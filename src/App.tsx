@@ -208,10 +208,19 @@ export default function App() {
     const s = resolved ?? settings
     const preferred =
       s?.models.defaultModel ||
-      status.models.find((m) => m.name === 'builtin:composer-lite')?.name ||
-      status.models.find((m) => m.name.startsWith('builtin:'))?.name ||
+      status.models.find((m) => m.ready && m.source === 'connection')?.name ||
+      status.models.find((m) => m.name === 'builtin:composer-lite' && m.ready)?.name ||
+      status.models.find((m) => m.name.startsWith('builtin:') && m.ready)?.name ||
+      status.models.find((m) => m.ready)?.name ||
       'builtin:composer-lite'
-    setSelectedModel((prev) => prev || preferred)
+    setSelectedModel((prev) => {
+      // Follow Settings default when it appears in the catalog (Ollama chip / default change).
+      if (s?.models.defaultModel && status.models.some((m) => m.name === s.models.defaultModel)) {
+        return s.models.defaultModel
+      }
+      if (prev && status.models.some((m) => m.name === prev)) return prev
+      return preferred
+    })
   }, [settings])
 
   const refreshChats = useCallback(async (preferredId?: string | null) => {
@@ -542,12 +551,14 @@ export default function App() {
         })
         const agentList = agents.length ? agents : await window.ide.listAgents()
         const activeAgent = agentList.find((a) => a.id === route.agentId)
+        // Agent pin (non-empty model field) wins; otherwise honor the chat picker / default
+        // so Ollama models selected in the UI are actually used.
+        const agentPinned = Boolean(activeAgent?.model?.trim())
         let runModel =
-          (selectedAgentId === 'auto'
-            ? route.model
-            : activeAgent?.resolvedModel || route.model) ||
+          (agentPinned ? activeAgent!.model.trim() : '') ||
           selectedModel ||
           settings.models.defaultModel ||
+          route.model ||
           'builtin:composer-lite'
 
         // If preferred builtin isn't installed, fall back to any ready built-in (Lite ↔ Full)
@@ -570,9 +581,18 @@ export default function App() {
           model: runModel
         }
 
-        if (runModel.startsWith('builtin:') && !builtinReady) {
+        const modelInfo = status.models.find((m) => m.name === runModel)
+        const cannotRunBuiltin = runModel.startsWith('builtin:') && !builtinReady
+        const cannotRunExternal =
+          !runModel.startsWith('builtin:') &&
+          (!hasConnection || (modelInfo ? modelInfo.ready === false : !hasConnection))
+        if (cannotRunBuiltin || cannotRunExternal) {
           setChatError(
-            'No built-in Composer model is installed yet. Open Settings → Models and download Composer Lite (~1 GB), then try again.'
+            cannotRunExternal
+              ? `Can’t reach model “${runModel}”. Is Ollama running? Open Settings → Models → Refresh, or run: ollama serve`
+              : hasConnection
+                ? 'That built-in model isn’t installed. Pick an Ollama model in the chat picker, or download Composer Lite in Settings → Models.'
+                : 'No model ready. Connect Ollama (Settings → Models) or download Composer Lite.'
           )
           // Still persist the user turn so the chat isn’t empty
           const displayContent =
@@ -1314,6 +1334,7 @@ export default function App() {
                 activeThread={activeThread}
                 routeLabel={routeLabel}
                 composerReady={composerReady}
+                modelsOk={ollamaOk}
                 streaming={streaming}
                 thinkingBuffer={thinkingBuffer}
                 answerBuffer={answerBuffer}

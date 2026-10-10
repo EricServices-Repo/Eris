@@ -75,7 +75,8 @@ export async function getModelsStatus(
 
 export function resolveConnectionForModel(
   settings: AppSettings,
-  model: string
+  model: string,
+  hintConnectionId?: string | null
 ): ModelConnection | null {
   if (isBuiltinRef(model)) {
     const ready = resolveReadyBuiltinRef(model)
@@ -97,10 +98,38 @@ export function resolveConnectionForModel(
   const external = settings.models.connections.filter(
     (c) => c.enabled && c.type === 'openai-compatible'
   )
+  if (hintConnectionId) {
+    const hinted = external.find((c) => c.id === hintConnectionId)
+    if (hinted) return hinted
+  }
   const byModel = external.find((c) => c.models.includes(model))
   if (byModel) return byModel
-  // Single open-ended connection (empty models list = discover-all)
+
+  const ollama = external.find((c) => c.provider === 'ollama' || c.id === 'ollama')
+  // Open-ended connection (empty models list = accept any id from that server)
   const openEnded = external.filter((c) => c.models.length === 0)
   if (openEnded.length === 1) return openEnded[0]!
+  // Prefer Ollama when the model isn't in any persisted list yet (fresh pull / before Refresh)
+  if (ollama) return ollama
+  if (external.length === 1) return external[0]!
   return external[0] ?? null
+}
+
+/** Persist live /v1/models lists onto connection.models so chat routing stays accurate. */
+export function connectionsWithDiscoveredModels(
+  settings: AppSettings,
+  status: ModelsStatus
+): { connections: ModelConnection[]; changed: boolean } {
+  let changed = false
+  const connections = settings.models.connections.map((c) => {
+    if (c.type !== 'openai-compatible' || !c.enabled) return c
+    const live = status.connections.find((x) => x.id === c.id)
+    if (!live?.reachable || !live.models?.length) return c
+    const same =
+      c.models.length === live.models.length && c.models.every((m, i) => m === live.models[i])
+    if (same) return c
+    changed = true
+    return { ...c, models: [...live.models] }
+  })
+  return { connections, changed }
 }

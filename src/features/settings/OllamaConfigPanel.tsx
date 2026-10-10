@@ -170,7 +170,10 @@ export function OllamaConfigPanel({
         <li>
           Pull a model, e.g. <code>ollama pull qwen2.5-coder:7b</code>
         </li>
-        <li>Connect below, then click a model chip to use it as the chat default.</li>
+        <li>
+          Connect / Refresh below, click a model chip (or pick it in the chat model menu). Chat uses
+          that model for Ask and Agent.
+        </li>
       </ol>
 
       <label className="field ollama-url-field">

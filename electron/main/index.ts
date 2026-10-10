@@ -33,7 +33,10 @@ import {
 } from './services/workspace'
 import { listTree, readTextFile, writeTextFile, languageFromPath } from './services/files'
 import { routeMessage } from './services/router'
-import { getModelsStatus } from './services/model-catalog'
+import {
+  connectionsWithDiscoveredModels,
+  getModelsStatus
+} from './services/model-catalog'
 import { runAgentWithWorkspaceTools } from './services/agent-runner'
 import { restoreCheckpoint, restoreCheckpointOp } from './services/checkpoints'
 import {
@@ -608,7 +611,20 @@ function registerIpc(): void {
 
   ipcMain.handle('models:status', async () => {
     const settings = getResolvedSettings(currentWorkspace)
-    return getModelsStatus(settings, getSecret)
+    const status = await getModelsStatus(settings, getSecret)
+    // Keep connection.models in sync with live Ollama/API lists so chat can route by model id.
+    const { connections, changed } = connectionsWithDiscoveredModels(settings, status)
+    if (changed) {
+      setSettings('user', { models: { connections } }, currentWorkspace)
+      return {
+        ...status,
+        connections: status.connections.map((c) => {
+          const updated = connections.find((u) => u.id === c.id)
+          return updated ? { ...c, models: updated.models } : c
+        })
+      }
+    }
+    return status
   })
 
   ipcMain.handle('models:builtinStatus', () => getBuiltinStatuses())

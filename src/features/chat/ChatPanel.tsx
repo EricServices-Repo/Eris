@@ -43,6 +43,8 @@ interface Props {
   activeThread: ChatThread | null
   routeLabel: string | null
   composerReady: boolean
+  /** True when any chat backend is ready (builtin or Ollama/API connection). */
+  modelsOk?: boolean
   streaming: boolean
   thinkingBuffer: string
   answerBuffer: string
@@ -99,6 +101,7 @@ export function ChatPanel({
   activeThread,
   routeLabel,
   composerReady,
+  modelsOk = false,
   streaming,
   thinkingBuffer,
   answerBuffer,
@@ -343,14 +346,25 @@ export function ChatPanel({
         </button>
       </div>
 
-      {!composerReady && (
+      {!composerReady && !modelsOk && (
         <div className="composer-banner">
           <span>
-            Download <strong>Composer Lite</strong> (~1 GB) to chat locally — or Full (~4.7 GB) for
-            stronger coding.
+            Connect <strong>Ollama</strong> or download <strong>Composer Lite</strong> (~1 GB) in
+            Settings → Models to start chatting.
           </span>
           <button className="btn btn-primary" onClick={onOpenModelsSettings}>
-            Download Lite
+            Open Models
+          </button>
+        </div>
+      )}
+      {!composerReady && modelsOk && (
+        <div className="composer-banner composer-banner-soft">
+          <span>
+            Using your connected API / Ollama models. Optional: download Composer Lite for offline
+            built-in chat.
+          </span>
+          <button className="btn" onClick={onOpenModelsSettings}>
+            Models
           </button>
         </div>
       )}
@@ -418,7 +432,7 @@ export function ChatPanel({
                   <span className="role">error</span>
                   {chatError}
                   <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
-                    {!composerReady && (
+                    {(!composerReady || !modelsOk) && (
                       <button className="btn btn-primary" onClick={onOpenModelsSettings}>
                         Open Models settings
                       </button>
