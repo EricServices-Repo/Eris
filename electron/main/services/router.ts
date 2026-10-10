@@ -5,10 +5,25 @@ function resolveModel(agent: AgentDefinition, settings: AppSettings): string {
   return agent.model.trim() || settings.models.defaultModel
 }
 
+function keywordMatches(hay: string, keyword: string): boolean {
+  const k = keyword.toLowerCase().trim()
+  if (!k) return false
+  if (k.includes(' ')) return hay.includes(k)
+  // Word-boundary match — avoid "app" matching "happen"
+  try {
+    return new RegExp(`(?:^|[^a-z0-9_])${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:$|[^a-z0-9_])`, 'i').test(
+      hay
+    )
+  } catch {
+    return hay.includes(k)
+  }
+}
+
 function scoreHeuristic(agent: AgentDefinition, text: string, fileNames: string[]): number {
   const hay = `${text}\n${fileNames.join('\n')}`.toLowerCase()
   const wantsBuild =
-    /\b(build|implement|add|create|fix|refactor|code|feature|write|generate|scaffold|project|app|working|make sure|ensure)\b/i.test(
+    /\b(build|implement|create|fix|refactor|feature|scaffold|generate)\b/i.test(text) ||
+    /\b(add|write|update|edit)\b[\s\S]{0,32}\b(file|code|bug|feature|function|component)\b/i.test(
       text
     )
   const wantsCodeReview =
@@ -17,14 +32,11 @@ function scoreHeuristic(agent: AgentDefinition, text: string, fileNames: string[
 
   let score = 0
   for (const keyword of agent.keywords) {
-    const k = keyword.toLowerCase().trim()
-    if (!k) continue
-    if (hay.includes(k)) score += k.includes(' ') ? 3 : 2
+    if (keywordMatches(hay, keyword)) score += keyword.includes(' ') ? 3 : 2
   }
   if (agent.id === 'composer') {
-    // Prefer Composer for project/build/ensure-working asks
     if (wantsBuild) score += 5
-    if (/\b(folder|workspace|calculator|todo|app)\b/i.test(text)) score += 2
+    if (/\b(folder|workspace|project)\b/i.test(text)) score += 2
   }
   if (agent.id === 'coder') {
     if (/\.(ts|tsx|js|jsx|py|go|rs|java|swift|css|html)\b/i.test(hay)) score += 2
@@ -35,12 +47,11 @@ function scoreHeuristic(agent: AgentDefinition, text: string, fileNames: string[
     score += 3
   }
   if (agent.id === 'reviewer') {
-    // Only boost Reviewer for real code-review asks — not "review the folder and make an app"
     if (wantsCodeReview) score += 5
     else if (/\breview\b/i.test(text) && !wantsBuild) score += 2
     if (wantsBuild && !wantsCodeReview) score -= 6
   }
-  if (agent.id === 'fast' && text.trim().length < 80) score += 1
+  if (agent.id === 'fast' && text.trim().length < 80 && !wantsBuild) score += 1
   return score
 }
 
@@ -101,20 +112,10 @@ export function routeHeuristic(
   }
 }
 
-export async function routeWithLlm(
-  workspacePath: string | null,
-  settings: AppSettings,
-  text: string,
-  fileNames: string[]
-): Promise<RouteResult> {
-  // LLM routing can use connections later; keyword routing is the local default.
-  const fallback = routeHeuristic(workspacePath, settings, text, fileNames)
-  return {
-    ...fallback,
-    reason: `${fallback.reason} (LLM router uses heuristic with built-in Composer)`
-  }
-}
-
+/**
+ * Resolve which agent policy profile applies.
+ * LLM intent/agent refinement lives in planChatTurn (chat-router.ts).
+ */
 export async function routeMessage(options: {
   workspacePath: string | null
   settings: AppSettings
@@ -160,8 +161,5 @@ export async function routeMessage(options: {
     }
   }
 
-  if (routing.useLlmRouter) {
-    return routeWithLlm(workspacePath, settings, text, fileNames)
-  }
   return routeHeuristic(workspacePath, settings, text, fileNames)
 }

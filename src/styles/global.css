@@ -1585,6 +1585,14 @@ select:focus {
   flex: 1;
 }
 
+.status-bar-version {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+  user-select: text;
+}
+
 .status-bar-btn {
   display: inline-flex;
   align-items: center;

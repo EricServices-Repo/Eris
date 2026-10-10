@@ -108,7 +108,7 @@ export function SetupWizard({
         <div className="setup-wizard-glow" aria-hidden />
         <header className="setup-wizard-header">
           <div className="setup-wizard-brand">
-            <img src={logo} alt="" className="setup-wizard-logo" />
+            <img src={logo} alt="" className="setup-wizard-logo" draggable={false} />
             <div>
               <div className="setup-wizard-kicker">First-time setup</div>
               <h1>Get Eris ready</h1>

@@ -33,6 +33,8 @@ import {
 } from './services/workspace'
 import { listTree, readTextFile, writeTextFile, languageFromPath } from './services/files'
 import { routeMessage } from './services/router'
+import { planChatTurn, turnPlanToRouteResult } from './services/chat-router'
+import type { TurnPlan } from '../../src/shared/settings-schema'
 import {
   connectionsWithDiscoveredModels,
   getModelsStatus
@@ -266,6 +268,39 @@ function resolveAppIcon(): string | undefined {
   return candidates.find((p) => existsSync(p))
 }
 
+function rendererEntryUrl(): string {
+  if (isDev && process.env['ELECTRON_RENDERER_URL']) {
+    return process.env['ELECTRON_RENDERER_URL']
+  }
+  return join(__dirname, '../renderer/index.html')
+}
+
+function isAppRendererUrl(url: string): boolean {
+  if (!url) return false
+  if (url === 'about:blank') return true
+  if (isDev) {
+    const dev = process.env['ELECTRON_RENDERER_URL']
+    if (dev && (url === dev || url.startsWith(dev + '/') || url.startsWith(dev + '?'))) return true
+  }
+  // Packaged: only the renderer shell HTML (not assets like .png / .js)
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'file:') return false
+    const path = decodeURIComponent(parsed.pathname)
+    return /\/out\/renderer\/index\.html$/i.test(path) || /\/renderer\/index\.html$/i.test(path)
+  } catch {
+    return false
+  }
+}
+
+function loadRenderer(win: BrowserWindow): void {
+  if (isDev && process.env['ELECTRON_RENDERER_URL']) {
+    void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
+  } else {
+    void win.loadFile(rendererEntryUrl())
+  }
+}
+
 function createWindow(): void {
   const icon = resolveAppIcon()
   mainWindow = new BrowserWindow({
@@ -291,15 +326,28 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    // Keep the shell intact — never open assets/binaries in-app
+    if (/^https?:/i.test(details.url)) {
+      void shell.openExternal(details.url)
+    }
     return { action: 'deny' }
   })
 
-  if (isDev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
-  } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+  // Drag/drop or mistaken navigation to e.g. logo.png shows raw binary as "garbage"
+  const rejectOffAppNavigation = (event: { preventDefault: () => void }, url: string) => {
+    if (isAppRendererUrl(url)) return
+    event.preventDefault()
+    if (/^https?:/i.test(url)) void shell.openExternal(url)
   }
+  mainWindow.webContents.on('will-navigate', rejectOffAppNavigation)
+  mainWindow.webContents.on('will-redirect', rejectOffAppNavigation)
+
+  mainWindow.webContents.on('did-navigate', (_event, url) => {
+    if (isAppRendererUrl(url) || !mainWindow || mainWindow.isDestroyed()) return
+    loadRenderer(mainWindow)
+  })
+
+  loadRenderer(mainWindow)
 }
 
 function buildMenu(): void {
@@ -463,6 +511,11 @@ function registerIpc(): void {
   }
 
   ipcMain.handle('app:getState', () => getAppState())
+  ipcMain.handle('app:getVersion', () => ({
+    version: app.getVersion(),
+    name: app.getName(),
+    packaged: app.isPackaged
+  }))
   ipcMain.handle('app:completeOnboarding', () => completeOnboarding())
   ipcMain.handle('app:resetOnboarding', () => resetOnboarding())
 
@@ -728,6 +781,34 @@ function registerIpc(): void {
     }
   )
 
+  ipcMain.handle(
+    'chat:planTurn',
+    async (
+      _e,
+      payload: {
+        text: string
+        fileNames?: string[]
+        manualAgentId?: string | null
+        selectedModel: string
+        mode?: 'ask' | 'agent'
+      }
+    ) => {
+      const settings = getResolvedSettings(currentWorkspace)
+      return planChatTurn({
+        workspacePath: currentWorkspace,
+        settings,
+        context: {
+          text: payload.text,
+          fileNames: payload.fileNames ?? [],
+          manualAgentId: payload.manualAgentId,
+          selectedModel: payload.selectedModel,
+          mode: payload.mode === 'ask' ? 'ask' : 'agent'
+        },
+        getSecret
+      })
+    }
+  )
+
   ipcMain.handle('agents:list', () => {
     const settings = getResolvedSettings(currentWorkspace)
     return listResolvedAgents(currentWorkspace, settings)
@@ -770,6 +851,7 @@ function registerIpc(): void {
         messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
         agentId?: string
         mode?: 'ask' | 'agent'
+        turnPlan?: TurnPlan
       }
     ) => {
       const settings = getResolvedSettings(currentWorkspace)
@@ -779,9 +861,26 @@ function registerIpc(): void {
       // Ghost completes share the llama runtime — never race the agent turn.
       abortAllCompletes()
       const { requestId, model, messages, agentId, mode } = payload
-      const agent = agentId ? findAgent(currentWorkspace, agentId) : null
-      const resolvedModel =
-        model || agent?.model.trim() || settings.models.defaultModel
+      const userText =
+        [...messages].reverse().find((m) => m.role === 'user')?.content.replace(/\n\n\[Eris\][\s\S]*$/, '') ||
+        ''
+      const turnPlan =
+        payload.turnPlan ??
+        (await planChatTurn({
+          workspacePath: currentWorkspace,
+          settings,
+          context: {
+            text: userText,
+            selectedModel: model || settings.models.defaultModel,
+            mode: mode === 'ask' ? 'ask' : 'agent',
+            manualAgentId: agentId ?? null
+          },
+          getSecret,
+          signal: chatAbort.signal
+        }))
+      const agent = findAgent(currentWorkspace, turnPlan.agentId) ||
+        (agentId ? findAgent(currentWorkspace, agentId) : null)
+      const resolvedModel = turnPlan.models.chat || model || settings.models.defaultModel
       const temperature =
         agent?.temperature ?? settings.models.temperature
       setDiagnosticsPaused(true)
@@ -811,15 +910,21 @@ function registerIpc(): void {
         logInfo('Chat stream start', {
           requestId,
           model: resolvedModel,
-          agentId: agent?.id ?? agentId,
+          toolsModel: turnPlan.models.tools,
+          agentId: turnPlan.agentId,
+          intent: turnPlan.intent,
           mode: mode ?? 'agent',
           messages: messages.length
         })
+        const route = turnPlanToRouteResult(turnPlan)
         event.sender.send('chat:routed', {
           requestId,
-          agentId: agent?.id ?? agentId,
-          agentName: agent?.name,
-          model: resolvedModel
+          agentId: route.agentId,
+          agentName: route.agentName,
+          model: resolvedModel,
+          reason: turnPlan.reason,
+          intent: turnPlan.intent,
+          toolsModel: turnPlan.models.tools
         })
 
         for await (const evt of runAgentWithWorkspaceTools({
@@ -830,7 +935,8 @@ function registerIpc(): void {
           temperature,
           signal: chatAbort.signal,
           getSecret,
-          mode: mode ?? 'agent'
+          mode: mode ?? 'agent',
+          turnPlan
         })) {
           if (evt.type === 'thinking') {
             pendingThinking += evt.text
@@ -1609,7 +1715,7 @@ function registerIpc(): void {
     const settings = getResolvedSettings(currentWorkspace)
     const base = settings.ericServices.apiBase.replace(/\/+$/, '')
     const url = settings.ericServices.linked
-      ? `${base}/account/update.php`
+      ? `${base}/account/eris.php`
       : `${base}/loginform.php`
     await shell.openExternal(url)
     return { ok: true, url }
@@ -1880,6 +1986,11 @@ function registerIpc(): void {
     clearUsageStats({ todayOnly: Boolean(payload?.todayOnly) })
   )
 }
+
+// macOS may deliver files dropped on the Dock/icon; never load them into the shell.
+app.on('open-file', (event) => {
+  event.preventDefault()
+})
 
 app.whenReady().then(() => {
   if (process.platform === 'win32') {

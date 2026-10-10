@@ -6,6 +6,7 @@ interface Props {
   routeLabel: string | null
   composerReady: boolean
   modelsOk: boolean
+  appVersion?: string | null
   disabled?: boolean
   onOpenSettings: () => void
   onAgentChange: (agentId: string | 'auto') => void
@@ -17,6 +18,7 @@ export function StatusBar({
   routeLabel,
   composerReady,
   modelsOk,
+  appVersion,
   disabled,
   onOpenSettings,
   onAgentChange
@@ -35,6 +37,11 @@ export function StatusBar({
           </span>
           Settings
         </button>
+        {appVersion && (
+          <span className="status-bar-version" title={`Eris v${appVersion}`}>
+            v{appVersion}
+          </span>
+        )}
       </div>
 
       <div className="status-bar-right" title={routeLabel || undefined}>

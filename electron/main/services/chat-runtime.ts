@@ -1,5 +1,5 @@
 import type { AppSettings } from '../../../src/shared/settings-schema'
-import { isBuiltinRef, resolveReadyBuiltinRef, streamBuiltinChat } from './builtin-model'
+import { isBuiltinRef, resolveExactBuiltinRef, streamBuiltinChat } from './builtin-model'
 import {
   streamOpenAICompatible,
   type ChatRequestMessage,
@@ -54,10 +54,10 @@ export async function* streamModelChat(options: {
 
   try {
     if (isBuiltinRef(model)) {
-      const ready = resolveReadyBuiltinRef(model)
+      const ready = resolveExactBuiltinRef(model)
       if (!ready) {
         throw new Error(
-          'No built-in Composer model is installed. Open Settings → Models and download Composer Lite (~1 GB).'
+          `Built-in model “${model}” is not ready. Open Settings → Models and download it.`
         )
       }
       model = ready

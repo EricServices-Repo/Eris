@@ -9,6 +9,7 @@ function subscribe<T>(channel: string, cb: (data: T) => void): () => void {
 
 const api: IdeApi = {
   getAppState: () => ipcRenderer.invoke('app:getState'),
+  getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
   completeOnboarding: () => ipcRenderer.invoke('app:completeOnboarding'),
   resetOnboarding: () => ipcRenderer.invoke('app:resetOnboarding'),
   listWorkspaces: () => ipcRenderer.invoke('workspace:list'),
@@ -45,6 +46,7 @@ const api: IdeApi = {
   saveProjectAgents: (config) => ipcRenderer.invoke('agents:saveProject', config),
   resetProjectAgents: () => ipcRenderer.invoke('agents:resetProject'),
   routeAgent: (payload) => ipcRenderer.invoke('agents:route', payload),
+  planChatTurn: (payload) => ipcRenderer.invoke('chat:planTurn', payload),
   listChats: () => ipcRenderer.invoke('chats:list'),
   getChat: (id) => ipcRenderer.invoke('chats:get', id),
   createChat: (model) => ipcRenderer.invoke('chats:create', model),

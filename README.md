@@ -20,7 +20,46 @@ npm run dev
 npm run dist:mac
 ```
 
-Artifacts land in `dist/` (e.g. `dist/mac-arm64/Eris.app`).
+Artifacts land in `dist/` (e.g. `dist/mac-arm64/Eris.app`). Version comes from `package.json` (`app.getVersion()` / status bar).
+
+### Release builds (DMG + ZIP)
+
+```bash
+npm run dist:release
+```
+
+Produces versioned installers under `dist/`, e.g. `Eris-0.1.0-arm64.dmg` and `.zip`.
+
+### Publish a GitHub Release
+
+Requires [GitHub CLI](https://cli.github.com/) (`gh auth login`) with `repo` scope, and a clean git tree.
+
+```bash
+# Bump patch (0.1.0 → 0.1.1), build, tag v0.1.1, push, create GitHub Release
+npm run release
+
+# Minor / major
+npm run release -- --bump minor
+npm run release -- --bump major
+
+# Exact version
+npm run release -- --version 0.2.0
+
+# Preview plan only
+npm run release:dry
+
+# Build + release current package.json version (no bump)
+npm run release:github
+```
+
+CI also publishes when you push a tag:
+
+```bash
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+That runs `.github/workflows/release.yml` (build on `macos-latest`, upload assets to the GitHub Release).
 
 ## Settings layers
 

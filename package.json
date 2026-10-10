@@ -11,8 +11,16 @@
     "preview": "electron-vite preview",
     "dist:mac": "npm run build && electron-builder --mac --dir",
     "dist:dmg": "npm run build && electron-builder --mac dmg",
+    "dist:release": "npm run build && electron-builder --mac dmg zip",
     "start:app": "npm run dist:mac && open \"$(ls -d dist/mac*/Eris.app | head -1)\"",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test:routing": "node scripts/test-routing.mjs",
+    "version:patch": "npm version patch --no-git-tag-version",
+    "version:minor": "npm version minor --no-git-tag-version",
+    "version:major": "npm version major --no-git-tag-version",
+    "release": "node scripts/release.mjs",
+    "release:dry": "node scripts/release.mjs --dry-run",
+    "release:github": "node scripts/release.mjs --no-bump"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -48,6 +56,7 @@
     "icon": "resources/icons/icon.png",
     "files": [
       "out/**/*",
+      "resources/**/*",
       "node_modules/node-llama-cpp/**/*",
       "node_modules/node-pty/**/*",
       "node_modules/typescript-language-server/**/*",
@@ -66,10 +75,24 @@
     "mac": {
       "icon": "resources/icons/icon.icns",
       "category": "public.app-category.developer-tools",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": null,
       "target": [
         "dir"
       ],
-      "identity": null
-    }
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "dmg": {
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "EricServices-Repo",
+        "repo": "Eris",
+        "releaseType": "release"
+      }
+    ]
   }
 }

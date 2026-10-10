@@ -7,6 +7,7 @@ import type {
   ProjectAgentsConfig,
   ResolvedAgent,
   RouteResult,
+  TurnPlan,
   SettingsPatch,
   SettingsScope,
   SkillInput,
@@ -21,6 +22,12 @@ export interface AppState {
   lastWorkspaceId: string | null
   /** ISO or epoch ms when the first-run setup wizard was finished/skipped */
   onboardingCompletedAt?: number | null
+}
+
+export interface AppVersionInfo {
+  version: string
+  name: string
+  packaged: boolean
 }
 
 export interface LayeredSettings {
@@ -76,6 +83,7 @@ export type UsageSnapshot = {
 
 export interface IdeApi {
   getAppState: () => Promise<AppState>
+  getAppVersion: () => Promise<AppVersionInfo>
   completeOnboarding: () => Promise<AppState>
   resetOnboarding: () => Promise<AppState>
   listWorkspaces: () => Promise<WorkspaceRecord[]>
@@ -121,6 +129,13 @@ export interface IdeApi {
     fileNames: string[]
     manualAgentId?: string | null
   }) => Promise<RouteResult>
+  planChatTurn: (payload: {
+    text: string
+    fileNames?: string[]
+    manualAgentId?: string | null
+    selectedModel: string
+    mode?: 'ask' | 'agent'
+  }) => Promise<TurnPlan>
   listChats: () => Promise<ChatThread[]>
   getChat: (id: string) => Promise<ChatThread | null>
   createChat: (model: string) => Promise<ChatThread>
@@ -143,6 +158,7 @@ export interface IdeApi {
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
     agentId?: string
     mode?: 'ask' | 'agent'
+    turnPlan?: TurnPlan
   }) => Promise<boolean>
   stopChat: () => Promise<boolean>
   onChatThinking: (cb: (data: { requestId: string; chunk: string }) => void) => () => void
@@ -192,6 +208,9 @@ export interface IdeApi {
       agentId?: string
       agentName?: string
       model: string
+      reason?: string
+      intent?: string
+      toolsModel?: string
     }) => void
   ) => () => void
   restoreCheckpoint: (checkpointId: string) => Promise<{ restored: number }>
