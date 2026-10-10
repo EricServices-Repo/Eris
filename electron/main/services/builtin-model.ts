@@ -1,0 +1,1010 @@
+import { createHash } from 'crypto'
+import {
+  closeSync,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync
+} from 'fs'
+import { join } from 'path'
+import { pipeline } from 'stream/promises'
+import { Transform } from 'stream'
+import type {
+  BuiltinModelManifestEntry,
+  BuiltinModelStatus
+} from '../../../src/shared/settings-schema'
+import { builtinModelsDir, modelsManifestPath } from './paths'
+import { logError, logInfo, logWarn } from './logger'
+
+type LlamaModule = typeof import('node-llama-cpp')
+
+const MAX_GGUF_STRING = 16 * 1024 * 1024
+const MAX_GGUF_ARRAY = 2_000_000
+
+function formatApproxSize(bytes: number): string {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
+  if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`
+  return `${bytes} B`
+}
+
+interface RuntimeState {
+  modelPath: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  llama: any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  model: any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any
+}
+
+let runtime: RuntimeState | null = null
+let downloadAbort: AbortController | null = null
+/** Serializes downloads so cancel + restart cannot interleave writes. */
+let downloadGate: Promise<void> = Promise.resolve()
+/** Serializes load/dispose so Stop + new chat cannot race Metal runtime. */
+let runtimeGate: Promise<void> = Promise.resolve()
+
+function enqueueRuntime<T>(fn: () => Promise<T>): Promise<T> {
+  const run = runtimeGate.then(fn, fn)
+  runtimeGate = run.then(
+    () => undefined,
+    () => undefined
+  )
+  return run
+}
+const progressById = new Map<string, { downloaded: number; total: number }>()
+
+function verifiedSidecarPath(modelPath: string): string {
+  return `${modelPath}.sha256`
+}
+
+function readVerifiedSidecar(modelPath: string): string | null {
+  const side = verifiedSidecarPath(modelPath)
+  if (!existsSync(side)) return null
+  try {
+    return readFileSync(side, 'utf8').trim().toLowerCase()
+  } catch {
+    return null
+  }
+}
+
+function writeVerifiedSidecar(modelPath: string, sha256: string): void {
+  writeFileSync(verifiedSidecarPath(modelPath), `${sha256}\n`, 'utf8')
+}
+
+function unlinkQuiet(path: string): void {
+  try {
+    if (existsSync(path)) unlinkSync(path)
+  } catch {
+    // ignore
+  }
+}
+
+/** Walk GGUF metadata with length caps — catches truncated/corrupt downloads. */
+function ggufMetadataLooksSane(path: string): boolean {
+  const fd = openSync(path, 'r')
+  let pos = 0
+  try {
+    const fileSize = statSync(path).size
+    const readExact = (n: number): Buffer => {
+      if (n < 0 || pos + n > fileSize) throw new Error('eof')
+      const buf = Buffer.alloc(n)
+      const got = readSync(fd, buf, 0, n, pos)
+      if (got !== n) throw new Error('short read')
+      pos += n
+      return buf
+    }
+    const u32 = () => readExact(4).readUInt32LE(0)
+    const u64 = () => {
+      const v = readExact(8).readBigUInt64LE(0)
+      if (v > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('u64 too large')
+      return Number(v)
+    }
+    const skip = (n: number) => {
+      if (n < 0 || pos + n > fileSize) throw new Error('skip past eof')
+      pos += n
+    }
+    const skipString = () => {
+      const n = u64()
+      if (n > MAX_GGUF_STRING) throw new Error(`string length ${n}`)
+      skip(n)
+    }
+    const skipValue = (type: number): void => {
+      switch (type) {
+        case 0:
+        case 1:
+        case 7:
+          skip(1)
+          return
+        case 2:
+        case 3:
+          skip(2)
+          return
+        case 4:
+        case 5:
+        case 6:
+          skip(4)
+          return
+        case 10:
+        case 11:
+        case 12:
+          skip(8)
+          return
+        case 8:
+          skipString()
+          return
+        case 9: {
+          const elemType = u32()
+          const count = u64()
+          if (count > MAX_GGUF_ARRAY) throw new Error(`array length ${count}`)
+          for (let i = 0; i < count; i++) skipValue(elemType)
+          return
+        }
+        default:
+          throw new Error(`bad type ${type}`)
+      }
+    }
+
+    const magic = readExact(4).toString('utf8')
+    if (magic !== 'GGUF') throw new Error('bad magic')
+    const version = u32()
+    if (version < 2 || version > 3) throw new Error(`bad version ${version}`)
+    const tensorCount = u64()
+    const kvCount = u64()
+    if (tensorCount > 100_000 || kvCount > 10_000) throw new Error('insane header counts')
+    for (let i = 0; i < kvCount; i++) {
+      skipString()
+      skipValue(u32())
+    }
+    for (let i = 0; i < Math.min(tensorCount, 8); i++) {
+      skipString()
+      const nDims = u32()
+      if (nDims > 8) throw new Error('bad dims')
+      for (let d = 0; d < nDims; d++) u64()
+      u32() // type
+      u64() // offset
+    }
+    return true
+  } catch {
+    return false
+  } finally {
+    closeSync(fd)
+  }
+}
+
+async function sha256File(path: string): Promise<string> {
+  const hash = createHash('sha256')
+  const { createReadStream } = await import('fs')
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(path)
+    stream.on('data', (chunk) => hash.update(chunk))
+    stream.on('error', reject)
+    stream.on('end', () => resolve())
+  })
+  return hash.digest('hex')
+}
+
+function readManifest(): { builtinModels: BuiltinModelManifestEntry[] } {
+  return JSON.parse(readFileSync(modelsManifestPath(), 'utf8')) as {
+    builtinModels: BuiltinModelManifestEntry[]
+  }
+}
+
+/** Prefer Lite as the default built-in Composer when present. */
+export function getComposerManifest(): BuiltinModelManifestEntry {
+  const manifest = readManifest()
+  const composers = manifest.builtinModels.filter((m) => m.role === 'composer')
+  const preferred =
+    composers.find((m) => m.tier === 'lite' || m.id === 'composer-lite') ??
+    composers.find((m) => m.id === 'composer') ??
+    composers[0] ??
+    manifest.builtinModels[0]
+  if (!preferred) throw new Error('No built-in composer model in manifest')
+  return preferred
+}
+
+export function findBuiltinEntry(idOrRef: string): BuiltinModelManifestEntry | null {
+  const manifest = readManifest()
+  const key = idOrRef.replace(/^builtin:/, '')
+  return (
+    manifest.builtinModels.find((m) => m.id === key || m.ref === idOrRef || m.ref === `builtin:${key}`) ??
+    null
+  )
+}
+
+export function localModelPath(entry: BuiltinModelManifestEntry): string {
+  return join(builtinModelsDir(), entry.filename)
+}
+
+/** File looks like a complete GGUF of the expected size (not HTML / truncated / corrupt). */
+export function isValidModelFile(path: string, entry: BuiltinModelManifestEntry): boolean {
+  if (!existsSync(path)) return false
+  try {
+    const size = statSync(path).size
+    const minBytes = Math.floor(entry.approxBytes * 0.98)
+    const maxBytes = Math.ceil(entry.approxBytes * 1.02)
+    if (size < minBytes || size > maxBytes) return false
+    const fd = openSync(path, 'r')
+    try {
+      const magic = Buffer.alloc(4)
+      readSync(fd, magic, 0, 4, 0)
+      if (magic.toString('utf8') !== 'GGUF') return false
+    } finally {
+      closeSync(fd)
+    }
+    // Sidecar proves a prior checksum-verified download.
+    if (entry.sha256) {
+      const side = readVerifiedSidecar(path)
+      if (side && side !== entry.sha256.toLowerCase()) return false
+      if (side === entry.sha256.toLowerCase()) return true
+    }
+    // No sidecar yet (legacy install) or no known hash — validate GGUF structure.
+    // This catches the corrupt Full download that still had the right byte size.
+    return ggufMetadataLooksSane(path)
+  } catch {
+    return false
+  }
+}
+
+export function getBuiltinStatuses(): BuiltinModelStatus[] {
+  const manifest = readManifest()
+  mkdirSync(builtinModelsDir(), { recursive: true })
+  return manifest.builtinModels.map((entry) => {
+    const path = localModelPath(entry)
+    const installed = existsSync(path)
+    const valid = installed && isValidModelFile(path, entry)
+    const downloadedBytes = installed
+      ? statSync(path).size
+      : progressById.get(entry.id)?.downloaded ?? 0
+    const total = progressById.get(entry.id)?.total || entry.approxBytes
+    const progress = total > 0 ? Math.min(1, downloadedBytes / total) : valid ? 1 : 0
+    return {
+      id: entry.id,
+      ref: entry.ref,
+      name: entry.name,
+      displayName: entry.displayName,
+      description: entry.description,
+      family: entry.family,
+      parameters: entry.parameters,
+      quant: entry.quant,
+      filename: entry.filename,
+      downloadUrl: entry.downloadUrl,
+      approxBytes: entry.approxBytes,
+      installed,
+      ready: valid,
+      localPath: installed ? path : null,
+      downloadedBytes,
+      progress: valid ? 1 : progress,
+      tier: entry.tier
+    }
+  })
+}
+
+export function isBuiltinRef(model: string): boolean {
+  return model.startsWith('builtin:')
+}
+
+export async function ensureComposerDownloaded(
+  onProgress?: (status: BuiltinModelStatus) => void,
+  id?: string
+): Promise<BuiltinModelStatus> {
+  const entry = id ? findBuiltinEntry(id) ?? getComposerManifest() : getComposerManifest()
+  const statuses = getBuiltinStatuses()
+  const current = statuses.find((s) => s.id === entry.id)!
+  if (current.ready) return current
+  return downloadBuiltinModel(entry.id, onProgress)
+}
+
+/** True if the given builtin ref (or any composer) is ready to run. */
+export function isBuiltinModelReady(modelRef: string): boolean {
+  const statuses = getBuiltinStatuses()
+  if (!isBuiltinRef(modelRef)) return false
+  const entry = findBuiltinEntry(modelRef)
+  if (entry) return Boolean(statuses.find((s) => s.id === entry.id)?.ready)
+  return statuses.some((s) => s.ready)
+}
+
+/** Pick a ready builtin when the requested one is missing (Lite ↔ Full). */
+export function resolveReadyBuiltinRef(preferred: string): string | null {
+  const statuses = getBuiltinStatuses()
+  if (isBuiltinRef(preferred)) {
+    const entry = findBuiltinEntry(preferred)
+    if (entry && statuses.find((s) => s.id === entry.id)?.ready) return entry.ref
+  }
+  const ready =
+    statuses.find((s) => s.tier === 'lite' && s.ready) ??
+    statuses.find((s) => s.ready)
+  return ready?.ref ?? null
+}
+
+/** Recompute sha256, write sidecar on match, or remove corrupt file. */
+export async function verifyBuiltinModel(id: string): Promise<{
+  ok: boolean
+  digest?: string
+  expected?: string | null
+  error?: string
+}> {
+  const entry = findBuiltinEntry(id)
+  if (!entry) return { ok: false, error: 'Unknown model' }
+  const path = localModelPath(entry)
+  if (!existsSync(path)) return { ok: false, error: 'Model file not found' }
+  if (!ggufMetadataLooksSane(path)) {
+    unlinkQuiet(path)
+    unlinkQuiet(verifiedSidecarPath(path))
+    return { ok: false, error: 'Corrupt GGUF metadata — file removed. Re-download.' }
+  }
+  const digest = await sha256File(path)
+  if (entry.sha256 && digest !== entry.sha256.toLowerCase()) {
+    unlinkQuiet(path)
+    unlinkQuiet(verifiedSidecarPath(path))
+    return {
+      ok: false,
+      digest,
+      expected: entry.sha256,
+      error: 'Checksum mismatch — file removed. Re-download.'
+    }
+  }
+  writeVerifiedSidecar(path, digest)
+  return { ok: true, digest, expected: entry.sha256 }
+}
+
+export function deleteBuiltinModel(id: string): boolean {
+  const entry = readManifest().builtinModels.find((m) => m.id === id)
+  if (!entry) return false
+  const target = localModelPath(entry)
+  if (runtime?.modelPath === target) {
+    void disposeRuntime()
+  }
+  unlinkQuiet(target)
+  unlinkQuiet(verifiedSidecarPath(target))
+  try {
+    const dir = builtinModelsDir()
+    const base = `${entry.filename}.partial.`
+    for (const name of readdirSync(dir)) {
+      if (name === `${entry.filename}.partial` || name.startsWith(base)) {
+        unlinkQuiet(join(dir, name))
+      }
+    }
+  } catch {
+    // ignore
+  }
+  progressById.delete(id)
+  logInfo('Builtin model deleted', { id })
+  return true
+}
+
+export async function downloadBuiltinModel(
+  id: string,
+  onProgress?: (status: BuiltinModelStatus) => void
+): Promise<BuiltinModelStatus> {
+  const entry = readManifest().builtinModels.find((m) => m.id === id)
+  if (!entry) throw new Error(`Unknown built-in model: ${id}`)
+
+  mkdirSync(builtinModelsDir(), { recursive: true })
+  const target = localModelPath(entry)
+  if (isValidModelFile(target, entry)) {
+    return getBuiltinStatuses().find((s) => s.id === id)!
+  }
+
+  // Cancel any in-flight download and wait so writers never interleave.
+  downloadAbort?.abort()
+  const previous = downloadGate
+  let releaseGate!: () => void
+  downloadGate = new Promise<void>((resolve) => {
+    releaseGate = resolve
+  })
+  await previous.catch(() => undefined)
+
+  const controller = new AbortController()
+  downloadAbort = controller
+  const partial = `${target}.partial.${process.pid}.${Date.now()}`
+
+  try {
+    // Remove incomplete / corrupt installs before downloading again
+    if (existsSync(target)) {
+      logWarn('Removing invalid builtin model file before re-download', {
+        id,
+        size: statSync(target).size,
+        expected: entry.approxBytes
+      })
+      unlinkQuiet(target)
+      unlinkQuiet(verifiedSidecarPath(target))
+    }
+
+    const res = await fetch(entry.downloadUrl, {
+      signal: controller.signal,
+      redirect: 'follow',
+      headers: {
+        'User-Agent': 'Eris/0.1',
+        Accept: 'application/octet-stream'
+      }
+    })
+    if (!res.ok || !res.body) {
+      throw new Error(`Download failed: HTTP ${res.status}`)
+    }
+
+    const contentType = (res.headers.get('content-type') || '').toLowerCase()
+    if (contentType.includes('text/html')) {
+      throw new Error('Download failed: received HTML instead of a model file (check the URL / network)')
+    }
+
+    const total = Number(
+      res.headers.get('content-length') ||
+        res.headers.get('x-linked-size') ||
+        entry.approxBytes
+    )
+    let downloaded = 0
+    progressById.set(id, { downloaded, total })
+
+    const hasher = createHash('sha256')
+    const { Readable } = await import('stream')
+    const nodeStream = Readable.fromWeb(res.body as import('stream/web').ReadableStream)
+    const hashing = new Transform({
+      transform(chunk: Buffer, _enc, cb) {
+        hasher.update(chunk)
+        downloaded += chunk.length
+        progressById.set(id, { downloaded, total })
+        if (onProgress) {
+          const status = getBuiltinStatuses().find((s) => s.id === id)
+          if (status) onProgress(status)
+        }
+        cb(null, chunk)
+      }
+    })
+
+    await pipeline(nodeStream, hashing, createWriteStream(partial))
+
+    if (downloaded < Math.floor(entry.approxBytes * 0.98)) {
+      unlinkQuiet(partial)
+      throw new Error(
+        `Download incomplete (${formatApproxSize(downloaded)} of ~${formatApproxSize(entry.approxBytes)}). Try again.`
+      )
+    }
+
+    const digest = hasher.digest('hex')
+    if (entry.sha256 && digest !== entry.sha256.toLowerCase()) {
+      unlinkQuiet(partial)
+      throw new Error(
+        `Download checksum mismatch for ${entry.displayName}. The file was corrupted in transit — try downloading again.`
+      )
+    }
+
+    if (!ggufMetadataLooksSane(partial)) {
+      unlinkQuiet(partial)
+      throw new Error(
+        `Download failed: ${entry.displayName} is not a valid GGUF model (corrupt metadata). Try again.`
+      )
+    }
+
+    unlinkQuiet(target)
+    renameSync(partial, target)
+    writeVerifiedSidecar(target, digest)
+    progressById.set(id, { downloaded, total: downloaded })
+    await disposeRuntime()
+    logInfo('Builtin model download complete', { id, bytes: downloaded, sha256: digest })
+    return getBuiltinStatuses().find((s) => s.id === id)!
+  } catch (err) {
+    unlinkQuiet(partial)
+    throw err
+  } finally {
+    if (downloadAbort === controller) downloadAbort = null
+    releaseGate()
+  }
+}
+
+export function cancelBuiltinDownload(): void {
+  downloadAbort?.abort()
+}
+
+async function loadLlamaModule(): Promise<LlamaModule> {
+  return import('node-llama-cpp')
+}
+
+// --- utilityProcess isolation for node-llama-cpp ---
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let llamaChild: any = null
+let llamaChildReady: Promise<void> | null = null
+let workerModelPath: string | null = null
+let preferInProcess = false
+let chatSeq = 0
+
+type WorkerMsg = {
+  type: string
+  id?: string
+  requestId?: string
+  text?: string
+  error?: string
+}
+
+function workerScriptPath(): string {
+  return join(__dirname, 'llama-worker.js')
+}
+
+function ensureLlamaChild(): Promise<void> {
+  if (preferInProcess) return Promise.reject(new Error('in-process'))
+  if (llamaChild && llamaChildReady) return llamaChildReady
+
+  llamaChildReady = new Promise<void>((resolve, reject) => {
+    let settled = false
+    const settle = (err?: Error) => {
+      if (settled) return
+      settled = true
+      if (err) reject(err)
+      else resolve()
+    }
+    try {
+      // Lazy require so typecheck works without electron types in all contexts
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { utilityProcess } = require('electron') as {
+        utilityProcess: {
+          fork: (
+            modulePath: string,
+            args?: string[],
+            opts?: { serviceName?: string }
+          ) => {
+            on: (event: string, cb: (...args: unknown[]) => void) => void
+            removeListener?: (event: string, cb: (...args: unknown[]) => void) => void
+            postMessage: (msg: unknown) => void
+            kill: () => void
+            pid?: number
+          }
+        }
+      }
+      const script = workerScriptPath()
+      if (!existsSync(script)) {
+        preferInProcess = true
+        settle(new Error(`llama worker missing: ${script}`))
+        return
+      }
+      const child = utilityProcess.fork(script, [], { serviceName: 'eris-llama' })
+      llamaChild = child
+      const onReady = (raw: unknown) => {
+        const msg = (raw && typeof raw === 'object' && 'data' in (raw as object)
+          ? (raw as { data: WorkerMsg }).data
+          : raw) as WorkerMsg
+        if (msg?.type === 'ready') {
+          try {
+            child.removeListener?.('message', onReady)
+          } catch {
+            // ignore
+          }
+          settle()
+        }
+      }
+      child.on('message', onReady)
+      child.on('exit', () => {
+        llamaChild = null
+        llamaChildReady = null
+        workerModelPath = null
+      })
+      // Fallback if ready was missed (some Electron builds deliver it before the listener)
+      setTimeout(() => {
+        if (llamaChild === child) settle()
+      }, 800)
+    } catch (err) {
+      preferInProcess = true
+      llamaChild = null
+      llamaChildReady = null
+      settle(err instanceof Error ? err : new Error(String(err)))
+    }
+  })
+
+  return llamaChildReady
+}
+
+function postToWorker(msg: Record<string, unknown>): void {
+  llamaChild?.postMessage(msg)
+}
+
+function onceWorkerMessage(
+  predicate: (msg: WorkerMsg) => boolean,
+  signal?: AbortSignal
+): Promise<WorkerMsg> {
+  return new Promise((resolve, reject) => {
+    if (!llamaChild) {
+      reject(new Error('No llama worker'))
+      return
+    }
+    const onMsg = (raw: unknown) => {
+      const msg = (raw && typeof raw === 'object' && 'data' in (raw as object)
+        ? (raw as { data: WorkerMsg }).data
+        : raw) as WorkerMsg
+      if (!predicate(msg)) return
+      cleanup()
+      resolve(msg)
+    }
+    const onAbort = () => {
+      cleanup()
+      const err = new Error('Aborted')
+      err.name = 'AbortError'
+      reject(err)
+    }
+    const cleanup = () => {
+      llamaChild?.off?.('message', onMsg)
+      // electron UtilityProcess uses EventEmitter-style; also try removeListener
+      try {
+        llamaChild?.removeListener?.('message', onMsg)
+      } catch {
+        // ignore
+      }
+      signal?.removeEventListener('abort', onAbort)
+    }
+    llamaChild.on('message', onMsg)
+    if (signal?.aborted) onAbort()
+    else signal?.addEventListener('abort', onAbort)
+  })
+}
+
+async function disposeRuntimeUnlocked(): Promise<void> {
+  if (llamaChild) {
+    try {
+      postToWorker({ type: 'dispose' })
+    } catch {
+      // ignore
+    }
+    try {
+      llamaChild.kill()
+    } catch {
+      // ignore
+    }
+    llamaChild = null
+    llamaChildReady = null
+    workerModelPath = null
+  }
+  if (!runtime) return
+  try {
+    await runtime.context?.dispose?.()
+    await runtime.model?.dispose?.()
+  } catch {
+    // ignore
+  }
+  runtime = null
+}
+
+export async function disposeRuntime(): Promise<void> {
+  return enqueueRuntime(() => disposeRuntimeUnlocked())
+}
+
+async function ensureRuntimeInProcess(
+  modelPath: string,
+  entry: BuiltinModelManifestEntry
+): Promise<RuntimeState> {
+  return enqueueRuntime(async () => {
+    if (runtime?.modelPath === modelPath) return runtime
+    await disposeRuntimeUnlocked()
+
+    if (!isValidModelFile(modelPath, entry)) {
+      throw new Error(
+        `${entry.displayName} file is missing or corrupted. Open Settings → Models and download it again.`
+      )
+    }
+
+    const llamaCpp = await loadLlamaModule()
+    const { getLlama } = llamaCpp
+    let llama
+    try {
+      llama = await getLlama()
+    } catch (err) {
+      logWarn('getLlama default failed, retrying GPU disabled', {
+        error: err instanceof Error ? err.message : String(err)
+      })
+      llama = await getLlama({ gpu: false })
+    }
+
+    logInfo('Loading builtin model (in-process)', { path: modelPath, gpu: llama.gpu })
+    let model
+    try {
+      model = await llama.loadModel({ modelPath })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      logError('Failed to load builtin model', { path: modelPath, error: message })
+      if (
+        /Array buffer allocation failed|GGUF|parse|corrupt|out of range|ERR_OUT_OF_RANGE/i.test(
+          message
+        )
+      ) {
+        unlinkQuiet(verifiedSidecarPath(modelPath))
+        try {
+          if (!ggufMetadataLooksSane(modelPath)) unlinkQuiet(modelPath)
+        } catch {
+          // ignore
+        }
+        throw new Error(
+          `${entry.displayName} file is corrupted. Open Settings → Models and download it again.`
+        )
+      }
+      throw err
+    }
+
+    if (entry.sha256 && !readVerifiedSidecar(modelPath)) {
+      void sha256File(modelPath)
+        .then((digest) => {
+          if (digest === entry.sha256!.toLowerCase()) writeVerifiedSidecar(modelPath, digest)
+        })
+        .catch(() => undefined)
+    }
+
+    const contextSize = entry.tier === 'lite' ? 4096 : 8192
+    const context = await model.createContext({ contextSize })
+    runtime = { modelPath, llama, model, context }
+    return runtime
+  })
+}
+
+async function ensureWorkerModel(
+  modelPath: string,
+  entry: BuiltinModelManifestEntry
+): Promise<void> {
+  await ensureLlamaChild()
+  if (workerModelPath === modelPath) return
+  if (!isValidModelFile(modelPath, entry)) {
+    throw new Error(
+      `${entry.displayName} file is missing or corrupted. Open Settings → Models and download it again.`
+    )
+  }
+  const requestId = `load-${Date.now()}`
+  const contextSize = entry.tier === 'lite' ? 4096 : 8192
+  logInfo('Loading builtin model (utilityProcess)', { path: modelPath })
+  postToWorker({ type: 'load', modelPath, contextSize, requestId })
+  const result = await onceWorkerMessage(
+    (m) =>
+      (m.type === 'loaded' || m.type === 'load-error') && m.requestId === requestId
+  )
+  if (result.type === 'load-error') {
+    throw new Error(result.error || 'Failed to load model in worker')
+  }
+  workerModelPath = modelPath
+}
+
+async function* streamBuiltinChatInProcess(options: {
+  modelRef: string
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  temperature: number
+  signal?: AbortSignal
+  entry: BuiltinModelManifestEntry
+  path: string
+}): AsyncGenerator<string, void, unknown> {
+  const llamaCpp = await loadLlamaModule()
+  const { LlamaChatSession } = llamaCpp
+  const state = await ensureRuntimeInProcess(options.path, options.entry)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let sequence: any = null
+
+  try {
+    sequence = state.context.getSequence()
+    const session = new LlamaChatSession({ contextSequence: sequence })
+
+    const system = options.messages
+      .filter((m) => m.role === 'system')
+      .map((m) => m.content)
+      .join('\n\n')
+    const transcript = options.messages
+      .filter((m) => m.role !== 'system')
+      .map((m) => `${m.role.toUpperCase()}:\n${m.content}`)
+      .join('\n\n')
+      .slice(-24_000)
+    const prompt = [system && `SYSTEM:\n${system.slice(0, 8000)}`, transcript, 'ASSISTANT:']
+      .filter(Boolean)
+      .join('\n\n')
+
+    let queue: string[] = []
+    let done = false
+    let caughtError: unknown = null
+    let notify: (() => void) | null = null
+
+    const wait = () =>
+      new Promise<void>((resolve) => {
+        notify = resolve
+      })
+
+    const wake = () => {
+      notify?.()
+      notify = null
+    }
+
+    const onAbortWake = () => {
+      done = true
+      wake()
+    }
+    options.signal?.addEventListener('abort', onAbortWake)
+
+    const run = session
+      .prompt(prompt, {
+        temperature: options.temperature,
+        signal: options.signal,
+        maxTokens: options.entry.tier === 'lite' ? 1024 : 4096,
+        onTextChunk(chunk: string) {
+          queue.push(chunk)
+          wake()
+        }
+      })
+      .then(() => {
+        done = true
+        wake()
+      })
+      .catch((err: unknown) => {
+        caughtError = err
+        done = true
+        wake()
+      })
+
+    try {
+      while (!done || queue.length > 0) {
+        if (options.signal?.aborted) {
+          const err = new Error('Aborted')
+          err.name = 'AbortError'
+          throw err
+        }
+        if (queue.length === 0) await wait()
+        while (queue.length > 0) {
+          yield queue.shift() as string
+        }
+      }
+      await run
+      if (options.signal?.aborted) {
+        const err = new Error('Aborted')
+        err.name = 'AbortError'
+        throw err
+      }
+      if (caughtError) {
+        const message =
+          caughtError instanceof Error ? caughtError.message : String(caughtError)
+        const name = caughtError instanceof Error ? caughtError.name : ''
+        if (name === 'AbortError' || /abort/i.test(message)) {
+          const err = new Error('Aborted')
+          err.name = 'AbortError'
+          throw err
+        }
+        throw caughtError instanceof Error ? caughtError : new Error(message)
+      }
+    } finally {
+      options.signal?.removeEventListener('abort', onAbortWake)
+    }
+  } finally {
+    try {
+      await sequence?.dispose?.()
+    } catch {
+      // ignore
+    }
+  }
+}
+
+async function* streamBuiltinChatViaWorker(options: {
+  modelRef: string
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  temperature: number
+  signal?: AbortSignal
+  entry: BuiltinModelManifestEntry
+  path: string
+}): AsyncGenerator<string, void, unknown> {
+  await ensureWorkerModel(options.path, options.entry)
+
+  const id = `chat-${++chatSeq}`
+  let queue: string[] = []
+  let done = false
+  let caughtError: string | null = null
+  let notify: (() => void) | null = null
+
+  const wait = () =>
+    new Promise<void>((resolve) => {
+      notify = resolve
+    })
+  const wake = () => {
+    notify?.()
+    notify = null
+  }
+
+  const onMsg = (raw: unknown) => {
+    const msg = (raw && typeof raw === 'object' && 'data' in (raw as object)
+      ? (raw as { data: WorkerMsg }).data
+      : raw) as WorkerMsg
+    if (msg.id !== id) return
+    if (msg.type === 'chunk' && msg.text) {
+      queue.push(msg.text)
+      wake()
+    } else if (msg.type === 'done') {
+      done = true
+      wake()
+    } else if (msg.type === 'error') {
+      caughtError = msg.error || 'Worker error'
+      done = true
+      wake()
+    }
+  }
+
+  llamaChild.on('message', onMsg)
+  const onAbort = () => {
+    postToWorker({ type: 'abort', id })
+    done = true
+    wake()
+  }
+  options.signal?.addEventListener('abort', onAbort)
+
+  postToWorker({
+    type: 'chat',
+    id,
+    messages: options.messages,
+    temperature: options.temperature,
+    maxTokens: options.entry.tier === 'lite' ? 1024 : 4096
+  })
+
+  try {
+    while (!done || queue.length > 0) {
+      if (options.signal?.aborted) {
+        const err = new Error('Aborted')
+        err.name = 'AbortError'
+        throw err
+      }
+      if (queue.length === 0) await wait()
+      while (queue.length > 0) {
+        yield queue.shift() as string
+      }
+    }
+    if (options.signal?.aborted || caughtError === 'Aborted') {
+      const err = new Error('Aborted')
+      err.name = 'AbortError'
+      throw err
+    }
+    if (caughtError) throw new Error(caughtError)
+  } finally {
+    options.signal?.removeEventListener('abort', onAbort)
+    try {
+      llamaChild?.removeListener?.('message', onMsg)
+      llamaChild?.off?.('message', onMsg)
+    } catch {
+      // ignore
+    }
+  }
+}
+
+export async function* streamBuiltinChat(options: {
+  modelRef: string
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  temperature: number
+  signal?: AbortSignal
+}): AsyncGenerator<string, void, unknown> {
+  const entry = findBuiltinEntry(options.modelRef) ?? getComposerManifest()
+  const path = localModelPath(entry)
+  if (!existsSync(path)) {
+    throw new Error(
+      `${entry.displayName} is not installed yet. Open Settings → Models and download it (~${formatApproxSize(entry.approxBytes)}).`
+    )
+  }
+  if (!isValidModelFile(path, entry)) {
+    throw new Error(
+      `${entry.displayName} file looks incomplete or corrupted. Open Settings → Models and download it again.`
+    )
+  }
+
+  // Prefer utilityProcess so Metal/CPU inference does not freeze the Electron UI.
+  // Fall back to in-process on worker failures (including sequence races).
+  if (!preferInProcess) {
+    try {
+      yield* streamBuiltinChatViaWorker({ ...options, entry, path })
+      return
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      const name = err instanceof Error ? err.name : ''
+      if (name === 'AbortError' || /abort/i.test(message)) throw err
+      logWarn('llama utilityProcess failed; falling back in-process', { error: message })
+      // Kill broken worker so the next attempt can retry isolation later
+      try {
+        await disposeRuntime()
+      } catch {
+        // ignore
+      }
+      // One hard failure (missing worker) → stick to in-process for the session
+      if (/worker missing|in-process/i.test(message)) preferInProcess = true
+    }
+  }
+
+  yield* streamBuiltinChatInProcess({ ...options, entry, path })
+}

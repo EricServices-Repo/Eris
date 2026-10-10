@@ -1,0 +1,67 @@
+{
+  "models": {
+    "defaultModel": "builtin:composer-lite",
+    "temperature": 0.3,
+    "contextWindow": 32768,
+    "connections": [
+      {
+        "id": "builtin",
+        "name": "Built-in Composer",
+        "type": "builtin",
+        "provider": "builtin",
+        "enabled": true,
+        "baseUrl": "",
+        "apiKeyRef": "",
+        "models": ["builtin:composer-lite", "builtin:composer"]
+      }
+    ]
+  },
+  "agent": {
+    "systemPrompt": "You are working inside Eris with the built-in Composer agent stack. Be concise, accurate, and cite file paths when referring to code.",
+    "includeOpenFiles": true,
+    "maxHistoryMessages": 40,
+    "autoKeepDiffs": false,
+    "routing": {
+      "enabled": true,
+      "mode": "auto",
+      "routerModel": "builtin:composer-lite",
+      "useLlmRouter": false,
+      "fallbackAgentId": "composer"
+    }
+  },
+  "mcp": {
+    "servers": []
+  },
+  "github": {
+    "host": "github.com",
+    "tokenRef": "",
+    "preferredProtocol": "https",
+    "repository": "",
+    "remoteName": "origin",
+    "defaultBranch": "main",
+    "linked": false
+  },
+  "ericServices": {
+    "apiBase": "https://www.ericservic.es",
+    "tokenRef": "",
+    "linked": false,
+    "username": "",
+    "email": "",
+    "lastSyncedAt": "",
+    "syncEnabled": true
+  },
+  "editor": {
+    "fontSize": 14,
+    "tabSize": 2,
+    "theme": "vs-dark",
+    "inlineSuggest": true
+  },
+  "general": {
+    "restoreLastWorkspace": true,
+    "logging": {
+      "enabled": true,
+      "directory": "",
+      "level": "info"
+    }
+  }
+}
