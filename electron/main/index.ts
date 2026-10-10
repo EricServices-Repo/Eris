@@ -266,6 +266,39 @@ function resolveAppIcon(): string | undefined {
   return candidates.find((p) => existsSync(p))
 }
 
+function rendererEntryUrl(): string {
+  if (isDev && process.env['ELECTRON_RENDERER_URL']) {
+    return process.env['ELECTRON_RENDERER_URL']
+  }
+  return join(__dirname, '../renderer/index.html')
+}
+
+function isAppRendererUrl(url: string): boolean {
+  if (!url) return false
+  if (url === 'about:blank') return true
+  if (isDev) {
+    const dev = process.env['ELECTRON_RENDERER_URL']
+    if (dev && (url === dev || url.startsWith(dev + '/') || url.startsWith(dev + '?'))) return true
+  }
+  // Packaged: only the renderer shell HTML (not assets like .png / .js)
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'file:') return false
+    const path = decodeURIComponent(parsed.pathname)
+    return /\/out\/renderer\/index\.html$/i.test(path) || /\/renderer\/index\.html$/i.test(path)
+  } catch {
+    return false
+  }
+}
+
+function loadRenderer(win: BrowserWindow): void {
+  if (isDev && process.env['ELECTRON_RENDERER_URL']) {
+    void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
+  } else {
+    void win.loadFile(rendererEntryUrl())
+  }
+}
+
 function createWindow(): void {
   const icon = resolveAppIcon()
   mainWindow = new BrowserWindow({
@@ -291,15 +324,28 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    // Keep the shell intact — never open assets/binaries in-app
+    if (/^https?:/i.test(details.url)) {
+      void shell.openExternal(details.url)
+    }
     return { action: 'deny' }
   })
 
-  if (isDev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
-  } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+  // Drag/drop or mistaken navigation to e.g. logo.png shows raw binary as "garbage"
+  const rejectOffAppNavigation = (event: { preventDefault: () => void }, url: string) => {
+    if (isAppRendererUrl(url)) return
+    event.preventDefault()
+    if (/^https?:/i.test(url)) void shell.openExternal(url)
   }
+  mainWindow.webContents.on('will-navigate', rejectOffAppNavigation)
+  mainWindow.webContents.on('will-redirect', rejectOffAppNavigation)
+
+  mainWindow.webContents.on('did-navigate', (_event, url) => {
+    if (isAppRendererUrl(url) || !mainWindow || mainWindow.isDestroyed()) return
+    loadRenderer(mainWindow)
+  })
+
+  loadRenderer(mainWindow)
 }
 
 function buildMenu(): void {
@@ -463,6 +509,11 @@ function registerIpc(): void {
   }
 
   ipcMain.handle('app:getState', () => getAppState())
+  ipcMain.handle('app:getVersion', () => ({
+    version: app.getVersion(),
+    name: app.getName(),
+    packaged: app.isPackaged
+  }))
   ipcMain.handle('app:completeOnboarding', () => completeOnboarding())
   ipcMain.handle('app:resetOnboarding', () => resetOnboarding())
 
@@ -1609,7 +1660,7 @@ function registerIpc(): void {
     const settings = getResolvedSettings(currentWorkspace)
     const base = settings.ericServices.apiBase.replace(/\/+$/, '')
     const url = settings.ericServices.linked
-      ? `${base}/account/update.php`
+      ? `${base}/account/eris.php`
       : `${base}/loginform.php`
     await shell.openExternal(url)
     return { ok: true, url }
@@ -1880,6 +1931,11 @@ function registerIpc(): void {
     clearUsageStats({ todayOnly: Boolean(payload?.todayOnly) })
   )
 }
+
+// macOS may deliver files dropped on the Dock/icon; never load them into the shell.
+app.on('open-file', (event) => {
+  event.preventDefault()
+})
 
 app.whenReady().then(() => {
   if (process.platform === 'win32') {

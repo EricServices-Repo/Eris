@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { existsSync } from 'fs'
-import { join } from 'path'
+import { dirname, join } from 'path'
 
 export const APP_DIR_NAME = 'Eris'
 export const WORKSPACE_DIR = '.eris'
@@ -63,37 +63,72 @@ export function workspaceAgentsPath(workspacePath: string): string {
   return join(workspaceConfigDir(workspacePath), 'agents.json')
 }
 
+function safeExists(path: string): boolean {
+  try {
+    return Boolean(path) && existsSync(path)
+  } catch {
+    // asar boundary / invalid path
+    return false
+  }
+}
+
+/**
+ * Resolve files shipped with the app.
+ * Packaged macOS layout: Contents/Resources/resources/<file> (extraResources)
+ * plus a copy inside app.asar/resources/ when included in electron-builder files.
+ */
 function resourceCandidates(fileName: string): string[] {
-  return [
-    join(process.resourcesPath ?? '', 'resources', fileName),
-    join(app.getAppPath(), 'resources', fileName),
-    join(__dirname, '../../../resources', fileName),
-    join(process.cwd(), 'resources', fileName)
-  ]
+  const out: string[] = []
+
+  // 1) electron-builder extraResources → Contents/Resources/resources/...
+  if (typeof process.resourcesPath === 'string' && process.resourcesPath) {
+    out.push(join(process.resourcesPath, 'resources', fileName))
+    out.push(join(process.resourcesPath, fileName))
+  }
+
+  // 2) Derive from executable (macOS): Eris.app/Contents/MacOS/Eris
+  try {
+    const exeDir = dirname(app.getPath('exe'))
+    out.push(join(exeDir, '..', 'Resources', 'resources', fileName))
+    out.push(join(exeDir, '..', 'Resources', fileName))
+  } catch {
+    // ignore before app ready
+  }
+
+  // 3) Inside asar / app path (dev and packaged fallback if resources are in files[])
+  try {
+    out.push(join(app.getAppPath(), 'resources', fileName))
+  } catch {
+    // ignore
+  }
+
+  // 4) Dev: repo resources/ next to electron-vite out/
+  out.push(join(__dirname, '../../../resources', fileName))
+  out.push(join(process.cwd(), 'resources', fileName))
+
+  return [...new Set(out.filter(Boolean))]
+}
+
+function resolveResource(fileName: string): string {
+  const candidates = resourceCandidates(fileName)
+  for (const candidate of candidates) {
+    if (safeExists(candidate)) return candidate
+  }
+  throw new Error(
+    `Missing app resource “${fileName}”. Tried:\n${candidates.map((c) => `  - ${c}`).join('\n')}`
+  )
 }
 
 export function defaultsPath(): string {
-  const candidates = resourceCandidates('defaults.json')
-  for (const candidate of candidates) {
-    if (candidate && existsSync(candidate)) return candidate
-  }
-  return candidates[1]
+  return resolveResource('defaults.json')
 }
 
 export function builtinAgentsPath(): string {
-  const candidates = resourceCandidates('agents.json')
-  for (const candidate of candidates) {
-    if (candidate && existsSync(candidate)) return candidate
-  }
-  return candidates[1]
+  return resolveResource('agents.json')
 }
 
 export function modelsManifestPath(): string {
-  const candidates = resourceCandidates('models/manifest.json')
-  for (const candidate of candidates) {
-    if (candidate && existsSync(candidate)) return candidate
-  }
-  return candidates[1]
+  return resolveResource('models/manifest.json')
 }
 
 export function builtinModelsDir(): string {

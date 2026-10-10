@@ -9,6 +9,7 @@ function subscribe<T>(channel: string, cb: (data: T) => void): () => void {
 
 const api: IdeApi = {
   getAppState: () => ipcRenderer.invoke('app:getState'),
+  getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
   completeOnboarding: () => ipcRenderer.invoke('app:completeOnboarding'),
   resetOnboarding: () => ipcRenderer.invoke('app:resetOnboarding'),
   listWorkspaces: () => ipcRenderer.invoke('workspace:list'),

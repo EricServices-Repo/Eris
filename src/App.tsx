@@ -101,6 +101,7 @@ export default function App() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | 'auto'>('auto')
   const [routeLabel, setRouteLabel] = useState<string | null>(null)
   const [composerReady, setComposerReady] = useState(false)
+  const [appVersion, setAppVersion] = useState<string | null>(null)
   const [toolActivity, setToolActivity] = useState<
     Array<{
       id: string
@@ -993,7 +994,11 @@ export default function App() {
 
   useEffect(() => {
     void (async () => {
-      const state = await window.ide.getAppState()
+      const [state, versionInfo] = await Promise.all([
+        window.ide.getAppState(),
+        window.ide.getAppVersion().catch(() => null)
+      ])
+      if (versionInfo?.version) setAppVersion(versionInfo.version)
       setWorkspaces(state.workspaces)
       const resolved = await refreshSettings()
       await refreshModels(resolved)
@@ -1212,7 +1217,7 @@ export default function App() {
       />
       <div className="titlebar">
         <div className="titlebar-brand">
-          <img src={logo} alt="" className="titlebar-logo" />
+          <img src={logo} alt="" className="titlebar-logo" draggable={false} />
           <span>Eris{activeWorkspace ? ` — ${activeWorkspace.name}` : ''}</span>
         </div>
         <div className="titlebar-actions">
@@ -1317,7 +1322,7 @@ export default function App() {
           <div className="agent-center-wrap">
             {!workspacePath ? (
               <div className="welcome">
-                <img src={logo} alt="Eris" className="welcome-logo" />
+                <img src={logo} alt="Eris" className="welcome-logo" draggable={false} />
                 <h1>Eris</h1>
                 <div>Create a workspace or link a folder to get started.</div>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
@@ -1745,6 +1750,7 @@ export default function App() {
         routeLabel={routeLabel}
         composerReady={composerReady}
         modelsOk={ollamaOk}
+        appVersion={appVersion}
         disabled={!workspacePath}
         onOpenSettings={() => openSettings()}
         onAgentChange={setSelectedAgentId}

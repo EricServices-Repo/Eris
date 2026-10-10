@@ -303,11 +303,11 @@ export function SettingsModal({
   const load = async () => {
     const [layers, models, agents] = await Promise.all([
       window.ide.getLayeredSettings(),
-      window.ide.modelsStatus(),
+      window.ide.modelsStatus().catch(() => null),
       window.ide.getProjectAgents().catch(() => null)
     ])
     setLayered(layers)
-    setStatus(models)
+    if (models) setStatus(models)
     setProjectAgents(agents)
     setAgentsDirty(false)
     setAgentsError(null)

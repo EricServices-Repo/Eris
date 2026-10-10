@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing git tag to build and publish (e.g. v0.1.1). Leave empty to use package.json version and create the tag from the workflow ref.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  release-mac:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+            TAG="${TAG#v}"
+            VERSION="$TAG"
+            echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          else
+            VERSION="$(node -p "require('./package.json').version")"
+            echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Building Eris v$(node -p "require('./package.json').version") → tag output set"
+
+      - name: Sync package version from tag
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json','utf8'));
+            pkg.version = process.env.VERSION;
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+            const lock = JSON.parse(fs.readFileSync('package-lock.json','utf8'));
+            lock.version = process.env.VERSION;
+            if (lock.packages && lock.packages['']) lock.packages[''].version = process.env.VERSION;
+            fs.writeFileSync('package-lock.json', JSON.stringify(lock, null, 2) + '\n');
+          "
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+
+      - name: Build macOS release artifacts
+        run: npm run dist:release
+
+      - name: Collect artifacts
+        id: arts
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          mkdir -p release-assets
+          # Prefer versioned electron-builder outputs
+          shopt -s nullglob
+          for f in dist/*.dmg dist/*.zip dist/*mac*.dmg dist/*mac*.zip dist/**/*.dmg dist/**/*.zip; do
+            [ -f "$f" ] || continue
+            cp "$f" release-assets/
+          done
+          count=$(ls -1 release-assets 2>/dev/null | wc -l | tr -d ' ')
+          echo "count=${count}" >> "$GITHUB_OUTPUT"
+          ls -la release-assets || true
+          if [ "$count" = "0" ]; then
+            echo "No .dmg/.zip artifacts found under dist/"
+            find dist -maxdepth 3 -type f | head -50
+            exit 1
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: Eris ${{ steps.ver.outputs.tag }}
+          draft: false
+          generate_release_notes: true
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

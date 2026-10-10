@@ -66,7 +66,7 @@ export function EricServicesAccountPanel({
       <p className="subtitle" style={{ marginTop: 0 }}>
         Sign in with your{' '}
         <a
-          href="https://www.ericservic.es/loginform.php"
+          href="https://www.ericservic.es/account/eris.php"
           onClick={(e) => {
             e.preventDefault()
             void window.ide.ericServicesOpenAccount()
@@ -74,8 +74,8 @@ export function EricServicesAccountPanel({
         >
           EricServic.es
         </a>{' '}
-        Control Hub account to link this Eris profile and sync editor, agent, and model preferences
-        across machines. Tokens are stored securely in user settings.
+        Control Hub account to link this Eris profile and sync editor, agent, model connections, MCP
+        configs, and user skills across machines. API keys and secrets stay local.
       </p>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>

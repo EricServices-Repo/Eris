@@ -23,6 +23,12 @@ export interface AppState {
   onboardingCompletedAt?: number | null
 }
 
+export interface AppVersionInfo {
+  version: string
+  name: string
+  packaged: boolean
+}
+
 export interface LayeredSettings {
   defaults: AppSettings
   user: SettingsPatch
@@ -76,6 +82,7 @@ export type UsageSnapshot = {
 
 export interface IdeApi {
   getAppState: () => Promise<AppState>
+  getAppVersion: () => Promise<AppVersionInfo>
   completeOnboarding: () => Promise<AppState>
   resetOnboarding: () => Promise<AppState>
   listWorkspaces: () => Promise<WorkspaceRecord[]>

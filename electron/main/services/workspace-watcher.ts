@@ -9,8 +9,20 @@ const IGNORE_NAMES = new Set([
   'release',
   '.DS_Store',
   'tsconfig.tsbuildinfo',
-  'tsconfig.web.tsbuildinfo'
+  'tsconfig.web.tsbuildinfo',
+  // Internal cache / index — writing these must not re-trigger the watcher
+  'code-index.json',
+  'cache'
 ])
+
+/** Paths under .eris that are safe to ignore (agent/index feedback). */
+function shouldIgnoreErisRel(rel: string): boolean {
+  const n = rel.split('\\').join('/')
+  if (!n.includes('.eris/')) return false
+  if (n.endsWith('/code-index.json') || n.includes('/code-index.json')) return true
+  if (n.includes('/.eris/cache/') || n.includes('/.eris/checkpoints/')) return true
+  return false
+}
 
 export type WorkspaceFsChangeHandler = (payload: {
   workspacePath: string
@@ -67,6 +79,8 @@ export function startWorkspaceWatcher(workspacePath: string | null): void {
       const rel = filename ? String(filename).split('\\').join('/') : ''
       const parts = rel.split('/')
       if (parts.some((p) => IGNORE_NAMES.has(p))) return
+      if (shouldIgnoreErisRel(rel) || shouldIgnoreErisRel(name)) return
+      if (name === 'code-index.json') return
       if (shouldIgnore(name) && !rel.includes('.eris/')) return
       pending = { path: rel || '.', eventType: String(eventType || 'change') }
       if (debounceTimer) clearTimeout(debounceTimer)
@@ -76,7 +90,7 @@ export function startWorkspaceWatcher(workspacePath: string | null): void {
         pending = null
         if (!p || !watchedPath || !handler) return
         handler({ workspacePath: watchedPath, path: p.path, eventType: p.eventType })
-      }, 250)
+      }, 400)
     })
     watcher.on('error', () => {
       // FSWatcher can fail on some volumes; leave stopped until next workspace open
