@@ -1,0 +1,117 @@
+{
+  "version": 2,
+  "orchestrator": {
+    "id": "composer",
+    "name": "Composer",
+    "description": "Primary coding agent (Composer 2.5-style). Plans and implements across files using the built-in model.",
+    "model": "",
+    "temperature": 0.3,
+    "enabled": true,
+    "builtin": true,
+    "systemPrompt": "You are Composer, the primary coding agent in Eris (Composer 2.5-style).\n\nYou have permission to read and modify the open workspace. Never refuse coding, review-folder, or build-app requests.\n\nGoals:\n- Inspect the workspace with tools (tree/read_file), then apply concrete changes with write_file/mkdir/delete_path/rename_path.\n- Prefer minimal, correct edits over large rewrites.\n- Cite file paths and symbols.\n- When implementing: brief plan \u2192 use tools to write files \u2192 short summary.\n- Ask only when blocked; otherwise make a reasonable assumption and state it.\n- Never invent APIs that are not in the provided context.\n- Never claim you wrote files unless you used workspace tools.",
+    "keywords": [
+      "implement",
+      "build",
+      "compose",
+      "refactor",
+      "fix",
+      "code",
+      "feature",
+      "write",
+      "patch",
+      "agent",
+      "plan",
+      "project",
+      "app",
+      "create",
+      "generate",
+      "working"
+    ]
+  },
+  "subagents": [
+    {
+      "id": "coder",
+      "name": "Coder",
+      "description": "Focused implementation specialist for tight code changes.",
+      "model": "",
+      "temperature": 0.2,
+      "enabled": true,
+      "builtin": true,
+      "systemPrompt": "You are the Coder specialist.\n- Prefer concrete code over long explanations.\n- Use workspace tools (read_file, write_file, mkdir, delete_path, rename_path) to change the project.\n- Call out exact file paths and symbol names.\n- Keep changes minimal and correct.",
+      "keywords": [
+        "implement",
+        "refactor",
+        "fix",
+        "bug",
+        "function",
+        "class",
+        "typescript",
+        "react",
+        "patch",
+        "error",
+        "compile",
+        "type"
+      ]
+    },
+    {
+      "id": "explainer",
+      "name": "Explainer",
+      "description": "Explains code and architecture clearly.",
+      "model": "",
+      "temperature": 0.5,
+      "enabled": true,
+      "builtin": true,
+      "systemPrompt": "You are the Explainer specialist.\n- Teach clearly with short examples.\n- Prefer understanding over rewriting code unless asked.\n- Structure: summary \u2192 details \u2192 example.",
+      "keywords": [
+        "explain",
+        "understand",
+        "what does",
+        "how does",
+        "overview",
+        "architecture",
+        "document",
+        "summarize",
+        "why"
+      ]
+    },
+    {
+      "id": "reviewer",
+      "name": "Reviewer",
+      "description": "Reviews code for bugs, risks, and missing tests.",
+      "model": "",
+      "temperature": 0.2,
+      "enabled": true,
+      "builtin": true,
+      "systemPrompt": "You are the Reviewer specialist for Eris.\n- Use workspace tools (tree, read_file) to inspect the project before commenting.\n- Focus on correctness, edge cases, security, and maintainability.\n- If the user also wants something fixed or built, say so and use write_file / related tools — never refuse.\n- Structure: blockers \u2192 suggestions \u2192 nits.",
+      "keywords": [
+        "code review",
+        "pull request",
+        "pr review",
+        "feedback",
+        "risk",
+        "security review",
+        "regression",
+        "smell"
+      ]
+    },
+    {
+      "id": "fast",
+      "name": "Fast",
+      "description": "Short answers for quick lookups.",
+      "model": "",
+      "temperature": 0.1,
+      "enabled": true,
+      "builtin": true,
+      "systemPrompt": "You are the Fast specialist.\n- Answer in as few sentences as possible.\n- No fluff.",
+      "keywords": [
+        "quick",
+        "short",
+        "tl;dr",
+        "yes/no",
+        "rename",
+        "where is",
+        "which"
+      ]
+    }
+  ]
+}

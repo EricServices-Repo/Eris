@@ -1,0 +1,266 @@
+import { z } from 'zod'
+
+export const AgentDefinitionSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string(),
+  /** Empty = models.defaultModel. Use builtin:composer-lite or builtin:composer. */
+  model: z.string(),
+  temperature: z.number().min(0).max(2).nullable(),
+  enabled: z.boolean(),
+  builtin: z.boolean(),
+  systemPrompt: z.string(),
+  keywords: z.array(z.string())
+})
+
+export const ProjectAgentsSchema = z.object({
+  version: z.number().int().positive(),
+  orchestrator: AgentDefinitionSchema,
+  subagents: z.array(AgentDefinitionSchema)
+})
+
+export const ModelConnectionSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  type: z.enum(['builtin', 'openai-compatible']),
+  /** UI preset hint: ollama | lmstudio | openai | openrouter | groq | together | deepseek | custom */
+  provider: z.string(),
+  enabled: z.boolean(),
+  baseUrl: z.string(),
+  /** Key name in safeStorage, never raw secret in JSON */
+  apiKeyRef: z.string(),
+  models: z.array(z.string())
+})
+
+export const McpServerSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  enabled: z.boolean(),
+  transport: z.enum(['stdio', 'sse', 'http']),
+  /** stdio: command to launch (e.g. npx, uvx, node) */
+  command: z.string(),
+  args: z.array(z.string()),
+  /** sse/http: server URL */
+  url: z.string(),
+  /** Extra env vars (values may be secret refs later) */
+  env: z.record(z.string()),
+  notes: z.string()
+})
+
+export const SettingsSchema = z.object({
+  models: z.object({
+    defaultModel: z.string(),
+    temperature: z.number().min(0).max(2),
+    contextWindow: z.number().int().min(512).max(128000),
+    connections: z.array(ModelConnectionSchema)
+  }),
+  agent: z.object({
+    systemPrompt: z.string(),
+    includeOpenFiles: z.boolean(),
+    maxHistoryMessages: z.number().int().min(2).max(200),
+    /** When true, agent file changes are kept automatically (no review required) */
+    autoKeepDiffs: z.boolean(),
+    routing: z.object({
+      enabled: z.boolean(),
+      mode: z.enum(['auto', 'manual', 'off']),
+      routerModel: z.string(),
+      useLlmRouter: z.boolean(),
+      fallbackAgentId: z.string().min(1)
+    })
+  }),
+  mcp: z.object({
+    servers: z.array(McpServerSchema)
+  }),
+  github: z.object({
+    /** github.com or GitHub Enterprise host */
+    host: z.string(),
+    /** safeStorage key for personal access token */
+    tokenRef: z.string(),
+    preferredProtocol: z.enum(['https', 'ssh']),
+    /** Workspace: owner/repo (e.g. acme/app) */
+    repository: z.string(),
+    remoteName: z.string(),
+    defaultBranch: z.string(),
+    /** When true, project is linked to the repository above */
+    linked: z.boolean()
+  }),
+  /** EricServic.es Control Hub account link + profile settings sync */
+  ericServices: z.object({
+    /** Origin for the site API, e.g. https://www.ericservic.es */
+    apiBase: z.string(),
+    /** safeStorage key for Eris API bearer token (eseris_…) */
+    tokenRef: z.string(),
+    linked: z.boolean(),
+    username: z.string(),
+    email: z.string(),
+    /** ISO timestamp from last successful pull/push */
+    lastSyncedAt: z.string(),
+    /** When true, pull remote settings on login / Sync Now */
+    syncEnabled: z.boolean()
+  }),
+  editor: z.object({
+    fontSize: z.number().int().min(10).max(32),
+    tabSize: z.number().int().min(1).max(8),
+    theme: z.enum(['vs-dark', 'vs', 'hc-black']),
+    /** Debounced as-you-type ghost completions (⌥\\ still forces one). */
+    inlineSuggest: z.boolean()
+  }),
+  general: z.object({
+    restoreLastWorkspace: z.boolean(),
+    logging: z.object({
+      enabled: z.boolean(),
+      /** Empty = app default logs folder under Application Support */
+      directory: z.string(),
+      level: z.enum(['debug', 'info', 'warn', 'error'])
+    })
+  })
+})
+
+export type AppSettings = z.infer<typeof SettingsSchema>
+export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>
+export type ProjectAgentsConfig = z.infer<typeof ProjectAgentsSchema>
+export type ModelConnection = z.infer<typeof ModelConnectionSchema>
+export type McpServerConfig = z.infer<typeof McpServerSchema>
+export type SubagentConfig = AgentDefinition
+
+export type SettingsScope = 'user' | 'workspace'
+
+export type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K]
+}
+
+export type SettingsPatch = DeepPartial<AppSettings>
+
+export interface WorkspaceMeta {
+  openFiles: string[]
+  activeFile: string | null
+  activeChatId: string | null
+  lastModel: string | null
+}
+
+export interface WorkspaceRecord {
+  id: string
+  name: string
+  path: string
+  createdAt: number
+  lastOpenedAt: number
+}
+
+export interface ChatMessage {
+  id: string
+  role: 'system' | 'user' | 'assistant'
+  content: string
+  /** Collapsible model/tool trace shown under Thinking */
+  thinking?: string
+  createdAt: number
+  agentId?: string
+  agentName?: string
+  model?: string
+}
+
+export interface ChatThread {
+  id: string
+  title: string
+  model: string
+  messages: ChatMessage[]
+  updatedAt: number
+  createdAt: number
+}
+
+export interface FileEntry {
+  name: string
+  path: string
+  isDirectory: boolean
+  children?: FileEntry[]
+}
+
+export interface ModelInfo {
+  name: string
+  size?: number
+  modifiedAt?: string
+  source?: 'builtin' | 'connection'
+  connectionId?: string
+  ready?: boolean
+}
+
+export interface ModelsStatus {
+  ok: boolean
+  error?: string
+  builtin: BuiltinModelStatus[]
+  models: ModelInfo[]
+  connections: Array<ModelConnection & { reachable?: boolean; error?: string }>
+}
+
+export interface RouteResult {
+  agentId: string
+  agentName: string
+  model: string
+  reason: string
+  method: 'manual' | 'heuristic' | 'llm' | 'default'
+}
+
+export interface ResolvedAgent extends AgentDefinition {
+  resolvedModel: string
+  role: 'orchestrator' | 'specialist'
+  source: 'builtin' | 'project'
+}
+
+export interface BuiltinModelManifestEntry {
+  id: string
+  ref: string
+  name: string
+  displayName: string
+  description: string
+  family: string
+  quant: string
+  parameters: string
+  contextWindow: number
+  filename: string
+  downloadUrl: string
+  approxBytes: number
+  sha256: string | null
+  role: string
+  /** lite = small/fast; full = larger quality model */
+  tier?: 'lite' | 'full'
+}
+
+export interface BuiltinModelStatus {
+  id: string
+  ref: string
+  name: string
+  displayName: string
+  description: string
+  family: string
+  parameters: string
+  quant: string
+  filename: string
+  downloadUrl: string
+  approxBytes: number
+  installed: boolean
+  ready: boolean
+  localPath: string | null
+  downloadedBytes: number
+  progress: number
+  tier?: 'lite' | 'full'
+}
+
+export type SkillScope = 'user' | 'workspace'
+
+export interface SkillRecord {
+  id: string
+  name: string
+  description: string
+  body: string
+  content: string
+  scope: SkillScope
+  path: string
+  updatedAt: number
+}
+
+export interface SkillInput {
+  id?: string
+  name: string
+  description: string
+  body: string
+  scope: SkillScope
+}
