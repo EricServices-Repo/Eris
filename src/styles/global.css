@@ -543,6 +543,10 @@ select:focus {
   font-size: 12px;
 }
 
+.composer-banner-soft {
+  background: rgba(120, 160, 200, 0.1);
+}
+
 .msg .role {
   display: block;
   margin-bottom: 6px;

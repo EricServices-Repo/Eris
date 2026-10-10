@@ -83,7 +83,7 @@ export async function* streamModelChat(options: {
     const connection = resolveConnectionForModel(options.settings, model)
     if (!connection || connection.type !== 'openai-compatible') {
       throw new Error(
-        `No model connection for “${model}”. Add an OpenAI-compatible connection in Settings → Models, or download Composer Lite.`
+        `No model connection for “${model}”. Connect Ollama or another API in Settings → Models (Refresh models after ollama pull), or download Composer Lite.`
       )
     }
     if (!connection.baseUrl) {
