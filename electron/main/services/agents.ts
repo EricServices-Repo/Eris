@@ -32,6 +32,19 @@ function normalizeAgent(raw: unknown, fallbackBuiltin = false): AgentDefinition 
   if (builtin && (model === 'builtin:composer' || model === 'builtin:composer-lite')) {
     model = ''
   }
+  const toolsRaw = String(input.tools ?? '')
+  const tools =
+    toolsRaw === 'none' || toolsRaw === 'read' || toolsRaw === 'edit' || toolsRaw === 'full'
+      ? toolsRaw
+      : builtin
+        ? input.id === 'fast'
+          ? 'none'
+          : input.id === 'explainer' || input.id === 'reviewer'
+            ? 'read'
+            : input.id === 'composer'
+              ? 'full'
+              : 'edit'
+        : 'edit'
   return AgentDefinitionSchema.parse({
     id: String(input.id ?? ''),
     name: String(input.name ?? input.id ?? 'Agent'),
@@ -43,7 +56,12 @@ function normalizeAgent(raw: unknown, fallbackBuiltin = false): AgentDefinition 
     systemPrompt: String(input.systemPrompt ?? ''),
     keywords: Array.isArray(input.keywords)
       ? input.keywords.map((k) => String(k))
-      : []
+      : [],
+    tools,
+    preferEscalate:
+      typeof input.preferEscalate === 'boolean'
+        ? input.preferEscalate
+        : tools === 'edit' || tools === 'full'
   })
 }
 
@@ -88,7 +106,9 @@ export function mergeAgentConfigs(
       builtin: isBuiltin,
       systemPrompt: isBuiltin ? existing.systemPrompt : incoming.systemPrompt,
       keywords: isBuiltin ? existing.keywords : incoming.keywords,
-      description: isBuiltin ? existing.description : incoming.description
+      description: isBuiltin ? existing.description : incoming.description,
+      tools: isBuiltin ? existing.tools : incoming.tools,
+      preferEscalate: isBuiltin ? existing.preferEscalate : incoming.preferEscalate
     })
   }
 

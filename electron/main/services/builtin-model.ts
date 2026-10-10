@@ -311,13 +311,32 @@ export function isBuiltinModelReady(modelRef: string): boolean {
   return statuses.some((s) => s.ready)
 }
 
-/** Pick a ready builtin when the requested one is missing (Lite ↔ Full). */
-export function resolveReadyBuiltinRef(preferred: string): string | null {
+/**
+ * Exact-tier ready check — does not fall back to another builtin.
+ * Use this for routing so Lite is never silently treated as Full (or vice versa).
+ */
+export function resolveExactBuiltinRef(preferred: string): string | null {
+  if (!isBuiltinRef(preferred)) return null
   const statuses = getBuiltinStatuses()
-  if (isBuiltinRef(preferred)) {
-    const entry = findBuiltinEntry(preferred)
-    if (entry && statuses.find((s) => s.id === entry.id)?.ready) return entry.ref
-  }
+  const entry = findBuiltinEntry(preferred)
+  if (!entry) return null
+  const status = statuses.find((s) => s.id === entry.id)
+  return status?.ready ? entry.ref : null
+}
+
+/** True when this exact builtin ref is downloaded and valid. */
+export function isExactBuiltinReady(preferred: string): boolean {
+  return Boolean(resolveExactBuiltinRef(preferred))
+}
+
+/**
+ * Pick a ready builtin when the requested one is missing (Lite ↔ Full).
+ * Prefer {@link resolveExactBuiltinRef} for routing decisions.
+ */
+export function resolveReadyBuiltinRef(preferred: string): string | null {
+  const exact = resolveExactBuiltinRef(preferred)
+  if (exact) return exact
+  const statuses = getBuiltinStatuses()
   const ready =
     statuses.find((s) => s.tier === 'lite' && s.ready) ??
     statuses.find((s) => s.ready)

@@ -2,6 +2,14 @@ import { existsSync, readFileSync, statSync } from 'fs'
 import { join } from 'path'
 import type { AppSettings } from '../../../src/shared/settings-schema'
 import { findBuiltinEntry, isBuiltinRef, resolveReadyBuiltinRef } from './builtin-model'
+import { formatAvailableModelsPrompt } from './model-catalog'
+import {
+  filterToolsByPolicy,
+  isErisCapabilityQuestion,
+  planChatTurn,
+  toolAllowedByPolicy
+} from './chat-router'
+import type { TurnPlan } from '../../../src/shared/settings-schema'
 import { formatMcpServersPrompt } from './mcp'
 import {
   callMcpTool,
@@ -114,16 +122,7 @@ const TOOL_BLOCK_RE = /<<<TOOL>>>\s*([\s\S]*?)\s*<<<END>>>/gi
 const TOOL_XML_RE =
   /<tool_call>\s*<name>\s*([^<]+?)\s*<\/name>\s*([\s\S]*?)<\/tool_call>/gi
 
-const LITE_ORCHESTRATOR_PROMPT = `You are Composer Lite in Eris — the chat the user talks to.
-
-For normal questions, answer briefly yourself.
-When the user needs workspace file changes (create/edit/fix/build/review a project), do NOT do the edits yourself.
-Reply with exactly this line and nothing else:
-CALL_FULL
-
-Eris will then run Composer Full to finish the workspace work. Do not invent file contents.`
-
-const TOOLS_PROMPT = `You are Composer Full — the workspace worker. Paths are relative to the workspace root.
+const TOOLS_PROMPT = `You are the Eris workspace worker. Paths are relative to the workspace root.
 
 When the API supports native function tools, prefer those. Otherwise use the text format below.
 
@@ -181,6 +180,8 @@ Rules:
 - You have permission to edit this workspace. Never refuse. Never stop early.
 - Do NOT write long step-by-step plans or fake "I will use list_dir" prose. Emit real <<<TOOL>>> blocks.
 - First action for project work: prefer retrieve or grep for the topic, then read_file / search_replace.
+- Questions about Eris AI models / providers: answer from the [Eris AI models] catalog — no retrieve/tree. Then DONE.
+- For code inspection, prefer retrieve or grep first, then read_file — do not emit tools for pure Q&A.
 - Prefer search_replace (or apply_patch) over write_file for existing files; use write_file to create new files or rewrite entire files.
 - After TOOL_RESULT, keep calling tools until the user request is fully done.
 - Only stop with a short DONE summary (no tools) when every part of the request is finished.
@@ -422,30 +423,6 @@ function looksLikeMissingDeps(detail: string): boolean {
   )
 }
 
-/** Lite for chat face; Full for workspace worker when installed. */
-function resolveLiteAndToolModels(requested: string): {
-  chat: string
-  tools: string
-  fullReady: boolean
-} {
-  if (requested && !isBuiltinRef(requested)) {
-    return { chat: requested, tools: requested, fullReady: true }
-  }
-  const lite =
-    resolveReadyBuiltinRef('builtin:composer-lite') ||
-    resolveReadyBuiltinRef(requested || 'builtin:composer-lite') ||
-    'builtin:composer-lite'
-  const fullReady = Boolean(resolveReadyBuiltinRef('builtin:composer'))
-  const full = fullReady ? 'builtin:composer' : lite
-  return { chat: lite, tools: full, fullReady }
-}
-
-function messageNeedsWorkspaceTools(text: string): boolean {
-  return /\b(create|write|fix|build|implement|refactor|delete|mkdir|rename|scaffold|generate|edit|update|add file|project folder|workspace|make sure|working|calculator|app|skill|skills)\b/i.test(
-    text
-  )
-}
-
 function stripToolBlocks(text: string): string {
   return text
     .replace(TOOL_BLOCK_RE, '')
@@ -577,7 +554,8 @@ function executeTool(
 
 export function buildWorkspaceToolsSystem(
   workspacePath: string,
-  settings?: AppSettings
+  settings?: AppSettings,
+  selectedModel?: string
 ): string {
   let tree = ''
   try {
@@ -593,6 +571,9 @@ export function buildWorkspaceToolsSystem(
     `You already have access to this folder via tools. Always use relative paths from the workspace root.`,
     `Current workspace tree (depth 2):\n${tree}`
   ]
+  if (settings) {
+    parts.push(formatAvailableModelsPrompt(settings, selectedModel))
+  }
   const indexSummary = formatIndexSummary(workspacePath)
   if (indexSummary) parts.push(indexSummary)
   const workspaceCtx = formatWorkspaceContextPrompt(workspacePath)
@@ -604,15 +585,6 @@ export function buildWorkspaceToolsSystem(
     if (mcp) parts.push(mcp)
   }
   return parts.join('\n\n')
-}
-
-function liteWantsFull(text: string): boolean {
-  const t = text.trim()
-  if (/^\s*CALL_FULL\s*$/i.test(t)) return true
-  if (/\bCALL_FULL\b/i.test(t) && t.length < 200) return true
-  if (parseToolCalls(text).length > 0) return true
-  if (talksAboutToolsWithoutCalling(text)) return true
-  return false
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -1197,6 +1169,67 @@ async function* streamThinkingText(options: {
   yield { kind: 'done', full, nativeToolCalls }
 }
 
+function buildPreservedWorkerMessages(options: {
+  messages: AgentChatMessage[]
+  workspacePath: string
+  settings: AppSettings
+  plan: TurnPlan
+  originalUserGoal: string
+  retrievalHint: string
+  mcpToolCount: number
+}): AgentChatMessage[] {
+  const priorSystem = options.messages.find((m) => m.role === 'system')?.content || ''
+  const toolsSystem = buildWorkspaceToolsSystem(
+    options.workspacePath,
+    options.settings,
+    options.plan.models.chat
+  )
+  const historyTail = options.messages
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .slice(-6)
+    .map((m) => ({
+      role: m.role as 'user' | 'assistant',
+      content: m.content.length > 4000 ? `${m.content.slice(0, 4000)}\n…` : m.content
+    }))
+
+  const nudge =
+    options.plan.intent === 'explore' ||
+    options.plan.intent === 'edit' ||
+    options.plan.intent === 'review' ||
+    options.plan.intent === 'run'
+      ? `Prefer retrieve or grep when inspecting code, then continue with tools until done.`
+      : `Answer briefly; tools are not required.`
+
+  const out: AgentChatMessage[] = [
+    {
+      role: 'system',
+      content: [
+        priorSystem.slice(0, 6000),
+        toolsSystem,
+        `Turn plan: ${options.plan.reason}`,
+        `Agent: ${options.plan.agentName} · intent: ${options.plan.intent} · tools: ${options.plan.toolPolicy}`
+      ]
+        .filter(Boolean)
+        .join('\n\n')
+    }
+  ]
+  for (const m of historyTail) {
+    // Avoid duplicating the latest user goal twice
+    if (m.role === 'user' && m.content.includes(options.originalUserGoal.slice(0, 80))) continue
+    out.push(m)
+  }
+  out.push({
+    role: 'user',
+    content:
+      `${options.originalUserGoal}${options.retrievalHint}\n\n` +
+      `[Eris] You are ${options.plan.agentName} (workspace worker on ${options.plan.models.tools.replace(/^builtin:/, '')}). ` +
+      `Keep using tools until this request is fully done. ` +
+      (options.mcpToolCount > 0 ? `MCP tools available (${options.mcpToolCount}). ` : '') +
+      nudge
+  })
+  return out
+}
+
 export async function* runAgentWithWorkspaceTools(options: {
   workspacePath: string | null
   settings: AppSettings
@@ -1205,41 +1238,86 @@ export async function* runAgentWithWorkspaceTools(options: {
   temperature: number
   signal?: AbortSignal
   getSecret: (key: string) => string | null
-  /** ask = answer only; agent = may call Full + tools */
+  /** ask = answer only; agent = may call tools per TurnPlan */
   mode?: AgentMode
+  /** Precomputed plan; recomputed in main if omitted. */
+  turnPlan?: TurnPlan
 }): AsyncGenerator<AgentRunnerEvent, void, unknown> {
   const messages: AgentChatMessage[] = options.messages.map((m) => ({ ...m }))
-  const { chat: liteModel, tools: toolModel, fullReady } = resolveLiteAndToolModels(
-    options.model
-  )
-  const fullAvailable = fullReady && toolModel !== liteModel
   const mode: AgentMode = options.mode === 'ask' ? 'ask' : 'agent'
+  const originalUserGoal =
+    [...messages].reverse().find((m) => m.role === 'user')?.content.replace(/\n\n\[Eris\][\s\S]*$/, '') ||
+    ''
 
-  if (!options.workspacePath || mode === 'ask') {
-    // Ask / no-workspace: stay on Lite (or the selected non-builtin model).
-    yield { type: 'model', model: liteModel }
+  const plan =
+    options.turnPlan ??
+    (await planChatTurn({
+      workspacePath: options.workspacePath,
+      settings: options.settings,
+      context: {
+        text: originalUserGoal,
+        selectedModel: options.model,
+        mode,
+        manualAgentId: null
+      },
+      getSecret: options.getSecret,
+      signal: options.signal
+    }))
+
+  yield { type: 'status', text: plan.reason }
+  if (plan.error) {
+    yield { type: 'answer', text: plan.error }
+    return
+  }
+
+  const chatModel = plan.models.chat
+  const toolsModel = plan.models.tools
+  const modelsCatalog = formatAvailableModelsPrompt(options.settings, chatModel)
+  const answerOnly =
+    !plan.requiresTools ||
+    plan.toolPolicy === 'none' ||
+    !options.workspacePath ||
+    mode === 'ask' ||
+    plan.intent === 'answer' ||
+    plan.intent === 'capability'
+
+  if (answerOnly) {
+    yield { type: 'model', model: chatModel }
     yield {
       type: 'status',
-      text: mode === 'ask' ? 'Ask mode (Composer Lite)…' : 'Composer Lite…'
+      text:
+        plan.intent === 'capability'
+          ? 'Answering from model catalog…'
+          : mode === 'ask'
+            ? `Ask · ${plan.agentName}…`
+            : `${plan.agentName}…`
     }
     const askMessages = messages.map((m) => ({ ...m }))
+    const tips: string[] = [modelsCatalog, `Routing: ${plan.reason}`]
     if (mode === 'ask') {
-      const tip =
+      tips.push(
         'You are in Ask mode. Answer clearly using markdown. Do not edit files or call tools.'
-      const idx = askMessages.findIndex((m) => m.role === 'system')
-      if (idx >= 0) {
-        askMessages[idx] = {
-          role: 'system',
-          content: `${askMessages[idx].content}\n\n${tip}`
-        }
-      } else {
-        askMessages.unshift({ role: 'system', content: tip })
+      )
+    }
+    if (plan.intent === 'capability' || isErisCapabilityQuestion(originalUserGoal)) {
+      tips.push(
+        'The user asked about Eris AI models/providers. Answer ONLY from the [Eris AI models] catalog above. Do not retrieve or search the workspace.'
+      )
+    }
+    const tip = tips.join('\n\n')
+    const idx = askMessages.findIndex((m) => m.role === 'system')
+    if (idx >= 0) {
+      askMessages[idx] = {
+        role: 'system',
+        content: `${askMessages[idx].content}\n\n${tip}`
       }
+    } else {
+      askMessages.unshift({ role: 'system', content: tip })
     }
     let full = ''
     for await (const evt of streamThinkingText({
       ...options,
-      model: liteModel,
+      model: chatModel,
       messages: askMessages
     })) {
       if (evt.kind === 'thinking') yield { type: 'thinking', text: evt.text }
@@ -1250,11 +1328,7 @@ export async function* runAgentWithWorkspaceTools(options: {
     return
   }
 
-  const workspacePath = options.workspacePath
-  const originalUserGoal =
-    [...messages].reverse().find((m) => m.role === 'user')?.content.replace(/\n\n\[Eris\][\s\S]*$/, '') ||
-    ''
-  const needsTools = messageNeedsWorkspaceTools(originalUserGoal)
+  const workspacePath = options.workspacePath as string
   try {
     await syncMcpRuntime(options.settings, workspacePath)
   } catch {
@@ -1264,83 +1338,19 @@ export async function* runAgentWithWorkspaceTools(options: {
   pruneOldCheckpoints(workspacePath, 20)
   yield { type: 'checkpoint', checkpointId: checkpoint.id }
 
-  // ——— Phase 1: Composer Lite — skipped when edits are needed and Full is ready ———
-  // Loading Lite then Full thrash-unloads multi‑GB models and freezes the app.
-  let goToWorker = needsTools && fullAvailable
-  if (!goToWorker) {
-    yield { type: 'model', model: liteModel }
-    const liteMessages: AgentChatMessage[] = messages.map((m) => ({ ...m }))
-    const firstSystem = liteMessages.findIndex((m) => m.role === 'system')
-    const mcpNote = formatMcpServersPrompt(options.settings)
-    // Keep Phase 1 prompt lean for the 4k Lite window.
-    const liteSystem = [
-      LITE_ORCHESTRATOR_PROMPT,
-      `Workspace is open at: ${workspacePath}`,
-      needsTools
-        ? 'This request looks like it needs workspace edits — reply with CALL_FULL only.'
-        : 'If this is just a question, answer it. If it needs file changes, reply CALL_FULL.',
-      mcpNote ? mcpNote.slice(0, 400) : ''
-    ]
-      .filter(Boolean)
-      .join('\n\n')
-    if (firstSystem >= 0) {
-      const prior = liteMessages[firstSystem].content
-      liteMessages[firstSystem] = {
-        role: 'system',
-        content: `${prior.slice(0, 3500)}\n\n${liteSystem}`.slice(0, 5000)
-      }
-    } else {
-      liteMessages.unshift({ role: 'system', content: liteSystem })
-    }
-
-    yield { type: 'status', text: 'Composer Lite…' }
-    let liteText = ''
-    for await (const evt of streamThinkingText({
-      ...options,
-      model: liteModel,
-      messages: liteMessages,
-      stopOnToolCall: true
-    })) {
-      if (evt.kind === 'thinking') yield { type: 'thinking', text: evt.text }
-      else liteText = evt.full
-    }
-
-    const callFull =
-      needsTools || liteWantsFull(liteText) || looksLikeRefusal(liteText)
-
-    if (!callFull) {
-      const answer = stripToolBlocks(liteText) || liteText.trim()
-      if (answer) yield { type: 'answer', text: answer }
-      return
-    }
-
-    goToWorker = true
-    if (!fullAvailable) {
-      yield {
-        type: 'thinking',
-        text:
-          '\n\n— Composer Full is not ready; Lite is attempting workspace tools. Download/verify Full in Settings → Models for reliable multi-file work.\n'
-      }
-    } else {
-      yield {
-        type: 'thinking',
-        text: '\n\n— Handing off to Composer Full (worker)…\n'
-      }
-      yield { type: 'status', text: 'Composer Full working until done…' }
-    }
-  } else {
+  const workerModel = toolsModel
+  yield { type: 'model', model: workerModel }
+  if (plan.escalateToFull) {
     yield {
       type: 'thinking',
-      text: '\n\n— Workspace edits needed; starting Composer Full directly (skipping Lite load)…\n'
+      text: `\n\n— Escalating tools to Composer Full (chat stays on ${chatModel.replace(/^builtin:/, '')})…\n`
     }
-    yield { type: 'status', text: 'Composer Full working until done…' }
+  }
+  yield {
+    type: 'status',
+    text: `${plan.agentName} · ${plan.intent} · ${workerModel.replace(/^builtin:/, '')}…`
   }
 
-  if (!goToWorker) return
-
-  // ——— Phase 2: Composer Full (or Lite fallback) ———
-  const workerModel = fullAvailable ? toolModel : liteModel
-  yield { type: 'model', model: workerModel }
   let retrievalHint = ''
   try {
     const retrieved = await retrieveContextAsync(workspacePath, originalUserGoal, 6)
@@ -1352,29 +1362,27 @@ export async function* runAgentWithWorkspaceTools(options: {
     // optional
   }
   const mcpToolCount = listMcpTools().length
-  const openaiTools: OpenAIToolDef[] = [
-    ...COMPOSER_OPENAI_TOOLS,
-    ...mcpToolsToOpenAI(
-      listMcpTools().map((t) => ({
-        fqName: t.fqName,
-        description: t.description
-      }))
-    )
-  ]
-  const workerMessages: AgentChatMessage[] = [
-    {
-      role: 'system',
-      content: buildWorkspaceToolsSystem(workspacePath, options.settings)
-    },
-    {
-      role: 'user',
-      content:
-        `${originalUserGoal}${retrievalHint}\n\n` +
-        `[Eris] You are Composer Full (the worker). Keep using tools until this request is fully done. ` +
-        (mcpToolCount > 0 ? `MCP tools available (${mcpToolCount}). ` : '') +
-        `First reply: emit ONLY a retrieve or tree tool JSON, then continue.`
-    }
-  ]
+  const openaiTools: OpenAIToolDef[] = filterToolsByPolicy(
+    [
+      ...COMPOSER_OPENAI_TOOLS,
+      ...mcpToolsToOpenAI(
+        listMcpTools().map((t) => ({
+          fqName: t.fqName,
+          description: t.description
+        }))
+      )
+    ],
+    plan.toolPolicy
+  )
+  const workerMessages: AgentChatMessage[] = buildPreservedWorkerMessages({
+    messages,
+    workspacePath,
+    settings: options.settings,
+    plan,
+    originalUserGoal,
+    retrievalHint,
+    mcpToolCount
+  })
 
   let lastTreeResult: string | null = null
   let lastInspectResult: string | null = null
@@ -1395,7 +1403,7 @@ export async function* runAgentWithWorkspaceTools(options: {
   let step = 0
   let verifyFailures = 0
   let mutationsSinceVerify = 0
-  const reviewOnly = isReviewOnlyGoal(originalUserGoal)
+  const reviewOnly = plan.intent === 'review' || isReviewOnlyGoal(originalUserGoal)
   const promptBudget = contextBudgetTokens(options.settings, workerModel)
 
   async function* compactWorkerContext(opts: {
@@ -1409,8 +1417,9 @@ export async function* runAgentWithWorkspaceTools(options: {
     }
     // Never swap Lite↔Full mid-run — node-llama-cpp holds one runtime; unloading
     // Full to summarize with Lite freezes the app for minutes and looks "broken".
-    const canSummarizeWithLite = liteModel === workerModel
-    const skipLite = Boolean(opts.skipLiteSummary) || !canSummarizeWithLite
+    // Stay on the tools model for compaction — never unload Full mid-run.
+    const canSummarizeInline = chatModel === workerModel
+    const skipLite = Boolean(opts.skipLiteSummary) || !canSummarizeInline
     yield { type: 'status', text: 'Compacting context…' }
     yield {
       type: 'thinking',
@@ -1426,7 +1435,7 @@ export async function* runAgentWithWorkspaceTools(options: {
       treeSnapshot: lastTreeResult,
       priorMemory: contextMemory,
       settings: options.settings,
-      liteModel,
+      liteModel: workerModel,
       temperature: options.temperature,
       signal: options.signal,
       getSecret: options.getSecret,
@@ -1503,9 +1512,7 @@ export async function* runAgentWithWorkspaceTools(options: {
     }
     yield {
       type: 'status',
-      text: fullAvailable
-        ? `Composer Full working (step ${step})…`
-        : `Composer Lite tools (step ${step})…`
+      text: `${plan.agentName} · ${plan.intent} (step ${step})…`
     }
 
     let assistantText = ''
@@ -1536,7 +1543,7 @@ export async function* runAgentWithWorkspaceTools(options: {
     if (toolCalls.length === 0) {
       const keepGoing =
         shouldKeepWorking({
-          needsTools: true,
+          needsTools: plan.requiresTools,
           mutated: workspaceMutated,
           assistantText,
           reviewOnly,
@@ -1553,7 +1560,7 @@ export async function* runAgentWithWorkspaceTools(options: {
           text:
             noProgressStreak >= MAX_NO_PROGRESS
               ? '\n\n— Still not done; resetting context and continuing…\n'
-              : '\n\n— Not done yet; Composer Full continuing…\n'
+              : `\n\n— Not done yet; ${plan.agentName} continuing…\n`
         }
         // Never stop — compact and keep pushing until finished.
         if (noProgressStreak >= MAX_NO_PROGRESS) {
@@ -1737,6 +1744,21 @@ export async function* runAgentWithWorkspaceTools(options: {
       throwIfAborted(options.signal)
       const call = toolCalls[i]
       const id = `t${toolExecRounds}_${i}`
+      if (!toolAllowedByPolicy(call.name, plan.toolPolicy)) {
+        yield {
+          type: 'tool',
+          tool: {
+            id,
+            name: call.name,
+            status: 'error',
+            detail: `Blocked by tool policy (${plan.toolPolicy}) for agent ${plan.agentName}`
+          }
+        }
+        resultParts.push(
+          `TOOL_RESULT ${call.name}: blocked by policy ${plan.toolPolicy}`
+        )
+        continue
+      }
       const path =
         typeof call.args.path === 'string'
           ? call.args.path

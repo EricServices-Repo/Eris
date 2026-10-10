@@ -33,6 +33,8 @@ import {
 } from './services/workspace'
 import { listTree, readTextFile, writeTextFile, languageFromPath } from './services/files'
 import { routeMessage } from './services/router'
+import { planChatTurn, turnPlanToRouteResult } from './services/chat-router'
+import type { TurnPlan } from '../../src/shared/settings-schema'
 import {
   connectionsWithDiscoveredModels,
   getModelsStatus
@@ -779,6 +781,34 @@ function registerIpc(): void {
     }
   )
 
+  ipcMain.handle(
+    'chat:planTurn',
+    async (
+      _e,
+      payload: {
+        text: string
+        fileNames?: string[]
+        manualAgentId?: string | null
+        selectedModel: string
+        mode?: 'ask' | 'agent'
+      }
+    ) => {
+      const settings = getResolvedSettings(currentWorkspace)
+      return planChatTurn({
+        workspacePath: currentWorkspace,
+        settings,
+        context: {
+          text: payload.text,
+          fileNames: payload.fileNames ?? [],
+          manualAgentId: payload.manualAgentId,
+          selectedModel: payload.selectedModel,
+          mode: payload.mode === 'ask' ? 'ask' : 'agent'
+        },
+        getSecret
+      })
+    }
+  )
+
   ipcMain.handle('agents:list', () => {
     const settings = getResolvedSettings(currentWorkspace)
     return listResolvedAgents(currentWorkspace, settings)
@@ -821,6 +851,7 @@ function registerIpc(): void {
         messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
         agentId?: string
         mode?: 'ask' | 'agent'
+        turnPlan?: TurnPlan
       }
     ) => {
       const settings = getResolvedSettings(currentWorkspace)
@@ -830,9 +861,26 @@ function registerIpc(): void {
       // Ghost completes share the llama runtime — never race the agent turn.
       abortAllCompletes()
       const { requestId, model, messages, agentId, mode } = payload
-      const agent = agentId ? findAgent(currentWorkspace, agentId) : null
-      const resolvedModel =
-        model || agent?.model.trim() || settings.models.defaultModel
+      const userText =
+        [...messages].reverse().find((m) => m.role === 'user')?.content.replace(/\n\n\[Eris\][\s\S]*$/, '') ||
+        ''
+      const turnPlan =
+        payload.turnPlan ??
+        (await planChatTurn({
+          workspacePath: currentWorkspace,
+          settings,
+          context: {
+            text: userText,
+            selectedModel: model || settings.models.defaultModel,
+            mode: mode === 'ask' ? 'ask' : 'agent',
+            manualAgentId: agentId ?? null
+          },
+          getSecret,
+          signal: chatAbort.signal
+        }))
+      const agent = findAgent(currentWorkspace, turnPlan.agentId) ||
+        (agentId ? findAgent(currentWorkspace, agentId) : null)
+      const resolvedModel = turnPlan.models.chat || model || settings.models.defaultModel
       const temperature =
         agent?.temperature ?? settings.models.temperature
       setDiagnosticsPaused(true)
@@ -862,15 +910,21 @@ function registerIpc(): void {
         logInfo('Chat stream start', {
           requestId,
           model: resolvedModel,
-          agentId: agent?.id ?? agentId,
+          toolsModel: turnPlan.models.tools,
+          agentId: turnPlan.agentId,
+          intent: turnPlan.intent,
           mode: mode ?? 'agent',
           messages: messages.length
         })
+        const route = turnPlanToRouteResult(turnPlan)
         event.sender.send('chat:routed', {
           requestId,
-          agentId: agent?.id ?? agentId,
-          agentName: agent?.name,
-          model: resolvedModel
+          agentId: route.agentId,
+          agentName: route.agentName,
+          model: resolvedModel,
+          reason: turnPlan.reason,
+          intent: turnPlan.intent,
+          toolsModel: turnPlan.models.tools
         })
 
         for await (const evt of runAgentWithWorkspaceTools({
@@ -881,7 +935,8 @@ function registerIpc(): void {
           temperature,
           signal: chatAbort.signal,
           getSecret,
-          mode: mode ?? 'agent'
+          mode: mode ?? 'agent',
+          turnPlan
         })) {
           if (evt.type === 'thinking') {
             pendingThinking += evt.text

@@ -46,6 +46,7 @@ const api: IdeApi = {
   saveProjectAgents: (config) => ipcRenderer.invoke('agents:saveProject', config),
   resetProjectAgents: () => ipcRenderer.invoke('agents:resetProject'),
   routeAgent: (payload) => ipcRenderer.invoke('agents:route', payload),
+  planChatTurn: (payload) => ipcRenderer.invoke('chat:planTurn', payload),
   listChats: () => ipcRenderer.invoke('chats:list'),
   getChat: (id) => ipcRenderer.invoke('chats:get', id),
   createChat: (model) => ipcRenderer.invoke('chats:create', model),

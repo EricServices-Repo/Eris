@@ -179,6 +179,35 @@ function AgentEditor({
         />
       </div>
       <div className="setting-row" style={{ gridTemplateColumns: '120px 1fr', border: 'none' }}>
+        <label>Tools</label>
+        <select
+          value={agent.tools ?? 'edit'}
+          onChange={(e) =>
+            onChange({
+              ...agent,
+              tools: e.target.value as AgentDefinition['tools']
+            })
+          }
+          title="Max tool access this agent may use"
+        >
+          <option value="none">none — answer only</option>
+          <option value="read">read — inspect files</option>
+          <option value="edit">edit — read + write</option>
+          <option value="full">full — edit + shell/git sync</option>
+        </select>
+      </div>
+      <div className="setting-row" style={{ gridTemplateColumns: '120px 1fr', border: 'none' }}>
+        <label>Escalate</label>
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <input
+            type="checkbox"
+            checked={agent.preferEscalate !== false}
+            onChange={(e) => onChange({ ...agent, preferEscalate: e.target.checked })}
+          />
+          Allow Lite → Full for tools
+        </label>
+      </div>
+      <div className="setting-row" style={{ gridTemplateColumns: '120px 1fr', border: 'none' }}>
         <label>System prompt</label>
         <textarea
           rows={4}
@@ -676,7 +705,7 @@ export function SettingsModal({
       {
         cat: 'agent' as Category,
         label: 'Use LLM router',
-        hint: 'Ask a model to choose the agent (falls back to keywords)',
+        hint: 'Ask routerModel to classify intent + agent (falls back to heuristics)',
         path: ['agent', 'routing', 'useLlmRouter'],
         type: 'boolean' as const
       },
@@ -1971,6 +2000,8 @@ export function SettingsModal({
                                 temperature: null,
                                 enabled: true,
                                 builtin: false,
+                                tools: 'edit',
+                                preferEscalate: true,
                                 systemPrompt: 'You are a project specialist in Eris.',
                                 keywords: []
                               }

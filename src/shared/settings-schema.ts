@@ -1,5 +1,18 @@
 import { z } from 'zod'
 
+export const AgentToolsCeilingSchema = z.enum(['none', 'read', 'edit', 'full'])
+export type AgentToolsCeiling = z.infer<typeof AgentToolsCeilingSchema>
+
+export const ChatIntentSchema = z.enum([
+  'answer',
+  'capability',
+  'explore',
+  'edit',
+  'review',
+  'run'
+])
+export type ChatIntent = z.infer<typeof ChatIntentSchema>
+
 export const AgentDefinitionSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -10,7 +23,11 @@ export const AgentDefinitionSchema = z.object({
   enabled: z.boolean(),
   builtin: z.boolean(),
   systemPrompt: z.string(),
-  keywords: z.array(z.string())
+  keywords: z.array(z.string()),
+  /** Max tool access this agent may use (policy ceiling). */
+  tools: AgentToolsCeilingSchema.default('edit'),
+  /** When true and chat model is Lite, allow escalate tools role to Full. */
+  preferEscalate: z.boolean().default(true)
 })
 
 export const ProjectAgentsSchema = z.object({
@@ -197,6 +214,35 @@ export interface RouteResult {
   model: string
   reason: string
   method: 'manual' | 'heuristic' | 'llm' | 'default'
+}
+
+/** Central routing decision for one chat turn (main-process authority). */
+export interface TurnPlan {
+  intent: ChatIntent
+  agentId: string
+  agentName: string
+  mode: 'ask' | 'agent'
+  models: {
+    chat: string
+    tools: string
+    router?: string
+  }
+  /** Effective tool ceiling after intersecting agent policy + intent + mode. */
+  toolPolicy: AgentToolsCeiling
+  requiresTools: boolean
+  escalateToFull: boolean
+  reason: string
+  method: 'manual' | 'heuristic' | 'llm' | 'default'
+  /** Set when the selected chat model cannot run (e.g. builtin not downloaded). */
+  error?: string
+}
+
+export interface ChatTurnContext {
+  text: string
+  fileNames?: string[]
+  manualAgentId?: string | null
+  selectedModel: string
+  mode: 'ask' | 'agent'
 }
 
 export interface ResolvedAgent extends AgentDefinition {

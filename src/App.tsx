@@ -215,11 +215,11 @@ export default function App() {
       status.models.find((m) => m.ready)?.name ||
       'builtin:composer-lite'
     setSelectedModel((prev) => {
-      // Follow Settings default when it appears in the catalog (Ollama chip / default change).
+      // Keep the session picker; only fill when empty or the prior model left the catalog.
+      if (prev && status.models.some((m) => m.name === prev)) return prev
       if (s?.models.defaultModel && status.models.some((m) => m.name === s.models.defaultModel)) {
         return s.models.defaultModel
       }
-      if (prev && status.models.some((m) => m.name === prev)) return prev
       return preferred
     })
   }, [settings])
@@ -545,45 +545,52 @@ export default function App() {
           setThreads((prev) => [thread!, ...prev.filter((t) => t.id !== thread!.id)])
         }
 
-        const route = await window.ide.routeAgent({
+        const selected =
+          selectedModel || settings.models.defaultModel || 'builtin:composer-lite'
+        const turnPlan = await window.ide.planChatTurn({
           text,
           fileNames: files.map((f) => f.name),
-          manualAgentId: selectedAgentId === 'auto' ? null : selectedAgentId
+          manualAgentId: selectedAgentId === 'auto' ? null : selectedAgentId,
+          selectedModel: selected,
+          mode: chatMode
         })
-        const agentList = agents.length ? agents : await window.ide.listAgents()
-        const activeAgent = agentList.find((a) => a.id === route.agentId)
-        // Agent pin (non-empty model field) wins; otherwise honor the chat picker / default
-        // so Ollama models selected in the UI are actually used.
-        const agentPinned = Boolean(activeAgent?.model?.trim())
-        let runModel =
-          (agentPinned ? activeAgent!.model.trim() : '') ||
-          selectedModel ||
-          settings.models.defaultModel ||
-          route.model ||
-          'builtin:composer-lite'
-
-        // If preferred builtin isn't installed, fall back to any ready built-in (Lite ↔ Full)
-        if (runModel.startsWith('builtin:')) {
-          const preferredReady = status.builtin?.some(
-            (b) => (b.ref === runModel || b.id === runModel.replace(/^builtin:/, '')) && b.ready
-          )
-          if (!preferredReady) {
-            const fallback =
-              status.builtin?.find((b) => b.tier === 'lite' && b.ready) ??
-              status.builtin?.find((b) => b.ready)
-            if (fallback) runModel = fallback.ref
-          }
-        }
-
-        setRouteLabel(`${route.agentName} · ${runModel} · ${route.method}`)
+        const runModel = turnPlan.models.chat
+        setRouteLabel(turnPlan.reason)
         routeMetaRef.current = {
-          agentId: route.agentId,
-          agentName: route.agentName,
+          agentId: turnPlan.agentId,
+          agentName: turnPlan.agentName,
           model: runModel
         }
 
+        if (turnPlan.error) {
+          setChatError(turnPlan.error)
+          const displayContent =
+            files.length > 0
+              ? `${text}\n\nAttached: ${files.map((f) => f.name).join(', ')}`
+              : text
+          const saved = await window.ide.saveChat({
+            ...thread,
+            model: runModel,
+            messages: [
+              ...thread.messages,
+              { id: uid(), role: 'user', content: displayContent, createdAt: Date.now() }
+            ]
+          })
+          setActiveThread(saved)
+          setThreads((prev) => [saved, ...prev.filter((t) => t.id !== saved.id)])
+          setAttachments([])
+          setActiveSkills([])
+          return
+        }
+
         const modelInfo = status.models.find((m) => m.name === runModel)
-        const cannotRunBuiltin = runModel.startsWith('builtin:') && !builtinReady
+        const cannotRunBuiltin =
+          runModel.startsWith('builtin:') &&
+          !(
+            status.builtin?.some(
+              (b) => (b.ref === runModel || b.id === runModel.replace(/^builtin:/, '')) && b.ready
+            ) ?? false
+          )
         const cannotRunExternal =
           !runModel.startsWith('builtin:') &&
           (!hasConnection || (modelInfo ? modelInfo.ready === false : !hasConnection))
@@ -592,7 +599,7 @@ export default function App() {
             cannotRunExternal
               ? `Can’t reach model “${runModel}”. Is Ollama running? Open Settings → Models → Refresh, or run: ollama serve`
               : hasConnection
-                ? 'That built-in model isn’t installed. Pick an Ollama model in the chat picker, or download Composer Lite in Settings → Models.'
+                ? `Model “${runModel}” isn’t installed. Download it in Settings → Models, or pick another model.`
                 : 'No model ready. Connect Ollama (Settings → Models) or download Composer Lite.'
           )
           // Still persist the user turn so the chat isn’t empty
@@ -633,11 +640,13 @@ export default function App() {
           : settings.agent.maxHistoryMessages
         const rules = rulesRaw.length > rulesCap ? `${rulesRaw.slice(0, rulesCap)}\n…` : rulesRaw
         const openTab = tabs.find((t) => t.path === activeFile)
+        const agentList = agents.length ? agents : await window.ide.listAgents()
+        const activeAgent = agentList.find((a) => a.id === turnPlan.agentId)
         const contextParts: string[] = [
           settings.agent.systemPrompt.slice(0, lean ? 1200 : 4000),
           activeAgent
             ? `You are the “${activeAgent.name}” ${activeAgent.role === 'orchestrator' ? 'orchestrator' : 'subagent'}.\n${activeAgent.systemPrompt.slice(0, lean ? 1500 : 6000)}`
-            : `You are the “${route.agentName}” agent.`
+            : `You are the “${turnPlan.agentName}” agent.`
         ].filter(Boolean)
         if (rules) contextParts.push(`Workspace rules:\n${rules}`)
         if (workspaceContextPin) {
@@ -733,9 +742,10 @@ export default function App() {
         const ok = await window.ide.streamChat({
           requestId,
           model: runModel,
-          agentId: route.agentId,
+          agentId: turnPlan.agentId,
           messages,
-          mode: chatMode
+          mode: chatMode,
+          turnPlan
         })
         // Error path also emits chat:error; this covers a missed event
         if (!ok && requestIdRef.current === requestId) {
@@ -796,11 +806,20 @@ export default function App() {
       answerAcc.current += chunk
       schedulePaint()
     })
-    const offRouted = window.ide.onChatRouted(({ requestId, agentId, agentName, model }) => {
-      if (requestId !== requestIdRef.current) return
-      routeMetaRef.current = { agentId, agentName, model }
-      if (agentName) setRouteLabel(`${agentName} · ${model}`)
-    })
+    const offRouted = window.ide.onChatRouted(
+      ({ requestId, agentId, agentName, model, reason, toolsModel }) => {
+        if (requestId !== requestIdRef.current) return
+        routeMetaRef.current = { agentId, agentName, model }
+        if (reason) setRouteLabel(reason)
+        else if (agentName) {
+          const tools =
+            toolsModel && toolsModel !== model
+              ? ` → ${toolsModel.replace(/^builtin:/, '')}`
+              : ''
+          setRouteLabel(`${agentName} · ${model.replace(/^builtin:/, '')}${tools}`)
+        }
+      }
+    )
     const offTool = window.ide.onChatTool(({ requestId, tool }) => {
       if (requestId !== requestIdRef.current) return
       setToolActivity((prev) => {

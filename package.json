@@ -14,6 +14,7 @@
     "dist:release": "npm run build && electron-builder --mac dmg zip",
     "start:app": "npm run dist:mac && open \"$(ls -d dist/mac*/Eris.app | head -1)\"",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test:routing": "node scripts/test-routing.mjs",
     "version:patch": "npm version patch --no-git-tag-version",
     "version:minor": "npm version minor --no-git-tag-version",
     "version:major": "npm version major --no-git-tag-version",
