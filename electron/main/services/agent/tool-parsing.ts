@@ -89,7 +89,9 @@ const KNOWN_TOOLS = new Set([
   'git_stage',
   'git_commit',
   'git_sync',
-  'git_stash'
+  'git_stash',
+  'delegate_to_agent',
+  'await_children'
 ])
 
 // Accept ```json or broken ``json fences (Lite often emits only two backticks)

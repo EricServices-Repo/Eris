@@ -19,6 +19,11 @@ import {
   type AgentRunRecord
 } from '../services/agent-runs'
 import { runAgentWithWorkspaceTools } from '../services/agent-runner'
+import {
+  configureBackgroundAgents,
+  delegateFromAgent,
+  getBackgroundJob
+} from '../services/background-agents'
 import { setDiagnosticsPaused } from '../services/diagnostics'
 import { findAgent } from '../services/agents'
 import { logError, logInfo, logWarn } from '../services/logger'
@@ -40,6 +45,8 @@ export function registerChatStreamIpc(): void {
         agentId?: string
         mode?: 'ask' | 'agent'
         turnPlan?: TurnPlan
+        /** Active chat thread — used when orchestrator delegates specialists. */
+        threadId?: string | null
       }
     ) => {
       const settings = getResolvedSettings(appState.currentWorkspace)
@@ -138,6 +145,12 @@ export function registerChatStreamIpc(): void {
         pendingThinking += `Route: ${turnPlan.reason}${turnPlan.classifiedIntent && turnPlan.classifiedIntent !== turnPlan.intent ? ` (classified ${turnPlan.classifiedIntent})` : ''} · tools ${turnPlan.toolPolicy}\n`
         scheduleStreamFlush()
 
+        const threadId = payload.threadId ?? null
+        if (appState.currentWorkspace) {
+          configureBackgroundAgents({ sender: event.sender, getSecret })
+        }
+        const chatChildIds: string[] = []
+
         for await (const evt of runAgentWithWorkspaceTools({
           workspacePath: appState.currentWorkspace,
           settings,
@@ -148,6 +161,7 @@ export function registerChatStreamIpc(): void {
           getSecret,
           mode: mode ?? 'agent',
           turnPlan,
+          jobId: `chat:${requestId}`,
           resume: resume
             ? {
                 goal: resume.goal,
@@ -155,6 +169,72 @@ export function registerChatStreamIpc(): void {
                 filesTouched: resume.filesTouched
               }
             : undefined,
+          onDelegate: async (req) => {
+            if (!appState.currentWorkspace) {
+              return { ok: false, detail: 'Open a workspace to delegate' }
+            }
+            try {
+              const child = delegateFromAgent({
+                workspacePath: appState.currentWorkspace,
+                parentJobId: null,
+                sourceThreadId: threadId,
+                model: resolvedModel,
+                agentId: req.agentId,
+                goal: req.goal,
+                summary: req.summary,
+                files: req.files,
+                openQuestions: req.openQuestions,
+                confidence: req.confidence,
+                claim: req.claim,
+                handoff: req.handoff
+              })
+              // Track children under a soft parent list on a marker job? Use childIds via patch —
+              // without a parent job, await_children needs another approach: collect ids locally.
+              chatChildIds.push(child.id)
+              event.sender.send('chat:status', {
+                requestId,
+                text: `Delegated → ${req.agentId} (${child.id.slice(0, 8)})`
+              })
+              return {
+                ok: true,
+                childJobId: child.id,
+                detail: `Spawned ${req.agentId} in Agents inbox · ${child.id}`
+              }
+            } catch (err) {
+              return {
+                ok: false,
+                detail: err instanceof Error ? err.message : String(err)
+              }
+            }
+          },
+          onAwaitChildren: async (timeoutMs) => {
+            if (chatChildIds.length === 0) {
+              return { ok: true, detail: 'No delegated children' }
+            }
+            const deadline = Date.now() + Math.max(5_000, Math.min(timeoutMs, 30 * 60_000))
+            const terminal = new Set(['done', 'failed', 'stopped', 'merged', 'discarded'])
+            event.sender.send('chat:status', { requestId, text: 'Waiting for children…' })
+            while (Date.now() < deadline) {
+              if (appState.chatAbort?.signal.aborted) {
+                return { ok: false, detail: 'Aborted while waiting for children' }
+              }
+              const children = chatChildIds.map((id) => getBackgroundJob(id)).filter(Boolean)
+              const pending = children.filter((c) => c && !terminal.has(c.status))
+              if (pending.length === 0) {
+                const detail = children
+                  .map((c) =>
+                    c
+                      ? `### ${c.agentName || c.agentId} · ${c.status}\n${c.answer.trim().slice(0, 800) || '(no answer)'}`
+                      : ''
+                  )
+                  .filter(Boolean)
+                  .join('\n\n')
+                return { ok: true, detail: detail || 'Children finished' }
+              }
+              await new Promise((r) => setTimeout(r, 500))
+            }
+            return { ok: false, detail: 'Timed out waiting for delegated children' }
+          },
           approveCommand: async (kind, command) => {
             const live = getResolvedSettings(appState.currentWorkspace)
             const workspaceAllowed = workspaceAllowedCommands(appState.currentWorkspace)
@@ -229,6 +309,19 @@ export function registerChatStreamIpc(): void {
               event.sender.send('chat:workspace-changed', { requestId })
             } else if (evt.type === 'status') {
               event.sender.send('chat:status', { requestId, text: evt.text })
+            } else if (evt.type === 'adapt') {
+              event.sender.send('chat:status', {
+                requestId,
+                text: evt.reason
+              })
+              if (evt.model) {
+                event.sender.send('chat:model', {
+                  requestId,
+                  model: evt.model,
+                  agentId: evt.agentId ?? agent?.id ?? agentId,
+                  agentName: evt.agentName ?? agent?.name
+                })
+              }
             } else if (evt.type === 'model') {
               event.sender.send('chat:model', {
                 requestId,

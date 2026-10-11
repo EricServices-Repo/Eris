@@ -59,6 +59,10 @@ Tools:
 - git_commit — { "name":"git_commit", "message":"Commit message" }
 - git_sync — { "name":"git_sync", "action":"fetch"|"pull"|"push" }
 - git_stash — { "name":"git_stash", "action":"push"|"pop"|"list", "message":"optional" }
+- delegate_to_agent — { "name":"delegate_to_agent", "agent_id":"coder"|"explainer"|"reviewer"|"fast", "goal":"…", "summary":"context", "files":["path"], "open_questions":["…"], "claim":"short label", "wait":false }
+  (Orchestrator only: spawn a specialist on a private/shared worktree with a structured handoff.)
+- await_children — { "name":"await_children", "timeout_ms":600000 }
+  (Wait for delegated children; use after fan-out.)
 - MCP tools — when listed below as mcp__server__tool, call {"name":"mcp__server__tool", ...args}
 
 Rules:
@@ -78,6 +82,7 @@ Rules:
 - Workspace is self-contained: install deps into this folder (npm/pnpm/yarn/bun install, npm install <pkg>). Never use npm -g / yarn global.
 - Bare npm install is allowed when node_modules is missing, package.json changed, or deps are missing — do not loop install to “fix” ordinary test failures.
 - Create React App (react-scripts): set "test": "react-scripts test". Never add a separate jest dependency or "test": "jest" (causes jest-circus runner conflicts). React components with JSX must use .tsx (never put JSX in .ts). When adding tests, also npm install -D @testing-library/react @testing-library/jest-dom and create src/setupTests.ts importing jest-dom. Run tests with CI=true npm test -- --watchAll=false --passWithNoTests.
+- Multi-agent: when the work clearly splits (implement vs review vs explain), use delegate_to_agent with a real handoff (goal + summary + files). Prefer coder for edits, reviewer for review, explainer for docs. Use await_children after fan-out before merging conclusions.
 - Keep non-tool text under 3 short sentences.`
 
 export function truncateForModel(text: string, max = 12_000): string {

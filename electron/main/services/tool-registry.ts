@@ -134,6 +134,38 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
       scope: { type: 'string', enum: ['user', 'workspace'] }
     },
     ['body']
+  ),
+  tool(
+    'delegate_to_agent',
+    'Spawn a specialist background agent with a structured handoff (orchestrator).',
+    {
+      agent_id: {
+        type: 'string',
+        description: 'Specialist id: coder | explainer | reviewer | fast (or project agent id)'
+      },
+      goal: { type: 'string', description: 'Concrete goal for the specialist' },
+      summary: { type: 'string', description: 'Context the specialist needs' },
+      files: { type: 'array', items: { type: 'string' } },
+      open_questions: { type: 'array', items: { type: 'string' } },
+      confidence: { type: 'number' },
+      claim: { type: 'string', description: 'Short blackboard claim line' },
+      wait: {
+        type: 'boolean',
+        description: 'If true, wait for this child (and siblings) before continuing'
+      }
+    },
+    ['agent_id', 'goal', 'summary']
+  ),
+  tool(
+    'await_children',
+    'Wait for delegated child agents to finish and return their results.',
+    {
+      timeout_ms: {
+        type: 'number',
+        description: 'Max wait in ms (default 600000)'
+      }
+    },
+    []
   )
 ]
 

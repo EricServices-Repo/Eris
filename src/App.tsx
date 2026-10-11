@@ -195,6 +195,7 @@ export default function App() {
     sendMessage,
     rerouteLast,
     resumeLastRun,
+    runInBackground,
     stopChat,
     newChat
   } = useChatSession({
@@ -616,6 +617,7 @@ export default function App() {
                 }}
                 onSend={(text, files, skillIds) => void sendMessage(text, files, skillIds)}
                 onStop={stopChat}
+                onRunInBackground={(goal) => void runInBackground(goal)}
                 pendingApproval={pendingApproval}
                 onApprovalDecision={(approvalId, decision) => {
                   setPendingApproval(null)
@@ -869,7 +871,13 @@ export default function App() {
                     open
                     workspacePath={workspacePath}
                     defaultModel={selectedModel || settings?.models.defaultModel || ''}
+                    selectedAgentId={selectedAgentId}
+                    activeThreadId={activeThread?.id ?? null}
                     onClose={() => showRightPanel('editor')}
+                    onBroughtToChat={(threadId) => {
+                      void refreshChats(threadId)
+                      showRightPanel('editor')
+                    }}
                   />
                 </Suspense>
               ) : rightPanel === 'evals' ? (
