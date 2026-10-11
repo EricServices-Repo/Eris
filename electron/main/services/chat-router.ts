@@ -129,21 +129,24 @@ export function classifyIntent(text: string, mode: 'ask' | 'agent'): ChatIntent 
   }
 
   if (
-    /\b(npm (test|run|start|install)|yarn |pnpm |bun |pytest|cargo test|make |docker )\b/i.test(
-      t
-    ) ||
+    /\b(npm (test|run|start|install)|yarn |pnpm |bun |pytest|cargo test|docker )\b/i.test(t) ||
+    // Makefile targets only — not "make a new app/project"
+    /\bmake\s+(test|check|build|all|install|clean|run|lint)\b/i.test(t) ||
     /\b(run|execute|start)\b[\s\S]{0,24}\b(test|tests|build|server|dev)\b/i.test(t)
   ) {
     return 'run'
   }
 
   if (
-    /\b(create|implement|refactor|scaffold|generate|delete|mkdir|rename|patch|write_file|search_replace)\b/i.test(
+    /\b(create|implement|refactor|scaffold|generate|delete|mkdir|rename|patch|write_file|search_replace|develop)\b/i.test(
       t
     ) ||
-    /\b(fix|build|add|update|edit)\b[\s\S]{0,40}\b(file|files|code|bug|feature|function|component|test)\b/i.test(
+    // "build/fix/add … file|code|app|project|…" — greenfield product asks count as edits
+    /\b(fix|build|add|update|edit|make|write)\b[\s\S]{0,48}\b(file|files|code|bug|feature|function|component|test|app|application|project|program|tool|cli|game|website|site|mac\s*os|macos|osx|ios|android|swift|electron|desktop|package|module|service)\b/i.test(
       t
     ) ||
+    /\b(build|create|make|scaffold|generate)\s+(me\s+)?(a|an|the)\b/i.test(t) ||
+    /\bnew\s+(app|application|project|package|module|component)\b/i.test(t) ||
     /\b(make sure|ensure)\b[\s\S]{0,40}\b(work|working|builds?|passes?)\b/i.test(t) ||
     /\b(write|add)\b[\s\S]{0,20}\b(skill|skills)\b/i.test(t)
   ) {

@@ -70,7 +70,15 @@ describe('classifyIntent', () => {
     ['code review this PR', 'agent', 'review'],
     ['run npm test', 'agent', 'run'],
     ['how does the app work?', 'agent', 'answer'],
-    ['fix the bug in the parser code', 'agent', 'edit']
+    ['fix the bug in the parser code', 'agent', 'edit'],
+    [
+      'Build a OSX App to review images, it should be able to tell if a car is in the photo or not',
+      'agent',
+      'edit'
+    ],
+    ['create me an electron desktop app for photo review', 'agent', 'edit'],
+    ['make a new project that classifies images', 'agent', 'edit'],
+    ['scaffold a macOS SwiftUI image viewer', 'agent', 'edit']
   ] as const)('%s (%s) → %s', (text, mode, intent) => {
     expect(classifyIntent(text, mode)).toBe(intent)
   })
