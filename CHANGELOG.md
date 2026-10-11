@@ -2,6 +2,11 @@
 
 All notable releases of Eris are listed here. Versions follow [semver](https://semver.org/) in `package.json` and ship as GitHub Releases tagged `vX.Y.Z`.
 
+## 0.2.1 — 2026-10-11
+
+- Route “build/create an app or project” prompts as edit turns so the agent writes files instead of answering with setup instructions.
+- Stop treating conversational “make a …” as a Makefile `run` intent.
+
 ## 0.2.0 — 2026-10-11
 
 - Eval harness with built-in tasks, scoreboard, and routing that prefers models with better intent scores.

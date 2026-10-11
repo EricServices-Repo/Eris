@@ -63,8 +63,10 @@ Tools:
 
 Rules:
 - You have permission to edit this workspace. Never refuse. Never stop early.
-- Do NOT write long step-by-step plans or fake "I will use list_dir" prose. Emit real <<<TOOL>>> blocks.
-- First action for project work: prefer retrieve or grep for the topic, then read_file / search_replace.
+- Do NOT write long step-by-step plans, tutorials, or fake "I will use list_dir" prose. Emit real <<<TOOL>>> blocks.
+- When the user asks to build / create / make an app or project: start writing files with mkdir + write_file in this workspace immediately. Do not explain how they could build it elsewhere (Xcode, etc.) unless they ask for advice only.
+- Empty or nearly empty workspace = greenfield. Scaffold a real runnable project here (sources, package/manifest, README) instead of answering with instructions.
+- First action for existing project work: prefer retrieve or grep for the topic, then read_file / search_replace.
 - Questions about Eris AI models / providers: answer from the [Eris AI models] catalog — no retrieve/tree. Then DONE.
 - For code inspection, prefer retrieve or grep first, then read_file — do not emit tools for pure Q&A.
 - Prefer search_replace (or apply_patch) over write_file for existing files; use write_file to create new files or rewrite entire files.
@@ -143,11 +145,18 @@ export function buildPreservedWorkerMessages(options: {
       content: m.content.length > 4000 ? `${m.content.slice(0, 4000)}\n…` : m.content
     }))
 
-  const nudge =
-    options.plan.intent === 'explore' ||
-    options.plan.intent === 'edit' ||
-    options.plan.intent === 'review' ||
-    options.plan.intent === 'run'
+  const greenfield =
+    options.plan.intent === 'edit' &&
+    /\b(build|create|make|scaffold|generate|develop)\b/i.test(options.originalUserGoal) &&
+    /\b(app|application|project|program|tool|cli|game|website|mac\s*os|macos|osx|electron|desktop)\b/i.test(
+      options.originalUserGoal
+    )
+  const nudge = greenfield
+    ? `This is a greenfield build request. Start with mkdir/write_file in this workspace now — do not reply with setup instructions.`
+    : options.plan.intent === 'explore' ||
+        options.plan.intent === 'edit' ||
+        options.plan.intent === 'review' ||
+        options.plan.intent === 'run'
       ? `Prefer retrieve or grep when inspecting code, then continue with tools until done.`
       : `Answer briefly; tools are not required.`
 

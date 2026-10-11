@@ -8,7 +8,7 @@ function appVersion(): string {
   try {
     return app.getVersion()
   } catch {
-    return '0.2.0'
+    return '0.2.1'
   }
 }
 
