@@ -110,7 +110,7 @@ function listMboxFiles(dir: string, depth = 0, out: string[] = []): string[] {
 
 function decodeMimeWord(value: string): string {
   return value
-    .replace(/=\?([^?]+)\?([bqBQ])\?([^?]+)\?\=/g, (_m, _charset, enc, data: string) => {
+    .replace(/=\?([^?]+)\?([bqBQ])\?([^?]+)\?=/g, (_m, _charset, enc, data: string) => {
       try {
         if (String(enc).toUpperCase() === 'B') {
           return Buffer.from(data, 'base64').toString('utf8')
@@ -518,10 +518,10 @@ function formatMessagesMarkdown(messages: EmailMessage[], query: string): string
   return lines.join('\n')
 }
 
-function upsertEmailSection(body: string, digest: string): string {
+export function upsertEmailSection(body: string, digest: string): string {
   const section = `## Email\n${digest.trim()}\n`
   if (/^##\s+Email\s*$/im.test(body)) {
-    return body.replace(/^##\s+Email\s*\n[\s\S]*?(?=^##\s+|\Z)/im, `${section}\n`)
+    return body.replace(/^##\s+Email\s*\n[\s\S]*?(?=^##\s+|(?![\s\S]))/im, `${section}\n`)
   }
   return `${body.trimEnd()}\n\n${section}`
 }

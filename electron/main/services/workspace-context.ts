@@ -134,7 +134,7 @@ export function setContextSummary(workspacePath: string, summary: string): Works
   const section = `## Summary\n${text}\n`
   let next: string
   if (/^##\s+Summary\s*$/im.test(current)) {
-    next = current.replace(/^##\s+Summary\s*\n[\s\S]*?(?=^##\s+|\Z)/im, `${section}\n`)
+    next = current.replace(/^##\s+Summary\s*\n[\s\S]*?(?=^##\s+|(?![\s\S]))/im, `${section}\n`)
   } else if (/^#\s+/m.test(current)) {
     next = current.replace(/^(#\s+[^\n]+\n+)/, `$1\n${section}\n`)
   } else {

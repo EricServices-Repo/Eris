@@ -183,14 +183,14 @@ export function EditorArea({
     syncPatchDecorations()
   }, [syncPatchDecorations])
 
+  const activeTabPath = active?.path
   useEffect(() => {
-    if (!active) return
-    const path = active.path
+    if (!activeTabPath) return
     const timer = window.setTimeout(() => {
-      void applyDiagnostics(path)
+      void applyDiagnostics(activeTabPath)
     }, 1500)
     return () => window.clearTimeout(timer)
-  }, [active?.path, applyDiagnostics])
+  }, [activeTabPath, applyDiagnostics])
 
   useEffect(() => {
     const ed = editorRef.current

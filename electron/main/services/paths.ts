@@ -119,6 +119,11 @@ function resolveResource(fileName: string): string {
   )
 }
 
+/** Absolute path of a file or folder shipped under resources/ (throws when missing). */
+export function appResourcePath(fileName: string): string {
+  return resolveResource(fileName)
+}
+
 export function defaultsPath(): string {
   return resolveResource('defaults.json')
 }

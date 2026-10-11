@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 export interface PendingDiff {
   id: string
@@ -24,7 +24,10 @@ interface Props {
   onAutoKeepDiffsChange?: (enabled: boolean) => void
 }
 
-function lineDiff(before: string, after: string): Array<{ type: 'same' | 'add' | 'del'; text: string }> {
+function lineDiff(
+  before: string,
+  after: string
+): Array<{ type: 'same' | 'add' | 'del'; text: string }> {
   const a = before.split('\n')
   const b = after.split('\n')
   const out: Array<{ type: 'same' | 'add' | 'del'; text: string }> = []
@@ -82,10 +85,13 @@ export function DiffReview({
     [diffs, openId, pending]
   )
 
+  const onOpenPathRef = useRef(onOpenPath)
+  onOpenPathRef.current = onOpenPath
+  const activeId = active?.id
+  const activePath = active?.path
   useEffect(() => {
-    if (!active) return
-    onOpenPath(openablePath(active.path))
-  }, [active?.id])
+    if (activeId && activePath) onOpenPathRef.current(openablePath(activePath))
+  }, [activeId, activePath])
 
   if (diffs.length === 0) return null
 
@@ -115,7 +121,10 @@ export function DiffReview({
             Undo all
           </button>
           {onAutoKeepDiffsChange && (
-            <label className="diff-always-keep" title="Save as a user setting — keep all future agent edits without review">
+            <label
+              className="diff-always-keep"
+              title="Save as a user setting — keep all future agent edits without review"
+            >
               <input
                 type="checkbox"
                 checked={autoKeepDiffs}

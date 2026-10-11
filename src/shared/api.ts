@@ -8,6 +8,8 @@ import type {
   ResolvedAgent,
   RouteResult,
   TurnPlan,
+  ChatIntent,
+  ChatPromptInput,
   SettingsPatch,
   SettingsScope,
   SkillInput,
@@ -16,12 +18,36 @@ import type {
   WorkspaceMeta,
   WorkspaceRecord
 } from './settings-schema'
+import type {
+  EvalProgressEvent,
+  EvalResult,
+  EvalScoreboard,
+  EvalTaskInfo
+} from './evals'
+import type { BackgroundJob, BackgroundJobEvent } from './background-agents'
 
 export interface AppState {
   workspaces: WorkspaceRecord[]
   lastWorkspaceId: string | null
   /** ISO or epoch ms when the first-run setup wizard was finished/skipped */
   onboardingCompletedAt?: number | null
+}
+
+export interface WorkspaceTrustStatus {
+  workspacePath: string | null
+  trusted: boolean
+  /** Human-readable risky settings this folder's .eris/settings.json asks for */
+  risky: string[]
+}
+
+export interface AgentRunSummary {
+  id: string
+  goal: string
+  agentId: string
+  status: 'running' | 'done' | 'stopped' | 'failed' | 'incomplete' | 'dismissed'
+  step: number
+  actionLog: string[]
+  updatedAt: string
 }
 
 export interface AppVersionInfo {
@@ -135,7 +161,18 @@ export interface IdeApi {
     manualAgentId?: string | null
     selectedModel: string
     mode?: 'ask' | 'agent'
+    forceRoute?: 'tools' | 'answer'
   }) => Promise<TurnPlan>
+  recordRoutingFeedback: (payload: {
+    text: string
+    from: ChatIntent
+    to: 'tools' | 'answer'
+    agentId: string
+  }) => Promise<boolean>
+  getResumableRun: () => Promise<AgentRunSummary | null>
+  getWorkspaceTrust: () => Promise<WorkspaceTrustStatus>
+  setWorkspaceTrust: (trusted: boolean) => Promise<boolean>
+  dismissRun: (id: string) => Promise<boolean>
   listChats: () => Promise<ChatThread[]>
   getChat: (id: string) => Promise<ChatThread | null>
   createChat: (model: string) => Promise<ChatThread>
@@ -155,12 +192,34 @@ export interface IdeApi {
   streamChat: (payload: {
     requestId: string
     model: string
-    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+    messages?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+    prompt?: ChatPromptInput
     agentId?: string
     mode?: 'ask' | 'agent'
     turnPlan?: TurnPlan
   }) => Promise<boolean>
   stopChat: () => Promise<boolean>
+  /** Absolute path of a dropped File ('' when it has none) */
+  getPathForFile: (file: File) => string
+  respondCommandApproval: (
+    approvalId: string,
+    decision: 'allow' | 'always' | 'deny'
+  ) => Promise<boolean>
+  onChatApprovalRequest: (
+    cb: (data: {
+      requestId: string
+      approvalId: string
+      kind: 'run' | 'push'
+      command: string
+    }) => void
+  ) => () => void
+  onChatApprovalResolved: (
+    cb: (data: {
+      requestId: string
+      approvalId: string
+      decision: 'allow' | 'always' | 'deny'
+    }) => void
+  ) => () => void
   onChatThinking: (cb: (data: { requestId: string; chunk: string }) => void) => () => void
   onChatAnswer: (cb: (data: { requestId: string; chunk: string }) => void) => () => void
   onChatDone: (cb: (data: { requestId: string; aborted?: boolean }) => void) => () => void
@@ -447,6 +506,32 @@ export interface IdeApi {
     query: string
   ) => Promise<{ ok: boolean; detail: string; paths: string[] }>
   rebuildCodeIndex: () => Promise<{ ok: boolean; files: number; symbols: number }>
+  searchReferences: (
+    name: string
+  ) => Promise<{ ok: boolean; detail: string; hits: Array<{ name: string; path: string; line: number }> }>
+  searchRelated: (path: string) => Promise<{ ok: boolean; detail: string; paths: string[] }>
+  listEvalTasks: () => Promise<EvalTaskInfo[]>
+  getEvalScoreboard: () => Promise<EvalScoreboard>
+  runEvals: (payload: {
+    taskIds: string[]
+    models: string[]
+    repeats?: number
+  }) => Promise<EvalResult[]>
+  cancelEvals: () => Promise<boolean>
+  evalsRunning: () => Promise<boolean>
+  clearEvalResults: () => Promise<EvalScoreboard>
+  onEvalProgress: (cb: (event: EvalProgressEvent) => void) => () => void
+  listBackgroundJobs: () => Promise<BackgroundJob[]>
+  enqueueBackgroundJob: (payload: {
+    goal: string
+    model: string
+    agentId?: string
+  }) => Promise<BackgroundJob>
+  stopBackgroundJob: (id: string) => Promise<boolean>
+  discardBackgroundJob: (id: string) => Promise<BackgroundJob>
+  mergeBackgroundJob: (id: string) => Promise<BackgroundJob>
+  backgroundJobDiff: (id: string) => Promise<{ ok: boolean; diff: string; error?: string }>
+  onBackgroundJob: (cb: (event: BackgroundJobEvent) => void) => () => void
   aiComplete: (payload: {
     path: string
     language: string

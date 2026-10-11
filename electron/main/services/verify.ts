@@ -101,6 +101,8 @@ export type VerifyOptions = {
   preferTypecheck?: boolean
   /** When false, never run npm install during verify. */
   allowInstall?: boolean
+  /** Asked before each install; resolve false to skip it. */
+  approveInstall?: (command: string) => Promise<boolean>
 }
 
 /**
@@ -196,10 +198,14 @@ function remediationForVerifyFailure(workspacePath: string, output: string): str
 
 async function ensureNpmInstall(
   workspacePath: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  approveInstall?: (command: string) => Promise<boolean>
 ): Promise<{ ran: boolean; ok: boolean; detail: string }> {
   if (!workspaceDepsNeedInstall(workspacePath)) {
     return { ran: false, ok: true, detail: '' }
+  }
+  if (approveInstall && !(await approveInstall('npm install'))) {
+    return { ran: true, ok: false, detail: 'npm install was denied by the user.' }
   }
   const install = await runWorkspaceCommand(workspacePath, 'npm install', {
     signal,
@@ -221,6 +227,7 @@ export async function runVerify(
   opts?: VerifyOptions
 ): Promise<VerifyResult> {
   const allowInstall = opts?.allowInstall !== false
+  const approve = async (cmd: string) => !opts?.approveInstall || opts.approveInstall(cmd)
   const command = detectVerifyCommand(workspacePath, {
     preferTypecheck: opts?.preferTypecheck
   })
@@ -236,7 +243,7 @@ export async function runVerify(
   let installNote = ''
   let ensured = { ran: false, ok: true, detail: '' }
   if (allowInstall) {
-    ensured = await ensureNpmInstall(workspacePath, signal)
+    ensured = await ensureNpmInstall(workspacePath, signal, opts?.approveInstall)
     if (ensured.ran) {
       installNote = `Ensured workspace deps:\n${ensured.detail}\n\n`
       if (!ensured.ok) {
@@ -295,9 +302,9 @@ export async function runVerify(
 
   // Tests import @testing-library/* that aren't installed — add them once, then retry.
   const missingTl = missingTestingLibraryPackages(out)
-  if (allowInstall && !ran.ok && missingTl.length > 0) {
-    const toInstall = [...new Set([...missingTl, '@testing-library/jest-dom'])]
-    const installCmd = `npm install -D ${toInstall.join(' ')}`
+  const toInstall = [...new Set([...missingTl, '@testing-library/jest-dom'])]
+  const installCmd = `npm install -D ${toInstall.join(' ')}`
+  if (allowInstall && !ran.ok && missingTl.length > 0 && (await approve(installCmd))) {
     const tlInstall = await runWorkspaceCommand(workspacePath, installCmd, {
       signal,
       timeoutMs: 300_000
@@ -340,7 +347,8 @@ export async function runVerify(
     looksLikeMissingLocalBin(out) &&
     missingTestingLibraryPackages(out).length === 0 &&
     existsSync(join(workspacePath, 'package.json')) &&
-    !ensured.ran
+    !ensured.ran &&
+    (await approve('npm install'))
   ) {
     const retryInstall = await runWorkspaceCommand(workspacePath, 'npm install', {
       signal,

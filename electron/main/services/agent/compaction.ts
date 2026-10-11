@@ -1,0 +1,254 @@
+import type { AppSettings } from '../../../../src/shared/settings-schema'
+import { findBuiltinEntry, isBuiltinRef } from '../builtin-model'
+import { truncateForModel } from './prompts'
+import { collectModelText } from './stream'
+import type { AgentChatMessage } from './types'
+
+/** Keep this many non-system messages verbatim after compaction. */
+const COMPACT_TAIL_MESSAGES = 5
+/** Soft message-count trigger (also used with token budget). */
+const COMPACT_MESSAGE_SOFT_LIMIT = 14
+/** Fraction of model context reserved for prompt before compacting. */
+const COMPACT_BUDGET_RATIO = 0.65
+
+/** Deterministic fallback summary from tools that actually ran. */
+export function buildWorkSummary(goal: string, actions: string[], workerNote: string): string {
+  const uniqueActions = [...new Set(actions)].slice(-40)
+  const goalLine = goal.replace(/\s+/g, ' ').trim().slice(0, 160)
+  const lines: string[] = []
+  if (goalLine) lines.push(`Finished: ${goalLine}`)
+  if (uniqueActions.length > 0) {
+    lines.push('')
+    lines.push('What I did:')
+    for (const a of uniqueActions) lines.push(`• ${a}`)
+  } else if (workerNote.trim()) {
+    lines.push('')
+    lines.push(workerNote.trim().slice(0, 600))
+  } else {
+    lines.push('Done.')
+  }
+  return lines.join('\n')
+}
+
+/** Rough token estimate for local budgeting (chars/4). */
+function estimateTokens(messages: AgentChatMessage[]): number {
+  let chars = 0
+  for (const m of messages) chars += m.content.length + 8
+  return Math.ceil(chars / 4)
+}
+
+/** Prompt budget before compaction — mirrors builtin 4k/8k; uses settings for cloud. */
+export function contextBudgetTokens(settings: AppSettings, workerModel: string): number {
+  if (isBuiltinRef(workerModel)) {
+    const entry = findBuiltinEntry(workerModel)
+    const ctx = entry?.tier === 'lite' ? 4096 : 8192
+    return Math.floor(ctx * COMPACT_BUDGET_RATIO)
+  }
+  const window = settings.models.contextWindow || 32768
+  return Math.floor(Math.min(Math.max(window, 2048), 128000) * COMPACT_BUDGET_RATIO)
+}
+
+export function needsContextCompaction(
+  messages: AgentChatMessage[],
+  budgetTokens: number,
+  force: boolean
+): boolean {
+  if (force) return messages.length > 4
+  if (messages.length > COMPACT_MESSAGE_SOFT_LIMIT) return true
+  return estimateTokens(messages) > budgetTokens
+}
+
+export function formatActionLogForResume(actionLog: string[], limit = 40): string {
+  if (actionLog.length === 0) return '(none yet)'
+  const unique = [...new Set(actionLog)]
+  const slice = unique.slice(-limit)
+  const omitted = unique.length - slice.length
+  return (
+    (omitted > 0 ? `(…${omitted} earlier)\n` : '') + slice.map((a) => `• ${a}`).join('\n')
+  )
+}
+
+function buildFallbackProgressSummary(
+  goal: string,
+  filesTouched: string[],
+  actionLog: string[],
+  priorMemory: string | null
+): string {
+  const parts: string[] = []
+  if (priorMemory?.trim()) parts.push(priorMemory.trim().slice(0, 1200))
+  parts.push(`Goal: ${goal.slice(0, 400)}`)
+  if (filesTouched.length) {
+    parts.push(`Files touched: ${[...new Set(filesTouched)].slice(-20).join(', ')}`)
+  }
+  const actions = [...new Set(actionLog)].slice(-24)
+  if (actions.length) parts.push(`Recent actions:\n${actions.map((a) => `• ${a}`).join('\n')}`)
+  return parts.join('\n\n').slice(0, 2500)
+}
+
+function buildResumeMessage(options: {
+  goal: string
+  filesTouched: string[]
+  actionLog: string[]
+  treeSnapshot: string | null
+  progressSummary: string
+}): AgentChatMessage {
+  const files =
+    options.filesTouched.length > 0
+      ? `Files already written/updated: ${[...new Set(options.filesTouched)].slice(-20).join(', ')}`
+      : 'No files written yet.'
+  const treeBit = options.treeSnapshot
+    ? `\nWorkspace tree:\n${truncateForModel(options.treeSnapshot, 2000)}\n`
+    : ''
+  return {
+    role: 'user',
+    content:
+      `Original request:\n${options.goal.slice(0, 1500)}\n\n` +
+      `Progress summary (compacted context — trust this over forgotten earlier turns):\n` +
+      `${options.progressSummary.slice(0, 2500)}\n\n` +
+      `Action log:\n${formatActionLogForResume(options.actionLog)}\n\n` +
+      `${files}${treeBit}\n` +
+      `Continue until the request is fully satisfied. ` +
+      `Do not redo completed actions unless fixing a failure. ` +
+      `Emit write_file/mkdir/read_file tool JSON now, OR if everything is done reply with a short DONE summary and no tools.`
+  }
+}
+
+async function summarizeMiddleWithLite(options: {
+  settings: AppSettings
+  liteModel: string
+  goal: string
+  middle: AgentChatMessage[]
+  filesTouched: string[]
+  actionLog: string[]
+  priorMemory: string | null
+  signal?: AbortSignal
+  getSecret: (key: string) => string | null
+  temperature: number
+}): Promise<string> {
+  const transcript = options.middle
+    .map((m) => `${m.role.toUpperCase()}:\n${m.content.slice(0, 900)}`)
+    .join('\n\n')
+    .slice(0, 12_000)
+
+  if (!transcript.trim()) {
+    return buildFallbackProgressSummary(
+      options.goal,
+      options.filesTouched,
+      options.actionLog,
+      options.priorMemory
+    )
+  }
+
+  const messages: AgentChatMessage[] = [
+    {
+      role: 'system',
+      content:
+        'You compress agent working memory for a coding worker that will continue the same task. ' +
+        'Write a dense progress brief (max ~20 short bullets or 250 words). Include: what was done, ' +
+        'key findings, files changed, failures/blockers, and what remains. ' +
+        'No tools. No CALL_FULL. No markdown fences. Plain text only.'
+    },
+    {
+      role: 'user',
+      content:
+        `Original request:\n${options.goal.slice(0, 1200)}\n\n` +
+        (options.priorMemory
+          ? `Previous memory (fold into the new brief):\n${options.priorMemory.slice(0, 1500)}\n\n`
+          : '') +
+        `Files touched: ${
+          options.filesTouched.length
+            ? [...new Set(options.filesTouched)].slice(-20).join(', ')
+            : '(none)'
+        }\n\n` +
+        `Action log:\n${formatActionLogForResume(options.actionLog, 30)}\n\n` +
+        `Transcript to compress:\n${transcript}\n\n` +
+        `Reply with only the progress brief.`
+    }
+  ]
+
+  try {
+    const summary = await collectModelText({
+      settings: options.settings,
+      model: options.liteModel,
+      messages,
+      temperature: Math.min(options.temperature, 0.3),
+      signal: options.signal,
+      getSecret: options.getSecret
+    })
+    if (summary.length >= 40) return summary.slice(0, 2500)
+  } catch {
+    // fall through
+  }
+  return buildFallbackProgressSummary(
+    options.goal,
+    options.filesTouched,
+    options.actionLog,
+    options.priorMemory
+  )
+}
+
+/**
+ * Compact worker context: pin system + rich resume (goal, action log, Lite summary) + recent tail.
+ * Returns the new message list and rolling memory string.
+ */
+export async function compactAgentMessages(options: {
+  messages: AgentChatMessage[]
+  goal: string
+  filesTouched: string[]
+  actionLog: string[]
+  treeSnapshot: string | null
+  priorMemory: string | null
+  settings: AppSettings
+  liteModel: string
+  temperature: number
+  signal?: AbortSignal
+  getSecret: (key: string) => string | null
+  /** When true, skip Lite and use action-log fallback only (stuck-loop recovery). */
+  skipLiteSummary?: boolean
+}): Promise<{ messages: AgentChatMessage[]; memory: string }> {
+  const system = options.messages.find((m) => m.role === 'system')
+  const nonSystem = options.messages.filter((m) => m.role !== 'system')
+  if (nonSystem.length <= COMPACT_TAIL_MESSAGES + 1) {
+    return { messages: options.messages, memory: options.priorMemory ?? '' }
+  }
+
+  const tail = nonSystem.slice(-COMPACT_TAIL_MESSAGES)
+  const middle = nonSystem.slice(0, Math.max(0, nonSystem.length - COMPACT_TAIL_MESSAGES))
+
+  let progressSummary: string
+  if (options.skipLiteSummary) {
+    progressSummary = buildFallbackProgressSummary(
+      options.goal,
+      options.filesTouched,
+      options.actionLog,
+      options.priorMemory
+    )
+  } else {
+    progressSummary = await summarizeMiddleWithLite({
+      settings: options.settings,
+      liteModel: options.liteModel,
+      goal: options.goal,
+      middle,
+      filesTouched: options.filesTouched,
+      actionLog: options.actionLog,
+      priorMemory: options.priorMemory,
+      signal: options.signal,
+      getSecret: options.getSecret,
+      temperature: options.temperature
+    })
+  }
+
+  const resume = buildResumeMessage({
+    goal: options.goal,
+    filesTouched: options.filesTouched,
+    actionLog: options.actionLog,
+    treeSnapshot: options.treeSnapshot,
+    progressSummary
+  })
+
+  const out: AgentChatMessage[] = []
+  if (system) out.push(system)
+  out.push(resume)
+  out.push(...tail)
+  return { messages: out, memory: progressSummary }
+}

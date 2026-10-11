@@ -8,6 +8,8 @@ import {
 import { join, relative, sep } from 'path'
 import { resolveInWorkspace, toWorkspaceRelative } from './workspace-fs'
 import { buildWorkspaceProcessEnv } from './workspace-env'
+import { cosine, hashEmbed } from './embeddings'
+import { loadCodeIndex } from './code-index'
 
 const SKIP_DIRS = new Set([
   'node_modules',
@@ -363,6 +365,7 @@ export async function retrieveContextAsync(
 
   const files: string[] = []
   walkFiles(workspacePath, workspacePath, files, 5000)
+  const queryVec = hashEmbed(query)
   const scored: Array<{ path: string; score: number; snippet: string }> = []
   for (let i = 0; i < files.length; i++) {
     if (i > 0 && i % 80 === 0) await yieldEventLoop()
@@ -384,6 +387,8 @@ export async function retrieveContextAsync(
       const count = lower.split(t).length - 1
       score += Math.min(8, count)
     }
+    const embedding = loadCodeIndex(workspacePath)?.embeddings?.[rel]
+    if (queryVec && embedding) score += cosine(queryVec, embedding) * 12
     if (score <= 0) continue
     const snippet = content.split('\n').slice(0, 8).join('\n').slice(0, 400)
     scored.push({ path: rel, score, snippet })
@@ -391,7 +396,7 @@ export async function retrieveContextAsync(
   scored.sort((a, b) => b.score - a.score)
   const top = scored.slice(0, maxFiles)
   const detail = top
-    .map((t) => `### ${t.path} (score ${t.score})\n${t.snippet}`)
+    .map((t) => `### ${t.path} (score ${t.score.toFixed(1)})\n${t.snippet}`)
     .join('\n\n')
   const result: RetrieveResult = {
     ok: true,

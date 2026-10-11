@@ -1,0 +1,87 @@
+import { ipcMain } from 'electron'
+import { deleteRule, listRules, saveRule } from '../services/rules'
+import {
+  listChats,
+  getChat,
+  createChat,
+  saveChat,
+  deleteChat,
+  loadWorkspaceRules
+} from '../services/chats'
+import {
+  createSkill,
+  deleteSkill,
+  ensureSkillsDirs,
+  getSkill,
+  listSkills,
+  loadSkillsPrompt,
+  updateSkill
+} from '../services/skills'
+import { logInfo } from '../services/logger'
+import type { ChatThread, SkillInput, SkillScope } from '../../../src/shared/settings-schema'
+import { appState } from '../app-state'
+
+export function registerChatsIpc(): void {
+  ipcMain.handle('chats:list', () => listChats(appState.currentWorkspace))
+  ipcMain.handle('chats:get', (_e, id: string) => getChat(appState.currentWorkspace, id))
+  ipcMain.handle('chats:create', (_e, model: string) => {
+    const thread = createChat(appState.currentWorkspace, model)
+    logInfo('Chat created', { id: thread.id, model })
+    return thread
+  })
+  ipcMain.handle('chats:save', (_e, thread: ChatThread) => saveChat(appState.currentWorkspace, thread))
+  ipcMain.handle('chats:delete', (_e, id: string) => {
+    deleteChat(appState.currentWorkspace, id)
+    logInfo('Chat deleted', { id })
+    return true
+  })
+  ipcMain.handle('chats:rules', () => loadWorkspaceRules(appState.currentWorkspace))
+
+  ipcMain.handle('skills:list', () => {
+    ensureSkillsDirs(appState.currentWorkspace)
+    return listSkills(appState.currentWorkspace)
+  })
+  ipcMain.handle('skills:get', (_e, id: string, scope?: SkillScope) =>
+    getSkill(appState.currentWorkspace, id, scope)
+  )
+  ipcMain.handle('skills:create', (_e, input: SkillInput) => {
+    ensureSkillsDirs(appState.currentWorkspace)
+    const skill = createSkill(appState.currentWorkspace, input)
+    logInfo('Skill created', { id: skill.id, scope: skill.scope })
+    return skill
+  })
+  ipcMain.handle(
+    'skills:update',
+    (
+      _e,
+      id: string,
+      scope: SkillScope,
+      patch: Partial<Pick<SkillInput, 'name' | 'description' | 'body'>>
+    ) => {
+      const skill = updateSkill(appState.currentWorkspace, id, scope, patch)
+      logInfo('Skill updated', { id: skill.id, scope: skill.scope })
+      return skill
+    }
+  )
+  ipcMain.handle('skills:delete', (_e, id: string, scope: SkillScope) => {
+    const ok = deleteSkill(appState.currentWorkspace, id, scope)
+    if (ok) logInfo('Skill deleted', { id, scope })
+    return ok
+  })
+  ipcMain.handle('skills:prompt', (_e, ids: string[]) =>
+    loadSkillsPrompt(appState.currentWorkspace, ids)
+  )
+
+  ipcMain.handle('rules:list', () => listRules(appState.currentWorkspace))
+  ipcMain.handle(
+    'rules:save',
+    (_e, name: string, body: string, previousId?: string) => {
+      if (!appState.currentWorkspace) throw new Error('Open a workspace to edit rules')
+      return saveRule(appState.currentWorkspace, name, body, previousId)
+    }
+  )
+  ipcMain.handle('rules:delete', (_e, id: string) => {
+    if (!appState.currentWorkspace) throw new Error('Open a workspace to edit rules')
+    return deleteRule(appState.currentWorkspace, id)
+  })
+}

@@ -15,6 +15,11 @@ import {
 } from './builtin-model'
 import { streamModelChat } from './chat-runtime'
 import { routeHeuristic, routeMessage } from './router'
+import { learnedRouteFor, readRoutingCorrections, routingExamples } from './routing-feedback'
+import { bestEvalModelForIntent } from './eval-store'
+
+/** LLM router hints below this confidence are ignored. */
+const LLM_MIN_CONFIDENCE = 0.55
 
 const CEILING_RANK: Record<AgentToolsCeiling, number> = {
   none: 0,
@@ -30,6 +35,9 @@ const READ_TOOLS = new Set([
   'grep',
   'glob',
   'search_symbols',
+  'find_references',
+  'semantic_search',
+  'related_files',
   'retrieve',
   'read_context',
   'read_email',
@@ -55,6 +63,20 @@ const EDIT_TOOLS = new Set([
 ])
 
 const FULL_TOOLS = new Set([...EDIT_TOOLS, 'run', 'git_sync'])
+
+function readyModelCandidates(settings: AppSettings): string[] {
+  const out: string[] = []
+  for (const ref of ['builtin:composer-lite', 'builtin:composer'] as const) {
+    if (isExactBuiltinReady(ref)) out.push(ref)
+  }
+  for (const conn of settings.models.connections) {
+    if (!conn.enabled || conn.type === 'builtin') continue
+    for (const name of conn.models) {
+      if (name && !isBuiltinRef(name)) out.push(name)
+    }
+  }
+  return [...new Set(out)]
+}
 
 export function intentNeedsTools(intent: ChatIntent): boolean {
   return intent === 'explore' || intent === 'edit' || intent === 'review' || intent === 'run'
@@ -245,7 +267,16 @@ function formatReason(parts: {
     parts.escalateToFull || parts.chat !== parts.tools
       ? `${chatShort} → tools:${toolsShort}`
       : chatShort
-  return `${parts.method === 'manual' ? 'Manual' : parts.method === 'llm' ? 'LLM' : 'Auto'} → ${parts.agentName} · ${parts.intent} · ${modelBit}`
+  const label: Record<TurnPlan['method'], string> = {
+    manual: 'Manual',
+    llm: 'LLM',
+    heuristic: 'Auto',
+    default: 'Auto',
+    override: 'Override',
+    learned: 'Learned',
+    eval: 'Eval'
+  }
+  return `${label[parts.method]} → ${parts.agentName} · ${parts.intent} · ${modelBit}`
 }
 
 async function llmRouteHint(options: {
@@ -254,6 +285,7 @@ async function llmRouteHint(options: {
   agents: AgentDefinition[]
   getSecret: (key: string) => string | null
   signal?: AbortSignal
+  examples?: string
 }): Promise<{ intent?: ChatIntent; agentId?: string } | null> {
   const routerModel =
     options.settings.agent.routing.routerModel ||
@@ -269,11 +301,16 @@ async function llmRouteHint(options: {
       routerModel
     : routerModel
 
-  const agentIds = options.agents.map((a) => a.id).join(', ')
+  const agentLines = options.agents
+    .map((a) => `- ${a.id}: ${a.description || a.name} (tools: ${a.tools ?? 'edit'})`)
+    .join('\n')
   const prompt =
     `Classify this IDE chat message. Reply with ONLY JSON: ` +
     `{"intent":"answer|capability|explore|edit|review|run","agentId":"<id>","confidence":0-1}\n` +
-    `Valid agentIds: ${agentIds}\n` +
+    `Intents: answer = reply from knowledge; capability = about Eris itself / its models; ` +
+    `explore = read workspace files; edit = change files; review = critique code; run = execute commands.\n` +
+    `Agents:\n${agentLines}\n` +
+    (options.examples ? `Past corrections from this user:\n${options.examples}\n` : '') +
     `Message:\n${options.text.slice(0, 1200)}`
 
   try {
@@ -299,6 +336,10 @@ async function llmRouteHint(options: {
     const parsed = JSON.parse(match[0]) as {
       intent?: string
       agentId?: string
+      confidence?: number
+    }
+    if (typeof parsed.confidence === 'number' && parsed.confidence < LLM_MIN_CONFIDENCE) {
+      return null
     }
     const intents: ChatIntent[] = [
       'answer',
@@ -328,14 +369,16 @@ export async function planChatTurn(options: {
   getSecret: (key: string) => string | null
   signal?: AbortSignal
 }): Promise<TurnPlan> {
-  const mode = options.context.mode === 'ask' ? 'ask' : 'agent'
+  const forceRoute = options.context.forceRoute
+  const mode = forceRoute === 'tools' ? 'agent' : options.context.mode === 'ask' ? 'ask' : 'agent'
   const text = options.context.text || ''
+  const corrections = readRoutingCorrections()
   const selectedModel =
     options.context.selectedModel.trim() ||
     options.settings.models.defaultModel ||
     'builtin:composer-lite'
 
-  let heuristicIntent = classifyIntent(text, mode)
+  const heuristicIntent = classifyIntent(text, mode)
 
   const route: RouteResult = await routeMessage({
     workspacePath: options.workspacePath,
@@ -349,7 +392,7 @@ export async function planChatTurn(options: {
     findAgent(options.workspacePath, route.agentId) ||
     allAgentsFlat(options.workspacePath)[0]
 
-  let method = route.method
+  let method: TurnPlan['method'] = route.method
   let intent = heuristicIntent
 
   if (
@@ -364,7 +407,8 @@ export async function planChatTurn(options: {
       text,
       agents,
       getSecret: options.getSecret,
-      signal: options.signal
+      signal: options.signal,
+      examples: routingExamples(corrections)
     })
     if (hint?.intent) intent = hint.intent
     if (hint?.agentId) {
@@ -381,6 +425,23 @@ export async function planChatTurn(options: {
   // Capability always wins over LLM misclassifies
   if (isErisCapabilityQuestion(text)) intent = 'capability'
   if (mode === 'ask' && intent !== 'capability') intent = 'answer'
+
+  const classifiedIntent = intent
+  const correction = forceRoute ?? (mode === 'agent' ? learnedRouteFor(text, corrections) : null)
+  if (correction === 'answer') {
+    intent = 'answer'
+  } else if (correction === 'tools' && !intentNeedsTools(intent)) {
+    intent = 'edit'
+  }
+  if (correction && intent !== classifiedIntent) {
+    method = forceRoute ? 'override' : 'learned'
+  }
+  if (correction === 'tools' && agent && CEILING_RANK[agent.tools ?? 'edit'] < CEILING_RANK.edit) {
+    const fallback = findAgent(options.workspacePath, options.settings.agent.routing.fallbackAgentId)
+    if (fallback?.enabled && CEILING_RANK[fallback.tools ?? 'edit'] >= CEILING_RANK.edit) {
+      agent = fallback
+    }
+  }
 
   if (!agent) {
     return {
@@ -399,8 +460,24 @@ export async function planChatTurn(options: {
   }
 
   const toolPolicy = effectiveToolPolicy(agent, intent, mode)
+  let modelForRoles = selectedModel
+  if (
+    options.settings.evals.useScoresForRouting &&
+    !options.context.manualAgentId &&
+    mode === 'agent'
+  ) {
+    const winner = bestEvalModelForIntent(
+      intent,
+      readyModelCandidates(options.settings),
+      options.settings.evals.minRuns
+    )
+    if (winner && winner !== selectedModel) {
+      modelForRoles = winner
+      method = 'eval'
+    }
+  }
   const roles = resolveModelRoles({
-    selectedModel,
+    selectedModel: modelForRoles,
     intent,
     toolPolicy,
     preferEscalate: agent.preferEscalate !== false
@@ -432,6 +509,7 @@ export async function planChatTurn(options: {
       escalateToFull: roles.escalateToFull
     }),
     method,
+    classifiedIntent,
     error: roles.error
   }
 }
@@ -443,7 +521,12 @@ export function turnPlanToRouteResult(plan: TurnPlan): RouteResult {
     agentName: plan.agentName,
     model: plan.models.chat,
     reason: plan.reason,
-    method: plan.method
+    method:
+      plan.method === 'override'
+        ? 'manual'
+        : plan.method === 'learned' || plan.method === 'eval'
+          ? 'heuristic'
+          : plan.method
   }
 }
 

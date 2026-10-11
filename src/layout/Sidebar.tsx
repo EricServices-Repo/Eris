@@ -51,16 +51,17 @@ export function Sidebar({
   const [chatsOpen, setChatsOpen] = useState(true)
   const [filesOpen, setFilesOpen] = useState(true)
 
+  const activeWorkspaceId = activeWorkspace?.id
   useEffect(() => {
-    if (!activeWorkspace) return
+    if (!activeWorkspaceId) return
     setExpandedIds((prev) => {
-      if (prev.has(activeWorkspace.id)) return prev
+      if (prev.has(activeWorkspaceId)) return prev
       const next = new Set(prev)
-      next.add(activeWorkspace.id)
+      next.add(activeWorkspaceId)
       return next
     })
     setChatsOpen(true)
-  }, [activeWorkspace?.id])
+  }, [activeWorkspaceId])
 
   const toggleExpanded = (id: string) => {
     setExpandedIds((prev) => {

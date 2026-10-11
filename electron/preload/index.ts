@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
 import type { IdeApi } from '../../src/shared/api'
 
 function subscribe<T>(channel: string, cb: (data: T) => void): () => void {
@@ -47,6 +47,11 @@ const api: IdeApi = {
   resetProjectAgents: () => ipcRenderer.invoke('agents:resetProject'),
   routeAgent: (payload) => ipcRenderer.invoke('agents:route', payload),
   planChatTurn: (payload) => ipcRenderer.invoke('chat:planTurn', payload),
+  recordRoutingFeedback: (payload) => ipcRenderer.invoke('routing:feedback', payload),
+  getResumableRun: () => ipcRenderer.invoke('runs:resumable'),
+  getWorkspaceTrust: () => ipcRenderer.invoke('workspace:trustStatus'),
+  setWorkspaceTrust: (trusted) => ipcRenderer.invoke('workspace:setTrust', trusted),
+  dismissRun: (id) => ipcRenderer.invoke('runs:dismiss', id),
   listChats: () => ipcRenderer.invoke('chats:list'),
   getChat: (id) => ipcRenderer.invoke('chats:get', id),
   createChat: (model) => ipcRenderer.invoke('chats:create', model),
@@ -61,6 +66,11 @@ const api: IdeApi = {
   loadSkillsPrompt: (ids) => ipcRenderer.invoke('skills:prompt', ids),
   streamChat: (payload) => ipcRenderer.invoke('chat:stream', payload),
   stopChat: () => ipcRenderer.invoke('chat:stop'),
+  getPathForFile: (file) => webUtils.getPathForFile(file),
+  respondCommandApproval: (approvalId, decision) =>
+    ipcRenderer.invoke('chat:approvalRespond', approvalId, decision),
+  onChatApprovalRequest: (cb) => subscribe('chat:approval-request', cb),
+  onChatApprovalResolved: (cb) => subscribe('chat:approval-resolved', cb),
   onChatThinking: (cb) => subscribe('chat:thinking', cb),
   onChatAnswer: (cb) => subscribe('chat:answer', cb),
   onChatDone: (cb) => subscribe('chat:done', cb),
@@ -115,6 +125,22 @@ const api: IdeApi = {
   searchSymbols: (query) => ipcRenderer.invoke('search:symbols', query),
   searchRetrieve: (query) => ipcRenderer.invoke('search:retrieve', query),
   rebuildCodeIndex: () => ipcRenderer.invoke('index:rebuild'),
+  searchReferences: (name) => ipcRenderer.invoke('search:references', name),
+  searchRelated: (path) => ipcRenderer.invoke('search:related', path),
+  listEvalTasks: () => ipcRenderer.invoke('evals:list'),
+  getEvalScoreboard: () => ipcRenderer.invoke('evals:scoreboard'),
+  runEvals: (payload) => ipcRenderer.invoke('evals:run', payload),
+  cancelEvals: () => ipcRenderer.invoke('evals:cancel'),
+  evalsRunning: () => ipcRenderer.invoke('evals:running'),
+  clearEvalResults: () => ipcRenderer.invoke('evals:clear'),
+  onEvalProgress: (cb) => subscribe('evals:progress', cb),
+  listBackgroundJobs: () => ipcRenderer.invoke('agents:jobs'),
+  enqueueBackgroundJob: (payload) => ipcRenderer.invoke('agents:enqueue', payload),
+  stopBackgroundJob: (id) => ipcRenderer.invoke('agents:stopJob', id),
+  discardBackgroundJob: (id) => ipcRenderer.invoke('agents:discardJob', id),
+  mergeBackgroundJob: (id) => ipcRenderer.invoke('agents:mergeJob', id),
+  backgroundJobDiff: (id) => ipcRenderer.invoke('agents:jobDiff', id),
+  onBackgroundJob: (cb) => subscribe('agents:job', cb),
   aiComplete: (payload) => ipcRenderer.invoke('ai:complete', payload),
   aiCompleteCancel: (requestId) => ipcRenderer.invoke('ai:completeCancel', requestId),
   aiInlineEdit: (payload) => ipcRenderer.invoke('ai:inlineEdit', payload),

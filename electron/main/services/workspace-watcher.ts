@@ -1,5 +1,6 @@
 import { watch, type FSWatcher } from 'fs'
-import { basename } from 'path'
+import { createRequire } from 'module'
+import { basename, relative, resolve, sep } from 'path'
 
 const IGNORE_NAMES = new Set([
   'node_modules',
@@ -15,28 +16,37 @@ const IGNORE_NAMES = new Set([
   'cache'
 ])
 
+/** Globs passed to @parcel/watcher so the native layer never reports them. */
+const NATIVE_IGNORE = [
+  'node_modules',
+  '**/node_modules',
+  '.git',
+  'out',
+  'dist',
+  'release',
+  '.eris/cache',
+  '.eris/checkpoints',
+  '.eris/runs',
+  '.eris/code-index.json',
+  '**/.DS_Store',
+  '**/*.tsbuildinfo'
+]
+
+const DEBOUNCE_MS = 400
+const DEFAULT_SUPPRESS_MS = 1500
+
 /** Paths under .eris that are safe to ignore (agent/index feedback). */
-function shouldIgnoreErisRel(rel: string): boolean {
-  const n = rel.split('\\').join('/')
-  if (!n.includes('.eris/')) return false
-  if (n.endsWith('/code-index.json') || n.includes('/code-index.json')) return true
-  if (n.includes('/.eris/cache/') || n.includes('/.eris/checkpoints/')) return true
+export function shouldIgnoreErisRel(rel: string): boolean {
+  const n = `/${rel.split('\\').join('/')}`
+  if (!n.includes('/.eris/')) return false
+  if (n.endsWith('/code-index.json')) return true
+  if (n.includes('/.eris/cache/') || n.includes('/.eris/checkpoints/') || n.includes('/.eris/runs/')) {
+    return true
+  }
   return false
 }
 
-export type WorkspaceFsChangeHandler = (payload: {
-  workspacePath: string
-  path: string
-  eventType: string
-}) => void
-
-let watcher: FSWatcher | null = null
-let watchedPath: string | null = null
-let debounceTimer: ReturnType<typeof setTimeout> | null = null
-let pending: { path: string; eventType: string } | null = null
-let handler: WorkspaceFsChangeHandler | null = null
-
-function shouldIgnore(name: string): boolean {
+function shouldIgnoreName(name: string): boolean {
   if (!name) return true
   if (IGNORE_NAMES.has(name)) return true
   if (name.startsWith('.')) {
@@ -47,57 +57,153 @@ function shouldIgnore(name: string): boolean {
   return false
 }
 
+/** True when a workspace-relative path should never reach the change handler. */
+export function shouldIgnoreWorkspaceRel(rel: string): boolean {
+  const n = rel.split('\\').join('/')
+  const parts = n.split('/')
+  if (parts.some((p) => IGNORE_NAMES.has(p))) return true
+  if (shouldIgnoreErisRel(n)) return true
+  const name = basename(n)
+  return shouldIgnoreName(name) && !n.includes('.eris/')
+}
+
+export type WorkspaceFsChangeHandler = (payload: {
+  workspacePath: string
+  path: string
+  eventType: string
+}) => void
+
+type ParcelSubscription = { unsubscribe: () => Promise<void> }
+type ParcelWatcher = {
+  subscribe: (
+    dir: string,
+    fn: (err: Error | null, events: Array<{ path: string; type: string }>) => void,
+    opts?: { ignore?: string[] }
+  ) => Promise<ParcelSubscription>
+}
+
+let fsWatcher: FSWatcher | null = null
+let parcelSub: ParcelSubscription | null = null
+let generation = 0
+let watchedPath: string | null = null
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
+let pending: { path: string; eventType: string } | null = null
+let handler: WorkspaceFsChangeHandler | null = null
+const suppressed = new Map<string, number>()
+let parcel: ParcelWatcher | null | undefined
+
+function loadParcel(): ParcelWatcher | null {
+  if (parcel !== undefined) return parcel
+  try {
+    parcel = createRequire(__filename)('@parcel/watcher') as ParcelWatcher
+  } catch {
+    parcel = null
+  }
+  return parcel
+}
+
+/** Ignore watcher events for this absolute path for a short window (our own writes). */
+export function suppressWatcherFor(absPath: string, ms = DEFAULT_SUPPRESS_MS): void {
+  suppressed.set(resolve(absPath), Date.now() + ms)
+}
+
+function isSuppressed(absPath: string): boolean {
+  const key = resolve(absPath)
+  const until = suppressed.get(key)
+  if (until === undefined) return false
+  if (Date.now() > until) {
+    suppressed.delete(key)
+    return false
+  }
+  return true
+}
+
 export function setWorkspaceFsChangeHandler(next: WorkspaceFsChangeHandler | null): void {
   handler = next
 }
 
 export function stopWorkspaceWatcher(): void {
+  generation++
   if (debounceTimer) {
     clearTimeout(debounceTimer)
     debounceTimer = null
   }
   pending = null
-  if (watcher) {
+  if (fsWatcher) {
     try {
-      watcher.close()
+      fsWatcher.close()
     } catch {
       /* ignore */
     }
-    watcher = null
+    fsWatcher = null
+  }
+  if (parcelSub) {
+    void parcelSub.unsubscribe().catch(() => undefined)
+    parcelSub = null
   }
   watchedPath = null
+}
+
+function onRawEvent(root: string, absPath: string, eventType: string): void {
+  if (!watchedPath || !handler || watchedPath !== root) return
+  if (isSuppressed(absPath)) return
+  const rel = relative(root, absPath).split(sep).join('/')
+  if (!rel || rel.startsWith('..')) return
+  if (shouldIgnoreWorkspaceRel(rel)) return
+  pending = { path: rel, eventType }
+  if (debounceTimer) clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(() => {
+    debounceTimer = null
+    const p = pending
+    pending = null
+    if (!p || !watchedPath || !handler) return
+    handler({ workspacePath: watchedPath, path: p.path, eventType: p.eventType })
+  }, DEBOUNCE_MS)
+}
+
+function startFsWatch(root: string): void {
+  try {
+    fsWatcher = watch(root, { recursive: true }, (eventType, filename) => {
+      if (!filename) return
+      onRawEvent(root, resolve(root, String(filename)), String(eventType || 'change'))
+    })
+    fsWatcher.on('error', () => {
+      // FSWatcher can fail on some volumes; leave stopped until next workspace open
+      stopWorkspaceWatcher()
+    })
+  } catch {
+    fsWatcher = null
+  }
 }
 
 export function startWorkspaceWatcher(workspacePath: string | null): void {
   stopWorkspaceWatcher()
   if (!workspacePath) return
-  watchedPath = workspacePath
-  try {
-    watcher = watch(workspacePath, { recursive: true }, (eventType, filename) => {
-      if (!watchedPath || !handler) return
-      const name = filename ? basename(String(filename)) : ''
-      const rel = filename ? String(filename).split('\\').join('/') : ''
-      const parts = rel.split('/')
-      if (parts.some((p) => IGNORE_NAMES.has(p))) return
-      if (shouldIgnoreErisRel(rel) || shouldIgnoreErisRel(name)) return
-      if (name === 'code-index.json') return
-      if (shouldIgnore(name) && !rel.includes('.eris/')) return
-      pending = { path: rel || '.', eventType: String(eventType || 'change') }
-      if (debounceTimer) clearTimeout(debounceTimer)
-      debounceTimer = setTimeout(() => {
-        debounceTimer = null
-        const p = pending
-        pending = null
-        if (!p || !watchedPath || !handler) return
-        handler({ workspacePath: watchedPath, path: p.path, eventType: p.eventType })
-      }, 400)
-    })
-    watcher.on('error', () => {
-      // FSWatcher can fail on some volumes; leave stopped until next workspace open
-      stopWorkspaceWatcher()
-    })
-  } catch {
-    watcher = null
-    watchedPath = null
+  const root = resolve(workspacePath)
+  watchedPath = root
+  const gen = generation
+  const native = loadParcel()
+  if (!native) {
+    startFsWatch(root)
+    return
   }
+  native
+    .subscribe(
+      root,
+      (err, events) => {
+        if (err || gen !== generation) return
+        for (const e of events) onRawEvent(root, e.path, e.type === 'update' ? 'change' : 'rename')
+      },
+      { ignore: NATIVE_IGNORE }
+    )
+    .then((sub) => {
+      if (gen !== generation) {
+        void sub.unsubscribe().catch(() => undefined)
+        return
+      }
+      parcelSub = sub
+    })
+    .catch(() => {
+      if (gen === generation) startFsWatch(root)
+    })
 }

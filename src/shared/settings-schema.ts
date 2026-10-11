@@ -64,6 +64,18 @@ export const McpServerSchema = z.object({
   notes: z.string()
 })
 
+export const LanguageServerSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  enabled: z.boolean(),
+  /** LSP languageId sent in didOpen (python, go, rust, …) */
+  languageId: z.string().min(1),
+  /** File extensions without the dot */
+  extensions: z.array(z.string()),
+  command: z.string(),
+  args: z.array(z.string())
+})
+
 export const SettingsSchema = z.object({
   models: z.object({
     defaultModel: z.string(),
@@ -77,6 +89,10 @@ export const SettingsSchema = z.object({
     maxHistoryMessages: z.number().int().min(2).max(200),
     /** When true, agent file changes are kept automatically (no review required) */
     autoKeepDiffs: z.boolean(),
+    /** ask = prompt before agent shell commands / pushes (safe commands skip); auto = never prompt */
+    commandApproval: z.enum(['ask', 'auto']),
+    /** Exact commands the user chose "Always allow" for (workspace scope) */
+    allowedCommands: z.array(z.string()),
     routing: z.object({
       enabled: z.boolean(),
       mode: z.enum(['auto', 'manual', 'off']),
@@ -84,6 +100,27 @@ export const SettingsSchema = z.object({
       useLlmRouter: z.boolean(),
       fallbackAgentId: z.string().min(1)
     })
+  }),
+  intelligence: z.object({
+    /** auto = embeddingModel on a connection when set, else local hashed vectors */
+    embeddingProvider: z.enum(['auto', 'local', 'connection']),
+    /** Model name served by a connection, e.g. nomic-embed-text on Ollama */
+    embeddingModel: z.string(),
+    /** Extra language servers; TypeScript/JavaScript is built in */
+    languageServers: z.array(LanguageServerSchema)
+  }),
+  evals: z.object({
+    /** Prefer the model with the best eval success rate for a turn's intent */
+    useScoresForRouting: z.boolean(),
+    /** Runs per model × intent before scores influence routing */
+    minRuns: z.number().int().min(1).max(50),
+    /** Let eval agents run commands that would normally need approval */
+    allowUnsafeCommands: z.boolean()
+  }),
+  backgroundAgents: z.object({
+    maxParallel: z.number().int().min(1).max(6),
+    /** Symlink the workspace node_modules into each worktree */
+    linkNodeModules: z.boolean()
   }),
   mcp: z.object({
     servers: z.array(McpServerSchema)
@@ -138,6 +175,7 @@ export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>
 export type ProjectAgentsConfig = z.infer<typeof ProjectAgentsSchema>
 export type ModelConnection = z.infer<typeof ModelConnectionSchema>
 export type McpServerConfig = z.infer<typeof McpServerSchema>
+export type LanguageServerConfig = z.infer<typeof LanguageServerSchema>
 export type SubagentConfig = AgentDefinition
 
 export type SettingsScope = 'user' | 'workspace'
@@ -232,7 +270,9 @@ export interface TurnPlan {
   requiresTools: boolean
   escalateToFull: boolean
   reason: string
-  method: 'manual' | 'heuristic' | 'llm' | 'default'
+  method: 'manual' | 'heuristic' | 'llm' | 'default' | 'override' | 'learned' | 'eval'
+  /** Intent the classifier picked before any override / learned correction */
+  classifiedIntent?: ChatIntent
   /** Set when the selected chat model cannot run (e.g. builtin not downloaded). */
   error?: string
 }
@@ -243,6 +283,24 @@ export interface ChatTurnContext {
   manualAgentId?: string | null
   selectedModel: string
   mode: 'ask' | 'agent'
+  /** User override from "Needed tools" / "Just a question" */
+  forceRoute?: 'tools' | 'answer'
+}
+
+/** Structured chat turn; the main process assembles the final prompt from this. */
+export interface ChatPromptInput {
+  text: string
+  mode: 'ask' | 'agent'
+  agentId: string
+  agentName?: string
+  skillIds: string[]
+  /** Active editor tab (may hold unsaved content) */
+  openFile?: { path: string; language?: string; content: string } | null
+  /** content set when the file is open in a tab; otherwise main reads from disk */
+  attachments: Array<{ path: string; name: string; language?: string; content?: string }>
+  history: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>
+  /** Continue a persisted, unfinished agent run */
+  resumeRunId?: string
 }
 
 export interface ResolvedAgent extends AgentDefinition {

@@ -1,0 +1,102 @@
+[
+  {
+    "id": "edit-add-function",
+    "title": "Add an exported function",
+    "intent": "edit",
+    "prompt": "In math.js, add a function `subtract(a, b)` that returns a - b and export it alongside `add`.",
+    "files": {
+      "math.js": "function add(a, b) {\n  return a + b\n}\n\nmodule.exports = { add }\n"
+    },
+    "checks": [
+      {
+        "type": "command",
+        "command": "node -e \"const m = require('./math.js'); process.exit(m.subtract(5, 3) === 2 && m.add(2, 2) === 4 ? 0 : 1)\""
+      }
+    ]
+  },
+  {
+    "id": "edit-fix-bug",
+    "title": "Fix an off-by-one bug",
+    "intent": "edit",
+    "prompt": "`node test.js` fails. Fix the bug in sum.js so the tests pass. Do not edit test.js.",
+    "files": {
+      "sum.js": "function sum(xs) {\n  let total = 0\n  for (let i = 1; i < xs.length; i++) total += xs[i]\n  return total\n}\n\nmodule.exports = { sum }\n",
+      "test.js": "const assert = require('assert')\nconst { sum } = require('./sum')\nassert.strictEqual(sum([1, 2, 3]), 6)\nassert.strictEqual(sum([]), 0)\nassert.strictEqual(sum([5]), 5)\nconsole.log('ok')\n"
+    },
+    "checks": [
+      { "type": "command", "command": "node test.js" },
+      { "type": "file_contains", "path": "test.js", "text": "assert.strictEqual(sum([5]), 5)" }
+    ]
+  },
+  {
+    "id": "edit-rename-file",
+    "title": "Rename a file",
+    "intent": "edit",
+    "prompt": "Rename notes/old-name.txt to notes/new-name.txt. Keep its contents unchanged.",
+    "files": {
+      "notes/old-name.txt": "keep this line\n"
+    },
+    "checks": [
+      { "type": "file_exists", "path": "notes/new-name.txt" },
+      { "type": "file_absent", "path": "notes/old-name.txt" },
+      { "type": "file_contains", "path": "notes/new-name.txt", "text": "keep this line" }
+    ]
+  },
+  {
+    "id": "edit-create-module",
+    "title": "Create a new module",
+    "intent": "edit",
+    "prompt": "Create src/greet.js that exports a function `greet(name)` returning the string `Hello, <name>!` (CommonJS module.exports).",
+    "files": {
+      "package.json": "{\n  \"name\": \"greet-fixture\",\n  \"version\": \"1.0.0\"\n}\n"
+    },
+    "checks": [
+      {
+        "type": "command",
+        "command": "node -e \"process.exit(require('./src/greet.js').greet('Ada') === 'Hello, Ada!' ? 0 : 1)\""
+      }
+    ]
+  },
+  {
+    "id": "explore-find-definition",
+    "title": "Locate a definition",
+    "intent": "explore",
+    "prompt": "Which file defines the function `parseConfig`? Reply with the file path.",
+    "files": {
+      "src/index.ts": "import { parseConfig } from './config/parse'\n\nexport function main() {\n  return parseConfig('{}')\n}\n",
+      "src/config/parse.ts": "export function parseConfig(raw: string) {\n  return JSON.parse(raw) as Record<string, unknown>\n}\n",
+      "src/util.ts": "export const noop = () => undefined\n"
+    },
+    "checks": [
+      { "type": "answer_contains", "text": "src/config/parse.ts" },
+      { "type": "no_changes" }
+    ]
+  },
+  {
+    "id": "answer-without-tools",
+    "title": "Answer without touching files",
+    "intent": "answer",
+    "prompt": "In one sentence, what does HTTP status code 404 mean?",
+    "files": {
+      "README.md": "# Fixture\n"
+    },
+    "checks": [
+      { "type": "answer_matches", "pattern": "not\\s*found" },
+      { "type": "no_changes" }
+    ]
+  },
+  {
+    "id": "run-test-suite",
+    "title": "Run tests and report",
+    "intent": "run",
+    "prompt": "Run the test suite with `npm test` and tell me how many tests passed.",
+    "files": {
+      "package.json": "{\n  \"name\": \"run-fixture\",\n  \"version\": \"1.0.0\",\n  \"scripts\": { \"test\": \"node test.js\" }\n}\n",
+      "test.js": "const results = [1 + 1 === 2, 'a'.toUpperCase() === 'A', [1, 2].length === 2]\nconst passed = results.filter(Boolean).length\nconsole.log(`${passed} passed, ${results.length - passed} failed`)\n"
+    },
+    "checks": [
+      { "type": "answer_matches", "pattern": "\\b3\\b" },
+      { "type": "no_changes" }
+    ]
+  }
+]
