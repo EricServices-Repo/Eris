@@ -51,7 +51,10 @@ export function commandNeedsApproval(
   return true
 }
 
-const pending = new Map<string, (decision: CommandApprovalDecision) => void>()
+const pending = new Map<
+  string,
+  { requestId: string; done: (decision: CommandApprovalDecision) => void }
+>()
 
 /** Ask the renderer to approve a command; resolves deny on abort. */
 export function requestCommandApproval(
@@ -73,7 +76,7 @@ export function requestCommandApproval(
       resolve(decision)
     }
     const onAbort = () => done('deny')
-    pending.set(approvalId, done)
+    pending.set(approvalId, { requestId, done })
     if (signal?.aborted) {
       done('deny')
       return
@@ -92,12 +95,15 @@ export function resolveCommandApproval(
   approvalId: string,
   decision: CommandApprovalDecision
 ): boolean {
-  const fn = pending.get(approvalId)
-  if (!fn) return false
-  fn(decision)
+  const entry = pending.get(approvalId)
+  if (!entry) return false
+  entry.done(decision)
   return true
 }
 
-export function denyAllPendingApprovals(): void {
-  for (const fn of [...pending.values()]) fn('deny')
+/** Deny pending prompts — all of them, or only those raised by one chat / background run. */
+export function denyAllPendingApprovals(requestId?: string): void {
+  for (const entry of [...pending.values()]) {
+    if (requestId === undefined || entry.requestId === requestId) entry.done('deny')
+  }
 }

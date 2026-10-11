@@ -16,6 +16,7 @@ import {
 import { streamModelChat } from './chat-runtime'
 import { routeHeuristic, routeMessage } from './router'
 import { learnedRouteFor, readRoutingCorrections, routingExamples } from './routing-feedback'
+import { bestEvalModelForIntent } from './eval-store'
 
 /** LLM router hints below this confidence are ignored. */
 const LLM_MIN_CONFIDENCE = 0.55
@@ -34,6 +35,9 @@ const READ_TOOLS = new Set([
   'grep',
   'glob',
   'search_symbols',
+  'find_references',
+  'semantic_search',
+  'related_files',
   'retrieve',
   'read_context',
   'read_email',
@@ -59,6 +63,20 @@ const EDIT_TOOLS = new Set([
 ])
 
 const FULL_TOOLS = new Set([...EDIT_TOOLS, 'run', 'git_sync'])
+
+function readyModelCandidates(settings: AppSettings): string[] {
+  const out: string[] = []
+  for (const ref of ['builtin:composer-lite', 'builtin:composer'] as const) {
+    if (isExactBuiltinReady(ref)) out.push(ref)
+  }
+  for (const conn of settings.models.connections) {
+    if (!conn.enabled || conn.type === 'builtin') continue
+    for (const name of conn.models) {
+      if (name && !isBuiltinRef(name)) out.push(name)
+    }
+  }
+  return [...new Set(out)]
+}
 
 export function intentNeedsTools(intent: ChatIntent): boolean {
   return intent === 'explore' || intent === 'edit' || intent === 'review' || intent === 'run'
@@ -255,7 +273,8 @@ function formatReason(parts: {
     heuristic: 'Auto',
     default: 'Auto',
     override: 'Override',
-    learned: 'Learned'
+    learned: 'Learned',
+    eval: 'Eval'
   }
   return `${label[parts.method]} → ${parts.agentName} · ${parts.intent} · ${modelBit}`
 }
@@ -441,8 +460,24 @@ export async function planChatTurn(options: {
   }
 
   const toolPolicy = effectiveToolPolicy(agent, intent, mode)
+  let modelForRoles = selectedModel
+  if (
+    options.settings.evals.useScoresForRouting &&
+    !options.context.manualAgentId &&
+    mode === 'agent'
+  ) {
+    const winner = bestEvalModelForIntent(
+      intent,
+      readyModelCandidates(options.settings),
+      options.settings.evals.minRuns
+    )
+    if (winner && winner !== selectedModel) {
+      modelForRoles = winner
+      method = 'eval'
+    }
+  }
   const roles = resolveModelRoles({
-    selectedModel,
+    selectedModel: modelForRoles,
     intent,
     toolPolicy,
     preferEscalate: agent.preferEscalate !== false
@@ -487,7 +522,11 @@ export function turnPlanToRouteResult(plan: TurnPlan): RouteResult {
     model: plan.models.chat,
     reason: plan.reason,
     method:
-      plan.method === 'override' ? 'manual' : plan.method === 'learned' ? 'heuristic' : plan.method
+      plan.method === 'override'
+        ? 'manual'
+        : plan.method === 'learned' || plan.method === 'eval'
+          ? 'heuristic'
+          : plan.method
   }
 }
 

@@ -2480,7 +2480,8 @@ select:focus {
   font-size: 12px;
 }
 
-.git-file:hover {
+.git-file:hover,
+.git-file.is-active {
   background: var(--accent-soft);
 }
 

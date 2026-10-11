@@ -12,7 +12,10 @@
         "enabled": true,
         "baseUrl": "",
         "apiKeyRef": "",
-        "models": ["builtin:composer-lite", "builtin:composer"]
+        "models": [
+          "builtin:composer-lite",
+          "builtin:composer"
+        ]
       }
     ]
   },
@@ -30,6 +33,57 @@
       "useLlmRouter": false,
       "fallbackAgentId": "composer"
     }
+  },
+  "intelligence": {
+    "embeddingProvider": "auto",
+    "embeddingModel": "",
+    "languageServers": [
+      {
+        "id": "python",
+        "name": "Python (pyright)",
+        "enabled": true,
+        "languageId": "python",
+        "extensions": [
+          "py",
+          "pyi"
+        ],
+        "command": "pyright-langserver",
+        "args": [
+          "--stdio"
+        ]
+      },
+      {
+        "id": "go",
+        "name": "Go (gopls)",
+        "enabled": true,
+        "languageId": "go",
+        "extensions": [
+          "go"
+        ],
+        "command": "gopls",
+        "args": []
+      },
+      {
+        "id": "rust",
+        "name": "Rust (rust-analyzer)",
+        "enabled": true,
+        "languageId": "rust",
+        "extensions": [
+          "rs"
+        ],
+        "command": "rust-analyzer",
+        "args": []
+      }
+    ]
+  },
+  "evals": {
+    "useScoresForRouting": true,
+    "minRuns": 3,
+    "allowUnsafeCommands": false
+  },
+  "backgroundAgents": {
+    "maxParallel": 2,
+    "linkNodeModules": true
   },
   "mcp": {
     "servers": []

@@ -18,6 +18,13 @@ import type {
   WorkspaceMeta,
   WorkspaceRecord
 } from './settings-schema'
+import type {
+  EvalProgressEvent,
+  EvalResult,
+  EvalScoreboard,
+  EvalTaskInfo
+} from './evals'
+import type { BackgroundJob, BackgroundJobEvent } from './background-agents'
 
 export interface AppState {
   workspaces: WorkspaceRecord[]
@@ -499,6 +506,32 @@ export interface IdeApi {
     query: string
   ) => Promise<{ ok: boolean; detail: string; paths: string[] }>
   rebuildCodeIndex: () => Promise<{ ok: boolean; files: number; symbols: number }>
+  searchReferences: (
+    name: string
+  ) => Promise<{ ok: boolean; detail: string; hits: Array<{ name: string; path: string; line: number }> }>
+  searchRelated: (path: string) => Promise<{ ok: boolean; detail: string; paths: string[] }>
+  listEvalTasks: () => Promise<EvalTaskInfo[]>
+  getEvalScoreboard: () => Promise<EvalScoreboard>
+  runEvals: (payload: {
+    taskIds: string[]
+    models: string[]
+    repeats?: number
+  }) => Promise<EvalResult[]>
+  cancelEvals: () => Promise<boolean>
+  evalsRunning: () => Promise<boolean>
+  clearEvalResults: () => Promise<EvalScoreboard>
+  onEvalProgress: (cb: (event: EvalProgressEvent) => void) => () => void
+  listBackgroundJobs: () => Promise<BackgroundJob[]>
+  enqueueBackgroundJob: (payload: {
+    goal: string
+    model: string
+    agentId?: string
+  }) => Promise<BackgroundJob>
+  stopBackgroundJob: (id: string) => Promise<boolean>
+  discardBackgroundJob: (id: string) => Promise<BackgroundJob>
+  mergeBackgroundJob: (id: string) => Promise<BackgroundJob>
+  backgroundJobDiff: (id: string) => Promise<{ ok: boolean; diff: string; error?: string }>
+  onBackgroundJob: (cb: (event: BackgroundJobEvent) => void) => () => void
   aiComplete: (payload: {
     path: string
     language: string

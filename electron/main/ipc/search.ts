@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { buildCodeIndexAsync, findSymbols } from '../services/code-index'
+import { buildCodeIndexAsync, findReferences, findSymbols, relatedFiles } from '../services/code-index'
 import { retrieveContextAsync, workspaceGlob, workspaceGrep } from '../services/workspace-search'
 import { appState } from '../app-state'
 
@@ -20,6 +20,14 @@ export function registerSearchIpc(): void {
   ipcMain.handle('search:symbols', (_e, query: string) => {
     if (!appState.currentWorkspace) return { ok: false, detail: 'No workspace', hits: [] }
     return findSymbols(appState.currentWorkspace, query)
+  })
+  ipcMain.handle('search:references', (_e, name: string) => {
+    if (!appState.currentWorkspace) return { ok: false, detail: 'No workspace', hits: [] }
+    return findReferences(appState.currentWorkspace, name)
+  })
+  ipcMain.handle('search:related', (_e, path: string) => {
+    if (!appState.currentWorkspace) return { ok: false, detail: 'No workspace', paths: [] }
+    return relatedFiles(appState.currentWorkspace, path)
   })
 
   ipcMain.handle('search:retrieve', async (_e, query: string) => {

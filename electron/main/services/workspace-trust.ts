@@ -15,7 +15,9 @@ export const RISKY_WORKSPACE_SETTINGS: Array<{ path: string[]; label: string }> 
   { path: ['ericServices'], label: 'Change the EricServic.es account endpoint' },
   { path: ['agent', 'commandApproval'], label: 'Turn off agent command approval' },
   { path: ['agent', 'allowedCommands'], label: 'Pre-approve agent shell commands' },
-  { path: ['general', 'logging', 'directory'], label: 'Write logs to a custom folder' }
+  { path: ['general', 'logging', 'directory'], label: 'Write logs to a custom folder' },
+  { path: ['intelligence', 'languageServers'], label: 'Start language servers (runs local commands)' },
+  { path: ['evals', 'allowUnsafeCommands'], label: 'Let eval agents run commands without approval' }
 ]
 
 interface TrustStore {

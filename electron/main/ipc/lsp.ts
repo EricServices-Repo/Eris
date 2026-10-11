@@ -8,16 +8,19 @@ import {
   lspDidClose,
   lspDidOpen,
   lspHover,
+  onExtraLspDiagnostics,
   onLspDiagnostics
-} from '../services/ts-lsp'
+} from '../services/language-servers'
 import { appState } from '../app-state'
 
 export function registerLspIpc(): void {
-  onLspDiagnostics((items) => {
+  const sendDiags = (items: { path: string }[]) => {
     if (!appState.mainWindow || appState.mainWindow.isDestroyed() || !items.length) return
     const path = items[0]!.path
     appState.mainWindow.webContents.send('lsp:diagnostics', { path, diagnostics: items })
-  })
+  }
+  onLspDiagnostics(sendDiags)
+  onExtraLspDiagnostics(sendDiags)
 
   ipcMain.handle(
     'lsp:didOpen',

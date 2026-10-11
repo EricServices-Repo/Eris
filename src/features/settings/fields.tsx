@@ -166,6 +166,56 @@ export function settingFields(agentIds: string[]): SettingField[] {
       type: 'string'
     },
     {
+      cat: 'agent',
+      label: 'Route from eval scores',
+      hint: 'Prefer the model with the best success rate for this intent',
+      path: ['evals', 'useScoresForRouting'],
+      type: 'boolean'
+    },
+    {
+      cat: 'agent',
+      label: 'Min eval runs',
+      hint: 'Runs required per model × intent before scores change routing',
+      path: ['evals', 'minRuns'],
+      type: 'number'
+    },
+    {
+      cat: 'agent',
+      label: 'Evals may run unsafe commands',
+      hint: 'Off = evals only auto-allow node/npm test commands',
+      path: ['evals', 'allowUnsafeCommands'],
+      type: 'boolean'
+    },
+    {
+      cat: 'agent',
+      label: 'Max parallel background agents',
+      hint: 'Each job uses its own git worktree',
+      path: ['backgroundAgents', 'maxParallel'],
+      type: 'number'
+    },
+    {
+      cat: 'agent',
+      label: 'Link node_modules into worktrees',
+      hint: 'Symlink the workspace install so background agents skip npm install',
+      path: ['backgroundAgents', 'linkNodeModules'],
+      type: 'boolean'
+    },
+    {
+      cat: 'editor',
+      label: 'Embedding provider',
+      hint: 'auto uses a connection model when set, otherwise local hashed vectors',
+      path: ['intelligence', 'embeddingProvider'],
+      type: 'select',
+      options: ['auto', 'local', 'connection']
+    },
+    {
+      cat: 'editor',
+      label: 'Embedding model',
+      hint: 'Optional connection model (e.g. nomic-embed-text). Empty = local vectors.',
+      path: ['intelligence', 'embeddingModel'],
+      type: 'string'
+    },
+    {
       cat: 'editor',
       label: 'Font size',
       path: ['editor', 'fontSize'],

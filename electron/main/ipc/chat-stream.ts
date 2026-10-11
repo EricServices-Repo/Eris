@@ -286,7 +286,7 @@ export function registerChatStreamIpc(): void {
   )
 
   ipcMain.handle('chat:stop', () => {
-    denyAllPendingApprovals()
+    if (appState.activeChatRequestId) denyAllPendingApprovals(appState.activeChatRequestId)
     if (appState.chatAbort) {
       appState.chatAbort.abort()
       // Keep the controller so in-flight code still sees signal.aborted === true.

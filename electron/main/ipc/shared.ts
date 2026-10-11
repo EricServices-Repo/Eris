@@ -6,7 +6,7 @@ import { startWorkspaceWatcher, stopWorkspaceWatcher } from '../services/workspa
 import { disposeMcpRuntime, syncMcpRuntime } from '../services/mcp-runtime'
 import { ensureCodeIndex } from '../services/code-index'
 import { disposePtySession } from '../services/pty-session'
-import { disposeTsLsp } from '../services/ts-lsp'
+import { disposeLanguageServers, configureLanguageServers } from '../services/language-servers'
 import { userDataRoot } from '../services/paths'
 import { appState } from '../app-state'
 
@@ -51,7 +51,7 @@ export function getSecret(key: string): string | null {
 
 export const refreshIntelligence = () => {
   disposePtySession()
-  void disposeTsLsp()
+  void disposeLanguageServers()
   if (!appState.currentWorkspace) {
     stopWorkspaceWatcher()
     void disposeMcpRuntime()
@@ -59,6 +59,7 @@ export const refreshIntelligence = () => {
   }
   startWorkspaceWatcher(appState.currentWorkspace)
   const settings = getResolvedSettings(appState.currentWorkspace)
+  configureLanguageServers(settings, appState.currentWorkspace)
   void syncMcpRuntime(settings, appState.currentWorkspace).catch(() => undefined)
   try {
     ensureCodeIndex(appState.currentWorkspace)

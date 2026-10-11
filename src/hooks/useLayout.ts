@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 
-export type RightPanel = 'editor' | 'terminal' | 'git' | 'debug'
+export type RightPanel = 'editor' | 'terminal' | 'git' | 'debug' | 'agents' | 'evals'
 
 export function useLayout() {
   const [rightPanel, setRightPanel] = useState<RightPanel>('editor')

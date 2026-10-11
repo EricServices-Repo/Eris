@@ -18,7 +18,7 @@ export interface GitStatusResult {
   entries: GitStatusEntry[]
 }
 
-function runGit(
+export function runGit(
   workspacePath: string,
   args: string[],
   timeoutMs = 20_000

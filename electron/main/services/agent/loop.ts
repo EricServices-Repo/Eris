@@ -9,7 +9,7 @@ import {
 } from '../chat-router'
 import { callMcpTool, isMcpToolName, listMcpTools, syncMcpRuntime } from '../mcp-runtime'
 import { retrieveContextAsync, workspaceGlob, workspaceGrep } from '../workspace-search'
-import { findSymbols } from '../code-index'
+import { findReferences, findSymbols, relatedFiles } from '../code-index'
 import {
   appendContextNote,
   formatWorkspaceContextPrompt,
@@ -98,6 +98,11 @@ export async function* runAgentWithWorkspaceTools(options: {
   approveCommand?: (kind: 'run' | 'push', command: string) => Promise<boolean>
   /** Continue an interrupted run instead of starting fresh. */
   resume?: { goal: string; actionLog: string[]; filesTouched: string[] }
+  /**
+   * sync = (re)start MCP servers for this workspace; reuse = use already-running servers;
+   * off = no MCP tools (evals, so runs stay reproducible).
+   */
+  mcp?: 'sync' | 'reuse' | 'off'
 }): AsyncGenerator<AgentRunnerEvent, void, unknown> {
   const messages: AgentChatMessage[] = options.messages.map((m) => ({ ...m }))
   const mode: AgentMode = options.mode === 'ask' ? 'ask' : 'agent'
@@ -186,11 +191,15 @@ export async function* runAgentWithWorkspaceTools(options: {
   }
 
   const workspacePath = options.workspacePath as string
-  try {
-    await syncMcpRuntime(options.settings, workspacePath)
-  } catch {
-    // MCP optional
+  const mcpMode = options.mcp ?? 'sync'
+  if (mcpMode === 'sync') {
+    try {
+      await syncMcpRuntime(options.settings, workspacePath)
+    } catch {
+      // MCP optional
+    }
   }
+  const mcpTools = mcpMode === 'off' ? [] : listMcpTools()
   const checkpoint = createCheckpoint(workspacePath)
   pruneOldCheckpoints(workspacePath, 20)
   yield { type: 'checkpoint', checkpointId: checkpoint.id }
@@ -218,12 +227,12 @@ export async function* runAgentWithWorkspaceTools(options: {
   } catch {
     // optional
   }
-  const mcpToolCount = listMcpTools().length
+  const mcpToolCount = mcpTools.length
   const openaiTools: OpenAIToolDef[] = filterToolsByPolicy(
     [
       ...COMPOSER_OPENAI_TOOLS,
       ...mcpToolsToOpenAI(
-        listMcpTools().map((t) => ({
+        mcpTools.map((t) => ({
           fqName: t.fqName,
           description: t.description
         }))
@@ -769,6 +778,20 @@ export async function* runAgentWithWorkspaceTools(options: {
         const query = argString(call.args, 'query') || argString(call.args, 'pattern')
         const found = findSymbols(workspacePath, query)
         result = { ok: found.ok, detail: found.detail, mutated: false }
+      } else if (call.name === 'find_references') {
+        const name =
+          argString(call.args, 'name') || argString(call.args, 'query') || argString(call.args, 'symbol')
+        const found = findReferences(workspacePath, name)
+        result = { ok: found.ok, detail: found.detail, mutated: false }
+      } else if (call.name === 'semantic_search') {
+        const query =
+          argString(call.args, 'query') || argString(call.args, 'pattern') || originalUserGoal
+        const retrieved = await retrieveContextAsync(workspacePath, query, 8)
+        result = { ok: retrieved.ok, detail: retrieved.detail, mutated: false }
+      } else if (call.name === 'related_files') {
+        const path = argString(call.args, 'path') || argString(call.args, 'file')
+        const related = relatedFiles(workspacePath, path)
+        result = { ok: related.ok, detail: related.detail, mutated: false }
       } else if (call.name === 'retrieve') {
         const query =
           argString(call.args, 'query') || argString(call.args, 'pattern') || originalUserGoal
@@ -908,7 +931,7 @@ export async function* runAgentWithWorkspaceTools(options: {
             mutated: false
           }
         }
-      } else if (isMcpToolName(call.name)) {
+      } else if (mcpMode !== 'off' && isMcpToolName(call.name)) {
         const mcpResult = await callMcpTool(call.name, call.args)
         result = { ok: mcpResult.ok, detail: mcpResult.detail, mutated: false }
       } else if (

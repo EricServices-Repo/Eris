@@ -6,7 +6,9 @@ import { disposeMcpRuntime } from './services/mcp-runtime'
 import { resolveLoginShellPath } from './services/workspace-env'
 import { setDiagnosticsPaused } from './services/diagnostics'
 import { disposePtySession } from './services/pty-session'
-import { disposeTsLsp } from './services/ts-lsp'
+import { disposeLanguageServers } from './services/language-servers'
+import { stopAllBackgroundJobs } from './services/background-agents'
+import { cancelEvalRun } from './services/eval-runner'
 import { disposeRuntime } from './services/builtin-model'
 import { configureLogger, logInfo, logWarn } from './services/logger'
 import { appState } from './app-state'
@@ -75,10 +77,12 @@ app.on('before-quit', (event) => {
   isQuitting = true
   appState.chatAbort?.abort()
   appState.chatAbort = null
+  cancelEvalRun()
+  void stopAllBackgroundJobs()
   setDiagnosticsPaused(false)
   stopWorkspaceWatcher()
   disposePtySession()
-  void disposeTsLsp().catch(() => undefined)
+  void disposeLanguageServers().catch(() => undefined)
   void disposeMcpRuntime().catch(() => undefined)
   void disposeRuntime()
     .catch(() => undefined)

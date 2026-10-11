@@ -69,6 +69,13 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   tool('search_symbols', 'Search the code symbol index', { query: { type: 'string' } }, [
     'query'
   ]),
+  tool('find_references', 'Find definitions and references of a symbol', { name: { type: 'string' } }, [
+    'name'
+  ]),
+  tool('semantic_search', 'Find files related to a natural-language query (embeddings + keywords)', {
+    query: { type: 'string' }
+  }, ['query']),
+  tool('related_files', 'Files that share symbols with a path', { path: pathProp }, ['path']),
   tool('retrieve', 'Rank relevant files for a query', { query: { type: 'string' } }, ['query']),
   tool('read_context', 'Read workspace .eris/context.md notes', {}),
   tool('read_email', 'Read pulled email context', {}),

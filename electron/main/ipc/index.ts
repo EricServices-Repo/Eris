@@ -16,6 +16,8 @@ import { registerSearchIpc } from './search'
 import { registerAiIpc } from './ai'
 import { registerDebugIpc } from './debug'
 import { registerContextIpc } from './context'
+import { registerEvalsIpc } from './evals'
+import { registerBackgroundAgentsIpc } from './background-agents'
 
 export function registerIpc(): void {
   registerWorkspaceIpc()
@@ -36,4 +38,6 @@ export function registerIpc(): void {
   registerAiIpc()
   registerDebugIpc()
   registerContextIpc()
+  registerEvalsIpc()
+  registerBackgroundAgentsIpc()
 }

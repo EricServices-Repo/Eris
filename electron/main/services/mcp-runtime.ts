@@ -1,7 +1,16 @@
+import { app } from 'electron'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import type { AppSettings, McpServerConfig } from '../../../src/shared/settings-schema'
 import { listEnabledMcpServers } from './mcp'
 import { logError, logInfo, logWarn } from './logger'
+
+function appVersion(): string {
+  try {
+    return app.getVersion()
+  } catch {
+    return '0.2.0'
+  }
+}
 
 export type McpToolInfo = {
   serverId: string
@@ -175,7 +184,7 @@ async function connectStdio(config: McpServerConfig, cwd: string | null): Promis
   await stdioRequest(session, 'initialize', {
     protocolVersion: '2024-11-05',
     capabilities: {},
-    clientInfo: { name: 'Eris', version: '0.1.0' }
+    clientInfo: { name: 'Eris', version: appVersion() }
   })
   writeStdioMessage(child, {
     jsonrpc: '2.0',
@@ -235,7 +244,7 @@ async function connectHttpLike(config: McpServerConfig): Promise<Session> {
   await httpRpc(config.url, 'initialize', {
     protocolVersion: '2024-11-05',
     capabilities: {},
-    clientInfo: { name: 'Eris', version: '0.1.0' }
+    clientInfo: { name: 'Eris', version: appVersion() }
   })
   try {
     await httpRpc(config.url, 'notifications/initialized', {})

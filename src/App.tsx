@@ -44,6 +44,12 @@ const TerminalPanel = lazy(() =>
 const SettingsModal = lazy(() =>
   import('@/features/settings/SettingsModal').then((m) => ({ default: m.SettingsModal }))
 )
+const AgentsPanel = lazy(() =>
+  import('@/features/agents/AgentsPanel').then((m) => ({ default: m.AgentsPanel }))
+)
+const EvalsPanel = lazy(() =>
+  import('@/features/evals/EvalsPanel').then((m) => ({ default: m.EvalsPanel }))
+)
 
 function flattenFiles(entries: FileEntry[], out: Array<{ path: string; name: string }> = []) {
   for (const e of entries) {
@@ -380,6 +386,22 @@ export default function App() {
         }
       },
       {
+        id: 'agents',
+        label: 'Toggle Background Agents',
+        run: () => {
+          setRightCollapsed(false)
+          setRightPanel((p) => (p === 'agents' ? 'editor' : 'agents'))
+        }
+      },
+      {
+        id: 'evals',
+        label: 'Toggle Eval Scoreboard',
+        run: () => {
+          setRightCollapsed(false)
+          setRightPanel((p) => (p === 'evals' ? 'editor' : 'evals'))
+        }
+      },
+      {
         id: 'verify',
         label: 'Run Verify (typecheck/tests)',
         run: () => {
@@ -691,6 +713,26 @@ export default function App() {
                 >
                   ▹
                 </button>
+                <button
+                  type="button"
+                  className={`icon-rail-btn${rightPanel === 'agents' ? ' active' : ''}`}
+                  title="Agents"
+                  aria-label="Agents"
+                  disabled={!workspacePath}
+                  onClick={() => showRightPanel('agents')}
+                >
+                  ↻
+                </button>
+                <button
+                  type="button"
+                  className={`icon-rail-btn${rightPanel === 'evals' ? ' active' : ''}`}
+                  title="Evals"
+                  aria-label="Evals"
+                  disabled={!workspacePath}
+                  onClick={() => showRightPanel('evals')}
+                >
+                  ▣
+                </button>
                 <div className="icon-rail-spacer" />
                 <button
                   type="button"
@@ -742,6 +784,24 @@ export default function App() {
                       onClick={() => setRightPanel('debug')}
                     >
                       Debug
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={rightPanel === 'agents'}
+                      className={`right-panel-tab ${rightPanel === 'agents' ? 'active' : ''}`}
+                      onClick={() => setRightPanel('agents')}
+                    >
+                      Agents
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={rightPanel === 'evals'}
+                      className={`right-panel-tab ${rightPanel === 'evals' ? 'active' : ''}`}
+                      onClick={() => setRightPanel('evals')}
+                    >
+                      Evals
                     </button>
                   </>
                 ) : (
@@ -803,6 +863,24 @@ export default function App() {
                     void openFile(resolveWorkspacePath(path), line)
                   }}
                 />
+              ) : rightPanel === 'agents' ? (
+                <Suspense fallback={<div className="editor-empty">Loading agents…</div>}>
+                  <AgentsPanel
+                    open
+                    workspacePath={workspacePath}
+                    defaultModel={selectedModel || settings?.models.defaultModel || ''}
+                    onClose={() => showRightPanel('editor')}
+                  />
+                </Suspense>
+              ) : rightPanel === 'evals' ? (
+                <Suspense fallback={<div className="editor-empty">Loading evals…</div>}>
+                  <EvalsPanel
+                    open
+                    models={models.map((m) => m.name)}
+                    defaultModel={selectedModel || settings?.models.defaultModel || ''}
+                    onClose={() => showRightPanel('editor')}
+                  />
+                </Suspense>
               ) : (
                 <Suspense fallback={<div className="editor-empty">Loading editor…</div>}>
                   <EditorArea
