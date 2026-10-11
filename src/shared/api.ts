@@ -24,7 +24,11 @@ import type {
   EvalScoreboard,
   EvalTaskInfo
 } from './evals'
-import type { BackgroundJob, BackgroundJobEvent } from './background-agents'
+import type {
+  BackgroundJob,
+  BackgroundJobEvent,
+  EnqueueBackgroundJobRequest
+} from './background-agents'
 
 export interface AppState {
   workspaces: WorkspaceRecord[]
@@ -197,6 +201,7 @@ export interface IdeApi {
     agentId?: string
     mode?: 'ask' | 'agent'
     turnPlan?: TurnPlan
+    threadId?: string | null
   }) => Promise<boolean>
   stopChat: () => Promise<boolean>
   /** Absolute path of a dropped File ('' when it has none) */
@@ -522,16 +527,24 @@ export interface IdeApi {
   clearEvalResults: () => Promise<EvalScoreboard>
   onEvalProgress: (cb: (event: EvalProgressEvent) => void) => () => void
   listBackgroundJobs: () => Promise<BackgroundJob[]>
-  enqueueBackgroundJob: (payload: {
-    goal: string
-    model: string
-    agentId?: string
-  }) => Promise<BackgroundJob>
+  enqueueBackgroundJob: (payload: EnqueueBackgroundJobRequest) => Promise<BackgroundJob>
   stopBackgroundJob: (id: string) => Promise<boolean>
   discardBackgroundJob: (id: string) => Promise<BackgroundJob>
   mergeBackgroundJob: (id: string) => Promise<BackgroundJob>
   backgroundJobDiff: (id: string) => Promise<{ ok: boolean; diff: string; error?: string }>
+  bringJobIntoChat: (
+    id: string,
+    threadId?: string | null
+  ) => Promise<{ ok: boolean; threadId: string; content: string; error?: string }>
   onBackgroundJob: (cb: (event: BackgroundJobEvent) => void) => () => void
+  /** Always https://agents.ericservic.es:6443 — not user-configurable */
+  cloudAgentsBaseUrl: () => Promise<string>
+  cloudAgentsHealth: () => Promise<import('./cloud-agents').CloudHealth>
+  listCloudJobs: () => Promise<BackgroundJob[]>
+  enqueueCloudJob: (
+    payload: import('./cloud-agents').EnqueueCloudJobRequest
+  ) => Promise<BackgroundJob>
+  stopCloudJob: (id: string) => Promise<boolean>
   aiComplete: (payload: {
     path: string
     language: string

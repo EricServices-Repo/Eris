@@ -60,10 +60,12 @@ import {
   MAX_BARE_INSTALLS_PER_RUN,
   packageJsonNewerThanModules
 } from './install-guards'
+import { decideMidRunAdapt, shouldConsiderMidRunAdapt } from './mid-run-adapt'
 import { buildPreservedWorkerMessages, truncateForModel } from './prompts'
 import { streamThinkingText } from './stream'
 import { argString, parseToolCalls, stripToolBlocks } from './tool-parsing'
 import type { AgentChatMessage, AgentMode, AgentRunnerEvent, ToolCall } from './types'
+import type { AgentHandoffPacket } from '../../../../src/shared/agent-orchestration'
 
 /** Consecutive rounds with zero mutation → stronger finish nudge (never stops Full). */
 const MAX_NO_PROGRESS = 8
@@ -103,6 +105,22 @@ export async function* runAgentWithWorkspaceTools(options: {
    * off = no MCP tools (evals, so runs stay reproducible).
    */
   mcp?: 'sync' | 'reuse' | 'off'
+  /** Background job id when running as a worktree agent (enables await_children). */
+  jobId?: string | null
+  /** Spawn a specialist child (orchestrator delegate_to_agent). */
+  onDelegate?: (request: {
+    agentId: string
+    goal: string
+    summary: string
+    files?: string[]
+    openQuestions?: string[]
+    confidence?: number
+    claim?: string
+    wait?: boolean
+    handoff: AgentHandoffPacket
+  }) => Promise<{ ok: boolean; childJobId?: string; detail: string }>
+  /** Wait for children of the current job. */
+  onAwaitChildren?: (timeoutMs: number) => Promise<{ ok: boolean; detail: string }>
 }): AsyncGenerator<AgentRunnerEvent, void, unknown> {
   const messages: AgentChatMessage[] = options.messages.map((m) => ({ ...m }))
   const mode: AgentMode = options.mode === 'ask' ? 'ask' : 'agent'
@@ -111,7 +129,7 @@ export async function* runAgentWithWorkspaceTools(options: {
     [...messages].reverse().find((m) => m.role === 'user')?.content.replace(/\n\n\[Eris\][\s\S]*$/, '') ||
     ''
 
-  const plan =
+  let plan =
     options.turnPlan ??
     (await planChatTurn({
       workspacePath: options.workspacePath,
@@ -133,7 +151,7 @@ export async function* runAgentWithWorkspaceTools(options: {
   }
 
   const chatModel = plan.models.chat
-  const toolsModel = plan.models.tools
+  let workerModel = plan.models.tools
   const modelsCatalog = formatAvailableModelsPrompt(options.settings, chatModel)
   const answerOnly =
     !plan.requiresTools ||
@@ -204,12 +222,19 @@ export async function* runAgentWithWorkspaceTools(options: {
   pruneOldCheckpoints(workspacePath, 20)
   yield { type: 'checkpoint', checkpointId: checkpoint.id }
 
-  const workerModel = toolsModel
   yield { type: 'model', model: workerModel }
   if (plan.escalateToFull) {
     yield {
       type: 'thinking',
       text: `\n\n— Escalating tools to Composer Full (chat stays on ${chatModel.replace(/^builtin:/, '')})…\n`
+    }
+    yield {
+      type: 'adapt',
+      kind: 'escalate',
+      reason: plan.reason,
+      model: workerModel,
+      agentId: plan.agentId,
+      agentName: plan.agentName
     }
   }
   yield {
@@ -280,8 +305,102 @@ export async function* runAgentWithWorkspaceTools(options: {
   let step = 0
   let verifyFailures = 0
   let mutationsSinceVerify = 0
+  let consecutiveToolErrors = 0
+  let escalateCount = plan.escalateToFull ? 1 : 0
+  let rerouteCount = 0
   const reviewOnly = plan.intent === 'review' || isReviewOnlyGoal(originalUserGoal)
-  const promptBudget = contextBudgetTokens(options.settings, workerModel)
+  let promptBudget = contextBudgetTokens(options.settings, workerModel)
+
+  async function* tryMidRunAdapt(trigger: string): AsyncGenerator<AgentRunnerEvent, boolean, unknown> {
+    if (
+      !shouldConsiderMidRunAdapt({
+        verifyFailures,
+        consecutiveToolErrors,
+        noProgressStreak,
+        escalateCount,
+        rerouteCount
+      })
+    ) {
+      return false
+    }
+    const decision = await decideMidRunAdapt({
+      workspacePath,
+      settings: options.settings,
+      plan,
+      selectedModel: options.model,
+      goal: originalUserGoal,
+      getSecret: options.getSecret,
+      signal: options.signal,
+      escalateCount,
+      rerouteCount,
+      actionLog,
+      filesTouched
+    })
+    if (!decision.kind) return false
+
+    if (decision.kind === 'escalate' && decision.nextToolsModel) {
+      escalateCount++
+      workerModel = decision.nextToolsModel
+      plan = {
+        ...plan,
+        models: { ...plan.models, tools: workerModel },
+        escalateToFull: true,
+        reason: `${plan.reason} · ${decision.reason}`
+      }
+      promptBudget = contextBudgetTokens(options.settings, workerModel)
+      consecutiveToolErrors = 0
+      noProgressStreak = 0
+      verifyFailures = Math.max(0, verifyFailures - 1)
+      yield { type: 'model', model: workerModel }
+      yield {
+        type: 'adapt',
+        kind: 'escalate',
+        reason: `${trigger}: ${decision.reason}`,
+        model: workerModel,
+        agentId: plan.agentId,
+        agentName: plan.agentName
+      }
+      yield { type: 'status', text: decision.reason }
+      yield { type: 'thinking', text: `\n\n— ${decision.reason}\n` }
+      workerMessages.push({
+        role: 'user',
+        content:
+          `[Eris mid-run escalate]\n${decision.reason}\n` +
+          `Continue on Composer Full. Re-read files you need, then emit the next tool JSON.`
+      })
+      return true
+    }
+
+    if (decision.kind === 'reroute' && decision.nextPlan) {
+      rerouteCount++
+      const prev = plan.agentName
+      plan = decision.nextPlan
+      workerModel = plan.models.tools
+      promptBudget = contextBudgetTokens(options.settings, workerModel)
+      consecutiveToolErrors = 0
+      noProgressStreak = 0
+      verifyFailures = Math.max(0, verifyFailures - 1)
+      yield { type: 'model', model: workerModel }
+      yield {
+        type: 'adapt',
+        kind: 'reroute',
+        reason: `${trigger}: ${decision.reason}`,
+        model: workerModel,
+        agentId: plan.agentId,
+        agentName: plan.agentName
+      }
+      yield { type: 'status', text: decision.reason }
+      yield { type: 'thinking', text: `\n\n— ${decision.reason}\n` }
+      workerMessages.push({
+        role: 'user',
+        content:
+          `[Eris mid-run re-route]\nWas: ${prev}. Now: ${plan.agentName}.\n${decision.reason}\n` +
+          `Continue the user goal with your specialist role. Emit tools as needed.`
+      })
+      return true
+    }
+    return false
+  }
 
   async function* compactWorkerContext(opts: {
     force?: boolean
@@ -372,6 +491,19 @@ export async function* runAgentWithWorkspaceTools(options: {
     throwIfAborted(options.signal)
 
     for await (const evt of compactWorkerContext()) yield evt
+
+    if (
+      shouldConsiderMidRunAdapt({
+        verifyFailures,
+        consecutiveToolErrors,
+        noProgressStreak,
+        escalateCount,
+        rerouteCount
+      })
+    ) {
+      const adapted = yield* tryMidRunAdapt('stuck signals')
+      if (adapted) continue
+    }
 
     step++
     if (step > MAX_AGENT_STEPS) {
@@ -931,6 +1063,96 @@ export async function* runAgentWithWorkspaceTools(options: {
             mutated: false
           }
         }
+      } else if (call.name === 'delegate_to_agent') {
+        const agentId = argString(call.args, 'agent_id') || argString(call.args, 'agentId')
+        const goal = argString(call.args, 'goal')
+        const summary = argString(call.args, 'summary') || goal
+        const claim = argString(call.args, 'claim') || undefined
+        const wait = Boolean(call.args.wait)
+        const confidence =
+          typeof call.args.confidence === 'number' ? call.args.confidence : undefined
+        const files = Array.isArray(call.args.files)
+          ? call.args.files.map((f) => String(f)).filter(Boolean)
+          : undefined
+        const openQuestions = Array.isArray(call.args.open_questions)
+          ? call.args.open_questions.map((q) => String(q)).filter(Boolean)
+          : Array.isArray(call.args.openQuestions)
+            ? call.args.openQuestions.map((q) => String(q)).filter(Boolean)
+            : undefined
+        if (!agentId || !goal) {
+          result = {
+            ok: false,
+            detail: 'delegate_to_agent requires agent_id and goal',
+            mutated: false
+          }
+        } else if (!options.onDelegate) {
+          result = {
+            ok: false,
+            detail: 'Delegation is unavailable in this run context',
+            mutated: false
+          }
+        } else {
+          const handoff: AgentHandoffPacket = {
+            goal,
+            summary,
+            files,
+            openQuestions,
+            confidence,
+            fromAgentId: plan.agentId,
+            toAgentId: agentId
+          }
+          const delegated = await options.onDelegate({
+            agentId,
+            goal,
+            summary,
+            files,
+            openQuestions,
+            confidence,
+            claim,
+            wait,
+            handoff
+          })
+          result = {
+            ok: delegated.ok,
+            detail: delegated.detail,
+            mutated: false
+          }
+          if (delegated.ok) {
+            yield {
+              type: 'adapt',
+              kind: 'delegate',
+              reason: `Delegated to ${agentId}: ${goal.slice(0, 120)}`,
+              agentId,
+              childJobId: delegated.childJobId
+            }
+            actionLog.push(`Delegated → ${agentId}: ${goal.slice(0, 80)}`)
+            if (wait && options.onAwaitChildren) {
+              yield { type: 'status', text: 'Waiting for children…' }
+              const awaited = await options.onAwaitChildren(
+                typeof call.args.timeout_ms === 'number' ? call.args.timeout_ms : 600_000
+              )
+              result = {
+                ok: awaited.ok,
+                detail: `${delegated.detail}\n\n${awaited.detail}`,
+                mutated: false
+              }
+            }
+          }
+        }
+      } else if (call.name === 'await_children') {
+        if (!options.onAwaitChildren) {
+          result = {
+            ok: false,
+            detail: 'await_children requires a background/orchestrator job context',
+            mutated: false
+          }
+        } else {
+          yield { type: 'status', text: 'Waiting for children…' }
+          const timeoutMs =
+            typeof call.args.timeout_ms === 'number' ? call.args.timeout_ms : 600_000
+          const awaited = await options.onAwaitChildren(timeoutMs)
+          result = { ok: awaited.ok, detail: awaited.detail, mutated: false }
+        }
       } else if (mcpMode !== 'off' && isMcpToolName(call.name)) {
         const mcpResult = await callMcpTool(call.name, call.args)
         result = { ok: mcpResult.ok, detail: mcpResult.detail, mutated: false }
@@ -1222,7 +1444,9 @@ export async function* runAgentWithWorkspaceTools(options: {
                   ? `Verify ${result.ok ? 'ok' : 'fail'}`
                   : result.detail.slice(0, 120)
         actionLog.push(label)
+        consecutiveToolErrors = 0
       } else {
+        consecutiveToolErrors++
         actionLog.push(`Failed ${call.name}${path ? ` ${path}` : ''}: ${result.detail.slice(0, 80)}`)
       }
       yield { type: 'progress', step, actionLog: [...actionLog], filesTouched: [...filesTouched] }
@@ -1303,17 +1527,29 @@ export async function* runAgentWithWorkspaceTools(options: {
             }
             actionLog.push(`Verify failed: ${verified.command}`)
             if (verifyFailures >= MAX_VERIFY_FAILURES) {
-              const answer =
-                buildWorkSummary(originalUserGoal, actionLog, '') +
-                `\n\nStopped: verify failed ${verifyFailures} times.\n` +
-                truncateForModel(verified.detail, 1500)
-              yield {
-                type: 'thinking',
-                text: '\n\n— Verify failure budget exhausted; stopping.\n'
+              const adapted = yield* tryMidRunAdapt('verify failures')
+              if (adapted) {
+                verifyNote +=
+                  `\nMid-run adaptation applied — continue fixing with the new model/agent.\n`
+              } else {
+                const answer =
+                  buildWorkSummary(originalUserGoal, actionLog, '') +
+                  `\n\nStopped: verify failed ${verifyFailures} times.\n` +
+                  truncateForModel(verified.detail, 1500)
+                yield {
+                  type: 'thinking',
+                  text: '\n\n— Verify failure budget exhausted; stopping.\n'
+                }
+                yield {
+                  type: 'progress',
+                  step,
+                  actionLog: [...actionLog],
+                  filesTouched: [...filesTouched],
+                  incomplete: true
+                }
+                yield { type: 'answer', text: answer }
+                return
               }
-              yield { type: 'progress', step, actionLog: [...actionLog], filesTouched: [...filesTouched], incomplete: true }
-              yield { type: 'answer', text: answer }
-              return
             }
           } else {
             verifyFailures = 0

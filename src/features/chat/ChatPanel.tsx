@@ -64,6 +64,9 @@ interface Props {
   onNewChat: () => void
   onSend: (text: string, attachments: ChatAttachment[], skillIds: string[]) => void
   onStop: () => void
+  /** Hand current/last goal to a background worktree agent */
+  onRunInBackground?: (goal?: string) => void
+  backgroundBusy?: boolean
   queuedMessages: QueuedChatMessage[]
   onQueueMessage: (text: string, attachments: ChatAttachment[], skillIds: string[]) => void
   onRemoveQueued: (id: string) => void
@@ -134,6 +137,8 @@ export function ChatPanel({
   onNewChat,
   onSend,
   onStop,
+  onRunInBackground,
+  backgroundBusy = false,
   queuedMessages,
   onQueueMessage,
   onRemoveQueued,
@@ -456,6 +461,17 @@ export function ChatPanel({
                           >
                             Just a question
                           </button>
+                          {onRunInBackground && (
+                            <button
+                              type="button"
+                              className="btn btn-link"
+                              title="Continue this goal on a private git worktree"
+                              disabled={backgroundBusy}
+                              onClick={() => onRunInBackground()}
+                            >
+                              Run in background
+                            </button>
+                          )}
                         </div>
                       )}
                   </div>
@@ -791,6 +807,17 @@ export function ChatPanel({
                       </option>
                     ))}
                   </select>
+                  {onRunInBackground && (
+                    <button
+                      type="button"
+                      className="btn composer-send-btn"
+                      disabled={backgroundBusy || (!draft.trim() && !activeThread)}
+                      title="Run this goal on a private git worktree (Agents inbox)"
+                      onClick={() => onRunInBackground(draft.trim() || undefined)}
+                    >
+                      Background
+                    </button>
+                  )}
                   {streaming ? (
                     <>
                       <button

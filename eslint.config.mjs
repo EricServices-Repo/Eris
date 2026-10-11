@@ -8,6 +8,8 @@ export default tseslint.config(
     ignores: [
       'out/**',
       'dist/**',
+      '**/dist/**',
+      'cloud-agent/**',
       'release/**',
       'node_modules/**',
       'resources/**',

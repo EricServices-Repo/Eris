@@ -62,7 +62,13 @@ const EDIT_TOOLS = new Set([
   'git_stash'
 ])
 
-const FULL_TOOLS = new Set([...EDIT_TOOLS, 'run', 'git_sync'])
+const FULL_TOOLS = new Set([
+  ...EDIT_TOOLS,
+  'run',
+  'git_sync',
+  'delegate_to_agent',
+  'await_children'
+])
 
 function readyModelCandidates(settings: AppSettings): string[] {
   const out: string[] = []

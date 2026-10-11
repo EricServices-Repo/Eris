@@ -125,6 +125,61 @@ export function useChatSession({
     void window.ide.stopChat()
   }, [])
 
+  /** Hand the current (or last) goal to a background worktree agent. */
+  const runInBackground = useCallback(
+    async (goalText?: string) => {
+      if (!workspacePath) {
+        setChatError('Open a workspace before starting a background agent.')
+        return null
+      }
+      const fromThread = [...(activeThreadRef.current?.messages || [])]
+        .reverse()
+        .find((m) => m.role === 'user')?.content
+      const goal =
+        (goalText || '').trim() ||
+        lastTurnRef.current?.text?.trim() ||
+        fromThread?.replace(/\n\nAttached:[\s\S]*$/, '').trim() ||
+        ''
+      if (!goal) {
+        setChatError('Nothing to hand off — send a message first, or type a goal.')
+        return null
+      }
+      const model =
+        selectedModel || settingsRef.current?.models.defaultModel || 'builtin:composer-lite'
+      try {
+        if (streaming) stopChat()
+        const job = await window.ide.enqueueBackgroundJob({
+          goal,
+          model,
+          agentId: selectedAgentId === 'auto' ? null : selectedAgentId,
+          mode: 'agent',
+          source: 'chat',
+          sourceThreadId: activeThreadRef.current?.id ?? null,
+          forceRoute: 'tools'
+        })
+        setRightCollapsed(false)
+        setRightPanel('agents')
+        setChatError(null)
+        setAgentStatus(`Background agent started · ${job.id.slice(0, 8)}`)
+        return job
+      } catch (err) {
+        setChatError(err instanceof Error ? err.message : 'Failed to start background agent')
+        return null
+      }
+    },
+    [
+      workspacePath,
+      activeThreadRef,
+      selectedModel,
+      settingsRef,
+      selectedAgentId,
+      streaming,
+      stopChat,
+      setRightCollapsed,
+      setRightPanel
+    ]
+  )
+
   const schedulePaint = useCallback(() => {
     if (paintRaf.current) return
     paintRaf.current = requestAnimationFrame(() => {
@@ -329,6 +384,7 @@ export function useChatSession({
           agentId: turnPlan.agentId,
           mode: turnPlan.mode,
           turnPlan,
+          threadId: thread.id,
           prompt: {
             text,
             mode: turnPlan.mode,
@@ -725,6 +781,7 @@ export function useChatSession({
     sendMessage,
     rerouteLast,
     resumeLastRun,
+    runInBackground,
     stopChat,
     newChat
   }
