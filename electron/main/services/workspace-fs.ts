@@ -3,6 +3,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -32,13 +33,43 @@ export function assertWorkspaceRoot(workspacePath: string | null): string {
   return resolve(workspacePath)
 }
 
+function realpathOrSelf(p: string): string {
+  try {
+    return realpathSync(p)
+  } catch {
+    return resolve(p)
+  }
+}
+
+/** Realpath of the path, or of its nearest existing ancestor joined with the missing tail. */
+export function realpathAllowMissing(p: string): string {
+  const abs = resolve(p)
+  const tail: string[] = []
+  let cur = abs
+  while (!existsSync(cur)) {
+    const parent = dirname(cur)
+    if (parent === cur) return abs
+    tail.unshift(basename(cur))
+    cur = parent
+  }
+  return join(realpathOrSelf(cur), ...tail)
+}
+
+/** True when target is root or inside it after resolving symlinks. */
+export function isPathInside(root: string, target: string): boolean {
+  const realRoot = realpathOrSelf(root)
+  const realTarget = realpathAllowMissing(target)
+  const rel = relative(realRoot, realTarget)
+  return rel === '' || (!rel.startsWith('..') && !rel.startsWith(sep) && !/^[a-zA-Z]:/.test(rel))
+}
+
 /** Resolve a user/model path to an absolute path inside the workspace. */
 export function resolveInWorkspace(workspacePath: string, userPath: string): string {
   const root = assertWorkspaceRoot(workspacePath)
   const raw = (userPath || '.').trim() || '.'
   const abs = resolve(root, raw)
   const rel = relative(root, abs)
-  if (rel.startsWith('..') || resolve(root, rel) !== abs) {
+  if (rel.startsWith('..') || resolve(root, rel) !== abs || !isPathInside(root, abs)) {
     throw new WorkspaceFsError(`Path escapes workspace: ${userPath}`)
   }
   return abs

@@ -70,7 +70,26 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
 
       - name: Build macOS release artifacts
-        run: npm run dist:release
+        # Signing + notarization activate only when the repo secrets are set; otherwise the build is unsigned.
+        run: |
+          if [ -n "$MAC_CERT_P12_BASE64" ]; then
+            export CSC_LINK="$MAC_CERT_P12_BASE64"
+            export CSC_KEY_PASSWORD="$MAC_CERT_PASSWORD"
+          else
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          if [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            export APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+          else
+            unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+          fi
+          npm run dist:release -- --publish never
+        env:
+          MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Collect artifacts
         id: arts
@@ -83,7 +102,11 @@ jobs:
             [ -f "$f" ] || continue
             cp "$f" release-assets/
           done
-          count=$(ls -1 release-assets 2>/dev/null | wc -l | tr -d ' ')
+          # electron-updater feed + differential-download maps
+          for f in dist/latest-mac.yml dist/*.blockmap; do
+            [ -f "$f" ] && cp "$f" release-assets/
+          done
+          count=$(ls -1 release-assets/*.dmg release-assets/*.zip 2>/dev/null | wc -l | tr -d ' ')
           echo "count=${count}" >> "$GITHUB_OUTPUT"
           ls -la release-assets || true
           if [ "$count" = "0" ]; then

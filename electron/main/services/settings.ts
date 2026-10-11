@@ -8,6 +8,12 @@ import {
   workspaceSettingsPath,
   userDataRoot
 } from './paths'
+import {
+  isWorkspaceTrusted,
+  riskyWorkspaceSettings,
+  setWorkspaceTrusted,
+  stripRiskyWorkspaceSettings
+} from './workspace-trust'
 
 function deepMerge<T extends Record<string, unknown>>(base: T, patch: Partial<T>): T {
   const out: Record<string, unknown> = { ...base }
@@ -61,6 +67,13 @@ export function getUserSettings(): SettingsPatch {
 export function getWorkspaceSettings(workspacePath: string | null): SettingsPatch {
   if (!workspacePath) return {}
   return readJson<SettingsPatch>(workspaceSettingsPath(workspacePath)) ?? {}
+}
+
+/** Workspace layer as applied: risky keys are dropped until the folder is trusted. */
+export function getEffectiveWorkspaceSettings(workspacePath: string | null): SettingsPatch {
+  const layer = getWorkspaceSettings(workspacePath)
+  if (!workspacePath || isWorkspaceTrusted(workspacePath)) return layer
+  return stripRiskyWorkspaceSettings(layer as Record<string, unknown>) as SettingsPatch
 }
 
 function sanitizeLegacyModels(raw: Record<string, unknown>): Record<string, unknown> {
@@ -205,7 +218,7 @@ export function getResolvedSettings(workspacePath: string | null): AppSettings {
                   getDefaults() as unknown as Record<string, unknown>,
                   getUserSettings() as Record<string, unknown>
                 ),
-                getWorkspaceSettings(workspacePath) as Record<string, unknown>
+                getEffectiveWorkspaceSettings(workspacePath) as Record<string, unknown>
               ) as Record<string, unknown>
             )
           )
@@ -242,6 +255,8 @@ export function setSettings(
       patch as Record<string, unknown>
     )
     writeJson(workspaceSettingsPath(workspacePath), next)
+    // Editing risky keys from Settings is an explicit user choice for this folder.
+    if (riskyWorkspaceSettings(patch).length > 0) setWorkspaceTrusted(workspacePath, true)
   }
 
   return getResolvedSettings(workspacePath)

@@ -76,6 +76,19 @@ interface Props {
   onOpenSkillsSettings: () => void
   onCreateSkill: () => void
   onDismissError: () => void
+  pendingApproval?: PendingCommandApproval | null
+  onApprovalDecision?: (approvalId: string, decision: 'allow' | 'always' | 'deny') => void
+  /** Re-run the last user message with a forced route */
+  onRerouteLast?: (intent: 'tools' | 'answer') => void
+  resumableRun?: { goal: string; updatedAt: string; step: number } | null
+  onResumeRun?: () => void
+  onDismissResume?: () => void
+}
+
+export interface PendingCommandApproval {
+  approvalId: string
+  kind: 'run' | 'push'
+  command: string
 }
 
 function parseAtQuery(draft: string, caret: number): { query: string; start: number } | null {
@@ -132,7 +145,13 @@ export function ChatPanel({
   onOpenModelsSettings,
   onOpenSkillsSettings,
   onCreateSkill,
-  onDismissError
+  onDismissError,
+  pendingApproval = null,
+  onApprovalDecision,
+  onRerouteLast,
+  resumableRun = null,
+  onResumeRun,
+  onDismissResume
 }: Props) {
   const [draft, setDraft] = useState('')
   const [dragging, setDragging] = useState(false)
@@ -369,6 +388,23 @@ export function ChatPanel({
         </div>
       )}
 
+      {resumableRun && !streaming && onResumeRun && (
+        <div className="composer-banner composer-banner-soft">
+          <span>
+            Last agent task stopped after {resumableRun.step} step
+            {resumableRun.step === 1 ? '' : 's'}: <strong>{resumableRun.goal.slice(0, 120)}</strong>
+          </span>
+          <button className="btn btn-primary" onClick={onResumeRun}>
+            Resume last task
+          </button>
+          {onDismissResume && (
+            <button className="btn" onClick={onDismissResume}>
+              Dismiss
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="agent-main">
         <div className="agent-messages">
           {!activeThread && !streaming && !chatError ? (
@@ -383,7 +419,7 @@ export function ChatPanel({
             <div className="chat-messages">
               {activeThread?.messages
                 .filter((m) => m.role !== 'system')
-                .map((m) => (
+                .map((m, i, visible) => (
                   <div key={m.id} className={`msg ${m.role}`}>
                     <span className="role">
                       {m.role}
@@ -398,6 +434,30 @@ export function ChatPanel({
                     ) : (
                       <div className="user-text">{m.content}</div>
                     )}
+                    {m.role === 'assistant' &&
+                      i === visible.length - 1 &&
+                      !streaming &&
+                      onRerouteLast && (
+                        <div className="msg-reroute">
+                          <span>Wrong route?</span>
+                          <button
+                            type="button"
+                            className="btn btn-link"
+                            title="Re-run this message with workspace tools"
+                            onClick={() => onRerouteLast('tools')}
+                          >
+                            Needed tools
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-link"
+                            title="Re-run this message as a plain answer"
+                            onClick={() => onRerouteLast('answer')}
+                          >
+                            Just a question
+                          </button>
+                        </div>
+                      )}
                   </div>
                 ))}
               {streaming && (
@@ -414,6 +474,37 @@ export function ChatPanel({
                     defaultOpen={!answerBuffer}
                     live={!answerBuffer}
                   />
+                  {pendingApproval && onApprovalDecision && (
+                    <div className="approval-card" role="alertdialog">
+                      <div className="approval-title">
+                        {pendingApproval.kind === 'push'
+                          ? 'Agent wants to push to the remote'
+                          : 'Agent wants to run a command'}
+                      </div>
+                      <pre className="approval-command">{pendingApproval.command}</pre>
+                      <div className="approval-actions">
+                        <button
+                          className="btn btn-primary"
+                          onClick={() => onApprovalDecision(pendingApproval.approvalId, 'allow')}
+                        >
+                          Allow
+                        </button>
+                        <button
+                          className="btn"
+                          title="Never ask again for this exact command in this workspace"
+                          onClick={() => onApprovalDecision(pendingApproval.approvalId, 'always')}
+                        >
+                          Always allow
+                        </button>
+                        <button
+                          className="btn"
+                          onClick={() => onApprovalDecision(pendingApproval.approvalId, 'deny')}
+                        >
+                          Deny
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {answerBuffer ? (
                     <div className="answer-text">
                       <MarkdownMessage content={answerBuffer} onOpenPath={onOpenPath} />
@@ -459,8 +550,8 @@ export function ChatPanel({
             e.preventDefault()
             setDragging(false)
             const paths = Array.from(e.dataTransfer.files)
-              .map((f) => (f as File & { path?: string }).path)
-              .filter(Boolean) as string[]
+              .map((f) => window.ide.getPathForFile(f))
+              .filter(Boolean)
             if (paths.length === 0) return
             const next = [...attachments]
             for (const path of paths) {

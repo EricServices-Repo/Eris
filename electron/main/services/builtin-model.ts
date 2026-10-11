@@ -814,7 +814,7 @@ async function* streamBuiltinChatInProcess(options: {
       .filter(Boolean)
       .join('\n\n')
 
-    let queue: string[] = []
+    const queue: string[] = []
     let done = false
     let caughtError: unknown = null
     let notify: (() => void) | null = null
@@ -907,7 +907,7 @@ async function* streamBuiltinChatViaWorker(options: {
   await ensureWorkerModel(options.path, options.entry)
 
   const id = `chat-${++chatSeq}`
-  let queue: string[] = []
+  const queue: string[] = []
   let done = false
   let caughtError: string | null = null
   let notify: (() => void) | null = null

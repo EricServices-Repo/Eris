@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSy
 import { join, relative, sep } from 'path'
 import { workspaceConfigDir } from './paths'
 import { logInfo } from './logger'
+import { suppressWatcherFor } from './workspace-watcher'
 
 const SKIP_DIRS = new Set([
   'node_modules',
@@ -111,6 +112,7 @@ function indexFiles(workspacePath: string, filesAbs: string[]): IndexRecord {
   memoryIndex = record
   try {
     mkdirSync(workspaceConfigDir(workspacePath), { recursive: true })
+    suppressWatcherFor(indexPath(workspacePath))
     writeFileSync(indexPath(workspacePath), JSON.stringify(record), 'utf8')
   } catch {
     // ignore persist errors
@@ -165,6 +167,7 @@ export async function buildCodeIndexAsync(workspacePath: string): Promise<IndexR
   memoryIndex = record
   try {
     mkdirSync(workspaceConfigDir(workspacePath), { recursive: true })
+    suppressWatcherFor(indexPath(workspacePath))
     writeFileSync(indexPath(workspacePath), JSON.stringify(record), 'utf8')
   } catch {
     // ignore

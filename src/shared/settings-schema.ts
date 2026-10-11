@@ -77,6 +77,10 @@ export const SettingsSchema = z.object({
     maxHistoryMessages: z.number().int().min(2).max(200),
     /** When true, agent file changes are kept automatically (no review required) */
     autoKeepDiffs: z.boolean(),
+    /** ask = prompt before agent shell commands / pushes (safe commands skip); auto = never prompt */
+    commandApproval: z.enum(['ask', 'auto']),
+    /** Exact commands the user chose "Always allow" for (workspace scope) */
+    allowedCommands: z.array(z.string()),
     routing: z.object({
       enabled: z.boolean(),
       mode: z.enum(['auto', 'manual', 'off']),
@@ -232,7 +236,9 @@ export interface TurnPlan {
   requiresTools: boolean
   escalateToFull: boolean
   reason: string
-  method: 'manual' | 'heuristic' | 'llm' | 'default'
+  method: 'manual' | 'heuristic' | 'llm' | 'default' | 'override' | 'learned'
+  /** Intent the classifier picked before any override / learned correction */
+  classifiedIntent?: ChatIntent
   /** Set when the selected chat model cannot run (e.g. builtin not downloaded). */
   error?: string
 }
@@ -243,6 +249,24 @@ export interface ChatTurnContext {
   manualAgentId?: string | null
   selectedModel: string
   mode: 'ask' | 'agent'
+  /** User override from "Needed tools" / "Just a question" */
+  forceRoute?: 'tools' | 'answer'
+}
+
+/** Structured chat turn; the main process assembles the final prompt from this. */
+export interface ChatPromptInput {
+  text: string
+  mode: 'ask' | 'agent'
+  agentId: string
+  agentName?: string
+  skillIds: string[]
+  /** Active editor tab (may hold unsaved content) */
+  openFile?: { path: string; language?: string; content: string } | null
+  /** content set when the file is open in a tab; otherwise main reads from disk */
+  attachments: Array<{ path: string; name: string; language?: string; content?: string }>
+  history: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>
+  /** Continue a persisted, unfinished agent run */
+  resumeRunId?: string
 }
 
 export interface ResolvedAgent extends AgentDefinition {

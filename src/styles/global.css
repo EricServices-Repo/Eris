@@ -547,6 +547,74 @@ select:focus {
   background: rgba(120, 160, 200, 0.1);
 }
 
+.trust-banner {
+  align-items: flex-start;
+}
+
+.trust-banner ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.trust-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.approval-card {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(230, 192, 123, 0.45);
+  border-radius: var(--radius);
+  background: rgba(230, 192, 123, 0.08);
+}
+
+.approval-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warning);
+  margin-bottom: 6px;
+}
+
+.approval-command {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.msg-reroute {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.msg-reroute .btn-link {
+  padding: 0 4px;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.msg-reroute .btn-link:hover {
+  text-decoration: underline;
+}
+
 .msg .role {
   display: block;
   margin-bottom: 6px;

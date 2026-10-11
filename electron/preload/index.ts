@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
 import type { IdeApi } from '../../src/shared/api'
 
 function subscribe<T>(channel: string, cb: (data: T) => void): () => void {
@@ -47,6 +47,11 @@ const api: IdeApi = {
   resetProjectAgents: () => ipcRenderer.invoke('agents:resetProject'),
   routeAgent: (payload) => ipcRenderer.invoke('agents:route', payload),
   planChatTurn: (payload) => ipcRenderer.invoke('chat:planTurn', payload),
+  recordRoutingFeedback: (payload) => ipcRenderer.invoke('routing:feedback', payload),
+  getResumableRun: () => ipcRenderer.invoke('runs:resumable'),
+  getWorkspaceTrust: () => ipcRenderer.invoke('workspace:trustStatus'),
+  setWorkspaceTrust: (trusted) => ipcRenderer.invoke('workspace:setTrust', trusted),
+  dismissRun: (id) => ipcRenderer.invoke('runs:dismiss', id),
   listChats: () => ipcRenderer.invoke('chats:list'),
   getChat: (id) => ipcRenderer.invoke('chats:get', id),
   createChat: (model) => ipcRenderer.invoke('chats:create', model),
@@ -61,6 +66,11 @@ const api: IdeApi = {
   loadSkillsPrompt: (ids) => ipcRenderer.invoke('skills:prompt', ids),
   streamChat: (payload) => ipcRenderer.invoke('chat:stream', payload),
   stopChat: () => ipcRenderer.invoke('chat:stop'),
+  getPathForFile: (file) => webUtils.getPathForFile(file),
+  respondCommandApproval: (approvalId, decision) =>
+    ipcRenderer.invoke('chat:approvalRespond', approvalId, decision),
+  onChatApprovalRequest: (cb) => subscribe('chat:approval-request', cb),
+  onChatApprovalResolved: (cb) => subscribe('chat:approval-resolved', cb),
   onChatThinking: (cb) => subscribe('chat:thinking', cb),
   onChatAnswer: (cb) => subscribe('chat:answer', cb),
   onChatDone: (cb) => subscribe('chat:done', cb),

@@ -21,6 +21,8 @@
     "includeOpenFiles": true,
     "maxHistoryMessages": 40,
     "autoKeepDiffs": false,
+    "commandApproval": "ask",
+    "allowedCommands": [],
     "routing": {
       "enabled": true,
       "mode": "auto",

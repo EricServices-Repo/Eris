@@ -3,13 +3,29 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 
+export interface TerminalNote {
+  id: number
+  text: string
+}
+
 interface Props {
   open: boolean
   workspacePath: string | null
+  /** Agent / verify output, replayed when the terminal mounts */
+  notes: TerminalNote[]
   onClose: () => void
 }
 
-export function TerminalPanel({ open, workspacePath, onClose }: Props) {
+function writeNote(term: Terminal, text: string) {
+  for (const line of text.replace(/\r\n/g, '\n').split('\n')) {
+    if (line.length) term.writeln(`\x1b[90m${line}\x1b[0m`)
+  }
+}
+
+export function TerminalPanel({ open, workspacePath, notes, onClose }: Props) {
+  const notesRef = useRef(notes)
+  notesRef.current = notes
+  const lastNoteIdRef = useRef(0)
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -46,12 +62,8 @@ export function TerminalPanel({ open, workspacePath, onClose }: Props) {
       term.writeln(`\r\n[process exited: ${exitCode}]`)
       setReady(false)
     })
-    const offAgent = window.ide.onChatTerminal(({ text }) => {
-      const lines = text.replace(/\r\n/g, '\n').split('\n')
-      for (const line of lines) {
-        if (line.length) term.writeln(`\x1b[90m${line}\x1b[0m`)
-      }
-    })
+    for (const note of notesRef.current) writeNote(term, note.text)
+    lastNoteIdRef.current = notesRef.current[notesRef.current.length - 1]?.id ?? 0
 
     const dataDisp = term.onData((data) => {
       void window.ide.ptyWrite(data)
@@ -88,7 +100,6 @@ export function TerminalPanel({ open, workspacePath, onClose }: Props) {
       disposed = true
       offData()
       offExit()
-      offAgent?.()
       dataDisp.dispose()
       ro.disconnect()
       term.dispose()
@@ -97,6 +108,15 @@ export function TerminalPanel({ open, workspacePath, onClose }: Props) {
       setReady(false)
     }
   }, [open, workspacePath])
+
+  useEffect(() => {
+    const term = termRef.current
+    if (!term) return
+    for (const note of notes) {
+      if (note.id > lastNoteIdRef.current) writeNote(term, note.text)
+    }
+    lastNoteIdRef.current = notes[notes.length - 1]?.id ?? lastNoteIdRef.current
+  }, [notes])
 
   if (!open) return null
 

@@ -1,0 +1,190 @@
+import type { NativeToolCall } from '../chat-runtime'
+import { isMcpToolName } from '../mcp-runtime'
+import type { ToolCall } from './types'
+
+const TOOL_BLOCK_RE = /<<<TOOL>>>\s*([\s\S]*?)\s*<<<END>>>/gi
+const TOOL_XML_RE =
+  /<tool_call>\s*<name>\s*([^<]+?)\s*<\/name>\s*([\s\S]*?)<\/tool_call>/gi
+
+export function parseJsonObject(text: string): Record<string, unknown> | null {
+  const trimmed = text.trim()
+  try {
+    const parsed = JSON.parse(trimmed) as unknown
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>
+    }
+  } catch {
+    // fall through to balanced extract
+  }
+  for (const candidate of extractBalancedJsonObjects(trimmed)) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      // continue
+    }
+  }
+  return null
+}
+
+/** Extract top-level `{...}` objects with string-aware brace matching. */
+export function extractBalancedJsonObjects(text: string): string[] {
+  const out: string[] = []
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== '{') continue
+    let depth = 0
+    let inString = false
+    let escape = false
+    for (let j = i; j < text.length; j++) {
+      const ch = text[j]
+      if (inString) {
+        if (escape) escape = false
+        else if (ch === '\\') escape = true
+        else if (ch === '"') inString = false
+        continue
+      }
+      if (ch === '"') {
+        inString = true
+        continue
+      }
+      if (ch === '{') depth++
+      else if (ch === '}') {
+        depth--
+        if (depth === 0) {
+          out.push(text.slice(i, j + 1))
+          i = j
+          break
+        }
+      }
+    }
+  }
+  return out
+}
+
+const KNOWN_TOOLS = new Set([
+  'tree',
+  'list_dir',
+  'read_file',
+  'search_replace',
+  'apply_patch',
+  'write_file',
+  'mkdir',
+  'delete_path',
+  'rename_path',
+  'run',
+  'grep',
+  'glob',
+  'search_symbols',
+  'retrieve',
+  'read_context',
+  'read_email',
+  'update_context',
+  'list_skills',
+  'read_skill',
+  'write_skill',
+  'git_status',
+  'git_diff',
+  'git_stage',
+  'git_commit',
+  'git_sync',
+  'git_stash'
+])
+
+// Accept ```json or broken ``json fences (Lite often emits only two backticks)
+const FENCE_JSON_RE = /`{2,3}(?:json|tool)?\s*([\s\S]*?)`{2,3}/gi
+
+function toolCallKey(obj: Record<string, unknown>): string {
+  const name = String(obj.name ?? '')
+  return `${name}|${String(obj.path ?? '')}|${String(obj.to ?? '')}|${String(obj.command ?? '')}|${String(obj.content ?? '').length}|${String(obj.old_string ?? '').length}|${String(obj.new_string ?? '').length}|${String(obj.patch ?? '').length}|${String(obj.message ?? '')}|${String(obj.action ?? '')}`
+}
+
+function pushToolCall(
+  calls: ToolCall[],
+  seen: Set<string>,
+  obj: Record<string, unknown> | null,
+  raw: string
+): void {
+  if (!obj || typeof obj.name !== 'string') return
+  const name = String(obj.name).trim()
+  if (!KNOWN_TOOLS.has(name) && !isMcpToolName(name)) return
+  const key = toolCallKey(obj)
+  if (seen.has(key)) return
+  seen.add(key)
+  calls.push({ name, args: obj, raw })
+}
+
+export function parseToolCalls(text: string): ToolCall[] {
+  const calls: ToolCall[] = []
+  const seen = new Set<string>()
+  let m: RegExpExecArray | null
+
+  TOOL_BLOCK_RE.lastIndex = 0
+  while ((m = TOOL_BLOCK_RE.exec(text)) !== null) {
+    pushToolCall(calls, seen, parseJsonObject(m[1]), m[0])
+  }
+
+  FENCE_JSON_RE.lastIndex = 0
+  while ((m = FENCE_JSON_RE.exec(text)) !== null) {
+    pushToolCall(calls, seen, parseJsonObject(m[1]), m[0])
+  }
+
+  TOOL_XML_RE.lastIndex = 0
+  while ((m = TOOL_XML_RE.exec(text)) !== null) {
+    const name = m[1].trim()
+    const body = m[2]
+    const args: Record<string, unknown> = { name }
+    const pathMatch = body.match(/<path>\s*([\s\S]*?)\s*<\/path>/i)
+    const contentMatch = body.match(/<content>\s*([\s\S]*?)\s*<\/content>/i)
+    const toMatch = body.match(/<to>\s*([\s\S]*?)\s*<\/to>/i)
+    if (pathMatch) args.path = pathMatch[1]
+    if (contentMatch) args.content = contentMatch[1]
+    if (toMatch) args.to = toMatch[1]
+    pushToolCall(calls, seen, args, m[0])
+  }
+
+  // Bare / unfenced JSON objects (including incomplete fences that still have a full object)
+  for (const raw of extractBalancedJsonObjects(text)) {
+    pushToolCall(calls, seen, parseJsonObject(raw), raw)
+  }
+
+  return calls
+}
+
+/** True when at least one complete tool call is available to execute now. */
+export function hasExecutableToolCall(text: string): boolean {
+  return parseToolCalls(text).length > 0
+}
+
+export function stripToolBlocks(text: string): string {
+  return text
+    .replace(TOOL_BLOCK_RE, '')
+    .replace(FENCE_JSON_RE, '')
+    .replace(TOOL_XML_RE, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+export function argString(args: Record<string, unknown>, key: string, fallback = ''): string {
+  const v = args[key]
+  return typeof v === 'string' ? v : fallback
+}
+
+export function nativeToToolCalls(calls: NativeToolCall[]): ToolCall[] {
+  const out: ToolCall[] = []
+  const seen = new Set<string>()
+  for (const c of calls) {
+    let args: Record<string, unknown> = {}
+    try {
+      const parsed = JSON.parse(c.arguments || '{}') as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        args = parsed as Record<string, unknown>
+      }
+    } catch {
+      args = {}
+    }
+    pushToolCall(out, seen, { name: c.name, ...args }, c.arguments || c.name)
+  }
+  return out
+}

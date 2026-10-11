@@ -8,6 +8,8 @@ import type {
   ResolvedAgent,
   RouteResult,
   TurnPlan,
+  ChatIntent,
+  ChatPromptInput,
   SettingsPatch,
   SettingsScope,
   SkillInput,
@@ -22,6 +24,23 @@ export interface AppState {
   lastWorkspaceId: string | null
   /** ISO or epoch ms when the first-run setup wizard was finished/skipped */
   onboardingCompletedAt?: number | null
+}
+
+export interface WorkspaceTrustStatus {
+  workspacePath: string | null
+  trusted: boolean
+  /** Human-readable risky settings this folder's .eris/settings.json asks for */
+  risky: string[]
+}
+
+export interface AgentRunSummary {
+  id: string
+  goal: string
+  agentId: string
+  status: 'running' | 'done' | 'stopped' | 'failed' | 'incomplete' | 'dismissed'
+  step: number
+  actionLog: string[]
+  updatedAt: string
 }
 
 export interface AppVersionInfo {
@@ -135,7 +154,18 @@ export interface IdeApi {
     manualAgentId?: string | null
     selectedModel: string
     mode?: 'ask' | 'agent'
+    forceRoute?: 'tools' | 'answer'
   }) => Promise<TurnPlan>
+  recordRoutingFeedback: (payload: {
+    text: string
+    from: ChatIntent
+    to: 'tools' | 'answer'
+    agentId: string
+  }) => Promise<boolean>
+  getResumableRun: () => Promise<AgentRunSummary | null>
+  getWorkspaceTrust: () => Promise<WorkspaceTrustStatus>
+  setWorkspaceTrust: (trusted: boolean) => Promise<boolean>
+  dismissRun: (id: string) => Promise<boolean>
   listChats: () => Promise<ChatThread[]>
   getChat: (id: string) => Promise<ChatThread | null>
   createChat: (model: string) => Promise<ChatThread>
@@ -155,12 +185,34 @@ export interface IdeApi {
   streamChat: (payload: {
     requestId: string
     model: string
-    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+    messages?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+    prompt?: ChatPromptInput
     agentId?: string
     mode?: 'ask' | 'agent'
     turnPlan?: TurnPlan
   }) => Promise<boolean>
   stopChat: () => Promise<boolean>
+  /** Absolute path of a dropped File ('' when it has none) */
+  getPathForFile: (file: File) => string
+  respondCommandApproval: (
+    approvalId: string,
+    decision: 'allow' | 'always' | 'deny'
+  ) => Promise<boolean>
+  onChatApprovalRequest: (
+    cb: (data: {
+      requestId: string
+      approvalId: string
+      kind: 'run' | 'push'
+      command: string
+    }) => void
+  ) => () => void
+  onChatApprovalResolved: (
+    cb: (data: {
+      requestId: string
+      approvalId: string
+      decision: 'allow' | 'always' | 'deny'
+    }) => void
+  ) => () => void
   onChatThinking: (cb: (data: { requestId: string; chunk: string }) => void) => () => void
   onChatAnswer: (cb: (data: { requestId: string; chunk: string }) => void) => () => void
   onChatDone: (cb: (data: { requestId: string; aborted?: boolean }) => void) => () => void

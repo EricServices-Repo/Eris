@@ -1,0 +1,45 @@
+export type AgentChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
+export type AgentMode = 'ask' | 'agent'
+
+export type AgentToolEvent = {
+  id: string
+  name: string
+  path?: string
+  status: 'running' | 'ok' | 'error'
+  detail: string
+}
+
+export type AgentDiffEvent = {
+  checkpointId: string
+  /** Index into the checkpoint ops list for per-file undo */
+  opIndex: number
+  path: string
+  before: string | null
+  after: string
+  op: 'write' | 'delete' | 'rename' | 'mkdir'
+}
+
+export type AgentRunnerEvent =
+  | { type: 'thinking'; text: string }
+  | { type: 'answer'; text: string }
+  | { type: 'tool'; tool: AgentToolEvent }
+  | { type: 'diff'; diff: AgentDiffEvent }
+  | { type: 'checkpoint'; checkpointId: string }
+  | { type: 'workspace-changed' }
+  | { type: 'status'; text: string }
+  | { type: 'model'; model: string }
+  | { type: 'terminal'; text: string }
+  | {
+      type: 'progress'
+      step: number
+      actionLog: string[]
+      filesTouched: string[]
+      /** Set when the loop stopped before finishing (step limit, verify budget). */
+      incomplete?: boolean
+    }
+
+export interface ToolCall {
+  name: string
+  args: Record<string, unknown>
+  raw: string
+}
