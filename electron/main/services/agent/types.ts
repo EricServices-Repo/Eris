@@ -37,6 +37,15 @@ export type AgentRunnerEvent =
       /** Set when the loop stopped before finishing (step limit, verify budget). */
       incomplete?: boolean
     }
+  | {
+      type: 'adapt'
+      kind: 'escalate' | 'reroute' | 'delegate'
+      reason: string
+      agentId?: string
+      agentName?: string
+      model?: string
+      childJobId?: string
+    }
 
 export interface ToolCall {
   name: string

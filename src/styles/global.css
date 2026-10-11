@@ -2428,6 +2428,11 @@ select:focus {
   color: #e6edf3;
 }
 
+.git-diff.agents-live {
+  min-height: 0;
+  line-height: 1.45;
+}
+
 .terminal-input-row,
 .git-commit-row {
   display: flex;
