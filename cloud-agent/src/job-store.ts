@@ -20,6 +20,8 @@ function storeFile(): string {
 
 export class JobStore {
   private jobs = new Map<string, CloudJob>()
+  private persistTimer: ReturnType<typeof setTimeout> | null = null
+  private persistDirty = false
 
   constructor() {
     mkdirSync(config.dataDir, { recursive: true })
@@ -32,9 +34,16 @@ export class JobStore {
       const raw = JSON.parse(readFileSync(storeFile(), 'utf8')) as { jobs?: CloudJob[] }
       for (const job of raw.jobs ?? []) {
         if (job.status === 'running') {
-          // Prefer resume if we have a checkpoint; else re-queue if still resumable.
           const cp = loadCheckpoint(job.id)
-          if (cp && cp.messages?.length) {
+          // CPU-only: do not auto re-queue on boot — that pegs all cores and can lock out SSH.
+          // Jobs stay resumable via continue / Force kill is a no-op for stopped.
+          if (config.gpu === 'false') {
+            job.status = 'stopped'
+            job.resumable = true
+            if (cp?.step != null) job.step = cp.step
+            job.liveStatus = 'Stopped (safe boot — resume manually)'
+            job.error = 'Interrupted by restart (CPU safe-boot)'
+          } else if (cp && cp.messages?.length) {
             job.status = 'queued'
             job.resumable = true
             job.step = cp.step
@@ -55,13 +64,36 @@ export class JobStore {
     }
   }
 
-  private persist(): void {
+  private persistNow(): void {
+    this.persistDirty = false
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer)
+      this.persistTimer = null
+    }
     mkdirSync(config.dataDir, { recursive: true })
-    writeFileSync(
-      storeFile(),
-      JSON.stringify({ jobs: [...this.jobs.values()] }, null, 2),
-      'utf8'
-    )
+    writeFileSync(storeFile(), JSON.stringify({ jobs: [...this.jobs.values()] }), 'utf8')
+  }
+
+  /** Debounced disk write — hot path patches only emit SSE; flush within ~400ms. */
+  private persist(options?: { immediate?: boolean }): void {
+    if (options?.immediate) {
+      this.persistNow()
+      return
+    }
+    this.persistDirty = true
+    if (this.persistTimer) return
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null
+      if (this.persistDirty) this.persistNow()
+    }, 400)
+    if (typeof this.persistTimer === 'object' && 'unref' in this.persistTimer) {
+      this.persistTimer.unref()
+    }
+  }
+
+  /** Flush pending writes (call on shutdown). */
+  flush(): void {
+    if (this.persistDirty || this.persistTimer) this.persistNow()
   }
 
   list(limit = 50, ownerId?: string | null): CloudJob[] {
@@ -117,7 +149,7 @@ export class JobStore {
       updatedAt: now
     }
     this.jobs.set(job.id, job)
-    this.persist()
+    this.persist({ immediate: true })
     jobEvents.emitJob(job)
     return job
   }
@@ -133,14 +165,19 @@ export class JobStore {
   }
 
   setStatus(id: string, status: CloudJobStatus, extra: Partial<CloudJob> = {}): CloudJob | null {
-    return this.patch(id, (j) => ({
-      ...j,
+    const cur = this.jobs.get(id)
+    if (!cur) return null
+    const terminal = status === 'done' || status === 'failed' || status === 'stopped'
+    const next = {
+      ...cur,
       ...extra,
       status,
-      finishedAt:
-        status === 'done' || status === 'failed' || status === 'stopped'
-          ? new Date().toISOString()
-          : j.finishedAt
-    }))
+      finishedAt: terminal ? new Date().toISOString() : cur.finishedAt,
+      updatedAt: new Date().toISOString()
+    }
+    this.jobs.set(id, next)
+    this.persist({ immediate: terminal })
+    jobEvents.emitJob(next)
+    return next
   }
 }

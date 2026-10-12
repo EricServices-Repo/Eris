@@ -42,7 +42,13 @@ export const config = {
   statusEnabled: process.env.ERIS_CLOUD_STATUS_ENABLED !== '0',
   publicBaseUrl: (process.env.ERIS_CLOUD_PUBLIC_URL || PUBLIC_BASE_URL).replace(/\/+$/, ''),
   dataDir: process.env.ERIS_CLOUD_DATA || '/var/lib/eris-cloud',
-  maxParallel: Math.max(1, Math.min(8, Number(process.env.ERIS_CLOUD_MAX_PARALLEL || 2))),
+  maxParallel: (() => {
+    const raw = Number(process.env.ERIS_CLOUD_MAX_PARALLEL || 2)
+    const n = Math.max(1, Math.min(8, Number.isFinite(raw) ? raw : 2))
+    // CPU hosts: never run more than one job — one context / two threads.
+    if (parseGpuMode(process.env.ERIS_CLOUD_GPU) === 'false') return Math.min(1, n)
+    return n
+  })(),
   maxFiles: Math.max(1, Math.min(800, Number(process.env.ERIS_CLOUD_MAX_FILES || 200))),
   maxFileBytes: Math.max(1024, Number(process.env.ERIS_CLOUD_MAX_FILE_BYTES || 400_000)),
   maxArtifactBytes: Math.max(1_000_000, Number(process.env.ERIS_CLOUD_MAX_ARTIFACT_BYTES || 16_000_000)),
@@ -64,6 +70,25 @@ export const config = {
    */
   adminToken: (process.env.ERIS_CLOUD_ADMIN_TOKEN || '').trim(),
   gpu: parseGpuMode(process.env.ERIS_CLOUD_GPU),
+  /**
+   * Cap llama.cpp CPU threads. Critical on CPU-only VMs so sshd/systemd stay responsive.
+   * Default: 2 on CPU, 0 (unlimited) when a GPU mode is selected.
+   */
+  maxThreads: (() => {
+    const raw = process.env.ERIS_CLOUD_MAX_THREADS
+    if (raw != null && String(raw).trim() !== '') {
+      return Math.max(0, Math.min(64, Number(raw) || 0))
+    }
+    return parseGpuMode(process.env.ERIS_CLOUD_GPU) === 'false' ? 2 : 0
+  })(),
+  /** GGUF context window — keep smaller on CPU to cut RAM/CPU thrash. */
+  contextSize: (() => {
+    const raw = process.env.ERIS_CLOUD_CONTEXT_SIZE
+    if (raw != null && String(raw).trim() !== '') {
+      return Math.max(512, Math.min(32768, Number(raw) || 4096))
+    }
+    return parseGpuMode(process.env.ERIS_CLOUD_GPU) === 'false' ? 4096 : 8192
+  })(),
   llmBase: (process.env.ERIS_CLOUD_LLM_BASE || '').replace(/\/+$/, ''),
   llmKey: process.env.ERIS_CLOUD_LLM_KEY || '',
   llmModel: process.env.ERIS_CLOUD_LLM_MODEL || 'composer'

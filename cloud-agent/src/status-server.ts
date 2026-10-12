@@ -91,11 +91,14 @@ export function startStatusServer(store: JobStore, hooks: StatusServerHooks): vo
     }
 
     if (path === '/metrics' || path === '/v1/metrics-public') {
+      const status = buildPublicStatus(store)
       sendJson(res, 200, {
         ok: true,
-        metrics: getMetrics(),
-        jobs: store.counts(),
-        generatedAt: new Date().toISOString()
+        metrics: status.metrics,
+        jobs: status.jobs,
+        usage: status.usage,
+        localModel: status.localModel,
+        generatedAt: status.generatedAt
       })
       return
     }

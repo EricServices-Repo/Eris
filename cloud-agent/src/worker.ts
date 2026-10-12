@@ -1,6 +1,11 @@
 import { existsSync } from 'fs'
 import { JobStore } from './job-store.js'
-import { chatCompletion, type ChatMessage } from './llm.js'
+import {
+  chatTurn,
+  releaseChatSession,
+  seedChatSession,
+  type ChatMessage
+} from './llm.js'
 import {
   listTree,
   maybeOpenPullRequest,
@@ -318,175 +323,209 @@ export class WorkerPool {
 
       let messages: ChatMessage[]
       let startStep = 1
+      let nextUser: string | null = null
+      let pendingAssistant: string | null = null
+
       if (checkpoint?.messages?.length) {
         messages = checkpoint.messages
-        startStep = Math.max(1, (checkpoint.step || 0) + 1)
+        startStep = Math.max(1, checkpoint.step || 1)
+        const last = messages[messages.length - 1]
+        if (last?.role === 'assistant') {
+          // Resume mid-step: tools not yet executed for this assistant turn
+          pendingAssistant = last.content
+          await seedChatSession(id, messages)
+        } else if (last?.role === 'user') {
+          // Seed history without the pending user turn, then prompt it
+          await seedChatSession(id, messages.slice(0, -1))
+          nextUser = last.content
+          startStep = Math.max(1, (checkpoint.step || 0) + 1)
+        } else {
+          await seedChatSession(id, messages)
+          nextUser = `Agent: ${job.agentName} (${job.agentId})\nGoal:\n${job.goal}`
+        }
         this.store.patch(id, (j) => ({
           ...j,
           liveStatus: `Resuming · step ${startStep}`,
           step: checkpoint.step
         }))
       } else {
-        messages = [
-          { role: 'system', content: SYSTEM_PROMPT },
-          {
-            role: 'user',
-            content: `Agent: ${job.agentName} (${job.agentId})\nGoal:\n${job.goal}`
-          }
-        ]
+        messages = [{ role: 'system', content: SYSTEM_PROMPT }]
+        nextUser = `Agent: ${job.agentName} (${job.agentId})\nGoal:\n${job.goal}`
       }
 
       const maxSteps = config.maxSteps
-      for (let step = startStep; step <= maxSteps; step++) {
-        if (ac.signal.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
-        this.store.patch(id, (j) => ({
-          ...j,
-          step,
-          liveStatus: `${job.agentName} · step ${step}`
-        }))
+      const toolMaxTokens = Math.min(512, Math.max(256, Math.floor(config.contextSize / 8)))
 
-        const assistant = await chatCompletion(messages, {
-          model: job.model,
-          signal: ac.signal
-        })
-        messages.push({ role: 'assistant', content: assistant })
-        this.store.patch(id, (j) => ({
-          ...j,
-          thinkingTail: (j.thinkingTail + `\n${assistant}`).slice(-4000)
-        }))
+      try {
+        for (let step = startStep; step <= maxSteps; step++) {
+          if (ac.signal.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
+          this.store.patch(id, (j) => ({
+            ...j,
+            step,
+            liveStatus: `${job.agentName} · step ${step}`
+          }))
 
-        saveCheckpoint(id, { step, messages, workspaceReady: true })
-
-        const tools = parseTools(assistant)
-        if (tools.length === 0) {
-          const answer = stripTools(assistant) || assistant
-          const current = this.store.get(id)!
-          let prUrl: string | null = null
-          if (job.openPr && job.repoUrl && githubToken) {
-            this.store.patch(id, (j) => ({ ...j, liveStatus: 'Opening pull request…' }))
-            const prResult = await maybeOpenPullRequest({
-              workspace,
-              repoUrl: job.repoUrl,
-              baseBranch: job.branch || null,
-              githubToken,
-              jobId: id,
-              goal: job.goal,
-              filesTouched: current.filesTouched
+          let assistant: string
+          if (pendingAssistant) {
+            assistant = pendingAssistant
+            pendingAssistant = null
+          } else {
+            if (!nextUser) {
+              nextUser = `Continue toward the goal. Use tools if needed, or reply DONE with a short summary.`
+            }
+            const needsSystem = messages.every((m) => m.role === 'system')
+            assistant = await chatTurn({
+              sessionKey: id,
+              userMessage: nextUser,
+              systemPrompt: needsSystem ? SYSTEM_PROMPT : undefined,
+              messagesForRemote: [...messages, { role: 'user', content: nextUser }],
+              model: job.model,
+              maxTokens: toolMaxTokens,
+              signal: ac.signal
             })
-            if (prResult?.startsWith('http')) prUrl = prResult
-            else if (prResult) {
-              // keep note in answer
-            }
+            messages.push({ role: 'user', content: nextUser })
+            messages.push({ role: 'assistant', content: assistant })
+            nextUser = null
           }
-          const pack = buildJobArtifacts(id, current.filesTouched || [])
-          this.store.setStatus(id, 'done', {
-            answer: prUrl
-              ? `${answer}\n\nPull request: ${prUrl}`
-              : answer,
-            liveStatus:
-              pack.files.length > 0
-                ? `Done · ${pack.files.length} file${pack.files.length === 1 ? '' : 's'} ready to apply`
-                : 'Done',
-            hasArtifacts: pack.files.length > 0,
-            artifactCount: pack.files.length,
-            artifactsTruncated: pack.truncated,
-            truncatedReasons: pack.truncatedReasons,
-            prUrl,
-            resumable: false
-          })
-          bumpMetric('jobsDone')
-          audit('job_done', { jobId: id, artifacts: pack.files.length, prUrl })
-          clearJobSecrets(id)
-          return
-        }
 
-        const results: string[] = []
-        for (let i = 0; i < tools.length; i++) {
-          const call = tools[i]!
-          const toolId = `t${step}_${i}`
-          const path =
-            typeof call.args.path === 'string'
-              ? call.args.path
-              : typeof call.args.command === 'string'
-                ? String(call.args.command).slice(0, 80)
-                : undefined
-          const running: CloudJobToolEvent = {
-            id: toolId,
-            name: call.name,
-            path,
-            status: 'running',
-            detail: 'Running…',
-            at: new Date().toISOString()
-          }
           this.store.patch(id, (j) => ({
             ...j,
-            recentTools: [...j.recentTools.filter((t) => t.id !== toolId), running].slice(-40),
-            liveStatus: `${call.name}: running`
+            thinkingTail: (j.thinkingTail + `\n${assistant}`).slice(-4000)
           }))
 
-          let ok = true
-          let detail = ''
-          let touched: string | undefined
-          try {
-            if (call.name === 'tree') {
-              detail = listTree(
+          saveCheckpoint(id, { step, messages, workspaceReady: true })
+
+          const tools = parseTools(assistant)
+          if (tools.length === 0) {
+            // Optional short final polish if the model already answered — keep tokens low
+            const answer = stripTools(assistant) || assistant
+            const current = this.store.get(id)!
+            let prUrl: string | null = null
+            if (job.openPr && job.repoUrl && githubToken) {
+              this.store.patch(id, (j) => ({ ...j, liveStatus: 'Opening pull request…' }))
+              const prResult = await maybeOpenPullRequest({
                 workspace,
-                typeof call.args.path === 'string' ? call.args.path : '.',
-                typeof call.args.maxDepth === 'number' ? call.args.maxDepth : 3
-              )
-            } else if (call.name === 'read_file') {
-              const p = String(call.args.path || '')
-              detail = readText(workspace, p)
-              touched = p
-            } else if (call.name === 'write_file') {
-              const p = String(call.args.path || '')
-              // Capture before content for artifact baseline if not seeded
-              try {
-                snapshotWorkspaceBaseline(id, [p])
-              } catch {
-                // ignore
-              }
-              const content = String(call.args.content ?? '')
-              touched = writeText(workspace, p, content)
-              detail = `Wrote ${touched} (${Buffer.byteLength(content, 'utf8')} bytes)`
-            } else if (call.name === 'run') {
-              const command = String(call.args.command || '')
-              const r = await runShell(workspace, command, ac.signal)
-              ok = r.ok
-              detail = r.detail
-            } else {
-              ok = false
-              detail = `Unknown tool: ${call.name}`
+                repoUrl: job.repoUrl,
+                baseBranch: job.branch || null,
+                githubToken,
+                jobId: id,
+                goal: job.goal,
+                filesTouched: current.filesTouched
+              })
+              if (prResult?.startsWith('http')) prUrl = prResult
             }
-          } catch (err) {
-            ok = false
-            detail = err instanceof Error ? err.message : String(err)
+            const pack = buildJobArtifacts(id, current.filesTouched || [])
+            this.store.setStatus(id, 'done', {
+              answer: prUrl ? `${answer}\n\nPull request: ${prUrl}` : answer,
+              liveStatus:
+                pack.files.length > 0
+                  ? `Done · ${pack.files.length} file${pack.files.length === 1 ? '' : 's'} ready to apply`
+                  : 'Done',
+              hasArtifacts: pack.files.length > 0,
+              artifactCount: pack.files.length,
+              artifactsTruncated: pack.truncated,
+              truncatedReasons: pack.truncatedReasons,
+              prUrl,
+              resumable: false
+            })
+            bumpMetric('jobsDone')
+            audit('job_done', { jobId: id, artifacts: pack.files.length, prUrl })
+            clearJobSecrets(id)
+            return
           }
 
-          const done: CloudJobToolEvent = {
-            ...running,
-            status: ok ? 'ok' : 'error',
-            detail: detail.slice(0, 2000),
-            at: new Date().toISOString()
-          }
-          this.store.patch(id, (j) => ({
-            ...j,
-            recentTools: [...j.recentTools.filter((t) => t.id !== toolId), done].slice(-40),
-            filesTouched: touched
-              ? [...new Set([...j.filesTouched, touched])]
-              : j.filesTouched,
-            liveStatus: `${call.name}: ${ok ? 'ok' : 'error'}`
-          }))
-          results.push(`TOOL_RESULT ${call.name}:\n${detail.slice(0, 8000)}`)
-        }
+          const results: string[] = []
+          for (let i = 0; i < tools.length; i++) {
+            const call = tools[i]!
+            const toolId = `t${step}_${i}`
+            const path =
+              typeof call.args.path === 'string'
+                ? call.args.path
+                : typeof call.args.command === 'string'
+                  ? String(call.args.command).slice(0, 80)
+                  : undefined
+            const running: CloudJobToolEvent = {
+              id: toolId,
+              name: call.name,
+              path,
+              status: 'running',
+              detail: 'Running…',
+              at: new Date().toISOString()
+            }
+            this.store.patch(id, (j) => ({
+              ...j,
+              recentTools: [...j.recentTools.filter((t) => t.id !== toolId), running].slice(-40),
+              liveStatus: `${call.name}: running`
+            }))
 
-        messages.push({
-          role: 'user',
-          content:
+            let ok = true
+            let detail = ''
+            let touched: string | undefined
+            try {
+              if (call.name === 'tree') {
+                detail = listTree(
+                  workspace,
+                  typeof call.args.path === 'string' ? call.args.path : '.',
+                  typeof call.args.maxDepth === 'number' ? call.args.maxDepth : 3
+                )
+              } else if (call.name === 'read_file') {
+                const p = String(call.args.path || '')
+                detail = readText(workspace, p)
+                touched = p
+              } else if (call.name === 'write_file') {
+                const p = String(call.args.path || '')
+                try {
+                  snapshotWorkspaceBaseline(id, [p])
+                } catch {
+                  // ignore
+                }
+                const content = String(call.args.content ?? '')
+                touched = writeText(workspace, p, content)
+                detail = `Wrote ${touched} (${Buffer.byteLength(content, 'utf8')} bytes)`
+              } else if (call.name === 'run') {
+                const command = String(call.args.command || '')
+                const r = await runShell(workspace, command, ac.signal)
+                ok = r.ok
+                detail = r.detail
+              } else {
+                ok = false
+                detail = `Unknown tool: ${call.name}`
+              }
+            } catch (err) {
+              ok = false
+              detail = err instanceof Error ? err.message : String(err)
+            }
+
+            const done: CloudJobToolEvent = {
+              ...running,
+              status: ok ? 'ok' : 'error',
+              detail: detail.slice(0, 2000),
+              at: new Date().toISOString()
+            }
+            this.store.patch(id, (j) => ({
+              ...j,
+              recentTools: [...j.recentTools.filter((t) => t.id !== toolId), done].slice(-40),
+              filesTouched: touched
+                ? [...new Set([...j.filesTouched, touched])]
+                : j.filesTouched,
+              liveStatus: `${call.name}: ${ok ? 'ok' : 'error'}`
+            }))
+            // Keep model context lean — UI still has fuller detail in recentTools
+            results.push(`TOOL_RESULT ${call.name}:\n${detail.slice(0, 1600)}`)
+          }
+
+          nextUser =
             results.join('\n\n') +
             '\n\nContinue with tools if needed, or reply DONE with a short summary.'
-        })
-        saveCheckpoint(id, { step, messages, workspaceReady: true })
+          // nextUser is prompted on the following iteration (KV-reuse); checkpoint after tools
+          saveCheckpoint(id, {
+            step,
+            messages: [...messages, { role: 'user', content: nextUser }],
+            workspaceReady: true
+          })
+        }
+      } finally {
+        releaseChatSession(id)
       }
 
       {

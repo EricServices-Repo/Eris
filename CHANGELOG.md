@@ -3,7 +3,10 @@
 ## 0.2.19 — 2026-10-12
 
 - Desktop rebuild: Cloud Agent work runs inline in chat thinking; Agents tree / right-column Agents tab / Background hand-off removed.
-- Cloud Agent **0.2.16**: status page **Force kill all** (works on `:6443/status` and `:80`); auto-creates `/var/lib/eris-cloud/admin.token` when `ERIS_CLOUD_ADMIN_TOKEN` is unset; `POST /admin/kill-all` + `/v1/admin/kill-all`; user `POST /v1/jobs/stop-all` / Settings → Agent **Stop all my jobs**.
+- Cloud Agent **0.2.19**: port **:80** status page is a usage overview (live capacity, today outcomes, free-plan caps, process metrics, plan/status bars, masked top users, recent audit).
+- Cloud Agent **0.2.18**: keep GGUF loaded; reuse KV/`LlamaChatSession` across tool steps; tool `maxTokens` ~512; auth cache; desktop SSE (poll fallback); skip file seed when cloning; debounced `jobs.json` writes; CPU mem cap 8g.
+- Cloud Agent **0.2.17**: CPU-only hosts cap llama to **2 threads** + 4k context and Quadlet `--cpus=2` so inference cannot peg the VM and kill SSH.
+- Cloud Agent **0.2.16**: status page **Force kill all** (nginx `:80` → `:8080`); auto `admin.token`; `POST /admin/kill-all`; Settings → Agent **Stop all my jobs**.
 
 ## 0.2.18 — 2026-10-12
 

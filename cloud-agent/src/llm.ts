@@ -1,25 +1,80 @@
 import { config } from './config.js'
-import { getLocalModelStatus, localChatCompletion } from './local-model.js'
+import {
+  getLocalModelStatus,
+  localChatCompletion,
+  localChatTurn,
+  releaseLocalChatSession,
+  seedLocalChatSession,
+  type ChatMessage
+} from './local-model.js'
 
-export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
+export type { ChatMessage }
 
 /**
- * Cloud Agent inference runs the bundled local GGUF (Composer Lite) inside the container.
+ * Cloud Agent inference runs the bundled local GGUF (Composer Full) inside the container.
  * Optional ERIS_CLOUD_LLM_BASE overrides to an external OpenAI-compatible API (ops only).
  */
 export async function chatCompletion(
   messages: ChatMessage[],
-  options: { model?: string; signal?: AbortSignal } = {}
+  options: { model?: string; signal?: AbortSignal; maxTokens?: number } = {}
 ): Promise<string> {
   if (config.llmBase) {
     return remoteChatCompletion(messages, options)
   }
-  return localChatCompletion(messages, { signal: options.signal })
+  return localChatCompletion(messages, {
+    signal: options.signal,
+    maxTokens: options.maxTokens
+  })
+}
+
+/** Incremental turn with KV reuse (local GGUF). Falls back to full completion for remote LLM. */
+export async function chatTurn(options: {
+  sessionKey: string
+  userMessage: string
+  systemPrompt?: string
+  messagesForRemote?: ChatMessage[]
+  model?: string
+  maxTokens?: number
+  signal?: AbortSignal
+}): Promise<string> {
+  if (config.llmBase) {
+    const messages = options.messagesForRemote || [
+      ...(options.systemPrompt
+        ? [{ role: 'system' as const, content: options.systemPrompt }]
+        : []),
+      { role: 'user' as const, content: options.userMessage }
+    ]
+    return remoteChatCompletion(messages, {
+      model: options.model,
+      signal: options.signal,
+      maxTokens: options.maxTokens
+    })
+  }
+  return localChatTurn({
+    sessionKey: options.sessionKey,
+    userMessage: options.userMessage,
+    systemPrompt: options.systemPrompt,
+    maxTokens: options.maxTokens,
+    signal: options.signal
+  })
+}
+
+export async function seedChatSession(
+  sessionKey: string,
+  messages: ChatMessage[]
+): Promise<void> {
+  if (config.llmBase) return
+  await seedLocalChatSession(sessionKey, messages)
+}
+
+export function releaseChatSession(sessionKey: string): void {
+  if (config.llmBase) return
+  releaseLocalChatSession(sessionKey)
 }
 
 async function remoteChatCompletion(
   messages: ChatMessage[],
-  options: { model?: string; signal?: AbortSignal }
+  options: { model?: string; signal?: AbortSignal; maxTokens?: number }
 ): Promise<string> {
   const url = `${config.llmBase}/chat/completions`
   const headers: Record<string, string> = {
@@ -35,6 +90,7 @@ async function remoteChatCompletion(
     body: JSON.stringify({
       model: options.model || config.llmModel,
       temperature: 0.2,
+      max_tokens: options.maxTokens ?? 1024,
       messages
     })
   })

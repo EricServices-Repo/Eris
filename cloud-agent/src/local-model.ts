@@ -29,13 +29,32 @@ export const LOCAL_MODEL = {
 
 export type LocalModelStatus = 'missing' | 'downloading' | 'ready' | 'error'
 
+export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
+
 let status: LocalModelStatus = 'missing'
 let statusError: string | null = null
 let ensurePromise: Promise<string> | null = null
+let runtimePromise: Promise<NonNullable<typeof llamaRuntime>> | null = null
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let llamaRuntime: { model: any; context: any; LlamaChatSession: any; gpu: string | false } | null =
   null
+
+/** Per-job chat sessions — keeps KV cache warm across tool steps. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const jobSessions = new Map<string, { session: any; sequence: any }>()
+
+/** Serialize llama use — one context sequence pool. */
+let chatGate: Promise<void> = Promise.resolve()
+
+function withChatLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = chatGate.then(fn, fn)
+  chatGate = run.then(
+    () => undefined,
+    () => undefined
+  )
+  return run
+}
 
 export function localModelDir(): string {
   return join(config.dataDir, 'models')
@@ -53,6 +72,7 @@ export function getLocalModelStatus(): {
   error?: string | null
   /** Active llama.cpp backend once loaded: cuda | vulkan | metal | false (CPU) */
   gpu?: string | false | null
+  cached: boolean
 } {
   return {
     status,
@@ -60,7 +80,8 @@ export function getLocalModelStatus(): {
     modelName: LOCAL_MODEL.name,
     path: localModelPath(),
     error: statusError,
-    gpu: llamaRuntime ? llamaRuntime.gpu : null
+    gpu: llamaRuntime ? llamaRuntime.gpu : null,
+    cached: Boolean(llamaRuntime)
   }
 }
 
@@ -91,7 +112,6 @@ async function downloadModel(dest: string): Promise<void> {
   mkdirSync(localModelDir(), { recursive: true })
   const partial = `${dest}.partial`
 
-  // Resume interrupted downloads when the CDN supports Range requests.
   let existing = 0
   if (existsSync(partial)) {
     try {
@@ -99,7 +119,6 @@ async function downloadModel(dest: string): Promise<void> {
     } catch {
       existing = 0
     }
-    // Tiny/corrupt leftovers — start clean
     if (existing > 0 && existing < 1024 * 1024) {
       try {
         unlinkSync(partial)
@@ -121,7 +140,6 @@ async function downloadModel(dest: string): Promise<void> {
   if (existing > 0 && res.status === 416) {
     // Already complete according to server — verify below
   } else if (existing > 0 && res.status === 200) {
-    // Server ignored Range — restart
     try {
       unlinkSync(partial)
     } catch {
@@ -187,84 +205,201 @@ export async function ensureLocalModel(): Promise<string> {
   return ensurePromise
 }
 
+function llamaThreadOpts(): { maxThreads?: number } {
+  if (!config.maxThreads || config.maxThreads <= 0) return {}
+  return { maxThreads: config.maxThreads }
+}
+
 async function createLlama() {
   const llamaCpp = await import('node-llama-cpp')
   const { getLlama } = llamaCpp
   const mode = config.gpu
+  const threads = llamaThreadOpts()
 
   if (mode === 'false') {
-    return getLlama({ gpu: false })
+    return getLlama({ gpu: false, ...threads })
   }
 
   try {
     if (mode === 'cuda' || mode === 'vulkan') {
-      return await getLlama({ gpu: mode })
+      return await getLlama({ gpu: mode, ...threads })
     }
-    // auto: let node-llama-cpp pick CUDA/Vulkan when the host exposes a GPU
-    return await getLlama()
+    return await getLlama({ ...threads })
   } catch (err) {
     console.warn(
       `[eris-cloud-agent] GPU init failed (${mode}), falling back to CPU:`,
       err instanceof Error ? err.message : err
     )
-    return getLlama({ gpu: false })
+    const cpuThreads =
+      config.maxThreads && config.maxThreads > 0 ? { maxThreads: config.maxThreads } : { maxThreads: 2 }
+    return getLlama({ gpu: false, ...cpuThreads })
   }
 }
 
 async function ensureRuntime(): Promise<NonNullable<typeof llamaRuntime>> {
   if (llamaRuntime) return llamaRuntime
-  const path = await ensureLocalModel()
-  const llamaCpp = await import('node-llama-cpp')
-  const { LlamaChatSession } = llamaCpp
-  const llama = await createLlama()
-  const model = await llama.loadModel({ modelPath: path })
-  const context = await model.createContext({ contextSize: 8192 })
-  const gpu = (llama.gpu ?? false) as string | false
-  console.log(
-    `[eris-cloud-agent] Local model ready · ${LOCAL_MODEL.name} · gpu=${gpu === false ? 'cpu' : gpu}`
-  )
-  llamaRuntime = { model, context, LlamaChatSession, gpu }
-  status = 'ready'
-  return llamaRuntime
+  if (!runtimePromise) {
+    runtimePromise = (async () => {
+      const path = await ensureLocalModel()
+      const llamaCpp = await import('node-llama-cpp')
+      const { LlamaChatSession } = llamaCpp
+      const llama = await createLlama()
+      const model = await llama.loadModel({ modelPath: path })
+      const contextOpts: { contextSize: number; threads?: number } = {
+        contextSize: config.contextSize
+      }
+      if (config.maxThreads && config.maxThreads > 0) {
+        contextOpts.threads = config.maxThreads
+      }
+      const context = await model.createContext(contextOpts)
+      const gpu = (llama.gpu ?? false) as string | false
+      console.log(
+        `[eris-cloud-agent] Local model ready · ${LOCAL_MODEL.name} · gpu=${
+          gpu === false ? 'cpu' : gpu
+        } · threads=${config.maxThreads || 'auto'} · ctx=${config.contextSize} · cached`
+      )
+      llamaRuntime = { model, context, LlamaChatSession, gpu }
+      status = 'ready'
+      return llamaRuntime
+    })().catch((err) => {
+      runtimePromise = null
+      throw err
+    })
+  }
+  return runtimePromise
 }
 
-export async function localChatCompletion(
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-  options: { signal?: AbortSignal } = {}
-): Promise<string> {
+function messagesToHistory(messages: ChatMessage[]): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = []
+  for (const m of messages) {
+    if (m.role === 'system') out.push({ type: 'system', text: m.content })
+    else if (m.role === 'user') out.push({ type: 'user', text: m.content })
+    else out.push({ type: 'model', response: [m.content] })
+  }
+  return out
+}
+
+async function getOrCreateJobSession(
+  sessionKey: string,
+  systemPrompt?: string
+): Promise<{ session: any; sequence: any }> {
+  const existing = jobSessions.get(sessionKey)
+  if (existing && !existing.session.disposed) return existing
+
   const runtime = await ensureRuntime()
   const sequence = runtime.context.getSequence()
-  try {
-    const session = new runtime.LlamaChatSession({ contextSequence: sequence })
-    const system = messages
-      .filter((m) => m.role === 'system')
-      .map((m) => m.content)
-      .join('\n\n')
-    const transcript = messages
-      .filter((m) => m.role !== 'system')
-      .map((m) => `${m.role.toUpperCase()}:\n${m.content}`)
-      .join('\n\n')
-      .slice(-20_000)
-    const prompt = [system && `SYSTEM:\n${system.slice(0, 6000)}`, transcript, 'ASSISTANT:']
-      .filter(Boolean)
-      .join('\n\n')
+  const session = new runtime.LlamaChatSession({
+    contextSequence: sequence,
+    systemPrompt: systemPrompt || undefined,
+    autoDisposeSequence: false
+  })
+  const entry = { session, sequence }
+  jobSessions.set(sessionKey, entry)
+  return entry
+}
 
-    const text = await session.prompt(prompt, {
-      temperature: 0.2,
-      maxTokens: 2048,
-      signal: options.signal
-    })
-    return String(text || '').trim()
-  } finally {
+/** Drop a job's chat session (keeps the loaded GGUF / context pool). */
+export function releaseLocalChatSession(sessionKey: string): void {
+  const entry = jobSessions.get(sessionKey)
+  if (!entry) return
+  jobSessions.delete(sessionKey)
+  try {
+    entry.session.dispose({ disposeSequence: true })
+  } catch {
     try {
-      sequence.dispose()
+      entry.sequence.dispose()
     } catch {
       // ignore
     }
   }
 }
 
-/** Kick off model prepare without blocking server listen. */
+/**
+ * Seed a job session from checkpoint history without generating tokens.
+ * Call before the next user turn after a restart/resume.
+ */
+export async function seedLocalChatSession(
+  sessionKey: string,
+  messages: ChatMessage[]
+): Promise<void> {
+  await withChatLock(async () => {
+    releaseLocalChatSession(sessionKey)
+    const system = messages
+      .filter((m) => m.role === 'system')
+      .map((m) => m.content)
+      .join('\n\n')
+    const { session } = await getOrCreateJobSession(sessionKey, system || undefined)
+    const history = messagesToHistory(messages)
+    if (history.length) {
+      try {
+        session.setChatHistory(history)
+      } catch (err) {
+        console.warn(
+          '[eris-cloud-agent] setChatHistory failed; session will rebuild on next turn:',
+          err instanceof Error ? err.message : err
+        )
+      }
+    }
+  })
+}
+
+export type LocalChatTurnOptions = {
+  sessionKey: string
+  userMessage: string
+  systemPrompt?: string
+  /** Default 512 for tool loops; raise for final answers. */
+  maxTokens?: number
+  signal?: AbortSignal
+}
+
+/**
+ * Incremental chat turn that reuses the job's KV cache.
+ * Model weights stay loaded in process for the lifetime of the worker.
+ */
+export async function localChatTurn(options: LocalChatTurnOptions): Promise<string> {
+  const maxTokens = options.maxTokens ?? 512
+  return withChatLock(async () => {
+    const { session } = await getOrCreateJobSession(options.sessionKey, options.systemPrompt)
+    const text = await session.prompt(options.userMessage, {
+      temperature: 0.2,
+      maxTokens,
+      signal: options.signal,
+      stopOnAbortSignal: true
+    })
+    return String(text || '').trim()
+  })
+}
+
+/**
+ * One-shot completion (no session reuse). Prefer localChatTurn for agent loops.
+ * Still uses the cached model/context — does not reload GGUF.
+ */
+export async function localChatCompletion(
+  messages: ChatMessage[],
+  options: { signal?: AbortSignal; maxTokens?: number } = {}
+): Promise<string> {
+  const system = messages
+    .filter((m) => m.role === 'system')
+    .map((m) => m.content)
+    .join('\n\n')
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user')
+  const prior = messages.filter((m) => m !== lastUser)
+  const key = `__oneshot_${Date.now()}_${Math.random().toString(36).slice(2)}`
+  try {
+    if (prior.length) await seedLocalChatSession(key, prior)
+    return await localChatTurn({
+      sessionKey: key,
+      userMessage: lastUser?.content || 'Continue.',
+      systemPrompt: prior.length ? undefined : system || undefined,
+      maxTokens: options.maxTokens ?? 1024,
+      signal: options.signal
+    })
+  } finally {
+    releaseLocalChatSession(key)
+  }
+}
+
+/** Kick off model prepare without blocking server listen — keeps GGUF in RAM once loaded. */
 export function warmLocalModel(): void {
   if (modelFileLooksReady()) {
     status = 'ready'

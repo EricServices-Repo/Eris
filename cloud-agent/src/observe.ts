@@ -25,6 +25,32 @@ const metrics: Metrics = {
   startedAt: new Date().toISOString()
 }
 
+/** Restore counters from disk after restart (best-effort). */
+export function loadMetricsSnapshot(): void {
+  try {
+    const path = join(config.dataDir, 'metrics.json')
+    if (!existsSync(path)) return
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as Partial<Metrics>
+    for (const key of [
+      'requests',
+      'enqueues',
+      'authFailures',
+      'jobsDone',
+      'jobsFailed',
+      'jobsStopped',
+      'toolDenied'
+    ] as const) {
+      const n = Number(raw[key])
+      if (Number.isFinite(n) && n >= 0) metrics[key] = Math.floor(n)
+    }
+    if (typeof raw.startedAt === 'string' && raw.startedAt) {
+      metrics.startedAt = raw.startedAt
+    }
+  } catch {
+    // ignore
+  }
+}
+
 function auditPath(): string {
   return join(config.dataDir, 'audit.jsonl')
 }
@@ -37,12 +63,38 @@ export function bumpMetric(key: keyof Omit<Metrics, 'startedAt'>, n = 1): void {
   metrics[key] = (metrics[key] as number) + n
 }
 
-export function getMetrics(): Metrics & { uptimeSec: number } {
+export function getMetrics(): Metrics & {
+  uptimeSec: number
+  successRate: number | null
+  terminalJobs: number
+} {
   const started = Date.parse(metrics.startedAt)
+  const terminal = metrics.jobsDone + metrics.jobsFailed + metrics.jobsStopped
   return {
     ...metrics,
-    uptimeSec: Number.isFinite(started) ? Math.round((Date.now() - started) / 1000) : 0
+    uptimeSec: Number.isFinite(started) ? Math.round((Date.now() - started) / 1000) : 0,
+    terminalJobs: terminal,
+    successRate: terminal > 0 ? Math.round((metrics.jobsDone / terminal) * 1000) / 10 : null
   }
+}
+
+/** Recent audit lines stripped for the public status page. */
+export function readPublicAudit(limit = 30): Array<Record<string, unknown>> {
+  return readRecentAudit(limit).map((row) => {
+    if (!row || typeof row !== 'object') return { raw: String(row) }
+    const o = { ...(row as Record<string, unknown>) }
+    delete o.token
+    delete o.authorization
+    delete o.githubToken
+    if (typeof o.owner === 'string') {
+      const s = o.owner
+      o.owner =
+        s === 'anonymous' ? s : s.length <= 4 ? s[0] + '…' : s.slice(0, 2) + '…' + s.slice(-2)
+    }
+    if (typeof o.error === 'string') o.error = o.error.slice(0, 160)
+    if (typeof o.goal === 'string') delete o.goal
+    return o
+  })
 }
 
 export function audit(event: string, fields: Record<string, unknown> = {}): void {

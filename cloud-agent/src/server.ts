@@ -11,6 +11,7 @@ import {
   audit,
   bumpMetric,
   getMetrics,
+  loadMetricsSnapshot,
   newRequestId,
   persistMetricsSnapshot,
   readRecentAudit
@@ -389,6 +390,7 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
 }
 
 const admin = ensureAdminToken()
+loadMetricsSnapshot()
 warmLocalModel()
 startStatusServer(store, {
   killAll: () => workers.stopAll()
@@ -413,6 +415,11 @@ function shutdown(signal: string): void {
   shuttingDown = true
   try {
     workers.stopAll()
+  } catch {
+    /* ignore */
+  }
+  try {
+    store.flush()
   } catch {
     /* ignore */
   }

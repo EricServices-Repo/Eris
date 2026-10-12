@@ -7,13 +7,38 @@ export type AuthContext = {
   token: string
 }
 
+type CacheEntry = { auth: AuthContext; expiresAt: number }
+
+const AUTH_TTL_MS = 120_000
+const authCache = new Map<string, CacheEntry>()
+
 function erisMeUrl(): string {
   return `${config.erisApiBase.replace(/\/+$/, '')}/me.php`
 }
 
+function cacheGet(token: string): AuthContext | null {
+  const hit = authCache.get(token)
+  if (!hit) return null
+  if (Date.now() > hit.expiresAt) {
+    authCache.delete(token)
+    return null
+  }
+  return hit.auth
+}
+
+function cacheSet(auth: AuthContext): void {
+  if (!auth.token) return
+  authCache.set(auth.token, { auth, expiresAt: Date.now() + AUTH_TTL_MS })
+  // Bound cache size
+  if (authCache.size > 500) {
+    const first = authCache.keys().next().value
+    if (first) authCache.delete(first)
+  }
+}
+
 /**
  * Validate Authorization: Bearer eseris_… against EricServic.es.
- * When allowAnonymous is true and no token is provided, returns a guest context.
+ * Results are cached ~2 minutes to avoid me.php on every job poll.
  */
 export async function authenticateRequest(
   authorization: string | undefined,
@@ -29,6 +54,9 @@ export async function authenticateRequest(
     }
     return { ok: false, status: 401, error: 'Authorization Bearer token required (EricServic.es).' }
   }
+
+  const cached = cacheGet(token)
+  if (cached) return { ok: true, auth: cached }
 
   try {
     const res = await fetch(erisMeUrl(), {
@@ -51,6 +79,7 @@ export async function authenticateRequest(
       const error =
         typeof data.error === 'string' ? data.error : `EricServic.es auth failed (${res.status})`
       audit('auth_failed', { status: res.status, error: error.slice(0, 200) })
+      authCache.delete(token)
       return { ok: false, status: 401, error }
     }
     const owner =
@@ -62,7 +91,9 @@ export async function authenticateRequest(
         'free'
     ).toLowerCase()
     const plan: 'free' | 'pro' = planRaw === 'pro' ? 'pro' : 'free'
-    return { ok: true, auth: { owner, plan, token } }
+    const auth = { owner, plan, token }
+    cacheSet(auth)
+    return { ok: true, auth }
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err)
     audit('auth_error', { error: error.slice(0, 200) })

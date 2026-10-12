@@ -517,6 +517,8 @@ Set in the Quadlet file (`/etc/containers/systemd/eris-cloud-agent.container`) o
 | `ERIS_CLOUD_MAX_CONCURRENT_PRO` | `3` | Pro-plan concurrent jobs |
 | `ERIS_CLOUD_LLM_BASE` | _(unset)_ | Optional remote OpenAI-compatible API |
 | `ERIS_CLOUD_ADMIN_TOKEN` | _(unset)_ | Shared secret for force-kill-all (`POST /admin/kill-all` on status page / API). Generate a long random string. |
+| `ERIS_CLOUD_MAX_THREADS` | `2` (CPU) / unlimited (GPU) | llama.cpp thread cap — keep low on CPU VMs so SSH stays up |
+| `ERIS_CLOUD_CONTEXT_SIZE` | `4096` (CPU) / `8192` (GPU) | GGUF context window |
 
 After editing the Quadlet unit:
 
@@ -562,3 +564,25 @@ Disable status server: `ERIS_CLOUD_STATUS_ENABLED=0`.
 ## Firewall
 
 Allow inbound **6443/tcp** (Eris API) and **80/tcp** (status page) from your network, or terminate TLS on a reverse proxy. API remains Bearer-auth; status GET is public; force kill-all needs the admin token (env or auto file).
+
+---
+
+## Emergency: CPU pegged / SSH dead
+
+Composer Full on CPU can use every core and starve `sshd`. Use the **console / out-of-band** session (provider VNC/serial), not SSH:
+
+```bash
+# Stop inference immediately
+sudo systemctl stop eris-cloud-agent.service
+# or: sudo podman stop eris-cloud-agent
+
+# Confirm load drops, then SSH should work again
+uptime
+
+# Upgrade to 0.2.17+ (2-thread cap + cgroup limits) and restart
+cd /path/to/Eris
+git pull
+./cloud-agent/scripts/rebuild.sh --cpu --install --no-pull
+```
+
+CPU Quadlet defaults: `ERIS_CLOUD_MAX_THREADS=2`, `--cpus=2`, `MemoryMax=6G`.
