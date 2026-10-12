@@ -87,6 +87,13 @@ elif [[ -n "$CUDA_VERSION" ]]; then
   echo "==> CUDA build arg: $CUDA_VERSION"
 fi
 
+# System Quadlet (eris-cloud-agent.service) runs as root — the image must be in
+# root's Podman store. Building only as a regular user is the #1 start failure.
+SYSTEM_SERVICE=0
+if systemctl cat eris-cloud-agent.service >/dev/null 2>&1 || [[ "$DO_INSTALL" -eq 1 ]]; then
+  SYSTEM_SERVICE=1
+fi
+
 if [[ "$USE_COMPOSE" -eq 1 ]]; then
   echo "==> docker compose -f $(basename "$COMPOSE_FILE") build + up"
   if [[ -n "$CUDA_VERSION" ]]; then
@@ -94,8 +101,15 @@ if [[ "$USE_COMPOSE" -eq 1 ]]; then
   fi
   docker compose -f "$COMPOSE_FILE" up -d --build
 else
-  echo "==> ${ENGINE} build eris-cloud-agent:latest${CPU_ONLY:+ (target runtime-cpu)}"
-  "$ENGINE" build -t eris-cloud-agent:latest "${BUILD_ARGS[@]}" "$CDIR"
+  if [[ "$ENGINE" == "podman" && "$SYSTEM_SERVICE" -eq 1 ]]; then
+    echo "==> sudo podman build eris-cloud-agent:latest${CPU_ONLY:+ (target runtime-cpu)}  (root store for systemd)"
+    sudo podman build -t localhost/eris-cloud-agent:latest -t eris-cloud-agent:latest \
+      "${BUILD_ARGS[@]}" "$CDIR"
+  else
+    echo "==> ${ENGINE} build eris-cloud-agent:latest${CPU_ONLY:+ (target runtime-cpu)}"
+    "$ENGINE" build -t localhost/eris-cloud-agent:latest -t eris-cloud-agent:latest \
+      "${BUILD_ARGS[@]}" "$CDIR"
+  fi
 fi
 
 if [[ "$DO_INSTALL" -eq 1 ]]; then

@@ -120,11 +120,14 @@ cd /opt/eris
 
 ### Step 3 — Build the image
 
-**CPU node (no NVIDIA):**
+**CPU node (no NVIDIA)** — use `sudo` so the image lands in root’s store (required for system Quadlet):
 
 ```bash
 cd /opt/eris
-podman build --target runtime-cpu -t eris-cloud-agent:latest ./cloud-agent
+sudo podman build --target runtime-cpu \
+  -t localhost/eris-cloud-agent:latest \
+  -t eris-cloud-agent:latest \
+  ./cloud-agent
 ```
 
 **GPU node:**
@@ -132,7 +135,10 @@ podman build --target runtime-cpu -t eris-cloud-agent:latest ./cloud-agent
 ```bash
 cd /opt/eris
 # once: nvidia-smi && sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
-podman build -t eris-cloud-agent:latest ./cloud-agent
+sudo podman build \
+  -t localhost/eris-cloud-agent:latest \
+  -t eris-cloud-agent:latest \
+  ./cloud-agent
 ```
 
 ### Step 4 — Install the Quadlet unit (systemd service)
@@ -224,6 +230,58 @@ sudo firewall-cmd --permanent --add-port=6443/tcp && sudo firewall-cmd --reload
 # sudo ufw allow 6443/tcp
 ```
 
+### Troubleshooting: `Failed to start eris-cloud-agent.service`
+
+On the VM, get the real error (the one-line journal summary is not enough):
+
+```bash
+journalctl -u eris-cloud-agent.service -n 80 --no-pager
+systemctl cat eris-cloud-agent.service
+sudo podman images | grep eris-cloud
+podman images | grep eris-cloud   # user store — systemd cannot see this
+```
+
+**Most common cause (Rocky / rootful Quadlet):** the image was built as your login user, but `eris-cloud-agent.service` runs as **root**. Root and user Podman storage are separate.
+
+Fix — build into the root store, then restart:
+
+```bash
+cd /opt/eris
+sudo podman rm -f eris-cloud-agent 2>/dev/null || true
+
+# CPU:
+sudo podman build --target runtime-cpu \
+  -t localhost/eris-cloud-agent:latest \
+  -t eris-cloud-agent:latest \
+  ./cloud-agent
+
+# Confirm root can see it:
+sudo podman image exists localhost/eris-cloud-agent:latest && echo OK
+
+sudo cp cloud-agent/deploy/eris-cloud-agent-cpu.container \
+  /etc/containers/systemd/eris-cloud-agent.container
+sudo systemctl daemon-reload
+sudo systemctl restart eris-cloud-agent.service
+systemctl status eris-cloud-agent.service --no-pager
+curl -sS http://127.0.0.1:6443/v1/health | jq '{ok,ready,gpuMode}'
+```
+
+Or re-run the helper (it builds with `sudo podman` when installing the system unit):
+
+```bash
+cd /opt/eris
+./cloud-agent/scripts/rebuild.sh --cpu --install --no-pull
+```
+
+Other checks:
+
+| Symptom | Fix |
+|---------|-----|
+| `short-name … resolving` / pull from registry | Image missing in root store; use `Pull=never` + `sudo podman build` |
+| `port is already allocated` | `sudo ss -lntp \| grep 6443` then stop the other process / `podman rm -f eris-cloud-agent` |
+| `executable file not found` / wrong image | Rebuild after `git pull`; confirm `Dockerfile` target `runtime-cpu` |
+| SELinux deny | `sudo ausearch -m avc -ts recent \| grep eris` — volume already uses `:Z` |
+
 ### Fallback — classic systemd unit (no Quadlet)
 
 If `/etc/containers/systemd` / Quadlet is unavailable:
@@ -258,7 +316,10 @@ Manual equivalent:
 
 ```bash
 cd /opt/eris
-podman build --target runtime-cpu -t eris-cloud-agent:latest ./cloud-agent
+sudo podman build --target runtime-cpu \
+  -t localhost/eris-cloud-agent:latest \
+  -t eris-cloud-agent:latest \
+  ./cloud-agent
 
 sudo mkdir -p /etc/containers/systemd
 sudo cp cloud-agent/deploy/eris-cloud-agent-cpu.container \
