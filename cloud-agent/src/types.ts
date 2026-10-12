@@ -65,7 +65,11 @@ export interface CloudHealth {
     modelId: string
     modelName: string
     error?: string | null
+    /** cuda | vulkan | metal | false once loaded */
+    gpu?: string | false | null
   }
+  /** Requested GPU mode from ERIS_CLOUD_GPU */
+  gpuMode?: 'auto' | 'cuda' | 'vulkan' | 'false'
   inference?: 'local' | 'remote'
   maxParallel: number
   running: number

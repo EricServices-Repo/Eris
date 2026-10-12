@@ -50,8 +50,10 @@ function healthBody(): Record<string, unknown> {
       status: local.status,
       modelId: local.modelId,
       modelName: local.modelName,
-      error: local.error
+      error: local.error,
+      gpu: local.gpu
     },
+    gpuMode: config.gpu,
     inference: config.llmBase ? 'remote' : 'local',
     maxParallel: config.maxParallel,
     running: counts.running,

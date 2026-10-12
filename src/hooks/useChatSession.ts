@@ -24,7 +24,7 @@ import type {
   QueuedChatMessage
 } from '@/features/chat/ChatPanel'
 import type { PendingDiff } from '@/features/chat/DiffReview'
-import { isCloudAgentsReady } from '@/shared/cloud-agents'
+import { shouldUseCloudAgents } from '@/shared/cloud-agents'
 import type { RightPanel } from './useLayout'
 import { uid } from './uid'
 
@@ -153,9 +153,14 @@ export function useChatSession({
         if (streaming) stopChat()
         let job
         let via = 'local'
+        let health = null
         try {
-          const health = await window.ide.cloudAgentsHealth()
-          if (isCloudAgentsReady(health)) {
+          health = await window.ide.cloudAgentsHealth()
+        } catch {
+          health = null
+        }
+        if (shouldUseCloudAgents(health)) {
+          try {
             job = await window.ide.enqueueCloudJob({
               goal,
               model,
@@ -163,9 +168,10 @@ export function useChatSession({
               claim: goal.slice(0, 64)
             })
             via = 'cloud'
+          } catch {
+            // Cloud enqueue/network failed — only then fall back to local.
+            job = undefined
           }
-        } catch {
-          // fall through to local
         }
         if (!job) {
           job = await window.ide.enqueueBackgroundJob({

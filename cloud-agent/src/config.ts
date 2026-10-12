@@ -19,6 +19,16 @@ function pkgVersion(): string {
 /** Public hostname:port Eris clients use (plain HTTP — no TLS cert). */
 export const PUBLIC_BASE_URL = 'http://agents.ericservic.es:6443'
 
+/** GPU preference for the in-container GGUF (node-llama-cpp). */
+export type GpuMode = 'auto' | 'cuda' | 'vulkan' | 'false'
+
+function parseGpuMode(raw: string | undefined): GpuMode {
+  const v = (raw || 'auto').trim().toLowerCase()
+  if (v === 'cuda' || v === 'vulkan' || v === 'auto') return v
+  if (v === '0' || v === 'false' || v === 'cpu' || v === 'off' || v === 'none') return 'false'
+  return 'auto'
+}
+
 export const config = {
   version: pkgVersion(),
   /** Listen inside the container / host */
@@ -29,6 +39,11 @@ export const config = {
   maxParallel: Math.max(1, Math.min(8, Number(process.env.ERIS_CLOUD_MAX_PARALLEL || 2))),
   maxFiles: Math.max(1, Math.min(500, Number(process.env.ERIS_CLOUD_MAX_FILES || 120))),
   maxFileBytes: Math.max(1024, Number(process.env.ERIS_CLOUD_MAX_FILE_BYTES || 200_000)),
+  /**
+   * GPU for local GGUF: auto (prefer CUDA/Vulkan) | cuda | vulkan | false (CPU).
+   * Requires NVIDIA Container Toolkit + CUDA libs in the image for GPU.
+   */
+  gpu: parseGpuMode(process.env.ERIS_CLOUD_GPU),
   /**
    * Optional override: OpenAI-compatible remote API.
    * When unset (default), the Cloud Agent runs its own local GGUF via node-llama-cpp.

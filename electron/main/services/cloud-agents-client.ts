@@ -4,7 +4,9 @@ import {
   CLOUD_AGENTS_BASE_URL,
   CLOUD_AGENTS_HEALTH_PATH,
   CLOUD_AGENTS_JOBS_PATH,
+  cloudAgentsFallbackReason,
   isCloudAgentsReady,
+  shouldUseCloudAgents,
   type CloudHealth,
   type CloudJob,
   type EnqueueCloudJobRequest
@@ -44,18 +46,27 @@ function shouldLogHealthFailure(error: string): boolean {
   return false
 }
 
+const DEFAULT_TIMEOUT_MS = 8_000
+const ENQUEUE_TIMEOUT_MS = 30_000
+
 async function cloudFetch(
   path: string,
-  init?: RequestInit & { logLabel?: string }
+  init?: RequestInit & { logLabel?: string; timeoutMs?: number }
 ): Promise<{ ok: boolean; status: number; data: Record<string, unknown>; error?: string }> {
-  const { logLabel, ...fetchInit } = init || {}
+  const { logLabel, timeoutMs = DEFAULT_TIMEOUT_MS, ...fetchInit } = init || {}
   const method = (fetchInit.method || 'GET').toUpperCase()
   const url = `${cloudAgentsBaseUrl()}${path}`
   const label = logLabel || `${method} ${path}`
+  const signal =
+    fetchInit.signal ||
+    (typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal
+      ? AbortSignal.timeout(timeoutMs)
+      : undefined)
 
   try {
     const res = await fetch(url, {
       ...fetchInit,
+      signal,
       headers: {
         Accept: 'application/json',
         'X-Eris-Client': 'eris-desktop',
@@ -142,8 +153,21 @@ export async function cloudAgentsHealth(): Promise<CloudHealth> {
             status: localModel.status,
             modelId: String(localModel.modelId || ''),
             modelName: String(localModel.modelName || ''),
-            error: localModel.error
+            error: localModel.error,
+            gpu:
+              localModel.gpu === false
+                ? false
+                : typeof localModel.gpu === 'string'
+                  ? localModel.gpu
+                  : null
           }
+        : undefined,
+    gpuMode:
+      r.data.gpuMode === 'cuda' ||
+      r.data.gpuMode === 'vulkan' ||
+      r.data.gpuMode === 'false' ||
+      r.data.gpuMode === 'auto'
+        ? r.data.gpuMode
         : undefined,
     inference: r.data.inference === 'remote' ? 'remote' : 'local',
     maxParallel: Number(r.data.maxParallel || 0),
@@ -159,23 +183,24 @@ export async function cloudAgentsHealth(): Promise<CloudHealth> {
       version: health.version,
       inference: health.inference,
       localModel: health.localModel?.status,
-      ready: isCloudAgentsReady(health)
+      ready: isCloudAgentsReady(health),
+      preferCloud: shouldUseCloudAgents(health)
     })
     lastHealthLogKey = ''
-  } else if (!isCloudAgentsReady(health)) {
-    const reason =
-      health.localModel?.status === 'downloading'
-        ? 'model still downloading'
-        : health.localModel?.status === 'missing'
-          ? 'model missing'
-          : health.localModel?.status === 'error'
-            ? `model error: ${health.localModel.error || 'unknown'}`
-            : 'not ready'
-    if (shouldLogHealthFailure(reason)) {
-      logWarn('Cloud Agents reachable but not ready — using local agents', {
+  } else {
+    const fallback = cloudAgentsFallbackReason(health)
+    if (fallback && shouldLogHealthFailure(fallback)) {
+      logWarn('Cloud Agents unavailable — using local agents', {
         baseUrl: cloudAgentsBaseUrl(),
-        reason,
+        reason: fallback,
         localModel: health.localModel,
+        inference: health.inference,
+        error: health.error
+      })
+    } else if (!isCloudAgentsReady(health) && shouldLogHealthFailure(health.localModel?.status || 'warming')) {
+      logInfo('Cloud Agents reachable — warming model (still prefer cloud)', {
+        baseUrl: cloudAgentsBaseUrl(),
+        localModel: health.localModel?.status,
         inference: health.inference
       })
     }
@@ -222,6 +247,7 @@ export async function enqueueCloudJob(req: EnqueueCloudJobRequest): Promise<Clou
   const r = await cloudFetch(CLOUD_AGENTS_JOBS_PATH, {
     method: 'POST',
     logLabel: 'enqueue job',
+    timeoutMs: ENQUEUE_TIMEOUT_MS,
     body: JSON.stringify({
       goal: req.goal,
       agentId: req.agentId,

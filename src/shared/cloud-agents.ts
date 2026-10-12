@@ -49,7 +49,11 @@ export interface CloudHealth {
     modelId: string
     modelName: string
     error?: string | null
+    /** cuda | vulkan | metal | false once the GGUF runtime is loaded */
+    gpu?: string | false | null
   }
+  /** Requested GPU mode on the worker (ERIS_CLOUD_GPU) */
+  gpuMode?: 'auto' | 'cuda' | 'vulkan' | 'false'
   inference?: 'local' | 'remote'
   maxParallel: number
   running: number
@@ -69,26 +73,51 @@ export interface EnqueueCloudJobRequest {
   files?: Array<{ path: string; content: string }>
 }
 
-/** True when Eris should prefer Cloud Agents over local worktrees. */
+/**
+ * Why Eris should skip Cloud and start a local worktree agent.
+ * Only hard cloud failures — not "model still downloading".
+ */
+export type CloudAgentsFallbackReason = 'unreachable' | 'model-error' | 'not-configured'
+
+export function cloudAgentsFallbackReason(
+  health: CloudHealth | null | undefined
+): CloudAgentsFallbackReason | null {
+  if (!health?.ok) return 'unreachable'
+  if (health.localModel?.status === 'error') return 'model-error'
+  // Remote override path only: missing/invalid LLM config is a cloud issue.
+  if (health.inference === 'remote' && health.llmConfigured === false) return 'not-configured'
+  return null
+}
+
+/**
+ * Prefer Cloud Agents whenever the worker is reachable and not in a hard error.
+ * Matches server accept policy: jobs may enqueue while the GGUF is still downloading.
+ */
+export function shouldUseCloudAgents(health: CloudHealth | null | undefined): boolean {
+  return cloudAgentsFallbackReason(health) === null
+}
+
+/** True when the cloud worker is fully ready for immediate inference (UI green state). */
 export function isCloudAgentsReady(health: CloudHealth | null | undefined): boolean {
-  if (!health?.ok) return false
-  if (health.localModel?.status === 'error') return false
-  if (health.inference === 'remote') return health.llmConfigured !== false
-  // Default: in-container GGUF must be loaded
-  return health.localModel?.status === 'ready'
+  if (!shouldUseCloudAgents(health)) return false
+  if (health!.inference === 'remote') return true
+  // Local GGUF path: green only once the model file is loaded.
+  return !health!.localModel || health!.localModel.status === 'ready'
 }
 
 export function cloudAgentsStatusLabel(health: CloudHealth | null | undefined): string {
   if (!health) return 'Cloud: checking…'
-  if (!health.ok) return `Cloud: offline${health.error ? ` (${health.error})` : ''} · using local`
-  if (health.localModel?.status === 'downloading') return 'Cloud: downloading model…'
-  if (health.localModel?.status === 'missing') return 'Cloud: model missing…'
-  if (health.localModel?.status === 'error') {
-    return `Cloud: model error · using local`
+  const fallback = cloudAgentsFallbackReason(health)
+  if (fallback === 'unreachable') {
+    return `Cloud: offline${health.error ? ` (${health.error})` : ''} · using local`
   }
+  if (fallback === 'model-error') return 'Cloud: model error · using local'
+  if (fallback === 'not-configured') return 'Cloud: LLM not configured · using local'
+  if (health.localModel?.status === 'downloading') return 'Cloud: downloading model…'
+  if (health.localModel?.status === 'missing') return 'Cloud: warming model…'
   if (isCloudAgentsReady(health)) {
     const name = health.localModel?.modelName || 'ready'
     return `Cloud: ${name}`
   }
-  return 'Cloud: pending · using local'
+  return 'Cloud: available'
 }
