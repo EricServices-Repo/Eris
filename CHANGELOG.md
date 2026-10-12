@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.1 — 2026-10-12
+
+macOS build (Apple Silicon). Download the `.dmg` or `.zip`, open, and move Eris to Applications.
+
+### Changes
+- Ship Cloud Agents HTTP hardening and Settings metrics for 0.2.1. (46e0870)
+- Add multi-agent orchestration and a self-hosted Cloud Agent worker. (a7cf157)
+- Merge pull request #3 from EricServices-Repo/cursor/ollama-model-usage (63ac618)
+- Ship 0.2.0: evals, code intelligence, and background worktree agents. (fff14e5)
+- Harden trust and packaging, upgrade Electron, and add CI quality gates. (cdace1e)
+- Merge pull request #2 from EricServices-Repo/cursor/ollama-model-usage (2dfe3d1)
+- Add TurnPlan chat routing for agents and models. (e445fd0)
+- Fix packaged shell load and ship GitHub release tooling. (f856c66)
+
 All notable releases of Eris are listed here. Versions follow [semver](https://semver.org/) in `package.json` and ship as GitHub Releases tagged `vX.Y.Z`.
 
 ## 0.2.0 — 2026-10-11
