@@ -205,7 +205,9 @@ const api: IdeApi = {
   installAppUpdate: () => ipcRenderer.invoke('updates:install'),
   openAppReleasesPage: () => ipcRenderer.invoke('updates:openReleases'),
   dismissAppUpdate: () => ipcRenderer.invoke('updates:dismiss'),
-  onUpdateStatus: (cb) => subscribe('updates:status', cb)
+  onUpdateStatus: (cb) => subscribe('updates:status', cb),
+  previewBugReport: (input) => ipcRenderer.invoke('bugReport:preview', input),
+  submitBugReport: (input) => ipcRenderer.invoke('bugReport:submit', input)
 }
 
 contextBridge.exposeInMainWorld('ide', api)

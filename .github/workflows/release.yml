@@ -187,6 +187,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Public feed for electron-updater — clients need no GitHub token.
+      # Must pass token: explicitly; env GITHUB_TOKEN alone can still use the job's
+      # default integration token (403 on cross-repo releases).
       - name: Publish public update feed (Eris-updates)
         uses: softprops/action-gh-release@v2
         with:
@@ -194,10 +196,9 @@ jobs:
           tag_name: ${{ needs.resolve-version.outputs.tag }}
           name: Eris ${{ needs.resolve-version.outputs.tag }}
           draft: false
+          token: ${{ secrets.ERIS_UPDATES_TOKEN }}
           body: |
             ## Eris ${{ needs.resolve-version.outputs.tag }}
 
             Public auto-update feed (macOS zip + Windows setup + `latest-*.yml`).
           files: release-assets/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.ERIS_UPDATES_TOKEN }}

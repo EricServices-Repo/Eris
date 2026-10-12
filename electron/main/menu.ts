@@ -1,4 +1,4 @@
-import { Menu } from 'electron'
+import { Menu, shell } from 'electron'
 import { checkForUpdatesNow } from './services/auto-update'
 import { appState } from './app-state'
 
@@ -90,6 +90,21 @@ export function buildMenu(): void {
           click: () => {
             appState.chatAbort?.abort()
             appState.mainWindow?.webContents.send('menu:stop-chat')
+          }
+        }
+      ]
+    },
+    {
+      label: 'Help',
+      submenu: [
+        {
+          label: 'Report a Bug…',
+          click: () => appState.mainWindow?.webContents.send('menu:report-bug')
+        },
+        {
+          label: 'Eris Feedback on GitHub',
+          click: () => {
+            void shell.openExternal('https://github.com/EricServices-Repo/Eris-feedback/issues')
           }
         }
       ]

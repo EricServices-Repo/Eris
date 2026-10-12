@@ -32,6 +32,7 @@ interface Props {
   onClose: () => void
   onChanged: (resolved: AppSettings) => void
   onRerunSetup?: () => void
+  onReportBug?: () => void
 }
 
 export function SettingsModal({
@@ -42,7 +43,8 @@ export function SettingsModal({
   startCreateSkill,
   onClose,
   onChanged,
-  onRerunSetup
+  onRerunSetup,
+  onReportBug
 }: Props) {
   const [category, setCategory] = useState<Category>('models')
   const [layered, setLayered] = useState<LayeredSettings | null>(null)
@@ -365,6 +367,7 @@ export function SettingsModal({
               apply={apply}
               onClose={onClose}
               onRerunSetup={onRerunSetup}
+              onReportBug={onReportBug}
             />
           )}
 

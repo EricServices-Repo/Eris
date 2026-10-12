@@ -70,6 +70,9 @@ const SearchPanel = lazy(() =>
 const DebugPanel = lazy(() =>
   import('@/features/debug/DebugPanel').then((m) => ({ default: m.DebugPanel }))
 )
+const BugReportModal = lazy(() =>
+  import('@/features/feedback/BugReportModal').then((m) => ({ default: m.BugReportModal }))
+)
 
 function flattenFiles(entries: FileEntry[], out: Array<{ path: string; name: string }> = []) {
   for (const e of entries) {
@@ -98,6 +101,7 @@ export default function App() {
   } = useSettingsState()
   const [settingsMounted, setSettingsMounted] = useState(false)
   const [diffReviewExpanded, setDiffReviewExpanded] = useState(true)
+  const [bugReportOpen, setBugReportOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [workspaceModal, setWorkspaceModal] = useState<null | 'create' | 'link'>(null)
   const [showSetupWizard, setShowSetupWizard] = useState(false)
@@ -406,7 +410,8 @@ export default function App() {
       window.ide.onMenu('menu:save', () => void saveActive()),
       window.ide.onMenu('menu:command-palette', () => setPaletteOpen(true)),
       window.ide.onMenu('menu:new-chat', () => void newChat()),
-      window.ide.onMenu('menu:stop-chat', () => stopChat())
+      window.ide.onMenu('menu:stop-chat', () => stopChat()),
+      window.ide.onMenu('menu:report-bug', () => setBugReportOpen(true))
     ]
     return () => offs.forEach((off) => off())
   }, [saveActive, newChat, openSettings, stopChat])
@@ -446,6 +451,11 @@ export default function App() {
         run: () => setWorkspaceModal('link')
       },
       { id: 'settings', label: 'Open Settings', shortcut: '⌘,', run: () => openSettings() },
+      {
+        id: 'report-bug',
+        label: 'Report a Bug…',
+        run: () => setBugReportOpen(true)
+      },
       {
         id: 'skills',
         label: 'Open Skills Settings',
@@ -1318,6 +1328,7 @@ export default function App() {
             onRerunSetup={() => {
               void window.ide.resetOnboarding().then(() => setShowSetupWizard(true))
             }}
+            onReportBug={() => setBugReportOpen(true)}
           />
         </Suspense>
       )}
@@ -1337,6 +1348,11 @@ export default function App() {
           else void linkFolder(name || undefined)
         }}
       />
+      {bugReportOpen && (
+        <Suspense fallback={null}>
+          <BugReportModal open={bugReportOpen} onClose={() => setBugReportOpen(false)} />
+        </Suspense>
+      )}
     </div>
   )
 }
