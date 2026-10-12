@@ -60,6 +60,11 @@ export interface CloudHealth {
   queued: number
   publicBaseUrl?: string
   error?: string
+  /**
+   * True when Eris has a linked EricServic.es account + device token.
+   * Cloud Agents require this; omit/false means use local only.
+   */
+  authenticated?: boolean
 }
 
 export interface EnqueueCloudJobRequest {
@@ -75,14 +80,21 @@ export interface EnqueueCloudJobRequest {
 
 /**
  * Why Eris should skip Cloud and start a local worktree agent.
- * Only hard cloud failures — not "model still downloading".
+ * Auth is required; otherwise only hard cloud failures (not "model still downloading").
  */
-export type CloudAgentsFallbackReason = 'unreachable' | 'model-error' | 'not-configured'
+export type CloudAgentsFallbackReason =
+  | 'not-authenticated'
+  | 'unreachable'
+  | 'model-error'
+  | 'not-configured'
 
 export function cloudAgentsFallbackReason(
   health: CloudHealth | null | undefined
 ): CloudAgentsFallbackReason | null {
-  if (!health?.ok) return 'unreachable'
+  if (!health) return 'unreachable'
+  // Cloud Agents require a signed-in EricServic.es account (linked + device token).
+  if (health.authenticated !== true) return 'not-authenticated'
+  if (!health.ok) return 'unreachable'
   if (health.localModel?.status === 'error') return 'model-error'
   // Remote override path only: missing/invalid LLM config is a cloud issue.
   if (health.inference === 'remote' && health.llmConfigured === false) return 'not-configured'
@@ -90,7 +102,7 @@ export function cloudAgentsFallbackReason(
 }
 
 /**
- * Prefer Cloud Agents whenever the worker is reachable and not in a hard error.
+ * Prefer Cloud Agents only when the user is authenticated and the worker is usable.
  * Matches server accept policy: jobs may enqueue while the GGUF is still downloading.
  */
 export function shouldUseCloudAgents(health: CloudHealth | null | undefined): boolean {
@@ -108,6 +120,9 @@ export function isCloudAgentsReady(health: CloudHealth | null | undefined): bool
 export function cloudAgentsStatusLabel(health: CloudHealth | null | undefined): string {
   if (!health) return 'Cloud: checking…'
   const fallback = cloudAgentsFallbackReason(health)
+  if (fallback === 'not-authenticated') {
+    return 'Cloud: sign in (Settings → Account) · using local'
+  }
   if (fallback === 'unreachable') {
     return `Cloud: offline${health.error ? ` (${health.error})` : ''} · using local`
   }

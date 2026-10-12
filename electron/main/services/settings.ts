@@ -178,6 +178,11 @@ function sanitizeEricServices(raw: Record<string, unknown>): Record<string, unkn
   if (typeof ericServices.email !== 'string') ericServices.email = ''
   if (typeof ericServices.lastSyncedAt !== 'string') ericServices.lastSyncedAt = ''
   if (typeof ericServices.syncEnabled !== 'boolean') ericServices.syncEnabled = true
+  const planRaw = String(ericServices.plan || 'free').toLowerCase()
+  ericServices.plan = planRaw === 'pro' ? 'pro' : 'free'
+  if (!ericServices.planLimits || typeof ericServices.planLimits !== 'object') {
+    ericServices.planLimits = {}
+  }
   return { ...raw, ericServices }
 }
 

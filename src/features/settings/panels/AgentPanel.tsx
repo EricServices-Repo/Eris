@@ -10,6 +10,7 @@ import {
 function offlineHealth(error: string): CloudHealth {
   return {
     ok: false,
+    authenticated: false,
     service: 'eris-cloud-agent',
     version: '',
     llmConfigured: false,
@@ -78,8 +79,9 @@ export function AgentPanel() {
           <div>
             <h3 style={{ margin: 0, fontSize: 14 }}>Cloud Agents</h3>
             <p className="subtitle" style={{ margin: '4px 0 0' }}>
-              Shared worker at {host} (plain HTTP). Local worktrees are used only when cloud
-              health or enqueue fails — not while the model is still downloading.
+              Shared worker at {host} (plain HTTP). Requires sign-in under Settings → Account.
+              Local worktrees are used when signed out, offline, or enqueue fails — not while the
+              model is still downloading.
             </p>
           </div>
           <button type="button" className="btn" disabled={busy} onClick={() => void refresh()}>
@@ -104,11 +106,13 @@ export function AgentPanel() {
               {ready ? 'Ready' : preferCloud ? 'Warming' : 'Offline'}
             </div>
             <div className="usage-hero-sub">
-              {preferCloud
-                ? cloud?.inference === 'remote'
-                  ? 'remote inference · prefer cloud'
-                  : 'local GGUF · prefer cloud'
-                : 'fallback to local worktrees'}
+              {cloud?.authenticated !== true
+                ? 'sign in required · Settings → Account'
+                : preferCloud
+                  ? cloud?.inference === 'remote'
+                    ? 'remote inference · prefer cloud'
+                    : 'local GGUF · prefer cloud'
+                  : 'fallback to local worktrees'}
             </div>
           </div>
           <div className="usage-hero-card">

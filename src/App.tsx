@@ -101,6 +101,7 @@ export default function App() {
         if (!cancelled) {
           setCloudHealth({
             ok: false,
+            authenticated: false,
             service: 'eris-cloud-agent',
             version: '',
             llmConfigured: false,

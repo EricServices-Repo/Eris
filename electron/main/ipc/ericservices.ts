@@ -10,7 +10,8 @@ import {
   ericServicesLogout,
   ericServicesPullSettings,
   ericServicesPushSettings,
-  ericServicesTokenRef
+  ericServicesTokenRef,
+  planPatchFromProfile
 } from '../services/ericservices'
 import { syncMcpRuntime } from '../services/mcp-runtime'
 import type { SettingsPatch } from '../../../src/shared/settings-schema'
@@ -67,12 +68,14 @@ export function registerEricServicesIpc(): void {
       return { ...base, ok: false, error: me.error }
     }
     if (me.profile) {
+      const planPatch = planPatchFromProfile(me.profile)
       setSettings(
         'user',
         {
           ericServices: {
             username: me.profile.username || settings.ericServices.username,
-            email: me.profile.email || settings.ericServices.email
+            email: me.profile.email || settings.ericServices.email,
+            ...planPatch
           }
         },
         appState.currentWorkspace
@@ -103,6 +106,7 @@ export function registerEricServicesIpc(): void {
       }
       const ref = ericServicesTokenRef()
       storeSecret(ref, result.token)
+      const planPatch = planPatchFromProfile(result.profile)
       setSettings(
         'user',
         {
@@ -111,7 +115,8 @@ export function registerEricServicesIpc(): void {
             tokenRef: ref,
             linked: true,
             username: result.profile?.username || username,
-            email: result.profile?.email || ''
+            email: result.profile?.email || '',
+            ...planPatch
           }
         },
         appState.currentWorkspace
@@ -154,7 +159,9 @@ export function registerEricServicesIpc(): void {
           linked: false,
           username: '',
           email: '',
-          lastSyncedAt: ''
+          lastSyncedAt: '',
+          plan: 'free',
+          planLimits: {}
         }
       },
       appState.currentWorkspace
@@ -311,6 +318,16 @@ export function registerEricServicesIpc(): void {
     const url = settings.ericServices.linked
       ? `${base}/account/eris.php`
       : `${base}/loginform.php`
+    await shell.openExternal(url)
+    return { ok: true, url }
+  })
+
+  ipcMain.handle('ericServices:openUpgrade', async () => {
+    const settings = getResolvedSettings(appState.currentWorkspace)
+    const base = settings.ericServices.apiBase.replace(/\/+$/, '')
+    const url = settings.ericServices.linked
+      ? `${base}/account/eris.php?upgrade=pro`
+      : `${base}/loginform.php?next=${encodeURIComponent('/account/eris.php?upgrade=pro')}`
     await shell.openExternal(url)
     return { ok: true, url }
   })

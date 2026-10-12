@@ -1,7 +1,7 @@
 {
   "name": "eris",
   "version": "0.2.2",
-  "description": "Eris — AI-first desktop IDE for macOS",
+  "description": "Eris — AI-first desktop IDE for macOS and Windows",
   "main": "./out/main/index.js",
   "author": "Eris",
   "license": "MIT",
@@ -11,7 +11,10 @@
     "preview": "electron-vite preview",
     "dist:mac": "npm run build && electron-builder --mac --dir -c.mac.identity=null",
     "dist:dmg": "npm run build && electron-builder --mac dmg -c.mac.identity=null",
-    "dist:release": "npm run build && electron-builder --mac dmg zip",
+    "dist:win": "npm run build && electron-builder --win nsis --x64",
+    "dist:release": "npm run build && electron-builder --mac dmg zip --win nsis --x64",
+    "dist:release:mac": "npm run build && electron-builder --mac dmg zip",
+    "dist:release:win": "npm run build && electron-builder --win nsis --x64",
     "start:app": "npm run dist:mac && open \"$(ls -d dist/mac*/Eris.app | head -1)\"",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "version:patch": "npm version patch --no-git-tag-version",
@@ -20,6 +23,7 @@
     "release": "node scripts/release.mjs",
     "release:dry": "node scripts/release.mjs --dry-run",
     "release:github": "node scripts/release.mjs --no-bump",
+    "release:local": "node scripts/release.mjs --local-build",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
@@ -133,12 +137,29 @@
       "target": [
         "dir"
       ],
-      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
       "entitlements": "resources/entitlements.mac.plist",
       "entitlementsInherit": "resources/entitlements.mac.plist"
     },
     "dmg": {
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
+    },
+    "win": {
+      "icon": "resources/icons/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-${version}-win-${arch}-setup.${ext}"
     },
     "publish": [
       {

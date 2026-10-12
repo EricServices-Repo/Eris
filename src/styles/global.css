@@ -3317,3 +3317,97 @@ button.linkish {
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
+
+.usage-plan-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: linear-gradient(135deg, rgba(61, 139, 253, 0.08), rgba(0, 0, 0, 0.12));
+}
+
+.usage-plan-banner.is-pro {
+  background: linear-gradient(135deg, rgba(80, 200, 120, 0.1), rgba(0, 0, 0, 0.12));
+}
+
+.usage-plan-banner-main {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  min-width: 220px;
+  flex: 1;
+}
+
+.usage-plan-badge {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(61, 139, 253, 0.2);
+  color: var(--text);
+}
+
+.usage-plan-banner.is-pro .usage-plan-badge {
+  background: rgba(80, 200, 120, 0.25);
+}
+
+.usage-plan-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.usage-plan-copy {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  max-width: 42em;
+}
+
+.usage-plan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.usage-limit-alert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(220, 80, 80, 0.45);
+  background: rgba(220, 80, 80, 0.1);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.usage-limit-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.usage-limit-meter-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.usage-limit-meter.is-exhausted .usage-limit-meter-head {
+  color: #f0a0a0;
+}

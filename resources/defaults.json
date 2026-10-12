@@ -104,7 +104,9 @@
     "username": "",
     "email": "",
     "lastSyncedAt": "",
-    "syncEnabled": true
+    "syncEnabled": true,
+    "plan": "free",
+    "planLimits": {}
   },
   "editor": {
     "fontSize": 14,

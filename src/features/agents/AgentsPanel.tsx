@@ -48,6 +48,7 @@ export function AgentsPanel({
         () =>
           ({
             ok: false,
+            authenticated: false,
             service: 'eris-cloud-agent',
             version: '',
             llmConfigured: false,
@@ -140,6 +141,7 @@ export function AgentsPanel({
     } catch (err) {
       const health: CloudHealth = {
         ok: false,
+        authenticated: false,
         service: 'eris-cloud-agent',
         version: '',
         llmConfigured: false,
@@ -351,8 +353,8 @@ export function AgentsPanel({
         </div>
       </div>
       <div className="debug-hint">
-        Cloud uses plain HTTP (no certificate). Local agents start only if cloud health or enqueue
-        fails — not while the remote model is still downloading.
+        Cloud Agents require EricServic.es sign-in (Settings → Account). Local agents are used when
+        signed out, offline, or enqueue fails — not while the remote model is still downloading.
       </div>
     </div>
   )
@@ -409,10 +411,10 @@ function JobTreeButton({
 function helpText(preferCloud: boolean): string {
   return [
     'Blackboard: local worktree agents + Cloud Agents.',
-    'Cloud status and metrics: Settings → Agent.',
+    'Cloud status and metrics: Settings → Agent. Sign-in: Settings → Account.',
     preferCloud
-      ? 'Cloud is available — Start uses the remote worker. Local only if cloud health/enqueue fails.'
-      : 'Cloud unavailable — Start uses a local worktree agent.',
+      ? 'Signed in and cloud available — Start uses the remote worker. Local only if health/enqueue fails.'
+      : 'Cloud unavailable or signed out — Start uses a local worktree agent.',
     '',
     'Tip: Bring to chat pastes the result into the active thread.'
   ].join('\n')
