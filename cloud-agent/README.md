@@ -6,7 +6,7 @@ Inference runs **inside the container** with **Composer Full** (Qwen2.5-Coder-7B
 
 **GPU:** The image includes CUDA libraries. With NVIDIA drivers + Container Toolkit on the host, the model runs on GPU (`ERIS_CLOUD_GPU=auto`). Without a GPU it falls back to CPU.
 
-**VM install / rebuild:** see **[INSTALL.md](./INSTALL.md)** — GPU or **CPU-only** (`./cloud-agent/scripts/rebuild.sh --cpu --install`).
+**VM install / rebuild:** see **[INSTALL.md](./INSTALL.md)** — GPU or **CPU-only** (`./cloud-agent/scripts/rebuild.sh --cpu --install`). The Eris GitHub repo is **private**; clone with `gh auth`, SSH deploy key, or a PAT (anonymous clone will fail).
 
 ## Client URL (no user configuration)
 
@@ -35,11 +35,13 @@ cd /opt/eris   # or your clone path
 
 ## Build & run (CPU-only)
 
-No NVIDIA driver or toolkit required:
+No NVIDIA driver or toolkit required. Clone the **private** repo first (see [INSTALL.md](./INSTALL.md)), then:
 
 ```bash
-cd /opt/eris   # or your clone
+cd /opt/eris   # authenticated clone of EricServices-Repo/Eris
 ./cloud-agent/scripts/rebuild.sh --cpu --install
+# without git credentials on the VM:
+./cloud-agent/scripts/rebuild.sh --cpu --install --no-pull
 
 # Compose:
 docker compose -f cloud-agent/docker-compose.cpu.yml up -d --build
