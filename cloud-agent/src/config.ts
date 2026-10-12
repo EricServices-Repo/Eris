@@ -85,9 +85,23 @@ export const config = {
   contextSize: (() => {
     const raw = process.env.ERIS_CLOUD_CONTEXT_SIZE
     if (raw != null && String(raw).trim() !== '') {
-      return Math.max(512, Math.min(32768, Number(raw) || 4096))
+      return Math.max(512, Math.min(32768, Number(raw) || 2048))
     }
-    return parseGpuMode(process.env.ERIS_CLOUD_GPU) === 'false' ? 4096 : 8192
+    // 7B Q4 + 4k ctx ≈ 7GB+ RSS — OOMs an 8g cgroup. Default 2k on CPU.
+    return parseGpuMode(process.env.ERIS_CLOUD_GPU) === 'false' ? 2048 : 8192
+  })(),
+  /**
+   * Load GGUF into RAM at process start.
+   * Default OFF on CPU — boot-time loadModel+createContext was OOM-killing the VM
+   * in a systemd restart loop. Model still loads on first job and stays cached.
+   * Set ERIS_CLOUD_WARM_ON_START=1 to pre-load (GPU / larger hosts).
+   */
+  warmOnStart: (() => {
+    const raw = process.env.ERIS_CLOUD_WARM_ON_START
+    if (raw != null && String(raw).trim() !== '') {
+      return raw === '1' || raw.toLowerCase() === 'true'
+    }
+    return parseGpuMode(process.env.ERIS_CLOUD_GPU) !== 'false'
   })(),
   llmBase: (process.env.ERIS_CLOUD_LLM_BASE || '').replace(/\/+$/, ''),
   llmKey: process.env.ERIS_CLOUD_LLM_KEY || '',

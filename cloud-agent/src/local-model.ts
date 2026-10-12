@@ -399,19 +399,42 @@ export async function localChatCompletion(
   }
 }
 
-/** Kick off model prepare without blocking server listen — keeps GGUF in RAM once loaded. */
+/**
+ * Prepare the local model without blocking listen.
+ * On CPU (warmOnStart=false): only ensure the GGUF file exists — do NOT mmap/load into RAM.
+ * Loading ~4.7GB + KV at boot was OOM-killing small VMs (systemd Restart=always → death spiral).
+ * Weights load on the first chat turn via ensureRuntime() and then stay cached.
+ */
 export function warmLocalModel(): void {
+  const preload = config.warmOnStart
+
   if (modelFileLooksReady()) {
     status = 'ready'
+    if (!preload) {
+      console.log(
+        `[eris-cloud-agent] GGUF on disk · ${LOCAL_MODEL.name} · defer RAM load until first job (CPU safe-boot)`
+      )
+      return
+    }
     void ensureRuntime().catch((err) => {
       status = 'error'
       statusError = err instanceof Error ? err.message : String(err)
     })
     return
   }
+
   status = 'downloading'
   void ensureLocalModel()
-    .then(() => ensureRuntime())
+    .then(() => {
+      status = 'ready'
+      if (!preload) {
+        console.log(
+          `[eris-cloud-agent] GGUF downloaded · ${LOCAL_MODEL.name} · defer RAM load until first job`
+        )
+        return
+      }
+      return ensureRuntime()
+    })
     .catch((err) => {
       status = 'error'
       statusError = err instanceof Error ? err.message : String(err)

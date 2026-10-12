@@ -518,7 +518,8 @@ Set in the Quadlet file (`/etc/containers/systemd/eris-cloud-agent.container`) o
 | `ERIS_CLOUD_LLM_BASE` | _(unset)_ | Optional remote OpenAI-compatible API |
 | `ERIS_CLOUD_ADMIN_TOKEN` | _(unset)_ | Shared secret for force-kill-all (`POST /admin/kill-all` on status page / API). Generate a long random string. |
 | `ERIS_CLOUD_MAX_THREADS` | `2` (CPU) / unlimited (GPU) | llama.cpp thread cap — keep low on CPU VMs so SSH stays up |
-| `ERIS_CLOUD_CONTEXT_SIZE` | `4096` (CPU) / `8192` (GPU) | GGUF context window |
+| `ERIS_CLOUD_CONTEXT_SIZE` | `2048` (CPU) / `8192` (GPU) | GGUF context — keep ≤2048 on 8g cgroups (7B+4k OOMs) |
+| `ERIS_CLOUD_WARM_ON_START` | `0` (CPU) / `1` (GPU) | Preload GGUF into RAM at boot. **Leave 0 on CPU** or boot OOMs the VM. |
 
 After editing the Quadlet unit:
 
@@ -579,10 +580,21 @@ sudo systemctl stop eris-cloud-agent.service
 # Confirm load drops, then SSH should work again
 uptime
 
-# Upgrade to 0.2.17+ (2-thread cap + cgroup limits) and restart
+# Upgrade to 0.2.20+ (deferred warm + safe-boot + 2k ctx) and restart
 cd /path/to/Eris
 git pull
 ./cloud-agent/scripts/rebuild.sh --cpu --install --no-pull
 ```
 
-CPU Quadlet defaults: `ERIS_CLOUD_MAX_THREADS=2`, `--cpus=2`, `MemoryMax=6G`.
+### Why the VM “crashes” when the service starts
+
+Composer Full is a **~4.7 GB** GGUF. On CPU boot the old agent did all of this at once:
+
+1. `warmLocalModel()` → `loadModel` + `createContext` (mmap ~5–8 GB RSS)
+2. `WorkerPool` resumed **queued/running** jobs → immediate inference on all cores
+3. cgroup `MemoryMax` / host OOM killer → container dies
+4. `Restart=always` → repeat until SSH/sshd starve
+
+**0.2.20+ mitigations:** no RAM preload on CPU (`WARM_ON_START=0`), stop queued+running on safe-boot, `CONTEXT_SIZE=2048`, `MAX_THREADS=2`, `--cpus=2`, `Restart=on-failure` + 45s backoff.
+
+CPU Quadlet defaults: `ERIS_CLOUD_MAX_THREADS=2`, `CONTEXT_SIZE=2048`, `WARM_ON_START=0`, `--cpus=2`, `MemoryMax=8G`. Host should have **≥10 GiB** RAM.
