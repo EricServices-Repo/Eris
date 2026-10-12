@@ -363,6 +363,39 @@ export async function createGithubPullRequest(options: {
   return { ok: true, number: json.number, htmlUrl: json.html_url }
 }
 
+export async function createGithubIssue(options: {
+  host: string
+  token: string
+  owner: string
+  repo: string
+  title: string
+  body?: string
+  labels?: string[]
+}): Promise<{
+  ok: boolean
+  error?: string
+  number?: number
+  htmlUrl?: string
+}> {
+  const res = await githubApi(
+    options.host,
+    options.token,
+    `/repos/${options.owner}/${options.repo}/issues`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: options.title,
+        body: options.body || '',
+        labels: options.labels?.length ? options.labels : undefined
+      })
+    }
+  )
+  if (!res.ok) return { ok: false, error: res.error || 'Create issue failed' }
+  const json = res.json as { number?: number; html_url?: string }
+  return { ok: true, number: json.number, htmlUrl: json.html_url }
+}
+
 export async function createGithubRepository(options: {
   host: string
   token: string

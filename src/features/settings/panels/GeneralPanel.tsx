@@ -49,13 +49,15 @@ export function GeneralPanel({
   resolved,
   apply,
   onClose,
-  onRerunSetup
+  onRerunSetup,
+  onReportBug
 }: {
   state: LogsState
   resolved: AppSettings
   apply: ApplySetting
   onClose: () => void
   onRerunSetup?: () => void
+  onReportBug?: () => void
 }) {
   const {
     logsInfo,
@@ -129,6 +131,27 @@ export function GeneralPanel({
           </button>
         </div>
       </div>
+
+      {onReportBug && (
+        <div className="github-section" style={{ marginBottom: 16 }}>
+          <h3>Feedback</h3>
+          <p className="model-conn-hint">
+            Submit a bug to{' '}
+            <code>EricServices-Repo/Eris-feedback</code> with environment data and recent logs
+            (tokens redacted). Requires a GitHub token under Settings → GitHub.
+          </p>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              onClose()
+              onReportBug()
+            }}
+          >
+            Report a Bug…
+          </button>
+        </div>
+      )}
 
       <div className="logs-panel-header">
         <strong>App logs</strong>

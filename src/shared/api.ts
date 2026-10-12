@@ -860,6 +860,63 @@ export interface IdeApi {
   openAppReleasesPage: () => Promise<void>
   dismissAppUpdate: () => Promise<{ ok: boolean }>
   onUpdateStatus: (cb: (status: UpdateStatusSnapshot) => void) => () => void
+  previewBugReport: (input: BugReportInput) => Promise<BugReportPreview>
+  submitBugReport: (input: BugReportInput) => Promise<BugReportResult>
+}
+
+export interface BugReportInput {
+  title: string
+  description: string
+  includeLogs?: boolean
+  includeDiagnostics?: boolean
+  openBrowserFallback?: boolean
+}
+
+export interface BugReportDiagnostics {
+  appName: string
+  appVersion: string
+  packaged: boolean
+  electron: string
+  chrome: string
+  node: string
+  platform: string
+  release: string
+  arch: string
+  locale: string
+  cpuCount: number
+  totalMemGb: number
+  workspaceLinked: boolean
+  workspaceName: string | null
+  defaultModel: string | null
+  ericServicesLinked: boolean
+  ericServicesPlan: string | null
+  githubHost: string | null
+  githubLinked: boolean
+  loggingEnabled: boolean
+  loggingLevel: string
+  logDirectory: string
+  currentLogFile: string
+  logFileCount: number
+}
+
+export interface BugReportPreview {
+  title: string
+  body: string
+  diagnostics: BugReportDiagnostics
+  logIncluded: boolean
+  logTruncated: boolean
+  logPath: string | null
+  hasGithubToken: boolean
+  targetRepo: string
+}
+
+export interface BugReportResult {
+  ok: boolean
+  error?: string
+  number?: number
+  htmlUrl?: string
+  openedBrowser?: boolean
+  copiedToClipboard?: boolean
 }
 
 export type UpdateState =

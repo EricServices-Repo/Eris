@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.14 — 2026-10-12
+
+- In-app **Report a Bug** (Help menu, Command Palette, Settings → General): creates a GitHub issue on `EricServices-Repo/Eris-feedback` with diagnostics + redacted recent logs.
+
 ## 0.2.13 — 2026-10-12
 
 - Multi-file Diff Review: file tree with +/- stats, Monaco side-by-side / inline DiffEditor, hunk navigation (n/p), expand/compact drawer.
