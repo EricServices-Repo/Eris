@@ -174,6 +174,11 @@ Set in the Quadlet file (`/etc/containers/systemd/eris-cloud-agent.container`) o
 | `ERIS_CLOUD_GPU` | `auto` | `auto` / `cuda` / `vulkan` / `cpu` |
 | `ERIS_CLOUD_MAX_PARALLEL` | `2` | Concurrent jobs |
 | `ERIS_CLOUD_DATA` | `/var/lib/eris-cloud` | Models + workspaces |
+| `ERIS_CLOUD_ALLOW_ANONYMOUS` | _(unset)_ | `1` = allow unauthenticated jobs (dev only) |
+| `ERIS_CLOUD_ERIS_API_BASE` | `https://www.ericservic.es/api/eris/v1` | Bearer token validation (`me.php`) |
+| `ERIS_CLOUD_FREE_JOBS_PER_DAY` | `5` | Free-plan daily enqueue cap |
+| `ERIS_CLOUD_MAX_CONCURRENT_FREE` | `1` | Free-plan concurrent jobs |
+| `ERIS_CLOUD_MAX_CONCURRENT_PRO` | `3` | Pro-plan concurrent jobs |
 | `ERIS_CLOUD_LLM_BASE` | _(unset)_ | Optional remote OpenAI-compatible API |
 
 After editing the Quadlet unit:

@@ -13,6 +13,8 @@ export type Category =
   | 'context'
   | 'mcp'
   | 'github'
+  | 'feedback'
+  | 'logging'
   | 'editor'
   | 'workspace'
 
@@ -57,26 +59,19 @@ export function settingFields(agentIds: string[]): SettingField[] {
       type: 'boolean'
     },
     {
-      cat: 'general',
+      cat: 'logging',
       label: 'Enable file logging',
       hint: 'Write app events to a daily log file',
       path: ['general', 'logging', 'enabled'],
       type: 'boolean'
     },
     {
-      cat: 'general',
+      cat: 'logging',
       label: 'Log level',
       hint: 'Minimum severity written to disk',
       path: ['general', 'logging', 'level'],
       type: 'select',
       options: ['debug', 'info', 'warn', 'error']
-    },
-    {
-      cat: 'models',
-      label: 'Default model',
-      hint: 'builtin:composer-lite (~1 GB) or builtin:composer (~4.7 GB)',
-      path: ['models', 'defaultModel'],
-      type: 'string'
     },
     {
       cat: 'models',
@@ -262,8 +257,10 @@ export function SettingRows({
   onChanged: (resolved: AppSettings) => void
   onReload: () => Promise<void>
 }) {
+  if (rows.length === 0) return null
+
   return (
-    <>
+    <div className="settings-rows">
       {rows.map((row) => {
         const value = getAt(resolved, row.path)
         const overridden =
@@ -273,53 +270,55 @@ export function SettingRows({
               ? 'user'
               : 'default'
         return (
-          <div className="setting-row" key={row.path.join('.')}>
-            <div>
+          <div className={`setting-row setting-row--${row.type}`} key={row.path.join('.')}>
+            <div className="setting-row-copy">
               <label>{row.label}</label>
               <div className="hint">
                 {row.hint} · <span className="badge">{overridden}</span>
               </div>
             </div>
-            {row.type === 'boolean' && (
-              <input
-                type="checkbox"
-                checked={Boolean(value)}
-                onChange={(e) => void apply(row.path, e.target.checked)}
-              />
-            )}
-            {row.type === 'string' && (
-              <input
-                value={String(value ?? '')}
-                onChange={(e) => void apply(row.path, e.target.value)}
-              />
-            )}
-            {row.type === 'number' && (
-              <input
-                type="number"
-                value={Number(value)}
-                step={row.path.includes('temperature') ? 0.1 : 1}
-                onChange={(e) => void apply(row.path, Number(e.target.value))}
-              />
-            )}
-            {row.type === 'textarea' && (
-              <textarea
-                rows={4}
-                value={String(value ?? '')}
-                onChange={(e) => void apply(row.path, e.target.value)}
-              />
-            )}
-            {row.type === 'select' && (
-              <select
-                value={String(value)}
-                onChange={(e) => void apply(row.path, e.target.value)}
-              >
-                {row.options?.map((o) => (
-                  <option key={o} value={o}>
-                    {o}
-                  </option>
-                ))}
-              </select>
-            )}
+            <div className="setting-row-control">
+              {row.type === 'boolean' && (
+                <input
+                  type="checkbox"
+                  checked={Boolean(value)}
+                  onChange={(e) => void apply(row.path, e.target.checked)}
+                />
+              )}
+              {row.type === 'string' && (
+                <input
+                  value={String(value ?? '')}
+                  onChange={(e) => void apply(row.path, e.target.value)}
+                />
+              )}
+              {row.type === 'number' && (
+                <input
+                  type="number"
+                  value={Number(value)}
+                  step={row.path.includes('temperature') ? 0.1 : 1}
+                  onChange={(e) => void apply(row.path, Number(e.target.value))}
+                />
+              )}
+              {row.type === 'textarea' && (
+                <textarea
+                  rows={4}
+                  value={String(value ?? '')}
+                  onChange={(e) => void apply(row.path, e.target.value)}
+                />
+              )}
+              {row.type === 'select' && (
+                <select
+                  value={String(value)}
+                  onChange={(e) => void apply(row.path, e.target.value)}
+                >
+                  {row.options?.map((o) => (
+                    <option key={o} value={o}>
+                      {o}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
             <button
               className="btn-ghost"
               disabled={overridden === 'default'}
@@ -337,6 +336,6 @@ export function SettingRows({
           </div>
         )
       })}
-    </>
+    </div>
   )
 }

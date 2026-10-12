@@ -24,6 +24,7 @@ export interface JobArtifacts {
   files: ArtifactFile[]
   /** True when the pack hit size/file caps */
   truncated: boolean
+  truncatedReasons?: string[]
   totalBytes: number
 }
 
@@ -68,9 +69,47 @@ function loadSeedBaseline(jobId: string): Record<string, string> {
   }
 }
 
+/**
+ * Merge current workspace contents into the seed baseline for paths not already recorded.
+ * Call before write_file so before/after diffs work for git-cloned files.
+ */
+export function snapshotWorkspaceBaseline(jobId: string, relPaths: string[]): void {
+  const workspace = jobWorkspace(jobId)
+  const existing = loadSeedBaseline(jobId)
+  let changed = false
+  for (const rel of relPaths) {
+    const path = rel.replace(/\\/g, '/').replace(/^\/+/, '')
+    if (!path || path.includes('..') || Object.prototype.hasOwnProperty.call(existing, path)) {
+      continue
+    }
+    try {
+      const abs = assertInWorkspace(workspace, path)
+      if (!existsSync(abs) || !statSync(abs).isFile()) {
+        // New file — mark as null via empty sentinel; before stays null in pack
+        continue
+      }
+      const st = statSync(abs)
+      if (st.size > config.maxFileBytes) continue
+      const buf = readFileSync(abs)
+      if (buf.includes(0)) continue
+      existing[path] = buf.toString('utf8')
+      changed = true
+    } catch {
+      // skip
+    }
+  }
+  if (changed) {
+    mkdirSync(artifactsDir(), { recursive: true })
+    writeFileSync(
+      seedPath(jobId),
+      JSON.stringify({ jobId, files: existing }, null, 2),
+      'utf8'
+    )
+  }
+}
+
 function isProbablyText(buf: Buffer): boolean {
   if (buf.includes(0)) return false
-  // Reject if too many non-printable bytes
   let bad = 0
   const n = Math.min(buf.length, 4096)
   for (let i = 0; i < n; i++) {
@@ -91,19 +130,25 @@ export function buildJobArtifacts(
 ): JobArtifacts {
   const workspace = jobWorkspace(jobId)
   const seed = loadSeedBaseline(jobId)
-  const maxFiles = Math.min(config.maxFiles, 80)
-  const maxBytes = Math.min(config.maxFileBytes * 40, 8_000_000)
+  const maxFiles = Math.min(config.maxFiles, 120)
+  const maxBytes = config.maxArtifactBytes
   const files: ArtifactFile[] = []
+  const truncatedReasons: string[] = []
   let totalBytes = 0
   let truncated = false
   const seen = new Set<string>()
+
+  const markTruncated = (reason: string) => {
+    truncated = true
+    if (!truncatedReasons.includes(reason)) truncatedReasons.push(reason)
+  }
 
   const consider = (relPath: string) => {
     const path = relPath.replace(/\\/g, '/').replace(/^\/+/, '')
     if (!path || path.includes('..') || seen.has(path)) return
     seen.add(path)
     if (files.length >= maxFiles || totalBytes >= maxBytes) {
-      truncated = true
+      markTruncated(files.length >= maxFiles ? 'max_files' : 'max_bytes')
       return
     }
     let abs: string
@@ -120,7 +165,7 @@ export function buildJobArtifacts(
       return
     }
     if (!st.isFile() || st.size > config.maxFileBytes) {
-      if (st.isFile() && st.size > config.maxFileBytes) truncated = true
+      if (st.isFile() && st.size > config.maxFileBytes) markTruncated('file_too_large')
       return
     }
     let buf: Buffer
@@ -133,12 +178,11 @@ export function buildJobArtifacts(
     const content = buf.toString('utf8')
     const before = Object.prototype.hasOwnProperty.call(seed, path) ? seed[path]! : null
     if (before !== null && before === content) return
-    // Brand-new empty write with no seed — still include if touched
     if (before === null && content === '' && !filesTouched.includes(path)) return
 
     const size = Buffer.byteLength(content, 'utf8')
     if (totalBytes + size > maxBytes) {
-      truncated = true
+      markTruncated('max_bytes')
       return
     }
     files.push({ path, content, before })
@@ -147,10 +191,9 @@ export function buildJobArtifacts(
 
   for (const p of filesTouched) consider(p)
 
-  // Also pick up new files under the workspace that differ from seed (bounded walk)
   if (files.length < maxFiles && existsSync(workspace)) {
     const walk = (dir: string, depth: number) => {
-      if (truncated || files.length >= maxFiles || depth > 8) return
+      if (truncated || files.length >= maxFiles || depth > 10) return
       let entries: string[]
       try {
         entries = readdirSync(dir)
@@ -184,6 +227,7 @@ export function buildJobArtifacts(
     createdAt: new Date().toISOString(),
     files,
     truncated,
+    truncatedReasons: truncatedReasons.length ? truncatedReasons : undefined,
     totalBytes
   }
   mkdirSync(dirname(artifactsPath(jobId)), { recursive: true })
@@ -201,8 +245,16 @@ export function readJobArtifacts(jobId: string): JobArtifacts | null {
   }
 }
 
-export function artifactsSummary(jobId: string): { hasArtifacts: boolean; artifactCount: number } {
+export function artifactsSummary(jobId: string): {
+  hasArtifacts: boolean
+  artifactCount: number
+  truncated?: boolean
+} {
   const pack = readJobArtifacts(jobId)
   if (!pack) return { hasArtifacts: false, artifactCount: 0 }
-  return { hasArtifacts: pack.files.length > 0, artifactCount: pack.files.length }
+  return {
+    hasArtifacts: pack.files.length > 0,
+    artifactCount: pack.files.length,
+    truncated: pack.truncated
+  }
 }

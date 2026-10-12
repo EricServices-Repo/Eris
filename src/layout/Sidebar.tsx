@@ -1,6 +1,7 @@
 import { useEffect, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { ChatThread, FileEntry, WorkspaceRecord } from '@/shared/settings-schema'
 import { FileTree } from '@/features/workspace/FileTree'
+import { AgentsHome } from '@/features/agents/AgentsHome'
 
 interface Props {
   workspaces: WorkspaceRecord[]
@@ -23,6 +24,7 @@ interface Props {
   onSelectThread: (id: string) => void
   onNewChat: () => void
   onDeleteThread: (id: string) => void
+  onOpenAgentsPanel?: () => void
 }
 
 export function Sidebar({
@@ -45,7 +47,8 @@ export function Sidebar({
   onAttachFile,
   onSelectThread,
   onNewChat,
-  onDeleteThread
+  onDeleteThread,
+  onOpenAgentsPanel
 }: Props) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [chatsOpen, setChatsOpen] = useState(true)
@@ -297,6 +300,13 @@ export function Sidebar({
                             </div>
                           )}
                         </div>
+
+                        {onOpenAgentsPanel && (
+                          <AgentsHome
+                            workspacePath={activeWorkspace.path}
+                            onOpenAgentsPanel={onOpenAgentsPanel}
+                          />
+                        )}
 
                         <div className="project-menu-group">
                           <button

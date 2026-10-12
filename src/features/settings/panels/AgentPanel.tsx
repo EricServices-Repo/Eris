@@ -6,6 +6,7 @@ import {
   isCloudAgentsReady,
   shouldUseCloudAgents
 } from '@/shared/cloud-agents'
+import { SettingsPage, SettingsSection } from '../SettingsSection'
 
 function offlineHealth(error: string): CloudHealth {
   return {
@@ -49,46 +50,21 @@ export function AgentPanel() {
   const host = CLOUD_AGENTS_BASE_URL.replace(/^https?:\/\//, '')
 
   return (
-    <>
-      <div
-        style={{
-          marginBottom: 16,
-          padding: 12,
-          border: '1px solid var(--border)',
-          borderRadius: 8,
-          background: 'var(--bg)',
-          color: 'var(--text-muted)',
-          lineHeight: 1.45
-        }}
-      >
-        Routing picks an <strong style={{ color: 'var(--text)' }}>orchestrator</strong> or{' '}
-        <strong style={{ color: 'var(--text)' }}>specialist</strong> from the project agent
-        config. Edit specialists under Subagents.
-      </div>
+    <SettingsPage>
+      <SettingsSection
+        title="Routing"
+        description="Picks an orchestrator or specialist from the project agent config. Edit specialists under Subagents."
+      />
 
-      <div className="usage-panel" style={{ marginBottom: 16 }}>
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 12,
-            marginBottom: 12
-          }}
-        >
-          <div>
-            <h3 style={{ margin: 0, fontSize: 14 }}>Cloud Agents</h3>
-            <p className="subtitle" style={{ margin: '4px 0 0' }}>
-              Shared worker at {host} (plain HTTP) runs <strong>Composer Full</strong>. Requires
-              sign-in under Settings → Account. This Mac always uses Composer Lite locally; Cloud
-              Agents handle Full when available.
-            </p>
-          </div>
+      <SettingsSection
+        title="Cloud Agents"
+        description={`Shared worker at ${host} runs Composer Full. Sign in under Account. This Mac uses Composer Lite locally; Cloud Agents handle Full when available.`}
+        actions={
           <button type="button" className="btn" disabled={busy} onClick={() => void refresh()}>
             {busy ? 'Checking…' : 'Refresh'}
           </button>
-        </div>
-
+        }
+      >
         <div
           className={`agents-cloud-status${ready ? ' is-ready' : preferCloud ? ' is-pending' : ' is-offline'}`}
           title={`${CLOUD_AGENTS_BASE_URL} — plain HTTP, no certificate`}
@@ -107,7 +83,7 @@ export function AgentPanel() {
             </div>
             <div className="usage-hero-sub">
               {cloud?.authenticated !== true
-                ? 'sign in required · Settings → Account'
+                ? 'sign in required · Account'
                 : preferCloud
                   ? cloud?.inference === 'remote'
                     ? 'remote inference · prefer cloud'
@@ -154,7 +130,7 @@ export function AgentPanel() {
             Model: {cloud.localModel.error}
           </div>
         )}
-      </div>
-    </>
+      </SettingsSection>
+    </SettingsPage>
   )
 }

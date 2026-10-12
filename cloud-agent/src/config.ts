@@ -16,7 +16,7 @@ function pkgVersion(): string {
   return '0.1.0'
 }
 
-/** Public hostname:port Eris clients use (plain HTTP — no TLS cert). */
+/** Public hostname:port Eris clients use (plain HTTP — terminate TLS at a proxy in production). */
 export const PUBLIC_BASE_URL = 'http://agents.ericservic.es:6443'
 
 /** GPU preference for the in-container GGUF (node-llama-cpp). */
@@ -31,31 +31,32 @@ function parseGpuMode(raw: string | undefined): GpuMode {
 
 export const config = {
   version: pkgVersion(),
-  /** Listen inside the container / host */
   host: process.env.ERIS_CLOUD_HOST || '0.0.0.0',
   port: Number(process.env.ERIS_CLOUD_PORT || 6443),
   publicBaseUrl: (process.env.ERIS_CLOUD_PUBLIC_URL || PUBLIC_BASE_URL).replace(/\/+$/, ''),
   dataDir: process.env.ERIS_CLOUD_DATA || '/var/lib/eris-cloud',
   maxParallel: Math.max(1, Math.min(8, Number(process.env.ERIS_CLOUD_MAX_PARALLEL || 2))),
-  maxFiles: Math.max(1, Math.min(500, Number(process.env.ERIS_CLOUD_MAX_FILES || 120))),
-  maxFileBytes: Math.max(1024, Number(process.env.ERIS_CLOUD_MAX_FILE_BYTES || 200_000)),
+  maxFiles: Math.max(1, Math.min(800, Number(process.env.ERIS_CLOUD_MAX_FILES || 200))),
+  maxFileBytes: Math.max(1024, Number(process.env.ERIS_CLOUD_MAX_FILE_BYTES || 400_000)),
+  maxArtifactBytes: Math.max(1_000_000, Number(process.env.ERIS_CLOUD_MAX_ARTIFACT_BYTES || 16_000_000)),
+  maxSteps: Math.max(8, Math.min(80, Number(process.env.ERIS_CLOUD_MAX_STEPS || 24))),
+  maxQueue: Math.max(10, Math.min(500, Number(process.env.ERIS_CLOUD_MAX_QUEUE || 100))),
+  freeJobsPerDay: Math.max(1, Number(process.env.ERIS_CLOUD_FREE_JOBS_PER_DAY || 5)),
+  maxConcurrentFree: Math.max(1, Math.min(4, Number(process.env.ERIS_CLOUD_MAX_CONCURRENT_FREE || 1))),
+  maxConcurrentPro: Math.max(1, Math.min(8, Number(process.env.ERIS_CLOUD_MAX_CONCURRENT_PRO || 3))),
+  erisApiBase:
+    process.env.ERIS_CLOUD_ERIS_API_BASE || 'https://www.ericservic.es/api/eris/v1',
   /**
-   * GPU for local GGUF: auto (prefer CUDA/Vulkan) | cuda | vulkan | false (CPU).
-   * Requires NVIDIA Container Toolkit + CUDA libs in the image for GPU.
+   * When true, unauthenticated requests are allowed (dev only).
+   * Default false — require EricServic.es Bearer token.
    */
+  allowAnonymous: process.env.ERIS_CLOUD_ALLOW_ANONYMOUS === '1',
   gpu: parseGpuMode(process.env.ERIS_CLOUD_GPU),
-  /**
-   * Optional override: OpenAI-compatible remote API.
-   * When unset (default), the Cloud Agent runs its own local GGUF via node-llama-cpp.
-   */
   llmBase: (process.env.ERIS_CLOUD_LLM_BASE || '').replace(/\/+$/, ''),
   llmKey: process.env.ERIS_CLOUD_LLM_KEY || '',
-  llmModel: process.env.ERIS_CLOUD_LLM_MODEL || 'composer',
-  allowAnonymous: process.env.ERIS_CLOUD_ALLOW_ANONYMOUS !== '0'
+  llmModel: process.env.ERIS_CLOUD_LLM_MODEL || 'composer'
 }
 
-/** True when jobs can be accepted (local model path or remote override). */
 export function llmConfigured(): boolean {
-  // Local model is always the default — configured even while downloading.
   return true
 }

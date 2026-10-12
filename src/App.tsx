@@ -70,10 +70,9 @@ const SearchPanel = lazy(() =>
 const DebugPanel = lazy(() =>
   import('@/features/debug/DebugPanel').then((m) => ({ default: m.DebugPanel }))
 )
-const BugReportModal = lazy(() =>
-  import('@/features/feedback/BugReportModal').then((m) => ({ default: m.BugReportModal }))
+const CodemapPanel = lazy(() =>
+  import('@/features/codemap/CodemapPanel').then((m) => ({ default: m.CodemapPanel }))
 )
-
 function flattenFiles(entries: FileEntry[], out: Array<{ path: string; name: string }> = []) {
   for (const e of entries) {
     if (e.isDirectory) {
@@ -101,7 +100,6 @@ export default function App() {
   } = useSettingsState()
   const [settingsMounted, setSettingsMounted] = useState(false)
   const [diffReviewExpanded, setDiffReviewExpanded] = useState(true)
-  const [bugReportOpen, setBugReportOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [workspaceModal, setWorkspaceModal] = useState<null | 'create' | 'link'>(null)
   const [showSetupWizard, setShowSetupWizard] = useState(false)
@@ -275,6 +273,7 @@ export default function App() {
     routeLabel,
     toolActivity,
     agentStatus,
+    setAgentStatus,
     pendingApproval,
     setPendingApproval,
     resumableRun,
@@ -411,7 +410,7 @@ export default function App() {
       window.ide.onMenu('menu:command-palette', () => setPaletteOpen(true)),
       window.ide.onMenu('menu:new-chat', () => void newChat()),
       window.ide.onMenu('menu:stop-chat', () => stopChat()),
-      window.ide.onMenu('menu:report-bug', () => setBugReportOpen(true))
+      window.ide.onMenu('menu:report-bug', () => openSettings('feedback'))
     ]
     return () => offs.forEach((off) => off())
   }, [saveActive, newChat, openSettings, stopChat])
@@ -453,8 +452,13 @@ export default function App() {
       { id: 'settings', label: 'Open Settings', shortcut: '⌘,', run: () => openSettings() },
       {
         id: 'report-bug',
-        label: 'Report a Bug…',
-        run: () => setBugReportOpen(true)
+        label: 'Send Feedback…',
+        run: () => openSettings('feedback')
+      },
+      {
+        id: 'logging',
+        label: 'Open Logging Settings',
+        run: () => openSettings('logging')
       },
       {
         id: 'skills',
@@ -567,6 +571,14 @@ export default function App() {
         }
       },
       {
+        id: 'codemap',
+        label: 'Open Codemap',
+        run: () => {
+          setRightCollapsed(false)
+          setRightPanel('codemap')
+        }
+      },
+      {
         id: 'verify',
         label: 'Run Verify (typecheck/tests)',
         run: () => {
@@ -635,6 +647,18 @@ export default function App() {
           void refreshSettings().then((resolved) => refreshModels(resolved))
           void refreshWorkspaceList()
         }}
+        onStartFirstWin={() => {
+          void (async () => {
+            setChatError(null)
+            await newChat()
+            const prompt =
+              'Scan this workspace briefly and suggest one small, safe improvement. If you edit a file, keep the change minimal so I can review it in Diff Review.'
+            // Prefill via send after a tick so the new thread is active
+            window.setTimeout(() => {
+              void sendMessage(prompt, [], [])
+            }, 200)
+          })()
+        }}
       />
       <div className="titlebar">
         <div className="titlebar-brand">
@@ -674,9 +698,15 @@ export default function App() {
           accountNeedsReauth,
           accountError: accountStatusError,
           entitlement,
+          cloudHealth,
+          modelsOk: ollamaOk,
+          composerReady,
           onOpenAccount: () => openSettings('account'),
           onOpenUsage: () => openSettings('usage'),
-          onOpenUpgrade: () => void window.ide.ericServicesOpenUpgrade()
+          onOpenUpgrade: () => void window.ide.ericServicesOpenUpgrade(),
+          onOpenModels: () => openSettings('models'),
+          onOpenAgent: () => openSettings('agent'),
+          onWorkLocal: () => showRightPanel('agents')
         }).filter((i) => !dismissedIssues[i.id])}
         onDismiss={(id) => setDismissedIssues((prev) => ({ ...prev, [id]: true }))}
       />
@@ -762,6 +792,7 @@ export default function App() {
                 }
               })
             }}
+            onOpenAgentsPanel={() => showRightPanel('agents')}
           />
           <div className="agent-center-wrap">
             {!workspacePath ? (
@@ -932,6 +963,16 @@ export default function App() {
                 >
                   ▣
                 </button>
+                <button
+                  type="button"
+                  className={`icon-rail-btn${rightPanel === 'codemap' ? ' active' : ''}`}
+                  title="Codemap"
+                  aria-label="Codemap"
+                  disabled={!workspacePath}
+                  onClick={() => showRightPanel('codemap')}
+                >
+                  ⌖
+                </button>
                 <div className="icon-rail-spacer" />
                 <button
                   type="button"
@@ -1001,6 +1042,15 @@ export default function App() {
                       onClick={() => setRightPanel('evals')}
                     >
                       Evals
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={rightPanel === 'codemap'}
+                      className={`right-panel-tab ${rightPanel === 'codemap' ? 'active' : ''}`}
+                      onClick={() => setRightPanel('codemap')}
+                    >
+                      Codemap
                     </button>
                   </>
                 ) : (
@@ -1094,6 +1144,17 @@ export default function App() {
                     models={models.map((m) => m.name)}
                     defaultModel={selectedModel || settings?.models.defaultModel || ''}
                     onClose={() => showRightPanel('editor')}
+                  />
+                </Suspense>
+              ) : rightPanel === 'codemap' ? (
+                <Suspense fallback={<div className="editor-empty">Loading codemap…</div>}>
+                  <CodemapPanel
+                    workspacePath={workspacePath}
+                    onOpenPath={(path, line) => {
+                      void openFile(path, line)
+                      showRightPanel('editor')
+                    }}
+                    onOpenSettings={(cat) => openSettings(cat)}
                   />
                 </Suspense>
               ) : (
@@ -1223,6 +1284,67 @@ export default function App() {
                 }
               }}
               onDismiss={() => setPendingDiffs([])}
+              onStageKept={() => {
+                void (async () => {
+                  const paths = pendingDiffs
+                    .filter((d) => d.status === 'kept')
+                    .map((d) => d.path.split(' → ')[0] || d.path)
+                  if (!paths.length) return
+                  const res = await window.ide.gitStage(paths)
+                  if (!res.ok) setChatError(res.error || 'Stage failed')
+                  else setAgentStatus(`Staged ${paths.length} file(s)`)
+                })()
+              }}
+              onCommitKept={() => {
+                void (async () => {
+                  const paths = pendingDiffs
+                    .filter((d) => d.status === 'kept')
+                    .map((d) => d.path.split(' → ')[0] || d.path)
+                  if (!paths.length) return
+                  const message =
+                    window.prompt('Commit message', `Agent: update ${paths.length} file(s)`) || ''
+                  if (!message.trim()) return
+                  const staged = await window.ide.gitStage(paths)
+                  if (!staged.ok) {
+                    setChatError(staged.error || 'Stage failed')
+                    return
+                  }
+                  const committed = await window.ide.gitCommit(message.trim())
+                  if (!committed.ok) setChatError(committed.error || 'Commit failed')
+                  else setAgentStatus('Committed kept changes')
+                })()
+              }}
+              onCreatePr={() => {
+                void (async () => {
+                  const paths = pendingDiffs
+                    .filter((d) => d.status === 'kept')
+                    .map((d) => d.path.split(' → ')[0] || d.path)
+                  if (!paths.length) return
+                  const title =
+                    window.prompt('Pull request title', `Agent updates (${paths.length} files)`) ||
+                    ''
+                  if (!title.trim()) return
+                  const staged = await window.ide.gitStage(paths)
+                  if (!staged.ok) {
+                    setChatError(staged.error || 'Stage failed')
+                    return
+                  }
+                  const committed = await window.ide.gitCommit(title.trim())
+                  if (!committed.ok) {
+                    setChatError(committed.error || 'Commit failed')
+                    return
+                  }
+                  const pr = await window.ide.githubCreatePullRequest({ title: title.trim() })
+                  if (!pr.ok) setChatError(pr.error || 'Could not create pull request')
+                  else {
+                    setAgentStatus(
+                      typeof pr.number === 'number'
+                        ? `Opened PR #${pr.number}${pr.htmlUrl ? ` · ${pr.htmlUrl}` : ''}`
+                        : pr.htmlUrl || 'Opened pull request'
+                    )
+                  }
+                })()
+              }}
               onUndoFile={(id) => {
                 void (async () => {
                   const target = pendingDiffs.find((d) => d.id === id)
@@ -1328,7 +1450,6 @@ export default function App() {
             onRerunSetup={() => {
               void window.ide.resetOnboarding().then(() => setShowSetupWizard(true))
             }}
-            onReportBug={() => setBugReportOpen(true)}
           />
         </Suspense>
       )}
@@ -1348,11 +1469,6 @@ export default function App() {
           else void linkFolder(name || undefined)
         }}
       />
-      {bugReportOpen && (
-        <Suspense fallback={null}>
-          <BugReportModal open={bugReportOpen} onClose={() => setBugReportOpen(false)} />
-        </Suspense>
-      )}
     </div>
   )
 }

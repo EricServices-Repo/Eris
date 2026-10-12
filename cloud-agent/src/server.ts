@@ -5,18 +5,34 @@ import { WorkerPool } from './worker.js'
 import { getLocalModelStatus, warmLocalModel } from './local-model.js'
 import type { CloudJobCreateRequest, CloudHealth } from './types.js'
 import { readJobArtifacts } from './artifacts.js'
+import { authenticateRequest, jobVisibleTo, type AuthContext } from './auth.js'
+import { jobEvents } from './events.js'
+import {
+  audit,
+  bumpMetric,
+  getMetrics,
+  newRequestId,
+  persistMetricsSnapshot,
+  readRecentAudit
+} from './observe.js'
 
 const store = new JobStore()
 const workers = new WorkerPool(store)
 
-function send(res: ServerResponse, status: number, body: unknown): void {
+function send(
+  res: ServerResponse,
+  status: number,
+  body: unknown,
+  extraHeaders?: Record<string, string>
+): void {
   const json = JSON.stringify(body)
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Eris-Client',
-    'Cache-Control': 'no-store'
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Eris-Client, X-Request-Id',
+    'Cache-Control': 'no-store',
+    ...extraHeaders
   })
   res.end(json)
 }
@@ -37,6 +53,23 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
     req.on('error', reject)
   })
+}
+
+async function requireAuth(
+  req: IncomingMessage,
+  res: ServerResponse,
+  opts?: { requireAuth?: boolean }
+): Promise<AuthContext | null> {
+  const result = await authenticateRequest(
+    typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined,
+    opts
+  )
+  if (!result.ok) {
+    bumpMetric('authFailures')
+    send(res, result.status, { ok: false, error: result.error })
+    return null
+  }
+  return result.auth
 }
 
 function healthBody(): Record<string, unknown> {
@@ -61,7 +94,8 @@ function healthBody(): Record<string, unknown> {
     inference,
     maxParallel: config.maxParallel,
     running: counts.running,
-    queued: counts.queued
+    queued: counts.queued,
+    authRequired: !config.allowAnonymous
   }
   return {
     ...health,
@@ -71,13 +105,24 @@ function healthBody(): Record<string, unknown> {
       health: '/v1/health',
       jobs: '/v1/jobs',
       job: '/v1/jobs/:id',
+      events: '/v1/jobs/:id/events',
+      continue: '/v1/jobs/:id/continue',
       stop: '/v1/jobs/:id/stop',
-      artifacts: '/v1/jobs/:id/artifacts'
+      artifacts: '/v1/jobs/:id/artifacts',
+      metrics: '/v1/metrics'
     }
   }
 }
 
+function writeSse(res: ServerResponse, event: string, data: unknown): void {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+}
+
 async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const requestId = newRequestId()
+  bumpMetric('requests')
+  res.setHeader('X-Request-Id', requestId)
+
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
   const path = url.pathname.replace(/\/+$/, '') || '/'
 
@@ -86,20 +131,40 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
     return
   }
 
+  // Health is public (for status bar / probes)
   if (req.method === 'GET' && (path === '/' || path === '/v1' || path === '/v1/health')) {
-    send(res, 200, healthBody())
+    send(res, 200, healthBody(), { 'X-Request-Id': requestId })
+    return
+  }
+
+  if (req.method === 'GET' && path === '/v1/metrics') {
+    const auth = await requireAuth(req, res)
+    if (!auth) return
+    send(res, 200, {
+      ok: true,
+      metrics: getMetrics(),
+      recentAudit: readRecentAudit(30)
+    })
     return
   }
 
   if (req.method === 'GET' && path === '/v1/jobs') {
-    send(res, 200, { ok: true, jobs: store.list(Number(url.searchParams.get('limit') || 50)) })
+    const auth = await requireAuth(req, res)
+    if (!auth) return
+    const ownerFilter = auth.owner === 'anonymous' && config.allowAnonymous ? null : auth.owner
+    send(res, 200, {
+      ok: true,
+      jobs: store.list(Number(url.searchParams.get('limit') || 50), ownerFilter)
+    })
     return
   }
 
   const jobMatch = path.match(/^\/v1\/jobs\/([^/]+)$/)
   if (req.method === 'GET' && jobMatch) {
+    const auth = await requireAuth(req, res)
+    if (!auth) return
     const job = store.get(jobMatch[1]!)
-    if (!job) {
+    if (!job || !jobVisibleTo(job.ownerId, auth)) {
       send(res, 404, { ok: false, error: 'Job not found' })
       return
     }
@@ -107,11 +172,61 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
     return
   }
 
+  const eventsMatch = path.match(/^\/v1\/jobs\/([^/]+)\/events$/)
+  if (req.method === 'GET' && eventsMatch) {
+    const auth = await requireAuth(req, res)
+    if (!auth) return
+    const jobId = eventsMatch[1]!
+    const job = store.get(jobId)
+    if (!job || !jobVisibleTo(job.ownerId, auth)) {
+      send(res, 404, { ok: false, error: 'Job not found' })
+      return
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'X-Request-Id': requestId
+    })
+    writeSse(res, 'job', job)
+
+    const unsub = jobEvents.onJob(jobId, (updated) => {
+      writeSse(res, 'job', updated)
+      if (
+        updated.status === 'done' ||
+        updated.status === 'failed' ||
+        updated.status === 'stopped'
+      ) {
+        writeSse(res, 'end', { status: updated.status })
+        unsub()
+        res.end()
+      }
+    })
+
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(`: ping\n\n`)
+      } catch {
+        clearInterval(heartbeat)
+      }
+    }, 15_000)
+
+    req.on('close', () => {
+      clearInterval(heartbeat)
+      unsub()
+    })
+    return
+  }
+
   const artifactsMatch = path.match(/^\/v1\/jobs\/([^/]+)\/artifacts$/)
   if (req.method === 'GET' && artifactsMatch) {
+    const auth = await requireAuth(req, res)
+    if (!auth) return
     const jobId = artifactsMatch[1]!
     const job = store.get(jobId)
-    if (!job) {
+    if (!job || !jobVisibleTo(job.ownerId, auth)) {
       send(res, 404, { ok: false, error: 'Job not found' })
       return
     }
@@ -131,21 +246,66 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
 
   const stopMatch = path.match(/^\/v1\/jobs\/([^/]+)\/stop$/)
   if (req.method === 'POST' && stopMatch) {
-    const ok = workers.stop(stopMatch[1]!)
-    send(res, ok ? 200 : 404, { ok, job: store.get(stopMatch[1]!) })
+    const auth = await requireAuth(req, res)
+    if (!auth) return
+    const id = stopMatch[1]!
+    const ok = workers.stop(id, auth)
+    send(res, ok ? 200 : 404, { ok, job: store.get(id) })
     return
   }
 
-  if (req.method === 'POST' && path === '/v1/jobs') {
+  const continueMatch = path.match(/^\/v1\/jobs\/([^/]+)\/continue$/)
+  if (req.method === 'POST' && continueMatch) {
+    const auth = await requireAuth(req, res)
+    if (!auth) return
+    const prevId = continueMatch[1]!
+    const prev = store.get(prevId)
+    if (!prev || !jobVisibleTo(prev.ownerId, auth)) {
+      send(res, 404, { ok: false, error: 'Job not found' })
+      return
+    }
     try {
       const raw = await readBody(req)
-      const body = (raw ? JSON.parse(raw) : {}) as CloudJobCreateRequest
-      const job = workers.enqueue(body)
+      const body = (raw ? JSON.parse(raw) : {}) as Partial<CloudJobCreateRequest>
+      const job = workers.enqueue(
+        {
+          goal: body.goal || prev.goal,
+          agentId: body.agentId || prev.agentId,
+          model: body.model || prev.model,
+          repoUrl: body.repoUrl ?? prev.repoUrl,
+          branch: body.branch ?? prev.branch,
+          openPr: body.openPr ?? prev.openPr,
+          githubToken: body.githubToken,
+          files: body.files,
+          claim: body.claim || `continue: ${prev.claim}`,
+          resumeFromJobId: prevId,
+          source: 'eris'
+        },
+        auth
+      )
       send(res, 201, { ok: true, job })
     } catch (err) {
       send(res, 400, {
         ok: false,
         error: err instanceof Error ? err.message : String(err)
+      })
+    }
+    return
+  }
+
+  if (req.method === 'POST' && path === '/v1/jobs') {
+    const auth = await requireAuth(req, res, { requireAuth: !config.allowAnonymous })
+    if (!auth) return
+    try {
+      const raw = await readBody(req)
+      const body = (raw ? JSON.parse(raw) : {}) as CloudJobCreateRequest
+      const job = workers.enqueue(body, auth)
+      send(res, 201, { ok: true, job, requestId })
+    } catch (err) {
+      send(res, 400, {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        requestId
       })
     }
     return
@@ -158,6 +318,9 @@ warmLocalModel()
 
 const server = createServer((req, res) => {
   void handler(req, res).catch((err) => {
+    audit('handler_error', {
+      error: err instanceof Error ? err.message : String(err)
+    })
     send(res, 500, {
       ok: false,
       error: err instanceof Error ? err.message : String(err)
@@ -170,11 +333,11 @@ let shuttingDown = false
 function shutdown(signal: string): void {
   if (shuttingDown) return
   shuttingDown = true
+  persistMetricsSnapshot()
   process.stdout.write(`${JSON.stringify({ msg: 'eris-cloud-agent shutting down', signal })}\n`)
   server.close(() => {
     process.exit(0)
   })
-  // Force exit if connections linger (active LLM jobs)
   setTimeout(() => process.exit(0), 15_000).unref()
 }
 
@@ -193,6 +356,7 @@ server.listen(config.port, config.host, () => {
       inference: config.llmBase ? 'remote' : 'local',
       localModel: local.status,
       model: local.modelName,
+      authRequired: !config.allowAnonymous,
       version: config.version
     })}\n`
   )

@@ -1,16 +1,19 @@
-import { app, clipboard, shell } from 'electron'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { join } from 'path'
+import { app } from 'electron'
 import { homedir, platform, release, arch, cpus, totalmem } from 'os'
 import { redactBugReportText } from '../../../src/shared/bug-report-sanitize'
-import { createGithubIssue, normalizeHost } from './github'
+import { createGithubIssue } from './github'
 import { getLogsInfo, logInfo, logWarn, readLogFile } from './logger'
 import { getResolvedSettings } from './settings'
 import { getSecret } from '../ipc/shared'
 import { appState } from '../app-state'
+import { normalizeApiBase } from './ericservices'
+import { userDataRoot } from './paths'
 
-/** Public issues inbox — any authenticated GitHub user can file here. */
+/** Public issues inbox (created via API — never opens a browser). */
 export const ERIS_FEEDBACK_OWNER = 'EricServices-Repo'
 export const ERIS_FEEDBACK_REPO = 'Eris-feedback'
-export const ERIS_FEEDBACK_ISSUES_URL = `https://github.com/${ERIS_FEEDBACK_OWNER}/${ERIS_FEEDBACK_REPO}/issues`
 
 const MAX_LOG_CHARS = 48_000
 const MAX_ISSUE_BODY = 55_000
@@ -20,8 +23,6 @@ export interface BugReportInput {
   description: string
   includeLogs?: boolean
   includeDiagnostics?: boolean
-  /** When true and API fails / no token, open browser + copy body */
-  openBrowserFallback?: boolean
 }
 
 export interface BugReportDiagnostics {
@@ -58,6 +59,7 @@ export interface BugReportPreview {
   logIncluded: boolean
   logTruncated: boolean
   logPath: string | null
+  /** Always true — submission uses the EricServic.es relay and/or a built-in token. */
   hasGithubToken: boolean
   targetRepo: string
 }
@@ -67,8 +69,50 @@ export interface BugReportResult {
   error?: string
   number?: number
   htmlUrl?: string
-  openedBrowser?: boolean
-  copiedToClipboard?: boolean
+  via?: 'ericservices' | 'builtin'
+}
+
+export interface FeedbackHistoryItem {
+  id: string
+  title: string
+  number?: number
+  htmlUrl?: string
+  via?: 'ericservices' | 'builtin'
+  submittedAt: string
+}
+
+const FEEDBACK_HISTORY_MAX = 40
+
+function feedbackHistoryPath(): string {
+  return join(userDataRoot(), 'feedback-history.json')
+}
+
+export function listFeedbackHistory(): FeedbackHistoryItem[] {
+  try {
+    const path = feedbackHistoryPath()
+    if (!existsSync(path)) return []
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as unknown
+    if (!Array.isArray(raw)) return []
+    return raw
+      .filter((x): x is FeedbackHistoryItem => Boolean(x && typeof x === 'object' && (x as FeedbackHistoryItem).title))
+      .slice(0, FEEDBACK_HISTORY_MAX)
+  } catch {
+    return []
+  }
+}
+
+function recordFeedbackHistory(item: FeedbackHistoryItem): void {
+  try {
+    const dir = userDataRoot()
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+    const prev = listFeedbackHistory()
+    const next = [item, ...prev.filter((x) => x.id !== item.id)].slice(0, FEEDBACK_HISTORY_MAX)
+    writeFileSync(feedbackHistoryPath(), JSON.stringify(next, null, 2), 'utf8')
+  } catch (err) {
+    logWarn('Could not persist feedback history', {
+      error: err instanceof Error ? err.message : String(err)
+    })
+  }
 }
 
 function workspaceDisplayName(): string | null {
@@ -93,7 +137,7 @@ export function collectBugDiagnostics(): BugReportDiagnostics {
     arch: arch(),
     locale: app.getLocale(),
     cpuCount: cpus()?.length || 0,
-    totalMemGb: Math.round((totalmem() / (1024 ** 3)) * 10) / 10,
+    totalMemGb: Math.round(totalmem() / 1024 ** 3 * 10) / 10,
     workspaceLinked: Boolean(appState.currentWorkspace),
     workspaceName: workspaceDisplayName(),
     defaultModel: settings.models?.defaultModel || null,
@@ -133,8 +177,45 @@ function trimBody(body: string): string {
   if (body.length <= MAX_ISSUE_BODY) return body
   return (
     body.slice(0, MAX_ISSUE_BODY) +
-    '\n\n---\n_(Issue body truncated to fit GitHub limits. Full logs are on the reporter’s machine.)_\n'
+    '\n\n---\n_(Issue body truncated to fit GitHub limits.)_\n'
   )
+}
+
+/**
+ * Built-in feedback credential (Issues on Eris-feedback only).
+ * Sources: env, packaged resources/eris-feedback-token, or repo resources/ for local builds.
+ * End users never configure this.
+ */
+export function resolveBuiltinFeedbackToken(): string | null {
+  const fromEnv = (process.env.ERIS_FEEDBACK_GITHUB_TOKEN || '').trim()
+  if (fromEnv) return fromEnv
+
+  const candidates = [
+    join(process.resourcesPath || '', 'eris-feedback-token'),
+    join(process.resourcesPath || '', 'resources', 'eris-feedback-token'),
+    join(app.getAppPath(), 'resources', 'eris-feedback-token'),
+    join(__dirname, '../../../resources/eris-feedback-token')
+  ]
+  for (const path of candidates) {
+    try {
+      if (!path || !existsSync(path)) continue
+      const value = readFileSync(path, 'utf8')
+        .split('\n')
+        .map((l) => l.trim())
+        .find((l) => l && !l.startsWith('#'))
+        ?.trim()
+      if (
+        value &&
+        !/REPLACE_ME|github_pat_or_ghp/i.test(value) &&
+        value.length >= 20
+      ) {
+        return value
+      }
+    } catch {
+      // try next
+    }
+  }
+  return null
 }
 
 export function buildBugReportPreview(input: BugReportInput): BugReportPreview {
@@ -195,11 +276,6 @@ export function buildBugReportPreview(input: BugReportInput): BugReportPreview {
     `_Submitted from Eris ${diagnostics.appVersion} via **Report a Bug**._`
   )
 
-  const settings = getResolvedSettings(appState.currentWorkspace)
-  const hasGithubToken = Boolean(
-    settings.github?.tokenRef && getSecret(settings.github.tokenRef)
-  )
-
   return {
     title: title.slice(0, 200),
     body: trimBody(parts.join('\n')),
@@ -207,119 +283,139 @@ export function buildBugReportPreview(input: BugReportInput): BugReportPreview {
     logIncluded: includeLogs,
     logTruncated,
     logPath,
-    hasGithubToken,
+    hasGithubToken: true,
     targetRepo: `${ERIS_FEEDBACK_OWNER}/${ERIS_FEEDBACK_REPO}`
+  }
+}
+
+async function submitViaEricServices(
+  preview: BugReportPreview
+): Promise<BugReportResult | null> {
+  const settings = getResolvedSettings(appState.currentWorkspace)
+  const apiBase = normalizeApiBase(settings.ericServices?.apiBase || 'https://www.ericservic.es')
+  const url = `${apiBase}/api/eris/v1/feedback.php`
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'Content-Type': 'application/json'
+  }
+  const tokenRef = settings.ericServices?.tokenRef || ''
+  const eseris = tokenRef ? getSecret(tokenRef) : null
+  if (eseris) headers.Authorization = `Bearer ${eseris}`
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ title: preview.title, body: preview.body })
+    })
+    const text = await res.text()
+    let data: Record<string, unknown> = {}
+    try {
+      data = text ? (JSON.parse(text) as Record<string, unknown>) : {}
+    } catch {
+      if (res.status === 404) return null
+      return null
+    }
+    if (!res.ok || data.ok === false) {
+      // 503 = relay not configured yet — fall through to builtin
+      if (res.status === 404 || res.status === 503) return null
+      return {
+        ok: false,
+        error: typeof data.error === 'string' ? data.error : `Feedback relay failed (${res.status})`,
+        via: 'ericservices'
+      }
+    }
+    return {
+      ok: true,
+      number: typeof data.number === 'number' ? data.number : undefined,
+      htmlUrl: typeof data.htmlUrl === 'string' ? data.htmlUrl : undefined,
+      via: 'ericservices'
+    }
+  } catch (err) {
+    logWarn('EricServic.es feedback relay unreachable', {
+      error: err instanceof Error ? err.message : String(err)
+    })
+    return null
+  }
+}
+
+async function submitViaBuiltinToken(preview: BugReportPreview): Promise<BugReportResult> {
+  const token = resolveBuiltinFeedbackToken()
+  if (!token) {
+    return {
+      ok: false,
+      error:
+        'Bug reporting is not configured in this build (missing feedback credential). Update Eris or contact support.'
+    }
+  }
+  const created = await createGithubIssue({
+    host: 'github.com',
+    token,
+    owner: ERIS_FEEDBACK_OWNER,
+    repo: ERIS_FEEDBACK_REPO,
+    title: preview.title,
+    body: preview.body,
+    labels: ['bug', 'from-client', 'needs-triage']
+  })
+  if (!created.ok) {
+    return { ok: false, error: created.error || 'Could not create GitHub issue', via: 'builtin' }
+  }
+  return {
+    ok: true,
+    number: created.number,
+    htmlUrl: created.htmlUrl,
+    via: 'builtin'
   }
 }
 
 export async function submitBugReport(input: BugReportInput): Promise<BugReportResult> {
   const preview = buildBugReportPreview(input)
-  const settings = getResolvedSettings(appState.currentWorkspace)
-  const tokenRef = settings.github?.tokenRef || ''
-  const token = tokenRef ? getSecret(tokenRef) : null
-  const host = normalizeHost(settings.github?.host || 'github.com')
-  const openBrowserFallback = input.openBrowserFallback !== false
-
   logInfo('Bug report submit started', {
-    hasToken: Boolean(token),
     includeLogs: preview.logIncluded,
     titleLen: preview.title.length,
-    bodyLen: preview.body.length
+    bodyLen: preview.body.length,
+    hasBuiltin: Boolean(resolveBuiltinFeedbackToken())
   })
 
-  if (token) {
-    const created = await createGithubIssue({
-      host,
-      token,
-      owner: ERIS_FEEDBACK_OWNER,
-      repo: ERIS_FEEDBACK_REPO,
+  // 1) Prefer EricServic.es relay (token stays on the server)
+  const relay = await submitViaEricServices(preview)
+  if (relay?.ok) {
+    logInfo('Bug report created via EricServic.es', {
+      number: relay.number,
+      url: relay.htmlUrl
+    })
+    recordFeedbackHistory({
+      id: `es-${relay.number ?? Date.now()}`,
       title: preview.title,
-      body: preview.body,
-      labels: ['bug', 'from-client', 'needs-triage']
+      number: relay.number,
+      htmlUrl: relay.htmlUrl,
+      via: 'ericservices',
+      submittedAt: new Date().toISOString()
     })
-    if (created.ok && created.htmlUrl) {
-      logInfo('Bug report created', { number: created.number, url: created.htmlUrl })
-      try {
-        await shell.openExternal(created.htmlUrl)
-      } catch {
-        // ignore
-      }
-      return {
-        ok: true,
-        number: created.number,
-        htmlUrl: created.htmlUrl
-      }
-    }
-    logWarn('Bug report API failed', { error: created.error })
-    if (!openBrowserFallback) {
-      return { ok: false, error: created.error || 'Could not create GitHub issue' }
-    }
-    // fall through to browser + clipboard
-    const fallback = await openBugReportFallback(preview, created.error)
-    return {
-      ok: false,
-      error: created.error || 'Could not create GitHub issue',
-      ...fallback
-    }
+    return relay
+  }
+  if (relay && !relay.ok && relay.error && !/not configured|404/i.test(relay.error)) {
+    // Real relay error (rate limit, GitHub down) — still try builtin before failing
+    logWarn('EricServic.es feedback relay error', { error: relay.error })
   }
 
-  if (!openBrowserFallback) {
-    return {
-      ok: false,
-      error:
-        'Add a GitHub personal access token under Settings → GitHub (needs permission to create issues on EricServices-Repo/Eris-feedback).'
-    }
-  }
-
-  const fallback = await openBugReportFallback(
-    preview,
-    'No GitHub token configured in Settings → GitHub.'
-  )
-  return {
-    ok: false,
-    error:
-      'No GitHub token in Settings → GitHub. Opened a draft in the browser and copied the full report to your clipboard.',
-    ...fallback
-  }
-}
-
-async function openBugReportFallback(
-  preview: BugReportPreview,
-  reason?: string
-): Promise<{ openedBrowser: boolean; copiedToClipboard: boolean }> {
-  let copiedToClipboard = false
-  try {
-    clipboard.writeText(preview.body)
-    copiedToClipboard = true
-  } catch {
-    // ignore
-  }
-
-  const shortBody = [
-    preview.body.slice(0, 2800),
-    '',
-    '---',
-    '_(Full report with logs was copied to your clipboard — paste below if truncated.)_',
-    reason ? `_Client note: ${reason}_` : ''
-  ]
-    .filter(Boolean)
-    .join('\n')
-
-  const url =
-    `${ERIS_FEEDBACK_ISSUES_URL}/new?` +
-    `title=${encodeURIComponent(preview.title)}&` +
-    `body=${encodeURIComponent(shortBody)}&` +
-    `labels=${encodeURIComponent('bug,from-client,needs-triage')}`
-
-  let openedBrowser = false
-  try {
-    await shell.openExternal(url)
-    openedBrowser = true
-  } catch (err) {
-    logWarn('Bug report browser open failed', {
-      error: err instanceof Error ? err.message : String(err)
+  // 2) Built-in client credential → GitHub Issues API (no user Settings token)
+  const direct = await submitViaBuiltinToken(preview)
+  if (direct.ok) {
+    logInfo('Bug report created via builtin token', {
+      number: direct.number,
+      url: direct.htmlUrl
     })
+    recordFeedbackHistory({
+      id: `gh-${direct.number ?? Date.now()}`,
+      title: preview.title,
+      number: direct.number,
+      htmlUrl: direct.htmlUrl,
+      via: 'builtin',
+      submittedAt: new Date().toISOString()
+    })
+  } else {
+    logWarn('Bug report failed', { error: direct.error })
   }
-
-  return { openedBrowser, copiedToClipboard }
+  return direct
 }

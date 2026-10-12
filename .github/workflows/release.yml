@@ -90,6 +90,20 @@ jobs:
         env:
           VERSION: ${{ needs.resolve-version.outputs.version }}
 
+      # Optional fallback when EricServic.es /api/eris/v1/feedback.php is down.
+      # Prefer the website relay (server-side token). Same secret can power both.
+      - name: Inject feedback credential
+        shell: bash
+        env:
+          ERIS_FEEDBACK_GITHUB_TOKEN: ${{ secrets.ERIS_FEEDBACK_GITHUB_TOKEN }}
+        run: |
+          if [ -n "${ERIS_FEEDBACK_GITHUB_TOKEN:-}" ]; then
+            printf '%s' "$ERIS_FEEDBACK_GITHUB_TOKEN" > resources/eris-feedback-token
+            echo "Wrote resources/eris-feedback-token for packaged fallback"
+          else
+            echo "ERIS_FEEDBACK_GITHUB_TOKEN secret unset — builds rely on EricServic.es feedback relay only"
+          fi
+
       - name: Build macOS (dmg + zip)
         if: matrix.platform == 'mac'
         run: |
@@ -115,8 +129,27 @@ jobs:
       - name: Build Windows (.exe installer)
         if: matrix.platform == 'win'
         shell: bash
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          # Fallbacks if the same names as Mac-style base64 secrets are preferred
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
-          export CSC_IDENTITY_AUTO_DISCOVERY=false
+          set -euo pipefail
+          # Prefer WIN_CSC_* (file path, https URL, or base64). Else WINDOWS_CERT_PFX_BASE64.
+          if [ -n "${WIN_CSC_LINK:-}" ]; then
+            export CSC_LINK="$WIN_CSC_LINK"
+            export CSC_KEY_PASSWORD="${WIN_CSC_KEY_PASSWORD:-}"
+            echo "Windows code signing: using WIN_CSC_LINK"
+          elif [ -n "${WINDOWS_CERT_PFX_BASE64:-}" ]; then
+            export CSC_LINK="$WINDOWS_CERT_PFX_BASE64"
+            export CSC_KEY_PASSWORD="${WINDOWS_CERT_PASSWORD:-}"
+            echo "Windows code signing: using WINDOWS_CERT_PFX_BASE64"
+          else
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            echo "Windows code signing: no cert secrets — building unsigned"
+          fi
           npm run dist:release:win -- --publish never
 
       - name: Collect dist artifacts

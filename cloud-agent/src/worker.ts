@@ -1,98 +1,181 @@
+import { existsSync } from 'fs'
 import { JobStore } from './job-store.js'
 import { chatCompletion, type ChatMessage } from './llm.js'
 import {
   listTree,
+  maybeOpenPullRequest,
   prepareWorkspace,
   readText,
   runShell,
-  writeText
+  writeText,
+  jobWorkspace
 } from './workspace.js'
+import type { AuthContext } from './auth.js'
 import type { CloudJob, CloudJobCreateRequest, CloudJobToolEvent } from './types.js'
 import { config } from './config.js'
 import { getLocalModelStatus } from './local-model.js'
-import { buildJobArtifacts, saveSeedBaseline } from './artifacts.js'
-
-const TOOL_RE = /<<<TOOL>>>\s*([\s\S]*?)\s*<<<END>>>/gi
-
-const SYSTEM = `You are an Eris Cloud Agent working in an isolated workspace.
-Use tools by emitting:
-
-<<<TOOL>>>
-{"name":"tree","path":"."}
-<<<END>>>
-
-Tools:
-- tree — { "name":"tree", "path":".", "maxDepth":3 }
-- read_file — { "name":"read_file", "path":"file.ts" }
-- write_file — { "name":"write_file", "path":"file.ts", "content":"..." }
-- run — { "name":"run", "command":"npm test" }
-
-Rules:
-- Prefer concrete file edits over long plans.
-- After TOOL_RESULT, keep going until the goal is done.
-- When finished, reply with a short DONE summary and no tools.
-- Paths are relative to the workspace root.`
-
-function parseTools(text: string): Array<{ name: string; args: Record<string, unknown> }> {
-  const out: Array<{ name: string; args: Record<string, unknown> }> = []
-  TOOL_RE.lastIndex = 0
-  let m: RegExpExecArray | null
-  while ((m = TOOL_RE.exec(text)) !== null) {
-    try {
-      const obj = JSON.parse(m[1]!) as Record<string, unknown>
-      const name = String(obj.name || '')
-      if (!name) continue
-      const args = { ...obj }
-      delete args.name
-      out.push({ name, args })
-    } catch {
-      // ignore bad block
-    }
-  }
-  return out
-}
-
-function stripTools(text: string): string {
-  return text.replace(TOOL_RE, '').trim()
-}
-
-/** Files attached at create time (not persisted in job JSON for size). */
-export const pendingFiles = new Map<string, CloudJobCreateRequest['files']>()
+import {
+  buildJobArtifacts,
+  saveSeedBaseline,
+  snapshotWorkspaceBaseline
+} from './artifacts.js'
+import {
+  clearJobSecrets,
+  loadCheckpoint,
+  loadJobGithubToken,
+  loadJobSeed,
+  saveCheckpoint,
+  saveJobGithubToken,
+  saveJobSeed
+} from './job-secrets.js'
+import { parseTools, stripTools, SYSTEM_PROMPT } from './tools.js'
+import { audit, bumpMetric } from './observe.js'
+import { assertCanEnqueue, recordEnqueue } from './entitlements.js'
 
 export class WorkerPool {
   private pumping = false
   private aborts = new Map<string, AbortController>()
   private active = new Set<string>()
+  /** Per-owner active count for fair scheduling */
+  private ownerActive = new Map<string, number>()
 
-  constructor(private store: JobStore) {}
+  constructor(private store: JobStore) {
+    // Recover any queued jobs after restart
+    void this.pump()
+  }
 
-  enqueue(req: CloudJobCreateRequest): CloudJob {
+  enqueue(req: CloudJobCreateRequest, auth: AuthContext): CloudJob {
     const local = getLocalModelStatus()
     if (!config.llmBase && local.status === 'error') {
       throw new Error(local.error || 'Local cloud model failed to load')
     }
-    const job = this.store.create({
-      ...req,
-      model: req.model || (config.llmBase ? config.llmModel : 'composer')
+
+    const gate = assertCanEnqueue(auth, this.store)
+    if (!gate.ok) throw new Error(gate.error)
+
+    // Resume path: clone metadata from previous job, reuse workspace/checkpoint
+    if (req.resumeFromJobId) {
+      return this.enqueueResume(req, auth)
+    }
+
+    const job = this.store.create(
+      {
+        ...req,
+        model: req.model || (config.llmBase ? config.llmModel : 'composer')
+      },
+      { ownerId: auth.owner, plan: auth.plan }
+    )
+
+    if (req.files?.length) {
+      saveJobSeed(job.id, req.files)
+      saveSeedBaseline(
+        job.id,
+        req.files.map((f) => ({
+          path: String(f.path || '').replace(/\\/g, '/').replace(/^\/+/, ''),
+          content: String(f.content ?? '')
+        }))
+      )
+    }
+    if (req.githubToken?.trim()) {
+      saveJobGithubToken(job.id, req.githubToken)
+    }
+
+    recordEnqueue(auth)
+    bumpMetric('enqueues')
+    audit('job_enqueued', {
+      jobId: job.id,
+      owner: auth.owner,
+      plan: auth.plan,
+      agentId: job.agentId
     })
-    if (req.files?.length) pendingFiles.set(job.id, req.files)
     void this.pump()
     return job
   }
 
-  stop(id: string): boolean {
+  private enqueueResume(req: CloudJobCreateRequest, auth: AuthContext): CloudJob {
+    const prev = this.store.get(String(req.resumeFromJobId))
+    if (!prev) throw new Error('resumeFromJobId not found')
+    if (prev.ownerId && prev.ownerId !== auth.owner && auth.owner !== 'anonymous') {
+      throw new Error('Cannot resume another user\'s job')
+    }
+    if (!prev.resumable && prev.status !== 'failed' && prev.status !== 'stopped') {
+      throw new Error('Job is not resumable')
+    }
+
+    const gate = assertCanEnqueue(auth, this.store)
+    if (!gate.ok) throw new Error(gate.error)
+
+    const job = this.store.create(
+      {
+        goal: req.goal || prev.goal,
+        agentId: req.agentId || prev.agentId,
+        model: req.model || prev.model,
+        repoUrl: req.repoUrl ?? prev.repoUrl,
+        branch: req.branch ?? prev.branch,
+        openPr: req.openPr ?? prev.openPr,
+        claim: req.claim || `resume: ${prev.claim}`
+      },
+      { ownerId: auth.owner, plan: auth.plan }
+    )
+
+    // Copy secrets / checkpoint from previous job into new id when possible
+    const cp = loadCheckpoint(prev.id)
+    if (cp) saveCheckpoint(job.id, cp)
+    const seed = loadJobSeed(prev.id)
+    if (seed) saveJobSeed(job.id, seed)
+    const token = loadJobGithubToken(prev.id)
+    if (token) saveJobGithubToken(job.id, token)
+    if (req.githubToken?.trim()) saveJobGithubToken(job.id, req.githubToken)
+    if (req.files?.length) {
+      saveJobSeed(job.id, req.files)
+      saveSeedBaseline(
+        job.id,
+        req.files.map((f) => ({
+          path: String(f.path || '').replace(/\\/g, '/').replace(/^\/+/, ''),
+          content: String(f.content ?? '')
+        }))
+      )
+    }
+
+    this.store.patch(job.id, (j) => ({
+      ...j,
+      resumable: true,
+      step: cp?.step || 0,
+      liveStatus: 'Queued (resume)',
+      filesTouched: [...prev.filesTouched],
+      thinkingTail: prev.thinkingTail
+    }))
+
+    recordEnqueue(auth)
+    bumpMetric('enqueues')
+    audit('job_resume_enqueued', {
+      jobId: job.id,
+      from: prev.id,
+      owner: auth.owner
+    })
+    void this.pump()
+    return this.store.get(job.id)!
+  }
+
+  stop(id: string, auth?: AuthContext): boolean {
+    const job = this.store.get(id)
+    if (!job) return false
+    if (auth && job.ownerId && job.ownerId !== auth.owner && auth.owner !== 'anonymous') {
+      return false
+    }
     const ac = this.aborts.get(id)
     if (ac) {
       ac.abort()
       return true
     }
-    const job = this.store.get(id)
-    if (job?.status === 'queued') {
+    if (job.status === 'queued') {
       this.store.setStatus(id, 'stopped', {
         liveStatus: 'Stopped',
-        error: 'Cancelled before start'
+        error: 'Cancelled before start',
+        resumable: true
       })
-      pendingFiles.delete(id)
+      bumpMetric('jobsStopped')
+      audit('job_stopped', { jobId: id })
       return true
     }
     return false
@@ -106,16 +189,51 @@ export class WorkerPool {
         const slots = config.maxParallel - this.active.size
         if (slots <= 0) break
         const queued = this.store
-          .list(200)
+          .list(500)
           .filter((j) => j.status === 'queued')
           .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
         if (queued.length === 0) break
-        const batch = queued.slice(0, slots)
+
+        // Fairness: prefer owners with fewer active jobs
+        const ranked = [...queued].sort((a, b) => {
+          const ao = this.ownerActive.get(a.ownerId || 'anonymous') || 0
+          const bo = this.ownerActive.get(b.ownerId || 'anonymous') || 0
+          if (ao !== bo) return ao - bo
+          return a.createdAt.localeCompare(b.createdAt)
+        })
+
+        const batch: CloudJob[] = []
+        for (const job of ranked) {
+          if (batch.length >= slots) break
+          const owner = job.ownerId || 'anonymous'
+          const maxForOwner =
+            job.plan === 'pro' ? config.maxConcurrentPro : config.maxConcurrentFree
+          const activeForOwner = this.ownerActive.get(owner) || 0
+          // Count already-running in store too
+          const storeRunning = this.store
+            .list(200)
+            .filter(
+              (j) =>
+                j.ownerId === owner &&
+                j.status === 'running' &&
+                !batch.some((b) => b.id === j.id)
+            ).length
+          if (activeForOwner + storeRunning >= maxForOwner) continue
+          batch.push(job)
+        }
+        if (batch.length === 0) break
+
         for (const job of batch) {
           this.store.setStatus(job.id, 'running', { liveStatus: 'Starting…' })
           this.active.add(job.id)
+          const owner = job.ownerId || 'anonymous'
+          this.ownerActive.set(owner, (this.ownerActive.get(owner) || 0) + 1)
           void this.runJob(job.id).finally(() => {
             this.active.delete(job.id)
+            this.ownerActive.set(
+              owner,
+              Math.max(0, (this.ownerActive.get(owner) || 1) - 1)
+            )
             void this.pump()
           })
         }
@@ -136,37 +254,63 @@ export class WorkerPool {
     }
 
     try {
-      this.store.patch(id, (j) => ({ ...j, liveStatus: 'Preparing workspace…' }))
-      const files = pendingFiles.get(id)
-      pendingFiles.delete(id)
+      const checkpoint = loadCheckpoint(id)
+      const seed = loadJobSeed(id)
+      const githubToken = loadJobGithubToken(id)
+      const workspaceExists = existsSync(jobWorkspace(id))
+      const reuse = Boolean(checkpoint?.workspaceReady && workspaceExists)
+
+      this.store.patch(id, (j) => ({
+        ...j,
+        liveStatus: reuse ? 'Resuming workspace…' : 'Preparing workspace…'
+      }))
+
       const workspace = await prepareWorkspace({
         jobId: id,
         repoUrl: job.repoUrl,
         branch: job.branch,
-        files
+        files: reuse ? undefined : seed,
+        githubToken,
+        reuse
       })
-      if (files?.length) {
+
+      // For git clones without seed overlay, snapshot touched-empty baseline later on first writes
+      if (!reuse && seed?.length) {
         saveSeedBaseline(
           id,
-          files.map((f) => ({
+          seed.map((f) => ({
             path: String(f.path || '').replace(/\\/g, '/').replace(/^\/+/, ''),
             content: String(f.content ?? '')
           }))
         )
       }
 
-      const messages: ChatMessage[] = [
-        { role: 'system', content: SYSTEM },
-        {
-          role: 'user',
-          content: `Agent: ${job.agentName} (${job.agentId})\nGoal:\n${job.goal}`
-        }
-      ]
+      let messages: ChatMessage[]
+      let startStep = 1
+      if (checkpoint?.messages?.length) {
+        messages = checkpoint.messages
+        startStep = Math.max(1, (checkpoint.step || 0) + 1)
+        this.store.patch(id, (j) => ({
+          ...j,
+          liveStatus: `Resuming · step ${startStep}`,
+          step: checkpoint.step
+        }))
+      } else {
+        messages = [
+          { role: 'system', content: SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content: `Agent: ${job.agentName} (${job.agentId})\nGoal:\n${job.goal}`
+          }
+        ]
+      }
 
-      for (let step = 1; step <= 24; step++) {
+      const maxSteps = config.maxSteps
+      for (let step = startStep; step <= maxSteps; step++) {
         if (ac.signal.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
         this.store.patch(id, (j) => ({
           ...j,
+          step,
           liveStatus: `${job.agentName} · step ${step}`
         }))
 
@@ -180,20 +324,48 @@ export class WorkerPool {
           thinkingTail: (j.thinkingTail + `\n${assistant}`).slice(-4000)
         }))
 
+        saveCheckpoint(id, { step, messages, workspaceReady: true })
+
         const tools = parseTools(assistant)
         if (tools.length === 0) {
           const answer = stripTools(assistant) || assistant
-          const current = this.store.get(id)
-          const pack = buildJobArtifacts(id, current?.filesTouched || [])
+          const current = this.store.get(id)!
+          let prUrl: string | null = null
+          if (job.openPr && job.repoUrl && githubToken) {
+            this.store.patch(id, (j) => ({ ...j, liveStatus: 'Opening pull request…' }))
+            const prResult = await maybeOpenPullRequest({
+              workspace,
+              repoUrl: job.repoUrl,
+              baseBranch: job.branch || null,
+              githubToken,
+              jobId: id,
+              goal: job.goal,
+              filesTouched: current.filesTouched
+            })
+            if (prResult?.startsWith('http')) prUrl = prResult
+            else if (prResult) {
+              // keep note in answer
+            }
+          }
+          const pack = buildJobArtifacts(id, current.filesTouched || [])
           this.store.setStatus(id, 'done', {
-            answer,
+            answer: prUrl
+              ? `${answer}\n\nPull request: ${prUrl}`
+              : answer,
             liveStatus:
               pack.files.length > 0
                 ? `Done · ${pack.files.length} file${pack.files.length === 1 ? '' : 's'} ready to apply`
                 : 'Done',
             hasArtifacts: pack.files.length > 0,
-            artifactCount: pack.files.length
+            artifactCount: pack.files.length,
+            artifactsTruncated: pack.truncated,
+            truncatedReasons: pack.truncatedReasons,
+            prUrl,
+            resumable: false
           })
+          bumpMetric('jobsDone')
+          audit('job_done', { jobId: id, artifacts: pack.files.length, prUrl })
+          clearJobSecrets(id)
           return
         }
 
@@ -237,6 +409,12 @@ export class WorkerPool {
               touched = p
             } else if (call.name === 'write_file') {
               const p = String(call.args.path || '')
+              // Capture before content for artifact baseline if not seeded
+              try {
+                snapshotWorkspaceBaseline(id, [p])
+              } catch {
+                // ignore
+              }
               const content = String(call.args.content ?? '')
               touched = writeText(workspace, p, content)
               detail = `Wrote ${touched} (${Buffer.byteLength(content, 'utf8')} bytes)`
@@ -277,6 +455,7 @@ export class WorkerPool {
             results.join('\n\n') +
             '\n\nContinue with tools if needed, or reply DONE with a short summary.'
         })
+        saveCheckpoint(id, { step, messages, workspaceReady: true })
       }
 
       {
@@ -287,8 +466,13 @@ export class WorkerPool {
           liveStatus: 'Failed',
           answer: current?.answer || 'Stopped at step limit',
           hasArtifacts: pack.files.length > 0,
-          artifactCount: pack.files.length
+          artifactCount: pack.files.length,
+          artifactsTruncated: pack.truncated,
+          truncatedReasons: pack.truncatedReasons,
+          resumable: true
         })
+        bumpMetric('jobsFailed')
+        audit('job_failed', { jobId: id, error: 'step_limit' })
       }
     } catch (err) {
       const aborted = err instanceof Error && err.name === 'AbortError'
@@ -298,7 +482,16 @@ export class WorkerPool {
         error: aborted ? 'Stopped' : err instanceof Error ? err.message : String(err),
         liveStatus: aborted ? 'Stopped' : 'Failed',
         hasArtifacts: pack.files.length > 0,
-        artifactCount: pack.files.length
+        artifactCount: pack.files.length,
+        artifactsTruncated: pack.truncated,
+        truncatedReasons: pack.truncatedReasons,
+        resumable: true
+      })
+      if (aborted) bumpMetric('jobsStopped')
+      else bumpMetric('jobsFailed')
+      audit(aborted ? 'job_stopped' : 'job_failed', {
+        jobId: id,
+        error: err instanceof Error ? err.message : String(err)
       })
     } finally {
       this.aborts.delete(id)

@@ -1,4 +1,9 @@
 import type { UsageEntitlement } from '@/shared/api'
+import type { CloudHealth } from '@/shared/cloud-agents'
+import {
+  cloudAgentsStatusLabel,
+  shouldUseCloudAgents
+} from '@/shared/cloud-agents'
 
 export type ConnectionIssue = {
   id: string
@@ -18,14 +23,17 @@ export function buildConnectionIssues(input: {
   accountNeedsReauth: boolean
   accountError?: string | null
   entitlement?: UsageEntitlement | null
+  cloudHealth?: CloudHealth | null
+  modelsOk?: boolean | null
+  composerReady?: boolean | null
   onOpenAccount: () => void
   onOpenUsage: () => void
   onOpenUpgrade: () => void
+  onOpenModels?: () => void
+  onOpenAgent?: () => void
+  onWorkLocal?: () => void
 }): ConnectionIssue[] {
   const issues: ConnectionIssue[] = []
-
-  // Cloud Agents status stays in the StatusBar only — never a top banner /
-  // load blocker. Offline cloud is expected when the worker is unreachable.
 
   if (input.accountNeedsReauth) {
     issues.push({
@@ -46,6 +54,36 @@ export function buildConnectionIssues(input: {
       detail: input.entitlement.blockedReason || undefined,
       actionLabel: 'Upgrade',
       onAction: input.onOpenUpgrade
+    })
+  }
+
+  const cloud = input.cloudHealth
+  if (cloud && !input.accountNeedsReauth) {
+    const ready = shouldUseCloudAgents(cloud)
+    if (!ready) {
+      const signedIn = cloud.authenticated === true
+      issues.push({
+        id: 'cloud',
+        tone: signedIn ? 'warn' : 'info',
+        title: signedIn ? 'Cloud Agents unavailable' : 'Cloud Agents offline',
+        detail: `${cloudAgentsStatusLabel(cloud)}. Local agents and Composer Lite still work.`,
+        actionLabel: signedIn ? 'Details' : 'Account',
+        onAction: signedIn ? input.onOpenAgent || input.onOpenAccount : input.onOpenAccount
+      })
+    }
+  }
+
+  if (input.modelsOk === false) {
+    issues.push({
+      id: 'models',
+      tone: 'warn',
+      title: 'No local models ready',
+      detail:
+        input.composerReady === false
+          ? 'Download Composer Lite or connect Ollama to chat.'
+          : 'Model probe failed — check Settings → Models.',
+      actionLabel: 'Models',
+      onAction: input.onOpenModels
     })
   }
 

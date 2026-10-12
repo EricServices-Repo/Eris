@@ -300,6 +300,30 @@ export function AgentsPanel({
               >
                 Stop
               </button>
+              {isCloudId(selected.id) &&
+                (selected.status === 'failed' ||
+                  selected.status === 'stopped' ||
+                  selected.resumable) && (
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busy || selected.status === 'running' || selected.status === 'queued'}
+                    title="Resume from the cloud checkpoint"
+                    onClick={() => {
+                      setBusy(true)
+                      setError(null)
+                      void window.ide
+                        .continueCloudJob(selected.id)
+                        .then(() => refresh())
+                        .catch((err) =>
+                          setError(err instanceof Error ? err.message : 'Continue failed')
+                        )
+                        .finally(() => setBusy(false))
+                    }}
+                  >
+                    Continue
+                  </button>
+                )}
               <button
                 type="button"
                 className="btn btn-primary"

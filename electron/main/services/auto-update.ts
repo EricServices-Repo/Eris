@@ -1,3 +1,4 @@
+import { spawnSync } from 'child_process'
 import { app, dialog, shell, type BrowserWindow } from 'electron'
 import { autoUpdater, type UpdateInfo, type ProgressInfo } from 'electron-updater'
 import { logInfo, logWarn } from './logger'
@@ -43,6 +44,11 @@ export interface UpdateStatusSnapshot {
   autoDownload: boolean
   packaged: boolean
   lastCheckedAt?: string
+  /**
+   * macOS without Developer ID: Squirrel cannot install in-place.
+   * Clients should open the Releases page instead of downloading via updater.
+   */
+  manualInstallOnly?: boolean
 }
 
 type GetWindow = () => BrowserWindow | null
@@ -52,13 +58,39 @@ let started = false
 let checkTimer: ReturnType<typeof setInterval> | null = null
 let manualCheck = false
 let lastCheckedAt: string | undefined
+let macSigningChecked = false
+let macInPlaceUpdates = process.platform !== 'darwin'
+
 let snapshot: UpdateStatusSnapshot = {
   state: 'idle',
   currentVersion: app.getVersion(),
   canOpenReleases: true,
   autoCheck: true,
   autoDownload: true,
-  packaged: app.isPackaged
+  packaged: app.isPackaged,
+  manualInstallOnly: false
+}
+
+/**
+ * Squirrel.Mac requires a Developer ID signature. Ad-hoc / unsigned local and CI
+ * builds always fail at download/install — detect that and use Releases instead.
+ */
+function macSupportsInPlaceUpdates(): boolean {
+  if (process.platform !== 'darwin') return true
+  if (macSigningChecked) return macInPlaceUpdates
+  macSigningChecked = true
+  const res = spawnSync('codesign', ['-dv', '--verbose=4', process.execPath], {
+    encoding: 'utf8',
+    timeout: 8_000
+  })
+  const msg = `${res.stderr || ''}\n${res.stdout || ''}\n${res.error?.message || ''}`
+  macInPlaceUpdates = /Authority=Developer ID Application/i.test(msg)
+  logInfo('macOS update signing check', { inPlaceUpdates: macInPlaceUpdates })
+  return macInPlaceUpdates
+}
+
+function manualInstallOnly(): boolean {
+  return process.platform === 'darwin' && !macSupportsInPlaceUpdates()
 }
 
 function readUpdatePrefs(): { autoCheck: boolean; autoDownload: boolean } {
@@ -75,14 +107,17 @@ function readUpdatePrefs(): { autoCheck: boolean; autoDownload: boolean } {
 
 function publish(partial: Partial<UpdateStatusSnapshot>): void {
   const prefs = readUpdatePrefs()
+  const manualOnly = manualInstallOnly()
   snapshot = {
     ...snapshot,
     ...partial,
     currentVersion: app.getVersion(),
     packaged: app.isPackaged,
     autoCheck: prefs.autoCheck,
-    autoDownload: prefs.autoDownload,
-    canOpenReleases: true
+    // Never auto-download on unsigned Mac — Squirrel will error and scare the user
+    autoDownload: manualOnly ? false : prefs.autoDownload,
+    canOpenReleases: true,
+    manualInstallOnly: manualOnly
   }
   const win = getWindow()
   win?.webContents.send('updates:status', snapshot)
@@ -124,8 +159,9 @@ function friendlyUpdateError(message: string): string {
 
 function applyFeedPrefs(): void {
   const prefs = readUpdatePrefs()
-  autoUpdater.autoDownload = prefs.autoDownload
-  autoUpdater.autoInstallOnAppQuit = true
+  const manualOnly = manualInstallOnly()
+  autoUpdater.autoDownload = manualOnly ? false : prefs.autoDownload
+  autoUpdater.autoInstallOnAppQuit = !manualOnly
 }
 
 /** Public GitHub Releases — no PAT required on clients. */
@@ -166,31 +202,55 @@ export function startAutoUpdates(getWin: GetWindow): void {
   })
 
   autoUpdater.on('update-available', (info: UpdateInfo) => {
-    logInfo('Update available', { version: info.version })
+    logInfo('Update available', { version: info.version, manualInstallOnly: manualInstallOnly() })
     publish({
       state: 'available',
       availableVersion: info.version,
       releaseName: info.releaseName || `Eris v${info.version}`,
       releaseNotes: notesToString(info.releaseNotes),
-      lastCheckedAt: new Date().toISOString()
+      lastCheckedAt: new Date().toISOString(),
+      error: undefined
     })
     lastCheckedAt = snapshot.lastCheckedAt
-    if (manualCheck && !readUpdatePrefs().autoDownload) {
+    if (manualCheck) {
       const win = getWindow()
-      const box = {
-        type: 'info' as const,
-        buttons: ['Download', 'Later', 'Open releases'],
-        defaultId: 0,
-        cancelId: 1,
-        message: `Eris ${info.version} is available`,
-        detail: 'Download now, or open the GitHub releases page for a manual installer.'
+      if (manualInstallOnly()) {
+        const box = {
+          type: 'info' as const,
+          buttons: ['Open releases', 'Later'],
+          defaultId: 0,
+          cancelId: 1,
+          message: `Eris ${info.version} is available`,
+          detail:
+            'This Mac build is not Developer ID–signed, so updates cannot install in-place. ' +
+            'Download the .dmg / .zip from GitHub Releases and replace Eris in Applications.'
+        }
+        void (win ? dialog.showMessageBox(win, box) : dialog.showMessageBox(box))
+          .then(({ response }) => {
+            manualCheck = false
+            if (response === 0) void openReleasesPage()
+          })
+          .catch(() => {
+            manualCheck = false
+          })
+        return
       }
-      void (win ? dialog.showMessageBox(win, box) : dialog.showMessageBox(box))
-        .then(({ response }) => {
-          if (response === 0) void downloadUpdate()
-          if (response === 2) void openReleasesPage()
-        })
-        .catch(() => {})
+      if (!readUpdatePrefs().autoDownload) {
+        const box = {
+          type: 'info' as const,
+          buttons: ['Download', 'Later', 'Open releases'],
+          defaultId: 0,
+          cancelId: 1,
+          message: `Eris ${info.version} is available`,
+          detail: 'Download now, or open the GitHub releases page for a manual installer.'
+        }
+        void (win ? dialog.showMessageBox(win, box) : dialog.showMessageBox(box))
+          .then(({ response }) => {
+            if (response === 0) void downloadUpdate()
+            if (response === 2) void openReleasesPage()
+          })
+          .catch(() => {})
+      }
     }
   })
 
@@ -248,6 +308,35 @@ export function startAutoUpdates(getWin: GetWindow): void {
 
   autoUpdater.on('error', (err) => {
     const raw = err?.message ?? String(err)
+    const isSignError = /code.?sign|Squirrel\.Mac|not signed|identity|Gatekeeper/i.test(raw)
+    // Unsigned Mac + Squirrel noise: don't alarm if we already know manual install is required
+    if (isSignError && manualInstallOnly()) {
+      logWarn('Auto-update skipped (unsigned Mac)', { error: raw })
+      publish({
+        state: snapshot.availableVersion ? 'available' : 'idle',
+        error: undefined,
+        manualInstallOnly: true
+      })
+      if (manualCheck) {
+        manualCheck = false
+        void dialog
+          .showMessageBox({
+            type: 'info',
+            buttons: ['Open releases', 'OK'],
+            defaultId: 0,
+            cancelId: 1,
+            message: 'Install from GitHub Releases',
+            detail:
+              'This Mac build is not Developer ID–signed, so Eris cannot update itself in-place. ' +
+              `Download the latest installer:\n${ERIS_RELEASES_URL}`
+          })
+          .then(({ response }) => {
+            if (response === 0) void openReleasesPage()
+          })
+          .catch(() => {})
+      }
+      return
+    }
     const message = friendlyUpdateError(raw)
     logWarn('Auto-update error', { error: raw })
     publish({ state: 'error', error: message })
@@ -286,12 +375,14 @@ export function startAutoUpdates(getWin: GetWindow): void {
 
 export function getUpdateStatus(): UpdateStatusSnapshot {
   const prefs = readUpdatePrefs()
+  const manualOnly = manualInstallOnly()
   return {
     ...snapshot,
     currentVersion: app.getVersion(),
     packaged: app.isPackaged,
     autoCheck: prefs.autoCheck,
-    autoDownload: prefs.autoDownload
+    autoDownload: manualOnly ? false : prefs.autoDownload,
+    manualInstallOnly: manualOnly
   }
 }
 
@@ -355,12 +446,21 @@ export async function downloadUpdate(): Promise<UpdateStatusSnapshot> {
   if (snapshot.state !== 'available' && snapshot.state !== 'error') {
     return getUpdateStatus()
   }
+  if (manualInstallOnly()) {
+    await openReleasesPage()
+    publish({
+      state: 'available',
+      error: undefined,
+      manualInstallOnly: true
+    })
+    return getUpdateStatus()
+  }
   try {
     publish({ state: 'downloading', percent: 0 })
     await autoUpdater.downloadUpdate()
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    publish({ state: 'error', error: message })
+    const raw = err instanceof Error ? err.message : String(err)
+    publish({ state: 'error', error: friendlyUpdateError(raw) })
   }
   return getUpdateStatus()
 }

@@ -124,17 +124,27 @@ If a previous manual container is still around: `podman rm -f eris-cloud-agent`.
 
 When `ERIS_CLOUD_LLM_BASE` is unset (default), the local GGUF is used.
 
+## Auth
+
+Job endpoints require `Authorization: Bearer <EricServic.es token>` (validated via `me.php`).  
+Set `ERIS_CLOUD_ALLOW_ANONYMOUS=1` for local/dev only. Health stays public.
+
 ## API
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/v1/health` | Liveness + local model / GPU status |
-| GET | `/v1/jobs` | List jobs |
-| POST | `/v1/jobs` | Create job `{ goal, agentId?, repoUrl?, branch?, files? }` |
+| GET | `/v1/health` | Liveness + local model / GPU status (`authRequired`) |
+| GET | `/v1/jobs` | List jobs for the authenticated owner |
+| POST | `/v1/jobs` | Create job `{ goal, agentId?, repoUrl?, branch?, githubToken?, openPr?, files?, resumeFromJobId? }` |
 | GET | `/v1/jobs/:id` | Job status / tools / answer |
+| GET | `/v1/jobs/:id/events` | SSE stream of job updates |
+| POST | `/v1/jobs/:id/continue` | Resume from checkpoint (new job id) |
 | GET | `/v1/jobs/:id/artifacts` | Patch bundle `{ files: [{ path, content, before }] }` for Eris Diff Review |
 | POST | `/v1/jobs/:id/stop` | Cancel |
+| GET | `/v1/metrics` | Counters + recent audit (auth required) |
 
 Health includes `ready`, `inference: "local"`, `gpuMode`, and `localModel: { status, modelId, modelName, gpu }`. `ok` means the process is up; `ready` means jobs can run.
+
+Jobs persist across restarts; running jobs re-queue and resume from checkpoints when possible. Shell `run` tools are sandboxed. Private repos use a short-lived `githubToken`; `openPr: true` pushes a branch and opens a PR.
 
 When a job finishes, Eris can **Apply changes** to download `/artifacts` and open Diff Review in the desktop app.

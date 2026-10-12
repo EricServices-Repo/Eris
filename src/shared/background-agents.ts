@@ -59,6 +59,9 @@ export interface BackgroundJob {
   filesTouched: string[]
   /** Cloud jobs: patch bundle ready to apply into the workspace */
   hasArtifacts?: boolean
+  artifactsTruncated?: boolean
+  resumable?: boolean
+  prUrl?: string
   artifactCount?: number
   answer: string
   /** Latest status line from the agent loop */

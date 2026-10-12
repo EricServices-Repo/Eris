@@ -68,15 +68,17 @@ GitHub Releases work, but a first-party feed is more reliable for branding and r
 
 Then add a second `publish` provider (`generic`) or set `autoUpdater.setFeedURL` to the site. Keep GitHub as backup.
 
-### 3. Code signing & notarization (required for silent Mac install)
+### 3. Code signing & notarization
 
-Without a Developer ID signature + notarization, macOS Gatekeeper blocks auto-install and electron-updater errors. Wire CI secrets:
+Without signing, macOS Gatekeeper blocks in-place updates and Windows SmartScreen scares users.
+Full setup: **[docs/SIGNING.md](./SIGNING.md)**.
 
-- `MAC_CERT_P12_BASE64` / `MAC_CERT_PASSWORD`
-- `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`
-- Windows: Authenticode cert for the NSIS installer (SmartScreen reputation)
+| Platform | Secrets |
+|----------|---------|
+| macOS | `MAC_CERT_P12_BASE64`, `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` |
+| Windows | `WIN_CSC_LINK` + `WIN_CSC_KEY_PASSWORD` (or `WINDOWS_CERT_PFX_BASE64` + `WINDOWS_CERT_PASSWORD`) |
 
-Document “unsigned builds: manual download only” on the website until signing is live.
+CI signs when secrets exist; otherwise builds unsigned. Document “unsigned: manual download only” on the website until both are live.
 
 ### 4. Release notes API / page
 

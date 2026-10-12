@@ -563,6 +563,17 @@ export interface IdeApi {
     query: string
   ) => Promise<{ ok: boolean; detail: string; paths: string[] }>
   rebuildCodeIndex: () => Promise<{ ok: boolean; files: number; symbols: number }>
+  codeIndexStats: () => Promise<{
+    ok: boolean
+    files: number
+    symbols: number
+    refs: number
+    summary: string
+    topSymbols: Array<{ name: string; kind: string; path: string; line: number }>
+    rules: number
+    skills: number
+  }>
+  getCloudJob: (id: string) => Promise<BackgroundJob | null>
   searchReferences: (
     name: string
   ) => Promise<{ ok: boolean; detail: string; hits: Array<{ name: string; path: string; line: number }> }>
@@ -595,6 +606,10 @@ export interface IdeApi {
   listCloudJobs: () => Promise<BackgroundJob[]>
   enqueueCloudJob: (
     payload: import('./cloud-agents').EnqueueCloudJobRequest
+  ) => Promise<BackgroundJob>
+  continueCloudJob: (
+    id: string,
+    payload?: Partial<import('./cloud-agents').EnqueueCloudJobRequest>
   ) => Promise<BackgroundJob>
   stopCloudJob: (id: string) => Promise<boolean>
   cloudJobArtifacts: (id: string) => Promise<import('./cloud-agents').CloudJobArtifacts>
@@ -862,6 +877,16 @@ export interface IdeApi {
   onUpdateStatus: (cb: (status: UpdateStatusSnapshot) => void) => () => void
   previewBugReport: (input: BugReportInput) => Promise<BugReportPreview>
   submitBugReport: (input: BugReportInput) => Promise<BugReportResult>
+  listFeedbackHistory: () => Promise<FeedbackHistoryItem[]>
+}
+
+export interface FeedbackHistoryItem {
+  id: string
+  title: string
+  number?: number
+  htmlUrl?: string
+  via?: 'ericservices' | 'builtin'
+  submittedAt: string
 }
 
 export interface BugReportInput {
@@ -869,7 +894,6 @@ export interface BugReportInput {
   description: string
   includeLogs?: boolean
   includeDiagnostics?: boolean
-  openBrowserFallback?: boolean
 }
 
 export interface BugReportDiagnostics {
@@ -915,8 +939,7 @@ export interface BugReportResult {
   error?: string
   number?: number
   htmlUrl?: string
-  openedBrowser?: boolean
-  copiedToClipboard?: boolean
+  via?: 'ericservices' | 'builtin'
 }
 
 export type UpdateState =
@@ -945,4 +968,6 @@ export interface UpdateStatusSnapshot {
   autoDownload: boolean
   packaged: boolean
   lastCheckedAt?: string
+  /** Unsigned macOS build — open Releases instead of in-place Squirrel install */
+  manualInstallOnly?: boolean
 }

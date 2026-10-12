@@ -37,11 +37,14 @@ export function UpdateBanner({
   const tone =
     status.state === 'error' ? 'danger' : status.state === 'downloaded' ? 'info' : 'warn'
 
+  const manualOnly = Boolean(status.manualInstallOnly)
   let title = 'Update available'
   let detail: string | undefined
   if (status.state === 'available') {
     title = `Eris ${status.availableVersion} is available`
-    detail = `You are on v${status.currentVersion}`
+    detail = manualOnly
+      ? `You are on v${status.currentVersion}. This build isn’t code-signed — download the installer from Releases.`
+      : `You are on v${status.currentVersion}`
   } else if (status.state === 'downloading') {
     title = `Downloading Eris ${status.availableVersion || ''}…`
     detail = progressLabel(status) || 'Downloading from GitHub Releases'
@@ -61,12 +64,17 @@ export function UpdateBanner({
           {detail && <span>{detail}</span>}
         </div>
         <div className="conn-strip-actions">
-          {status.state === 'available' && !status.autoDownload && (
+          {status.state === 'available' && manualOnly && (
+            <button type="button" className="btn btn-primary" onClick={onOpenReleases}>
+              Open releases
+            </button>
+          )}
+          {status.state === 'available' && !manualOnly && !status.autoDownload && (
             <button type="button" className="btn btn-primary" onClick={onDownload}>
               Download
             </button>
           )}
-          {status.state === 'available' && status.autoDownload && (
+          {status.state === 'available' && !manualOnly && status.autoDownload && (
             <button type="button" className="btn" onClick={onCheck}>
               Check again
             </button>
@@ -81,7 +89,12 @@ export function UpdateBanner({
               Open releases
             </button>
           )}
-          {(status.state === 'available' || status.state === 'downloaded') && (
+          {status.state === 'available' && !manualOnly && (
+            <button type="button" className="btn" onClick={onOpenReleases}>
+              Notes
+            </button>
+          )}
+          {status.state === 'downloaded' && (
             <button type="button" className="btn" onClick={onOpenReleases}>
               Notes
             </button>
