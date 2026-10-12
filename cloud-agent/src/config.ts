@@ -64,6 +64,25 @@ export const config = {
    */
   adminToken: (process.env.ERIS_CLOUD_ADMIN_TOKEN || '').trim(),
   gpu: parseGpuMode(process.env.ERIS_CLOUD_GPU),
+  /**
+   * Cap llama.cpp CPU threads. Critical on CPU-only VMs so sshd/systemd stay responsive.
+   * Default: 2 on CPU, 0 (unlimited) when a GPU mode is selected.
+   */
+  maxThreads: (() => {
+    const raw = process.env.ERIS_CLOUD_MAX_THREADS
+    if (raw != null && String(raw).trim() !== '') {
+      return Math.max(0, Math.min(64, Number(raw) || 0))
+    }
+    return parseGpuMode(process.env.ERIS_CLOUD_GPU) === 'false' ? 2 : 0
+  })(),
+  /** GGUF context window — keep smaller on CPU to cut RAM/CPU thrash. */
+  contextSize: (() => {
+    const raw = process.env.ERIS_CLOUD_CONTEXT_SIZE
+    if (raw != null && String(raw).trim() !== '') {
+      return Math.max(512, Math.min(32768, Number(raw) || 4096))
+    }
+    return parseGpuMode(process.env.ERIS_CLOUD_GPU) === 'false' ? 4096 : 8192
+  })(),
   llmBase: (process.env.ERIS_CLOUD_LLM_BASE || '').replace(/\/+$/, ''),
   llmKey: process.env.ERIS_CLOUD_LLM_KEY || '',
   llmModel: process.env.ERIS_CLOUD_LLM_MODEL || 'composer'

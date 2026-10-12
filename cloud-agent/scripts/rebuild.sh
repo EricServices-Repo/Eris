@@ -194,16 +194,25 @@ else
       RUN_EXTRA=(--device nvidia.com/gpu=all --security-opt=label=disable)
     fi
   fi
+  RUN_LIMITS=()
+  RUN_ENV=(
+    -e ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443
+    -e ERIS_CLOUD_STATUS_PORT=8080
+    -e "ERIS_CLOUD_GPU=${GPU_ENV}"
+    -e "ERIS_CLOUD_MAX_PARALLEL=${PARALLEL}"
+  )
+  if [[ "$CPU_ONLY" -eq 1 ]]; then
+    RUN_LIMITS+=(--cpus=2 --memory=6g)
+    RUN_ENV+=(-e ERIS_CLOUD_MAX_THREADS=2 -e ERIS_CLOUD_CONTEXT_SIZE=4096)
+  fi
   "$ENGINE" run -d --name eris-cloud-agent \
     --restart unless-stopped \
     "${RUN_EXTRA[@]}" \
+    "${RUN_LIMITS[@]}" \
     --stop-signal=SIGTERM \
     -p 6443:6443 \
     -p 8080:8080 \
-    -e ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443 \
-    -e ERIS_CLOUD_STATUS_PORT=8080 \
-    -e "ERIS_CLOUD_GPU=${GPU_ENV}" \
-    -e "ERIS_CLOUD_MAX_PARALLEL=${PARALLEL}" \
+    "${RUN_ENV[@]}" \
     -v eris-cloud-data:/var/lib/eris-cloud \
     eris-cloud-agent:latest
   install_nginx_status_proxy

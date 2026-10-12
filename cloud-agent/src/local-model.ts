@@ -187,27 +187,37 @@ export async function ensureLocalModel(): Promise<string> {
   return ensurePromise
 }
 
+function llamaThreadOpts(): { maxThreads?: number } {
+  // 0 = unlimited (node-llama-cpp default). CPU default is 2 via config.
+  if (!config.maxThreads || config.maxThreads <= 0) return {}
+  return { maxThreads: config.maxThreads }
+}
+
 async function createLlama() {
   const llamaCpp = await import('node-llama-cpp')
   const { getLlama } = llamaCpp
   const mode = config.gpu
+  const threads = llamaThreadOpts()
 
   if (mode === 'false') {
-    return getLlama({ gpu: false })
+    return getLlama({ gpu: false, ...threads })
   }
 
   try {
     if (mode === 'cuda' || mode === 'vulkan') {
-      return await getLlama({ gpu: mode })
+      return await getLlama({ gpu: mode, ...threads })
     }
     // auto: let node-llama-cpp pick CUDA/Vulkan when the host exposes a GPU
-    return await getLlama()
+    return await getLlama({ ...threads })
   } catch (err) {
     console.warn(
       `[eris-cloud-agent] GPU init failed (${mode}), falling back to CPU:`,
       err instanceof Error ? err.message : err
     )
-    return getLlama({ gpu: false })
+    // Always cap threads on CPU fallback so a failed GPU path cannot peg the host.
+    const cpuThreads =
+      config.maxThreads && config.maxThreads > 0 ? { maxThreads: config.maxThreads } : { maxThreads: 2 }
+    return getLlama({ gpu: false, ...cpuThreads })
   }
 }
 
@@ -218,10 +228,18 @@ async function ensureRuntime(): Promise<NonNullable<typeof llamaRuntime>> {
   const { LlamaChatSession } = llamaCpp
   const llama = await createLlama()
   const model = await llama.loadModel({ modelPath: path })
-  const context = await model.createContext({ contextSize: 8192 })
+  const contextOpts: { contextSize: number; threads?: number } = {
+    contextSize: config.contextSize
+  }
+  if (config.maxThreads && config.maxThreads > 0) {
+    contextOpts.threads = config.maxThreads
+  }
+  const context = await model.createContext(contextOpts)
   const gpu = (llama.gpu ?? false) as string | false
   console.log(
-    `[eris-cloud-agent] Local model ready · ${LOCAL_MODEL.name} · gpu=${gpu === false ? 'cpu' : gpu}`
+    `[eris-cloud-agent] Local model ready · ${LOCAL_MODEL.name} · gpu=${
+      gpu === false ? 'cpu' : gpu
+    } · threads=${config.maxThreads || 'auto'} · ctx=${config.contextSize}`
   )
   llamaRuntime = { model, context, LlamaChatSession, gpu }
   status = 'ready'
