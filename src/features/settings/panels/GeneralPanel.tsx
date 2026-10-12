@@ -87,6 +87,48 @@ export function GeneralPanel({
           </button>
         </div>
       )}
+
+      <div className="github-section" style={{ marginBottom: 16 }}>
+        <h3>Updates</h3>
+        <p className="model-conn-hint">
+          Eris checks{' '}
+          <code>github.com/EricServices-Repo/Eris/releases</code> for new builds (macOS zip +
+          Windows setup). Signed releases install automatically; otherwise use Open releases.
+        </p>
+        <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={resolved.general.updates?.autoCheck !== false}
+            onChange={(e) => void apply(['general', 'updates', 'autoCheck'], e.target.checked)}
+          />
+          <span>Check for updates automatically</span>
+        </label>
+        <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={resolved.general.updates?.autoDownload !== false}
+            onChange={(e) => void apply(['general', 'updates', 'autoDownload'], e.target.checked)}
+          />
+          <span>Download updates in the background</span>
+        </label>
+        <div className="model-conn-actions" style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => void window.ide.checkForAppUpdates(false)}
+          >
+            Check for updates
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void window.ide.openAppReleasesPage()}
+          >
+            Open releases
+          </button>
+        </div>
+      </div>
+
       <div className="logs-panel-header">
         <strong>App logs</strong>
         <span className="hint">

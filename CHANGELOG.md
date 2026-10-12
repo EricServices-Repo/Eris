@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.12 — 2026-10-12
+
+- In-app updater against GitHub Releases (banner, Settings → General, status-bar check); see `docs/UPDATES.md`.
+- Cloud Agent jobs return a patch artifact bundle; Eris **Apply changes** opens Diff Review.
+- Cloud Agent Docker: reproducible builds, tini/SIGTERM, resumable model download, `ready` health, VM `INSTALL.md` + `rebuild.sh`.
+
 ## 0.2.11 — 2026-10-12
 
 - Cleaner EricServic.es account/sync Settings UX; session expiry prompts re-login.

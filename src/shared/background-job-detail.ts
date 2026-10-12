@@ -66,11 +66,23 @@ export function formatBackgroundJobDetail(job: BackgroundJob, diff: string): str
     lines.push('')
   }
 
+  if (job.hasArtifacts || (job.artifactCount && job.artifactCount > 0)) {
+    lines.push(
+      `Artifacts: ${job.artifactCount || job.filesTouched.length} file(s) — use Apply changes to open Diff Review`
+    )
+    if (job.filesTouched?.length) {
+      lines.push(job.filesTouched.slice(0, 40).map((f) => `  - ${f}`).join('\n'))
+    }
+    lines.push('')
+  }
+
   if (diff.trim()) {
     lines.push('Diff')
     lines.push(diff.slice(0, 12000))
   } else if (job.status === 'running' || job.status === 'queued') {
     lines.push('(diff available when the job finishes)')
+  } else if (job.id.startsWith('cloud:') && !job.hasArtifacts) {
+    lines.push('(no file artifacts — answer-only job, or still packing)')
   }
 
   return lines.filter((l, i, arr) => !(l === '' && arr[i - 1] === '')).join('\n')

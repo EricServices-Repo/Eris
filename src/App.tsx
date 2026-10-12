@@ -17,8 +17,9 @@ import {
   ConnectionStatusStrip,
   buildConnectionIssues
 } from '@/layout/ConnectionStatusStrip'
+import { UpdateBanner } from '@/layout/UpdateBanner'
 import { useColumnWidths } from '@/layout/useColumnResize'
-import type { UsageEntitlement } from '@/shared/api'
+import type { UpdateStatusSnapshot, UsageEntitlement } from '@/shared/api'
 
 /** Keep in sync with ChatPanel.MAX_QUEUED_MESSAGES (avoid eager ChatPanel import). */
 const MAX_QUEUED_MESSAGES = 3
@@ -103,6 +104,7 @@ export default function App() {
   const [bootReady, setBootReady] = useState(false)
   const [bootError, setBootError] = useState<string | null>(null)
   const [appVersion, setAppVersion] = useState<string | null>(null)
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatusSnapshot | null>(null)
   const [cloudHealth, setCloudHealth] = useState<CloudHealth | null>(null)
   const [entitlement, setEntitlement] = useState<UsageEntitlement | null>(null)
   const [accountNeedsReauth, setAccountNeedsReauth] = useState(false)
@@ -368,6 +370,8 @@ export default function App() {
         setShowSetupWizard(needsOnboarding)
         setBootReady(true)
 
+        void window.ide.getUpdateStatus().then(setUpdateStatus).catch(() => {})
+
         if (resolved) {
           void refreshModels(resolved)
           void refreshSkills()
@@ -405,6 +409,11 @@ export default function App() {
     ]
     return () => offs.forEach((off) => off())
   }, [saveActive, newChat, openSettings, stopChat])
+
+  useEffect(() => {
+    const off = window.ide.onUpdateStatus((s) => setUpdateStatus(s))
+    return () => off()
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -659,6 +668,14 @@ export default function App() {
           onOpenUpgrade: () => void window.ide.ericServicesOpenUpgrade()
         }).filter((i) => !dismissedIssues[i.id])}
         onDismiss={(id) => setDismissedIssues((prev) => ({ ...prev, [id]: true }))}
+      />
+      <UpdateBanner
+        status={updateStatus}
+        onCheck={() => void window.ide.checkForAppUpdates(true)}
+        onDownload={() => void window.ide.downloadAppUpdate()}
+        onInstall={() => void window.ide.installAppUpdate()}
+        onOpenReleases={() => void window.ide.openAppReleasesPage()}
+        onDismiss={() => void window.ide.dismissAppUpdate()}
       />
       <WorkspaceTrustBanner
         workspacePath={workspacePath}
@@ -1053,6 +1070,10 @@ export default function App() {
                       void refreshChats(threadId)
                       showRightPanel('editor')
                     }}
+                    onCloudDiffs={(diffs) => {
+                      setPendingDiffs((prev) => [...prev.filter((d) => d.status === 'pending'), ...diffs])
+                      showRightPanel('editor')
+                    }}
                   />
                 </Suspense>
               ) : rightPanel === 'evals' ? (
@@ -1245,12 +1266,14 @@ export default function App() {
         entitlement={entitlement}
         accountNeedsReauth={accountNeedsReauth}
         appVersion={appVersion}
+        updateStatus={updateStatus}
         disabled={!workspacePath}
         onOpenSettings={() => openSettings()}
         onOpenAgentSettings={() => openSettings('agent')}
         onOpenModels={() => openSettings('models')}
         onOpenUsage={() => openSettings('usage')}
         onOpenAccount={() => openSettings('account')}
+        onCheckUpdates={() => void window.ide.checkForAppUpdates(false)}
         onAgentChange={setSelectedAgentId}
       />
 

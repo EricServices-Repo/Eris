@@ -90,24 +90,66 @@ async function downloadModel(dest: string): Promise<void> {
   statusError = null
   mkdirSync(localModelDir(), { recursive: true })
   const partial = `${dest}.partial`
+
+  // Resume interrupted downloads when the CDN supports Range requests.
+  let existing = 0
   if (existsSync(partial)) {
+    try {
+      existing = statSync(partial).size
+    } catch {
+      existing = 0
+    }
+    // Tiny/corrupt leftovers — start clean
+    if (existing > 0 && existing < 1024 * 1024) {
+      try {
+        unlinkSync(partial)
+      } catch {
+        // ignore
+      }
+      existing = 0
+    }
+  }
+
+  const headers: Record<string, string> = { 'User-Agent': 'eris-cloud-agent' }
+  if (existing > 0) headers.Range = `bytes=${existing}-`
+
+  const res = await fetch(LOCAL_MODEL.downloadUrl, {
+    headers,
+    redirect: 'follow'
+  })
+
+  if (existing > 0 && res.status === 416) {
+    // Already complete according to server — verify below
+  } else if (existing > 0 && res.status === 200) {
+    // Server ignored Range — restart
     try {
       unlinkSync(partial)
     } catch {
       // ignore
     }
-  }
-
-  const res = await fetch(LOCAL_MODEL.downloadUrl, {
-    headers: { 'User-Agent': 'eris-cloud-agent' },
-    redirect: 'follow'
-  })
-  if (!res.ok || !res.body) {
+    existing = 0
+  } else if (!res.ok && res.status !== 206) {
     throw new Error(`Model download failed (${res.status})`)
   }
 
-  const nodeStream = Readable.fromWeb(res.body as import('stream/web').ReadableStream)
-  await pipeline(nodeStream, createWriteStream(partial))
+  if (res.body && (res.status === 200 || res.status === 206)) {
+    const nodeStream = Readable.fromWeb(res.body as import('stream/web').ReadableStream)
+    await pipeline(
+      nodeStream,
+      createWriteStream(partial, { flags: existing > 0 && res.status === 206 ? 'a' : 'w' })
+    )
+  }
+
+  if (!existsSync(partial)) {
+    throw new Error('Model download produced no file')
+  }
+
+  const size = statSync(partial).size
+  if (size < LOCAL_MODEL.approxBytes * 0.9) {
+    throw new Error(
+      `Model download incomplete (${size} bytes; expected ~${LOCAL_MODEL.approxBytes})`
+    )
+  }
 
   const digest = await sha256FileStream(partial)
   if (digest !== LOCAL_MODEL.sha256) {

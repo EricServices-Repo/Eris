@@ -9,8 +9,26 @@ import {
   shouldUseCloudAgents,
   type CloudHealth,
   type CloudJob,
+  type CloudJobArtifacts,
   type EnqueueCloudJobRequest
 } from '../../../src/shared/cloud-agents'
+import {
+  createCheckpoint,
+  recordWriteOp,
+  snapshotBeforeWrite
+} from './checkpoints'
+import { writeWorkspaceFile } from './workspace-fs'
+
+export interface CloudAppliedDiff {
+  id: string
+  checkpointId: string
+  opIndex: number
+  path: string
+  before: string | null
+  after: string
+  op: 'write'
+  status: 'pending'
+}
 import type { BackgroundJob } from '../../../src/shared/background-agents'
 import { deriveBlackboardStatus } from '../../../src/shared/agent-orchestration'
 import { logError, logInfo, logWarn } from './logger'
@@ -371,6 +389,8 @@ export function cloudJobToBackgroundJob(job: CloudJob, workspacePath: string): B
     step: job.recentTools.length,
     actionLog: [],
     filesTouched: job.filesTouched || [],
+    hasArtifacts: Boolean(job.hasArtifacts),
+    artifactCount: job.artifactCount || 0,
     answer: job.answer || '',
     liveStatus: job.liveStatus,
     recentTools: (job.recentTools || []).map((t) => ({
@@ -389,4 +409,93 @@ export function cloudJobToBackgroundJob(job: CloudJob, workspacePath: string): B
   }
   mapped.blackboard = deriveBlackboardStatus(mapped)
   return mapped
+}
+
+export async function fetchCloudJobArtifacts(id: string): Promise<CloudJobArtifacts> {
+  const rawId = id.replace(/^cloud:/, '')
+  const r = await cloudFetch(`${CLOUD_AGENTS_JOBS_PATH}/${encodeURIComponent(rawId)}/artifacts`, {
+    logLabel: `artifacts ${rawId.slice(0, 8)}`,
+    timeoutMs: ENQUEUE_TIMEOUT_MS
+  })
+  if (!r.ok || !Array.isArray(r.data.files)) {
+    throw new Error(r.error || 'No artifacts available for this cloud job')
+  }
+  return {
+    jobId: String(r.data.jobId || rawId),
+    createdAt: String(r.data.createdAt || ''),
+    files: (r.data.files as CloudJobArtifacts['files']).map((f) => ({
+      path: String(f.path || ''),
+      content: String(f.content ?? ''),
+      before: f.before == null ? null : String(f.before)
+    })),
+    truncated: Boolean(r.data.truncated),
+    totalBytes: Number(r.data.totalBytes || 0)
+  }
+}
+
+/**
+ * Pull the cloud patch bundle and write it into the local workspace under a checkpoint
+ * so Diff Review can Keep / Undo each file.
+ */
+export async function applyCloudJobArtifacts(
+  workspacePath: string,
+  jobId: string
+): Promise<{
+  ok: boolean
+  checkpointId: string
+  diffs: CloudAppliedDiff[]
+  truncated: boolean
+  error?: string
+}> {
+  if (!workspacePath) {
+    return { ok: false, checkpointId: '', diffs: [], truncated: false, error: 'Open a workspace first' }
+  }
+  try {
+    const pack = await fetchCloudJobArtifacts(jobId)
+    if (pack.files.length === 0) {
+      return {
+        ok: false,
+        checkpointId: '',
+        diffs: [],
+        truncated: pack.truncated,
+        error: 'Artifact bundle is empty'
+      }
+    }
+    const checkpoint = createCheckpoint(workspacePath)
+    const diffs: CloudAppliedDiff[] = []
+    for (let i = 0; i < pack.files.length; i++) {
+      const file = pack.files[i]!
+      const path = file.path.replace(/\\/g, '/').replace(/^\/+/, '')
+      if (!path || path.includes('..')) continue
+      const before = snapshotBeforeWrite(workspacePath, checkpoint.id, path)
+      writeWorkspaceFile(workspacePath, path, file.content)
+      recordWriteOp(workspacePath, checkpoint.id, path, before, file.content)
+      diffs.push({
+        id: `${checkpoint.id}:${i}`,
+        checkpointId: checkpoint.id,
+        opIndex: i,
+        path,
+        before,
+        after: file.content,
+        op: 'write',
+        status: 'pending'
+      })
+    }
+    logInfo('Cloud artifacts applied', {
+      jobId,
+      files: diffs.length,
+      truncated: pack.truncated,
+      checkpointId: checkpoint.id
+    })
+    return {
+      ok: true,
+      checkpointId: checkpoint.id,
+      diffs,
+      truncated: pack.truncated
+    }
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err)
+    logError('Cloud artifacts apply failed', { jobId, error })
+    return { ok: false, checkpointId: '', diffs: [], truncated: false, error }
+  }
 }

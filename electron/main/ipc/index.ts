@@ -19,6 +19,7 @@ import { registerContextIpc } from './context'
 import { registerEvalsIpc } from './evals'
 import { registerBackgroundAgentsIpc } from './background-agents'
 import { registerCloudAgentsIpc } from './cloud-agents'
+import { registerUpdatesIpc } from './updates'
 
 export function registerIpc(): void {
   registerWorkspaceIpc()
@@ -42,4 +43,5 @@ export function registerIpc(): void {
   registerEvalsIpc()
   registerBackgroundAgentsIpc()
   registerCloudAgentsIpc()
+  registerUpdatesIpc()
 }

@@ -17,7 +17,7 @@ Wants=network-online.target
 Type=simple
 Restart=always
 RestartSec=5
-TimeoutStartSec=180
+TimeoutStartSec=900
 
 ExecStartPre=-/usr/bin/podman volume create eris-cloud-data
 ExecStartPre=-/usr/bin/podman rm -f eris-cloud-agent
@@ -26,6 +26,8 @@ ExecStart=/usr/bin/podman run --rm --name eris-cloud-agent \
   --publish 6443:6443 \
   --device nvidia.com/gpu=all \
   --security-opt=label=disable \
+  --stop-signal=SIGTERM \
+  --stop-timeout=25 \
   --env ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443 \
   --env ERIS_CLOUD_HOST=0.0.0.0 \
   --env ERIS_CLOUD_PORT=6443 \
@@ -35,7 +37,7 @@ ExecStart=/usr/bin/podman run --rm --name eris-cloud-agent \
   --volume eris-cloud-data:/var/lib/eris-cloud:Z \
   localhost/eris-cloud-agent:latest
 
-ExecStop=/usr/bin/podman stop -t 20 eris-cloud-agent
+ExecStop=/usr/bin/podman stop -t 25 eris-cloud-agent
 
 [Install]
 WantedBy=multi-user.target

@@ -43,6 +43,30 @@ describe('cloud agents defaults', () => {
     expect(mapped.routeReason).toContain('agents.ericservic.es')
     expect(mapped.filesTouched).toEqual(['src/App.tsx'])
   })
+
+  it('maps artifact metadata onto background jobs', () => {
+    const job: CloudJob = {
+      id: 'art',
+      goal: 'Edit App',
+      agentId: 'coder',
+      agentName: 'Coder',
+      model: 'composer',
+      status: 'done',
+      claim: 'Edit App',
+      liveStatus: 'Done · 1 file ready to apply',
+      answer: 'Updated App.tsx',
+      filesTouched: ['src/App.tsx'],
+      hasArtifacts: true,
+      artifactCount: 1,
+      recentTools: [],
+      thinkingTail: '',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:02.000Z'
+    }
+    const mapped = cloudJobToBackgroundJob(job, '/tmp/ws')
+    expect(mapped.hasArtifacts).toBe(true)
+    expect(mapped.artifactCount).toBe(1)
+  })
 })
 
 describe('cloud readiness + status', () => {

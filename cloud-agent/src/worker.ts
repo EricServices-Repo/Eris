@@ -10,6 +10,7 @@ import {
 import type { CloudJob, CloudJobCreateRequest, CloudJobToolEvent } from './types.js'
 import { config } from './config.js'
 import { getLocalModelStatus } from './local-model.js'
+import { buildJobArtifacts, saveSeedBaseline } from './artifacts.js'
 
 const TOOL_RE = /<<<TOOL>>>\s*([\s\S]*?)\s*<<<END>>>/gi
 
@@ -144,6 +145,15 @@ export class WorkerPool {
         branch: job.branch,
         files
       })
+      if (files?.length) {
+        saveSeedBaseline(
+          id,
+          files.map((f) => ({
+            path: String(f.path || '').replace(/\\/g, '/').replace(/^\/+/, ''),
+            content: String(f.content ?? '')
+          }))
+        )
+      }
 
       const messages: ChatMessage[] = [
         { role: 'system', content: SYSTEM },
@@ -173,9 +183,16 @@ export class WorkerPool {
         const tools = parseTools(assistant)
         if (tools.length === 0) {
           const answer = stripTools(assistant) || assistant
+          const current = this.store.get(id)
+          const pack = buildJobArtifacts(id, current?.filesTouched || [])
           this.store.setStatus(id, 'done', {
             answer,
-            liveStatus: 'Done'
+            liveStatus:
+              pack.files.length > 0
+                ? `Done · ${pack.files.length} file${pack.files.length === 1 ? '' : 's'} ready to apply`
+                : 'Done',
+            hasArtifacts: pack.files.length > 0,
+            artifactCount: pack.files.length
           })
           return
         }
@@ -262,16 +279,26 @@ export class WorkerPool {
         })
       }
 
-      this.store.setStatus(id, 'failed', {
-        error: 'Step limit reached',
-        liveStatus: 'Failed',
-        answer: this.store.get(id)?.answer || 'Stopped at step limit'
-      })
+      {
+        const current = this.store.get(id)
+        const pack = buildJobArtifacts(id, current?.filesTouched || [])
+        this.store.setStatus(id, 'failed', {
+          error: 'Step limit reached',
+          liveStatus: 'Failed',
+          answer: current?.answer || 'Stopped at step limit',
+          hasArtifacts: pack.files.length > 0,
+          artifactCount: pack.files.length
+        })
+      }
     } catch (err) {
       const aborted = err instanceof Error && err.name === 'AbortError'
+      const current = this.store.get(id)
+      const pack = buildJobArtifacts(id, current?.filesTouched || [])
       this.store.setStatus(id, aborted ? 'stopped' : 'failed', {
         error: aborted ? 'Stopped' : err instanceof Error ? err.message : String(err),
-        liveStatus: aborted ? 'Stopped' : 'Failed'
+        liveStatus: aborted ? 'Stopped' : 'Failed',
+        hasArtifacts: pack.files.length > 0,
+        artifactCount: pack.files.length
       })
     } finally {
       this.aborts.delete(id)

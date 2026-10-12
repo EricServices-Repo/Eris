@@ -57,6 +57,9 @@ export interface BackgroundJob {
   step: number
   actionLog: string[]
   filesTouched: string[]
+  /** Cloud jobs: patch bundle ready to apply into the workspace */
+  hasArtifacts?: boolean
+  artifactCount?: number
   answer: string
   /** Latest status line from the agent loop */
   liveStatus?: string | null

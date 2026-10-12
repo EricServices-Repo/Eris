@@ -35,13 +35,15 @@ PodmanArgs=--security-opt=label=disable
 PodmanArgs=--restart=on-failure:5
 HealthCmd=node -e "fetch('http://127.0.0.1:6443/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 HealthInterval=30s
-HealthTimeout=5s
-HealthStartPeriod=120s
-HealthRetries=5
+HealthTimeout=8s
+# Allow first-boot Composer Full download (~4.7 GB) before marking unhealthy
+HealthStartPeriod=600s
+HealthRetries=8
 
 [Service]
 Restart=always
-TimeoutStartSec=180
+# Long enough for image pull + model warm on cold start
+TimeoutStartSec=900
 
 [Install]
 WantedBy=default.target

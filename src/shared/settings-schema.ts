@@ -174,6 +174,13 @@ export const SettingsSchema = z.object({
   }),
   general: z.object({
     restoreLastWorkspace: z.boolean(),
+    /** GitHub Releases auto-update (electron-updater) */
+    updates: z.object({
+      /** Periodically check GitHub for a newer release */
+      autoCheck: z.boolean(),
+      /** Download in the background when an update is found */
+      autoDownload: z.boolean()
+    }),
     logging: z.object({
       enabled: z.boolean(),
       /** Empty = app default logs folder under Application Support */

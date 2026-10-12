@@ -144,6 +144,10 @@ function sanitizeGeneral(raw: Record<string, unknown>): Record<string, unknown> 
   if (typeof general.restoreLastWorkspace !== 'boolean') {
     general.restoreLastWorkspace = true
   }
+  const updates = { ...((general.updates as Record<string, unknown> | undefined) || {}) }
+  if (typeof updates.autoCheck !== 'boolean') updates.autoCheck = true
+  if (typeof updates.autoDownload !== 'boolean') updates.autoDownload = true
+  general.updates = updates
   return { ...raw, general }
 }
 

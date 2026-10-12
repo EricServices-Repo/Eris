@@ -1772,6 +1772,22 @@ select:focus {
   flex-shrink: 0;
 }
 
+.update-banner {
+  border-bottom: 1px solid var(--border);
+}
+
+.update-banner.tone-warn {
+  background: color-mix(in srgb, var(--warn, #c9a227) 12%, var(--bg));
+}
+
+.update-banner.tone-info {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+}
+
+.update-banner.tone-danger {
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg));
+}
+
 .conn-strip {
   display: flex;
   flex-direction: column;

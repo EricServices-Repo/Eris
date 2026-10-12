@@ -1,6 +1,6 @@
 import type { ResolvedAgent } from '@/shared/settings-schema'
 import type { CloudHealth } from '@/shared/cloud-agents'
-import type { UsageEntitlement } from '@/shared/api'
+import type { UpdateStatusSnapshot, UsageEntitlement } from '@/shared/api'
 import {
   CLOUD_AGENTS_BASE_URL,
   cloudAgentsStatusLabel,
@@ -18,12 +18,14 @@ interface Props {
   entitlement?: UsageEntitlement | null
   accountNeedsReauth?: boolean
   appVersion?: string | null
+  updateStatus?: UpdateStatusSnapshot | null
   disabled?: boolean
   onOpenSettings: () => void
   onOpenAgentSettings?: () => void
   onOpenModels?: () => void
   onOpenUsage?: () => void
   onOpenAccount?: () => void
+  onCheckUpdates?: () => void
   onAgentChange: (agentId: string | 'auto') => void
 }
 
@@ -78,12 +80,14 @@ export function StatusBar({
   entitlement = null,
   accountNeedsReauth = false,
   appVersion,
+  updateStatus = null,
   disabled,
   onOpenSettings,
   onOpenAgentSettings,
   onOpenModels,
   onOpenUsage,
   onOpenAccount,
+  onCheckUpdates,
   onAgentChange
 }: Props) {
   const cloudReady = isCloudAgentsReady(cloudHealth)
@@ -112,9 +116,24 @@ export function StatusBar({
           Settings
         </button>
         {appVersion && (
-          <span className="status-bar-version" title={`Eris v${appVersion}`}>
-            v{appVersion}
-          </span>
+          <button
+            type="button"
+            className={`status-bar-btn status-bar-version${
+              updateStatus?.state === 'available' || updateStatus?.state === 'downloaded'
+                ? ' is-warn'
+                : ''
+            }`}
+            onClick={() => onCheckUpdates?.()}
+            title={
+              updateStatus?.state === 'available' || updateStatus?.state === 'downloaded'
+                ? `Update ${updateStatus.availableVersion} ready — click to check`
+                : `Eris v${appVersion} — check for updates`
+            }
+          >
+            {updateStatus?.state === 'available' || updateStatus?.state === 'downloaded'
+              ? `v${appVersion} ↑`
+              : `v${appVersion}`}
+          </button>
         )}
         <button
           type="button"

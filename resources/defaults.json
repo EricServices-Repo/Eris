@@ -116,6 +116,10 @@
   },
   "general": {
     "restoreLastWorkspace": true,
+    "updates": {
+      "autoCheck": true,
+      "autoDownload": true
+    },
     "logging": {
       "enabled": true,
       "directory": "",

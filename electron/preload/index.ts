@@ -148,6 +148,8 @@ const api: IdeApi = {
   listCloudJobs: () => ipcRenderer.invoke('cloudAgents:list'),
   enqueueCloudJob: (payload) => ipcRenderer.invoke('cloudAgents:enqueue', payload),
   stopCloudJob: (id) => ipcRenderer.invoke('cloudAgents:stop', id),
+  cloudJobArtifacts: (id) => ipcRenderer.invoke('cloudAgents:artifacts', id),
+  applyCloudJobArtifacts: (id) => ipcRenderer.invoke('cloudAgents:applyArtifacts', id),
   aiComplete: (payload) => ipcRenderer.invoke('ai:complete', payload),
   aiCompleteCancel: (requestId) => ipcRenderer.invoke('ai:completeCancel', requestId),
   aiInlineEdit: (payload) => ipcRenderer.invoke('ai:inlineEdit', payload),
@@ -196,7 +198,14 @@ const api: IdeApi = {
   clearLogs: () => ipcRenderer.invoke('logs:clear'),
   openLogsFolder: () => ipcRenderer.invoke('logs:openFolder'),
   pickLogsDirectory: () => ipcRenderer.invoke('logs:pickDirectory'),
-  writeLog: (level, message, meta) => ipcRenderer.invoke('logs:write', level, message, meta)
+  writeLog: (level, message, meta) => ipcRenderer.invoke('logs:write', level, message, meta),
+  getUpdateStatus: () => ipcRenderer.invoke('updates:getStatus'),
+  checkForAppUpdates: (silent) => ipcRenderer.invoke('updates:check', silent),
+  downloadAppUpdate: () => ipcRenderer.invoke('updates:download'),
+  installAppUpdate: () => ipcRenderer.invoke('updates:install'),
+  openAppReleasesPage: () => ipcRenderer.invoke('updates:openReleases'),
+  dismissAppUpdate: () => ipcRenderer.invoke('updates:dismiss'),
+  onUpdateStatus: (cb) => subscribe('updates:status', cb)
 }
 
 contextBridge.exposeInMainWorld('ide', api)
