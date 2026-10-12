@@ -32,18 +32,22 @@ export class JobStore {
     try {
       if (!existsSync(storeFile())) return
       const raw = JSON.parse(readFileSync(storeFile(), 'utf8')) as { jobs?: CloudJob[] }
+      let dirty = false
       for (const job of raw.jobs ?? []) {
-        if (job.status === 'running') {
+        // CPU-only: never auto-resume work on boot. WorkerPool.pump() would start
+        // queued jobs immediately → loadModel + inference → host lockup / OOM loop.
+        if (config.gpu === 'false' && (job.status === 'running' || job.status === 'queued')) {
           const cp = loadCheckpoint(job.id)
-          // CPU-only: do not auto re-queue on boot — that pegs all cores and can lock out SSH.
-          // Jobs stay resumable via continue / Force kill is a no-op for stopped.
-          if (config.gpu === 'false') {
-            job.status = 'stopped'
-            job.resumable = true
-            if (cp?.step != null) job.step = cp.step
-            job.liveStatus = 'Stopped (safe boot — resume manually)'
-            job.error = 'Interrupted by restart (CPU safe-boot)'
-          } else if (cp && cp.messages?.length) {
+          job.status = 'stopped'
+          job.resumable = true
+          if (cp?.step != null) job.step = cp.step
+          job.liveStatus = 'Stopped (safe boot — resume manually)'
+          job.error = 'Interrupted by restart (CPU safe-boot)'
+          job.updatedAt = new Date().toISOString()
+          dirty = true
+        } else if (job.status === 'running') {
+          const cp = loadCheckpoint(job.id)
+          if (cp && cp.messages?.length) {
             job.status = 'queued'
             job.resumable = true
             job.step = cp.step
@@ -56,9 +60,11 @@ export class JobStore {
             job.error = undefined
           }
           job.updatedAt = new Date().toISOString()
+          dirty = true
         }
         this.jobs.set(job.id, job)
       }
+      if (dirty) this.persistNow()
     } catch {
       // ignore
     }
