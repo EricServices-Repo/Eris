@@ -2,7 +2,7 @@
 
 Dockerized worker that runs Cloud Agent jobs for **every Eris install**.
 
-Inference runs **inside the container** with a local GGUF (Composer Lite / Qwen2.5-Coder-1.5B) via `node-llama-cpp`. No external LLM API is required.
+Inference runs **inside the container** with **Composer Full** (Qwen2.5-Coder-7B GGUF) via `node-llama-cpp`. Desktop Eris keeps **Composer Lite** locally; Cloud Agents use the full model. No external LLM API is required.
 
 **GPU:** The image includes CUDA libraries. With NVIDIA drivers + Container Toolkit on the host, the model runs on GPU (`ERIS_CLOUD_GPU=auto`). Without a GPU it falls back to CPU.
 
@@ -48,7 +48,7 @@ podman exec eris-cloud-agent npx --no node-llama-cpp inspect gpu
 curl -sS http://127.0.0.1:6443/v1/health | jq '.localModel.gpu,.gpuMode'
 ```
 
-On first start the worker downloads Composer Lite (~1 GB) into `/var/lib/eris-cloud/models`.
+On first start the worker downloads Composer Full (~4.7 GB) into `/var/lib/eris-cloud/models`.
 
 | `ERIS_CLOUD_GPU` | Behavior |
 |------------------|----------|

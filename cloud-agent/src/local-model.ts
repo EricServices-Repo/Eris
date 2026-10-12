@@ -13,15 +13,18 @@ import { pipeline } from 'stream/promises'
 import { Readable } from 'stream'
 import { config } from './config.js'
 
-/** Same GGUF Eris ships as Composer Lite — runs inside the Cloud Agent container. */
+/**
+ * Composer Full (7B) — runs inside the Cloud Agent container.
+ * Desktop Eris keeps Composer Lite locally; cloud jobs use this heavier model.
+ */
 export const LOCAL_MODEL = {
-  id: 'composer-lite',
-  name: 'Composer Lite',
-  filename: 'Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf',
+  id: 'composer',
+  name: 'Composer Full',
+  filename: 'Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf',
   downloadUrl:
-    'https://huggingface.co/bartowski/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf',
-  approxBytes: 986_048_800,
-  sha256: 'f530705d447660a4336c329981af164b471b60b974b1d808d57e8ec9fe23b239'
+    'https://huggingface.co/bartowski/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf',
+  approxBytes: 4_683_074_336,
+  sha256: '1664fccab734674a50763490a8c6931b70e3f2f8ec10031b54806d30e5f956b6'
 }
 
 export type LocalModelStatus = 'missing' | 'downloading' | 'ready' | 'error'

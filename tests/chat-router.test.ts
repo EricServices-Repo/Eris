@@ -117,7 +117,7 @@ describe('tool policy filtering', () => {
 })
 
 describe('resolveModelRoles', () => {
-  it('escalates Lite to Full for tool turns when Full is ready', () => {
+  it('keeps local chat and tools on Composer Lite (Full is Cloud Agents only)', () => {
     const r = resolveModelRoles({
       selectedModel: 'builtin:composer-lite',
       intent: 'edit',
@@ -126,19 +126,19 @@ describe('resolveModelRoles', () => {
     })
     expect(r).toMatchObject({
       chat: 'builtin:composer-lite',
-      tools: 'builtin:composer',
-      escalateToFull: true
+      tools: 'builtin:composer-lite',
+      escalateToFull: false
     })
   })
 
-  it('stays on Lite when Full is not downloaded', () => {
-    ready.delete('builtin:composer')
+  it('remaps selected Composer Full to Lite for local runs', () => {
     const r = resolveModelRoles({
-      selectedModel: 'builtin:composer-lite',
+      selectedModel: 'builtin:composer',
       intent: 'edit',
       toolPolicy: 'edit',
       preferEscalate: true
     })
+    expect(r.chat).toBe('builtin:composer-lite')
     expect(r.tools).toBe('builtin:composer-lite')
     expect(r.escalateToFull).toBe(false)
   })
@@ -153,15 +153,15 @@ describe('resolveModelRoles', () => {
     expect(r).toMatchObject({ chat: 'qwen3:0.6b', tools: 'qwen3:0.6b', escalateToFull: false })
   })
 
-  it('errors instead of silently swapping a missing builtin', () => {
-    ready.delete('builtin:composer')
+  it('errors when Full is selected but Lite is not installed', () => {
+    ready.delete('builtin:composer-lite')
     const r = resolveModelRoles({
       selectedModel: 'builtin:composer',
       intent: 'answer',
       toolPolicy: 'none',
       preferEscalate: true
     })
-    expect(r.error).toMatch(/not ready/)
+    expect(r.error).toMatch(/Cloud Agents|Composer Lite/)
   })
 })
 

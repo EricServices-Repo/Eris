@@ -50,7 +50,7 @@ export const config = {
    */
   llmBase: (process.env.ERIS_CLOUD_LLM_BASE || '').replace(/\/+$/, ''),
   llmKey: process.env.ERIS_CLOUD_LLM_KEY || '',
-  llmModel: process.env.ERIS_CLOUD_LLM_MODEL || 'composer-lite',
+  llmModel: process.env.ERIS_CLOUD_LLM_MODEL || 'composer',
   allowAnonymous: process.env.ERIS_CLOUD_ALLOW_ANONYMOUS !== '0'
 }
 

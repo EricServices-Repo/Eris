@@ -171,7 +171,11 @@ export function AgentsPanel({
         const health = await probeHealth()
         if (shouldUseCloudAgents(health)) {
           try {
-            const job = await window.ide.enqueueCloudJob(payload)
+            const job = await window.ide.enqueueCloudJob({
+              ...payload,
+              // Cloud Agent always runs Composer Full.
+              model: 'composer'
+            })
             setGoal('')
             setSelectedId(job.id)
             void refresh()
@@ -413,8 +417,8 @@ function helpText(preferCloud: boolean): string {
     'Blackboard: local worktree agents + Cloud Agents.',
     'Cloud status and metrics: Settings → Agent. Sign-in: Settings → Account.',
     preferCloud
-      ? 'Signed in and cloud available — Start uses the remote worker. Local only if health/enqueue fails.'
-      : 'Cloud unavailable or signed out — Start uses a local worktree agent.',
+      ? 'Signed in — Start uses Cloud Agents (Composer Full). Local Lite only if health/enqueue fails.'
+      : 'Cloud unavailable or signed out — Start uses a local Composer Lite worktree agent.',
     '',
     'Tip: Bring to chat pastes the result into the active thread.'
   ].join('\n')

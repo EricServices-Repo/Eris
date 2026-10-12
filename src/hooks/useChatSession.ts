@@ -163,7 +163,8 @@ export function useChatSession({
           try {
             job = await window.ide.enqueueCloudJob({
               goal,
-              model,
+              // Cloud Agent runs Composer Full; ignore local picker.
+              model: 'composer',
               agentId,
               claim: goal.slice(0, 64)
             })
@@ -176,7 +177,11 @@ export function useChatSession({
         if (!job) {
           job = await window.ide.enqueueBackgroundJob({
             goal,
-            model,
+            // Local worktrees stay on Composer Lite.
+            model:
+              model === 'builtin:composer' || model === 'composer'
+                ? 'builtin:composer-lite'
+                : model,
             agentId,
             mode: 'agent',
             source: 'chat',

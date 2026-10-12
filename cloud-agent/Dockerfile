@@ -67,7 +67,7 @@ ENV NVIDIA_VISIBLE_DEVICES=all \
   ERIS_CLOUD_DATA=/var/lib/eris-cloud \
   ERIS_CLOUD_MAX_PARALLEL=2 \
   ERIS_CLOUD_GPU=auto \
-  ERIS_CLOUD_LLM_MODEL=composer-lite
+  ERIS_CLOUD_LLM_MODEL=composer
 
 WORKDIR /app
 
@@ -82,8 +82,8 @@ USER node
 
 EXPOSE 6443
 
-# Longer start period: first boot downloads ~1GB GGUF into the volume
-HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=5 \
+# First boot downloads Composer Full (~4.7 GB) into the volume
+HEALTHCHECK --interval=30s --timeout=5s --start-period=600s --retries=8 \
   CMD node -e "fetch('http://127.0.0.1:6443/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "dist/server.js"]

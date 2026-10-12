@@ -72,7 +72,7 @@ export class WorkerPool {
     }
     const job = this.store.create({
       ...req,
-      model: req.model || (config.llmBase ? config.llmModel : 'composer-lite')
+      model: req.model || (config.llmBase ? config.llmModel : 'composer')
     })
     if (req.files?.length) pendingFiles.set(job.id, req.files)
     void this.pump()

@@ -75,10 +75,11 @@ export function registerCloudAgentsIpc(): void {
       branch = branch || settings.github.defaultBranch || 'main'
     }
 
+    // Cloud worker always runs Composer Full (7B). Desktop stays on Composer Lite.
     const job = await enqueueCloudJob({
       goal: payload.goal,
       agentId: payload.agentId,
-      model: payload.model || settings.models.defaultModel,
+      model: 'composer',
       repoUrl,
       branch,
       claim: payload.claim,
