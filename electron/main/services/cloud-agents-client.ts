@@ -69,11 +69,22 @@ const DEFAULT_TIMEOUT_MS = 8_000
 const HEALTH_TIMEOUT_MS = 2_500
 const ENQUEUE_TIMEOUT_MS = 30_000
 
+/** Bearer token from EricServic.es — set by IPC before authenticated calls. */
+let cloudAuthToken: string | null = null
+
+export function setCloudAgentsAuthToken(token: string | null | undefined): void {
+  cloudAuthToken = token?.trim() || null
+}
+
+export function getCloudAgentsAuthToken(): string | null {
+  return cloudAuthToken
+}
+
 async function cloudFetch(
   path: string,
-  init?: RequestInit & { logLabel?: string; timeoutMs?: number }
+  init?: RequestInit & { logLabel?: string; timeoutMs?: number; auth?: boolean }
 ): Promise<{ ok: boolean; status: number; data: Record<string, unknown>; error?: string }> {
-  const { logLabel, timeoutMs = DEFAULT_TIMEOUT_MS, ...fetchInit } = init || {}
+  const { logLabel, timeoutMs = DEFAULT_TIMEOUT_MS, auth = true, ...fetchInit } = init || {}
   const method = (fetchInit.method || 'GET').toUpperCase()
   const url = `${cloudAgentsBaseUrl()}${path}`
   const label = logLabel || `${method} ${path}`
@@ -83,6 +94,11 @@ async function cloudFetch(
       ? AbortSignal.timeout(timeoutMs)
       : undefined)
 
+  const authHeaders: Record<string, string> = {}
+  if (auth && cloudAuthToken) {
+    authHeaders.Authorization = `Bearer ${cloudAuthToken}`
+  }
+
   try {
     const res = await fetch(url, {
       ...fetchInit,
@@ -90,6 +106,7 @@ async function cloudFetch(
       headers: {
         Accept: 'application/json',
         'X-Eris-Client': 'eris-desktop',
+        ...authHeaders,
         ...(fetchInit.body ? { 'Content-Type': 'application/json' } : {}),
         ...(fetchInit.headers as Record<string, string> | undefined)
       }
@@ -142,7 +159,8 @@ async function cloudFetch(
 export async function cloudAgentsHealth(authenticated = false): Promise<CloudHealth> {
   const r = await cloudFetch(CLOUD_AGENTS_HEALTH_PATH, {
     logLabel: 'health',
-    timeoutMs: HEALTH_TIMEOUT_MS
+    timeoutMs: HEALTH_TIMEOUT_MS,
+    auth: false
   })
   if (!r.ok) {
     const error = r.error || 'Unreachable'
@@ -200,6 +218,7 @@ export async function cloudAgentsHealth(authenticated = false): Promise<CloudHea
     queued: Number(r.data.queued || 0),
     publicBaseUrl:
       typeof r.data.publicBaseUrl === 'string' ? r.data.publicBaseUrl : CLOUD_AGENTS_BASE_URL,
+    authRequired: r.data.authRequired !== false,
     authenticated
   }
 
@@ -268,7 +287,10 @@ export async function enqueueCloudJob(req: EnqueueCloudJobRequest): Promise<Clou
     goal: req.goal.slice(0, 120),
     agentId: req.agentId,
     files: req.files?.length || 0,
-    repoUrl: req.repoUrl || null
+    repoUrl: req.repoUrl || null,
+    openPr: Boolean(req.openPr),
+    hasGithubToken: Boolean(req.githubToken),
+    resumeFromJobId: req.resumeFromJobId || null
   })
   const r = await cloudFetch(CLOUD_AGENTS_JOBS_PATH, {
     method: 'POST',
@@ -280,6 +302,9 @@ export async function enqueueCloudJob(req: EnqueueCloudJobRequest): Promise<Clou
       model: req.model,
       repoUrl: req.repoUrl,
       branch: req.branch,
+      openPr: Boolean(req.openPr),
+      githubToken: req.githubToken || undefined,
+      resumeFromJobId: req.resumeFromJobId || undefined,
       claim: req.claim,
       files: req.files,
       source: 'eris'
@@ -297,6 +322,35 @@ export async function enqueueCloudJob(req: EnqueueCloudJobRequest): Promise<Clou
   const job = r.data.job as CloudJob
   logInfo('Cloud Agents enqueue ok', { id: job.id, status: job.status, agentId: job.agentId })
   return job
+}
+
+/** Resume a finished/stopped/failed job from its server checkpoint. */
+export async function continueCloudJob(
+  id: string,
+  extra: Partial<EnqueueCloudJobRequest> = {}
+): Promise<CloudJob> {
+  const rawId = id.replace(/^cloud:/, '')
+  const r = await cloudFetch(
+    `${CLOUD_AGENTS_JOBS_PATH}/${encodeURIComponent(rawId)}/continue`,
+    {
+      method: 'POST',
+      logLabel: `continue job ${rawId.slice(0, 8)}`,
+      timeoutMs: ENQUEUE_TIMEOUT_MS,
+      body: JSON.stringify({
+        goal: extra.goal,
+        agentId: extra.agentId,
+        model: extra.model,
+        githubToken: extra.githubToken || undefined,
+        openPr: extra.openPr,
+        files: extra.files,
+        claim: extra.claim
+      })
+    }
+  )
+  if (!r.ok || !r.data.job) {
+    throw new Error(r.error || 'Failed to continue cloud job')
+  }
+  return r.data.job as CloudJob
 }
 
 export async function stopCloudJob(id: string): Promise<boolean> {
@@ -391,6 +445,9 @@ export function cloudJobToBackgroundJob(job: CloudJob, workspacePath: string): B
     filesTouched: job.filesTouched || [],
     hasArtifacts: Boolean(job.hasArtifacts),
     artifactCount: job.artifactCount || 0,
+    artifactsTruncated: Boolean(job.artifactsTruncated),
+    resumable: Boolean(job.resumable),
+    prUrl: job.prUrl || undefined,
     answer: job.answer || '',
     liveStatus: job.liveStatus,
     recentTools: (job.recentTools || []).map((t) => ({

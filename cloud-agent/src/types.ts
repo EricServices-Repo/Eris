@@ -26,11 +26,17 @@ export interface CloudJobCreateRequest {
   /** Optional public or tokenized git clone URL */
   repoUrl?: string | null
   branch?: string | null
+  /** Short-lived GitHub PAT for private clone / optional PR (never returned in job JSON) */
+  githubToken?: string | null
+  /** When true and repoUrl is set, attempt push + PR after success */
+  openPr?: boolean
   /** Small workspace overlay (path → content) when not cloning */
   files?: CloudJobFile[]
   claim?: string | null
   source?: 'eris' | 'api'
   clientId?: string | null
+  /** Continue a previous job from its checkpoint */
+  resumeFromJobId?: string | null
 }
 
 export interface CloudJob {
@@ -41,17 +47,24 @@ export interface CloudJob {
   model: string
   status: CloudJobStatus
   claim: string
+  ownerId?: string
+  plan?: 'free' | 'pro'
   repoUrl?: string | null
   branch?: string | null
+  openPr?: boolean
+  prUrl?: string | null
   liveStatus: string
   answer: string
   error?: string
   filesTouched: string[]
-  /** Patch bundle available via GET /v1/jobs/:id/artifacts */
   hasArtifacts?: boolean
   artifactCount?: number
+  artifactsTruncated?: boolean
+  truncatedReasons?: string[]
   recentTools: CloudJobToolEvent[]
   thinkingTail: string
+  step?: number
+  resumable?: boolean
   createdAt: string
   updatedAt: string
   finishedAt?: string
@@ -59,25 +72,21 @@ export interface CloudJob {
 
 export interface CloudHealth {
   ok: boolean
-  /** Process is up; model may still be downloading. */
   service: 'eris-cloud-agent'
   version: string
   llmConfigured: boolean
-  /** True when inference can accept jobs (local ready or remote override). */
   ready?: boolean
-  /** Local GGUF status inside the container */
   localModel?: {
     status: 'missing' | 'downloading' | 'ready' | 'error'
     modelId: string
     modelName: string
     error?: string | null
-    /** cuda | vulkan | metal | false once loaded */
     gpu?: string | false | null
   }
-  /** Requested GPU mode from ERIS_CLOUD_GPU */
   gpuMode?: 'auto' | 'cuda' | 'vulkan' | 'false'
   inference?: 'local' | 'remote'
   maxParallel: number
   running: number
   queued: number
+  authRequired?: boolean
 }

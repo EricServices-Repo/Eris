@@ -13,6 +13,8 @@ export type SettingsCategory =
   | 'context'
   | 'mcp'
   | 'github'
+  | 'feedback'
+  | 'logging'
   | 'editor'
   | 'workspace'
   | undefined

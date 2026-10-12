@@ -1,4 +1,5 @@
 import type { UsageEntitlement } from '@/shared/api'
+import type { CloudHealth } from '@/shared/cloud-agents'
 
 export type ConnectionIssue = {
   id: string
@@ -18,14 +19,17 @@ export function buildConnectionIssues(input: {
   accountNeedsReauth: boolean
   accountError?: string | null
   entitlement?: UsageEntitlement | null
+  cloudHealth?: CloudHealth | null
+  modelsOk?: boolean | null
+  composerReady?: boolean | null
   onOpenAccount: () => void
   onOpenUsage: () => void
   onOpenUpgrade: () => void
+  onOpenModels?: () => void
+  onOpenAgent?: () => void
+  onWorkLocal?: () => void
 }): ConnectionIssue[] {
   const issues: ConnectionIssue[] = []
-
-  // Cloud Agents status stays in the StatusBar only — never a top banner /
-  // load blocker. Offline cloud is expected when the worker is unreachable.
 
   if (input.accountNeedsReauth) {
     issues.push({
@@ -46,6 +50,22 @@ export function buildConnectionIssues(input: {
       detail: input.entitlement.blockedReason || undefined,
       actionLabel: 'Upgrade',
       onAction: input.onOpenUpgrade
+    })
+  }
+
+  // Cloud Agents status lives in the status bar only (no top banner on timeout/offline).
+
+  if (input.modelsOk === false) {
+    issues.push({
+      id: 'models',
+      tone: 'warn',
+      title: 'No local models ready',
+      detail:
+        input.composerReady === false
+          ? 'Download Composer Lite or connect Ollama to chat.'
+          : 'Model probe failed — check Settings → Models.',
+      actionLabel: 'Models',
+      onAction: input.onOpenModels
     })
   }
 

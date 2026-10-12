@@ -1,8 +1,28 @@
 # Changelog
 
+## 0.2.16 — 2026-10-12
+
+- Local ↔ cloud handoff: **Continue on cloud** / **Continue local** (chat context attached).
+- Explorer **Agents** home lists local + cloud jobs; open Agents panel from there.
+- Diff Review: **Stage kept**, **Commit…**, **Open PR…**.
+- Faster Tab/ghost complete (280ms); hint when chat owns the model.
+- **Codemap** panel: index stats, symbols, links to Context/Rules/Skills.
+- Settings: search across all pages + preference fields.
+- Connection strip: Cloud Agents / models degraded states (dismissible).
+- Feedback: recent submissions history on this Mac.
+- Onboarding: **Try it** step + **Start guided chat** first-win path.
+- Cloud Agent **0.2.13**: EricServic.es Bearer auth + plan limits, durable resume/continue, SSE job events, shell sandbox, private clone + optional PR, richer artifacts, structured tool parsing, metrics/audit, fair multi-tenant queue. Desktop sends account + GitHub tokens automatically.
+
+## 0.2.15 — 2026-10-12
+
+- Report a Bug stays fully in-app: no GitHub browser draft, no Help-menu “open feedback on GitHub”. Submits via EricServic.es relay or built-in credential.
+- Settings → **Feedback** page: Bug / Idea / Question chooser, attach toggles, env chips, in-place success — Help and Command Palette open this page.
+- Settings UX: grouped sidebar (App / AI / Project / Editor), shared section chrome, **Logging** as its own page (viewer + preferences).
+- CI: Windows Authenticode signing when `WIN_CSC_*` / `WINDOWS_CERT_*` secrets are set (see `docs/SIGNING.md`).
+
 ## 0.2.14 — 2026-10-12
 
-- In-app **Report a Bug** (Help menu, Command Palette, Settings → General): creates a GitHub issue on `EricServices-Repo/Eris-feedback` with diagnostics + redacted recent logs.
+- In-app **Report a Bug** (Help menu, Command Palette, Settings → General): submits diagnostics + redacted logs to `EricServices-Repo/Eris-feedback` via the EricServic.es relay (preferred) or a build-in credential — no user GitHub token or browser draft. See `docs/FEEDBACK.md`.
 
 ## 0.2.13 — 2026-10-12
 

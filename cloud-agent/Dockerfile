@@ -2,13 +2,13 @@
 # Eris Cloud Agent — Composer Full (GGUF) via node-llama-cpp
 # Client URL: http://agents.ericservic.es:6443 (plain HTTP)
 #
-# GPU: CUDA runtime libs included. Host needs NVIDIA Container Toolkit.
-#   podman run --device nvidia.com/gpu=all --security-opt=label=disable ...
-# CPU-only hosts still work (node-llama-cpp falls back when no GPU is visible).
+# GPU (default image):
+#   docker/podman build -t eris-cloud-agent ./cloud-agent
+#   # optional: --build-arg INSTALL_CUDA_VERSION=13.1
 #
-# Build:
-#   docker build -t eris-cloud-agent ./cloud-agent
-#   # optional: --build-arg INSTALL_CUDA_VERSION=13.1  (must be ≤ host driver CUDA)
+# CPU-only (no NVIDIA / no CUDA packages — preferred on CPU VMs):
+#   docker/podman build --target runtime-cpu -t eris-cloud-agent ./cloud-agent
+#   ./cloud-agent/scripts/rebuild.sh --cpu --install
 
 ARG NODE_VERSION=22
 ARG INSTALL_CUDA_VERSION=12.5
@@ -32,24 +32,71 @@ RUN npm run build \
   && npm prune --omit=dev \
   && npm cache clean --force
 
-# ── production runtime + CUDA ───────────────────────────────────────
-FROM node:${NODE_VERSION}-bookworm AS runtime
+# ── shared OS bits (no CUDA) ────────────────────────────────────────
+FROM node:${NODE_VERSION}-bookworm AS runtime-base
 
-ARG TARGETARCH=amd64
-ARG INSTALL_CUDA_VERSION=12.5
 ARG NODE_VERSION=22
 
 LABEL org.opencontainers.image.title="Eris Cloud Agent" \
-  org.opencontainers.image.description="Cloud Agent worker for Eris IDE (Composer Full + CUDA)" \
+  org.opencontainers.image.description="Cloud Agent worker for Eris IDE (Composer Full)" \
   org.opencontainers.image.source="https://github.com/EricServices-Repo/Eris" \
   org.opencontainers.image.vendor="Eris"
 
 SHELL ["/bin/bash", "-c"]
 
-# tini = proper PID 1 (forwards SIGTERM for graceful drain)
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends tini \
+  && apt-get install -y --no-install-recommends \
+    tini git ca-certificates bash curl cmake clang libgomp1 \
   && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=build --chown=node:node /app/package.json ./
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/dist ./dist
+COPY --chown=node:node docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+RUN chmod 755 /usr/local/bin/docker-entrypoint.sh \
+  && mkdir -p /var/lib/eris-cloud/models /var/lib/eris-cloud/workspaces \
+  && chown -R node:node /var/lib/eris-cloud /app
+
+ENV NODE_ENV=production \
+  NODE_OPTIONS=--max-old-space-size=4096 \
+  ERIS_CLOUD_HOST=0.0.0.0 \
+  ERIS_CLOUD_PORT=6443 \
+  ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443 \
+  ERIS_CLOUD_DATA=/var/lib/eris-cloud \
+  ERIS_CLOUD_MAX_PARALLEL=2 \
+  ERIS_CLOUD_LLM_MODEL=composer
+
+EXPOSE 6443
+STOPSIGNAL SIGTERM
+
+HEALTHCHECK --interval=30s --timeout=8s --start-period=600s --retries=8 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.ERIS_CLOUD_PORT||6443)+'/v1/health').then(async r=>{if(!r.ok)process.exit(1);const j=await r.json();process.exit(j&&j.ok?0:1)}).catch(()=>process.exit(1))"
+
+ENTRYPOINT ["tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
+CMD ["node", "dist/server.js"]
+
+# ── CPU-only runtime (no NVIDIA host / no CUDA packages) ────────────
+FROM runtime-base AS runtime-cpu
+
+LABEL org.opencontainers.image.description="Cloud Agent worker for Eris IDE (Composer Full, CPU-only)"
+
+ENV ERIS_CLOUD_GPU=false \
+  NVIDIA_VISIBLE_DEVICES=void
+
+USER node
+
+# ── GPU runtime + CUDA (default final stage) ────────────────────────
+FROM runtime-base AS runtime
+
+ARG TARGETARCH=amd64
+ARG INSTALL_CUDA_VERSION=12.5
+
+LABEL org.opencontainers.image.description="Cloud Agent worker for Eris IDE (Composer Full + CUDA)"
+
+USER root
 
 RUN set -euo pipefail \
   && if [ "$TARGETARCH" = "arm64" ]; then NVARCH=sbsa; else NVARCH=x86_64; fi \
@@ -69,7 +116,6 @@ RUN set -euo pipefail \
        "cuda-nvtx-${CUDA_VER}" \
        "libcusparse-${CUDA_VER}" \
        "libcublas-${CUDA_VER}" \
-       git ca-certificates bash curl cmake clang libgomp1 \
   && apt-mark hold "libcublas-${CUDA_VER}" \
   && apt-get purge -y --auto-remove gnupg2 \
   && rm -rf /var/lib/apt/lists/* \
@@ -80,35 +126,6 @@ RUN set -euo pipefail \
 ENV NVIDIA_VISIBLE_DEVICES=all \
   NVIDIA_DRIVER_CAPABILITIES=compute,utility \
   LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64 \
-  NODE_ENV=production \
-  NODE_OPTIONS=--max-old-space-size=4096 \
-  ERIS_CLOUD_HOST=0.0.0.0 \
-  ERIS_CLOUD_PORT=6443 \
-  ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443 \
-  ERIS_CLOUD_DATA=/var/lib/eris-cloud \
-  ERIS_CLOUD_MAX_PARALLEL=2 \
-  ERIS_CLOUD_GPU=auto \
-  ERIS_CLOUD_LLM_MODEL=composer
-
-WORKDIR /app
-
-COPY --from=build --chown=node:node /app/package.json ./
-COPY --from=build --chown=node:node /app/node_modules ./node_modules
-COPY --from=build --chown=node:node /app/dist ./dist
-COPY --chown=node:node docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-
-RUN chmod 755 /usr/local/bin/docker-entrypoint.sh \
-  && mkdir -p /var/lib/eris-cloud/models /var/lib/eris-cloud/workspaces \
-  && chown -R node:node /var/lib/eris-cloud /app
+  ERIS_CLOUD_GPU=auto
 
 USER node
-
-EXPOSE 6443
-STOPSIGNAL SIGTERM
-
-# First boot may download Composer Full (~4.7 GB) into the volume
-HEALTHCHECK --interval=30s --timeout=8s --start-period=600s --retries=8 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.ERIS_CLOUD_PORT||6443)+'/v1/health').then(async r=>{if(!r.ok)process.exit(1);const j=await r.json();process.exit(j&&j.ok?0:1)}).catch(()=>process.exit(1))"
-
-ENTRYPOINT ["tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
-CMD ["node", "dist/server.js"]

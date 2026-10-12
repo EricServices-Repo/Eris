@@ -14,13 +14,24 @@ import { UsagePanel } from './UsagePanel'
 import { type Category, SettingRows, setAt, settingFields } from './fields'
 import { AgentPanel } from './panels/AgentPanel'
 import { ContextPanel, useContextPanelState } from './panels/ContextPanel'
-import { GeneralPanel, useLogsState } from './panels/GeneralPanel'
+import { FeedbackPanel } from './panels/FeedbackPanel'
+import { GeneralPanel } from './panels/GeneralPanel'
+import { LoggingPanel, useLogsState } from './panels/LoggingPanel'
 import { McpPanel, useMcpPanelState } from './panels/McpPanel'
 import { ModelsPanel, useModelsPanelState } from './panels/ModelsPanel'
 import { RulesPanel, useRulesPanelState } from './panels/RulesPanel'
 import { SkillsPanel, useSkillsPanelState } from './panels/SkillsPanel'
 import { SubagentsPanel } from './panels/SubagentsPanel'
 import { WorkspacePanel } from './panels/WorkspacePanel'
+import { SettingsSection } from './SettingsSection'
+import {
+  SETTINGS_LABELS,
+  SETTINGS_NAV,
+  SETTINGS_PAGE_KEYWORDS,
+  SETTINGS_ROWS_CATEGORIES,
+  SETTINGS_SCOPE_CATEGORIES,
+  SETTINGS_SUBTITLES
+} from './settings-meta'
 
 interface Props {
   open: boolean
@@ -32,7 +43,6 @@ interface Props {
   onClose: () => void
   onChanged: (resolved: AppSettings) => void
   onRerunSetup?: () => void
-  onReportBug?: () => void
 }
 
 export function SettingsModal({
@@ -43,8 +53,7 @@ export function SettingsModal({
   startCreateSkill,
   onClose,
   onChanged,
-  onRerunSetup,
-  onReportBug
+  onRerunSetup
 }: Props) {
   const [category, setCategory] = useState<Category>('models')
   const [layered, setLayered] = useState<LayeredSettings | null>(null)
@@ -67,8 +76,6 @@ export function SettingsModal({
   const { loadWorkspaceContextDoc } = contextState
 
   const load = async () => {
-    // Paint the shell as soon as layered settings return — do not wait on
-    // modelsStatus (Ollama probe can take seconds when offline).
     const layersP = window.ide.getLayeredSettings()
     const modelsP = window.ide.modelsStatus().catch(() => null)
     const agentsP = window.ide.getProjectAgents().catch(() => null)
@@ -85,7 +92,6 @@ export function SettingsModal({
 
   useEffect(() => {
     if (!open) return
-    // Instant shell from in-memory settings; IPC refresh fills layers/models next.
     if (!layered && seedResolved) {
       setLayered({
         defaults: seedResolved,
@@ -108,9 +114,8 @@ export function SettingsModal({
       setCategory(initialCategory)
       if (initialCategory === 'skills') void loadSkills(null, false)
       if (initialCategory === 'rules') void loadRules()
-      if (initialCategory === 'context') {
-        void loadWorkspaceContextDoc()
-      }
+      if (initialCategory === 'context') void loadWorkspaceContextDoc()
+      if (initialCategory === 'logging') void loadLogs()
     }
   }, [open, initialCategory, startCreateSkill])
 
@@ -119,9 +124,7 @@ export function SettingsModal({
   }, [open, category, hasWorkspace])
 
   useEffect(() => {
-    if (open && category === 'context') {
-      void loadWorkspaceContextDoc()
-    }
+    if (open && category === 'context') void loadWorkspaceContextDoc()
   }, [open, category, hasWorkspace])
 
   useEffect(() => {
@@ -136,7 +139,7 @@ export function SettingsModal({
   }, [category])
 
   useEffect(() => {
-    if (open && category === 'general') void loadLogs(selectedLogFile || undefined)
+    if (open && category === 'logging') void loadLogs(selectedLogFile || undefined)
   }, [open, category])
 
   useEffect(() => {
@@ -160,7 +163,6 @@ export function SettingsModal({
   const resolved = layered?.resolved
 
   const apply = async (path: string[], value: unknown) => {
-    // Always keep all / EricServic.es account are user preferences — never workspace.
     const saveScope: SettingsScope =
       (path[0] === 'agent' && path[1] === 'autoKeepDiffs') || path[0] === 'ericServices'
         ? 'user'
@@ -170,43 +172,70 @@ export function SettingsModal({
     await load()
   }
 
-  const categories: { id: Category; label: string }[] = [
-    { id: 'general', label: 'General' },
-    { id: 'account', label: 'Account' },
-    { id: 'models', label: 'Models' },
-    { id: 'usage', label: 'Usage' },
-    { id: 'agent', label: 'Agent' },
-    { id: 'subagents', label: 'Subagents' },
-    { id: 'skills', label: 'Skills' },
-    { id: 'rules', label: 'Rules' },
-    { id: 'context', label: 'Context' },
-    { id: 'mcp', label: 'MCP' },
-    { id: 'github', label: 'GitHub' },
-    { id: 'editor', label: 'Editor' },
-    { id: 'workspace', label: 'Workspace' }
-  ]
-
   const agentIds = useMemo(() => {
     if (!projectAgents) return ['orchestrator']
     return [projectAgents.orchestrator.id, ...projectAgents.subagents.map((a) => a.id)]
   }, [projectAgents])
 
-  const rows = useMemo(() => {
-    if (!resolved) return []
-    return settingFields(agentIds).filter((r) => {
-      if (r.cat !== category) return false
-      if (!search.trim()) return true
-      const q = search.toLowerCase()
-      return r.label.toLowerCase().includes(q) || r.hint.toLowerCase().includes(q)
+  const searchQuery = search.trim().toLowerCase()
+
+  const pageHits = useMemo(() => {
+    if (!searchQuery) return [] as Category[]
+    return (Object.keys(SETTINGS_LABELS) as Category[]).filter((id) => {
+      const hay = [
+        SETTINGS_LABELS[id],
+        SETTINGS_SUBTITLES[id],
+        ...(SETTINGS_PAGE_KEYWORDS[id] || [])
+      ]
+        .join(' ')
+        .toLowerCase()
+      return hay.includes(searchQuery)
     })
-  }, [resolved, category, search, agentIds])
+  }, [searchQuery])
+
+  const fieldHits = useMemo(() => {
+    if (!searchQuery || !resolved) return []
+    return settingFields(agentIds).filter(
+      (r) =>
+        r.label.toLowerCase().includes(searchQuery) || r.hint.toLowerCase().includes(searchQuery)
+    )
+  }, [searchQuery, resolved, agentIds])
+
+  const rows = useMemo(() => {
+    if (!resolved || !SETTINGS_ROWS_CATEGORIES.has(category)) return []
+    if (searchQuery) {
+      return settingFields(agentIds).filter(
+        (r) =>
+          r.cat === category &&
+          (r.label.toLowerCase().includes(searchQuery) ||
+            r.hint.toLowerCase().includes(searchQuery))
+      )
+    }
+    return settingFields(agentIds).filter((r) => r.cat === category)
+  }, [resolved, category, searchQuery, agentIds])
+
+  const showScope = SETTINGS_SCOPE_CATEGORIES.has(category)
+  const rowsTitle =
+    category === 'models'
+      ? 'Sampling'
+      : category === 'agent'
+        ? 'Agent preferences'
+        : category === 'logging'
+          ? 'Log preferences'
+          : category === 'general'
+            ? 'Preferences'
+            : 'Preferences'
 
   if (!open) return null
 
   if (!resolved || !layered) {
     return (
       <div className="modal-backdrop" onClick={onClose}>
-        <div className="modal settings-modal-loading" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="modal settings-modal-loading"
+          style={{ gridTemplateColumns: '1fr', height: 'auto', minHeight: 160 }}
+          onClick={(e) => e.stopPropagation()}
+        >
           <div className="modal-content">
             <h2>Settings</h2>
             <p className="subtitle">Loading…</p>
@@ -218,58 +247,43 @@ export function SettingsModal({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-nav">
-          <div style={{ padding: '4px 10px 12px', color: 'var(--text-muted)', fontSize: 11 }}>
-            SETTINGS
-          </div>
-          {categories.map((c) => (
-            <button
-              key={c.id}
-              className={category === c.id ? 'active' : ''}
-              onClick={() => setCategory(c.id)}
-            >
-              {c.label}
-            </button>
+          <div className="modal-nav-brand">SETTINGS</div>
+          {SETTINGS_NAV.map((group) => (
+            <div key={group.label} className="modal-nav-group">
+              <div className="modal-nav-group-label">{group.label}</div>
+              {group.items.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={category === id ? 'active' : ''}
+                  onClick={() => setCategory(id)}
+                >
+                  {SETTINGS_LABELS[id]}
+                </button>
+              ))}
+            </div>
           ))}
           <div style={{ flex: 1 }} />
-          <button onClick={onClose}>Close</button>
+          <button type="button" className="modal-nav-close" onClick={onClose}>
+            Close
+          </button>
         </div>
         <div className="modal-content">
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'start' }}>
+          <header className="settings-page-header">
             <div>
-              <h2>{categories.find((c) => c.id === category)?.label}</h2>
-              <div className="subtitle">
-                {category === 'subagents'
-                  ? 'Project agents live in .eris/agents.json'
-                  : category === 'skills'
-                    ? 'Skill files teach the agent specialized workflows (SKILL.md)'
-                    : category === 'mcp'
-                      ? 'Model Context Protocol servers available to the agent'
-                      : category === 'github'
-                        ? 'Link this project to a GitHub repository'
-                        : category === 'account'
-                          ? 'Link your EricServic.es profile and sync preferences'
-                          : category === 'usage'
-                            ? 'Plan limits, Upgrade to Pro, and daily model usage'
-                            : category === 'agent'
-                              ? 'Routing, Cloud Agents status, and background agent limits'
-                              : 'Cursor-style layered config: defaults → user → workspace'}
-              </div>
+              <h2>{SETTINGS_LABELS[category]}</h2>
+              <p className="subtitle">{SETTINGS_SUBTITLES[category]}</p>
             </div>
-            {category !== 'subagents' &&
-              category !== 'skills' &&
-              category !== 'mcp' &&
-              category !== 'github' &&
-              category !== 'account' &&
-              category !== 'usage' && (
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input
-                  placeholder="Search settings"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  style={{ width: 160 }}
-                />
+            <div className="settings-page-tools">
+              <input
+                placeholder="Search all settings…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                aria-label="Search all settings"
+              />
+              {showScope && (
                 <select
                   className="scope-select"
                   value={scope}
@@ -281,9 +295,48 @@ export function SettingsModal({
                     Workspace
                   </option>
                 </select>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          </header>
+
+          {searchQuery && (pageHits.length > 0 || fieldHits.length > 0) && (
+            <div className="settings-search-results">
+              {pageHits.length > 0 && (
+                <div className="settings-search-group">
+                  <div className="settings-search-label">Pages</div>
+                  {pageHits.map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className={`settings-search-hit${id === category ? ' is-active' : ''}`}
+                      onClick={() => setCategory(id)}
+                    >
+                      <strong>{SETTINGS_LABELS[id]}</strong>
+                      <span>{SETTINGS_SUBTITLES[id]}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {fieldHits.length > 0 && (
+                <div className="settings-search-group">
+                  <div className="settings-search-label">Preferences</div>
+                  {fieldHits.slice(0, 12).map((r) => (
+                    <button
+                      key={r.path.join('.')}
+                      type="button"
+                      className="settings-search-hit"
+                      onClick={() => setCategory(r.cat)}
+                    >
+                      <strong>{r.label}</strong>
+                      <span>
+                        {SETTINGS_LABELS[r.cat]} · {r.hint}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {category === 'usage' && <UsagePanel />}
 
@@ -307,7 +360,7 @@ export function SettingsModal({
 
           {category === 'rules' && <RulesPanel state={rulesState} hasWorkspace={hasWorkspace} />}
 
-          {category === 'mcp' && resolved && (
+          {category === 'mcp' && (
             <McpPanel
               state={mcpState}
               resolved={resolved}
@@ -318,7 +371,7 @@ export function SettingsModal({
             />
           )}
 
-          {category === 'github' && resolved && (
+          {category === 'github' && (
             <GitHubSettingsPanel
               resolved={resolved}
               hasWorkspace={hasWorkspace}
@@ -331,7 +384,7 @@ export function SettingsModal({
             />
           )}
 
-          {category === 'account' && resolved && (
+          {category === 'account' && (
             <EricServicesAccountPanel
               resolved={resolved}
               scope={scope}
@@ -362,24 +415,37 @@ export function SettingsModal({
 
           {category === 'general' && (
             <GeneralPanel
-              state={logsState}
               resolved={resolved}
               apply={apply}
               onClose={onClose}
               onRerunSetup={onRerunSetup}
-              onReportBug={onReportBug}
             />
           )}
 
-          {category !== 'subagents' && (
-            <SettingRows
-              rows={rows}
-              resolved={resolved}
-              layered={layered}
-              apply={apply}
-              onChanged={onChanged}
-              onReload={load}
-            />
+          {category === 'logging' && (
+            <LoggingPanel state={logsState} resolved={resolved} apply={apply} />
+          )}
+
+          {category === 'feedback' && <FeedbackPanel />}
+
+          {rows.length > 0 && (
+            <SettingsSection
+              title={rowsTitle}
+              description={
+                scope === 'workspace'
+                  ? 'Changes write to .eris/settings.json for this project.'
+                  : 'Changes apply to your user profile on this machine.'
+              }
+            >
+              <SettingRows
+                rows={rows}
+                resolved={resolved}
+                layered={layered}
+                apply={apply}
+                onChanged={onChanged}
+                onReload={load}
+              />
+            </SettingsSection>
           )}
         </div>
       </div>

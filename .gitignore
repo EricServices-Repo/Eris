@@ -9,3 +9,5 @@ release
 .eris
 .ericservices-ide
 *.tsbuildinfo
+# Built-in Eris → Eris-feedback credential (CI injects; never commit)
+resources/eris-feedback-token

@@ -126,25 +126,34 @@ export function useChatSession({
     void window.ide.stopChat()
   }, [])
 
-  /** Hand the current (or last) goal to a background worktree agent. */
+  /**
+   * Hand the current goal (+ recent chat context) to cloud and/or a local worktree.
+   * prefer: 'auto' | 'cloud' | 'local'
+   */
   const runInBackground = useCallback(
-    async (goalText?: string) => {
+    async (goalText?: string, prefer: 'auto' | 'cloud' | 'local' = 'auto') => {
       if (!workspacePath) {
         setChatError('Open a workspace before starting a background agent.')
         return null
       }
-      const fromThread = [...(activeThreadRef.current?.messages || [])]
-        .reverse()
-        .find((m) => m.role === 'user')?.content
-      const goal =
+      const messages = activeThreadRef.current?.messages || []
+      const fromThread = [...messages].reverse().find((m) => m.role === 'user')?.content
+      const bareGoal =
         (goalText || '').trim() ||
         lastTurnRef.current?.text?.trim() ||
         fromThread?.replace(/\n\nAttached:[\s\S]*$/, '').trim() ||
         ''
-      if (!goal) {
+      if (!bareGoal) {
         setChatError('Nothing to hand off — send a message first, or type a goal.')
         return null
       }
+      const contextTail = messages
+        .slice(-8)
+        .map((m) => `${m.role}: ${m.content.slice(0, 1200)}`)
+        .join('\n\n')
+      const goal = contextTail
+        ? `${bareGoal}\n\n---\nRecent chat context:\n${contextTail.slice(0, 6000)}`
+        : bareGoal
       const model =
         selectedModel || settingsRef.current?.models.defaultModel || 'builtin:composer-lite'
       const agentId = selectedAgentId === 'auto' ? null : selectedAgentId
@@ -159,25 +168,31 @@ export function useChatSession({
         } catch {
           health = null
         }
-        if (shouldUseCloudAgents(health)) {
+        const tryCloud = prefer === 'cloud' || (prefer === 'auto' && shouldUseCloudAgents(health))
+        if (tryCloud) {
           try {
             job = await window.ide.enqueueCloudJob({
               goal,
-              // Cloud Agent runs Composer Full; ignore local picker.
               model: 'composer',
               agentId,
-              claim: goal.slice(0, 64)
+              claim: bareGoal.slice(0, 64)
             })
             via = 'cloud'
-          } catch {
-            // Cloud enqueue/network failed — only then fall back to local.
+          } catch (err) {
+            if (prefer === 'cloud') {
+              setChatError(
+                err instanceof Error
+                  ? err.message
+                  : 'Cloud handoff failed. Sign in or check Cloud Agents status.'
+              )
+              return null
+            }
             job = undefined
           }
         }
-        if (!job) {
+        if (!job && prefer !== 'cloud') {
           job = await window.ide.enqueueBackgroundJob({
             goal,
-            // Local worktrees stay on Composer Lite.
             model:
               model === 'builtin:composer' || model === 'composer'
                 ? 'builtin:composer-lite'
@@ -188,6 +203,11 @@ export function useChatSession({
             sourceThreadId,
             forceRoute: 'tools'
           })
+          via = 'local'
+        }
+        if (!job) {
+          setChatError('Could not start a background agent.')
+          return null
         }
         setRightCollapsed(false)
         setRightPanel('agents')
@@ -801,6 +821,7 @@ export function useChatSession({
     routeLabel,
     toolActivity,
     agentStatus,
+    setAgentStatus,
     pendingApproval,
     setPendingApproval,
     resumableRun,

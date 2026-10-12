@@ -126,6 +126,7 @@ const api: IdeApi = {
   searchSymbols: (query) => ipcRenderer.invoke('search:symbols', query),
   searchRetrieve: (query) => ipcRenderer.invoke('search:retrieve', query),
   rebuildCodeIndex: () => ipcRenderer.invoke('index:rebuild'),
+  codeIndexStats: () => ipcRenderer.invoke('index:stats'),
   searchReferences: (name) => ipcRenderer.invoke('search:references', name),
   searchRelated: (path) => ipcRenderer.invoke('search:related', path),
   listEvalTasks: () => ipcRenderer.invoke('evals:list'),
@@ -146,7 +147,9 @@ const api: IdeApi = {
   cloudAgentsBaseUrl: () => ipcRenderer.invoke('cloudAgents:baseUrl'),
   cloudAgentsHealth: () => ipcRenderer.invoke('cloudAgents:health'),
   listCloudJobs: () => ipcRenderer.invoke('cloudAgents:list'),
+  getCloudJob: (id) => ipcRenderer.invoke('cloudAgents:get', id),
   enqueueCloudJob: (payload) => ipcRenderer.invoke('cloudAgents:enqueue', payload),
+  continueCloudJob: (id, payload) => ipcRenderer.invoke('cloudAgents:continue', id, payload),
   stopCloudJob: (id) => ipcRenderer.invoke('cloudAgents:stop', id),
   cloudJobArtifacts: (id) => ipcRenderer.invoke('cloudAgents:artifacts', id),
   applyCloudJobArtifacts: (id) => ipcRenderer.invoke('cloudAgents:applyArtifacts', id),
@@ -207,7 +210,8 @@ const api: IdeApi = {
   dismissAppUpdate: () => ipcRenderer.invoke('updates:dismiss'),
   onUpdateStatus: (cb) => subscribe('updates:status', cb),
   previewBugReport: (input) => ipcRenderer.invoke('bugReport:preview', input),
-  submitBugReport: (input) => ipcRenderer.invoke('bugReport:submit', input)
+  submitBugReport: (input) => ipcRenderer.invoke('bugReport:submit', input),
+  listFeedbackHistory: () => ipcRenderer.invoke('bugReport:history')
 }
 
 contextBridge.exposeInMainWorld('ide', api)

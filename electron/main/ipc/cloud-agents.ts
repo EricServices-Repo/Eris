@@ -5,10 +5,12 @@ import {
   cloudAgentsHealth,
   cloudJobToBackgroundJob,
   collectWorkspaceFilesForCloud,
+  continueCloudJob,
   enqueueCloudJob,
   fetchCloudJobArtifacts,
   getCloudJob,
   listCloudJobs,
+  setCloudAgentsAuthToken,
   stopCloudJob,
   cloudAgentsBaseUrl
 } from '../services/cloud-agents-client'
@@ -19,6 +21,19 @@ import { assertCloudJobWithinPlan } from '../services/eris-entitlements'
 import { recordCloudJobEnqueue } from '../services/usage-stats'
 import { getSecret } from './shared'
 
+function ericServicesToken(): string | null {
+  const settings = getResolvedSettings(appState.currentWorkspace)
+  const token = settings.ericServices.tokenRef
+    ? getSecret(settings.ericServices.tokenRef)
+    : null
+  return token?.trim() || null
+}
+
+function ericServicesCloudAuth(): boolean {
+  const settings = getResolvedSettings(appState.currentWorkspace)
+  return isEricServicesAuthenticated(settings, ericServicesToken())
+}
+
 function requireCloudAuth(): void {
   if (!ericServicesCloudAuth()) {
     throw new Error(
@@ -27,23 +42,22 @@ function requireCloudAuth(): void {
   }
 }
 
-function ericServicesCloudAuth(): boolean {
-  const settings = getResolvedSettings(appState.currentWorkspace)
-  const token = settings.ericServices.tokenRef
-    ? getSecret(settings.ericServices.tokenRef)
-    : null
-  return isEricServicesAuthenticated(settings, token)
+/** Sync Bearer token into the cloud HTTP client before authenticated calls. */
+function syncCloudAuth(): void {
+  setCloudAgentsAuthToken(ericServicesCloudAuth() ? ericServicesToken() : null)
 }
 
 export function registerCloudAgentsIpc(): void {
   ipcMain.handle('cloudAgents:baseUrl', () => cloudAgentsBaseUrl())
 
-  ipcMain.handle('cloudAgents:health', async () =>
-    cloudAgentsHealth(ericServicesCloudAuth())
-  )
+  ipcMain.handle('cloudAgents:health', async () => {
+    syncCloudAuth()
+    return cloudAgentsHealth(ericServicesCloudAuth())
+  })
 
   ipcMain.handle('cloudAgents:list', async () => {
     if (!ericServicesCloudAuth()) return []
+    syncCloudAuth()
     const jobs = await listCloudJobs(50)
     const ws = appState.currentWorkspace || ''
     return jobs.map((j) => cloudJobToBackgroundJob(j, ws))
@@ -51,6 +65,7 @@ export function registerCloudAgentsIpc(): void {
 
   ipcMain.handle('cloudAgents:get', async (_e, id: string) => {
     if (!ericServicesCloudAuth()) return null
+    syncCloudAuth()
     const rawId = String(id).replace(/^cloud:/, '')
     const job = await getCloudJob(rawId)
     if (!job) return null
@@ -59,6 +74,7 @@ export function registerCloudAgentsIpc(): void {
 
   ipcMain.handle('cloudAgents:enqueue', async (_e, payload: EnqueueCloudJobRequest) => {
     requireCloudAuth()
+    syncCloudAuth()
     const workspace = appState.currentWorkspace
     const settings = getResolvedSettings(workspace)
     assertCloudJobWithinPlan(settings, getSecret)
@@ -77,6 +93,10 @@ export function registerCloudAgentsIpc(): void {
       branch = branch || settings.github.defaultBranch || 'main'
     }
 
+    const githubToken =
+      payload.githubToken ||
+      (settings.github.tokenRef ? getSecret(settings.github.tokenRef) : null)
+
     // Cloud worker always runs Composer Full (7B). Desktop stays on Composer Lite.
     const job = await enqueueCloudJob({
       goal: payload.goal,
@@ -84,6 +104,9 @@ export function registerCloudAgentsIpc(): void {
       model: 'composer',
       repoUrl,
       branch,
+      githubToken: githubToken || undefined,
+      openPr: Boolean(payload.openPr),
+      resumeFromJobId: payload.resumeFromJobId,
       claim: payload.claim,
       files
     })
@@ -95,20 +118,45 @@ export function registerCloudAgentsIpc(): void {
     return cloudJobToBackgroundJob(job, workspace || '')
   })
 
+  ipcMain.handle(
+    'cloudAgents:continue',
+    async (_e, id: string, payload?: Partial<EnqueueCloudJobRequest>) => {
+      requireCloudAuth()
+      syncCloudAuth()
+      const settings = getResolvedSettings(appState.currentWorkspace)
+      const githubToken =
+        payload?.githubToken ||
+        (settings.github.tokenRef ? getSecret(settings.github.tokenRef) : null)
+      const job = await continueCloudJob(String(id), {
+        ...payload,
+        githubToken: githubToken || undefined
+      })
+      try {
+        recordCloudJobEnqueue()
+      } catch {
+        /* ignore */
+      }
+      return cloudJobToBackgroundJob(job, appState.currentWorkspace || '')
+    }
+  )
+
   ipcMain.handle('cloudAgents:stop', async (_e, id: string) => {
     requireCloudAuth()
+    syncCloudAuth()
     const rawId = String(id).replace(/^cloud:/, '')
     return stopCloudJob(rawId)
   })
 
   ipcMain.handle('cloudAgents:artifacts', async (_e, id: string) => {
     requireCloudAuth()
+    syncCloudAuth()
     return fetchCloudJobArtifacts(String(id))
   })
 
   /** Fetch cloud patch bundle and apply into the open workspace (Diff Review). */
   ipcMain.handle('cloudAgents:applyArtifacts', async (_e, id: string) => {
     requireCloudAuth()
+    syncCloudAuth()
     const workspace = appState.currentWorkspace
     if (!workspace) throw new Error('Open a workspace to apply cloud changes')
     return applyCloudJobArtifacts(workspace, String(id))

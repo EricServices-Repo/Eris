@@ -57,7 +57,7 @@ export type ErisSyncEnvelope = {
 
 const TOKEN_REF = 'ericServices.token'
 
-function normalizeApiBase(base: string): string {
+export function normalizeApiBase(base: string): string {
   let b = (base || 'https://www.ericservic.es').trim().replace(/\/+$/, '')
   if (!/^https?:\/\//i.test(b)) b = `https://${b}`
   return b

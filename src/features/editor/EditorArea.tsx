@@ -298,11 +298,15 @@ export function EditorArea({
   }, [active, clearGhost])
 
   const scheduleInlineSuggest = useCallback(() => {
-    if (!settings.editor.inlineSuggest || chatBusy) return
+    if (!settings.editor.inlineSuggest) return
+    if (chatBusy) {
+      setCompleteHint('Tab complete pauses while chat is busy')
+      return
+    }
     if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current)
     suggestTimerRef.current = setTimeout(() => {
       void requestTabComplete({ quiet: true })
-    }, 450)
+    }, 280)
   }, [requestTabComplete, settings.editor.inlineSuggest, chatBusy])
 
   const acceptGhost = useCallback(() => {

@@ -1,6 +1,6 @@
 {
   "name": "@eris/cloud-agent",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "private": true,
   "description": "Eris Cloud Agent worker — runs agent jobs for all Eris installs",
   "type": "module",
@@ -11,7 +11,9 @@
     "dev": "tsx watch src/server.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "docker:build": "docker build -t eris-cloud-agent:latest .",
-    "docker:up": "docker compose up -d --build"
+    "docker:build:cpu": "docker build --target runtime-cpu -t eris-cloud-agent:latest .",
+    "docker:up": "docker compose up -d --build",
+    "docker:up:cpu": "docker compose -f docker-compose.cpu.yml up -d --build"
   },
   "engines": {
     "node": ">=20"

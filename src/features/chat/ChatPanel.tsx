@@ -64,8 +64,8 @@ interface Props {
   onNewChat: () => void
   onSend: (text: string, attachments: ChatAttachment[], skillIds: string[]) => void
   onStop: () => void
-  /** Hand current/last goal to a background worktree agent */
-  onRunInBackground?: (goal?: string) => void
+  /** Hand current/last goal to cloud and/or a local worktree agent */
+  onRunInBackground?: (goal?: string, prefer?: 'auto' | 'cloud' | 'local') => void
   backgroundBusy?: boolean
   queuedMessages: QueuedChatMessage[]
   onQueueMessage: (text: string, attachments: ChatAttachment[], skillIds: string[]) => void
@@ -462,15 +462,26 @@ export function ChatPanel({
                             Just a question
                           </button>
                           {onRunInBackground && (
-                            <button
-                              type="button"
-                              className="btn btn-link"
-                              title="Continue this goal on a private git worktree"
-                              disabled={backgroundBusy}
-                              onClick={() => onRunInBackground()}
-                            >
-                              Run in background
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                className="btn btn-link"
+                                title="Continue this chat on Cloud Agents (Composer Full)"
+                                disabled={backgroundBusy}
+                                onClick={() => onRunInBackground(undefined, 'cloud')}
+                              >
+                                Continue on cloud
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-link"
+                                title="Continue on a private local git worktree"
+                                disabled={backgroundBusy}
+                                onClick={() => onRunInBackground(undefined, 'local')}
+                              >
+                                Continue local
+                              </button>
+                            </>
                           )}
                         </div>
                       )}
@@ -808,15 +819,26 @@ export function ChatPanel({
                     ))}
                   </select>
                   {onRunInBackground && (
-                    <button
-                      type="button"
-                      className="btn composer-send-btn"
-                      disabled={backgroundBusy || (!draft.trim() && !activeThread)}
-                      title="Run this goal on a private git worktree (Agents inbox)"
-                      onClick={() => onRunInBackground(draft.trim() || undefined)}
-                    >
-                      Background
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className="btn composer-send-btn"
+                        disabled={backgroundBusy || (!draft.trim() && !activeThread)}
+                        title="Hand off to Cloud Agents"
+                        onClick={() => onRunInBackground(draft.trim() || undefined, 'cloud')}
+                      >
+                        Cloud
+                      </button>
+                      <button
+                        type="button"
+                        className="btn composer-send-btn"
+                        disabled={backgroundBusy || (!draft.trim() && !activeThread)}
+                        title="Hand off to a local worktree agent"
+                        onClick={() => onRunInBackground(draft.trim() || undefined, 'local')}
+                      >
+                        Local BG
+                      </button>
+                    </>
                   )}
                   {streaming ? (
                     <>

@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { BuiltinModelStatus } from '@/shared/settings-schema'
 import logo from '@/assets/logo.png'
 
-type StepId = 'welcome' | 'models' | 'workspace' | 'ready'
+type StepId = 'welcome' | 'models' | 'workspace' | 'firstWin' | 'ready'
 
 const STEPS: Array<{ id: StepId; label: string }> = [
   { id: 'welcome', label: 'Welcome' },
   { id: 'models', label: 'Models' },
   { id: 'workspace', label: 'Workspace' },
+  { id: 'firstWin', label: 'Try it' },
   { id: 'ready', label: 'Ready' }
 ]
 
@@ -17,6 +18,8 @@ interface Props {
   onCreateWorkspace: () => void
   onLinkWorkspace: () => void
   hasWorkspace: boolean
+  /** Start a guided first agent turn after setup */
+  onStartFirstWin?: () => void
 }
 
 export function SetupWizard({
@@ -24,7 +27,8 @@ export function SetupWizard({
   onFinished,
   onCreateWorkspace,
   onLinkWorkspace,
-  hasWorkspace
+  hasWorkspace,
+  onStartFirstWin
 }: Props) {
   const [step, setStep] = useState<StepId>('welcome')
   const [builtins, setBuiltins] = useState<BuiltinModelStatus[]>([])
@@ -243,6 +247,27 @@ export function SetupWizard({
             </section>
           )}
 
+          {step === 'firstWin' && (
+            <section className="setup-panel">
+              <h2>Your first win</h2>
+              <p>
+                After setup, Eris can open a chat with a starter prompt: ask the agent to scan the
+                workspace and suggest one small improvement. Review the diff, Keep the change, then
+                you&apos;re shipping.
+              </p>
+              <ul className="setup-checklist">
+                <li>Composer Lite answers in chat</li>
+                <li>Agent mode can propose file edits</li>
+                <li>Diff Review lets you Keep or Undo each file</li>
+              </ul>
+              {!hasWorkspace && (
+                <p className="model-conn-hint">
+                  Link a workspace on the previous step for the best first run.
+                </p>
+              )}
+            </section>
+          )}
+
           {step === 'ready' && (
             <section className="setup-panel">
               <h2>You&apos;re set</h2>
@@ -324,14 +349,28 @@ export function SetupWizard({
                 Continue
               </button>
             ) : (
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={busy}
-                onClick={() => void finish()}
-              >
-                {busy ? 'Finishing…' : 'Start using Eris'}
-              </button>
+              <>
+                {onStartFirstWin && hasWorkspace && (
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busy}
+                    onClick={() => {
+                      void finish().then(() => onStartFirstWin())
+                    }}
+                  >
+                    Start guided chat
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={busy}
+                  onClick={() => void finish()}
+                >
+                  {busy ? 'Finishing…' : 'Start using Eris'}
+                </button>
+              </>
             )}
           </div>
         </footer>

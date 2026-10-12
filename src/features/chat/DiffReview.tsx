@@ -30,6 +30,11 @@ interface Props {
   /** Notify parent when expand toggles (taller drawer). */
   expanded?: boolean
   onExpandedChange?: (expanded: boolean) => void
+  /** Git: stage kept files, commit, open PR */
+  onStageKept?: () => void
+  onCommitKept?: () => void
+  onCreatePr?: () => void
+  gitBusy?: boolean
 }
 
 function statusLabel(status: PendingDiff['status']): string {
@@ -66,7 +71,11 @@ export function DiffReview({
   onAutoKeepDiffsChange,
   theme = 'vs-dark',
   expanded: expandedProp,
-  onExpandedChange
+  onExpandedChange,
+  onStageKept,
+  onCommitKept,
+  onCreatePr,
+  gitBusy = false
 }: Props) {
   const pending = diffs.filter((d) => d.status === 'pending')
   const kept = diffs.filter((d) => d.status === 'kept')
@@ -215,6 +224,39 @@ export function DiffReview({
           <button type="button" className="btn" disabled={!pending.length} onClick={onUndoAll}>
             Undo all
           </button>
+          {onStageKept && (
+            <button
+              type="button"
+              className="btn"
+              disabled={gitBusy || kept.length === 0}
+              title="git add kept files"
+              onClick={onStageKept}
+            >
+              Stage kept
+            </button>
+          )}
+          {onCommitKept && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={gitBusy || kept.length === 0}
+              title="Stage kept files and commit"
+              onClick={onCommitKept}
+            >
+              Commit…
+            </button>
+          )}
+          {onCreatePr && (
+            <button
+              type="button"
+              className="btn"
+              disabled={gitBusy || kept.length === 0}
+              title="Commit kept files and open a GitHub pull request"
+              onClick={onCreatePr}
+            >
+              Open PR…
+            </button>
+          )}
           {onAutoKeepDiffsChange && (
             <label
               className="diff-always-keep"

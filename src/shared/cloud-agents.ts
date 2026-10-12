@@ -26,8 +26,12 @@ export interface CloudJob {
   model: string
   status: CloudJobStatus
   claim: string
+  ownerId?: string
+  plan?: 'free' | 'pro'
   repoUrl?: string | null
   branch?: string | null
+  openPr?: boolean
+  prUrl?: string | null
   liveStatus: string
   answer: string
   error?: string
@@ -35,8 +39,12 @@ export interface CloudJob {
   /** Patch bundle available via GET /v1/jobs/:id/artifacts */
   hasArtifacts?: boolean
   artifactCount?: number
+  artifactsTruncated?: boolean
+  truncatedReasons?: string[]
   recentTools: CloudJobToolEvent[]
   thinkingTail: string
+  step?: number
+  resumable?: boolean
   createdAt: string
   updatedAt: string
   finishedAt?: string
@@ -54,6 +62,7 @@ export interface CloudJobArtifacts {
   createdAt: string
   files: CloudJobArtifactFile[]
   truncated: boolean
+  truncatedReasons?: string[]
   totalBytes: number
 }
 
@@ -79,6 +88,7 @@ export interface CloudHealth {
   running: number
   queued: number
   publicBaseUrl?: string
+  authRequired?: boolean
   error?: string
   /**
    * True when Eris has a linked EricServic.es account + device token.
@@ -93,7 +103,13 @@ export interface EnqueueCloudJobRequest {
   model?: string | null
   repoUrl?: string | null
   branch?: string | null
+  /** Short-lived GitHub PAT for private clone / optional PR (never logged) */
+  githubToken?: string | null
+  /** When true and repoUrl is set, cloud worker attempts push + PR */
+  openPr?: boolean
   claim?: string | null
+  /** Continue from a previous cloud job checkpoint */
+  resumeFromJobId?: string | null
   /** Relative workspace files to seed the cloud workspace */
   files?: Array<{ path: string; content: string }>
 }
