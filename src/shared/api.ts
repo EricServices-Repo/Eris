@@ -537,7 +537,7 @@ export interface IdeApi {
     threadId?: string | null
   ) => Promise<{ ok: boolean; threadId: string; content: string; error?: string }>
   onBackgroundJob: (cb: (event: BackgroundJobEvent) => void) => () => void
-  /** Always https://agents.ericservic.es:6443 — not user-configurable */
+  /** Always http://agents.ericservic.es:6443 — not user-configurable (no TLS) */
   cloudAgentsBaseUrl: () => Promise<string>
   cloudAgentsHealth: () => Promise<import('./cloud-agents').CloudHealth>
   listCloudJobs: () => Promise<BackgroundJob[]>

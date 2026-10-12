@@ -1,8 +1,8 @@
 /**
  * Public Cloud Agent endpoint for every Eris install.
- * No user configuration — clients hit agents.ericservic.es:6443 (Docker listen port).
+ * Plain HTTP on :6443 — no TLS certificate required on client or server.
  */
-export const CLOUD_AGENTS_BASE_URL = 'https://agents.ericservic.es:6443'
+export const CLOUD_AGENTS_BASE_URL = 'http://agents.ericservic.es:6443'
 
 export const CLOUD_AGENTS_HEALTH_PATH = '/v1/health'
 export const CLOUD_AGENTS_JOBS_PATH = '/v1/jobs'
@@ -67,4 +67,28 @@ export interface EnqueueCloudJobRequest {
   claim?: string | null
   /** Relative workspace files to seed the cloud workspace */
   files?: Array<{ path: string; content: string }>
+}
+
+/** True when Eris should prefer Cloud Agents over local worktrees. */
+export function isCloudAgentsReady(health: CloudHealth | null | undefined): boolean {
+  if (!health?.ok) return false
+  if (health.localModel?.status === 'error') return false
+  if (health.inference === 'remote') return health.llmConfigured !== false
+  // Default: in-container GGUF must be loaded
+  return health.localModel?.status === 'ready'
+}
+
+export function cloudAgentsStatusLabel(health: CloudHealth | null | undefined): string {
+  if (!health) return 'Cloud: checking…'
+  if (!health.ok) return `Cloud: offline${health.error ? ` (${health.error})` : ''} · using local`
+  if (health.localModel?.status === 'downloading') return 'Cloud: downloading model…'
+  if (health.localModel?.status === 'missing') return 'Cloud: model missing…'
+  if (health.localModel?.status === 'error') {
+    return `Cloud: model error · using local`
+  }
+  if (isCloudAgentsReady(health)) {
+    const name = health.localModel?.modelName || 'ready'
+    return `Cloud: ${name}`
+  }
+  return 'Cloud: pending · using local'
 }

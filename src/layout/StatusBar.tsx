@@ -1,4 +1,6 @@
 import type { ResolvedAgent } from '@/shared/settings-schema'
+import type { CloudHealth } from '@/shared/cloud-agents'
+import { CLOUD_AGENTS_BASE_URL, cloudAgentsStatusLabel, isCloudAgentsReady } from '@/shared/cloud-agents'
 
 interface Props {
   agents: ResolvedAgent[]
@@ -6,9 +8,11 @@ interface Props {
   routeLabel: string | null
   composerReady: boolean
   modelsOk: boolean
+  cloudHealth?: CloudHealth | null
   appVersion?: string | null
   disabled?: boolean
   onOpenSettings: () => void
+  onOpenAgentSettings?: () => void
   onAgentChange: (agentId: string | 'auto') => void
 }
 
@@ -18,11 +22,16 @@ export function StatusBar({
   routeLabel,
   composerReady,
   modelsOk,
+  cloudHealth = null,
   appVersion,
   disabled,
   onOpenSettings,
+  onOpenAgentSettings,
   onAgentChange
 }: Props) {
+  const cloudReady = isCloudAgentsReady(cloudHealth)
+  const cloudTitle = `${cloudAgentsStatusLabel(cloudHealth)}\n${CLOUD_AGENTS_BASE_URL} (plain HTTP)\nOpen Settings → Agent for metrics`
+
   return (
     <footer className="status-bar">
       <div className="status-bar-left">
@@ -42,6 +51,17 @@ export function StatusBar({
             v{appVersion}
           </span>
         )}
+        <button
+          type="button"
+          className="status-bar-btn"
+          onClick={onOpenAgentSettings}
+          title={cloudTitle}
+        >
+          <span className={`status-dot${cloudReady ? ' ok' : ''}`} />
+          <span className="status-bar-label">
+            {cloudReady ? 'Cloud' : cloudHealth && !cloudHealth.ok ? 'Local agents' : 'Cloud…'}
+          </span>
+        </button>
       </div>
 
       <div className="status-bar-right" title={routeLabel || undefined}>

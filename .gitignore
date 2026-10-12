@@ -8,3 +8,4 @@ release
 .env.*
 .eris
 .ericservices-ide
+*.tsbuildinfo

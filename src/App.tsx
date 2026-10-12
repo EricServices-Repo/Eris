@@ -9,6 +9,7 @@ import {
   type CSSProperties
 } from 'react'
 import type { FileEntry } from '@/shared/settings-schema'
+import type { CloudHealth } from '@/shared/cloud-agents'
 import { Sidebar } from '@/layout/Sidebar'
 import { WorkspaceTrustBanner } from '@/features/workspace/WorkspaceTrustBanner'
 import { StatusBar } from '@/layout/StatusBar'
@@ -82,11 +83,41 @@ export default function App() {
   const [showSetupWizard, setShowSetupWizard] = useState(false)
   const [onboardingReady, setOnboardingReady] = useState(false)
   const [appVersion, setAppVersion] = useState<string | null>(null)
+  const [cloudHealth, setCloudHealth] = useState<CloudHealth | null>(null)
   const [terminalNotes, setTerminalNotes] = useState<TerminalNote[]>([])
   const terminalNoteSeq = useRef(0)
   const appendTerminal = useCallback((text: string) => {
     const id = ++terminalNoteSeq.current
     setTerminalNotes((prev) => [...prev.slice(-(MAX_TERMINAL_NOTES - 1)), { id, text }])
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const tick = async () => {
+      try {
+        const health = await window.ide.cloudAgentsHealth()
+        if (!cancelled) setCloudHealth(health)
+      } catch {
+        if (!cancelled) {
+          setCloudHealth({
+            ok: false,
+            service: 'eris-cloud-agent',
+            version: '',
+            llmConfigured: false,
+            maxParallel: 0,
+            running: 0,
+            queued: 0,
+            error: 'Unreachable'
+          })
+        }
+      }
+    }
+    void tick()
+    const id = window.setInterval(() => void tick(), 15_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
   }, [])
 
   const {
@@ -1064,9 +1095,11 @@ export default function App() {
         routeLabel={routeLabel}
         composerReady={composerReady}
         modelsOk={ollamaOk}
+        cloudHealth={cloudHealth}
         appVersion={appVersion}
         disabled={!workspacePath}
         onOpenSettings={() => openSettings()}
+        onOpenAgentSettings={() => openSettings('agent')}
         onAgentChange={setSelectedAgentId}
       />
 

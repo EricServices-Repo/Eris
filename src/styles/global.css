@@ -2433,6 +2433,32 @@ select:focus {
   line-height: 1.45;
 }
 
+.agents-cloud-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg-elevated, var(--bg)) 92%, transparent);
+}
+
+.agents-cloud-status.is-ready {
+  color: var(--text);
+}
+
+.agents-cloud-status.is-offline .status-dot {
+  background: #b45309;
+}
+
+.agents-cloud-host {
+  margin-left: auto;
+  opacity: 0.75;
+  font-family: ui-monospace, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
 .terminal-input-row,
 .git-commit-row {
   display: flex;
