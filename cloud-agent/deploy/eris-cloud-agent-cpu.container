@@ -21,10 +21,13 @@ Image=localhost/eris-cloud-agent:latest
 Pull=never
 ContainerName=eris-cloud-agent
 PublishPort=6443:6443
+# Status dashboard (no auth) — http://agents.ericservic.es/
+PublishPort=80:8080
 Volume=eris-cloud-data:/var/lib/eris-cloud:Z
 Environment=ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443
 Environment=ERIS_CLOUD_HOST=0.0.0.0
 Environment=ERIS_CLOUD_PORT=6443
+Environment=ERIS_CLOUD_STATUS_PORT=8080
 Environment=ERIS_CLOUD_DATA=/var/lib/eris-cloud
 Environment=ERIS_CLOUD_MAX_PARALLEL=1
 Environment=ERIS_CLOUD_GPU=false

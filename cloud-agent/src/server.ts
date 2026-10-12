@@ -15,6 +15,7 @@ import {
   persistMetricsSnapshot,
   readRecentAudit
 } from './observe.js'
+import { startStatusServer } from './status-server.js'
 
 const store = new JobStore()
 const workers = new WorkerPool(store)
@@ -109,7 +110,13 @@ function healthBody(): Record<string, unknown> {
       continue: '/v1/jobs/:id/continue',
       stop: '/v1/jobs/:id/stop',
       artifacts: '/v1/jobs/:id/artifacts',
-      metrics: '/v1/metrics'
+      metrics: '/v1/metrics',
+      statusPage: `http://0.0.0.0:${config.statusPort}/` 
+    },
+    statusPage: {
+      enabled: config.statusEnabled,
+      port: config.statusPort,
+      publicHint: 'http://agents.ericservic.es/ (host :80 → container status port)'
     }
   }
 }
@@ -315,6 +322,7 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
 }
 
 warmLocalModel()
+startStatusServer(store)
 
 const server = createServer((req, res) => {
   void handler(req, res).catch((err) => {
@@ -351,6 +359,8 @@ server.listen(config.port, config.host, () => {
       msg: 'eris-cloud-agent listening',
       host: config.host,
       port: config.port,
+      statusPort: config.statusPort,
+      statusEnabled: config.statusEnabled,
       publicBaseUrl: config.publicBaseUrl,
       clientDefault: PUBLIC_BASE_URL,
       inference: config.llmBase ? 'remote' : 'local',
