@@ -11,10 +11,11 @@ Inference runs **inside the container** with **Composer Full** (Qwen2.5-Coder-7B
 ## Client URL (no user configuration)
 
 ```
-http://agents.ericservic.es:6443
+API:    http://agents.ericservic.es:6443
+Status: http://agents.ericservic.es/          (no auth — metrics dashboard)
 ```
 
-Plain HTTP — no TLS certificate required. Container listen port: **6443**.
+Plain HTTP — no TLS certificate required. API port **6443**; status page host **80** → container **8080**.
 
 ## Image improvements
 

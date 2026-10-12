@@ -69,7 +69,7 @@ ENV NODE_ENV=production \
   ERIS_CLOUD_MAX_PARALLEL=2 \
   ERIS_CLOUD_LLM_MODEL=composer
 
-EXPOSE 6443
+EXPOSE 6443 8080
 STOPSIGNAL SIGTERM
 
 HEALTHCHECK --interval=30s --timeout=8s --start-period=600s --retries=8 \

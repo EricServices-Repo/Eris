@@ -159,7 +159,9 @@ else
     "${RUN_EXTRA[@]}" \
     --stop-signal=SIGTERM \
     -p 6443:6443 \
+    -p 80:8080 \
     -e ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443 \
+    -e ERIS_CLOUD_STATUS_PORT=8080 \
     -e "ERIS_CLOUD_GPU=${GPU_ENV}" \
     -e "ERIS_CLOUD_MAX_PARALLEL=${PARALLEL}" \
     -v eris-cloud-data:/var/lib/eris-cloud \

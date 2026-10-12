@@ -24,11 +24,13 @@ ExecStartPre=-/usr/bin/podman rm -f eris-cloud-agent
 
 ExecStart=/usr/bin/podman run --rm --name eris-cloud-agent \
   --publish 6443:6443 \
+  --publish 80:8080 \
   --stop-signal=SIGTERM \
   --stop-timeout=25 \
   --env ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443 \
   --env ERIS_CLOUD_HOST=0.0.0.0 \
   --env ERIS_CLOUD_PORT=6443 \
+  --env ERIS_CLOUD_STATUS_PORT=8080 \
   --env ERIS_CLOUD_DATA=/var/lib/eris-cloud \
   --env ERIS_CLOUD_MAX_PARALLEL=1 \
   --env ERIS_CLOUD_GPU=false \

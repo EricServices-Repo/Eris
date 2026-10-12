@@ -33,6 +33,13 @@ export const config = {
   version: pkgVersion(),
   host: process.env.ERIS_CLOUD_HOST || '0.0.0.0',
   port: Number(process.env.ERIS_CLOUD_PORT || 6443),
+  /**
+   * Unauthenticated status webpage + JSON.
+   * Host maps public :80 → this port (default 8080 inside the container).
+   * Set ERIS_CLOUD_STATUS_ENABLED=0 to disable.
+   */
+  statusPort: Math.max(1, Number(process.env.ERIS_CLOUD_STATUS_PORT || 8080)),
+  statusEnabled: process.env.ERIS_CLOUD_STATUS_ENABLED !== '0',
   publicBaseUrl: (process.env.ERIS_CLOUD_PUBLIC_URL || PUBLIC_BASE_URL).replace(/\/+$/, ''),
   dataDir: process.env.ERIS_CLOUD_DATA || '/var/lib/eris-cloud',
   maxParallel: Math.max(1, Math.min(8, Number(process.env.ERIS_CLOUD_MAX_PARALLEL || 2))),
