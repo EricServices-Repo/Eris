@@ -9,24 +9,75 @@ Client URL (no TLS): `http://agents.ericservic.es:6443`
 ## One-time host setup
 
 ```bash
-# NVIDIA driver already installed? Check:
-nvidia-smi
-
-# Container Device Interface for Podman GPU
-sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
-nvidia-ctk cdi list
-
 # Clone the Eris repo (once)
 sudo mkdir -p /opt/eris && sudo chown "$USER:$USER" /opt/eris
 git clone https://github.com/EricServices-Repo/Eris.git /opt/eris
 cd /opt/eris
 ```
 
+**GPU hosts only** (skip for CPU-only nodes):
+
+```bash
+nvidia-smi
+sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+nvidia-ctk cdi list
+```
+
 Prefer **Podman + Quadlet** on the VM (systemd owns the container).
 
 ---
 
-## First install (Quadlet)
+## First install — CPU-only node (no NVIDIA)
+
+Use this on a VM without a GPU. Builds the smaller `runtime-cpu` image (no CUDA packages), sets `ERIS_CLOUD_GPU=false`, and does **not** request NVIDIA devices. Inference is slower; parallelism defaults to **1**.
+
+```bash
+cd /opt/eris
+./cloud-agent/scripts/rebuild.sh --cpu --install
+```
+
+Manual equivalent:
+
+```bash
+cd /opt/eris
+podman build --target runtime-cpu -t eris-cloud-agent:latest ./cloud-agent
+
+sudo mkdir -p /etc/containers/systemd
+sudo cp cloud-agent/deploy/eris-cloud-agent-cpu.container \
+  /etc/containers/systemd/eris-cloud-agent.container
+sudo systemctl daemon-reload
+sudo systemctl enable --now eris-cloud-agent.service
+
+curl -sS http://127.0.0.1:6443/v1/health | jq '{ok,ready,gpuMode,localModel}'
+# Expect gpuMode: "false" and localModel.gpu: false once ready
+```
+
+Docker Compose (CPU):
+
+```bash
+cd /opt/eris
+./cloud-agent/scripts/rebuild.sh --cpu --compose
+# or: docker compose -f cloud-agent/docker-compose.cpu.yml up -d --build
+```
+
+Classic systemd (no Quadlet):
+
+```bash
+podman build --target runtime-cpu -t eris-cloud-agent:latest ./cloud-agent
+sudo cp cloud-agent/deploy/eris-cloud-agent-cpu.service /etc/systemd/system/eris-cloud-agent.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now eris-cloud-agent.service
+```
+
+Rebuild later on a CPU node:
+
+```bash
+./cloud-agent/scripts/rebuild.sh --cpu
+```
+
+---
+
+## First install — GPU (Quadlet)
 
 ```bash
 cd /opt/eris
@@ -75,10 +126,11 @@ What it does:
 | Flag | Meaning |
 |------|---------|
 | `--install` | Also copy Quadlet unit + `daemon-reload` + enable |
+| `--cpu` | CPU-only image (`runtime-cpu`) + CPU Quadlet (no NVIDIA) |
 | `--no-pull` | Do not `git pull` (build local tree only) |
-| `--cuda 13.1` | Build with `INSTALL_CUDA_VERSION=13.1` (must be ≤ host driver) |
+| `--cuda 13.1` | Build with `INSTALL_CUDA_VERSION=13.1` (must be ≤ host driver; ignored with `--cpu`) |
 | `--docker` | Use `docker` instead of `podman` |
-| `--compose` | `docker compose up -d --build` (Docker Engine path) |
+| `--compose` | `docker compose up -d --build` (uses `docker-compose.cpu.yml` with `--cpu`) |
 
 Examples:
 
@@ -86,11 +138,15 @@ Examples:
 # Rebuild only (no git pull)
 ./cloud-agent/scripts/rebuild.sh --no-pull
 
+# CPU-only rebuild
+./cloud-agent/scripts/rebuild.sh --cpu --no-pull
+
 # Newer CUDA libs in the image
 ./cloud-agent/scripts/rebuild.sh --cuda 13.1
 
 # Docker Compose path
 ./cloud-agent/scripts/rebuild.sh --docker --compose
+./cloud-agent/scripts/rebuild.sh --cpu --compose
 ```
 
 ### Manual rebuild (no script)
@@ -171,7 +227,7 @@ Set in the Quadlet file (`/etc/containers/systemd/eris-cloud-agent.container`) o
 | Variable | Default | Notes |
 |----------|---------|--------|
 | `ERIS_CLOUD_PUBLIC_URL` | `http://agents.ericservic.es:6443` | URL clients use |
-| `ERIS_CLOUD_GPU` | `auto` | `auto` / `cuda` / `vulkan` / `cpu` |
+| `ERIS_CLOUD_GPU` | `auto` (GPU image) / `false` (CPU image) | `auto` / `cuda` / `vulkan` / `false` / `cpu` |
 | `ERIS_CLOUD_MAX_PARALLEL` | `2` | Concurrent jobs |
 | `ERIS_CLOUD_DATA` | `/var/lib/eris-cloud` | Models + workspaces |
 | `ERIS_CLOUD_ALLOW_ANONYMOUS` | _(unset)_ | `1` = allow unauthenticated jobs (dev only) |

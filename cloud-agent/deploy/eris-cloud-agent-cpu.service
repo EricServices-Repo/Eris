@@ -1,0 +1,41 @@
+# Classic systemd unit — CPU-only (no NVIDIA). Use when Quadlet is unavailable.
+#
+#   sudo cp cloud-agent/deploy/eris-cloud-agent-cpu.service /etc/systemd/system/eris-cloud-agent.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now eris-cloud-agent.service
+#
+# Build CPU image first:
+#   podman build --target runtime-cpu -t eris-cloud-agent:latest ./cloud-agent
+
+[Unit]
+Description=Eris Cloud Agent (podman, CPU-only)
+Documentation=https://github.com/EricServices-Repo/Eris
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+TimeoutStartSec=900
+
+ExecStartPre=-/usr/bin/podman volume create eris-cloud-data
+ExecStartPre=-/usr/bin/podman rm -f eris-cloud-agent
+
+ExecStart=/usr/bin/podman run --rm --name eris-cloud-agent \
+  --publish 6443:6443 \
+  --stop-signal=SIGTERM \
+  --stop-timeout=25 \
+  --env ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443 \
+  --env ERIS_CLOUD_HOST=0.0.0.0 \
+  --env ERIS_CLOUD_PORT=6443 \
+  --env ERIS_CLOUD_DATA=/var/lib/eris-cloud \
+  --env ERIS_CLOUD_MAX_PARALLEL=1 \
+  --env ERIS_CLOUD_GPU=false \
+  --volume eris-cloud-data:/var/lib/eris-cloud:Z \
+  localhost/eris-cloud-agent:latest
+
+ExecStop=/usr/bin/podman stop -t 25 eris-cloud-agent
+
+[Install]
+WantedBy=multi-user.target

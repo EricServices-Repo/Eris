@@ -1,0 +1,38 @@
+# CPU-only Cloud Agent (no NVIDIA reservation).
+#   docker compose -f cloud-agent/docker-compose.cpu.yml up -d --build
+#   ./cloud-agent/scripts/rebuild.sh --cpu --compose
+
+services:
+  eris-cloud-agent:
+    build:
+      context: .
+      target: runtime-cpu
+    image: eris-cloud-agent:latest
+    container_name: eris-cloud-agent
+    restart: unless-stopped
+    ports:
+      - "6443:6443"
+    environment:
+      ERIS_CLOUD_PUBLIC_URL: http://agents.ericservic.es:6443
+      ERIS_CLOUD_HOST: "0.0.0.0"
+      ERIS_CLOUD_PORT: "6443"
+      ERIS_CLOUD_DATA: /var/lib/eris-cloud
+      ERIS_CLOUD_MAX_PARALLEL: "1"
+      ERIS_CLOUD_GPU: "false"
+    volumes:
+      - eris-cloud-data:/var/lib/eris-cloud
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:6443/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 8s
+      retries: 8
+      start_period: 600s
+
+volumes:
+  eris-cloud-data:

@@ -6,7 +6,7 @@ Inference runs **inside the container** with **Composer Full** (Qwen2.5-Coder-7B
 
 **GPU:** The image includes CUDA libraries. With NVIDIA drivers + Container Toolkit on the host, the model runs on GPU (`ERIS_CLOUD_GPU=auto`). Without a GPU it falls back to CPU.
 
-**VM install / rebuild:** see **[INSTALL.md](./INSTALL.md)** — copy-paste CLI for agents.ericservic.es, plus `./cloud-agent/scripts/rebuild.sh`.
+**VM install / rebuild:** see **[INSTALL.md](./INSTALL.md)** — GPU or **CPU-only** (`./cloud-agent/scripts/rebuild.sh --cpu --install`).
 
 ## Client URL (no user configuration)
 
@@ -32,6 +32,20 @@ cd /opt/eris   # or your clone path
 # first time on a host:
 ./cloud-agent/scripts/rebuild.sh --install
 ```
+
+## Build & run (CPU-only)
+
+No NVIDIA driver or toolkit required:
+
+```bash
+cd /opt/eris   # or your clone
+./cloud-agent/scripts/rebuild.sh --cpu --install
+
+# Compose:
+docker compose -f cloud-agent/docker-compose.cpu.yml up -d --build
+```
+
+Health should report `gpuMode: "false"`. Jobs still use Composer Full; expect slower step times and keep `ERIS_CLOUD_MAX_PARALLEL=1`.
 
 ## Build & run (GPU)
 

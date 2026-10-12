@@ -1,0 +1,42 @@
+# Podman Quadlet — CPU-only Cloud Agent (no NVIDIA device / no GPU toolkit).
+#
+# Install on a CPU VM:
+#   podman build --target runtime-cpu -t eris-cloud-agent:latest ./cloud-agent
+#   sudo cp cloud-agent/deploy/eris-cloud-agent-cpu.container /etc/containers/systemd/eris-cloud-agent.container
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now eris-cloud-agent.service
+#
+# Or: ./cloud-agent/scripts/rebuild.sh --cpu --install
+#
+# Note: inference is slower than GPU. Prefer ERIS_CLOUD_MAX_PARALLEL=1.
+
+[Unit]
+Description=Eris Cloud Agent CPU-only (agents.ericservic.es:6443)
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=localhost/eris-cloud-agent:latest
+ContainerName=eris-cloud-agent
+PublishPort=6443:6443
+Volume=eris-cloud-data:/var/lib/eris-cloud:Z
+Environment=ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443
+Environment=ERIS_CLOUD_HOST=0.0.0.0
+Environment=ERIS_CLOUD_PORT=6443
+Environment=ERIS_CLOUD_DATA=/var/lib/eris-cloud
+Environment=ERIS_CLOUD_MAX_PARALLEL=1
+Environment=ERIS_CLOUD_GPU=false
+PodmanArgs=--restart=on-failure:5
+HealthCmd=node -e "fetch('http://127.0.0.1:6443/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+HealthInterval=30s
+HealthTimeout=8s
+# Allow first-boot Composer Full download (~4.7 GB) before marking unhealthy
+HealthStartPeriod=600s
+HealthRetries=8
+
+[Service]
+Restart=always
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target

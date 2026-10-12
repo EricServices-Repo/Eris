@@ -1,9 +1,5 @@
 import type { UsageEntitlement } from '@/shared/api'
 import type { CloudHealth } from '@/shared/cloud-agents'
-import {
-  cloudAgentsStatusLabel,
-  shouldUseCloudAgents
-} from '@/shared/cloud-agents'
 
 export type ConnectionIssue = {
   id: string
@@ -57,21 +53,7 @@ export function buildConnectionIssues(input: {
     })
   }
 
-  const cloud = input.cloudHealth
-  if (cloud && !input.accountNeedsReauth) {
-    const ready = shouldUseCloudAgents(cloud)
-    if (!ready) {
-      const signedIn = cloud.authenticated === true
-      issues.push({
-        id: 'cloud',
-        tone: signedIn ? 'warn' : 'info',
-        title: signedIn ? 'Cloud Agents unavailable' : 'Cloud Agents offline',
-        detail: `${cloudAgentsStatusLabel(cloud)}. Local agents and Composer Lite still work.`,
-        actionLabel: signedIn ? 'Details' : 'Account',
-        onAction: signedIn ? input.onOpenAgent || input.onOpenAccount : input.onOpenAccount
-      })
-    }
-  }
+  // Cloud Agents status lives in the status bar only (no top banner on timeout/offline).
 
   if (input.modelsOk === false) {
     issues.push({
