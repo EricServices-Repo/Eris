@@ -1,5 +1,4 @@
 import type { AppSettings, TurnPlan } from '../../../../src/shared/settings-schema'
-import { isExactBuiltinReady, isBuiltinRef, resolveExactBuiltinRef } from '../builtin-model'
 import { findAgent, getProjectAgents, listResolvedAgents } from '../agents'
 import { planChatTurn } from '../chat-router'
 
@@ -41,19 +40,7 @@ export async function decideMidRunAdapt(options: {
   actionLog: string[]
   filesTouched: string[]
 }): Promise<MidRunAdaptDecision> {
-  const toolsModel = options.plan.models.tools
-  const exact = isBuiltinRef(toolsModel) ? resolveExactBuiltinRef(toolsModel) : null
-  const isLite = exact === 'builtin:composer-lite' || (exact != null && /lite/i.test(exact))
-  const fullReady = isExactBuiltinReady('builtin:composer')
-
-  if (options.escalateCount === 0 && isLite && fullReady) {
-    return {
-      kind: 'escalate',
-      reason: 'Mid-run escalate: tools → Composer Full after stuck signals',
-      nextToolsModel: 'builtin:composer'
-    }
-  }
-
+  // Composer Full is Cloud Agents only — never mid-run escalate to local Full.
   if (options.rerouteCount >= 1) {
     return { kind: null, reason: '' }
   }
@@ -74,13 +61,6 @@ export async function decideMidRunAdapt(options: {
   }
 
   if (!targetId) {
-    if (options.escalateCount === 0 && isLite && fullReady) {
-      return {
-        kind: 'escalate',
-        reason: 'Mid-run escalate: tools → Composer Full',
-        nextToolsModel: 'builtin:composer'
-      }
-    }
     return { kind: null, reason: '' }
   }
 

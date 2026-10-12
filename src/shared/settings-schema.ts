@@ -44,7 +44,7 @@ export const ModelConnectionSchema = z.object({
   provider: z.string(),
   enabled: z.boolean(),
   baseUrl: z.string(),
-  /** Key name in safeStorage, never raw secret in JSON */
+  /** Key name in local secrets.json, never raw secret in settings JSON */
   apiKeyRef: z.string(),
   models: z.array(z.string())
 })
@@ -128,7 +128,7 @@ export const SettingsSchema = z.object({
   github: z.object({
     /** github.com or GitHub Enterprise host */
     host: z.string(),
-    /** safeStorage key for personal access token */
+    /** Local secrets.json key for personal access token */
     tokenRef: z.string(),
     preferredProtocol: z.enum(['https', 'ssh']),
     /** Workspace: owner/repo (e.g. acme/app) */
@@ -142,7 +142,7 @@ export const SettingsSchema = z.object({
   ericServices: z.object({
     /** Origin for the site API, e.g. https://www.ericservic.es */
     apiBase: z.string(),
-    /** safeStorage key for Eris API bearer token (eseris_…) */
+    /** Local secrets.json key for Eris API bearer token (eseris_…) */
     tokenRef: z.string(),
     linked: z.boolean(),
     username: z.string(),
@@ -174,6 +174,13 @@ export const SettingsSchema = z.object({
   }),
   general: z.object({
     restoreLastWorkspace: z.boolean(),
+    /** GitHub Releases auto-update (electron-updater) */
+    updates: z.object({
+      /** Periodically check GitHub for a newer release */
+      autoCheck: z.boolean(),
+      /** Download in the background when an update is found */
+      autoDownload: z.boolean()
+    }),
     logging: z.object({
       enabled: z.boolean(),
       /** Empty = app default logs folder under Application Support */

@@ -1,5 +1,6 @@
 import type { ResolvedAgent } from '@/shared/settings-schema'
 import type { CloudHealth } from '@/shared/cloud-agents'
+import type { UpdateStatusSnapshot, UsageEntitlement } from '@/shared/api'
 import {
   CLOUD_AGENTS_BASE_URL,
   cloudAgentsStatusLabel,
@@ -14,11 +15,59 @@ interface Props {
   composerReady: boolean
   modelsOk: boolean
   cloudHealth?: CloudHealth | null
+  entitlement?: UsageEntitlement | null
+  accountNeedsReauth?: boolean
   appVersion?: string | null
+  updateStatus?: UpdateStatusSnapshot | null
   disabled?: boolean
   onOpenSettings: () => void
   onOpenAgentSettings?: () => void
+  onOpenModels?: () => void
+  onOpenUsage?: () => void
+  onOpenAccount?: () => void
+  onCheckUpdates?: () => void
   onAgentChange: (agentId: string | 'auto') => void
+}
+
+function formatQuota(ent: UsageEntitlement): string {
+  if (ent.plan === 'pro') return 'Pro · Unlimited'
+  const left = ent.requests.remaining
+  const limit = ent.requests.limit
+  if (left == null || limit == null) return 'Free'
+  return `Free · ${left}/${limit} req`
+}
+
+/** green = ready, yellow = partial, red = none */
+function modelsLight(
+  composerReady: boolean,
+  modelsOk: boolean
+): { tone: 'ok' | 'warn' | 'danger'; label: string; title: string } {
+  if (composerReady && modelsOk) {
+    return {
+      tone: 'ok',
+      label: 'Models',
+      title: 'Composer Lite and connected providers are ready'
+    }
+  }
+  if (composerReady && !modelsOk) {
+    return {
+      tone: 'warn',
+      label: 'Models',
+      title: 'Composer Lite ready · Ollama / API providers offline'
+    }
+  }
+  if (!composerReady && modelsOk) {
+    return {
+      tone: 'warn',
+      label: 'Models',
+      title: 'External providers ready · download Composer Lite for offline chat'
+    }
+  }
+  return {
+    tone: 'danger',
+    label: 'No models',
+    title: 'No local models ready — download Composer Lite or connect Ollama in Settings → Models'
+  }
 }
 
 export function StatusBar({
@@ -28,15 +77,29 @@ export function StatusBar({
   composerReady,
   modelsOk,
   cloudHealth = null,
+  entitlement = null,
+  accountNeedsReauth = false,
   appVersion,
+  updateStatus = null,
   disabled,
   onOpenSettings,
   onOpenAgentSettings,
+  onOpenModels,
+  onOpenUsage,
+  onOpenAccount,
+  onCheckUpdates,
   onAgentChange
 }: Props) {
   const cloudReady = isCloudAgentsReady(cloudHealth)
   const preferCloud = shouldUseCloudAgents(cloudHealth)
   const cloudTitle = `${cloudAgentsStatusLabel(cloudHealth)}\n${CLOUD_AGENTS_BASE_URL} (plain HTTP)\nOpen Settings → Agent for metrics`
+  const models = modelsLight(composerReady, modelsOk)
+
+  let cloudLabel = 'Local agents'
+  if (accountNeedsReauth) cloudLabel = 'Re-auth'
+  else if (cloudHealth?.authenticated !== true) cloudLabel = 'Sign in'
+  else if (cloudReady) cloudLabel = 'Cloud'
+  else if (preferCloud) cloudLabel = 'Cloud…'
 
   return (
     <footer className="status-bar">
@@ -53,38 +116,74 @@ export function StatusBar({
           Settings
         </button>
         {appVersion && (
-          <span className="status-bar-version" title={`Eris v${appVersion}`}>
-            v{appVersion}
-          </span>
+          <button
+            type="button"
+            className={`status-bar-btn status-bar-version${
+              updateStatus?.state === 'available' || updateStatus?.state === 'downloaded'
+                ? ' is-warn'
+                : ''
+            }`}
+            onClick={() => onCheckUpdates?.()}
+            title={
+              updateStatus?.state === 'available' || updateStatus?.state === 'downloaded'
+                ? `Update ${updateStatus.availableVersion} ready — click to check`
+                : `Eris v${appVersion} — check for updates`
+            }
+          >
+            {updateStatus?.state === 'available' || updateStatus?.state === 'downloaded'
+              ? `v${appVersion} ↑`
+              : `v${appVersion}`}
+          </button>
         )}
         <button
           type="button"
-          className="status-bar-btn"
+          className={`status-bar-btn${accountNeedsReauth ? ' is-warn' : ''}`}
           onClick={onOpenAgentSettings}
           title={cloudTitle}
         >
-          <span className={`status-dot${preferCloud ? ' ok' : ''}`} />
-          <span className="status-bar-label">
-            {cloudReady
-              ? 'Cloud'
-              : preferCloud
-                ? 'Cloud…'
-                : cloudHealth?.authenticated !== true
-                  ? 'Sign in'
-                  : 'Local agents'}
-          </span>
+          <span
+            className={`status-dot${preferCloud && !accountNeedsReauth ? ' ok' : ''}${
+              accountNeedsReauth ? ' warn' : ''
+            }`}
+          />
+          <span className="status-bar-label">{cloudLabel}</span>
         </button>
+        {entitlement && (
+          <button
+            type="button"
+            className={`status-bar-btn status-bar-plan${
+              entitlement.overLimit || accountNeedsReauth ? ' is-warn' : ''
+            }`}
+            onClick={() => {
+              if (accountNeedsReauth) onOpenAccount?.()
+              else onOpenUsage?.()
+            }}
+            title={
+              accountNeedsReauth
+                ? 'Session expired — sign in again'
+                : entitlement.blockedReason ||
+                  `${entitlement.planLabel} plan · today ${entitlement.requests.used} requests` +
+                    (entitlement.requests.limit != null
+                      ? ` / ${entitlement.requests.limit}`
+                      : ' (unlimited)')
+            }
+          >
+            <span className="status-bar-plan-pill">{formatQuota(entitlement)}</span>
+          </button>
+        )}
       </div>
 
       <div className="status-bar-right" title={routeLabel || undefined}>
-        <span
-          className={`status-dot ${modelsOk ? 'ok' : ''}`}
-          title={
-            composerReady
-              ? 'Built-in Composer ready'
-              : 'Download Composer Lite in Settings → Models (~1 GB)'
-          }
-        />
+        <button
+          type="button"
+          className={`status-bar-btn status-bar-models tone-${models.tone}`}
+          onClick={() => onOpenModels?.()}
+          title={models.title}
+        >
+          <span className={`status-dot ${models.tone === 'ok' ? 'ok' : models.tone}`} />
+          <span className="status-bar-models-label">{models.label}</span>
+        </button>
+        <span className="status-bar-divider" aria-hidden />
         <span className="status-bar-label">Agent</span>
         <select
           className="status-bar-select"
@@ -95,8 +194,6 @@ export function StatusBar({
         >
           <option value="auto">Auto route</option>
           {agents.map((a) => {
-            // Only show a model when the agent overrides it. Empty model inherits
-            // models.defaultModel (often Ollama) and should not clutter every row.
             const explicitModel = a.model.trim()
             return (
               <option key={a.id} value={a.id} title={a.resolvedModel || undefined}>

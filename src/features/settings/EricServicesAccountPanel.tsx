@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { AppSettings, SettingsScope } from '@/shared/settings-schema'
 
 type AccountStatus = Awaited<ReturnType<typeof window.ide.ericServicesStatus>>
@@ -9,6 +9,16 @@ interface Props {
   onScopeChange: (scope: SettingsScope) => void
   onApply: (path: string[], value: unknown) => Promise<void>
   onChanged: () => Promise<void>
+}
+
+function formatSyncedAt(raw: string | null | undefined): string {
+  if (!raw) return 'Never'
+  const ms = Date.parse(raw)
+  if (!Number.isFinite(ms)) return raw
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short'
+  }).format(new Date(ms))
 }
 
 export function EricServicesAccountPanel({
@@ -27,16 +37,18 @@ export function EricServicesAccountPanel({
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [showAdvanced, setShowAdvanced] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
       const s = await window.ide.ericServicesStatus()
       setStatus(s)
       if (s.apiBase) setApiBase(s.apiBase)
+      if (s.username && !username) setUsername(s.username)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load account status')
     }
-  }, [])
+  }, [username])
 
   useEffect(() => {
     void refresh()
@@ -59,74 +71,92 @@ export function EricServicesAccountPanel({
     }
   }
 
-  const linked = Boolean(status?.linked && status?.hasToken)
+  const needsReauth = Boolean(status?.needsReauth)
+  const linked = Boolean(status?.linked && status?.hasToken && !needsReauth)
+  const planLabel = (status?.plan || status?.profile?.erisPlan) === 'pro' ? 'Pro' : 'Free'
+  const syncEnabled = resolved.ericServices?.syncEnabled !== false
+
+  const identity = useMemo(() => {
+    if (status?.username) return `@${status.username}`
+    if (resolved.ericServices?.username) return `@${resolved.ericServices.username}`
+    return null
+  }, [status?.username, resolved.ericServices?.username])
 
   return (
-    <div className="github-settings">
-      <p className="subtitle" style={{ marginTop: 0 }}>
-        Sign in with your{' '}
-        <a
-          href="https://www.ericservic.es/account/eris.php"
-          onClick={(e) => {
-            e.preventDefault()
-            void window.ide.ericServicesOpenAccount()
-          }}
-        >
-          EricServic.es
-        </a>{' '}
-        Control Hub account to link this Eris profile and sync editor, agent, model connections, MCP
-        configs, and user skills across machines. API keys and secrets stay local.
-      </p>
-
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
-        <select
-          className="scope-select"
-          value={scope}
-          onChange={(e) => onScopeChange(e.target.value as SettingsScope)}
-        >
-          <option value="user">User (account / sync)</option>
-          <option value="workspace" disabled>
-            Workspace (not used)
-          </option>
-        </select>
-        <button type="button" className="btn" disabled={busy} onClick={() => void refresh()}>
-          Refresh
-        </button>
-      </div>
+    <div className="es-account">
+      <header className="es-account-hero">
+        <div>
+          <h2 className="es-account-title">EricServic.es</h2>
+          <p className="es-account-lead">
+            Link your Control Hub account to sync profile settings across machines. Secrets and API
+            keys stay on this device.
+          </p>
+        </div>
+        <div className="es-account-hero-actions">
+          <select
+            className="scope-select"
+            value={scope}
+            onChange={(e) => onScopeChange(e.target.value as SettingsScope)}
+            aria-label="Settings scope"
+          >
+            <option value="user">User</option>
+            <option value="workspace" disabled>
+              Workspace
+            </option>
+          </select>
+          <button type="button" className="btn" disabled={busy} onClick={() => void refresh()}>
+            Refresh
+          </button>
+        </div>
+      </header>
 
       {status && (
-        <div className="github-status-card">
-          <div className="model-conn-row-head">
-            <span className={`status-dot ${linked ? 'ok' : ''}`} />
-            <strong>{linked ? 'Linked' : 'Not signed in'}</strong>
-            {status.username && <span className="badge">@{status.username}</span>}
-            {status.hasToken ? (
-              <span className="badge">token</span>
-            ) : (
-              <span className="badge">no token</span>
-            )}
-            {linked && (
-              <span className="badge">
-                {(status.plan || status.profile?.erisPlan) === 'pro' ? 'Pro' : 'Free'}
-              </span>
-            )}
+        <section className={`es-account-card${needsReauth ? ' is-warn' : linked ? ' is-ok' : ''}`}>
+          <div className="es-account-card-top">
+            <div className="es-account-identity">
+              <span className={`status-dot ${linked ? 'ok' : needsReauth ? 'warn' : ''}`} />
+              <div>
+                <div className="es-account-state">
+                  {needsReauth ? 'Session expired' : linked ? 'Signed in' : 'Not signed in'}
+                </div>
+                {(identity || status.email) && (
+                  <div className="es-account-meta">
+                    {identity}
+                    {identity && status.email ? ' · ' : ''}
+                    {status.email}
+                  </div>
+                )}
+              </div>
+            </div>
+            {linked && <span className="es-plan-pill">{planLabel}</span>}
           </div>
-          {status.email && <div className="model-conn-meta">{status.email}</div>}
+
+          {needsReauth && (
+            <div className="es-account-banner">
+              Your device token is no longer valid. Sign in again to restore sync and Cloud Agents.
+            </div>
+          )}
+
           {linked && (
-            <div className="model-conn-meta">
-              Plan is set on www.ericservic.es (admin Free/Pro). Free has daily limits; Pro is
-              unlimited — see Settings → Usage.
-            </div>
+            <dl className="es-account-stats">
+              <div>
+                <dt>Last synced</dt>
+                <dd>{formatSyncedAt(status.lastSyncedAt)}</dd>
+              </div>
+              <div>
+                <dt>Sync on sign-in</dt>
+                <dd>{syncEnabled ? 'On' : 'Off'}</dd>
+              </div>
+              <div>
+                <dt>API</dt>
+                <dd className="es-account-ellipsis" title={status.apiBase}>
+                  {status.apiBase.replace(/^https?:\/\//, '')}
+                </dd>
+              </div>
+            </dl>
           )}
-          {status.lastSyncedAt && (
-            <div className="model-conn-meta">Last synced · {status.lastSyncedAt}</div>
-          )}
-          {status.error && (
-            <div className="subtitle" style={{ color: 'var(--danger)', marginTop: 8 }}>
-              {status.error}
-            </div>
-          )}
-          <div className="model-conn-actions">
+
+          <div className="es-account-actions">
             <button
               type="button"
               className="btn"
@@ -135,7 +165,7 @@ export function EricServicesAccountPanel({
             >
               Open account
             </button>
-            {linked && status.plan !== 'pro' && (
+            {linked && planLabel !== 'Pro' && (
               <button
                 type="button"
                 className="btn btn-primary"
@@ -146,45 +176,48 @@ export function EricServicesAccountPanel({
               </button>
             )}
           </div>
-        </div>
+        </section>
       )}
 
-      {!linked && (
-        <section className="github-section">
-          <h3>Sign in</h3>
-          <p className="model-conn-hint">
-            Use the same username and password as{' '}
-            <code>www.ericservic.es/loginform.php</code>. A device token is issued for Eris (password
-            is not stored).
+      {(!linked || needsReauth) && (
+        <section className="es-account-section">
+          <h3>{needsReauth ? 'Sign in again' : 'Sign in'}</h3>
+          <p className="es-account-hint">
+            Use your EricServic.es username and password. Eris stores a device token only — never
+            your password.
           </p>
-          <label className="field">
-            <span>API base</span>
-            <input
-              value={apiBase}
-              onChange={(e) => setApiBase(e.target.value)}
-              placeholder="https://www.ericservic.es"
-            />
-          </label>
-          <label className="field">
-            <span>Username</span>
-            <input
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="username"
-              autoComplete="username"
-            />
-          </label>
-          <label className="field">
-            <span>Password</span>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              autoComplete="current-password"
-            />
-          </label>
-          <div className="model-conn-actions">
+          {showAdvanced && (
+            <label className="field">
+              <span>API base</span>
+              <input
+                value={apiBase}
+                onChange={(e) => setApiBase(e.target.value)}
+                placeholder="https://www.ericservic.es"
+              />
+            </label>
+          )}
+          <div className="es-account-form-grid">
+            <label className="field">
+              <span>Username</span>
+              <input
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="username"
+                autoComplete="username"
+              />
+            </label>
+            <label className="field">
+              <span>Password</span>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="current-password"
+              />
+            </label>
+          </div>
+          <div className="es-account-actions">
             <button
               type="button"
               className="btn btn-primary"
@@ -205,7 +238,7 @@ export function EricServicesAccountPanel({
                   setPassword('')
                   const syncNote =
                     result.sync?.ok === false
-                      ? ` · sync note: ${result.sync.error || 'deferred'}`
+                      ? ` · sync: ${result.sync.error || 'deferred'}`
                       : result.sync?.direction
                         ? ` · synced (${result.sync.direction})`
                         : ''
@@ -219,7 +252,14 @@ export function EricServicesAccountPanel({
                 })
               }
             >
-              Sign in &amp; sync
+              {needsReauth ? 'Re-authenticate' : 'Sign in & sync'}
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => setShowAdvanced((v) => !v)}
+            >
+              {showAdvanced ? 'Hide API base' : 'Advanced'}
             </button>
           </div>
         </section>
@@ -227,27 +267,30 @@ export function EricServicesAccountPanel({
 
       {linked && (
         <>
-          <section className="github-section">
-            <h3>Profile sync</h3>
-            <p className="model-conn-hint">
-              Syncs editor prefs, agent routing, model connections (URLs/models only), MCP server
-              configs, GitHub host/protocol, and your user skills. API keys, tokens, MCP env secret
-              values, and machine paths stay local.
-            </p>
-            <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <input
-                type="checkbox"
-                checked={resolved.ericServices?.syncEnabled !== false}
-                onChange={(e) =>
-                  void run(async () => {
-                    await onApply(['ericServices', 'syncEnabled'], e.target.checked)
-                    await onChanged()
-                  })
-                }
-              />
-              <span>Enable sync on sign-in</span>
-            </label>
-            <div className="model-conn-actions">
+          <section className="es-account-section">
+            <div className="es-account-section-head">
+              <div>
+                <h3>Profile sync</h3>
+                <p className="es-account-hint">
+                  Editor, agent routing, model connection metadata, MCP configs, and user skills.
+                  Tokens and secret env values stay local.
+                </p>
+              </div>
+              <label className="es-toggle">
+                <input
+                  type="checkbox"
+                  checked={syncEnabled}
+                  onChange={(e) =>
+                    void run(async () => {
+                      await onApply(['ericServices', 'syncEnabled'], e.target.checked)
+                      await onChanged()
+                    })
+                  }
+                />
+                <span>Sync on sign-in</span>
+              </label>
+            </div>
+            <div className="es-sync-actions">
               <button
                 type="button"
                 className="btn btn-primary"
@@ -261,8 +304,8 @@ export function EricServicesAccountPanel({
                     }
                     setMessage(
                       result.direction === 'pull'
-                        ? 'Pulled profile settings from EricServic.es'
-                        : 'Pushed profile settings to EricServic.es'
+                        ? 'Pulled latest profile from EricServic.es'
+                        : 'Pushed local profile to EricServic.es'
                     )
                     await onChanged()
                     await refresh()
@@ -284,8 +327,8 @@ export function EricServicesAccountPanel({
                     }
                     setMessage(
                       result.updatedAt
-                        ? 'Pulled remote profile settings'
-                        : 'No remote settings yet — use Push to upload'
+                        ? 'Pulled remote profile'
+                        : 'Nothing remote yet — push to upload'
                     )
                     await onChanged()
                     await refresh()
@@ -305,7 +348,7 @@ export function EricServicesAccountPanel({
                       setError(result.error || 'Push failed')
                       return
                     }
-                    setMessage('Pushed local profile settings')
+                    setMessage('Pushed local profile')
                     await onChanged()
                     await refresh()
                   })
@@ -316,11 +359,10 @@ export function EricServicesAccountPanel({
             </div>
           </section>
 
-          <section className="github-section">
+          <section className="es-account-section es-account-section-muted">
             <h3>Sign out</h3>
-            <p className="model-conn-hint">
-              Revokes this device token on EricServic.es and clears the local link. Synced settings
-              already applied stay on this machine.
+            <p className="es-account-hint">
+              Revokes this device token. Settings already applied on this machine are kept.
             </p>
             <button
               type="button"
@@ -330,6 +372,7 @@ export function EricServicesAccountPanel({
                 void run(async () => {
                   await window.ide.ericServicesLogout()
                   setMessage('Signed out')
+                  setUsername('')
                   await onChanged()
                   await refresh()
                 })
@@ -341,14 +384,9 @@ export function EricServicesAccountPanel({
         </>
       )}
 
-      {error && (
-        <div className="subtitle" style={{ color: 'var(--danger)' }}>
-          {error}
-        </div>
-      )}
-      {message && !error && (
-        <div className="subtitle" style={{ color: 'var(--success, #3d9a5f)' }}>
-          {message}
+      {(error || message) && (
+        <div className={`es-account-toast${error ? ' is-error' : ' is-ok'}`}>
+          {error || message}
         </div>
       )}
     </div>

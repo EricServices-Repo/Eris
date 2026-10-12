@@ -25,6 +25,8 @@ import { WorkspacePanel } from './panels/WorkspacePanel'
 interface Props {
   open: boolean
   hasWorkspace: boolean
+  /** Already-loaded app settings for instant paint before IPC returns. */
+  seedResolved?: AppSettings | null
   initialCategory?: Category
   startCreateSkill?: boolean
   onClose: () => void
@@ -35,6 +37,7 @@ interface Props {
 export function SettingsModal({
   open,
   hasWorkspace,
+  seedResolved = null,
   initialCategory,
   startCreateSkill,
   onClose,
@@ -59,26 +62,36 @@ export function SettingsModal({
   const { selectedLogFile, loadLogs } = logsState
   const { loadRules } = rulesState
   const { setMcpRuntime } = mcpState
-  const { loadWorkspaceContextDoc, loadEmailSources } = contextState
+  const { loadWorkspaceContextDoc } = contextState
 
   const load = async () => {
-    const [layers, models, agents] = await Promise.all([
-      window.ide.getLayeredSettings(),
-      window.ide.modelsStatus().catch(() => null),
-      window.ide.getProjectAgents().catch(() => null)
-    ])
+    // Paint the shell as soon as layered settings return — do not wait on
+    // modelsStatus (Ollama probe can take seconds when offline).
+    const layersP = window.ide.getLayeredSettings()
+    const modelsP = window.ide.modelsStatus().catch(() => null)
+    const agentsP = window.ide.getProjectAgents().catch(() => null)
+
+    const layers = await layersP
     setLayered(layers)
-    if (models) setStatus(models)
-    setProjectAgents(agents)
     setAgentsDirty(false)
     setAgentsError(null)
-    if (category === 'general' || open) {
-      void loadLogs(selectedLogFile || undefined)
-    }
+
+    const [models, agents] = await Promise.all([modelsP, agentsP])
+    if (models) setStatus(models)
+    setProjectAgents(agents)
   }
 
   useEffect(() => {
     if (!open) return
+    // Instant shell from in-memory settings; IPC refresh fills layers/models next.
+    if (!layered && seedResolved) {
+      setLayered({
+        defaults: seedResolved,
+        user: {},
+        workspace: {},
+        resolved: seedResolved
+      })
+    }
     void load()
   }, [open])
 
@@ -95,7 +108,6 @@ export function SettingsModal({
       if (initialCategory === 'rules') void loadRules()
       if (initialCategory === 'context') {
         void loadWorkspaceContextDoc()
-        void loadEmailSources()
       }
     }
   }, [open, initialCategory, startCreateSkill])
@@ -107,7 +119,6 @@ export function SettingsModal({
   useEffect(() => {
     if (open && category === 'context') {
       void loadWorkspaceContextDoc()
-      void loadEmailSources()
     }
   }, [open, category, hasWorkspace])
 
@@ -188,7 +199,20 @@ export function SettingsModal({
     })
   }, [resolved, category, search, agentIds])
 
-  if (!open || !resolved || !layered) return null
+  if (!open) return null
+
+  if (!resolved || !layered) {
+    return (
+      <div className="modal-backdrop" onClick={onClose}>
+        <div className="modal settings-modal-loading" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content">
+            <h2>Settings</h2>
+            <p className="subtitle">Loading…</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="modal-backdrop" onClick={onClose}>

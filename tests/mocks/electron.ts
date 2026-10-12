@@ -11,12 +11,6 @@ export const app = {
   getName: () => 'Eris'
 }
 
-export const safeStorage = {
-  isEncryptionAvailable: () => false,
-  encryptString: (s: string) => Buffer.from(s),
-  decryptString: (b: Buffer) => b.toString()
-}
-
 export const ipcMain = { handle: () => undefined, on: () => undefined }
 export const dialog = { showMessageBox: async () => ({ response: 0 }) }
 export const shell = { openExternal: async () => undefined }
@@ -24,4 +18,4 @@ export const utilityProcess = { fork: () => ({ on: () => undefined, postMessage:
 export class BrowserWindow {}
 export type WebContents = { send: (...args: unknown[]) => void; isDestroyed: () => boolean }
 
-export default { app, safeStorage, ipcMain, dialog, shell, utilityProcess, BrowserWindow }
+export default { app, ipcMain, dialog, shell, utilityProcess, BrowserWindow }

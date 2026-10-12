@@ -1,0 +1,7 @@
+# Public update feed — no client token required.
+# Source stays private; installers are mirrored to EricServices-Repo/Eris-updates.
+provider: github
+owner: EricServices-Repo
+repo: Eris-updates
+releaseType: release
+updaterCacheDirName: eris-updater

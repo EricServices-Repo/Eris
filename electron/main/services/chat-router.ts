@@ -40,7 +40,6 @@ const READ_TOOLS = new Set([
   'related_files',
   'retrieve',
   'read_context',
-  'read_email',
   'list_skills',
   'read_skill',
   'git_status',
@@ -224,7 +223,9 @@ export function resolveModelRoles(options: {
   preferEscalate: boolean
 }): { chat: string; tools: string; escalateToFull: boolean; error?: string } {
   const selected = options.selectedModel.trim() || 'builtin:composer-lite'
-  const needsTools = options.toolPolicy !== 'none' && intentNeedsTools(options.intent)
+  void options.toolPolicy
+  void options.preferEscalate
+  void options.intent
 
   if (!isBuiltinRef(selected)) {
     return { chat: selected, tools: selected, escalateToFull: false }
@@ -240,26 +241,27 @@ export function resolveModelRoles(options: {
     }
   }
 
-  const isLite = exact === 'builtin:composer-lite' || /lite/i.test(exact)
-  const fullReady = isExactBuiltinReady('builtin:composer')
+  // Desktop always runs Composer Lite locally. Composer Full runs on Cloud Agents only.
+  const liteReady = resolveExactBuiltinRef('builtin:composer-lite')
+  const lite = liteReady || 'builtin:composer-lite'
+  const isFull =
+    exact === 'builtin:composer' || (!/lite/i.test(exact) && /composer$/i.test(exact))
 
-  if (!needsTools || !options.preferEscalate || !isLite) {
-    return { chat: exact, tools: exact, escalateToFull: false }
-  }
-
-  if (fullReady) {
-    return {
-      chat: exact,
-      tools: 'builtin:composer',
-      escalateToFull: true
+  if (isFull) {
+    if (!liteReady) {
+      return {
+        chat: exact,
+        tools: exact,
+        escalateToFull: false,
+        error:
+          'Composer Full runs on Cloud Agents. Download Composer Lite for local chat, or sign in and use a Cloud Agent.'
+      }
     }
+    return { chat: lite, tools: lite, escalateToFull: false }
   }
 
-  return {
-    chat: exact,
-    tools: exact,
-    escalateToFull: false
-  }
+  // Stay on Lite for local chat + tools (no local Full escalate).
+  return { chat: exact, tools: exact, escalateToFull: false }
 }
 
 function formatReason(parts: {

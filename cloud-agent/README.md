@@ -2,9 +2,11 @@
 
 Dockerized worker that runs Cloud Agent jobs for **every Eris install**.
 
-Inference runs **inside the container** with a local GGUF (Composer Lite / Qwen2.5-Coder-1.5B) via `node-llama-cpp`. No external LLM API is required.
+Inference runs **inside the container** with **Composer Full** (Qwen2.5-Coder-7B GGUF) via `node-llama-cpp`. Desktop Eris keeps **Composer Lite** locally; Cloud Agents use the full model. No external LLM API is required.
 
 **GPU:** The image includes CUDA libraries. With NVIDIA drivers + Container Toolkit on the host, the model runs on GPU (`ERIS_CLOUD_GPU=auto`). Without a GPU it falls back to CPU.
+
+**VM install / rebuild:** see **[INSTALL.md](./INSTALL.md)** — copy-paste CLI for agents.ericservic.es, plus `./cloud-agent/scripts/rebuild.sh`.
 
 ## Client URL (no user configuration)
 
@@ -13,6 +15,23 @@ http://agents.ericservic.es:6443
 ```
 
 Plain HTTP — no TLS certificate required. Container listen port: **6443**.
+
+## Image improvements
+
+1. Reproducible `npm ci` install from `package-lock.json`
+2. `tini` as PID 1 + `SIGTERM` graceful drain (15s force exit)
+3. Resumable Composer Full download (HTTP Range) into the data volume
+4. Health reports `ready` when the local model (or remote LLM) can take jobs
+5. Easier ops: `docker-compose.yml`, 600s health start period, `INSTALL_CUDA_VERSION` build arg, VM rebuild script
+
+### Rebuild on the VM (fast path)
+
+```bash
+cd /opt/eris   # or your clone path
+./cloud-agent/scripts/rebuild.sh
+# first time on a host:
+./cloud-agent/scripts/rebuild.sh --install
+```
 
 ## Build & run (GPU)
 
@@ -28,12 +47,17 @@ nvidia-ctk cdi list
 # from repo root
 podman build -t eris-cloud-agent ./cloud-agent
 # or: docker build -t eris-cloud-agent ./cloud-agent
+# optional newer CUDA libs: --build-arg INSTALL_CUDA_VERSION=13.1
+
+# Compose (Docker Engine + NVIDIA toolkit)
+docker compose -f cloud-agent/docker-compose.yml up -d --build
 
 # Manual run with GPU
 podman run -d --name eris-cloud-agent \
   --restart unless-stopped \
   --device nvidia.com/gpu=all \
   --security-opt=label=disable \
+  --stop-signal=SIGTERM \
   -p 6443:6443 \
   -e ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443 \
   -e ERIS_CLOUD_GPU=auto \
@@ -45,10 +69,10 @@ Verify GPU inside the container:
 
 ```bash
 podman exec eris-cloud-agent npx --no node-llama-cpp inspect gpu
-curl -sS http://127.0.0.1:6443/v1/health | jq '.localModel.gpu,.gpuMode'
+curl -sS http://127.0.0.1:6443/v1/health | jq '{ready,gpuMode,localModel}'
 ```
 
-On first start the worker downloads Composer Lite (~1 GB) into `/var/lib/eris-cloud/models`.
+On first start the worker downloads Composer Full (~4.7 GB) into `/var/lib/eris-cloud/models` (resumes if interrupted).
 
 | `ERIS_CLOUD_GPU` | Behavior |
 |------------------|----------|
@@ -108,6 +132,9 @@ When `ERIS_CLOUD_LLM_BASE` is unset (default), the local GGUF is used.
 | GET | `/v1/jobs` | List jobs |
 | POST | `/v1/jobs` | Create job `{ goal, agentId?, repoUrl?, branch?, files? }` |
 | GET | `/v1/jobs/:id` | Job status / tools / answer |
+| GET | `/v1/jobs/:id/artifacts` | Patch bundle `{ files: [{ path, content, before }] }` for Eris Diff Review |
 | POST | `/v1/jobs/:id/stop` | Cancel |
 
-Health includes `inference: "local"`, `gpuMode`, and `localModel: { status, modelId, modelName, gpu }`.
+Health includes `ready`, `inference: "local"`, `gpuMode`, and `localModel: { status, modelId, modelName, gpu }`. `ok` means the process is up; `ready` means jobs can run.
+
+When a job finishes, Eris can **Apply changes** to download `/artifacts` and open Diff Review in the desktop app.

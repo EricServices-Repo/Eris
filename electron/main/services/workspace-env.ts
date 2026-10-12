@@ -1,4 +1,4 @@
-import { execFileSync } from 'child_process'
+import { execFile } from 'child_process'
 import { existsSync, mkdirSync, readdirSync } from 'fs'
 import { delimiter, join } from 'path'
 import { homedir } from 'os'
@@ -83,32 +83,48 @@ function hostToolPath(): string {
   return cachedHostToolPath
 }
 
+/** Cached login-shell PATH; null = resolved empty; undefined = not warmed yet. */
 let cachedLoginPath: string | null | undefined
+let loginPathWarmStarted = false
 
 /**
- * PATH from an interactive login shell — Electron/Dock launches omit Homebrew/nvm.
- * Cached for the process lifetime.
+ * Cached login-shell PATH only — never blocks the Electron main process.
+ * Call {@link warmLoginShellPath} at startup to fill the cache in the background.
  */
 export function resolveLoginShellPath(): string {
-  if (cachedLoginPath !== undefined) return cachedLoginPath || ''
+  return cachedLoginPath || ''
+}
+
+/**
+ * Resolve PATH from an interactive login shell without blocking IPC.
+ * Dock/Finder launches omit Homebrew/nvm; this fills that gap after first paint.
+ */
+export function warmLoginShellPath(): void {
+  if (loginPathWarmStarted) return
+  loginPathWarmStarted = true
 
   const shell = process.env.SHELL || '/bin/zsh'
-  try {
-    const out = execFileSync(shell, ['-ilc', 'printenv PATH'], {
+  execFile(
+    shell,
+    ['-ilc', 'printenv PATH'],
+    {
       encoding: 'utf8',
       timeout: 4000,
       env: { ...process.env, TERM: 'dumb' }
-    }).trim()
-    cachedLoginPath = out || null
-  } catch {
-    cachedLoginPath = null
-  }
-  return cachedLoginPath || ''
+    },
+    (err, stdout) => {
+      const next = !err && stdout?.trim() ? stdout.trim() : null
+      cachedLoginPath = next
+      // Rebuild host PATH on next use so Homebrew/nvm bins appear.
+      cachedHostToolPath = null
+    }
+  )
 }
 
 /** For tests / after user changes shell config mid-session. */
 export function clearLoginShellPathCache(): void {
   cachedLoginPath = undefined
+  loginPathWarmStarted = false
   cachedMacToolDirs = null
   cachedHostToolPath = null
 }

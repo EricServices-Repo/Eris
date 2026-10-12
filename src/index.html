@@ -8,9 +8,31 @@
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Eris</title>
+    <style>
+      html,
+      body,
+      #root {
+        margin: 0;
+        height: 100%;
+        background: #1a1b1e;
+        color: #e8e8ea;
+        font-family: 'SF Pro Text', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      }
+      .boot-splash {
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #9a9ba3;
+        font-size: 14px;
+        letter-spacing: 0.02em;
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot-splash">Loading Eris…</div>
+    </div>
     <script type="module" src="./main.tsx"></script>
   </body>
 </html>

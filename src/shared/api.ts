@@ -448,6 +448,7 @@ export interface IdeApi {
     error?: string
     linked: boolean
     hasToken: boolean
+    needsReauth?: boolean
     apiBase: string
     username: string
     email: string
@@ -596,6 +597,23 @@ export interface IdeApi {
     payload: import('./cloud-agents').EnqueueCloudJobRequest
   ) => Promise<BackgroundJob>
   stopCloudJob: (id: string) => Promise<boolean>
+  cloudJobArtifacts: (id: string) => Promise<import('./cloud-agents').CloudJobArtifacts>
+  applyCloudJobArtifacts: (id: string) => Promise<{
+    ok: boolean
+    checkpointId: string
+    truncated: boolean
+    error?: string
+    diffs: Array<{
+      id: string
+      checkpointId: string
+      opIndex: number
+      path: string
+      before: string | null
+      after: string
+      op: 'write'
+      status: 'pending'
+    }>
+  }>
   aiComplete: (payload: {
     path: string
     language: string
@@ -809,38 +827,12 @@ export interface IdeApi {
     updatedAt: number
     empty: boolean
   }>
-  emailDiscoverSources: (emlFolder?: string) => Promise<
-    Array<{
-      kind: 'thunderbird' | 'outlook' | 'eml'
-      id: string
-      label: string
-      path?: string
-      available: boolean
-      detail?: string
-    }>
-  >
-  emailPickEmlFolder: () => Promise<{ ok: boolean; path: string | null }>
-  emailPull: (payload: {
-    sourceId: string
-    query?: string
-    maxMessages?: number
-    appendToContext?: boolean
-  }) => Promise<{
-    ok: boolean
-    error?: string
-    messages: Array<{
-      id: string
-      source: string
-      from: string
-      to: string
-      subject: string
-      date: string
-      snippet: string
-    }>
-    writtenPath?: string
-    contextUpdated?: boolean
+  resetWorkspaceContext: () => Promise<{
+    body: string
+    pin: string
+    updatedAt: number
+    empty: boolean
   }>
-  emailReadPulled: () => Promise<{ ok: boolean; detail: string; path?: string }>
   getUsageStats: (days?: number) => Promise<UsageSnapshot>
   clearUsageStats: (payload?: { todayOnly?: boolean }) => Promise<UsageSnapshot>
   onMenu: (channel: string, cb: () => void) => () => void
@@ -861,4 +853,39 @@ export interface IdeApi {
     message: string,
     meta?: unknown
   ) => Promise<boolean>
+  getUpdateStatus: () => Promise<UpdateStatusSnapshot>
+  checkForAppUpdates: (silent?: boolean) => Promise<UpdateStatusSnapshot>
+  downloadAppUpdate: () => Promise<UpdateStatusSnapshot>
+  installAppUpdate: () => Promise<{ ok: boolean }>
+  openAppReleasesPage: () => Promise<void>
+  dismissAppUpdate: () => Promise<{ ok: boolean }>
+  onUpdateStatus: (cb: (status: UpdateStatusSnapshot) => void) => () => void
+}
+
+export type UpdateState =
+  | 'idle'
+  | 'disabled'
+  | 'checking'
+  | 'available'
+  | 'not-available'
+  | 'downloading'
+  | 'downloaded'
+  | 'error'
+
+export interface UpdateStatusSnapshot {
+  state: UpdateState
+  currentVersion: string
+  availableVersion?: string
+  releaseName?: string
+  releaseNotes?: string
+  percent?: number
+  bytesPerSecond?: number
+  transferred?: number
+  total?: number
+  error?: string
+  canOpenReleases: boolean
+  autoCheck: boolean
+  autoDownload: boolean
+  packaged: boolean
+  lastCheckedAt?: string
 }

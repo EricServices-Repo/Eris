@@ -33,7 +33,6 @@ import { applyUnifiedPatch, resolveInWorkspace, searchReplaceInFile } from '../w
 import { gitCommit, gitDiff, gitStage, gitStatus, gitStash } from '../git-service'
 import { pushPullFetch, parseGithubRepo } from '../github'
 import { invalidateDiagnosticsCache } from '../diagnostics'
-import { readPulledEmailContext } from '../email-context'
 import { formatSkillsListForAgent, getSkill, slugifySkillId, upsertSkill } from '../skills'
 import { userSkillsDir } from '../paths'
 import {
@@ -942,14 +941,6 @@ export async function* runAgentWithWorkspaceTools(options: {
         }
         if (doc.pin) {
           result.detail = `${prompt}\n\n[pin length ${doc.pin.length} chars]`
-        }
-      } else if (call.name === 'read_email') {
-        const email = readPulledEmailContext(workspacePath)
-        result = {
-          ok: email.ok,
-          detail: email.detail,
-          path: email.path,
-          mutated: false
         }
       } else if (call.name === 'list_skills') {
         result = {

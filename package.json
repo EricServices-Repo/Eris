@@ -1,6 +1,6 @@
 {
   "name": "eris",
-  "version": "0.2.2",
+  "version": "0.2.13",
   "description": "Eris — AI-first desktop IDE for macOS and Windows",
   "main": "./out/main/index.js",
   "author": "Eris",
@@ -32,7 +32,8 @@
     "format:check": "prettier --check .",
     "check": "npm run typecheck && npm run lint && npm test",
     "cloud-agent:build": "npm run build --prefix cloud-agent",
-    "cloud-agent:docker": "docker build -t eris-cloud-agent ./cloud-agent"
+    "cloud-agent:docker": "docker build -t eris-cloud-agent:latest ./cloud-agent",
+    "cloud-agent:compose": "docker compose -f cloud-agent/docker-compose.yml up -d --build"
   },
   "dependencies": {
     "@parcel/watcher": "^2.6.0",
@@ -96,6 +97,10 @@
       "node_modules/@parcel/watcher*/**/*"
     ],
     "extraResources": [
+      {
+        "from": "resources/app-update.yml",
+        "to": "app-update.yml"
+      },
       {
         "from": "resources",
         "to": "resources"
@@ -165,7 +170,7 @@
       {
         "provider": "github",
         "owner": "EricServices-Repo",
-        "repo": "Eris",
+        "repo": "Eris-updates",
         "releaseType": "release"
       }
     ]

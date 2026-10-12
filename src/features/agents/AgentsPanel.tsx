@@ -7,6 +7,7 @@ import {
 } from '@/shared/cloud-agents'
 import { deriveBlackboardStatus } from '@/shared/agent-orchestration'
 import { formatBackgroundJobDetail } from '@/shared/background-job-detail'
+import type { PendingDiff } from '@/features/chat/DiffReview'
 
 interface Props {
   open: boolean
@@ -17,6 +18,8 @@ interface Props {
   onClose: () => void
   onOpenPath?: (path: string) => void
   onBroughtToChat?: (threadId: string) => void
+  /** Surface applied cloud patch files into Diff Review */
+  onCloudDiffs?: (diffs: PendingDiff[]) => void
 }
 
 function isCloudId(id: string): boolean {
@@ -30,7 +33,8 @@ export function AgentsPanel({
   selectedAgentId = 'auto',
   activeThreadId = null,
   onClose,
-  onBroughtToChat
+  onBroughtToChat,
+  onCloudDiffs
 }: Props) {
   const [jobs, setJobs] = useState<BackgroundJob[]>([])
   const [goal, setGoal] = useState('')
@@ -171,7 +175,11 @@ export function AgentsPanel({
         const health = await probeHealth()
         if (shouldUseCloudAgents(health)) {
           try {
-            const job = await window.ide.enqueueCloudJob(payload)
+            const job = await window.ide.enqueueCloudJob({
+              ...payload,
+              // Cloud Agent always runs Composer Full.
+              model: 'composer'
+            })
             setGoal('')
             setSelectedId(job.id)
             void refresh()
@@ -295,16 +303,49 @@ export function AgentsPanel({
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={selected.status !== 'done' || isCloudId(selected.id)}
-                title={isCloudId(selected.id) ? 'Cloud jobs hand off via answer/files — merge is local-only' : undefined}
-                onClick={() =>
+                disabled={
+                  busy ||
+                  (isCloudId(selected.id)
+                    ? selected.status !== 'done' && selected.status !== 'failed'
+                    : selected.status !== 'done')
+                }
+                title={
+                  isCloudId(selected.id)
+                    ? 'Download cloud file changes and open Diff Review'
+                    : 'Merge local agent worktree into the current branch'
+                }
+                onClick={() => {
+                  if (isCloudId(selected.id)) {
+                    setBusy(true)
+                    setError(null)
+                    void window.ide
+                      .applyCloudJobArtifacts(selected.id)
+                      .then((result) => {
+                        if (!result.ok) {
+                          setError(result.error || 'Apply failed')
+                          return
+                        }
+                        onCloudDiffs?.(
+                          result.diffs.map((d) => ({
+                            ...d,
+                            status: 'pending' as const
+                          }))
+                        )
+                        void refresh()
+                      })
+                      .catch((err) =>
+                        setError(err instanceof Error ? err.message : 'Apply failed')
+                      )
+                      .finally(() => setBusy(false))
+                    return
+                  }
                   void window.ide
                     .mergeBackgroundJob(selected.id)
                     .then(() => refresh())
                     .catch((err) => setError(err instanceof Error ? err.message : 'Merge failed'))
-                }
+                }}
               >
-                Merge
+                {isCloudId(selected.id) ? 'Apply changes' : 'Merge'}
               </button>
               <button
                 type="button"
@@ -413,9 +454,10 @@ function helpText(preferCloud: boolean): string {
     'Blackboard: local worktree agents + Cloud Agents.',
     'Cloud status and metrics: Settings → Agent. Sign-in: Settings → Account.',
     preferCloud
-      ? 'Signed in and cloud available — Start uses the remote worker. Local only if health/enqueue fails.'
-      : 'Cloud unavailable or signed out — Start uses a local worktree agent.',
+      ? 'Signed in — Start uses Cloud Agents (Composer Full). Local Lite only if health/enqueue fails.'
+      : 'Cloud unavailable or signed out — Start uses a local Composer Lite worktree agent.',
     '',
-    'Tip: Bring to chat pastes the result into the active thread.'
+    'Tip: Bring to chat pastes the result into the active thread.',
+    'Cloud: Apply changes pulls the file patch bundle into Diff Review.'
   ].join('\n')
 }

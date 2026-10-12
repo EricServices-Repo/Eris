@@ -1,7 +1,15 @@
 node_modules
 dist
-npm-debug.log
+npm-debug.log*
 .git
+.gitignore
 *.md
 .env
 .env.*
+deploy
+docker-compose.yml
+**/*.test.ts
+**/*.spec.ts
+coverage
+.DS_Store
+*.log

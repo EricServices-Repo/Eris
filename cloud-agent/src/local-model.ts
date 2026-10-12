@@ -13,15 +13,18 @@ import { pipeline } from 'stream/promises'
 import { Readable } from 'stream'
 import { config } from './config.js'
 
-/** Same GGUF Eris ships as Composer Lite — runs inside the Cloud Agent container. */
+/**
+ * Composer Full (7B) — runs inside the Cloud Agent container.
+ * Desktop Eris keeps Composer Lite locally; cloud jobs use this heavier model.
+ */
 export const LOCAL_MODEL = {
-  id: 'composer-lite',
-  name: 'Composer Lite',
-  filename: 'Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf',
+  id: 'composer',
+  name: 'Composer Full',
+  filename: 'Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf',
   downloadUrl:
-    'https://huggingface.co/bartowski/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf',
-  approxBytes: 986_048_800,
-  sha256: 'f530705d447660a4336c329981af164b471b60b974b1d808d57e8ec9fe23b239'
+    'https://huggingface.co/bartowski/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf',
+  approxBytes: 4_683_074_336,
+  sha256: '1664fccab734674a50763490a8c6931b70e3f2f8ec10031b54806d30e5f956b6'
 }
 
 export type LocalModelStatus = 'missing' | 'downloading' | 'ready' | 'error'
@@ -87,24 +90,66 @@ async function downloadModel(dest: string): Promise<void> {
   statusError = null
   mkdirSync(localModelDir(), { recursive: true })
   const partial = `${dest}.partial`
+
+  // Resume interrupted downloads when the CDN supports Range requests.
+  let existing = 0
   if (existsSync(partial)) {
+    try {
+      existing = statSync(partial).size
+    } catch {
+      existing = 0
+    }
+    // Tiny/corrupt leftovers — start clean
+    if (existing > 0 && existing < 1024 * 1024) {
+      try {
+        unlinkSync(partial)
+      } catch {
+        // ignore
+      }
+      existing = 0
+    }
+  }
+
+  const headers: Record<string, string> = { 'User-Agent': 'eris-cloud-agent' }
+  if (existing > 0) headers.Range = `bytes=${existing}-`
+
+  const res = await fetch(LOCAL_MODEL.downloadUrl, {
+    headers,
+    redirect: 'follow'
+  })
+
+  if (existing > 0 && res.status === 416) {
+    // Already complete according to server — verify below
+  } else if (existing > 0 && res.status === 200) {
+    // Server ignored Range — restart
     try {
       unlinkSync(partial)
     } catch {
       // ignore
     }
-  }
-
-  const res = await fetch(LOCAL_MODEL.downloadUrl, {
-    headers: { 'User-Agent': 'eris-cloud-agent' },
-    redirect: 'follow'
-  })
-  if (!res.ok || !res.body) {
+    existing = 0
+  } else if (!res.ok && res.status !== 206) {
     throw new Error(`Model download failed (${res.status})`)
   }
 
-  const nodeStream = Readable.fromWeb(res.body as import('stream/web').ReadableStream)
-  await pipeline(nodeStream, createWriteStream(partial))
+  if (res.body && (res.status === 200 || res.status === 206)) {
+    const nodeStream = Readable.fromWeb(res.body as import('stream/web').ReadableStream)
+    await pipeline(
+      nodeStream,
+      createWriteStream(partial, { flags: existing > 0 && res.status === 206 ? 'a' : 'w' })
+    )
+  }
+
+  if (!existsSync(partial)) {
+    throw new Error('Model download produced no file')
+  }
+
+  const size = statSync(partial).size
+  if (size < LOCAL_MODEL.approxBytes * 0.9) {
+    throw new Error(
+      `Model download incomplete (${size} bytes; expected ~${LOCAL_MODEL.approxBytes})`
+    )
+  }
 
   const digest = await sha256FileStream(partial)
   if (digest !== LOCAL_MODEL.sha256) {

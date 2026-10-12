@@ -96,20 +96,23 @@ function sanitizeLegacyModels(raw: Record<string, unknown>): Record<string, unkn
     ]
   } else if (Array.isArray(models.connections)) {
     models.connections = (models.connections as Array<Record<string, unknown>>).map((c) => {
+      // Legacy / synced profiles sometimes stored provider presets as `type`
+      // (e.g. "openai", "ollama"). Canonical types are only builtin | openai-compatible.
+      const rawType = typeof c.type === 'string' ? c.type : ''
+      if (rawType === 'builtin') {
+        const list = Array.isArray(c.models) ? [...(c.models as string[])] : []
+        for (const ref of ['builtin:composer-lite', 'builtin:composer']) {
+          if (!list.includes(ref)) list.push(ref)
+        }
+        return { ...c, type: 'builtin', provider: 'builtin', models: list }
+      }
       const provider =
         typeof c.provider === 'string' && c.provider
           ? c.provider
-          : c.type === 'builtin'
-            ? 'builtin'
+          : rawType && rawType !== 'openai-compatible'
+            ? rawType
             : 'custom'
-      if (c.type !== 'builtin') {
-        return { ...c, provider }
-      }
-      const list = Array.isArray(c.models) ? [...(c.models as string[])] : []
-      for (const ref of ['builtin:composer-lite', 'builtin:composer']) {
-        if (!list.includes(ref)) list.push(ref)
-      }
-      return { ...c, provider: 'builtin', models: list }
+      return { ...c, type: 'openai-compatible', provider }
     })
   }
   if (!models.defaultModel || models.defaultModel === '') {
@@ -141,6 +144,10 @@ function sanitizeGeneral(raw: Record<string, unknown>): Record<string, unknown> 
   if (typeof general.restoreLastWorkspace !== 'boolean') {
     general.restoreLastWorkspace = true
   }
+  const updates = { ...((general.updates as Record<string, unknown> | undefined) || {}) }
+  if (typeof updates.autoCheck !== 'boolean') updates.autoCheck = true
+  if (typeof updates.autoDownload !== 'boolean') updates.autoDownload = true
+  general.updates = updates
   return { ...raw, general }
 }
 
@@ -211,7 +218,7 @@ function sanitizeMcp(raw: Record<string, unknown>): Record<string, unknown> {
   return { ...raw, mcp }
 }
 
-export function getResolvedSettings(workspacePath: string | null): AppSettings {
+function buildResolvedSettings(workspacePath: string | null): AppSettings {
   const merged = sanitizeEditor(
     sanitizeEricServices(
       sanitizeGithub(
@@ -238,7 +245,40 @@ export function getResolvedSettings(workspacePath: string | null): AppSettings {
   agent.routing = routing
   delete agent.subagents
   merged.agent = agent
-  return SettingsSchema.parse(merged)
+  const parsed = SettingsSchema.safeParse(merged)
+  if (parsed.success) return parsed.data
+  // Never throw into IPC — a bad synced profile must not brick boot.
+  return getDefaults()
+}
+
+export function getResolvedSettings(workspacePath: string | null): AppSettings {
+  try {
+    return buildResolvedSettings(workspacePath)
+  } catch {
+    return getDefaults()
+  }
+}
+
+/**
+ * Rewrite legacy connection `type` values (e.g. "openai") on disk so sync/login
+ * never feeds invalid enums back through setSettings.
+ */
+export function migrateLegacyConnectionTypesInUserSettings(): void {
+  const user = getUserSettings() as Record<string, unknown>
+  const models = user.models as Record<string, unknown> | undefined
+  if (!models || !Array.isArray(models.connections)) return
+  let changed = false
+  const connections = (models.connections as Array<Record<string, unknown>>).map((c) => {
+    if (!c || typeof c !== 'object') return c
+    const rawType = typeof c.type === 'string' ? c.type : ''
+    if (rawType === 'builtin' || rawType === 'openai-compatible') return c
+    changed = true
+    const provider =
+      typeof c.provider === 'string' && c.provider ? c.provider : rawType || 'custom'
+    return { ...c, type: 'openai-compatible', provider }
+  })
+  if (!changed) return
+  writeJson(userSettingsPath(), { ...user, models: { ...models, connections } })
 }
 
 export function setSettings(
@@ -249,16 +289,19 @@ export function setSettings(
   mkdirSync(userDataRoot(), { recursive: true })
 
   if (scope === 'user') {
-    const next = deepMerge(getUserSettings() as Record<string, unknown>, patch as Record<string, unknown>)
+    let next = deepMerge(getUserSettings() as Record<string, unknown>, patch as Record<string, unknown>)
+    // Normalize model connection types before persisting (synced profiles may send "openai").
+    if (next.models) next = sanitizeLegacyModels(next)
     writeJson(userSettingsPath(), next)
   } else {
     if (!workspacePath) {
       throw new Error('Workspace settings require an open workspace')
     }
-    const next = deepMerge(
+    let next = deepMerge(
       getWorkspaceSettings(workspacePath) as Record<string, unknown>,
       patch as Record<string, unknown>
     )
+    if (next.models) next = sanitizeLegacyModels(next)
     writeJson(workspaceSettingsPath(workspacePath), next)
     // Editing risky keys from Settings is an explicit user choice for this folder.
     if (riskyWorkspaceSettings(patch).length > 0) setWorkspaceTrusted(workspacePath, true)

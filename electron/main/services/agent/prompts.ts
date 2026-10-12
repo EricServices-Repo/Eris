@@ -47,7 +47,6 @@ Tools:
 - search_symbols — { "name":"search_symbols", "query":"MyComponent" }  (code index)
 - retrieve — { "name":"retrieve", "query":"auth middleware" }  (rank relevant files)
 - read_context — { "name":"read_context" }  (full workspace reference notes in .eris/context.md)
-- read_email — { "name":"read_email" }  (last Thunderbird/Outlook pull in .eris/email-context.md)
 - update_context — { "name":"update_context", "mode":"append"|"summary", "text":"…" }  (save durable workspace facts; prefer append for notes, summary for the pinned brief)
 - list_skills — { "name":"list_skills" }
 - read_skill — { "name":"read_skill", "id":"my-skill", "scope":"user"|"workspace" }

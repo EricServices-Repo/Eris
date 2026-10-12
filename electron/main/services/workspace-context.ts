@@ -10,15 +10,25 @@ export interface WorkspaceContextDoc {
   empty: boolean
 }
 
-const PIN_MAX = 800
+export const CONTEXT_PIN_MAX = 800
+const PIN_MAX = CONTEXT_PIN_MAX
 const FULL_PROMPT_MAX = 6000
-const DEFAULT_CONTEXT = `# Workspace context
+
+/** Starter file for new workspaces. Summary is empty so nothing is pinned until filled in. */
+export const DEFAULT_CONTEXT = `# Workspace context
+
+Only the Summary section is added to every chat turn (~${PIN_MAX} characters).
+Everything else stays on disk until the agent calls read_context.
 
 ## Summary
-Short facts the agent should always know (stack, entrypoints, conventions).
 
 ## Reference
-Key paths, architecture notes, env quirks, “do not touch” areas.
+- What this project is and the main stack
+- Important paths and entrypoints
+- How to run, test, and build
+- Conventions the agent should follow
+- Fragile areas — ask before changing
+- Env quirks (never paste secrets here)
 
 ## Notes
 `
@@ -41,13 +51,18 @@ function extractSection(body: string, heading: string): string {
   return m?.[1]?.trim() ?? ''
 }
 
-/** Prefer ## Summary; else first meaningful paragraph. Cap for prompt efficiency. */
+/**
+ * Prefer ## Summary when that heading exists (even if empty — do not fall back to
+ * Reference/boilerplate). Without a Summary heading, use the first prose paragraph.
+ */
 export function extractContextPin(body: string, max = PIN_MAX): string {
   const trimmed = body.trim()
   if (!trimmed) return ''
 
+  const hasSummaryHeading = /^##\s+Summary\s*$/im.test(trimmed)
   const summary = extractSection(trimmed, 'Summary')
-  if (summary) {
+  if (hasSummaryHeading) {
+    if (!summary) return ''
     return summary.length <= max ? summary : `${summary.slice(0, max - 1)}…`
   }
 
@@ -125,6 +140,10 @@ export function saveWorkspaceContext(workspacePath: string, body: string): Works
   writeFileSync(path, body.endsWith('\n') ? body : `${body}\n`, 'utf8')
   invalidateWorkspaceContextCache(workspacePath)
   return getWorkspaceContext(workspacePath)
+}
+
+export function resetWorkspaceContext(workspacePath: string): WorkspaceContextDoc {
+  return saveWorkspaceContext(workspacePath, DEFAULT_CONTEXT)
 }
 
 /** Replace or create the ## Summary section; keeps other sections. */

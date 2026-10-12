@@ -79,7 +79,6 @@ const KNOWN_TOOLS = new Set([
   'search_symbols',
   'retrieve',
   'read_context',
-  'read_email',
   'update_context',
   'list_skills',
   'read_skill',

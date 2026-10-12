@@ -1,10 +1,12 @@
 import { ipcMain } from 'electron'
 import { appState } from '../app-state'
 import {
+  applyCloudJobArtifacts,
   cloudAgentsHealth,
   cloudJobToBackgroundJob,
   collectWorkspaceFilesForCloud,
   enqueueCloudJob,
+  fetchCloudJobArtifacts,
   getCloudJob,
   listCloudJobs,
   stopCloudJob,
@@ -75,10 +77,11 @@ export function registerCloudAgentsIpc(): void {
       branch = branch || settings.github.defaultBranch || 'main'
     }
 
+    // Cloud worker always runs Composer Full (7B). Desktop stays on Composer Lite.
     const job = await enqueueCloudJob({
       goal: payload.goal,
       agentId: payload.agentId,
-      model: payload.model || settings.models.defaultModel,
+      model: 'composer',
       repoUrl,
       branch,
       claim: payload.claim,
@@ -96,5 +99,18 @@ export function registerCloudAgentsIpc(): void {
     requireCloudAuth()
     const rawId = String(id).replace(/^cloud:/, '')
     return stopCloudJob(rawId)
+  })
+
+  ipcMain.handle('cloudAgents:artifacts', async (_e, id: string) => {
+    requireCloudAuth()
+    return fetchCloudJobArtifacts(String(id))
+  })
+
+  /** Fetch cloud patch bundle and apply into the open workspace (Diff Review). */
+  ipcMain.handle('cloudAgents:applyArtifacts', async (_e, id: string) => {
+    requireCloudAuth()
+    const workspace = appState.currentWorkspace
+    if (!workspace) throw new Error('Open a workspace to apply cloud changes')
+    return applyCloudJobArtifacts(workspace, String(id))
   })
 }

@@ -75,7 +75,7 @@ git push origin v0.2.3
 | Workspace | `<folder>/.eris/settings.json` |
 | Agents | `<folder>/.eris/agents.json` |
 | Rules | `<folder>/.eris/rules/*.md` |
-| Secrets | Electron `safeStorage` (API keys) |
+| Secrets | Local `secrets.json` in userData (API keys; no OS Keychain) |
 
 Workspace overrides user overrides defaults. Change scope in Settings with the User / Workspace control.
 

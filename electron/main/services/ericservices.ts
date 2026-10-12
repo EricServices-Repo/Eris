@@ -29,6 +29,8 @@ export interface EricServicesStatus {
   error?: string
   linked: boolean
   hasToken: boolean
+  /** Local link looks valid but /me rejected the device token — prompt re-login. */
+  needsReauth?: boolean
   apiBase: string
   username: string
   email: string
@@ -278,10 +280,17 @@ export async function ericServicesLogout(
 export async function ericServicesFetchMe(
   apiBase: string,
   token: string
-): Promise<{ ok: boolean; error?: string; profile?: EricServicesProfile }> {
+): Promise<{ ok: boolean; error?: string; status?: number; profile?: EricServicesProfile }> {
   const result = await erisFetch(apiBase, '/me.php', { method: 'GET', token })
-  if (!result.ok) return { ok: false, error: result.error }
-  return { ok: true, profile: result.data.profile as EricServicesProfile }
+  if (!result.ok) return { ok: false, error: result.error, status: result.status }
+  return { ok: true, status: result.status, profile: result.data.profile as EricServicesProfile }
+}
+
+/** True when /me failed because the device token is missing, revoked, or expired. */
+export function isEricServicesAuthFailure(error?: string, status?: number): boolean {
+  if (status === 401 || status === 403) return true
+  const msg = String(error || '').toLowerCase()
+  return /unauthor|forbidden|invalid.?token|expired|not.?authenticated|revoked|sign.?in/i.test(msg)
 }
 
 export async function ericServicesPullSettings(

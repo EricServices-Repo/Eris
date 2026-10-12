@@ -1,16 +1,12 @@
-import { ipcMain, dialog } from 'electron'
+import { ipcMain } from 'electron'
 import {
   appendContextNote,
   formatWorkspaceContextPrompt,
   getWorkspaceContext,
+  resetWorkspaceContext,
   saveWorkspaceContext,
   setContextSummary
 } from '../services/workspace-context'
-import {
-  discoverEmailSources,
-  pullEmailContext,
-  readPulledEmailContext
-} from '../services/email-context'
 import { appState } from '../app-state'
 
 export function registerContextIpc(): void {
@@ -28,42 +24,8 @@ export function registerContextIpc(): void {
     if (!appState.currentWorkspace) throw new Error('Open a workspace to edit context')
     return appendContextNote(appState.currentWorkspace, String(note ?? ''))
   })
-
-  ipcMain.handle('email:discoverSources', async (_e, emlFolder?: string) => {
-    return discoverEmailSources(emlFolder)
+  ipcMain.handle('context:reset', () => {
+    if (!appState.currentWorkspace) throw new Error('Open a workspace to edit context')
+    return resetWorkspaceContext(appState.currentWorkspace)
   })
-
-  ipcMain.handle('email:pickEmlFolder', async () => {
-    if (!appState.mainWindow) return { ok: false, path: null as string | null }
-    const result = await dialog.showOpenDialog(appState.mainWindow, {
-      title: 'Choose folder of .eml exports',
-      properties: ['openDirectory']
-    })
-    if (result.canceled || !result.filePaths[0]) {
-      return { ok: false, path: null as string | null }
-    }
-    return { ok: true, path: result.filePaths[0] }
-  })
-
-  ipcMain.handle(
-    'email:pull',
-    async (
-      _e,
-      payload: {
-        sourceId: string
-        query?: string
-        maxMessages?: number
-        appendToContext?: boolean
-      }
-    ) => {
-      return pullEmailContext(appState.currentWorkspace, {
-        sourceId: payload.sourceId,
-        query: payload.query,
-        maxMessages: payload.maxMessages,
-        appendToContext: payload.appendToContext
-      })
-    }
-  )
-
-  ipcMain.handle('email:readPulled', () => readPulledEmailContext(appState.currentWorkspace))
 }

@@ -82,6 +82,7 @@ export function useWorkspace({
         return
       }
       setActiveWorkspace(opened)
+      // Interactive shell first: tree + meta + settings. Models/index come after paint.
       const [entries, list, meta, resolved] = await Promise.all([
         window.ide.listTree(opened.path),
         refreshWorkspaceList(),
@@ -91,7 +92,6 @@ export function useWorkspace({
       setTree(entries)
       setWorkspaces(list)
       setSettings(resolved)
-      await refreshModels(resolved)
 
       const restored: OpenTab[] = []
       for (const filePath of meta.openFiles) {
@@ -117,8 +117,11 @@ export function useWorkspace({
 
       if (meta.lastModel) setSelectedModel(meta.lastModel)
       await refreshChats(meta.activeChatId)
-      await refreshSkills()
       setActiveSkills([])
+
+      // Defer provider probes / skills so the editor shell becomes interactive sooner.
+      void refreshModels(resolved)
+      void refreshSkills()
     },
     [
       refreshSettings,

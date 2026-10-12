@@ -26,7 +26,7 @@ describe('cloud agents defaults', () => {
       goal: 'Add a button',
       agentId: 'coder',
       agentName: 'Coder',
-      model: 'composer-lite',
+      model: 'composer',
       status: 'running',
       claim: 'Add a button',
       liveStatus: 'Coder · step 2',
@@ -43,6 +43,30 @@ describe('cloud agents defaults', () => {
     expect(mapped.routeReason).toContain('agents.ericservic.es')
     expect(mapped.filesTouched).toEqual(['src/App.tsx'])
   })
+
+  it('maps artifact metadata onto background jobs', () => {
+    const job: CloudJob = {
+      id: 'art',
+      goal: 'Edit App',
+      agentId: 'coder',
+      agentName: 'Coder',
+      model: 'composer',
+      status: 'done',
+      claim: 'Edit App',
+      liveStatus: 'Done · 1 file ready to apply',
+      answer: 'Updated App.tsx',
+      filesTouched: ['src/App.tsx'],
+      hasArtifacts: true,
+      artifactCount: 1,
+      recentTools: [],
+      thinkingTail: '',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:02.000Z'
+    }
+    const mapped = cloudJobToBackgroundJob(job, '/tmp/ws')
+    expect(mapped.hasArtifacts).toBe(true)
+    expect(mapped.artifactCount).toBe(1)
+  })
 })
 
 describe('cloud readiness + status', () => {
@@ -58,8 +82,8 @@ describe('cloud readiness + status', () => {
     queued: 0,
     localModel: {
       status: 'ready',
-      modelId: 'composer-lite',
-      modelName: 'Composer Lite',
+      modelId: 'composer',
+      modelName: 'Composer Full',
       error: null
     }
   }
@@ -126,6 +150,6 @@ describe('cloud readiness + status', () => {
         localModel: { ...base.localModel!, status: 'downloading' }
       })
     ).not.toContain('using local')
-    expect(cloudAgentsStatusLabel(base)).toContain('Composer Lite')
+    expect(cloudAgentsStatusLabel(base)).toContain('Composer Full')
   })
 })

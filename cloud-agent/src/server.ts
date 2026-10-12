@@ -4,6 +4,7 @@ import { JobStore } from './job-store.js'
 import { WorkerPool } from './worker.js'
 import { getLocalModelStatus, warmLocalModel } from './local-model.js'
 import type { CloudJobCreateRequest, CloudHealth } from './types.js'
+import { readJobArtifacts } from './artifacts.js'
 
 const store = new JobStore()
 const workers = new WorkerPool(store)
@@ -41,11 +42,14 @@ function readBody(req: IncomingMessage): Promise<string> {
 function healthBody(): Record<string, unknown> {
   const counts = store.counts()
   const local = getLocalModelStatus()
+  const inference = config.llmBase ? 'remote' : 'local'
+  const ready = inference === 'remote' || local.status === 'ready'
   const health: CloudHealth = {
     ok: true,
     service: 'eris-cloud-agent',
     version: config.version,
     llmConfigured: llmConfigured(),
+    ready,
     localModel: {
       status: local.status,
       modelId: local.modelId,
@@ -54,7 +58,7 @@ function healthBody(): Record<string, unknown> {
       gpu: local.gpu
     },
     gpuMode: config.gpu,
-    inference: config.llmBase ? 'remote' : 'local',
+    inference,
     maxParallel: config.maxParallel,
     running: counts.running,
     queued: counts.queued
@@ -67,7 +71,8 @@ function healthBody(): Record<string, unknown> {
       health: '/v1/health',
       jobs: '/v1/jobs',
       job: '/v1/jobs/:id',
-      stop: '/v1/jobs/:id/stop'
+      stop: '/v1/jobs/:id/stop',
+      artifacts: '/v1/jobs/:id/artifacts'
     }
   }
 }
@@ -99,6 +104,28 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
       return
     }
     send(res, 200, { ok: true, job })
+    return
+  }
+
+  const artifactsMatch = path.match(/^\/v1\/jobs\/([^/]+)\/artifacts$/)
+  if (req.method === 'GET' && artifactsMatch) {
+    const jobId = artifactsMatch[1]!
+    const job = store.get(jobId)
+    if (!job) {
+      send(res, 404, { ok: false, error: 'Job not found' })
+      return
+    }
+    const pack = readJobArtifacts(jobId)
+    if (!pack || pack.files.length === 0) {
+      send(res, 404, {
+        ok: false,
+        error: 'No artifacts for this job yet (finish a job that writes files)',
+        jobId,
+        filesTouched: job.filesTouched
+      })
+      return
+    }
+    send(res, 200, { ok: true, ...pack })
     return
   }
 
@@ -138,6 +165,22 @@ const server = createServer((req, res) => {
   })
 })
 
+let shuttingDown = false
+
+function shutdown(signal: string): void {
+  if (shuttingDown) return
+  shuttingDown = true
+  process.stdout.write(`${JSON.stringify({ msg: 'eris-cloud-agent shutting down', signal })}\n`)
+  server.close(() => {
+    process.exit(0)
+  })
+  // Force exit if connections linger (active LLM jobs)
+  setTimeout(() => process.exit(0), 15_000).unref()
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT', () => shutdown('SIGINT'))
+
 server.listen(config.port, config.host, () => {
   const local = getLocalModelStatus()
   process.stdout.write(
@@ -149,7 +192,8 @@ server.listen(config.port, config.host, () => {
       clientDefault: PUBLIC_BASE_URL,
       inference: config.llmBase ? 'remote' : 'local',
       localModel: local.status,
-      model: local.modelName
+      model: local.modelName,
+      version: config.version
     })}\n`
   )
 })

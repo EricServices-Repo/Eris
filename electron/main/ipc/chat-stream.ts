@@ -98,7 +98,11 @@ export function registerChatStreamIpc(): void {
         }))
       const agent = findAgent(appState.currentWorkspace, turnPlan.agentId) ||
         (agentId ? findAgent(appState.currentWorkspace, agentId) : null)
-      const resolvedModel = turnPlan.models.chat || model || settings.models.defaultModel
+      let resolvedModel = turnPlan.models.chat || model || settings.models.defaultModel
+      // Local chat never loads Composer Full — that model runs on Cloud Agents.
+      if (resolvedModel === 'builtin:composer') {
+        resolvedModel = 'builtin:composer-lite'
+      }
       const temperature =
         agent?.temperature ?? settings.models.temperature
       setDiagnosticsPaused(true)

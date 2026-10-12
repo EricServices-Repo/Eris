@@ -11,6 +11,7 @@ import {
   ericServicesPullSettings,
   ericServicesPushSettings,
   ericServicesTokenRef,
+  isEricServicesAuthFailure,
   planPatchFromProfile
 } from '../services/ericservices'
 import { syncMcpRuntime } from '../services/mcp-runtime'
@@ -65,7 +66,15 @@ export function registerEricServicesIpc(): void {
     if (!token || !settings.ericServices.linked) return base
     const me = await ericServicesFetchMe(settings.ericServices.apiBase, token)
     if (!me.ok) {
-      return { ...base, ok: false, error: me.error }
+      const needsReauth = isEricServicesAuthFailure(me.error, me.status)
+      return {
+        ...base,
+        ok: false,
+        error: me.error,
+        needsReauth,
+        // Keep username/email for the re-auth prompt, but treat session as expired.
+        linked: needsReauth ? false : base.linked
+      }
     }
     if (me.profile) {
       const planPatch = planPatchFromProfile(me.profile)
@@ -124,10 +133,11 @@ export function registerEricServicesIpc(): void {
 
       let sync: { ok: boolean; error?: string; direction?: string } | undefined
       if (payload.syncAfter !== false && settings.ericServices.syncEnabled !== false) {
-        sync = await syncEricServicesProfile('pull')
+        // Use the just-issued token so sync never depends on a re-read race.
+        sync = await syncEricServicesProfile('pull', result.token)
         if (!sync.ok) {
           // Push local prefs if nothing remote yet
-          sync = await syncEricServicesProfile('push')
+          sync = await syncEricServicesProfile('push', result.token)
         }
       }
 
@@ -170,7 +180,8 @@ export function registerEricServicesIpc(): void {
   })
 
   async function syncEricServicesProfile(
-    direction: 'pull' | 'push' | 'bidirectional'
+    direction: 'pull' | 'push' | 'bidirectional',
+    tokenOverride?: string | null
   ): Promise<{
     ok: boolean
     error?: string
@@ -179,9 +190,9 @@ export function registerEricServicesIpc(): void {
     status?: ReturnType<typeof buildEricServicesStatus>
   }> {
     const settings = getResolvedSettings(appState.currentWorkspace)
-    const token = settings.ericServices.tokenRef
-      ? getSecret(settings.ericServices.tokenRef)
-      : null
+    const token =
+      tokenOverride ||
+      (settings.ericServices.tokenRef ? getSecret(settings.ericServices.tokenRef) : null)
     if (!token || !settings.ericServices.linked) {
       return { ok: false, error: 'Sign in to EricServic.es first' }
     }

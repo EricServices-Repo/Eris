@@ -1,0 +1,47 @@
+# Local / ops compose for Eris Cloud Agent (GPU optional).
+#   docker compose -f cloud-agent/docker-compose.yml up -d --build
+#   podman compose -f cloud-agent/docker-compose.yml up -d --build
+
+services:
+  eris-cloud-agent:
+    build:
+      context: .
+      args:
+        INSTALL_CUDA_VERSION: ${INSTALL_CUDA_VERSION:-12.5}
+    image: eris-cloud-agent:latest
+    container_name: eris-cloud-agent
+    restart: unless-stopped
+    ports:
+      - "6443:6443"
+    environment:
+      ERIS_CLOUD_PUBLIC_URL: http://agents.ericservic.es:6443
+      ERIS_CLOUD_HOST: "0.0.0.0"
+      ERIS_CLOUD_PORT: "6443"
+      ERIS_CLOUD_DATA: /var/lib/eris-cloud
+      ERIS_CLOUD_MAX_PARALLEL: "2"
+      ERIS_CLOUD_GPU: auto
+    volumes:
+      - eris-cloud-data:/var/lib/eris-cloud
+    # Docker Engine + NVIDIA Container Toolkit
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:6443/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 8s
+      retries: 8
+      start_period: 600s
+
+volumes:
+  eris-cloud-data:

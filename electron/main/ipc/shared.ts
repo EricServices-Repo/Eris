@@ -1,6 +1,5 @@
-import { safeStorage } from 'electron'
 import { join } from 'path'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs'
 import { getResolvedSettings } from '../services/settings'
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from '../services/workspace-watcher'
 import { disposeMcpRuntime, syncMcpRuntime } from '../services/mcp-runtime'
@@ -10,43 +9,101 @@ import { disposeLanguageServers, configureLanguageServers } from '../services/la
 import { userDataRoot } from '../services/paths'
 import { appState } from '../app-state'
 
-const secretsPath = (): string => join(userDataRoot(), 'secrets.bin')
+/** Plain JSON in userData — never Electron safeStorage / OS Keychain. */
+const secretsPath = (): string => join(userDataRoot(), 'secrets.json')
+/** Pre-Keychain-removal path; only plain JSON is migrated, ciphertext is discarded. */
+const legacySecretsPath = (): string => join(userDataRoot(), 'secrets.bin')
 
-export function storeSecret(key: string, value: string): void {
-  mkdirSync(userDataRoot(), { recursive: true })
-  let map: Record<string, string> = {}
-  if (existsSync(secretsPath())) {
-    try {
-      const buf = readFileSync(secretsPath())
-      if (safeStorage.isEncryptionAvailable()) {
-        map = JSON.parse(safeStorage.decryptString(buf))
-      } else {
-        map = JSON.parse(buf.toString('utf8'))
-      }
-    } catch {
-      map = {}
-    }
-  }
-  map[key] = value
-  const payload = JSON.stringify(map)
-  if (safeStorage.isEncryptionAvailable()) {
-    writeFileSync(secretsPath(), safeStorage.encryptString(payload))
-  } else {
-    writeFileSync(secretsPath(), payload, 'utf8')
-  }
-}
+/** In-memory cache so hot paths do not re-read secrets.json on every getSecret. */
+let secretsCache: Record<string, string> | null = null
 
-export function getSecret(key: string): string | null {
-  if (!existsSync(secretsPath())) return null
+function parseSecretsPayload(raw: string): Record<string, string> | null {
   try {
-    const buf = readFileSync(secretsPath())
-    const map = safeStorage.isEncryptionAvailable()
-      ? (JSON.parse(safeStorage.decryptString(buf)) as Record<string, string>)
-      : (JSON.parse(buf.toString('utf8')) as Record<string, string>)
-    return map[key] ?? null
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === 'string') out[k] = v
+    }
+    return out
   } catch {
     return null
   }
+}
+
+function discardLegacySecretsFile(): void {
+  const binPath = legacySecretsPath()
+  if (!existsSync(binPath)) return
+  try {
+    unlinkSync(binPath)
+  } catch {
+    // best-effort
+  }
+}
+
+function readSecretsMap(): Record<string, string> {
+  if (secretsCache) return { ...secretsCache }
+
+  const jsonPath = secretsPath()
+  if (existsSync(jsonPath)) {
+    try {
+      const map = parseSecretsPayload(readFileSync(jsonPath, 'utf8'))
+      if (map) {
+        secretsCache = map
+        return { ...map }
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  const binPath = legacySecretsPath()
+  if (!existsSync(binPath)) {
+    secretsCache = {}
+    return {}
+  }
+
+  // Migrate only if the legacy file is already plain JSON. Never call safeStorage —
+  // decrypting it on macOS prompts the OS Keychain.
+  try {
+    const asUtf8 = parseSecretsPayload(readFileSync(binPath, 'utf8'))
+    if (asUtf8) {
+      writeSecretsMap(asUtf8)
+      return { ...asUtf8 }
+    }
+  } catch {
+    // ignore
+  }
+  discardLegacySecretsFile()
+  secretsCache = {}
+  return {}
+}
+
+function writeSecretsMap(map: Record<string, string>): void {
+  secretsCache = { ...map }
+  mkdirSync(userDataRoot(), { recursive: true })
+  const payload = JSON.stringify(map)
+  const target = secretsPath()
+  const tmp = `${target}.${process.pid}.tmp`
+  writeFileSync(tmp, payload, 'utf8')
+  renameSync(tmp, target)
+  discardLegacySecretsFile()
+}
+
+export function storeSecret(key: string, value: string): void {
+  const map = readSecretsMap()
+  if (!value) {
+    delete map[key]
+  } else {
+    map[key] = value
+  }
+  writeSecretsMap(map)
+}
+
+export function getSecret(key: string): string | null {
+  const map = readSecretsMap()
+  const value = map[key]
+  return value && value.length > 0 ? value : null
 }
 
 export const refreshIntelligence = () => {
@@ -61,11 +118,14 @@ export const refreshIntelligence = () => {
   const settings = getResolvedSettings(appState.currentWorkspace)
   configureLanguageServers(settings, appState.currentWorkspace)
   void syncMcpRuntime(settings, appState.currentWorkspace).catch(() => undefined)
-  try {
-    ensureCodeIndex(appState.currentWorkspace)
-  } catch {
-    // optional
-  }
+  // Index off the interactive path — open workspace should not wait on it.
+  setImmediate(() => {
+    try {
+      if (appState.currentWorkspace) ensureCodeIndex(appState.currentWorkspace)
+    } catch {
+      // optional
+    }
+  })
 }
 
 export const completeControllers = new Map<string, AbortController>()

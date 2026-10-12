@@ -47,6 +47,9 @@ export interface CloudJob {
   answer: string
   error?: string
   filesTouched: string[]
+  /** Patch bundle available via GET /v1/jobs/:id/artifacts */
+  hasArtifacts?: boolean
+  artifactCount?: number
   recentTools: CloudJobToolEvent[]
   thinkingTail: string
   createdAt: string
@@ -56,9 +59,12 @@ export interface CloudJob {
 
 export interface CloudHealth {
   ok: boolean
+  /** Process is up; model may still be downloading. */
   service: 'eris-cloud-agent'
   version: string
   llmConfigured: boolean
+  /** True when inference can accept jobs (local ready or remote override). */
+  ready?: boolean
   /** Local GGUF status inside the container */
   localModel?: {
     status: 'missing' | 'downloading' | 'ready' | 'error'

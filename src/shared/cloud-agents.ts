@@ -32,6 +32,9 @@ export interface CloudJob {
   answer: string
   error?: string
   filesTouched: string[]
+  /** Patch bundle available via GET /v1/jobs/:id/artifacts */
+  hasArtifacts?: boolean
+  artifactCount?: number
   recentTools: CloudJobToolEvent[]
   thinkingTail: string
   createdAt: string
@@ -39,11 +42,28 @@ export interface CloudJob {
   finishedAt?: string
 }
 
+export interface CloudJobArtifactFile {
+  path: string
+  content: string
+  before: string | null
+}
+
+export interface CloudJobArtifacts {
+  ok?: boolean
+  jobId: string
+  createdAt: string
+  files: CloudJobArtifactFile[]
+  truncated: boolean
+  totalBytes: number
+}
+
 export interface CloudHealth {
   ok: boolean
   service: string
   version: string
   llmConfigured: boolean
+  /** Worker reports inference can take jobs (local model ready or remote override). */
+  ready?: boolean
   localModel?: {
     status: 'missing' | 'downloading' | 'ready' | 'error'
     modelId: string
@@ -112,6 +132,7 @@ export function shouldUseCloudAgents(health: CloudHealth | null | undefined): bo
 /** True when the cloud worker is fully ready for immediate inference (UI green state). */
 export function isCloudAgentsReady(health: CloudHealth | null | undefined): boolean {
   if (!shouldUseCloudAgents(health)) return false
+  if (typeof health!.ready === 'boolean') return health!.ready
   if (health!.inference === 'remote') return true
   // Local GGUF path: green only once the model file is loaded.
   return !health!.localModel || health!.localModel.status === 'ready'

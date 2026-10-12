@@ -78,7 +78,6 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   tool('related_files', 'Files that share symbols with a path', { path: pathProp }, ['path']),
   tool('retrieve', 'Rank relevant files for a query', { query: { type: 'string' } }, ['query']),
   tool('read_context', 'Read workspace .eris/context.md notes', {}),
-  tool('read_email', 'Read pulled email context', {}),
   tool(
     'update_context',
     'Append or set workspace context notes',

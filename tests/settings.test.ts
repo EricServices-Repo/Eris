@@ -54,4 +54,57 @@ describe('settings migrations', () => {
     expect(builtin.models).toEqual(expect.arrayContaining(['builtin:composer-lite', 'builtin:composer']))
     expect(s.models.connections.find((c) => c.id === 'o')!.provider).toBe('custom')
   })
+
+  it('coerces legacy connection type openai to openai-compatible', () => {
+    writeUserSettings({
+      models: {
+        connections: [
+          { id: 'builtin', name: 'B', type: 'builtin', enabled: true, baseUrl: '', apiKeyRef: '', models: [] },
+          {
+            id: 'oa',
+            name: 'OpenAI',
+            type: 'openai',
+            enabled: true,
+            baseUrl: 'https://api.openai.com/v1',
+            apiKeyRef: '',
+            models: ['gpt-4o']
+          }
+        ]
+      }
+    })
+    const s = getResolvedSettings(null)
+    const oa = s.models.connections.find((c) => c.id === 'oa')!
+    expect(oa.type).toBe('openai-compatible')
+    expect(oa.provider).toBe('openai')
+  })
+
+  it('persists legacy connection type migration to disk', async () => {
+    const { migrateLegacyConnectionTypesInUserSettings } = await import(
+      '../electron/main/services/settings'
+    )
+    const { readFileSync } = await import('fs')
+    const { userSettingsPath } = await import('../electron/main/services/paths')
+    writeUserSettings({
+      models: {
+        connections: [
+          {
+            id: 'ollama',
+            name: 'Ollama',
+            type: 'openai',
+            provider: 'ollama',
+            enabled: true,
+            baseUrl: 'http://localhost:11434/v1',
+            apiKeyRef: '',
+            models: ['qwen3']
+          }
+        ]
+      }
+    })
+    migrateLegacyConnectionTypesInUserSettings()
+    const disk = JSON.parse(readFileSync(userSettingsPath(), 'utf8')) as {
+      models: { connections: Array<{ type: string; provider: string }> }
+    }
+    expect(disk.models.connections[0]!.type).toBe('openai-compatible')
+    expect(disk.models.connections[0]!.provider).toBe('ollama')
+  })
 })
