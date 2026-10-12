@@ -91,9 +91,10 @@ export function GeneralPanel({
       <div className="github-section" style={{ marginBottom: 16 }}>
         <h3>Updates</h3>
         <p className="model-conn-hint">
-          Eris checks{' '}
-          <code>github.com/EricServices-Repo/Eris/releases</code> for new builds (macOS zip +
-          Windows setup). Signed releases install automatically; otherwise use Open releases.
+          Eris checks the public{' '}
+          <code>EricServices-Repo/Eris-updates</code> feed (macOS zip + Windows setup). No
+          GitHub token needed. Signed builds install in-place; unsigned local builds may need
+          Open releases.
         </p>
         <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <input

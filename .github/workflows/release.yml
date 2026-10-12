@@ -162,7 +162,7 @@ jobs:
       - name: List release assets
         run: ls -laR release-assets
 
-      - name: Publish GitHub Release
+      - name: Publish private source release (Eris)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.resolve-version.outputs.tag }}
@@ -174,6 +174,8 @@ jobs:
 
             Cross-platform desktop builds (same `package.json` version).
 
+            Public installers (auto-update feed): https://github.com/EricServices-Repo/Eris-updates/releases/tag/${{ needs.resolve-version.outputs.tag }}
+
             | Platform | Artifact |
             |----------|----------|
             | macOS (Apple Silicon / Intel) | `Eris-*-mac-*.dmg` / `.zip` |
@@ -183,3 +185,19 @@ jobs:
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Public feed for electron-updater — clients need no GitHub token.
+      - name: Publish public update feed (Eris-updates)
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: EricServices-Repo/Eris-updates
+          tag_name: ${{ needs.resolve-version.outputs.tag }}
+          name: Eris ${{ needs.resolve-version.outputs.tag }}
+          draft: false
+          body: |
+            ## Eris ${{ needs.resolve-version.outputs.tag }}
+
+            Public auto-update feed (macOS zip + Windows setup + `latest-*.yml`).
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.ERIS_UPDATES_TOKEN }}

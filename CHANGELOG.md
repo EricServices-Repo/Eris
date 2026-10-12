@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.13 — 2026-10-12
+
+- Multi-file Diff Review: file tree with +/- stats, Monaco side-by-side / inline DiffEditor, hunk navigation (n/p), expand/compact drawer.
+- Keyboard: `j`/`k` next/previous file while reviewing agent or Cloud Apply changes.
+- Client updates use the public `EricServices-Repo/Eris-updates` feed (no GitHub token on clients); CI mirrors installers there.
+
 ## 0.2.12 — 2026-10-12
 
 - In-app updater against GitHub Releases (banner, Settings → General, status-bar check); see `docs/UPDATES.md`.

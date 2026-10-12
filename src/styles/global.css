@@ -283,6 +283,11 @@ select:focus {
   background: var(--panel, var(--bg-elevated));
 }
 
+.bottom-drawer.is-diff-expanded {
+  max-height: min(62vh, 720px);
+  flex: 0 0 min(62vh, 720px);
+}
+
 .bottom-drawer > .diff-review {
   flex: 1;
   min-height: 140px;
@@ -2577,6 +2582,151 @@ select:focus {
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   font-size: 12px;
+  flex-shrink: 0;
+}
+
+.diff-review-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) 1fr;
+  overflow: hidden;
+}
+
+.diff-file-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  overflow: auto;
+  border-right: 1px solid var(--border);
+  background: var(--bg-sidebar, var(--bg));
+  min-height: 0;
+}
+
+.diff-file-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 6px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.diff-file-row:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border);
+}
+
+.diff-file-row.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.diff-file-row.status-undone {
+  opacity: 0.45;
+}
+
+.diff-file-row.status-kept {
+  opacity: 0.8;
+}
+
+.diff-op-pill {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.diff-op-pill.op-delete {
+  color: #e35d6a;
+}
+
+.diff-op-pill.op-mkdir,
+.diff-op-pill.op-rename {
+  color: var(--warning, #d4a017);
+}
+
+.diff-file-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.diff-file-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-file-dir {
+  color: var(--text-muted);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-file-stats {
+  display: flex;
+  gap: 4px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.diff-stat-add {
+  color: var(--success, #3d9a5f);
+  font-weight: 600;
+}
+
+.diff-stat-del {
+  color: #e35d6a;
+  font-weight: 600;
+}
+
+.diff-hunk-nav {
+  display: flex;
+  gap: 4px;
+}
+
+.diff-monaco-host {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.diff-monaco-host > section,
+.diff-monaco-host > div {
+  height: 100% !important;
+}
+
+.diff-op-summary {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 14px;
+  font-size: 12px;
+}
+
+.diff-op-summary .hint {
+  color: var(--text-muted);
+  margin-top: 8px;
 }
 
 .terminal-panel-pty {
@@ -2655,57 +2805,12 @@ select:focus {
   margin: 0;
 }
 
-.diff-file-list {
-  display: flex;
-  gap: 4px;
-  padding: 6px 8px;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--border);
-}
-
-.diff-file {
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 4px 8px;
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  cursor: pointer;
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.diff-file.active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.diff-file.status-pending {
-  border-color: color-mix(in srgb, var(--warning, #d4a017) 55%, var(--border));
-}
-
-.diff-file.status-kept {
-  opacity: 0.85;
-  border-color: color-mix(in srgb, var(--success, #3d9a5f) 45%, var(--border));
-}
-
-.diff-file.status-undone {
-  opacity: 0.45;
-  text-decoration: line-through;
-}
-
-.diff-op {
-  font-family: ui-monospace, Menlo, monospace;
-  color: var(--accent);
-}
-
 .diff-pane {
   min-height: 0;
   flex: 1;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .diff-pane-bar {
@@ -2713,6 +2818,9 @@ select:focus {
   align-items: center;
   gap: 8px;
   padding: 4px 10px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
 }
 
 .diff-lines {

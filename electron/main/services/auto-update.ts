@@ -3,9 +3,14 @@ import { autoUpdater, type UpdateInfo, type ProgressInfo } from 'electron-update
 import { logInfo, logWarn } from './logger'
 import { getResolvedSettings } from './settings'
 
-/** Public GitHub Releases page (website can deep-link here too). */
-export const ERIS_RELEASES_URL = 'https://github.com/EricServices-Repo/Eris/releases/latest'
-export const ERIS_RELEASES_REPO = 'EricServices-Repo/Eris'
+/**
+ * Public update feed (no client token). Source stays private in EricServices-Repo/Eris;
+ * installers + latest-*.yml are mirrored to EricServices-Repo/Eris-updates.
+ */
+export const ERIS_RELEASES_URL = 'https://github.com/EricServices-Repo/Eris-updates/releases/latest'
+export const ERIS_RELEASES_REPO = 'EricServices-Repo/Eris-updates'
+const UPDATE_OWNER = 'EricServices-Repo'
+const UPDATE_REPO = 'Eris-updates'
 
 const FIRST_CHECK_DELAY_MS = 20_000
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
@@ -92,10 +97,45 @@ function notesToString(notes: UpdateInfo['releaseNotes']): string | undefined {
   return undefined
 }
 
+function friendlyUpdateError(message: string): string {
+  if (/app-update\.yml|ENOENT/i.test(message)) {
+    return (
+      'Update configuration is missing from this build. ' +
+      'Quit Eris completely and reopen the rebuilt app, or download an installer from Releases.'
+    )
+  }
+  if (/404|Not Found|Unable to find latest version|CHANNEL_FILE_NOT_FOUND|LATEST_VERSION_NOT_FOUND/i.test(message)) {
+    return (
+      'No update metadata found on the public Eris-updates feed yet. ' +
+      'Open Releases to download an installer manually.'
+    )
+  }
+  if (/401|403|Bad credentials|Unauthorized|rate.?limit/i.test(message)) {
+    return 'GitHub rate-limited or rejected the update check. Try again in a few minutes, or open Releases.'
+  }
+  if (/code.?sign|Squirrel\.Mac|not signed|identity|Gatekeeper/i.test(message)) {
+    return (
+      'This build is not code-signed, so macOS cannot install updates in-place. ' +
+      'Download the latest installer from GitHub Releases.'
+    )
+  }
+  return message
+}
+
 function applyFeedPrefs(): void {
   const prefs = readUpdatePrefs()
   autoUpdater.autoDownload = prefs.autoDownload
   autoUpdater.autoInstallOnAppQuit = true
+}
+
+/** Public GitHub Releases — no PAT required on clients. */
+function configureUpdateFeed(): void {
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: UPDATE_OWNER,
+    repo: UPDATE_REPO,
+    releaseType: 'release'
+  })
 }
 
 /** Background + manual update checks against GitHub Releases (packaged builds). */
@@ -118,8 +158,8 @@ export function startAutoUpdates(getWin: GetWindow): void {
   }
 
   applyFeedPrefs()
+  configureUpdateFeed()
   autoUpdater.logger = null
-  // GitHub Releases provider is embedded via package.json build.publish
 
   autoUpdater.on('checking-for-update', () => {
     publish({ state: 'checking' })
@@ -207,8 +247,9 @@ export function startAutoUpdates(getWin: GetWindow): void {
   })
 
   autoUpdater.on('error', (err) => {
-    const message = err?.message ?? String(err)
-    logWarn('Auto-update error', { error: message })
+    const raw = err?.message ?? String(err)
+    const message = friendlyUpdateError(raw)
+    logWarn('Auto-update error', { error: raw })
     publish({ state: 'error', error: message })
     if (manualCheck) {
       manualCheck = false
@@ -221,8 +262,7 @@ export function startAutoUpdates(getWin: GetWindow): void {
           message: 'Could not update automatically',
           detail:
             `${message}\n\n` +
-            'Packaged updates need a signed build and GitHub release assets ' +
-            '(latest-mac.yml / latest.yml). You can download the installer manually.'
+            `Release installers: ${ERIS_RELEASES_URL}`
         })
         .then(({ response }) => {
           if (response === 0) void openReleasesPage()
@@ -277,12 +317,14 @@ export async function checkForUpdates(options?: {
 
   manualCheck = !options?.silent
   applyFeedPrefs()
+  configureUpdateFeed()
   lastCheckedAt = new Date().toISOString()
   publish({ state: 'checking', lastCheckedAt })
   try {
     await autoUpdater.checkForUpdates()
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
+    const raw = err instanceof Error ? err.message : String(err)
+    const message = friendlyUpdateError(raw)
     publish({ state: 'error', error: message, lastCheckedAt })
     if (manualCheck) {
       manualCheck = false

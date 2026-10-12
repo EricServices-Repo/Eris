@@ -1,6 +1,6 @@
 {
   "name": "eris",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "description": "Eris — AI-first desktop IDE for macOS and Windows",
   "main": "./out/main/index.js",
   "author": "Eris",
@@ -98,6 +98,10 @@
     ],
     "extraResources": [
       {
+        "from": "resources/app-update.yml",
+        "to": "app-update.yml"
+      },
+      {
         "from": "resources",
         "to": "resources"
       },
@@ -166,7 +170,7 @@
       {
         "provider": "github",
         "owner": "EricServices-Repo",
-        "repo": "Eris",
+        "repo": "Eris-updates",
         "releaseType": "release"
       }
     ]

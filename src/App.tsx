@@ -97,6 +97,7 @@ export default function App() {
     openSettings
   } = useSettingsState()
   const [settingsMounted, setSettingsMounted] = useState(false)
+  const [diffReviewExpanded, setDiffReviewExpanded] = useState(true)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [workspaceModal, setWorkspaceModal] = useState<null | 'create' | 'link'>(null)
   const [showSetupWizard, setShowSetupWizard] = useState(false)
@@ -1175,10 +1176,15 @@ export default function App() {
         </div>
 
         {workspacePath && pendingDiffs.length > 0 && (
-          <div className="bottom-drawer">
+          <div
+            className={`bottom-drawer${diffReviewExpanded ? ' is-diff-expanded' : ''}`}
+          >
             <Suspense fallback={null}>
             <DiffReview
               diffs={pendingDiffs}
+              theme={settings?.editor.theme}
+              expanded={diffReviewExpanded}
+              onExpandedChange={setDiffReviewExpanded}
               onOpenPath={(path) => {
                 const abs = path.startsWith('/') ? path : `${workspacePath}/${path.split(' → ')[0]}`
                 void openFile(abs)
