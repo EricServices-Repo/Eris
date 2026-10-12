@@ -127,11 +127,11 @@ export function useChatSession({
   }, [])
 
   /**
-   * Hand the current goal (+ recent chat context) to cloud and/or a local worktree.
-   * prefer: 'auto' | 'cloud' | 'local'
+   * Start a background agent for the current goal (+ recent chat context).
+   * Uses Cloud (Composer Full) when available; otherwise a local worktree — never a user choice.
    */
   const runInBackground = useCallback(
-    async (goalText?: string, prefer: 'auto' | 'cloud' | 'local' = 'auto') => {
+    async (goalText?: string) => {
       if (!workspacePath) {
         setChatError('Open a workspace before starting a background agent.')
         return null
@@ -161,15 +161,13 @@ export function useChatSession({
       try {
         if (streaming) stopChat()
         let job
-        let via = 'local'
         let health = null
         try {
           health = await window.ide.cloudAgentsHealth()
         } catch {
           health = null
         }
-        const tryCloud = prefer === 'cloud' || (prefer === 'auto' && shouldUseCloudAgents(health))
-        if (tryCloud) {
+        if (shouldUseCloudAgents(health)) {
           try {
             job = await window.ide.enqueueCloudJob({
               goal,
@@ -177,20 +175,11 @@ export function useChatSession({
               agentId,
               claim: bareGoal.slice(0, 64)
             })
-            via = 'cloud'
-          } catch (err) {
-            if (prefer === 'cloud') {
-              setChatError(
-                err instanceof Error
-                  ? err.message
-                  : 'Cloud handoff failed. Sign in or check Cloud Agents status.'
-              )
-              return null
-            }
+          } catch {
             job = undefined
           }
         }
-        if (!job && prefer !== 'cloud') {
+        if (!job) {
           job = await window.ide.enqueueBackgroundJob({
             goal,
             model:
@@ -203,7 +192,6 @@ export function useChatSession({
             sourceThreadId,
             forceRoute: 'tools'
           })
-          via = 'local'
         }
         if (!job) {
           setChatError('Could not start a background agent.')
@@ -212,9 +200,7 @@ export function useChatSession({
         setRightCollapsed(false)
         setRightPanel('agents')
         setChatError(null)
-        setAgentStatus(
-          `${via === 'cloud' ? 'Cloud' : 'Local'} agent started · ${job.id.replace(/^cloud:/, '').slice(0, 8)}`
-        )
+        setAgentStatus(`Agent started · ${job.id.replace(/^cloud:/, '').slice(0, 8)}`)
         return job
       } catch (err) {
         setChatError(err instanceof Error ? err.message : 'Failed to start background agent')
@@ -423,6 +409,55 @@ export function useChatSession({
         setAttachments([])
         setActiveSkills([])
 
+        // Agent mode + Cloud available → Composer Full on the worker (no user toggle).
+        if (chatMode === 'agent' && turnPlan.mode === 'agent' && workspacePath) {
+          let health = null
+          try {
+            health = await window.ide.cloudAgentsHealth()
+          } catch {
+            health = null
+          }
+          if (shouldUseCloudAgents(health)) {
+            try {
+              const contextTail = saved.messages
+                .slice(-8)
+                .map((m) => `${m.role}: ${m.content.slice(0, 1200)}`)
+                .join('\n\n')
+              const goal = `${text}\n\n---\nRecent chat context:\n${contextTail.slice(0, 6000)}`
+              const job = await window.ide.enqueueCloudJob({
+                goal,
+                model: 'composer',
+                agentId: turnPlan.agentId,
+                claim: text.slice(0, 64)
+              })
+              const note = await window.ide.saveChat({
+                ...saved,
+                messages: [
+                  ...saved.messages,
+                  {
+                    id: uid(),
+                    role: 'assistant',
+                    content: `Started background agent · ${job.id.replace(/^cloud:/, '').slice(0, 8)}. Track progress in the Agents panel; use Apply changes when files are ready.`,
+                    createdAt: Date.now(),
+                    agentId: turnPlan.agentId,
+                    agentName: turnPlan.agentName,
+                    model: 'composer'
+                  }
+                ]
+              })
+              setActiveThread(note)
+              setThreads((prev) => [note, ...prev.filter((t) => t.id !== note.id)])
+              setRightCollapsed(false)
+              setRightPanel('agents')
+              setAgentStatus(`Agent started · ${job.id.replace(/^cloud:/, '').slice(0, 8)}`)
+              setRouteLabel(`${turnPlan.agentName || 'Agent'} · Composer`)
+              return
+            } catch {
+              // Fall through to local streamChat (Composer Lite).
+            }
+          }
+        }
+
         const requestId = uid()
         requestIdRef.current = requestId
         userStoppedRef.current = false
@@ -484,11 +519,14 @@ export function useChatSession({
       streaming,
       skills,
       chatMode,
+      workspacePath,
       setComposerReady,
       setOllamaOk,
       setActiveThread,
       setThreads,
-      setActiveSkills
+      setActiveSkills,
+      setRightCollapsed,
+      setRightPanel
     ]
   )
 

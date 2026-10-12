@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { BackgroundJob } from '@/shared/background-agents'
 import {
-  cloudAgentsFallbackReason,
   shouldUseCloudAgents,
   type CloudHealth
 } from '@/shared/cloud-agents'
@@ -42,28 +41,12 @@ export function AgentsPanel({
   const [diff, setDiff] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [cloud, setCloud] = useState<CloudHealth | null>(null)
 
   const refresh = useCallback(async () => {
-    const [local, remote, health] = await Promise.all([
+    const [local, remote] = await Promise.all([
       window.ide.listBackgroundJobs(),
-      window.ide.listCloudJobs().catch(() => [] as BackgroundJob[]),
-      window.ide.cloudAgentsHealth().catch(
-        () =>
-          ({
-            ok: false,
-            authenticated: false,
-            service: 'eris-cloud-agent',
-            version: '',
-            llmConfigured: false,
-            maxParallel: 0,
-            running: 0,
-            queued: 0,
-            error: 'Unreachable'
-          }) satisfies CloudHealth
-      )
+      window.ide.listCloudJobs().catch(() => [] as BackgroundJob[])
     ])
-    setCloud(health)
     const byId = new Map<string, BackgroundJob>()
     for (const j of [...remote, ...local]) byId.set(j.id, j)
     const list = [...byId.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -122,8 +105,6 @@ export function AgentsPanel({
     [jobs]
   )
 
-  const preferCloud = shouldUseCloudAgents(cloud)
-
   const startLocal = (payload: {
     goal: string
     model: string
@@ -139,11 +120,9 @@ export function AgentsPanel({
 
   const probeHealth = async (): Promise<CloudHealth> => {
     try {
-      const health = await window.ide.cloudAgentsHealth()
-      setCloud(health)
-      return health
+      return await window.ide.cloudAgentsHealth()
     } catch (err) {
-      const health: CloudHealth = {
+      return {
         ok: false,
         authenticated: false,
         service: 'eris-cloud-agent',
@@ -154,8 +133,6 @@ export function AgentsPanel({
         queued: 0,
         error: err instanceof Error ? err.message : 'Unreachable'
       }
-      setCloud(health)
-      return health
     }
   }
 
@@ -184,22 +161,18 @@ export function AgentsPanel({
             setSelectedId(job.id)
             void refresh()
             return
-          } catch (cloudErr) {
-            // Only fall back after a real cloud enqueue/network failure.
-            const msg = cloudErr instanceof Error ? cloudErr.message : 'Cloud enqueue failed'
+          } catch {
+            // Fall back after enqueue/network failure.
             const job = await startLocal(payload)
             setGoal('')
             setSelectedId(job.id)
-            setError(`Cloud unavailable (${msg}) — started local agent instead`)
             void refresh()
             return
           }
         }
-        const reason = cloudAgentsFallbackReason(health) || 'unreachable'
         const job = await startLocal(payload)
         setGoal('')
         setSelectedId(job.id)
-        setError(`Cloud unavailable (${reason}) — started local agent instead`)
         void refresh()
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to start')
@@ -242,11 +215,7 @@ export function AgentsPanel({
       <div className="git-commit-row">
         <input
           value={goal}
-          placeholder={
-            preferCloud
-              ? 'Goal for Cloud Agent'
-              : 'Goal for local worktree agent (cloud offline)'
-          }
+          placeholder="Goal for background agent"
           onChange={(e) => setGoal(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
@@ -261,16 +230,14 @@ export function AgentsPanel({
           disabled={busy || !goal.trim() || !workspacePath}
           onClick={start}
         >
-          {preferCloud ? 'Start cloud' : 'Start local'}
+          Start
         </button>
       </div>
       <div className="git-body">
         <div className="git-files">
           <div className="explorer-section-label">Blackboard</div>
           {jobs.length === 0 ? (
-            <div className="chat-empty">
-              No tasks yet. Cloud status and metrics are in Settings → Agent.
-            </div>
+            <div className="chat-empty">No background agents yet.</div>
           ) : (
             roots.map((j) => (
               <JobTreeButton
@@ -308,7 +275,7 @@ export function AgentsPanel({
                     type="button"
                     className="btn"
                     disabled={busy || selected.status === 'running' || selected.status === 'queued'}
-                    title="Resume from the cloud checkpoint"
+                    title="Resume from checkpoint"
                     onClick={() => {
                       setBusy(true)
                       setError(null)
@@ -335,8 +302,8 @@ export function AgentsPanel({
                 }
                 title={
                   isCloudId(selected.id)
-                    ? 'Download cloud file changes and open Diff Review'
-                    : 'Merge local agent worktree into the current branch'
+                    ? 'Download file changes and open Diff Review'
+                    : 'Merge worktree into the current branch'
                 }
                 onClick={() => {
                   if (isCloudId(selected.id)) {
@@ -413,13 +380,9 @@ export function AgentsPanel({
             </div>
           )}
           <pre className="git-diff agents-live">
-            {selected ? formatBackgroundJobDetail(selected, diff) : helpText(preferCloud)}
+            {selected ? formatBackgroundJobDetail(selected, diff) : helpText()}
           </pre>
         </div>
-      </div>
-      <div className="debug-hint">
-        Cloud Agents require EricServic.es sign-in (Settings → Account). Local agents are used when
-        signed out, offline, or enqueue fails — not while the remote model is still downloading.
       </div>
     </div>
   )
@@ -440,7 +403,6 @@ function JobTreeButton({
 }) {
   const board = job.blackboard || deriveBlackboardStatus(job)
   const kids = childrenOf(job.id)
-  const cloud = isCloudId(job.id)
   return (
     <>
       <button
@@ -454,7 +416,7 @@ function JobTreeButton({
           {(job.claim || job.goal).slice(0, 64)}
           <div className="hint">
             {(job.agentName || job.agentId) +
-              (cloud ? ' · cloud' : job.source === 'delegate' ? ' · delegate' : '') +
+              (job.source === 'delegate' ? ' · delegate' : '') +
               (kids.length ? ` · ${kids.length} child` : '')}
           </div>
         </span>
@@ -473,15 +435,9 @@ function JobTreeButton({
   )
 }
 
-function helpText(preferCloud: boolean): string {
+function helpText(): string {
   return [
-    'Blackboard: local worktree agents + Cloud Agents.',
-    'Cloud status and metrics: Settings → Agent. Sign-in: Settings → Account.',
-    preferCloud
-      ? 'Signed in — Start uses Cloud Agents (Composer Full). Local Lite only if health/enqueue fails.'
-      : 'Cloud unavailable or signed out — Start uses a local Composer Lite worktree agent.',
-    '',
-    'Tip: Bring to chat pastes the result into the active thread.',
-    'Cloud: Apply changes pulls the file patch bundle into Diff Review.'
+    'Background agents run here. Start a goal above, or send an Agent-mode chat message.',
+    'Apply changes opens Diff Review when file patches are ready. Bring to chat pastes the result into the active thread.'
   ].join('\n')
 }
