@@ -5,7 +5,6 @@ export type RightPanel =
   | 'terminal'
   | 'git'
   | 'debug'
-  | 'agents'
   | 'evals'
   | 'codemap'
 

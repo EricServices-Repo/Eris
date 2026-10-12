@@ -30,7 +30,11 @@ import { logError, logInfo, logWarn } from '../services/logger'
 import { appState } from '../app-state'
 import { getSecret, abortAllCompletes } from './shared'
 import { addWorkspaceAllowedCommand, workspaceAllowedCommands } from '../services/workspace-trust'
-import { assertChatWithinPlan } from '../services/eris-entitlements'
+import { assertChatWithinPlan, assertCloudJobWithinPlan } from '../services/eris-entitlements'
+import {
+  cloudInlineAvailable,
+  runCloudAgentInline
+} from '../services/cloud-agent-inline'
 
 export function registerChatStreamIpc(): void {
   ipcMain.handle(
@@ -163,6 +167,85 @@ export function registerChatStreamIpc(): void {
           configureBackgroundAgents({ sender: event.sender, getSecret })
         }
         const chatChildIds: string[] = []
+
+        // Agent mode: prefer Cloud Composer inline in chat (thinking/tools/answer),
+        // not a background Agents-panel job. Fall back to local Lite on failure.
+        const wantCloudInline =
+          (mode ?? 'agent') === 'agent' &&
+          turnPlan.mode === 'agent' &&
+          Boolean(appState.currentWorkspace) &&
+          !resume
+
+        if (wantCloudInline && (await cloudInlineAvailable(settings, getSecret))) {
+          try {
+            assertCloudJobWithinPlan(settings, getSecret)
+            event.sender.send('chat:model', {
+              requestId,
+              model: 'composer',
+              agentId: turnPlan.agentId,
+              agentName: turnPlan.agentName
+            })
+            for await (const evt of runCloudAgentInline({
+              workspacePath: appState.currentWorkspace!,
+              settings,
+              goal: userText,
+              agentId: turnPlan.agentId,
+              agentName: turnPlan.agentName,
+              getSecret,
+              signal: appState.chatAbort.signal
+            })) {
+              if (evt.type === 'thinking') {
+                pendingThinking += evt.text
+                scheduleStreamFlush()
+              } else if (evt.type === 'answer') {
+                pendingAnswer += evt.text
+                scheduleStreamFlush()
+              } else {
+                flushStreamChunks()
+                if (evt.type === 'tool') {
+                  event.sender.send('chat:tool', { requestId, tool: evt.tool })
+                } else if (evt.type === 'diff') {
+                  event.sender.send('chat:diff', { requestId, diff: evt.diff })
+                } else if (evt.type === 'checkpoint') {
+                  event.sender.send('chat:checkpoint', {
+                    requestId,
+                    checkpointId: evt.checkpointId
+                  })
+                } else if (evt.type === 'workspace-changed') {
+                  event.sender.send('chat:workspace-changed', { requestId })
+                } else if (evt.type === 'status') {
+                  event.sender.send('chat:status', { requestId, text: evt.text })
+                } else if (evt.type === 'model') {
+                  event.sender.send('chat:model', {
+                    requestId,
+                    model: evt.model,
+                    agentId: evt.agentId ?? turnPlan.agentId,
+                    agentName: evt.agentName ?? turnPlan.agentName
+                  })
+                }
+              }
+            }
+            flushStreamChunks()
+            persistRun({ status: 'done' })
+            event.sender.send('chat:done', { requestId })
+            logInfo('Chat stream done (cloud inline)', { requestId })
+            return true
+          } catch (cloudErr) {
+            if ((cloudErr as Error).name === 'AbortError') {
+              flushStreamChunks()
+              persistRun({ status: 'stopped' })
+              event.sender.send('chat:done', { requestId, aborted: true })
+              return false
+            }
+            logWarn('Cloud inline chat falling back to local', {
+              requestId,
+              error: cloudErr instanceof Error ? cloudErr.message : String(cloudErr)
+            })
+            pendingThinking +=
+              '\nCloud unavailable — continuing with local Composer Lite.\n'
+            scheduleStreamFlush()
+          }
+        }
 
         for await (const evt of runAgentWithWorkspaceTools({
           workspacePath: appState.currentWorkspace,
