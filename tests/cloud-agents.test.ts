@@ -3,8 +3,10 @@ import {
   CLOUD_AGENTS_BASE_URL,
   CLOUD_AGENTS_HEALTH_PATH,
   CLOUD_AGENTS_JOBS_PATH,
+  cloudAgentsFallbackReason,
   cloudAgentsStatusLabel,
   isCloudAgentsReady,
+  shouldUseCloudAgents,
   type CloudHealth
 } from '../src/shared/cloud-agents'
 import { cloudJobToBackgroundJob } from '../electron/main/services/cloud-agents-client'
@@ -73,11 +75,48 @@ describe('cloud readiness + status', () => {
     expect(isCloudAgentsReady(null)).toBe(false)
   })
 
+  it('prefers cloud while the model is warming; local only on hard failures', () => {
+    expect(shouldUseCloudAgents(base)).toBe(true)
+    expect(
+      shouldUseCloudAgents({
+        ...base,
+        localModel: { ...base.localModel!, status: 'downloading' }
+      })
+    ).toBe(true)
+    expect(
+      shouldUseCloudAgents({
+        ...base,
+        localModel: { ...base.localModel!, status: 'missing' }
+      })
+    ).toBe(true)
+    expect(cloudAgentsFallbackReason({ ...base, ok: false })).toBe('unreachable')
+    expect(
+      cloudAgentsFallbackReason({
+        ...base,
+        localModel: { ...base.localModel!, status: 'error', error: 'boom' }
+      })
+    ).toBe('model-error')
+    expect(shouldUseCloudAgents({ ...base, ok: false })).toBe(false)
+    expect(shouldUseCloudAgents(null)).toBe(false)
+  })
+
   it('labels offline and ready states for the status bar', () => {
     expect(cloudAgentsStatusLabel(null)).toContain('checking')
     expect(cloudAgentsStatusLabel({ ...base, ok: false, error: 'Unreachable' })).toContain(
       'using local'
     )
+    expect(
+      cloudAgentsStatusLabel({
+        ...base,
+        localModel: { ...base.localModel!, status: 'downloading' }
+      })
+    ).toContain('downloading')
+    expect(
+      cloudAgentsStatusLabel({
+        ...base,
+        localModel: { ...base.localModel!, status: 'downloading' }
+      })
+    ).not.toContain('using local')
     expect(cloudAgentsStatusLabel(base)).toContain('Composer Lite')
   })
 })

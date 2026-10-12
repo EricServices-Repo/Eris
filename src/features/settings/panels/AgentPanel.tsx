@@ -3,7 +3,8 @@ import type { CloudHealth } from '@/shared/cloud-agents'
 import {
   CLOUD_AGENTS_BASE_URL,
   cloudAgentsStatusLabel,
-  isCloudAgentsReady
+  isCloudAgentsReady,
+  shouldUseCloudAgents
 } from '@/shared/cloud-agents'
 
 function offlineHealth(error: string): CloudHealth {
@@ -42,6 +43,7 @@ export function AgentPanel() {
   }, [refresh])
 
   const ready = isCloudAgentsReady(cloud)
+  const preferCloud = shouldUseCloudAgents(cloud)
   const label = cloudAgentsStatusLabel(cloud)
   const host = CLOUD_AGENTS_BASE_URL.replace(/^https?:\/\//, '')
 
@@ -76,8 +78,8 @@ export function AgentPanel() {
           <div>
             <h3 style={{ margin: 0, fontSize: 14 }}>Cloud Agents</h3>
             <p className="subtitle" style={{ margin: '4px 0 0' }}>
-              Shared worker at {host} (plain HTTP). When offline, background jobs run in local
-              worktrees.
+              Shared worker at {host} (plain HTTP). Local worktrees are used only when cloud
+              health or enqueue fails — not while the model is still downloading.
             </p>
           </div>
           <button type="button" className="btn" disabled={busy} onClick={() => void refresh()}>
@@ -86,11 +88,11 @@ export function AgentPanel() {
         </div>
 
         <div
-          className={`agents-cloud-status${ready ? ' is-ready' : cloud?.ok ? ' is-pending' : ' is-offline'}`}
+          className={`agents-cloud-status${ready ? ' is-ready' : preferCloud ? ' is-pending' : ' is-offline'}`}
           title={`${CLOUD_AGENTS_BASE_URL} — plain HTTP, no certificate`}
           style={{ marginBottom: 12 }}
         >
-          <span className={`status-dot${ready ? ' ok' : ''}`} />
+          <span className={`status-dot${preferCloud ? ' ok' : ''}`} />
           <span>{label}</span>
           <span className="agents-cloud-host">{host}</span>
         </div>
@@ -99,10 +101,14 @@ export function AgentPanel() {
           <div className="usage-hero-card">
             <div className="usage-hero-label">Status</div>
             <div className="usage-hero-value" style={{ fontSize: 18 }}>
-              {ready ? 'Ready' : cloud?.ok ? 'Pending' : 'Offline'}
+              {ready ? 'Ready' : preferCloud ? 'Warming' : 'Offline'}
             </div>
             <div className="usage-hero-sub">
-              {cloud?.inference === 'remote' ? 'remote inference' : 'local GGUF in container'}
+              {preferCloud
+                ? cloud?.inference === 'remote'
+                  ? 'remote inference · prefer cloud'
+                  : 'local GGUF · prefer cloud'
+                : 'fallback to local worktrees'}
             </div>
           </div>
           <div className="usage-hero-card">
@@ -122,6 +128,13 @@ export function AgentPanel() {
             </div>
             <div className="usage-hero-sub">
               {cloud?.localModel?.status || (cloud?.llmConfigured ? 'configured' : 'n/a')}
+              {cloud?.localModel?.gpu === false
+                ? ' · CPU'
+                : cloud?.localModel?.gpu
+                  ? ` · GPU ${cloud.localModel.gpu}`
+                  : cloud?.gpuMode
+                    ? ` · gpu=${cloud.gpuMode}`
+                    : ''}
               {cloud?.version ? ` · v${cloud.version}` : ''}
             </div>
           </div>

@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { BackgroundJob } from '@/shared/background-agents'
-import type { CloudHealth } from '@/shared/cloud-agents'
-import { isCloudAgentsReady } from '@/shared/cloud-agents'
+import {
+  cloudAgentsFallbackReason,
+  shouldUseCloudAgents,
+  type CloudHealth
+} from '@/shared/cloud-agents'
 import { deriveBlackboardStatus } from '@/shared/agent-orchestration'
 import { formatBackgroundJobDetail } from '@/shared/background-job-detail'
 
@@ -114,7 +117,7 @@ export function AgentsPanel({
     [jobs]
   )
 
-  const cloudReady = isCloudAgentsReady(cloud)
+  const preferCloud = shouldUseCloudAgents(cloud)
 
   const startLocal = (payload: {
     goal: string
@@ -129,6 +132,27 @@ export function AgentsPanel({
       forceRoute: 'tools'
     })
 
+  const probeHealth = async (): Promise<CloudHealth> => {
+    try {
+      const health = await window.ide.cloudAgentsHealth()
+      setCloud(health)
+      return health
+    } catch (err) {
+      const health: CloudHealth = {
+        ok: false,
+        service: 'eris-cloud-agent',
+        version: '',
+        llmConfigured: false,
+        maxParallel: 0,
+        running: 0,
+        queued: 0,
+        error: err instanceof Error ? err.message : 'Unreachable'
+      }
+      setCloud(health)
+      return health
+    }
+  }
+
   const start = () => {
     if (!goal.trim() || !workspacePath) return
     setBusy(true)
@@ -141,7 +165,9 @@ export function AgentsPanel({
     }
     void (async () => {
       try {
-        if (cloudReady) {
+        // Live health at start — never decide from a stale panel poll alone.
+        const health = await probeHealth()
+        if (shouldUseCloudAgents(health)) {
           try {
             const job = await window.ide.enqueueCloudJob(payload)
             setGoal('')
@@ -149,6 +175,7 @@ export function AgentsPanel({
             void refresh()
             return
           } catch (cloudErr) {
+            // Only fall back after a real cloud enqueue/network failure.
             const msg = cloudErr instanceof Error ? cloudErr.message : 'Cloud enqueue failed'
             const job = await startLocal(payload)
             setGoal('')
@@ -158,9 +185,11 @@ export function AgentsPanel({
             return
           }
         }
+        const reason = cloudAgentsFallbackReason(health) || 'unreachable'
         const job = await startLocal(payload)
         setGoal('')
         setSelectedId(job.id)
+        setError(`Cloud unavailable (${reason}) — started local agent instead`)
         void refresh()
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to start')
@@ -204,7 +233,7 @@ export function AgentsPanel({
         <input
           value={goal}
           placeholder={
-            cloudReady
+            preferCloud
               ? 'Goal for Cloud Agent'
               : 'Goal for local worktree agent (cloud offline)'
           }
@@ -222,7 +251,7 @@ export function AgentsPanel({
           disabled={busy || !goal.trim() || !workspacePath}
           onClick={start}
         >
-          {cloudReady ? 'Start cloud' : 'Start local'}
+          {preferCloud ? 'Start cloud' : 'Start local'}
         </button>
       </div>
       <div className="git-body">
@@ -317,13 +346,13 @@ export function AgentsPanel({
             </div>
           )}
           <pre className="git-diff agents-live">
-            {selected ? formatBackgroundJobDetail(selected, diff) : helpText(cloudReady)}
+            {selected ? formatBackgroundJobDetail(selected, diff) : helpText(preferCloud)}
           </pre>
         </div>
       </div>
       <div className="debug-hint">
-        Cloud uses plain HTTP (no certificate). If cloud is offline or enqueue fails, Eris starts a local
-        worktree agent.
+        Cloud uses plain HTTP (no certificate). Local agents start only if cloud health or enqueue
+        fails — not while the remote model is still downloading.
       </div>
     </div>
   )
@@ -377,13 +406,13 @@ function JobTreeButton({
   )
 }
 
-function helpText(cloudReady: boolean): string {
+function helpText(preferCloud: boolean): string {
   return [
     'Blackboard: local worktree agents + Cloud Agents.',
     'Cloud status and metrics: Settings → Agent.',
-    cloudReady
-      ? 'Cloud is ready — Start prefers the remote worker (own GGUF). Falls back to local on failure.'
-      : 'Cloud not ready — Start uses a local worktree agent.',
+    preferCloud
+      ? 'Cloud is available — Start uses the remote worker. Local only if cloud health/enqueue fails.'
+      : 'Cloud unavailable — Start uses a local worktree agent.',
     '',
     'Tip: Bring to chat pastes the result into the active thread.'
   ].join('\n')

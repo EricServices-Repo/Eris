@@ -31,7 +31,8 @@ let statusError: string | null = null
 let ensurePromise: Promise<string> | null = null
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let llamaRuntime: { model: any; context: any; LlamaChatSession: any } | null = null
+let llamaRuntime: { model: any; context: any; LlamaChatSession: any; gpu: string | false } | null =
+  null
 
 export function localModelDir(): string {
   return join(config.dataDir, 'models')
@@ -47,13 +48,16 @@ export function getLocalModelStatus(): {
   modelName: string
   path: string
   error?: string | null
+  /** Active llama.cpp backend once loaded: cuda | vulkan | metal | false (CPU) */
+  gpu?: string | false | null
 } {
   return {
     status,
     modelId: LOCAL_MODEL.id,
     modelName: LOCAL_MODEL.name,
     path: localModelPath(),
-    error: statusError
+    error: statusError,
+    gpu: llamaRuntime ? llamaRuntime.gpu : null
   }
 }
 
@@ -138,20 +142,43 @@ export async function ensureLocalModel(): Promise<string> {
   return ensurePromise
 }
 
+async function createLlama() {
+  const llamaCpp = await import('node-llama-cpp')
+  const { getLlama } = llamaCpp
+  const mode = config.gpu
+
+  if (mode === 'false') {
+    return getLlama({ gpu: false })
+  }
+
+  try {
+    if (mode === 'cuda' || mode === 'vulkan') {
+      return await getLlama({ gpu: mode })
+    }
+    // auto: let node-llama-cpp pick CUDA/Vulkan when the host exposes a GPU
+    return await getLlama()
+  } catch (err) {
+    console.warn(
+      `[eris-cloud-agent] GPU init failed (${mode}), falling back to CPU:`,
+      err instanceof Error ? err.message : err
+    )
+    return getLlama({ gpu: false })
+  }
+}
+
 async function ensureRuntime(): Promise<NonNullable<typeof llamaRuntime>> {
   if (llamaRuntime) return llamaRuntime
   const path = await ensureLocalModel()
   const llamaCpp = await import('node-llama-cpp')
-  const { getLlama, LlamaChatSession } = llamaCpp
-  let llama
-  try {
-    llama = await getLlama({ gpu: false })
-  } catch {
-    llama = await getLlama()
-  }
+  const { LlamaChatSession } = llamaCpp
+  const llama = await createLlama()
   const model = await llama.loadModel({ modelPath: path })
   const context = await model.createContext({ contextSize: 8192 })
-  llamaRuntime = { model, context, LlamaChatSession }
+  const gpu = (llama.gpu ?? false) as string | false
+  console.log(
+    `[eris-cloud-agent] Local model ready · ${LOCAL_MODEL.name} · gpu=${gpu === false ? 'cpu' : gpu}`
+  )
+  llamaRuntime = { model, context, LlamaChatSession, gpu }
   status = 'ready'
   return llamaRuntime
 }
