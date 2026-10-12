@@ -67,6 +67,32 @@ export interface LayeredSettings {
   resolved: AppSettings
 }
 
+export type UsageLimitMeter = {
+  used: number
+  limit: number | null
+  remaining: number | null
+  ratio: number
+  exhausted: boolean
+}
+
+export type UsageEntitlement = {
+  plan: 'free' | 'pro'
+  planLabel: string
+  authenticated: boolean
+  limits: {
+    dailyRequests: number | null
+    dailyTokens: number | null
+    cloudJobsPerDay: number | null
+  }
+  requests: UsageLimitMeter
+  tokens: UsageLimitMeter
+  cloudJobs: UsageLimitMeter
+  overLimit: boolean
+  blockedReason: string | null
+  upgradeUrl: string
+  accountUrl: string
+}
+
 export type UsageSnapshot = {
   today: {
     date: string
@@ -84,12 +110,14 @@ export type UsageSnapshot = {
     totalRequests: number
     totalInputTokens: number
     totalOutputTokens: number
+    cloudJobs?: number
   }
   days: Array<{
     date: string
     totalRequests: number
     totalInputTokens: number
     totalOutputTokens: number
+    cloudJobs?: number
   }>
   byKind: Array<{
     kind: 'builtin' | 'openai-compatible' | 'other'
@@ -109,6 +137,7 @@ export type UsageSnapshot = {
     totalTokens: number
     share: number
   }>
+  entitlement?: UsageEntitlement
 }
 
 export interface IdeApi {
@@ -424,7 +453,18 @@ export interface IdeApi {
     email: string
     lastSyncedAt: string
     syncEnabled: boolean
-    profile?: { username: string; email: string; isAdmin?: boolean; accountUrl?: string } | null
+    plan?: 'free' | 'pro' | string
+    profile?: {
+      username: string
+      email: string
+      isAdmin?: boolean
+      accountUrl?: string
+      plan?: string
+      planLabel?: string
+      erisPlan?: string
+      features?: Record<string, unknown>
+      erisLimits?: Record<string, unknown>
+    } | null
     remoteUpdatedAt?: string | null
   }>
   ericServicesLogin: (payload: {
@@ -435,7 +475,17 @@ export interface IdeApi {
   }) => Promise<{
     ok: boolean
     error?: string
-    profile?: { username: string; email: string; isAdmin?: boolean; accountUrl?: string }
+    profile?: {
+      username: string
+      email: string
+      isAdmin?: boolean
+      accountUrl?: string
+      plan?: string
+      planLabel?: string
+      erisPlan?: string
+      features?: Record<string, unknown>
+      erisLimits?: Record<string, unknown>
+    }
     status?: Record<string, unknown>
     sync?: { ok: boolean; error?: string; direction?: string }
   }>
@@ -459,6 +509,7 @@ export interface IdeApi {
     status?: Record<string, unknown>
   }>
   ericServicesOpenAccount: () => Promise<{ ok: boolean; url?: string; error?: string }>
+  ericServicesOpenUpgrade: () => Promise<{ ok: boolean; url?: string; error?: string }>
   mcpStatus: () => Promise<{
     servers: Array<{
       id: string

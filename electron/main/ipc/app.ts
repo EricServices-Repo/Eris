@@ -1,6 +1,8 @@
 import { app, ipcMain, dialog } from 'electron'
 import { getAppState, completeOnboarding, resetOnboarding } from '../services/workspace'
 import { clearUsageStats, getUsageSnapshot } from '../services/usage-stats'
+import { getUsageEntitlement } from '../services/eris-entitlements'
+import { getResolvedSettings } from '../services/settings'
 import {
   clearLogs,
   getLogsInfo,
@@ -55,8 +57,20 @@ export function registerAppIpc(): void {
   })
   ipcMain.handle('secrets:get', (_e, key: string) => getSecret(key))
 
-  ipcMain.handle('usage:get', (_e, days?: number) => getUsageSnapshot(days ?? 7))
-  ipcMain.handle('usage:clear', (_e, payload?: { todayOnly?: boolean }) =>
-    clearUsageStats({ todayOnly: Boolean(payload?.todayOnly) })
-  )
+  ipcMain.handle('usage:get', (_e, days?: number) => {
+    const settings = getResolvedSettings(appState.currentWorkspace)
+    const snap = getUsageSnapshot(days ?? 7)
+    return {
+      ...snap,
+      entitlement: getUsageEntitlement(settings, getSecret)
+    }
+  })
+  ipcMain.handle('usage:clear', (_e, payload?: { todayOnly?: boolean }) => {
+    const settings = getResolvedSettings(appState.currentWorkspace)
+    const snap = clearUsageStats({ todayOnly: Boolean(payload?.todayOnly) })
+    return {
+      ...snap,
+      entitlement: getUsageEntitlement(settings, getSecret)
+    }
+  })
 }

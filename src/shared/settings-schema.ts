@@ -150,7 +150,20 @@ export const SettingsSchema = z.object({
     /** ISO timestamp from last successful pull/push */
     lastSyncedAt: z.string(),
     /** When true, pull remote settings on login / Sync Now */
-    syncEnabled: z.boolean()
+    syncEnabled: z.boolean(),
+    /**
+     * Plan from www.ericservic.es (admin pulldown Free/Pro on the account).
+     * Synced from profile.erisPlan on login /me.
+     */
+    plan: z.enum(['free', 'pro']),
+    /** Optional Free-tier overrides from profile.erisLimits (null fields = use defaults). */
+    planLimits: z
+      .object({
+        dailyRequests: z.number().int().nonnegative().nullable().optional(),
+        dailyTokens: z.number().int().nonnegative().nullable().optional(),
+        cloudJobsPerDay: z.number().int().nonnegative().nullable().optional()
+      })
+      .optional()
   }),
   editor: z.object({
     fontSize: z.number().int().min(10).max(32),

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-
-type UsageSnapshot = Awaited<ReturnType<typeof window.ide.getUsageStats>>
+import type { UsageEntitlement, UsageLimitMeter, UsageSnapshot } from '@/shared/api'
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`
@@ -22,6 +21,37 @@ function kindAccent(kind: string): string {
   return 'usage-accent-other'
 }
 
+function LimitMeter({
+  label,
+  meter,
+  format = (n) => String(n)
+}: {
+  label: string
+  meter: UsageLimitMeter
+  format?: (n: number) => string
+}) {
+  const unlimited = meter.limit == null
+  const pct = unlimited ? 0 : Math.round(meter.ratio * 100)
+  return (
+    <div className={`usage-limit-meter${meter.exhausted ? ' is-exhausted' : ''}`}>
+      <div className="usage-limit-meter-head">
+        <span>{label}</span>
+        <span className="usage-muted">
+          {unlimited
+            ? `${format(meter.used)} · unlimited`
+            : `${format(meter.used)} / ${format(meter.limit!)}`}
+        </span>
+      </div>
+      <div className="usage-bar-track">
+        <div
+          className={`usage-bar-fill ${meter.exhausted ? 'usage-accent-other' : 'usage-accent-builtin'}`}
+          style={{ width: unlimited ? '8%' : `${Math.max(meter.used > 0 ? 4 : 0, pct)}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
 export function UsagePanel() {
   const [stats, setStats] = useState<UsageSnapshot | null>(null)
   const [busy, setBusy] = useState(false)
@@ -31,6 +61,12 @@ export function UsagePanel() {
     setBusy(true)
     setError(null)
     try {
+      // Refresh account plan from Control Hub when signed in
+      try {
+        await window.ide.ericServicesStatus()
+      } catch {
+        /* offline / signed out — local Free caps still apply */
+      }
       setStats(await window.ide.getUsageStats())
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load usage')
@@ -44,6 +80,8 @@ export function UsagePanel() {
   }, [refresh])
 
   const today = stats?.today
+  const ent: UsageEntitlement | undefined = stats?.entitlement
+  const isPro = ent?.plan === 'pro'
   const totalToday =
     (today?.totalInputTokens || 0) + (today?.totalOutputTokens || 0)
   const maxModel = Math.max(1, ...(stats?.byModel.map((m) => m.totalTokens) || [1]))
@@ -59,9 +97,75 @@ export function UsagePanel() {
 
   return (
     <div className="usage-panel">
+      <div className={`usage-plan-banner${isPro ? ' is-pro' : ' is-free'}`}>
+        <div className="usage-plan-banner-main">
+          <div className="usage-plan-badge">{ent?.planLabel || 'Free'}</div>
+          <div>
+            <div className="usage-plan-title">
+              {isPro ? 'Pro — unlimited usage' : 'Free plan — daily limits apply'}
+            </div>
+            <p className="usage-plan-copy">
+              {ent?.authenticated
+                ? isPro
+                  ? 'Your EricServic.es account is on Pro. Plan is managed in the Control Hub.'
+                  : 'Limits reset each calendar day. An admin can upgrade your account to Pro on www.ericservic.es.'
+                : 'Sign in under Settings → Account to sync your plan from EricServic.es. Until then, Free limits apply.'}
+            </p>
+          </div>
+        </div>
+        <div className="usage-plan-actions">
+          {!isPro && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy}
+              onClick={() => void window.ide.ericServicesOpenUpgrade()}
+            >
+              Upgrade to Pro
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={() => void window.ide.ericServicesOpenAccount()}
+          >
+            {ent?.authenticated ? 'Manage account' : 'Sign in'}
+          </button>
+        </div>
+      </div>
+
+      {ent?.blockedReason && (
+        <div className="usage-limit-alert">
+          {ent.blockedReason}
+          <button
+            type="button"
+            className="btn btn-primary"
+            style={{ marginLeft: 12 }}
+            onClick={() => void window.ide.ericServicesOpenUpgrade()}
+          >
+            Upgrade to Pro
+          </button>
+        </div>
+      )}
+
+      {ent && (
+        <section className="usage-section">
+          <div className="usage-section-head">
+            <h3>Today’s allowance</h3>
+            <span className="usage-muted">{today?.date || '—'}</span>
+          </div>
+          <div className="usage-limit-grid">
+            <LimitMeter label="Requests" meter={ent.requests} />
+            <LimitMeter label="Tokens" meter={ent.tokens} format={formatTokens} />
+            <LimitMeter label="Cloud Agent jobs" meter={ent.cloudJobs} />
+          </div>
+        </section>
+      )}
+
       <p className="subtitle" style={{ marginTop: 0 }}>
         Local accounting of model requests and estimated tokens (chars÷4 when providers don’t
-        report usage). Resets per calendar day on this Mac.
+        report usage). Resets per calendar day on this machine.
       </p>
 
       <div className="usage-hero">

@@ -225,7 +225,7 @@ export function SettingsModal({
                         : category === 'account'
                           ? 'Link your EricServic.es profile and sync preferences'
                           : category === 'usage'
-                            ? 'Daily model requests and token estimates by type'
+                            ? 'Plan limits, Upgrade to Pro, and daily model usage'
                             : category === 'agent'
                               ? 'Routing, Cloud Agents status, and background agent limits'
                               : 'Cursor-style layered config: defaults → user → workspace'}

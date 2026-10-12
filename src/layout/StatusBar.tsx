@@ -69,9 +69,9 @@ export function StatusBar({
               ? 'Cloud'
               : preferCloud
                 ? 'Cloud…'
-                : cloudHealth && !cloudHealth.ok
-                  ? 'Local agents'
-                  : 'Cloud…'}
+                : cloudHealth?.authenticated !== true
+                  ? 'Sign in'
+                  : 'Local agents'}
           </span>
         </button>
       </div>

@@ -48,6 +48,7 @@ describe('cloud agents defaults', () => {
 describe('cloud readiness + status', () => {
   const base: CloudHealth = {
     ok: true,
+    authenticated: true,
     service: 'eris-cloud-agent',
     version: '0.1.0',
     llmConfigured: true,
@@ -98,6 +99,14 @@ describe('cloud readiness + status', () => {
     ).toBe('model-error')
     expect(shouldUseCloudAgents({ ...base, ok: false })).toBe(false)
     expect(shouldUseCloudAgents(null)).toBe(false)
+  })
+
+  it('requires EricServic.es login before preferring cloud', () => {
+    expect(cloudAgentsFallbackReason({ ...base, authenticated: false })).toBe('not-authenticated')
+    expect(shouldUseCloudAgents({ ...base, authenticated: false })).toBe(false)
+    expect(shouldUseCloudAgents({ ...base, authenticated: undefined })).toBe(false)
+    expect(isCloudAgentsReady({ ...base, authenticated: false })).toBe(false)
+    expect(cloudAgentsStatusLabel({ ...base, authenticated: false })).toContain('sign in')
   })
 
   it('labels offline and ready states for the status bar', () => {

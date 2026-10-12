@@ -20,6 +20,8 @@ export type DayUsage = {
   totalRequests: number
   totalInputTokens: number
   totalOutputTokens: number
+  /** Cloud Agent jobs enqueued today (Free tier capped). */
+  cloudJobs?: number
 }
 
 export type UsageSnapshot = {
@@ -34,6 +36,7 @@ export type UsageSnapshot = {
     totalTokens: number
   }>
   byModel: Array<ModelUsageEntry & { totalTokens: number; share: number }>
+  entitlement?: import('./eris-entitlements').UsageEntitlement
 }
 
 type UsageFile = {
@@ -60,7 +63,8 @@ function emptyDay(date: string): DayUsage {
     models: {},
     totalRequests: 0,
     totalInputTokens: 0,
-    totalOutputTokens: 0
+    totalOutputTokens: 0,
+    cloudJobs: 0
   }
 }
 
@@ -153,6 +157,16 @@ export function recordModelUsage(options: {
   day.totalRequests += 1
   day.totalInputTokens += inputTokens
   day.totalOutputTokens += outputTokens
+  file.days[date] = day
+  saveFile(file)
+}
+
+/** Count a Cloud Agent enqueue toward Free-tier daily caps. */
+export function recordCloudJobEnqueue(): void {
+  const file = loadFile()
+  const date = todayKey()
+  const day = file.days[date] || emptyDay(date)
+  day.cloudJobs = (day.cloudJobs || 0) + 1
   file.days[date] = day
   saveFile(file)
 }

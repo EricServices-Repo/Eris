@@ -1,4 +1,5 @@
 import type { AppSettings, McpServerConfig, SettingsPatch } from '../../../src/shared/settings-schema'
+import { parseErisPlanFromProfile, type ErisPlanId } from '../../../src/shared/eris-plan'
 import {
   exportUserSkillsForSync,
   importUserSkillsFromSync,
@@ -10,6 +11,17 @@ export interface EricServicesProfile {
   email: string
   isAdmin?: boolean
   accountUrl?: string
+  /** Set by www.ericservic.es admin (Free / Pro pulldown). */
+  erisPlan?: 'free' | 'pro' | string
+  plan?: string
+  eris_plan?: string
+  /** Optional Free-tier overrides from Control Hub. */
+  erisLimits?: {
+    dailyRequests?: number | null
+    dailyTokens?: number | null
+    cloudJobsPerDay?: number | null
+  }
+  eris_limits?: EricServicesProfile['erisLimits']
 }
 
 export interface EricServicesStatus {
@@ -22,6 +34,8 @@ export interface EricServicesStatus {
   email: string
   lastSyncedAt: string
   syncEnabled: boolean
+  /** Cached plan from Control Hub (free | pro). */
+  plan: 'free' | 'pro'
   profile?: EricServicesProfile | null
   remoteUpdatedAt?: string | null
 }
@@ -339,11 +353,37 @@ export function ericServicesTokenRef(): string {
   return TOKEN_REF
 }
 
+/** Linked account + stored device token — required for Cloud Agents. */
+export function isEricServicesAuthenticated(
+  settings: AppSettings,
+  token: string | null | undefined
+): boolean {
+  return Boolean(settings.ericServices?.linked && token)
+}
+
+export function planPatchFromProfile(
+  profile: EricServicesProfile | null | undefined
+): { plan: ErisPlanId; planLimits: AppSettings['ericServices']['planLimits'] } {
+  const parsed = parseErisPlanFromProfile(profile)
+  return {
+    plan: parsed.plan,
+    planLimits:
+      parsed.plan === 'pro'
+        ? {}
+        : {
+            dailyRequests: parsed.limits.dailyRequests,
+            dailyTokens: parsed.limits.dailyTokens,
+            cloudJobsPerDay: parsed.limits.cloudJobsPerDay
+          }
+  }
+}
+
 export function buildEricServicesStatus(
   settings: AppSettings,
   hasToken: boolean,
   extras?: Partial<EricServicesStatus>
 ): EricServicesStatus {
+  const plan: ErisPlanId = settings.ericServices.plan === 'pro' ? 'pro' : 'free'
   return {
     ok: true,
     linked: Boolean(settings.ericServices.linked && hasToken),
@@ -353,10 +393,12 @@ export function buildEricServicesStatus(
     email: settings.ericServices.email || '',
     lastSyncedAt: settings.ericServices.lastSyncedAt || '',
     syncEnabled: settings.ericServices.syncEnabled !== false,
+    plan,
     profile: settings.ericServices.username
       ? {
           username: settings.ericServices.username,
-          email: settings.ericServices.email || ''
+          email: settings.ericServices.email || '',
+          erisPlan: plan
         }
       : null,
     ...extras

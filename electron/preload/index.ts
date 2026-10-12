@@ -118,6 +118,7 @@ const api: IdeApi = {
   ericServicesLogout: () => ipcRenderer.invoke('ericServices:logout'),
   ericServicesSync: (direction) => ipcRenderer.invoke('ericServices:sync', direction),
   ericServicesOpenAccount: () => ipcRenderer.invoke('ericServices:openAccount'),
+  ericServicesOpenUpgrade: () => ipcRenderer.invoke('ericServices:openUpgrade'),
   mcpStatus: () => ipcRenderer.invoke('mcp:status'),
   mcpReconnect: () => ipcRenderer.invoke('mcp:reconnect'),
   searchGrep: (pattern, glob) => ipcRenderer.invoke('search:grep', pattern, glob),

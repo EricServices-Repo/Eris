@@ -12,19 +12,43 @@ import {
 } from '../services/cloud-agents-client'
 import type { EnqueueCloudJobRequest } from '../../../src/shared/cloud-agents'
 import { getResolvedSettings } from '../services/settings'
+import { isEricServicesAuthenticated } from '../services/ericservices'
+import { assertCloudJobWithinPlan } from '../services/eris-entitlements'
+import { recordCloudJobEnqueue } from '../services/usage-stats'
+import { getSecret } from './shared'
+
+function requireCloudAuth(): void {
+  if (!ericServicesCloudAuth()) {
+    throw new Error(
+      'Sign in to EricServic.es (Settings → Account) to use Cloud Agents. Local agents remain available.'
+    )
+  }
+}
+
+function ericServicesCloudAuth(): boolean {
+  const settings = getResolvedSettings(appState.currentWorkspace)
+  const token = settings.ericServices.tokenRef
+    ? getSecret(settings.ericServices.tokenRef)
+    : null
+  return isEricServicesAuthenticated(settings, token)
+}
 
 export function registerCloudAgentsIpc(): void {
   ipcMain.handle('cloudAgents:baseUrl', () => cloudAgentsBaseUrl())
 
-  ipcMain.handle('cloudAgents:health', async () => cloudAgentsHealth())
+  ipcMain.handle('cloudAgents:health', async () =>
+    cloudAgentsHealth(ericServicesCloudAuth())
+  )
 
   ipcMain.handle('cloudAgents:list', async () => {
+    if (!ericServicesCloudAuth()) return []
     const jobs = await listCloudJobs(50)
     const ws = appState.currentWorkspace || ''
     return jobs.map((j) => cloudJobToBackgroundJob(j, ws))
   })
 
   ipcMain.handle('cloudAgents:get', async (_e, id: string) => {
+    if (!ericServicesCloudAuth()) return null
     const rawId = String(id).replace(/^cloud:/, '')
     const job = await getCloudJob(rawId)
     if (!job) return null
@@ -32,8 +56,10 @@ export function registerCloudAgentsIpc(): void {
   })
 
   ipcMain.handle('cloudAgents:enqueue', async (_e, payload: EnqueueCloudJobRequest) => {
+    requireCloudAuth()
     const workspace = appState.currentWorkspace
     const settings = getResolvedSettings(workspace)
+    assertCloudJobWithinPlan(settings, getSecret)
     const files =
       payload.files && payload.files.length > 0
         ? payload.files
@@ -58,10 +84,16 @@ export function registerCloudAgentsIpc(): void {
       claim: payload.claim,
       files
     })
+    try {
+      recordCloudJobEnqueue()
+    } catch {
+      /* ignore accounting failures */
+    }
     return cloudJobToBackgroundJob(job, workspace || '')
   })
 
   ipcMain.handle('cloudAgents:stop', async (_e, id: string) => {
+    requireCloudAuth()
     const rawId = String(id).replace(/^cloud:/, '')
     return stopCloudJob(rawId)
   })

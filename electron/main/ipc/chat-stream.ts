@@ -30,6 +30,7 @@ import { logError, logInfo, logWarn } from '../services/logger'
 import { appState } from '../app-state'
 import { getSecret, abortAllCompletes } from './shared'
 import { addWorkspaceAllowedCommand, workspaceAllowedCommands } from '../services/workspace-trust'
+import { assertChatWithinPlan } from '../services/eris-entitlements'
 
 export function registerChatStreamIpc(): void {
   ipcMain.handle(
@@ -50,13 +51,21 @@ export function registerChatStreamIpc(): void {
       }
     ) => {
       const settings = getResolvedSettings(appState.currentWorkspace)
+      const { requestId } = payload
+      try {
+        assertChatWithinPlan(settings, getSecret)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Plan limit reached'
+        event.sender.send('chat:error', { requestId, error: message })
+        return { ok: false, error: message }
+      }
       appState.chatAbort?.abort()
       appState.chatAbort = new AbortController()
       appState.chatStreamActive = true
       appState.activeChatRequestId = payload.requestId
       // Ghost completes share the llama runtime — never race the agent turn.
       abortAllCompletes()
-      const { requestId, model, agentId, mode } = payload
+      const { model, agentId, mode } = payload
       const resumeRun = payload.prompt?.resumeRunId
         ? loadLastAgentRun(appState.currentWorkspace)
         : null

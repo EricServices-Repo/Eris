@@ -119,7 +119,7 @@ async function cloudFetch(
   }
 }
 
-export async function cloudAgentsHealth(): Promise<CloudHealth> {
+export async function cloudAgentsHealth(authenticated = false): Promise<CloudHealth> {
   const r = await cloudFetch(CLOUD_AGENTS_HEALTH_PATH, { logLabel: 'health' })
   if (!r.ok) {
     const error = r.error || 'Unreachable'
@@ -127,7 +127,8 @@ export async function cloudAgentsHealth(): Promise<CloudHealth> {
       logWarn('Cloud Agents health check failed — using local agents', {
         baseUrl: cloudAgentsBaseUrl(),
         status: r.status,
-        error
+        error,
+        authenticated
       })
     }
     return {
@@ -138,7 +139,8 @@ export async function cloudAgentsHealth(): Promise<CloudHealth> {
       maxParallel: 0,
       running: 0,
       queued: 0,
-      error
+      error,
+      authenticated
     }
   }
   const localModel = r.data.localModel as CloudHealth['localModel'] | undefined
@@ -174,7 +176,8 @@ export async function cloudAgentsHealth(): Promise<CloudHealth> {
     running: Number(r.data.running || 0),
     queued: Number(r.data.queued || 0),
     publicBaseUrl:
-      typeof r.data.publicBaseUrl === 'string' ? r.data.publicBaseUrl : CLOUD_AGENTS_BASE_URL
+      typeof r.data.publicBaseUrl === 'string' ? r.data.publicBaseUrl : CLOUD_AGENTS_BASE_URL,
+    authenticated
   }
 
   if (lastHealthLogKey) {

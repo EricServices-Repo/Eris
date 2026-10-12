@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 /**
- * Version + distribute Eris, then publish a GitHub Release.
+ * Version Eris, tag, and push — CI builds macOS + Windows into dist/ and
+ * uploads them to the GitHub Release for that tag.
  *
  * Usage:
- *   node scripts/release.mjs                 # bump patch, build, tag, release
+ *   node scripts/release.mjs                 # bump patch, changelog, tag, push (CI builds)
  *   node scripts/release.mjs --bump minor
  *   node scripts/release.mjs --bump major
- *   node scripts/release.mjs --version 0.2.0  # set exact version
+ *   node scripts/release.mjs --version 0.3.0  # set exact version
  *   node scripts/release.mjs --no-bump        # use package.json as-is
- *   node scripts/release.mjs --dry-run        # print plan only
- *   node scripts/release.mjs --skip-build     # tag/release existing dist artifacts
+ *   node scripts/release.mjs --local-build    # also build installers on this machine into dist/
+ *   node scripts/release.mjs --dry-run
+ *
+ * Version control: single semver in package.json / package-lock.json / git tag vX.Y.Z.
+ * Artifacts are named per platform (…-mac-… / …-win-…).
  *
  * Requires: gh CLI authenticated with repo scope; clean git working tree for bump/tag.
  */
@@ -35,7 +39,7 @@ function parseArgs(argv) {
     version: null,
     noBump: false,
     dryRun: false,
-    skipBuild: false,
+    localBuild: false,
     draft: false,
     prerelease: false
   }
@@ -43,7 +47,8 @@ function parseArgs(argv) {
     const a = argv[i]
     if (a === '--dry-run') args.dryRun = true
     else if (a === '--no-bump') args.noBump = true
-    else if (a === '--skip-build') args.skipBuild = true
+    else if (a === '--local-build') args.localBuild = true
+    else if (a === '--skip-build') args.localBuild = false // legacy alias: CI-only
     else if (a === '--draft') args.draft = true
     else if (a === '--prerelease') args.prerelease = true
     else if (a === '--bump') args.bump = argv[++i] || 'patch'
@@ -130,46 +135,46 @@ function collectArtifacts(version) {
       const full = join(dir, name)
       const st = statSync(full)
       if (st.isDirectory()) {
-        // Skip unpacked .app bundles — we ship dmg/zip
-        if (name.endsWith('.app')) continue
+        if (name.endsWith('.app') || name === 'win-unpacked' || name === 'mac' || name.startsWith('mac-')) {
+          continue
+        }
         walk(full)
         continue
       }
-      if (/\.(dmg|zip|yml|yaml|blockmap)$/i.test(name)) {
+      if (/\.(dmg|zip|exe|yml|yaml|blockmap)$/i.test(name)) {
         wanted.push(full)
       }
     }
   }
   walk(dist)
-  // Prefer versioned filenames when present
   const versioned = wanted.filter((p) => p.includes(version))
   return (versioned.length ? versioned : wanted).filter((p) => !p.endsWith('builder-debug.yml'))
 }
 
 function notesFromGit(prevTag, version) {
-  let range = ''
-  try {
-    if (prevTag) range = `${prevTag}..HEAD`
-    else range = 'HEAD'
-  } catch {
-    range = 'HEAD'
-  }
+  let range = prevTag ? `${prevTag}..HEAD` : 'HEAD'
   let log = ''
   try {
     log = runCapture(`git log ${range} --pretty=format:"- %s (%h)"`)
   } catch {
     log = '- Initial release'
   }
-  const lines = [
+  return [
     `## Eris v${version}`,
     '',
-    'macOS build (Apple Silicon). Download the `.dmg` or `.zip`, open, and move Eris to Applications.',
+    'Cross-platform desktop builds (macOS + Windows) from the same version tag.',
+    '',
+    '| Platform | Download |',
+    '|----------|----------|',
+    `| macOS | \`Eris-${version}-mac-*.dmg\` / \`.zip\` |`,
+    `| Windows | \`Eris-${version}-win-*-setup.exe\` |`,
+    '',
+    'CI builds both platforms on tag push (`.github/workflows/release.yml`).',
     '',
     '### Changes',
     log || '- See commit history',
     ''
-  ]
-  return lines.join('\n')
+  ].join('\n')
 }
 
 function prependChangelog(version, body) {
@@ -180,6 +185,13 @@ function prependChangelog(version, body) {
     ? prev.replace('# Changelog\n\n', `# Changelog\n\n${entry}`)
     : `# Changelog\n\n${entry}${prev}`
   writeFileSync(changelogPath, next, 'utf8')
+}
+
+function localDistScript() {
+  const plat = process.platform
+  if (plat === 'darwin') return 'dist:release:mac'
+  if (plat === 'win32') return 'dist:release:win'
+  die(`--local-build is only supported on macOS or Windows (got ${plat}). Use tag + CI for both platforms.`)
 }
 
 function main() {
@@ -209,11 +221,11 @@ function main() {
   }
 
   console.log(`Eris release plan`)
-  console.log(`  current: ${prevVersion}`)
-  console.log(`  next:    ${nextVersion} (${tag})`)
-  console.log(`  bump:    ${args.noBump || args.version ? 'none' : args.bump}`)
-  console.log(`  build:   ${args.skipBuild ? 'skip' : 'dist:release'}`)
-  console.log(`  dry-run: ${args.dryRun}`)
+  console.log(`  current:     ${prevVersion}`)
+  console.log(`  next:        ${nextVersion} (${tag})`)
+  console.log(`  bump:        ${args.noBump || args.version ? 'none' : args.bump}`)
+  console.log(`  local-build: ${args.localBuild ? localDistScript() : 'no (CI builds mac + win)'}`)
+  console.log(`  dry-run:     ${args.dryRun}`)
 
   if (args.dryRun) {
     console.log('Dry run — no changes made.')
@@ -225,7 +237,6 @@ function main() {
     if (pkg.version !== nextVersion) {
       pkg.version = nextVersion
       writePkg(pkg)
-      // Keep lockfile version field in sync when present
       const lockPath = join(root, 'package-lock.json')
       if (existsSync(lockPath)) {
         const lock = JSON.parse(readFileSync(lockPath, 'utf8'))
@@ -239,25 +250,22 @@ function main() {
   const notes = notesFromGit(prevTag && prevTag !== tag ? prevTag : '', nextVersion)
   prependChangelog(nextVersion, notes)
 
-  if (!args.skipBuild) {
-    run('npm run dist:release')
+  if (args.localBuild) {
+    run(`npm run ${localDistScript()}`)
+    const artifacts = collectArtifacts(nextVersion)
+    if (artifacts.length === 0) {
+      die('No local release artifacts found in dist/.')
+    }
+    console.log('Local dist/ artifacts:')
+    for (const a of artifacts) console.log(`  ${a}`)
   }
 
-  const artifacts = collectArtifacts(nextVersion)
-  if (artifacts.length === 0) {
-    die('No release artifacts found in dist/ (expected .dmg / .zip). Run without --skip-build.')
-  }
-  console.log('Artifacts:')
-  for (const a of artifacts) console.log(`  ${a}`)
-
-  // Commit version bump + changelog when we changed files
   const dirty = runCapture('git status --porcelain')
   if (dirty) {
     run('git add package.json package-lock.json CHANGELOG.md')
     run(`git commit -m "Release ${tag}"`)
   }
 
-  // Tag + push
   const existingTag = spawnSync('git', ['rev-parse', tag], { cwd: root, encoding: 'utf8' })
   if (existingTag.status === 0) {
     die(`Tag ${tag} already exists. Bump version or delete the tag first.`)
@@ -266,27 +274,47 @@ function main() {
   run('git push origin HEAD')
   run(`git push origin ${tag}`)
 
-  const ghArgs = [
-    'release',
-    'create',
-    tag,
-    ...artifacts,
-    '--title',
-    `Eris ${tag}`,
-    '--notes',
-    notes
-  ]
-  if (args.draft) ghArgs.push('--draft')
-  if (args.prerelease) ghArgs.push('--prerelease')
+  // Create/update the GitHub Release shell; CI attaches mac + win assets.
+  const view = spawnSync('gh', ['release', 'view', tag], {
+    cwd: root,
+    encoding: 'utf8'
+  })
+  if (view.status !== 0) {
+    const ghArgs = [
+      'release',
+      'create',
+      tag,
+      '--title',
+      `Eris ${tag}`,
+      '--notes',
+      notes
+    ]
+    if (args.draft) ghArgs.push('--draft')
+    if (args.prerelease) ghArgs.push('--prerelease')
+    console.log(`$ gh release create ${tag} …`)
+    const gh = spawnSync('gh', ghArgs, { cwd: root, stdio: 'inherit', encoding: 'utf8' })
+    if (gh.status !== 0) die('gh release create failed')
+  }
 
-  console.log(`$ gh ${ghArgs.map((a) => (a.includes('\n') ? '[notes]' : a)).join(' ')}`)
-  const gh = spawnSync('gh', ghArgs, { cwd: root, stdio: 'inherit', encoding: 'utf8' })
-  if (gh.status !== 0) die('gh release create failed')
+  if (args.localBuild) {
+    const artifacts = collectArtifacts(nextVersion)
+    if (artifacts.length) {
+      const upload = spawnSync(
+        'gh',
+        ['release', 'upload', tag, ...artifacts, '--clobber'],
+        { cwd: root, stdio: 'inherit', encoding: 'utf8' }
+      )
+      if (upload.status !== 0) {
+        console.warn('release: local artifact upload failed (CI may still attach builds)')
+      }
+    }
+  }
 
-  console.log(`\nPublished ${tag}`)
+  console.log(`\nTagged ${tag}. CI Release workflow builds macOS + Windows into dist/ and uploads them.`)
   try {
     const url = runCapture(`gh release view ${tag} --json url -q .url`)
     console.log(url)
+    console.log(`Workflow: https://github.com/EricServices-Repo/Eris/actions`)
   } catch {
     // ignore
   }

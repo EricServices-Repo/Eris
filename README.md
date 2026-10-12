@@ -22,44 +22,50 @@ npm run dist:mac
 
 Artifacts land in `dist/` (e.g. `dist/mac-arm64/Eris.app`). Version comes from `package.json` (`app.getVersion()` / status bar).
 
-### Release builds (DMG + ZIP)
+### Release builds (macOS + Windows)
 
-```bash
-npm run dist:release
-```
+One app version in `package.json` (semver). Artifacts land in `dist/`:
 
-Produces versioned installers under `dist/`, e.g. `Eris-0.1.0-arm64.dmg` and `.zip`.
+| Command | Output |
+|---------|--------|
+| `npm run dist:release:mac` | `Eris-<ver>-mac-<arch>.dmg` / `.zip` |
+| `npm run dist:release:win` | `Eris-<ver>-win-x64-setup.exe` |
+| `npm run dist:mac` | Unpacked `.app` (dev) |
+| `npm run dist:win` | Windows NSIS installer |
+
+Native modules require building each OS on that OS (or CI). Cross-compiling Windows on a Mac is not supported for releases.
 
 ### Publish a GitHub Release
 
 Requires [GitHub CLI](https://cli.github.com/) (`gh auth login`) with `repo` scope, and a clean git tree.
 
 ```bash
-# Bump patch (0.1.0 → 0.1.1), build, tag v0.1.1, push, create GitHub Release
+# Bump patch, changelog, tag vX.Y.Z, push → CI builds macOS + Windows and uploads
 npm run release
 
-# Minor / major
+# Minor / major / exact
 npm run release -- --bump minor
-npm run release -- --bump major
+npm run release -- --version 0.3.0
 
-# Exact version
-npm run release -- --version 0.2.0
-
-# Preview plan only
-npm run release:dry
-
-# Build + release current package.json version (no bump)
+# Current package.json version (no bump)
 npm run release:github
+
+# Also build installers for *this* machine into dist/ and upload them
+npm run release:local
+
+npm run release:dry
 ```
 
-CI also publishes when you push a tag:
+Pushing a `v*` tag always runs `.github/workflows/release.yml`:
+
+1. **macos-latest** → macOS dmg/zip into `dist/`
+2. **windows-latest** → Windows `.exe` into `dist/`
+3. Publish both to the GitHub Release for that tag
 
 ```bash
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.2.3
+git push origin v0.2.3
 ```
-
-That runs `.github/workflows/release.yml` (build on `macos-latest`, upload assets to the GitHub Release).
 
 ## Settings layers
 

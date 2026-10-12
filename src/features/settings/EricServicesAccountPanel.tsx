@@ -105,8 +105,19 @@ export function EricServicesAccountPanel({
             ) : (
               <span className="badge">no token</span>
             )}
+            {linked && (
+              <span className="badge">
+                {(status.plan || status.profile?.erisPlan) === 'pro' ? 'Pro' : 'Free'}
+              </span>
+            )}
           </div>
           {status.email && <div className="model-conn-meta">{status.email}</div>}
+          {linked && (
+            <div className="model-conn-meta">
+              Plan is set on www.ericservic.es (admin Free/Pro). Free has daily limits; Pro is
+              unlimited — see Settings → Usage.
+            </div>
+          )}
           {status.lastSyncedAt && (
             <div className="model-conn-meta">Last synced · {status.lastSyncedAt}</div>
           )}
@@ -124,6 +135,16 @@ export function EricServicesAccountPanel({
             >
               Open account
             </button>
+            {linked && status.plan !== 'pro' && (
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={() => void window.ide.ericServicesOpenUpgrade()}
+              >
+                Upgrade to Pro
+              </button>
+            )}
           </div>
         </div>
       )}

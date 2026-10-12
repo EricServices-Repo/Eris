@@ -1,5 +1,7 @@
 name: Release
 
+# Every v* tag builds macOS + Windows installers into dist/ on CI runners
+# and uploads them to the matching GitHub Release.
 on:
   push:
     tags:
@@ -7,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing git tag to build and publish (e.g. v0.1.1). Leave empty to use package.json version and create the tag from the workflow ref.'
+        description: 'Existing git tag to build and publish (e.g. v0.2.3). Leave empty to use package.json version.'
         required: false
         default: ''
 
@@ -15,8 +17,46 @@ permissions:
   contents: write
 
 jobs:
-  release-mac:
-    runs-on: macos-latest
+  resolve-version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.ver.outputs.tag }}
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+            TAG="${TAG#v}"
+            echo "tag=v${TAG}" >> "$GITHUB_OUTPUT"
+            echo "version=${TAG}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            VERSION="$(node -p "require('./package.json').version")"
+            echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: resolve-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+          - os: windows-latest
+            platform: win
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,45 +72,26 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Resolve version
-        id: ver
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
-            TAG="${{ inputs.tag }}"
-            TAG="${TAG#v}"
-            VERSION="$TAG"
-            echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          else
-            VERSION="$(node -p "require('./package.json').version")"
-            echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          fi
-          echo "Building Eris v$(node -p "require('./package.json').version") → tag output set"
-
       - name: Sync package version from tag
-        if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+        shell: bash
         run: |
-          VERSION="${{ steps.ver.outputs.version }}"
+          VERSION="${{ needs.resolve-version.outputs.version }}"
           node -e "
             const fs = require('fs');
+            const version = process.env.VERSION;
             const pkg = JSON.parse(fs.readFileSync('package.json','utf8'));
-            pkg.version = process.env.VERSION;
+            pkg.version = version;
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
             const lock = JSON.parse(fs.readFileSync('package-lock.json','utf8'));
-            lock.version = process.env.VERSION;
-            if (lock.packages && lock.packages['']) lock.packages[''].version = process.env.VERSION;
+            lock.version = version;
+            if (lock.packages && lock.packages['']) lock.packages[''].version = version;
             fs.writeFileSync('package-lock.json', JSON.stringify(lock, null, 2) + '\n');
           "
         env:
-          VERSION: ${{ steps.ver.outputs.version }}
+          VERSION: ${{ needs.resolve-version.outputs.version }}
 
-      - name: Build macOS release artifacts
-        # Signing + notarization activate only when the repo secrets are set; otherwise the build is unsigned.
+      - name: Build macOS (dmg + zip)
+        if: matrix.platform == 'mac'
         run: |
           if [ -n "$MAC_CERT_P12_BASE64" ]; then
             export CSC_LINK="$MAC_CERT_P12_BASE64"
@@ -83,7 +104,7 @@ jobs:
           else
             unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
           fi
-          npm run dist:release -- --publish never
+          npm run dist:release:mac -- --publish never
         env:
           MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
           MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
@@ -91,37 +112,74 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      - name: Collect artifacts
-        id: arts
+      - name: Build Windows (.exe installer)
+        if: matrix.platform == 'win'
+        shell: bash
         run: |
-          VERSION="${{ steps.ver.outputs.version }}"
+          export CSC_IDENTITY_AUTO_DISCOVERY=false
+          npm run dist:release:win -- --publish never
+
+      - name: Collect dist artifacts
+        shell: bash
+        run: |
           mkdir -p release-assets
-          # Prefer versioned electron-builder outputs
           shopt -s nullglob
-          for f in dist/*.dmg dist/*.zip dist/*mac*.dmg dist/*mac*.zip dist/**/*.dmg dist/**/*.zip; do
-            [ -f "$f" ] || continue
-            cp "$f" release-assets/
-          done
-          # electron-updater feed + differential-download maps
-          for f in dist/latest-mac.yml dist/*.blockmap; do
-            [ -f "$f" ] && cp "$f" release-assets/
-          done
-          count=$(ls -1 release-assets/*.dmg release-assets/*.zip 2>/dev/null | wc -l | tr -d ' ')
-          echo "count=${count}" >> "$GITHUB_OUTPUT"
+          if [ "${{ matrix.platform }}" = "mac" ]; then
+            for f in dist/*.dmg dist/*.zip dist/*mac*.dmg dist/*mac*.zip dist/latest-mac.yml dist/*.blockmap; do
+              [ -f "$f" ] && cp "$f" release-assets/
+            done
+          else
+            for f in dist/*.exe dist/*win*.exe dist/latest.yml dist/*.blockmap; do
+              [ -f "$f" ] && cp "$f" release-assets/
+            done
+          fi
           ls -la release-assets || true
+          count=$(find release-assets -type f | wc -l | tr -d ' ')
           if [ "$count" = "0" ]; then
-            echo "No .dmg/.zip artifacts found under dist/"
-            find dist -maxdepth 3 -type f | head -50
+            echo "No artifacts under dist/ for ${{ matrix.platform }}"
+            find dist -maxdepth 3 -type f | head -80
             exit 1
           fi
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: eris-${{ matrix.platform }}-${{ needs.resolve-version.outputs.version }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: [resolve-version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -laR release-assets
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.ver.outputs.tag }}
-          name: Eris ${{ steps.ver.outputs.tag }}
+          tag_name: ${{ needs.resolve-version.outputs.tag }}
+          name: Eris ${{ needs.resolve-version.outputs.tag }}
           draft: false
           generate_release_notes: true
+          body: |
+            ## Eris ${{ needs.resolve-version.outputs.tag }}
+
+            Cross-platform desktop builds (same `package.json` version).
+
+            | Platform | Artifact |
+            |----------|----------|
+            | macOS (Apple Silicon / Intel) | `Eris-*-mac-*.dmg` / `.zip` |
+            | Windows (x64) | `Eris-*-win-*-setup.exe` |
+
+            Install: open the macOS `.dmg` and drag to Applications, or run the Windows setup `.exe`.
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
