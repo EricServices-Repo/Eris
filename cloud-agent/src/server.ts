@@ -16,6 +16,7 @@ import {
   readRecentAudit
 } from './observe.js'
 import { startStatusServer } from './status-server.js'
+import { buildPublicStatus, statusPageHtml } from './status-page.js'
 
 const store = new JobStore()
 const workers = new WorkerPool(store)
@@ -141,6 +142,21 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
   // Health is public (for status bar / probes)
   if (req.method === 'GET' && (path === '/' || path === '/v1' || path === '/v1/health')) {
     send(res, 200, healthBody(), { 'X-Request-Id': requestId })
+    return
+  }
+
+  // Public status dashboard also on the API port (no auth) — useful when host :80 is not mapped yet
+  if (req.method === 'GET' && (path === '/status' || path === '/status.html')) {
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-Request-Id': requestId
+    })
+    res.end(statusPageHtml())
+    return
+  }
+  if (req.method === 'GET' && (path === '/status.json' || path === '/v1/status')) {
+    send(res, 200, buildPublicStatus(store), { 'X-Request-Id': requestId })
     return
   }
 

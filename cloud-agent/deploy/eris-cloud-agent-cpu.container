@@ -20,8 +20,8 @@ Wants=network-online.target
 Image=localhost/eris-cloud-agent:latest
 Pull=never
 ContainerName=eris-cloud-agent
+# API + status dashboard (host :80 → container :8080)
 PublishPort=6443:6443
-# Status dashboard (no auth) — http://agents.ericservic.es/
 PublishPort=80:8080
 Volume=eris-cloud-data:/var/lib/eris-cloud:Z
 Environment=ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443

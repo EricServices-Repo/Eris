@@ -75,7 +75,6 @@ export function AgentsHome({ workspacePath, onOpenAgentsPanel, onSelectJob }: Pr
           ) : (
             jobs.map((j) => {
               const board = deriveBlackboardStatus(j)
-              const cloud = j.id.startsWith('cloud:')
               return (
                 <button
                   key={j.id}
@@ -89,9 +88,7 @@ export function AgentsHome({ workspacePath, onOpenAgentsPanel, onSelectJob }: Pr
                 >
                   <span className={`status-dot ${statusDot(j.status)}`} />
                   <span className="agents-home-copy">
-                    <strong>
-                      {cloud ? 'Cloud' : 'Local'} · {shortId(j.id)}
-                    </strong>
+                    <strong>{shortId(j.id)}</strong>
                     <em>
                       {board} · {(j.claim || j.goal || '').slice(0, 42)}
                     </em>

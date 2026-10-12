@@ -438,7 +438,7 @@ export function cloudJobToBackgroundJob(job: CloudJob, workspacePath: string): B
     agentId: job.agentId,
     agentName: job.agentName,
     source: 'panel',
-    claim: job.claim || `cloud: ${job.goal.slice(0, 48)}`,
+    claim: job.claim || job.goal.slice(0, 48),
     status,
     step: job.recentTools.length,
     actionLog: [],
@@ -462,7 +462,7 @@ export function cloudJobToBackgroundJob(job: CloudJob, workspacePath: string): B
     error: job.error,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
-    routeReason: `Cloud · ${CLOUD_AGENTS_BASE_URL.replace(/^https?:\/\//, '')}`
+    routeReason: 'Background agent'
   }
   mapped.blackboard = deriveBlackboardStatus(mapped)
   return mapped
