@@ -612,6 +612,8 @@ export interface IdeApi {
     payload?: Partial<import('./cloud-agents').EnqueueCloudJobRequest>
   ) => Promise<BackgroundJob>
   stopCloudJob: (id: string) => Promise<boolean>
+  /** Stop all queued/running Cloud jobs for the signed-in account */
+  stopAllCloudJobs: () => Promise<{ count: number; stopped: string[] }>
   cloudJobArtifacts: (id: string) => Promise<import('./cloud-agents').CloudJobArtifacts>
   applyCloudJobArtifacts: (id: string) => Promise<{
     ok: boolean

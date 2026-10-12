@@ -4685,32 +4685,6 @@ button.linkish {
   white-space: nowrap;
 }
 
-.agents-home-item {
-  display: flex !important;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.agents-home-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.agents-home-copy strong {
-  font-size: 12px;
-}
-
-.agents-home-copy em {
-  font-style: normal;
-  font-size: 11px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .codemap-body {
   display: flex;
   flex-direction: column;

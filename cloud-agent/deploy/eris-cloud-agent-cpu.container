@@ -20,9 +20,9 @@ Wants=network-online.target
 Image=localhost/eris-cloud-agent:latest
 Pull=never
 ContainerName=eris-cloud-agent
-# API + status dashboard (host :80 → container :8080)
+# API on :6443; status on host :8080 (nginx :80 → 8080 — see deploy/nginx-eris-cloud-status.conf)
 PublishPort=6443:6443
-PublishPort=80:8080
+PublishPort=8080:8080
 Volume=eris-cloud-data:/var/lib/eris-cloud:Z
 Environment=ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443
 Environment=ERIS_CLOUD_HOST=0.0.0.0
@@ -31,6 +31,8 @@ Environment=ERIS_CLOUD_STATUS_PORT=8080
 Environment=ERIS_CLOUD_DATA=/var/lib/eris-cloud
 Environment=ERIS_CLOUD_MAX_PARALLEL=1
 Environment=ERIS_CLOUD_GPU=false
+# Uncomment and set a long random secret to enable status-page Force kill all:
+# Environment=ERIS_CLOUD_ADMIN_TOKEN=
 HealthCmd=node -e "fetch('http://127.0.0.1:6443/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 HealthInterval=30s
 HealthTimeout=8s

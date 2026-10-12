@@ -365,6 +365,23 @@ export async function stopCloudJob(id: string): Promise<boolean> {
   return r.ok
 }
 
+/** Stop all queued/running Cloud jobs for the signed-in account. */
+export async function stopAllCloudJobs(): Promise<{ count: number; stopped: string[] }> {
+  const r = await cloudFetch(`${CLOUD_AGENTS_JOBS_PATH}/stop-all`, {
+    method: 'POST',
+    logLabel: 'stop-all cloud jobs',
+    body: '{}'
+  })
+  if (!r.ok) {
+    throw new Error(r.error || 'Failed to stop cloud jobs')
+  }
+  const data = r.data as { count?: number; stopped?: string[] }
+  return {
+    count: Number(data.count) || 0,
+    stopped: Array.isArray(data.stopped) ? data.stopped.map(String) : []
+  }
+}
+
 /** Collect a bounded set of text files for cloud workspace seeding. */
 export function collectWorkspaceFilesForCloud(
   workspacePath: string,

@@ -181,6 +181,37 @@ export class WorkerPool {
     return false
   }
 
+  /**
+   * Force-stop queued + running jobs.
+   * - `owner` set: only that owner's jobs (user clear)
+   * - omit / null owner: every active job (admin kill-all)
+   */
+  stopAll(options?: { owner?: string | null }): { stopped: string[]; count: number } {
+    const ownerFilter =
+      options && options.owner != null && options.owner !== '' ? options.owner : null
+    const ids = new Set<string>()
+
+    for (const job of this.store.list(500)) {
+      if (job.status !== 'queued' && job.status !== 'running') continue
+      if (ownerFilter && (job.ownerId || 'anonymous') !== ownerFilter) continue
+      ids.add(job.id)
+    }
+    if (!ownerFilter) {
+      for (const id of this.aborts.keys()) ids.add(id)
+    }
+
+    const stopped: string[] = []
+    for (const id of ids) {
+      if (this.stop(id)) stopped.push(id)
+    }
+
+    audit('jobs_stop_all', {
+      owner: ownerFilter || '*',
+      count: stopped.length
+    })
+    return { stopped, count: stopped.length }
+  }
+
   async pump(): Promise<void> {
     if (this.pumping) return
     this.pumping = true

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.19 — 2026-10-12
+
+- Desktop rebuild: Cloud Agent work runs inline in chat thinking; Agents tree / right-column Agents tab / Background hand-off removed.
+- Cloud Agent **0.2.16**: status page **Force kill all** (works on `:6443/status` and `:80`); auto-creates `/var/lib/eris-cloud/admin.token` when `ERIS_CLOUD_ADMIN_TOKEN` is unset; `POST /admin/kill-all` + `/v1/admin/kill-all`; user `POST /v1/jobs/stop-all` / Settings → Agent **Stop all my jobs**.
+
+## 0.2.18 — 2026-10-12
+
+- Agent mode runs Cloud Composer **inline in chat** (thinking / tools / answer / diffs); local Lite is a silent fallback — not a background Agents-panel job.
+- Removed left-sidebar Agents tree and right-column Agents tab; no Background hand-off — all agent work stays in the main chat thinking stream.
+
+## 0.2.17 — 2026-10-12
+
+- Agents panel and chat UI no longer expose Cloud vs Local labels or buttons.
+- Connection strip no longer banners Cloud Agents offline/timeout (status bar only).
+- Cloud Agent: CPU-only install (`--cpu`), private-repo clone docs, Podman Quadlet as systemd, public status page on port 80, root-store image build fix.
+
 ## 0.2.16 — 2026-10-12
 
 - Local ↔ cloud handoff: **Continue on cloud** / **Continue local** (chat context attached).

@@ -17,6 +17,13 @@ import {
 } from './observe.js'
 import { startStatusServer } from './status-server.js'
 import { buildPublicStatus, statusPageHtml } from './status-page.js'
+import {
+  adminKillConfigured,
+  adminTokenFilePath,
+  ensureAdminToken,
+  getAdminTokenSource,
+  verifyAdminToken
+} from './admin.js'
 
 const store = new JobStore()
 const workers = new WorkerPool(store)
@@ -110,10 +117,13 @@ function healthBody(): Record<string, unknown> {
       events: '/v1/jobs/:id/events',
       continue: '/v1/jobs/:id/continue',
       stop: '/v1/jobs/:id/stop',
+      stopAll: '/v1/jobs/stop-all',
+      adminKillAll: '/v1/admin/kill-all',
       artifacts: '/v1/jobs/:id/artifacts',
       metrics: '/v1/metrics',
-      statusPage: `http://0.0.0.0:${config.statusPort}/` 
+      statusPage: `http://0.0.0.0:${config.statusPort}/`
     },
+    adminKillAllConfigured: adminKillConfigured(),
     statusPage: {
       enabled: config.statusEnabled,
       port: config.statusPort,
@@ -267,6 +277,47 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
     return
   }
 
+  // Must be registered before /v1/jobs/:id/stop so "stop-all" is not treated as an id
+  if (req.method === 'POST' && path === '/v1/jobs/stop-all') {
+    const auth = await requireAuth(req, res)
+    if (!auth) return
+    const result = workers.stopAll({ owner: auth.owner })
+    send(res, 200, {
+      ok: true,
+      scope: 'owner',
+      owner: auth.owner,
+      count: result.count,
+      stopped: result.stopped
+    })
+    return
+  }
+
+  if (
+    req.method === 'POST' &&
+    (path === '/v1/admin/kill-all' || path === '/admin/kill-all')
+  ) {
+    if (!adminKillConfigured()) {
+      send(res, 503, {
+        ok: false,
+        error: 'Admin kill-all unavailable — could not create admin.token under data dir'
+      })
+      return
+    }
+    if (!verifyAdminToken(req)) {
+      bumpMetric('authFailures')
+      send(res, 401, { ok: false, error: 'Invalid or missing admin token' })
+      return
+    }
+    const result = workers.stopAll()
+    send(res, 200, {
+      ok: true,
+      scope: 'all',
+      count: result.count,
+      stopped: result.stopped
+    })
+    return
+  }
+
   const stopMatch = path.match(/^\/v1\/jobs\/([^/]+)\/stop$/)
   if (req.method === 'POST' && stopMatch) {
     const auth = await requireAuth(req, res)
@@ -337,8 +388,11 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
   send(res, 404, { ok: false, error: 'Not found' })
 }
 
+const admin = ensureAdminToken()
 warmLocalModel()
-startStatusServer(store)
+startStatusServer(store, {
+  killAll: () => workers.stopAll()
+})
 
 const server = createServer((req, res) => {
   void handler(req, res).catch((err) => {
@@ -357,6 +411,11 @@ let shuttingDown = false
 function shutdown(signal: string): void {
   if (shuttingDown) return
   shuttingDown = true
+  try {
+    workers.stopAll()
+  } catch {
+    /* ignore */
+  }
   persistMetricsSnapshot()
   process.stdout.write(`${JSON.stringify({ msg: 'eris-cloud-agent shutting down', signal })}\n`)
   server.close(() => {
@@ -383,7 +442,25 @@ server.listen(config.port, config.host, () => {
       localModel: local.status,
       model: local.modelName,
       authRequired: !config.allowAnonymous,
-      version: config.version
+      version: config.version,
+      adminKillAll: adminKillConfigured(),
+      adminTokenSource: getAdminTokenSource(),
+      adminTokenFile:
+        getAdminTokenSource() === 'file' ? adminTokenFilePath() : undefined,
+      statusUrls: [
+        `http://0.0.0.0:${config.port}/status`,
+        config.statusEnabled ? `http://0.0.0.0:${config.statusPort}/` : null
+      ].filter(Boolean)
     })}\n`
   )
+  if (admin.source === 'file') {
+    process.stdout.write(
+      `${JSON.stringify({
+        msg: 'eris-cloud-agent admin token for Force kill all (status page)',
+        hint: 'Read token from data volume, then paste into status page Force kill all',
+        path: adminTokenFilePath(),
+        example: `podman exec eris-cloud-agent cat ${adminTokenFilePath()}`
+      })}\n`
+    )
+  }
 })

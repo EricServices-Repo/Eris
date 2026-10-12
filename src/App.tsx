@@ -49,9 +49,6 @@ const TerminalPanel = lazy(() =>
 const SettingsModal = lazy(() =>
   import('@/features/settings/SettingsModal').then((m) => ({ default: m.SettingsModal }))
 )
-const AgentsPanel = lazy(() =>
-  import('@/features/agents/AgentsPanel').then((m) => ({ default: m.AgentsPanel }))
-)
 const EvalsPanel = lazy(() =>
   import('@/features/evals/EvalsPanel').then((m) => ({ default: m.EvalsPanel }))
 )
@@ -288,7 +285,6 @@ export default function App() {
     sendMessage,
     rerouteLast,
     resumeLastRun,
-    runInBackground,
     stopChat,
     newChat
   } = useChatSession({
@@ -555,14 +551,6 @@ export default function App() {
         }
       },
       {
-        id: 'agents',
-        label: 'Toggle Background Agents',
-        run: () => {
-          setRightCollapsed(false)
-          setRightPanel((p) => (p === 'agents' ? 'editor' : 'agents'))
-        }
-      },
-      {
         id: 'evals',
         label: 'Toggle Eval Scoreboard',
         run: () => {
@@ -705,8 +693,7 @@ export default function App() {
           onOpenUsage: () => openSettings('usage'),
           onOpenUpgrade: () => void window.ide.ericServicesOpenUpgrade(),
           onOpenModels: () => openSettings('models'),
-          onOpenAgent: () => openSettings('agent'),
-          onWorkLocal: () => showRightPanel('agents')
+          onOpenAgent: () => openSettings('agent')
         }).filter((i) => !dismissedIssues[i.id])}
         onDismiss={(id) => setDismissedIssues((prev) => ({ ...prev, [id]: true }))}
       />
@@ -792,7 +779,6 @@ export default function App() {
                 }
               })
             }}
-            onOpenAgentsPanel={() => showRightPanel('agents')}
           />
           <div className="agent-center-wrap">
             {!workspacePath ? (
@@ -844,7 +830,6 @@ export default function App() {
                   }}
                   onSend={(text, files, skillIds) => void sendMessage(text, files, skillIds)}
                   onStop={stopChat}
-                  onRunInBackground={(goal) => void runInBackground(goal)}
                   pendingApproval={pendingApproval}
                   onApprovalDecision={(approvalId, decision) => {
                     setPendingApproval(null)
@@ -945,16 +930,6 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  className={`icon-rail-btn${rightPanel === 'agents' ? ' active' : ''}`}
-                  title="Agents"
-                  aria-label="Agents"
-                  disabled={!workspacePath}
-                  onClick={() => showRightPanel('agents')}
-                >
-                  ↻
-                </button>
-                <button
-                  type="button"
                   className={`icon-rail-btn${rightPanel === 'evals' ? ' active' : ''}`}
                   title="Evals"
                   aria-label="Evals"
@@ -1024,15 +999,6 @@ export default function App() {
                       onClick={() => setRightPanel('debug')}
                     >
                       Debug
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={rightPanel === 'agents'}
-                      className={`right-panel-tab ${rightPanel === 'agents' ? 'active' : ''}`}
-                      onClick={() => setRightPanel('agents')}
-                    >
-                      Agents
                     </button>
                     <button
                       type="button"
@@ -1115,25 +1081,6 @@ export default function App() {
                     onClose={() => showRightPanel('editor')}
                     onOpenPath={(path, line) => {
                       void openFile(resolveWorkspacePath(path), line)
-                    }}
-                  />
-                </Suspense>
-              ) : rightPanel === 'agents' ? (
-                <Suspense fallback={<div className="editor-empty">Loading agents…</div>}>
-                  <AgentsPanel
-                    open
-                    workspacePath={workspacePath}
-                    defaultModel={selectedModel || settings?.models.defaultModel || ''}
-                    selectedAgentId={selectedAgentId}
-                    activeThreadId={activeThread?.id ?? null}
-                    onClose={() => showRightPanel('editor')}
-                    onBroughtToChat={(threadId) => {
-                      void refreshChats(threadId)
-                      showRightPanel('editor')
-                    }}
-                    onCloudDiffs={(diffs) => {
-                      setPendingDiffs((prev) => [...prev.filter((d) => d.status === 'pending'), ...diffs])
-                      showRightPanel('editor')
                     }}
                   />
                 </Suspense>

@@ -12,6 +12,7 @@ import {
   listCloudJobs,
   setCloudAgentsAuthToken,
   stopCloudJob,
+  stopAllCloudJobs,
   cloudAgentsBaseUrl
 } from '../services/cloud-agents-client'
 import type { EnqueueCloudJobRequest } from '../../../src/shared/cloud-agents'
@@ -145,6 +146,12 @@ export function registerCloudAgentsIpc(): void {
     syncCloudAuth()
     const rawId = String(id).replace(/^cloud:/, '')
     return stopCloudJob(rawId)
+  })
+
+  ipcMain.handle('cloudAgents:stopAll', async () => {
+    requireCloudAuth()
+    syncCloudAuth()
+    return stopAllCloudJobs()
   })
 
   ipcMain.handle('cloudAgents:artifacts', async (_e, id: string) => {

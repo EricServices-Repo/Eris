@@ -24,7 +24,9 @@ Image=localhost/eris-cloud-agent:latest
 Pull=never
 ContainerName=eris-cloud-agent
 PublishPort=6443:6443
-PublishPort=80:8080
+# Status server on host :8080 — nginx on :80 proxies here (see deploy/nginx-eris-cloud-status.conf).
+# Do not bind host :80 in Podman; nginx already owns it on agents.ericservic.es.
+PublishPort=8080:8080
 Volume=eris-cloud-data:/var/lib/eris-cloud:Z
 Environment=ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443
 Environment=ERIS_CLOUD_HOST=0.0.0.0
@@ -33,6 +35,8 @@ Environment=ERIS_CLOUD_STATUS_PORT=8080
 Environment=ERIS_CLOUD_DATA=/var/lib/eris-cloud
 Environment=ERIS_CLOUD_MAX_PARALLEL=2
 Environment=ERIS_CLOUD_GPU=auto
+# Uncomment and set a long random secret to enable status-page Force kill all:
+# Environment=ERIS_CLOUD_ADMIN_TOKEN=
 # NVIDIA GPU via CDI (Container Device Interface)
 AddDevice=nvidia.com/gpu=all
 PodmanArgs=--security-opt=label=disable

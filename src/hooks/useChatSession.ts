@@ -24,7 +24,6 @@ import type {
   QueuedChatMessage
 } from '@/features/chat/ChatPanel'
 import type { PendingDiff } from '@/features/chat/DiffReview'
-import { shouldUseCloudAgents } from '@/shared/cloud-agents'
 import type { RightPanel } from './useLayout'
 import { uid } from './uid'
 
@@ -125,100 +124,6 @@ export function useChatSession({
     requestIdRef.current = null
     void window.ide.stopChat()
   }, [])
-
-  /**
-   * Start a background agent for the current goal (+ recent chat context).
-   * Uses Cloud (Composer Full) when available; otherwise a local worktree — never a user choice.
-   */
-  const runInBackground = useCallback(
-    async (goalText?: string) => {
-      if (!workspacePath) {
-        setChatError('Open a workspace before starting a background agent.')
-        return null
-      }
-      const messages = activeThreadRef.current?.messages || []
-      const fromThread = [...messages].reverse().find((m) => m.role === 'user')?.content
-      const bareGoal =
-        (goalText || '').trim() ||
-        lastTurnRef.current?.text?.trim() ||
-        fromThread?.replace(/\n\nAttached:[\s\S]*$/, '').trim() ||
-        ''
-      if (!bareGoal) {
-        setChatError('Nothing to hand off — send a message first, or type a goal.')
-        return null
-      }
-      const contextTail = messages
-        .slice(-8)
-        .map((m) => `${m.role}: ${m.content.slice(0, 1200)}`)
-        .join('\n\n')
-      const goal = contextTail
-        ? `${bareGoal}\n\n---\nRecent chat context:\n${contextTail.slice(0, 6000)}`
-        : bareGoal
-      const model =
-        selectedModel || settingsRef.current?.models.defaultModel || 'builtin:composer-lite'
-      const agentId = selectedAgentId === 'auto' ? null : selectedAgentId
-      const sourceThreadId = activeThreadRef.current?.id ?? null
-      try {
-        if (streaming) stopChat()
-        let job
-        let health = null
-        try {
-          health = await window.ide.cloudAgentsHealth()
-        } catch {
-          health = null
-        }
-        if (shouldUseCloudAgents(health)) {
-          try {
-            job = await window.ide.enqueueCloudJob({
-              goal,
-              model: 'composer',
-              agentId,
-              claim: bareGoal.slice(0, 64)
-            })
-          } catch {
-            job = undefined
-          }
-        }
-        if (!job) {
-          job = await window.ide.enqueueBackgroundJob({
-            goal,
-            model:
-              model === 'builtin:composer' || model === 'composer'
-                ? 'builtin:composer-lite'
-                : model,
-            agentId,
-            mode: 'agent',
-            source: 'chat',
-            sourceThreadId,
-            forceRoute: 'tools'
-          })
-        }
-        if (!job) {
-          setChatError('Could not start a background agent.')
-          return null
-        }
-        setRightCollapsed(false)
-        setRightPanel('agents')
-        setChatError(null)
-        setAgentStatus(`Agent started · ${job.id.replace(/^cloud:/, '').slice(0, 8)}`)
-        return job
-      } catch (err) {
-        setChatError(err instanceof Error ? err.message : 'Failed to start background agent')
-        return null
-      }
-    },
-    [
-      workspacePath,
-      activeThreadRef,
-      selectedModel,
-      settingsRef,
-      selectedAgentId,
-      streaming,
-      stopChat,
-      setRightCollapsed,
-      setRightPanel
-    ]
-  )
 
   const schedulePaint = useCallback(() => {
     if (paintRaf.current) return
@@ -409,55 +314,7 @@ export function useChatSession({
         setAttachments([])
         setActiveSkills([])
 
-        // Agent mode + Cloud available → Composer Full on the worker (no user toggle).
-        if (chatMode === 'agent' && turnPlan.mode === 'agent' && workspacePath) {
-          let health = null
-          try {
-            health = await window.ide.cloudAgentsHealth()
-          } catch {
-            health = null
-          }
-          if (shouldUseCloudAgents(health)) {
-            try {
-              const contextTail = saved.messages
-                .slice(-8)
-                .map((m) => `${m.role}: ${m.content.slice(0, 1200)}`)
-                .join('\n\n')
-              const goal = `${text}\n\n---\nRecent chat context:\n${contextTail.slice(0, 6000)}`
-              const job = await window.ide.enqueueCloudJob({
-                goal,
-                model: 'composer',
-                agentId: turnPlan.agentId,
-                claim: text.slice(0, 64)
-              })
-              const note = await window.ide.saveChat({
-                ...saved,
-                messages: [
-                  ...saved.messages,
-                  {
-                    id: uid(),
-                    role: 'assistant',
-                    content: `Started background agent · ${job.id.replace(/^cloud:/, '').slice(0, 8)}. Track progress in the Agents panel; use Apply changes when files are ready.`,
-                    createdAt: Date.now(),
-                    agentId: turnPlan.agentId,
-                    agentName: turnPlan.agentName,
-                    model: 'composer'
-                  }
-                ]
-              })
-              setActiveThread(note)
-              setThreads((prev) => [note, ...prev.filter((t) => t.id !== note.id)])
-              setRightCollapsed(false)
-              setRightPanel('agents')
-              setAgentStatus(`Agent started · ${job.id.replace(/^cloud:/, '').slice(0, 8)}`)
-              setRouteLabel(`${turnPlan.agentName || 'Agent'} · Composer`)
-              return
-            } catch {
-              // Fall through to local streamChat (Composer Lite).
-            }
-          }
-        }
-
+        // Agent mode uses Cloud Composer inline via chat:stream (thinking UI) when available.
         const requestId = uid()
         requestIdRef.current = requestId
         userStoppedRef.current = false
@@ -519,14 +376,11 @@ export function useChatSession({
       streaming,
       skills,
       chatMode,
-      workspacePath,
       setComposerReady,
       setOllamaOk,
       setActiveThread,
       setThreads,
-      setActiveSkills,
-      setRightCollapsed,
-      setRightPanel
+      setActiveSkills
     ]
   )
 
@@ -739,7 +593,7 @@ export function useChatSession({
       const modelLabel =
         model === 'builtin:composer-lite'
           ? 'Composer Lite'
-          : model === 'builtin:composer'
+          : model === 'builtin:composer' || model === 'composer'
             ? 'Composer Full'
             : model
       setRouteLabel(`${name} · ${modelLabel}`)
@@ -874,7 +728,6 @@ export function useChatSession({
     sendMessage,
     rerouteLast,
     resumeLastRun,
-    runInBackground,
     stopChat,
     newChat
   }

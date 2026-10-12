@@ -27,7 +27,6 @@ export function buildConnectionIssues(input: {
   onOpenUpgrade: () => void
   onOpenModels?: () => void
   onOpenAgent?: () => void
-  onWorkLocal?: () => void
 }): ConnectionIssue[] {
   const issues: ConnectionIssue[] = []
 

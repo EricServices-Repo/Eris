@@ -3,6 +3,11 @@ import { config } from './config.js'
 import type { JobStore } from './job-store.js'
 import { buildPublicStatus, statusPageHtml } from './status-page.js'
 import { getMetrics } from './observe.js'
+import { adminKillConfigured, verifyAdminToken } from './admin.js'
+
+export type StatusServerHooks = {
+  killAll: () => { stopped: string[]; count: number }
+}
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const json = JSON.stringify(body, null, 2)
@@ -23,10 +28,10 @@ function sendHtml(res: ServerResponse, html: string): void {
 }
 
 /**
- * Unauthenticated status UI + JSON on ERIS_CLOUD_STATUS_PORT (host maps 80 → this port).
- * Does not expose job goals, tokens, or file contents.
+ * Status UI + JSON on ERIS_CLOUD_STATUS_PORT (host maps 80 → this port).
+ * GET is public. POST /admin/kill-all requires ERIS_CLOUD_ADMIN_TOKEN.
  */
-export function startStatusServer(store: JobStore): void {
+export function startStatusServer(store: JobStore, hooks: StatusServerHooks): void {
   if (!config.statusEnabled) {
     process.stdout.write(
       `${JSON.stringify({ msg: 'eris-cloud-agent status page disabled', statusEnabled: false })}\n`
@@ -41,10 +46,32 @@ export function startStatusServer(store: JobStore): void {
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET,OPTIONS',
-        'Access-Control-Allow-Headers': 'Accept'
+        'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+        'Access-Control-Allow-Headers': 'Accept, Authorization, X-Eris-Admin-Token, Content-Type'
       })
       res.end()
+      return
+    }
+
+    if (req.method === 'POST' && (path === '/admin/kill-all' || path === '/v1/admin/kill-all')) {
+      if (!adminKillConfigured()) {
+        sendJson(res, 503, {
+          ok: false,
+          error: 'Admin kill-all disabled — set ERIS_CLOUD_ADMIN_TOKEN on the worker'
+        })
+        return
+      }
+      if (!verifyAdminToken(req)) {
+        sendJson(res, 401, { ok: false, error: 'Invalid or missing admin token' })
+        return
+      }
+      const result = hooks.killAll()
+      sendJson(res, 200, {
+        ok: true,
+        scope: 'all',
+        count: result.count,
+        stopped: result.stopped
+      })
       return
     }
 
@@ -81,7 +108,8 @@ export function startStatusServer(store: JobStore): void {
         version: status.version,
         gpuMode: status.gpuMode,
         localModel: status.localModel,
-        jobs: status.jobs
+        jobs: status.jobs,
+        adminKillAllConfigured: adminKillConfigured()
       })
       return
     }
@@ -89,7 +117,7 @@ export function startStatusServer(store: JobStore): void {
     sendJson(res, 404, {
       ok: false,
       error: 'Not found',
-      endpoints: ['/', '/status.json', '/metrics', '/health']
+      endpoints: ['/', '/status.json', '/metrics', '/health', 'POST /admin/kill-all']
     })
   })
 
@@ -99,8 +127,8 @@ export function startStatusServer(store: JobStore): void {
         msg: 'eris-cloud-agent status page listening',
         host: config.host,
         port: config.statusPort,
-        paths: ['/', '/status.json', '/metrics', '/health'],
-        auth: false
+        paths: ['/', '/status.json', '/metrics', '/health', 'POST /admin/kill-all'],
+        adminKillAll: adminKillConfigured()
       })}\n`
     )
   })

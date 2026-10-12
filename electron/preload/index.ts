@@ -151,6 +151,7 @@ const api: IdeApi = {
   enqueueCloudJob: (payload) => ipcRenderer.invoke('cloudAgents:enqueue', payload),
   continueCloudJob: (id, payload) => ipcRenderer.invoke('cloudAgents:continue', id, payload),
   stopCloudJob: (id) => ipcRenderer.invoke('cloudAgents:stop', id),
+  stopAllCloudJobs: () => ipcRenderer.invoke('cloudAgents:stopAll'),
   cloudJobArtifacts: (id) => ipcRenderer.invoke('cloudAgents:artifacts', id),
   applyCloudJobArtifacts: (id) => ipcRenderer.invoke('cloudAgents:applyArtifacts', id),
   aiComplete: (payload) => ipcRenderer.invoke('ai:complete', payload),

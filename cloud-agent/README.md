@@ -12,7 +12,7 @@ Inference runs **inside the container** with **Composer Full** (Qwen2.5-Coder-7B
 
 ```
 API:    http://agents.ericservic.es:6443
-Status: http://agents.ericservic.es/          (no auth — metrics dashboard)
+Status: http://agents.ericservic.es/          (port 80 via nginx → :8080; Force kill all)
 ```
 
 Plain HTTP — no TLS certificate required. API port **6443**; status page host **80** → container **8080**.
@@ -157,7 +157,10 @@ Set `ERIS_CLOUD_ALLOW_ANONYMOUS=1` for local/dev only. Health stays public.
 | GET | `/v1/jobs/:id/events` | SSE stream of job updates |
 | POST | `/v1/jobs/:id/continue` | Resume from checkpoint (new job id) |
 | GET | `/v1/jobs/:id/artifacts` | Patch bundle `{ files: [{ path, content, before }] }` for Eris Diff Review |
-| POST | `/v1/jobs/:id/stop` | Cancel |
+| POST | `/v1/jobs/:id/stop` | Cancel one job |
+| POST | `/v1/jobs/stop-all` | Cancel all queued/running jobs for the authenticated owner |
+| POST | `/admin/kill-all` or `/v1/admin/kill-all` | Force-kill **every** active job (admin token; auto-created at `/var/lib/eris-cloud/admin.token`) |
+| GET | `/status` | Status HTML (includes **Force kill all**) — use when host `:80` is blocked |
 | GET | `/v1/metrics` | Counters + recent audit (auth required) |
 
 Health includes `ready`, `inference: "local"`, `gpuMode`, and `localModel: { status, modelId, modelName, gpu }`. `ok` means the process is up; `ready` means jobs can run.
