@@ -1,6 +1,6 @@
 {
   "name": "@eris/cloud-agent",
-  "version": "0.2.18",
+  "version": "0.2.19",
   "private": true,
   "description": "Eris Cloud Agent worker — runs agent jobs for all Eris installs",
   "type": "module",

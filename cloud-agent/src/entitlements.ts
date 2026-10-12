@@ -74,3 +74,42 @@ export function recordEnqueue(auth: AuthContext): void {
   usage.jobs[auth.owner] = (usage.jobs[auth.owner] || 0) + 1
   saveUsage(usage)
 }
+
+/** Mask owner for the public :80 status page (no full emails/usernames). */
+export function maskOwner(owner: string): string {
+  const s = String(owner || '').trim() || 'anonymous'
+  if (s === 'anonymous') return 'anonymous'
+  if (s.length <= 4) return s[0] + '…'
+  return s.slice(0, 2) + '…' + s.slice(-2)
+}
+
+/**
+ * Daily free-plan enqueue usage (UTC day). Safe for the public status page.
+ */
+export function getUsageOverview(): {
+  day: string
+  freeJobsPerDay: number
+  freeEnqueuesToday: number
+  freeUsersToday: number
+  freeUsersAtCap: number
+  topFreeUsers: Array<{ owner: string; jobs: number; atCap: boolean }>
+} {
+  const usage = loadUsage()
+  const freeJobsPerDay = config.freeJobsPerDay
+  const entries = Object.entries(usage.jobs || {})
+    .map(([owner, jobs]) => {
+      const n = Number(jobs) || 0
+      return { owner: maskOwner(owner), jobs: n, atCap: n >= freeJobsPerDay }
+    })
+    .filter((e) => e.jobs > 0)
+    .sort((a, b) => b.jobs - a.jobs)
+  const freeEnqueuesToday = entries.reduce((n, e) => n + e.jobs, 0)
+  return {
+    day: usage.day,
+    freeJobsPerDay,
+    freeEnqueuesToday,
+    freeUsersToday: entries.length,
+    freeUsersAtCap: entries.filter((e) => e.atCap).length,
+    topFreeUsers: entries.slice(0, 12)
+  }
+}
