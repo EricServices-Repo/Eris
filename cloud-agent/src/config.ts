@@ -42,7 +42,13 @@ export const config = {
   statusEnabled: process.env.ERIS_CLOUD_STATUS_ENABLED !== '0',
   publicBaseUrl: (process.env.ERIS_CLOUD_PUBLIC_URL || PUBLIC_BASE_URL).replace(/\/+$/, ''),
   dataDir: process.env.ERIS_CLOUD_DATA || '/var/lib/eris-cloud',
-  maxParallel: Math.max(1, Math.min(8, Number(process.env.ERIS_CLOUD_MAX_PARALLEL || 2))),
+  maxParallel: (() => {
+    const raw = Number(process.env.ERIS_CLOUD_MAX_PARALLEL || 2)
+    const n = Math.max(1, Math.min(8, Number.isFinite(raw) ? raw : 2))
+    // CPU hosts: never run more than one job — one context / two threads.
+    if (parseGpuMode(process.env.ERIS_CLOUD_GPU) === 'false') return Math.min(1, n)
+    return n
+  })(),
   maxFiles: Math.max(1, Math.min(800, Number(process.env.ERIS_CLOUD_MAX_FILES || 200))),
   maxFileBytes: Math.max(1024, Number(process.env.ERIS_CLOUD_MAX_FILE_BYTES || 400_000)),
   maxArtifactBytes: Math.max(1_000_000, Number(process.env.ERIS_CLOUD_MAX_ARTIFACT_BYTES || 16_000_000)),

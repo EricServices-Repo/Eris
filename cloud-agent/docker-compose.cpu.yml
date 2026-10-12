@@ -24,7 +24,7 @@ services:
       ERIS_CLOUD_MAX_THREADS: "2"
       ERIS_CLOUD_CONTEXT_SIZE: "4096"
     cpus: 2
-    mem_limit: 6g
+    mem_limit: 8g
     volumes:
       - eris-cloud-data:/var/lib/eris-cloud
     healthcheck:

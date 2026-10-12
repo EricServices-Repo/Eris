@@ -416,6 +416,11 @@ function shutdown(signal: string): void {
   } catch {
     /* ignore */
   }
+  try {
+    store.flush()
+  } catch {
+    /* ignore */
+  }
   persistMetricsSnapshot()
   process.stdout.write(`${JSON.stringify({ msg: 'eris-cloud-agent shutting down', signal })}\n`)
   server.close(() => {

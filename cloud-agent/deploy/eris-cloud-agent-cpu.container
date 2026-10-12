@@ -36,8 +36,8 @@ Environment=ERIS_CLOUD_MAX_THREADS=2
 Environment=ERIS_CLOUD_CONTEXT_SIZE=4096
 # Uncomment and set a long random secret to enable status-page Force kill all:
 # Environment=ERIS_CLOUD_ADMIN_TOKEN=
-# Hard cap so a runaway job cannot starve SSH (2 CPUs, 6GiB).
-PodmanArgs=--cpus=2 --memory=6g --memory-swap=6g
+# Hard cap so a runaway job cannot starve SSH (2 CPUs, 8GiB — room for ~4.7GB GGUF + KV).
+PodmanArgs=--cpus=2 --memory=8g --memory-swap=8g
 HealthCmd=node -e "fetch('http://127.0.0.1:6443/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 HealthInterval=30s
 HealthTimeout=8s
@@ -50,7 +50,7 @@ Restart=always
 TimeoutStartSec=900
 # Extra safety at the systemd slice level
 CPUQuota=200%
-MemoryMax=6G
+MemoryMax=8G
 
 [Install]
 WantedBy=multi-user.target

@@ -5,8 +5,8 @@
 import type { AppSettings } from '../../../src/shared/settings-schema'
 import {
   shouldUseCloudAgents,
-  type CloudJob,
-  type CloudJobToolEvent
+  type CloudHealth,
+  type CloudJob
 } from '../../../src/shared/cloud-agents'
 import {
   applyCloudJobArtifacts,
@@ -15,7 +15,8 @@ import {
   enqueueCloudJob,
   getCloudJob,
   setCloudAgentsAuthToken,
-  stopCloudJob
+  stopCloudJob,
+  watchCloudJob
 } from './cloud-agents-client'
 import { isEricServicesAuthenticated } from './ericservices'
 import { logInfo, logWarn } from './logger'
@@ -74,6 +75,9 @@ function syncAuth(settings: AppSettings, getSecret: (ref: string) => string | nu
   return ok
 }
 
+let healthCache: { at: number; health: CloudHealth } | null = null
+const HEALTH_CACHE_MS = 20_000
+
 /**
  * Returns true if Cloud can take this Agent-mode turn (caller falls back to local if false).
  */
@@ -83,10 +87,87 @@ export async function cloudInlineAvailable(
 ): Promise<boolean> {
   if (!syncAuth(settings, getSecret)) return false
   try {
+    if (healthCache && Date.now() - healthCache.at < HEALTH_CACHE_MS) {
+      return shouldUseCloudAgents(healthCache.health)
+    }
     const health = await cloudAgentsHealth(true)
+    healthCache = { at: Date.now(), health }
     return shouldUseCloudAgents(health)
   } catch {
     return false
+  }
+}
+
+function* emitJobDelta(
+  current: CloudJob,
+  state: {
+    lastThinking: string
+    lastLive: string
+    lastAnswer: string
+    seenTools: Map<string, string>
+  }
+): Generator<CloudInlineEvent> {
+  if (current.liveStatus && current.liveStatus !== state.lastLive) {
+    state.lastLive = current.liveStatus
+    yield { type: 'status', text: current.liveStatus }
+  }
+
+  const thinking = current.thinkingTail || ''
+  if (thinking.length > state.lastThinking.length) {
+    const chunk = thinking.slice(state.lastThinking.length)
+    state.lastThinking = thinking
+    yield { type: 'thinking', text: chunk }
+  } else if (thinking && thinking !== state.lastThinking) {
+    state.lastThinking = thinking
+    yield { type: 'thinking', text: `\n${thinking.slice(-800)}` }
+  }
+
+  for (const t of current.recentTools || []) {
+    const key = `${t.id}:${t.status}`
+    if (state.seenTools.get(t.id) === t.status) continue
+    state.seenTools.set(t.id, t.status)
+    yield {
+      type: 'tool',
+      tool: {
+        id: t.id,
+        name: t.name,
+        path: t.path,
+        status: t.status,
+        detail: t.detail || ''
+      }
+    }
+  }
+
+  const answer = current.answer || ''
+  if (answer.length > state.lastAnswer.length) {
+    const chunk = answer.slice(state.lastAnswer.length)
+    state.lastAnswer = answer
+    yield { type: 'answer', text: chunk }
+  }
+}
+
+async function* pollJobUntilDone(
+  jobId: string,
+  signal?: AbortSignal
+): AsyncGenerator<CloudJob> {
+  let current: CloudJob | null = null
+  while (true) {
+    if (signal?.aborted) {
+      throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
+    }
+    const next = await getCloudJob(jobId)
+    if (next) {
+      current = next
+      yield next
+      if (
+        next.status === 'done' ||
+        next.status === 'failed' ||
+        next.status === 'stopped'
+      ) {
+        return
+      }
+    }
+    await sleep(2000, signal)
   }
 }
 
@@ -113,7 +194,6 @@ export async function* runCloudAgentInline(options: {
   yield { type: 'thinking', text: 'Routing to Cloud Composer…\n' }
   yield { type: 'status', text: 'Starting Cloud Agent…' }
 
-  const files = collectWorkspaceFilesForCloud(workspacePath)
   let repoUrl: string | null = null
   let branch: string | null = null
   if (settings.github.linked && settings.github.repository) {
@@ -124,6 +204,12 @@ export async function* runCloudAgentInline(options: {
   const githubToken = settings.github.tokenRef
     ? getSecret(settings.github.tokenRef)
     : null
+
+  // Prefer clone over shipping file bodies — avoids multi‑MB seed + dual workspace prep.
+  const files =
+    repoUrl && githubToken
+      ? []
+      : collectWorkspaceFilesForCloud(workspacePath)
 
   const job = await enqueueCloudJob({
     goal,
@@ -140,76 +226,62 @@ export async function* runCloudAgentInline(options: {
   } catch {
     /* ignore accounting failures */
   }
-  logInfo('Cloud inline job started', { id: job.id, files: files.length })
+  logInfo('Cloud inline job started', {
+    id: job.id,
+    files: files.length,
+    clone: Boolean(repoUrl && githubToken)
+  })
 
-  let lastThinking = ''
-  let lastLive = ''
-  let lastAnswer = ''
-  const seenTools = new Map<string, string>()
-  let current: CloudJob = job
-
-  const emitTool = function* (t: CloudJobToolEvent): Generator<CloudInlineEvent> {
-    const key = `${t.id}:${t.status}`
-    if (seenTools.get(t.id) === t.status) return
-    seenTools.set(t.id, t.status)
-    yield {
-      type: 'tool',
-      tool: {
-        id: t.id,
-        name: t.name,
-        path: t.path,
-        status: t.status,
-        detail: t.detail || ''
-      }
-    }
+  const state = {
+    lastThinking: '',
+    lastLive: '',
+    lastAnswer: '',
+    seenTools: new Map<string, string>()
   }
+  let current: CloudJob = job
+  yield* emitJobDelta(current, state)
 
   try {
-    while (true) {
-      if (signal?.aborted) {
-        await stopCloudJob(current.id).catch(() => undefined)
-        throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
+    let stream: AsyncGenerator<CloudJob>
+    try {
+      stream = watchCloudJob(job.id, signal)
+    } catch {
+      stream = pollJobUntilDone(job.id, signal)
+    }
+
+    try {
+      for await (const next of stream) {
+        if (signal?.aborted) {
+          await stopCloudJob(current.id).catch(() => undefined)
+          throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
+        }
+        current = next
+        yield* emitJobDelta(current, state)
+        if (
+          current.status === 'done' ||
+          current.status === 'failed' ||
+          current.status === 'stopped'
+        ) {
+          break
+        }
       }
-
-      const next = await getCloudJob(current.id)
-      if (next) current = next
-
-      if (current.liveStatus && current.liveStatus !== lastLive) {
-        lastLive = current.liveStatus
-        yield { type: 'status', text: current.liveStatus }
-      }
-
-      const thinking = current.thinkingTail || ''
-      if (thinking.length > lastThinking.length) {
-        const chunk = thinking.slice(lastThinking.length)
-        lastThinking = thinking
-        yield { type: 'thinking', text: chunk }
-      } else if (thinking && thinking !== lastThinking) {
-        // Tail window slid — send a short separator + new tail
-        lastThinking = thinking
-        yield { type: 'thinking', text: `\n${thinking.slice(-800)}` }
-      }
-
-      for (const t of current.recentTools || []) {
-        yield* emitTool(t)
-      }
-
-      const answer = current.answer || ''
-      if (answer.length > lastAnswer.length) {
-        const chunk = answer.slice(lastAnswer.length)
-        lastAnswer = answer
-        yield { type: 'answer', text: chunk }
-      }
-
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') throw err
+      // SSE failed mid-job — finish via poll
+      logWarn('Cloud inline SSE fallback to poll', {
+        id: job.id,
+        error: err instanceof Error ? err.message : String(err)
+      })
       if (
-        current.status === 'done' ||
-        current.status === 'failed' ||
-        current.status === 'stopped'
+        current.status !== 'done' &&
+        current.status !== 'failed' &&
+        current.status !== 'stopped'
       ) {
-        break
+        for await (const next of pollJobUntilDone(job.id, signal)) {
+          current = next
+          yield* emitJobDelta(current, state)
+        }
       }
-
-      await sleep(900, signal)
     }
 
     if (current.status === 'failed') {
@@ -219,9 +291,11 @@ export async function* runCloudAgentInline(options: {
       throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
     }
 
-    // Final answer if not streamed yet
-    if (current.answer && current.answer !== lastAnswer) {
-      yield { type: 'answer', text: current.answer.slice(lastAnswer.length) || current.answer }
+    if (current.answer && current.answer !== state.lastAnswer) {
+      yield {
+        type: 'answer',
+        text: current.answer.slice(state.lastAnswer.length) || current.answer
+      }
     }
 
     if (current.hasArtifacts || (current.artifactCount && current.artifactCount > 0)) {

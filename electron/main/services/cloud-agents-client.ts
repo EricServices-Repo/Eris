@@ -67,6 +67,8 @@ function shouldLogHealthFailure(error: string): boolean {
 const DEFAULT_TIMEOUT_MS = 8_000
 /** Health probes must fail fast — cloud offline must never stall the client. */
 const HEALTH_TIMEOUT_MS = 2_500
+const HEALTH_CACHE_TTL_MS = 20_000
+let healthCache: { at: number; value: CloudHealth } | null = null
 const ENQUEUE_TIMEOUT_MS = 30_000
 
 /** Bearer token from EricServic.es — set by IPC before authenticated calls. */
@@ -157,12 +159,17 @@ async function cloudFetch(
 }
 
 export async function cloudAgentsHealth(authenticated = false): Promise<CloudHealth> {
+  if (healthCache && Date.now() - healthCache.at < HEALTH_CACHE_TTL_MS) {
+    return { ...healthCache.value, authenticated }
+  }
+
   const r = await cloudFetch(CLOUD_AGENTS_HEALTH_PATH, {
     logLabel: 'health',
     timeoutMs: HEALTH_TIMEOUT_MS,
     auth: false
   })
   if (!r.ok) {
+    healthCache = null
     const error = r.error || 'Unreachable'
     if (shouldLogHealthFailure(error)) {
       logWarn('Cloud Agents health check failed — using local agents', {
@@ -251,6 +258,7 @@ export async function cloudAgentsHealth(authenticated = false): Promise<CloudHea
     }
   }
 
+  healthCache = { at: Date.now(), value: health }
   return health
 }
 
@@ -279,6 +287,73 @@ export async function getCloudJob(id: string): Promise<CloudJob | null> {
     return null
   }
   return (r.data.job as CloudJob) || null
+}
+
+/**
+ * Stream job updates over SSE (auth once). Falls back to throwing so callers can poll.
+ */
+export async function* watchCloudJob(
+  id: string,
+  signal?: AbortSignal
+): AsyncGenerator<CloudJob> {
+  const rawId = id.replace(/^cloud:/, '')
+  const url = `${cloudAgentsBaseUrl()}${CLOUD_AGENTS_JOBS_PATH}/${encodeURIComponent(rawId)}/events`
+  const headers: Record<string, string> = {
+    Accept: 'text/event-stream',
+    'X-Eris-Client': 'eris-desktop'
+  }
+  if (cloudAuthToken) headers.Authorization = `Bearer ${cloudAuthToken}`
+
+  const res = await fetch(url, { headers, signal })
+  if (!res.ok || !res.body) {
+    throw new Error(`Cloud job SSE failed (${res.status})`)
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  let eventName = 'message'
+  let dataLines: string[] = []
+
+  const flush = function* (): Generator<CloudJob> {
+    if (!dataLines.length) return
+    const raw = dataLines.join('\n')
+    dataLines = []
+    const ev = eventName
+    eventName = 'message'
+    if (ev === 'end' || ev === 'ping') return
+    try {
+      const parsed = JSON.parse(raw) as CloudJob
+      if (parsed && typeof parsed.id === 'string' && parsed.status) yield parsed
+    } catch {
+      // ignore malformed chunks
+    }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    let nl: number
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      let line = buf.slice(0, nl)
+      buf = buf.slice(nl + 1)
+      if (line.endsWith('\r')) line = line.slice(0, -1)
+      if (line.startsWith(':')) continue
+      if (!line) {
+        yield* flush()
+        continue
+      }
+      if (line.startsWith('event:')) {
+        eventName = line.slice(6).trim()
+        continue
+      }
+      if (line.startsWith('data:')) {
+        dataLines.push(line.slice(5).trimStart())
+      }
+    }
+  }
+  yield* flush()
 }
 
 export async function enqueueCloudJob(req: EnqueueCloudJobRequest): Promise<CloudJob> {
