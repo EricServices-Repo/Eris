@@ -124,10 +124,11 @@ export function registerEricServicesIpc(): void {
 
       let sync: { ok: boolean; error?: string; direction?: string } | undefined
       if (payload.syncAfter !== false && settings.ericServices.syncEnabled !== false) {
-        sync = await syncEricServicesProfile('pull')
+        // Use the just-issued token so sync never depends on a re-read race.
+        sync = await syncEricServicesProfile('pull', result.token)
         if (!sync.ok) {
           // Push local prefs if nothing remote yet
-          sync = await syncEricServicesProfile('push')
+          sync = await syncEricServicesProfile('push', result.token)
         }
       }
 
@@ -170,7 +171,8 @@ export function registerEricServicesIpc(): void {
   })
 
   async function syncEricServicesProfile(
-    direction: 'pull' | 'push' | 'bidirectional'
+    direction: 'pull' | 'push' | 'bidirectional',
+    tokenOverride?: string | null
   ): Promise<{
     ok: boolean
     error?: string
@@ -179,9 +181,9 @@ export function registerEricServicesIpc(): void {
     status?: ReturnType<typeof buildEricServicesStatus>
   }> {
     const settings = getResolvedSettings(appState.currentWorkspace)
-    const token = settings.ericServices.tokenRef
-      ? getSecret(settings.ericServices.tokenRef)
-      : null
+    const token =
+      tokenOverride ||
+      (settings.ericServices.tokenRef ? getSecret(settings.ericServices.tokenRef) : null)
     if (!token || !settings.ericServices.linked) {
       return { ok: false, error: 'Sign in to EricServic.es first' }
     }
