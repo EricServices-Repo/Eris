@@ -2,14 +2,18 @@ import { describe, expect, it } from 'vitest'
 import {
   CLOUD_AGENTS_BASE_URL,
   CLOUD_AGENTS_HEALTH_PATH,
-  CLOUD_AGENTS_JOBS_PATH
+  CLOUD_AGENTS_JOBS_PATH,
+  cloudAgentsStatusLabel,
+  isCloudAgentsReady,
+  type CloudHealth
 } from '../src/shared/cloud-agents'
 import { cloudJobToBackgroundJob } from '../electron/main/services/cloud-agents-client'
 import type { CloudJob } from '../src/shared/cloud-agents'
 
 describe('cloud agents defaults', () => {
-  it('uses agents.ericservic.es:6443 with no user config', () => {
-    expect(CLOUD_AGENTS_BASE_URL).toBe('https://agents.ericservic.es:6443')
+  it('uses plain HTTP agents.ericservic.es:6443 with no TLS cert', () => {
+    expect(CLOUD_AGENTS_BASE_URL).toBe('http://agents.ericservic.es:6443')
+    expect(CLOUD_AGENTS_BASE_URL.startsWith('http://')).toBe(true)
     expect(CLOUD_AGENTS_HEALTH_PATH).toBe('/v1/health')
     expect(CLOUD_AGENTS_JOBS_PATH).toBe('/v1/jobs')
   })
@@ -20,7 +24,7 @@ describe('cloud agents defaults', () => {
       goal: 'Add a button',
       agentId: 'coder',
       agentName: 'Coder',
-      model: 'gpt-4o-mini',
+      model: 'composer-lite',
       status: 'running',
       claim: 'Add a button',
       liveStatus: 'Coder · step 2',
@@ -36,5 +40,44 @@ describe('cloud agents defaults', () => {
     expect(mapped.status).toBe('running')
     expect(mapped.routeReason).toContain('agents.ericservic.es')
     expect(mapped.filesTouched).toEqual(['src/App.tsx'])
+  })
+})
+
+describe('cloud readiness + status', () => {
+  const base: CloudHealth = {
+    ok: true,
+    service: 'eris-cloud-agent',
+    version: '0.1.0',
+    llmConfigured: true,
+    inference: 'local',
+    maxParallel: 2,
+    running: 0,
+    queued: 0,
+    localModel: {
+      status: 'ready',
+      modelId: 'composer-lite',
+      modelName: 'Composer Lite',
+      error: null
+    }
+  }
+
+  it('is ready only when the remote health is ok and model is ready', () => {
+    expect(isCloudAgentsReady(base)).toBe(true)
+    expect(isCloudAgentsReady({ ...base, ok: false })).toBe(false)
+    expect(
+      isCloudAgentsReady({
+        ...base,
+        localModel: { ...base.localModel!, status: 'downloading' }
+      })
+    ).toBe(false)
+    expect(isCloudAgentsReady(null)).toBe(false)
+  })
+
+  it('labels offline and ready states for the status bar', () => {
+    expect(cloudAgentsStatusLabel(null)).toContain('checking')
+    expect(cloudAgentsStatusLabel({ ...base, ok: false, error: 'Unreachable' })).toContain(
+      'using local'
+    )
+    expect(cloudAgentsStatusLabel(base)).toContain('Composer Lite')
   })
 })

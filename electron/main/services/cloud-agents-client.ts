@@ -4,12 +4,14 @@ import {
   CLOUD_AGENTS_BASE_URL,
   CLOUD_AGENTS_HEALTH_PATH,
   CLOUD_AGENTS_JOBS_PATH,
+  isCloudAgentsReady,
   type CloudHealth,
   type CloudJob,
   type EnqueueCloudJobRequest
 } from '../../../src/shared/cloud-agents'
 import type { BackgroundJob } from '../../../src/shared/background-agents'
 import { deriveBlackboardStatus } from '../../../src/shared/agent-orchestration'
+import { logError, logInfo, logWarn } from './logger'
 
 const SKIP_DIRS = new Set([
   '.git',
@@ -28,19 +30,37 @@ export function cloudAgentsBaseUrl(): string {
   return CLOUD_AGENTS_BASE_URL
 }
 
+let lastHealthLogKey = ''
+let lastHealthLogAt = 0
+const HEALTH_LOG_COOLDOWN_MS = 30_000
+
+function shouldLogHealthFailure(error: string): boolean {
+  const now = Date.now()
+  if (error !== lastHealthLogKey || now - lastHealthLogAt >= HEALTH_LOG_COOLDOWN_MS) {
+    lastHealthLogKey = error
+    lastHealthLogAt = now
+    return true
+  }
+  return false
+}
+
 async function cloudFetch(
   path: string,
-  init?: RequestInit
+  init?: RequestInit & { logLabel?: string }
 ): Promise<{ ok: boolean; status: number; data: Record<string, unknown>; error?: string }> {
+  const { logLabel, ...fetchInit } = init || {}
+  const method = (fetchInit.method || 'GET').toUpperCase()
   const url = `${cloudAgentsBaseUrl()}${path}`
+  const label = logLabel || `${method} ${path}`
+
   try {
     const res = await fetch(url, {
-      ...init,
+      ...fetchInit,
       headers: {
         Accept: 'application/json',
         'X-Eris-Client': 'eris-desktop',
-        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-        ...(init?.headers as Record<string, string> | undefined)
+        ...(fetchInit.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(fetchInit.headers as Record<string, string> | undefined)
       }
     })
     const text = await res.text()
@@ -48,35 +68,57 @@ async function cloudFetch(
     try {
       data = text ? (JSON.parse(text) as Record<string, unknown>) : {}
     } catch {
-      return {
-        ok: false,
+      const error = `Unexpected response from Cloud Agents (${res.status})`
+      logWarn('Cloud Agents response not JSON', {
+        label,
+        url,
         status: res.status,
-        data: {},
-        error: `Unexpected response from Cloud Agents (${res.status})`
-      }
+        bodyPreview: text.slice(0, 240)
+      })
+      return { ok: false, status: res.status, data: {}, error }
     }
     if (!res.ok || data.ok === false) {
-      return {
-        ok: false,
+      const error =
+        typeof data.error === 'string' ? data.error : `Request failed (${res.status})`
+      logWarn('Cloud Agents request failed', {
+        label,
+        url,
         status: res.status,
-        data,
-        error: typeof data.error === 'string' ? data.error : `Request failed (${res.status})`
-      }
+        error,
+        okFlag: data.ok
+      })
+      return { ok: false, status: res.status, data, error }
     }
     return { ok: true, status: res.status, data }
   } catch (err) {
-    return {
-      ok: false,
-      status: 0,
-      data: {},
-      error: err instanceof Error ? err.message : 'Network error reaching Cloud Agents'
-    }
+    const error = err instanceof Error ? err.message : 'Network error reaching Cloud Agents'
+    const cause =
+      err instanceof Error && 'cause' in err
+        ? String((err as Error & { cause?: unknown }).cause ?? '')
+        : ''
+    logWarn('Cloud Agents network error', {
+      label,
+      url,
+      baseUrl: cloudAgentsBaseUrl(),
+      error,
+      cause: cause || undefined,
+      name: err instanceof Error ? err.name : undefined
+    })
+    return { ok: false, status: 0, data: {}, error }
   }
 }
 
 export async function cloudAgentsHealth(): Promise<CloudHealth> {
-  const r = await cloudFetch(CLOUD_AGENTS_HEALTH_PATH)
+  const r = await cloudFetch(CLOUD_AGENTS_HEALTH_PATH, { logLabel: 'health' })
   if (!r.ok) {
+    const error = r.error || 'Unreachable'
+    if (shouldLogHealthFailure(error)) {
+      logWarn('Cloud Agents health check failed — using local agents', {
+        baseUrl: cloudAgentsBaseUrl(),
+        status: r.status,
+        error
+      })
+    }
     return {
       ok: false,
       service: 'eris-cloud-agent',
@@ -85,11 +127,11 @@ export async function cloudAgentsHealth(): Promise<CloudHealth> {
       maxParallel: 0,
       running: 0,
       queued: 0,
-      error: r.error || 'Unreachable'
+      error
     }
   }
   const localModel = r.data.localModel as CloudHealth['localModel'] | undefined
-  return {
+  const health: CloudHealth = {
     ok: true,
     service: String(r.data.service || 'eris-cloud-agent'),
     version: String(r.data.version || ''),
@@ -110,24 +152,76 @@ export async function cloudAgentsHealth(): Promise<CloudHealth> {
     publicBaseUrl:
       typeof r.data.publicBaseUrl === 'string' ? r.data.publicBaseUrl : CLOUD_AGENTS_BASE_URL
   }
+
+  if (lastHealthLogKey) {
+    logInfo('Cloud Agents health recovered', {
+      baseUrl: cloudAgentsBaseUrl(),
+      version: health.version,
+      inference: health.inference,
+      localModel: health.localModel?.status,
+      ready: isCloudAgentsReady(health)
+    })
+    lastHealthLogKey = ''
+  } else if (!isCloudAgentsReady(health)) {
+    const reason =
+      health.localModel?.status === 'downloading'
+        ? 'model still downloading'
+        : health.localModel?.status === 'missing'
+          ? 'model missing'
+          : health.localModel?.status === 'error'
+            ? `model error: ${health.localModel.error || 'unknown'}`
+            : 'not ready'
+    if (shouldLogHealthFailure(reason)) {
+      logWarn('Cloud Agents reachable but not ready — using local agents', {
+        baseUrl: cloudAgentsBaseUrl(),
+        reason,
+        localModel: health.localModel,
+        inference: health.inference
+      })
+    }
+  }
+
+  return health
 }
 
 export async function listCloudJobs(limit = 50): Promise<CloudJob[]> {
-  const r = await cloudFetch(`${CLOUD_AGENTS_JOBS_PATH}?limit=${limit}`)
-  if (!r.ok) return []
+  const r = await cloudFetch(`${CLOUD_AGENTS_JOBS_PATH}?limit=${limit}`, {
+    logLabel: 'list jobs'
+  })
+  if (!r.ok) {
+    logWarn('Cloud Agents list jobs failed', {
+      baseUrl: cloudAgentsBaseUrl(),
+      error: r.error,
+      status: r.status
+    })
+    return []
+  }
   const jobs = r.data.jobs
   return Array.isArray(jobs) ? (jobs as CloudJob[]) : []
 }
 
 export async function getCloudJob(id: string): Promise<CloudJob | null> {
-  const r = await cloudFetch(`${CLOUD_AGENTS_JOBS_PATH}/${encodeURIComponent(id)}`)
-  if (!r.ok) return null
+  const r = await cloudFetch(`${CLOUD_AGENTS_JOBS_PATH}/${encodeURIComponent(id)}`, {
+    logLabel: `get job ${id.slice(0, 8)}`
+  })
+  if (!r.ok) {
+    logWarn('Cloud Agents get job failed', { id, error: r.error, status: r.status })
+    return null
+  }
   return (r.data.job as CloudJob) || null
 }
 
 export async function enqueueCloudJob(req: EnqueueCloudJobRequest): Promise<CloudJob> {
+  logInfo('Cloud Agents enqueue start', {
+    baseUrl: cloudAgentsBaseUrl(),
+    goal: req.goal.slice(0, 120),
+    agentId: req.agentId,
+    files: req.files?.length || 0,
+    repoUrl: req.repoUrl || null
+  })
   const r = await cloudFetch(CLOUD_AGENTS_JOBS_PATH, {
     method: 'POST',
+    logLabel: 'enqueue job',
     body: JSON.stringify({
       goal: req.goal,
       agentId: req.agentId,
@@ -140,16 +234,28 @@ export async function enqueueCloudJob(req: EnqueueCloudJobRequest): Promise<Clou
     })
   })
   if (!r.ok || !r.data.job) {
-    throw new Error(r.error || 'Failed to enqueue cloud job')
+    const error = r.error || 'Failed to enqueue cloud job'
+    logError('Cloud Agents enqueue failed', {
+      baseUrl: cloudAgentsBaseUrl(),
+      status: r.status,
+      error
+    })
+    throw new Error(error)
   }
-  return r.data.job as CloudJob
+  const job = r.data.job as CloudJob
+  logInfo('Cloud Agents enqueue ok', { id: job.id, status: job.status, agentId: job.agentId })
+  return job
 }
 
 export async function stopCloudJob(id: string): Promise<boolean> {
   const r = await cloudFetch(`${CLOUD_AGENTS_JOBS_PATH}/${encodeURIComponent(id)}/stop`, {
     method: 'POST',
+    logLabel: `stop job ${id.slice(0, 8)}`,
     body: '{}'
   })
+  if (!r.ok) {
+    logWarn('Cloud Agents stop failed', { id, error: r.error, status: r.status })
+  }
   return r.ok
 }
 

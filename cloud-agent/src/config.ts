@@ -16,8 +16,8 @@ function pkgVersion(): string {
   return '0.1.0'
 }
 
-/** Public hostname:port Eris clients use (no user config). */
-export const PUBLIC_BASE_URL = 'https://agents.ericservic.es:6443'
+/** Public hostname:port Eris clients use (plain HTTP — no TLS cert). */
+export const PUBLIC_BASE_URL = 'http://agents.ericservic.es:6443'
 
 export const config = {
   version: pkgVersion(),

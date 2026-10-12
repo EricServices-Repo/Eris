@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { BackgroundJob } from '@/shared/background-agents'
 import type { CloudHealth } from '@/shared/cloud-agents'
-import { CLOUD_AGENTS_BASE_URL } from '@/shared/cloud-agents'
+import { isCloudAgentsReady } from '@/shared/cloud-agents'
 import { deriveBlackboardStatus } from '@/shared/agent-orchestration'
 import { formatBackgroundJobDetail } from '@/shared/background-job-detail'
 
@@ -114,7 +114,20 @@ export function AgentsPanel({
     [jobs]
   )
 
-  const cloudReady = Boolean(cloud?.ok && cloud.localModel?.status !== 'error')
+  const cloudReady = isCloudAgentsReady(cloud)
+
+  const startLocal = (payload: {
+    goal: string
+    model: string
+    agentId: string | null
+    claim: string
+  }) =>
+    window.ide.enqueueBackgroundJob({
+      ...payload,
+      mode: 'agent',
+      source: 'panel',
+      forceRoute: 'tools'
+    })
 
   const start = () => {
     if (!goal.trim() || !workspacePath) return
@@ -126,22 +139,35 @@ export function AgentsPanel({
       agentId: selectedAgentId === 'auto' ? null : selectedAgentId,
       claim: goal.trim().slice(0, 64)
     }
-    const run = cloudReady
-      ? window.ide.enqueueCloudJob(payload)
-      : window.ide.enqueueBackgroundJob({
-          ...payload,
-          mode: 'agent',
-          source: 'panel',
-          forceRoute: 'tools'
-        })
-    void run
-      .then((job) => {
+    void (async () => {
+      try {
+        if (cloudReady) {
+          try {
+            const job = await window.ide.enqueueCloudJob(payload)
+            setGoal('')
+            setSelectedId(job.id)
+            void refresh()
+            return
+          } catch (cloudErr) {
+            const msg = cloudErr instanceof Error ? cloudErr.message : 'Cloud enqueue failed'
+            const job = await startLocal(payload)
+            setGoal('')
+            setSelectedId(job.id)
+            setError(`Cloud unavailable (${msg}) — started local agent instead`)
+            void refresh()
+            return
+          }
+        }
+        const job = await startLocal(payload)
         setGoal('')
         setSelectedId(job.id)
         void refresh()
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to start'))
-      .finally(() => setBusy(false))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to start')
+      } finally {
+        setBusy(false)
+      }
+    })()
   }
 
   if (!open) return null
@@ -157,24 +183,12 @@ export function AgentsPanel({
     )
   }).length
 
-  const cloudLabel = !cloud
-    ? 'checking…'
-    : !cloud.ok
-      ? 'cloud offline · local'
-      : cloud.localModel?.status === 'downloading'
-        ? 'cloud model downloading…'
-        : cloud.localModel?.status === 'ready' || cloud.inference === 'local'
-          ? `cloud · ${cloud.localModel?.modelName || 'local model'}`
-          : cloud.llmConfigured
-            ? 'cloud ready'
-            : 'cloud online (model pending)'
-
   return (
     <div className="git-panel">
       <div className="terminal-bar">
         <strong>Agents</strong>
         <span className="thinking-status-inline">
-          {activeCount > 0 ? `${activeCount} active` : 'idle'} · {cloudLabel}
+          {activeCount > 0 ? `${activeCount} active` : 'idle'}
         </span>
         <div className="diff-actions">
           <button type="button" className="btn" onClick={() => void refresh()}>
@@ -191,8 +205,8 @@ export function AgentsPanel({
           value={goal}
           placeholder={
             cloudReady
-              ? 'Goal for Cloud Agent (agents.ericservic.es:6443)'
-              : 'Goal for local worktree agent'
+              ? 'Goal for Cloud Agent'
+              : 'Goal for local worktree agent (cloud offline)'
           }
           onChange={(e) => setGoal(e.target.value)}
           onKeyDown={(e) => {
@@ -216,8 +230,7 @@ export function AgentsPanel({
           <div className="explorer-section-label">Blackboard</div>
           {jobs.length === 0 ? (
             <div className="chat-empty">
-              No tasks yet. Cloud Agents use <strong>{CLOUD_AGENTS_BASE_URL.replace(/^https?:\/\//, '')}</strong>{' '}
-              automatically when available.
+              No tasks yet. Cloud status and metrics are in Settings → Agent.
             </div>
           ) : (
             roots.map((j) => (
@@ -309,7 +322,8 @@ export function AgentsPanel({
         </div>
       </div>
       <div className="debug-hint">
-        Cloud: {CLOUD_AGENTS_BASE_URL} (no setup). Falls back to local worktrees when cloud is offline.
+        Cloud uses plain HTTP (no certificate). If cloud is offline or enqueue fails, Eris starts a local
+        worktree agent.
       </div>
     </div>
   )
@@ -366,10 +380,10 @@ function JobTreeButton({
 function helpText(cloudReady: boolean): string {
   return [
     'Blackboard: local worktree agents + Cloud Agents.',
-    `Cloud endpoint: ${CLOUD_AGENTS_BASE_URL} (built-in, no settings).`,
+    'Cloud status and metrics: Settings → Agent.',
     cloudReady
-      ? 'Cloud is ready — Start sends jobs to the remote worker (runs its own local GGUF).'
-      : 'Cloud offline or model error — Start uses a local worktree.',
+      ? 'Cloud is ready — Start prefers the remote worker (own GGUF). Falls back to local on failure.'
+      : 'Cloud not ready — Start uses a local worktree agent.',
     '',
     'Tip: Bring to chat pastes the result into the active thread.'
   ].join('\n')

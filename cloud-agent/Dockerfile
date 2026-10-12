@@ -1,5 +1,5 @@
 # Eris Cloud Agent — runs its own local GGUF (Composer Lite) via node-llama-cpp
-# Client URL: https://agents.ericservic.es:6443
+# Client URL: http://agents.ericservic.es:6443 (plain HTTP, no TLS cert)
 
 FROM node:22-bookworm-slim AS build
 
@@ -33,7 +33,7 @@ COPY --from=build /app/dist ./dist
 ENV NODE_ENV=production \
   ERIS_CLOUD_HOST=0.0.0.0 \
   ERIS_CLOUD_PORT=6443 \
-  ERIS_CLOUD_PUBLIC_URL=https://agents.ericservic.es:6443 \
+  ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443 \
   ERIS_CLOUD_DATA=/var/lib/eris-cloud \
   ERIS_CLOUD_MAX_PARALLEL=2 \
   # Leave ERIS_CLOUD_LLM_BASE unset — use the bundled local model

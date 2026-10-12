@@ -7,20 +7,21 @@ Inference runs **inside the container** with a local GGUF (Composer Lite / Qwen2
 ## Client URL (no user configuration)
 
 ```
-https://agents.ericservic.es:6443
+http://agents.ericservic.es:6443
 ```
 
-Container listen port: **6443**.
+Plain HTTP — no TLS certificate required. Container listen port: **6443**.
 
 ## Build & run
 
 ```bash
 # from repo root
 docker build -t eris-cloud-agent ./cloud-agent
+# or: podman build -t eris-cloud-agent ./cloud-agent
 
-docker run -d --name eris-cloud-agent \
+podman run -d --name eris-cloud-agent \
   -p 6443:6443 \
-  -e ERIS_CLOUD_PUBLIC_URL=https://agents.ericservic.es:6443 \
+  -e ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443 \
   -v eris-cloud-data:/var/lib/eris-cloud \
   eris-cloud-agent
 ```

@@ -24,6 +24,7 @@ import type {
   QueuedChatMessage
 } from '@/features/chat/ChatPanel'
 import type { PendingDiff } from '@/features/chat/DiffReview'
+import { isCloudAgentsReady } from '@/shared/cloud-agents'
 import type { RightPanel } from './useLayout'
 import { uid } from './uid'
 
@@ -146,21 +147,43 @@ export function useChatSession({
       }
       const model =
         selectedModel || settingsRef.current?.models.defaultModel || 'builtin:composer-lite'
+      const agentId = selectedAgentId === 'auto' ? null : selectedAgentId
+      const sourceThreadId = activeThreadRef.current?.id ?? null
       try {
         if (streaming) stopChat()
-        const job = await window.ide.enqueueBackgroundJob({
-          goal,
-          model,
-          agentId: selectedAgentId === 'auto' ? null : selectedAgentId,
-          mode: 'agent',
-          source: 'chat',
-          sourceThreadId: activeThreadRef.current?.id ?? null,
-          forceRoute: 'tools'
-        })
+        let job
+        let via = 'local'
+        try {
+          const health = await window.ide.cloudAgentsHealth()
+          if (isCloudAgentsReady(health)) {
+            job = await window.ide.enqueueCloudJob({
+              goal,
+              model,
+              agentId,
+              claim: goal.slice(0, 64)
+            })
+            via = 'cloud'
+          }
+        } catch {
+          // fall through to local
+        }
+        if (!job) {
+          job = await window.ide.enqueueBackgroundJob({
+            goal,
+            model,
+            agentId,
+            mode: 'agent',
+            source: 'chat',
+            sourceThreadId,
+            forceRoute: 'tools'
+          })
+        }
         setRightCollapsed(false)
         setRightPanel('agents')
         setChatError(null)
-        setAgentStatus(`Background agent started · ${job.id.slice(0, 8)}`)
+        setAgentStatus(
+          `${via === 'cloud' ? 'Cloud' : 'Local'} agent started · ${job.id.replace(/^cloud:/, '').slice(0, 8)}`
+        )
         return job
       } catch (err) {
         setChatError(err instanceof Error ? err.message : 'Failed to start background agent')
