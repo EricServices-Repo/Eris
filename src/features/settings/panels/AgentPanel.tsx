@@ -25,6 +25,8 @@ function offlineHealth(error: string): CloudHealth {
 export function AgentPanel() {
   const [cloud, setCloud] = useState<CloudHealth | null>(null)
   const [busy, setBusy] = useState(false)
+  const [clearBusy, setClearBusy] = useState(false)
+  const [clearMsg, setClearMsg] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     setBusy(true)
@@ -37,6 +39,31 @@ export function AgentPanel() {
       setBusy(false)
     }
   }, [])
+
+  const stopAllMine = useCallback(async () => {
+    if (
+      !window.confirm(
+        'Stop all of your queued and running Cloud Agent jobs?\n\nThis only affects your account, not other users.'
+      )
+    ) {
+      return
+    }
+    setClearBusy(true)
+    setClearMsg(null)
+    try {
+      const result = await window.ide.stopAllCloudJobs()
+      setClearMsg(
+        result.count === 0
+          ? 'No active Cloud jobs for your account.'
+          : `Stopped ${result.count} Cloud job${result.count === 1 ? '' : 's'}.`
+      )
+      await refresh()
+    } catch (err) {
+      setClearMsg(err instanceof Error ? err.message : 'Failed to stop Cloud jobs')
+    } finally {
+      setClearBusy(false)
+    }
+  }, [refresh])
 
   useEffect(() => {
     void refresh()
@@ -60,9 +87,20 @@ export function AgentPanel() {
         title="Cloud Agents"
         description={`Shared worker at ${host} runs Composer Full. Sign in under Account. This Mac uses Composer Lite locally; Cloud Agents handle Full when available.`}
         actions={
-          <button type="button" className="btn" disabled={busy} onClick={() => void refresh()}>
-            {busy ? 'Checking…' : 'Refresh'}
-          </button>
+          <>
+            <button
+              type="button"
+              className="btn"
+              disabled={clearBusy || cloud?.authenticated !== true}
+              title="Stop all of your queued and running Cloud jobs"
+              onClick={() => void stopAllMine()}
+            >
+              {clearBusy ? 'Stopping…' : 'Stop all my jobs'}
+            </button>
+            <button type="button" className="btn" disabled={busy} onClick={() => void refresh()}>
+              {busy ? 'Checking…' : 'Refresh'}
+            </button>
+          </>
         }
       >
         <div
@@ -120,6 +158,11 @@ export function AgentPanel() {
           </div>
         </div>
 
+        {clearMsg && (
+          <div className="settings-hint" style={{ marginTop: 12 }}>
+            {clearMsg}
+          </div>
+        )}
         {cloud?.error && (
           <div className="git-error" style={{ marginTop: 12 }}>
             {cloud.error}

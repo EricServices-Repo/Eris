@@ -1,6 +1,6 @@
 {
   "name": "eris",
-  "version": "0.2.18",
+  "version": "0.2.19",
   "description": "Eris — AI-first desktop IDE for macOS and Windows",
   "main": "./out/main/index.js",
   "author": "Eris",
@@ -15,7 +15,7 @@
     "dist:release": "npm run build && electron-builder --mac dmg zip --win nsis --x64",
     "dist:release:mac": "npm run build && electron-builder --mac dmg zip",
     "dist:release:win": "npm run build && electron-builder --win nsis --x64",
-    "start:app": "npm run dist:mac && open \"$(ls -d dist/mac*/Eris.app | head -1)\"",
+    "start:app": "npm run dist:mac && (osascript -e 'tell application \"Eris\" to quit' 2>/dev/null || true); sleep 1; pkill -x Eris 2>/dev/null || true; sleep 1; open \"$(ls -d dist/mac*/Eris.app | head -1)\"",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "version:patch": "npm version patch --no-git-tag-version",
     "version:minor": "npm version minor --no-git-tag-version",

@@ -58,6 +58,11 @@ export const config = {
    * Default false — require EricServic.es Bearer token.
    */
   allowAnonymous: process.env.ERIS_CLOUD_ALLOW_ANONYMOUS === '1',
+  /**
+   * Shared secret for ops force-kill-all (`POST /v1/admin/kill-all` and status page).
+   * When empty, admin kill-all is disabled (user `POST /v1/jobs/stop-all` still works).
+   */
+  adminToken: (process.env.ERIS_CLOUD_ADMIN_TOKEN || '').trim(),
   gpu: parseGpuMode(process.env.ERIS_CLOUD_GPU),
   llmBase: (process.env.ERIS_CLOUD_LLM_BASE || '').replace(/\/+$/, ''),
   llmKey: process.env.ERIS_CLOUD_LLM_KEY || '',

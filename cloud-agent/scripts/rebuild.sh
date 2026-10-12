@@ -112,6 +112,45 @@ else
   fi
 fi
 
+install_nginx_status_proxy() {
+  local conf_src="$CDIR/deploy/nginx-eris-cloud-status.conf"
+  local conf_dst=""
+  if [[ ! -f "$conf_src" ]]; then
+    echo "==> skip nginx status proxy (missing $conf_src)"
+    return 0
+  fi
+  if [[ ! -d /etc/nginx ]]; then
+    echo "==> nginx not installed — status is on http://127.0.0.1:8080/ (publish host :80 yourself)"
+    return 0
+  fi
+  if [[ -d /etc/nginx/conf.d ]]; then
+    conf_dst=/etc/nginx/conf.d/eris-cloud-status.conf
+  elif [[ -d /etc/nginx/sites-available ]]; then
+    conf_dst=/etc/nginx/sites-available/eris-cloud-status.conf
+  else
+    echo "==> nginx present but no conf.d/sites-available — install $conf_src manually"
+    return 0
+  fi
+  echo "==> install nginx :80 → 127.0.0.1:8080 status proxy ($conf_dst)"
+  sudo cp "$conf_src" "$conf_dst"
+  if [[ "$conf_dst" == /etc/nginx/sites-available/* && -d /etc/nginx/sites-enabled ]]; then
+    sudo ln -sfn "$conf_dst" /etc/nginx/sites-enabled/eris-cloud-status.conf
+    # Avoid default site 403 stealing :80
+    if [[ -L /etc/nginx/sites-enabled/default ]]; then
+      sudo rm -f /etc/nginx/sites-enabled/default
+      echo "==> disabled nginx sites-enabled/default (was likely returning 403 on :80)"
+    fi
+  fi
+  if sudo nginx -t 2>/tmp/eris-nginx-test.log; then
+    sudo systemctl reload nginx 2>/dev/null || sudo nginx -s reload 2>/dev/null || true
+    echo "==> nginx reloaded — http://127.0.0.1/ should show Cloud Agent status"
+  else
+    echo "==> nginx -t failed; status proxy not active:"
+    cat /tmp/eris-nginx-test.log >&2 || true
+    echo "    Fix the conflict, then: sudo nginx -t && sudo systemctl reload nginx"
+  fi
+}
+
 if [[ "$DO_INSTALL" -eq 1 ]]; then
   echo "==> install Quadlet unit"
   sudo mkdir -p /etc/containers/systemd
@@ -123,6 +162,7 @@ if [[ "$DO_INSTALL" -eq 1 ]]; then
   fi
   sudo systemctl daemon-reload
   sudo systemctl enable eris-cloud-agent.service
+  install_nginx_status_proxy
 fi
 
 restart_service() {
@@ -159,13 +199,14 @@ else
     "${RUN_EXTRA[@]}" \
     --stop-signal=SIGTERM \
     -p 6443:6443 \
-    -p 80:8080 \
+    -p 8080:8080 \
     -e ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443 \
     -e ERIS_CLOUD_STATUS_PORT=8080 \
     -e "ERIS_CLOUD_GPU=${GPU_ENV}" \
     -e "ERIS_CLOUD_MAX_PARALLEL=${PARALLEL}" \
     -v eris-cloud-data:/var/lib/eris-cloud \
     eris-cloud-agent:latest
+  install_nginx_status_proxy
 fi
 
 echo "==> waiting for health…"
@@ -180,14 +221,42 @@ done
 
 if [[ "$ok" -eq 1 ]]; then
   if command -v jq >/dev/null 2>&1; then
-    jq '{ok,ready,gpuMode,version,localModel}' </tmp/eris-cloud-health.json
+    jq '{ok,ready,gpuMode,version,localModel,adminKillAllConfigured,endpoints}' </tmp/eris-cloud-health.json
   else
     cat /tmp/eris-cloud-health.json
     echo
   fi
-  echo "==> rebuild done · http://127.0.0.1:6443/v1/health"
+  ver="$(python3 -c 'import json;print(json.load(open("/tmp/eris-cloud-health.json")).get("version",""))' 2>/dev/null || true)"
+  echo "==> rebuild done · version=${ver:-unknown} · http://127.0.0.1:6443/v1/health"
+  echo "==> status (direct): http://127.0.0.1:8080/"
+  echo "==> status (:80 via nginx): http://127.0.0.1/"
+  if curl -fsS http://127.0.0.1:8080/ 2>/dev/null | grep -q 'Force kill all'; then
+    echo "==> OK: Force kill all present on :8080 status page"
+  else
+    echo "==> WARN: Force kill all not found on :8080 — image may be stale (need cloud-agent >= 0.2.16)"
+  fi
+  if curl -fsS http://127.0.0.1/ 2>/dev/null | grep -q 'Force kill all'; then
+    echo "==> OK: Force kill all present on :80 (nginx → status)"
+  else
+    echo "==> :80 not serving status yet — installing nginx proxy"
+    install_nginx_status_proxy
+    sleep 1
+    if curl -fsS http://127.0.0.1/ 2>/dev/null | grep -q 'Force kill all'; then
+      echo "==> OK: Force kill all present on :80 after nginx install"
+    else
+      code="$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1/ 2>/dev/null || echo err)"
+      echo "==> WARN: :80 still not OK (HTTP $code). On the VM run:"
+      echo "    sudo cp $CDIR/deploy/nginx-eris-cloud-status.conf /etc/nginx/conf.d/"
+      echo "    sudo rm -f /etc/nginx/sites-enabled/default"
+      echo "    sudo nginx -t && sudo systemctl reload nginx"
+      echo "    # and ensure Quadlet publishes 8080:8080 (rebuild with --install)"
+    fi
+  fi
   if [[ "$CPU_ONLY" -eq 1 ]]; then
     echo "==> CPU node: expect localModel.gpu=false once the model is loaded"
+  fi
+  if [[ -n "$ver" && "$ver" != "0.2.16" && "$ver" != "0.2.15" ]]; then
+    echo "==> NOTE: expected cloud-agent >= 0.2.16 for kill-all; got $ver"
   fi
 else
   echo "rebuild: health endpoint not up yet (model may still be downloading)"

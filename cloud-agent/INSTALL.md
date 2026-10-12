@@ -516,6 +516,7 @@ Set in the Quadlet file (`/etc/containers/systemd/eris-cloud-agent.container`) o
 | `ERIS_CLOUD_MAX_CONCURRENT_FREE` | `1` | Free-plan concurrent jobs |
 | `ERIS_CLOUD_MAX_CONCURRENT_PRO` | `3` | Pro-plan concurrent jobs |
 | `ERIS_CLOUD_LLM_BASE` | _(unset)_ | Optional remote OpenAI-compatible API |
+| `ERIS_CLOUD_ADMIN_TOKEN` | _(unset)_ | Shared secret for force-kill-all (`POST /admin/kill-all` on status page / API). Generate a long random string. |
 
 After editing the Quadlet unit:
 
@@ -526,29 +527,38 @@ sudo systemctl restart eris-cloud-agent.service
 
 ---
 
-## Status webpage (port 80, no auth)
+## Status webpage (port 80) + Force kill all
 
-Unauthenticated dashboard + JSON metrics (no job goals, tokens, or file contents):
+Unauthenticated dashboard (no job goals/tokens). **Force kill all** is on this page.
 
 | URL | Purpose |
 |-----|---------|
-| `http://agents.ericservic.es/` | HTML status board (auto-refresh) |
-| `http://agents.ericservic.es/status.json` | Full public status JSON |
-| `http://agents.ericservic.es/metrics` | Counters only |
+| `http://agents.ericservic.es/` | Status board + **Force kill all** (nginx :80 → container :8080) |
+| `http://127.0.0.1:8080/` | Same board direct (bypasses nginx) |
+| `POST /admin/kill-all` | Abort every queued/running job (`X-Eris-Admin-Token`) |
 
-Inside the container the status server listens on **8080**; Quadlet maps **host 80 → 8080**.
+**Why you might see nginx 403 on :80:** the host already runs nginx on port 80. Podman must **not** bind :80. Instead:
+
+1. Container publishes **8080:8080**
+2. `rebuild.sh --install` installs `deploy/nginx-eris-cloud-status.conf` → proxies `:80` → `127.0.0.1:8080`
 
 ```bash
-# After rebuild with the updated unit (PublishPort=80:8080):
-curl -sS http://127.0.0.1/status.json | jq '{ready,gpuMode,jobs,metrics}'
-# Open in a browser:
-#   http://agents.ericservic.es/
+# On the agent VM (after git pull of cloud-agent >= 0.2.16):
+./cloud-agent/scripts/rebuild.sh --cpu --install --no-pull
+# Confirm:
+curl -sS http://127.0.0.1:6443/v1/health | jq .version   # expect 0.2.16+
+curl -sS http://127.0.0.1/ | grep -F 'Force kill all'
+podman exec eris-cloud-agent cat /var/lib/eris-cloud/admin.token
 ```
 
-Disable: `ERIS_CLOUD_STATUS_ENABLED=0`. Open firewall **80/tcp** as well as 6443.
+Admin token: `ERIS_CLOUD_ADMIN_TOKEN`, or auto file `/var/lib/eris-cloud/admin.token`.
+
+Signed-in Eris clients: Settings → Agent → **Stop all my jobs** (own jobs only).
+
+Disable status server: `ERIS_CLOUD_STATUS_ENABLED=0`.
 
 ---
 
 ## Firewall
 
-Allow inbound **6443/tcp** (Eris API) and **80/tcp** (status page) from your network, or terminate TLS on a reverse proxy. API remains Bearer-auth; the status page has no auth.
+Allow inbound **6443/tcp** (Eris API) and **80/tcp** (status page) from your network, or terminate TLS on a reverse proxy. API remains Bearer-auth; status GET is public; force kill-all needs the admin token (env or auto file).

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.19 — 2026-10-12
+
+- Desktop rebuild: Cloud Agent work runs inline in chat thinking; Agents tree / right-column Agents tab / Background hand-off removed.
+- Cloud Agent **0.2.16**: status page **Force kill all** (works on `:6443/status` and `:80`); auto-creates `/var/lib/eris-cloud/admin.token` when `ERIS_CLOUD_ADMIN_TOKEN` is unset; `POST /admin/kill-all` + `/v1/admin/kill-all`; user `POST /v1/jobs/stop-all` / Settings → Agent **Stop all my jobs**.
+
 ## 0.2.18 — 2026-10-12
 
 - Agent mode runs Cloud Composer **inline in chat** (thinking / tools / answer / diffs); local Lite is a silent fallback — not a background Agents-panel job.
