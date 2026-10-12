@@ -12,6 +12,7 @@ interface Props {
   resolved: AppSettings
   status: ModelsStatus | null
   defaultModel: string
+  compact?: boolean
   onSaveConnections: (connections: ModelConnection[]) => Promise<void>
   onRefresh: () => Promise<void>
   onSetDefaultModel: (model: string) => Promise<void>
@@ -21,6 +22,7 @@ export function OllamaConfigPanel({
   resolved,
   status,
   defaultModel,
+  compact = false,
   onSaveConnections,
   onRefresh,
   onSetDefaultModel
@@ -37,11 +39,11 @@ export function OllamaConfigPanel({
 
   const [baseUrl, setBaseUrl] = useState(ollama?.baseUrl || OLLAMA_DEFAULT_URL)
   const [urlDirty, setUrlDirty] = useState(false)
+  const [showUrl, setShowUrl] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
 
-  // Keep local URL in sync when connection loads/changes (unless user is editing).
   const displayUrl = urlDirty ? baseUrl : ollama?.baseUrl || baseUrl
 
   const models = useMemo(() => {
@@ -94,10 +96,7 @@ export function OllamaConfigPanel({
         await onSaveConnections(mergeConnections(withModels))
         setInfo(`Connected — ${withModels.models.length} model(s)`)
       } else if (liveAfter && !liveAfter.reachable) {
-        setError(
-          liveAfter.error ||
-            'Could not reach Ollama. Is it running? Try: ollama serve'
-        )
+        setError(liveAfter.error || 'Could not reach Ollama. Is it running? Try: ollama serve')
       } else {
         setInfo('Saved. Pull a model with ollama pull, then refresh again.')
       }
@@ -117,9 +116,7 @@ export function OllamaConfigPanel({
     setBusy(true)
     setError(null)
     try {
-      await onSaveConnections(
-        mergeConnections({ ...ollama, enabled: !ollama.enabled })
-      )
+      await onSaveConnections(mergeConnections({ ...ollama, enabled: !ollama.enabled }))
       await onRefresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update Ollama')
@@ -145,6 +142,98 @@ export function OllamaConfigPanel({
     } finally {
       setBusy(false)
     }
+  }
+
+  const statusLabel = !ollama
+    ? 'Not connected'
+    : !enabled
+      ? 'Off'
+      : reachable
+        ? models.length > 0
+          ? `${models.length} model${models.length === 1 ? '' : 's'}`
+          : 'Connected · no models'
+        : 'Offline'
+
+  if (compact) {
+    return (
+      <div className="ollama-config is-compact">
+        <div className="models-row">
+          <div className="models-row-main">
+            <span className={`status-dot ${reachable && enabled ? 'ok' : ''}`} />
+            <div className="models-row-copy">
+              <div className="models-row-title">
+                <strong>Local Ollama</strong>
+              </div>
+              <div className="models-row-meta">{statusLabel}</div>
+            </div>
+          </div>
+          <div className="models-row-actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy}
+              onClick={() => void ensureAndRefresh()}
+            >
+              {busy ? '…' : ollama ? 'Refresh' : 'Connect'}
+            </button>
+            {ollama && (
+              <button type="button" className="btn" disabled={busy} onClick={() => void toggleEnabled()}>
+                {enabled ? 'Disable' : 'Enable'}
+              </button>
+            )}
+            <button type="button" className="btn" onClick={() => setShowUrl((v) => !v)}>
+              {showUrl ? 'Hide URL' : 'URL'}
+            </button>
+          </div>
+        </div>
+
+        {showUrl && (
+          <label className="field ollama-url-field">
+            <span>Base URL</span>
+            <input
+              value={displayUrl}
+              onChange={(e) => {
+                setBaseUrl(e.target.value)
+                setUrlDirty(true)
+              }}
+              placeholder={OLLAMA_DEFAULT_URL}
+              spellCheck={false}
+            />
+          </label>
+        )}
+
+        {models.length > 0 && (
+          <div className="model-chip-row">
+            {models.map((m) => (
+              <button
+                key={m}
+                type="button"
+                className={`model-chip ${defaultModel === m ? 'active' : ''}`}
+                title="Use as default model"
+                onClick={() => void onSetDefaultModel(m)}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {(error || (live?.error && !reachable) || info) && (
+          <div
+            className="models-inline-msg"
+            data-tone={error || (live?.error && !reachable) ? 'danger' : 'ok'}
+          >
+            {error || (!reachable ? live?.error : null) || info}
+          </div>
+        )}
+
+        {!ollama && !error && !info && (
+          <p className="models-hint">
+            Install Ollama, run <code>ollama pull …</code>, then Connect.
+          </p>
+        )}
+      </div>
+    )
   }
 
   return (
@@ -216,10 +305,7 @@ export function OllamaConfigPanel({
         </div>
       )}
       {info && !error && (
-        <div
-          className="subtitle"
-          style={{ color: 'var(--success, #3d9a5f)', marginBottom: 8 }}
-        >
+        <div className="subtitle" style={{ color: 'var(--success, #3d9a5f)', marginBottom: 8 }}>
           {info}
         </div>
       )}

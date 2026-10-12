@@ -167,6 +167,8 @@ export async function* streamOpenAICompatible(options: {
   }
 }
 
+const LIST_MODELS_TIMEOUT_MS = 2_500
+
 export async function listOpenAIModels(
   baseUrl: string,
   apiKey?: string | null
@@ -181,7 +183,11 @@ export async function listOpenAIModels(
 
   let res: Response
   try {
-    res = await fetch(url, { headers })
+    const signal =
+      typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal
+        ? AbortSignal.timeout(LIST_MODELS_TIMEOUT_MS)
+        : undefined
+    res = await fetch(url, { headers, signal })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     throw new Error(

@@ -5,6 +5,7 @@ export type SettingsCategory =
   | 'general'
   | 'models'
   | 'usage'
+  | 'account'
   | 'agent'
   | 'subagents'
   | 'skills'

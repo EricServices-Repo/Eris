@@ -20,44 +20,54 @@ export async function getModelsStatus(
   }))
 
   const connections: ModelsStatus['connections'] = []
-  for (const conn of settings.models.connections) {
+  const externalProbes = settings.models.connections.map(async (conn) => {
     if (conn.type === 'builtin') {
-      connections.push({ ...conn, reachable: builtin.some((b) => b.ready) })
-      continue
+      return {
+        connection: { ...conn, reachable: builtin.some((b) => b.ready) },
+        models: [] as ModelInfo[]
+      }
     }
     if (!conn.enabled) {
-      connections.push({ ...conn, reachable: false })
-      continue
+      return { connection: { ...conn, reachable: false }, models: [] as ModelInfo[] }
     }
     const key = conn.apiKeyRef ? getSecret(conn.apiKeyRef) : null
     try {
       const remote = await listOpenAIModels(conn.baseUrl, key)
       const names = remote.length > 0 ? remote : conn.models
+      const discovered: ModelInfo[] = []
       for (const name of names) {
         if (isBuiltinRef(name)) continue
-        models.push({
+        discovered.push({
           name,
           source: 'connection',
           connectionId: conn.id,
           ready: true
         })
       }
-      connections.push({ ...conn, reachable: true, models: names })
+      return {
+        connection: { ...conn, reachable: true, models: names },
+        models: discovered
+      }
     } catch (err) {
-      connections.push({
-        ...conn,
-        reachable: false,
-        error: err instanceof Error ? err.message : 'Unreachable'
-      })
-      for (const name of conn.models) {
-        models.push({
+      return {
+        connection: {
+          ...conn,
+          reachable: false,
+          error: err instanceof Error ? err.message : 'Unreachable'
+        },
+        models: conn.models.map((name) => ({
           name,
-          source: 'connection',
+          source: 'connection' as const,
           connectionId: conn.id,
           ready: false
-        })
+        }))
       }
     }
+  })
+
+  for (const result of await Promise.all(externalProbes)) {
+    connections.push(result.connection)
+    models.push(...result.models)
   }
 
   const anyBuiltinReady = builtin.some((b) => b.ready)

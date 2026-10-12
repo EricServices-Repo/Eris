@@ -47,6 +47,8 @@ function shouldLogHealthFailure(error: string): boolean {
 }
 
 const DEFAULT_TIMEOUT_MS = 8_000
+/** Health probes must fail fast — cloud offline must never stall the client. */
+const HEALTH_TIMEOUT_MS = 2_500
 const ENQUEUE_TIMEOUT_MS = 30_000
 
 async function cloudFetch(
@@ -120,7 +122,10 @@ async function cloudFetch(
 }
 
 export async function cloudAgentsHealth(authenticated = false): Promise<CloudHealth> {
-  const r = await cloudFetch(CLOUD_AGENTS_HEALTH_PATH, { logLabel: 'health' })
+  const r = await cloudFetch(CLOUD_AGENTS_HEALTH_PATH, {
+    logLabel: 'health',
+    timeoutMs: HEALTH_TIMEOUT_MS
+  })
   if (!r.ok) {
     const error = r.error || 'Unreachable'
     if (shouldLogHealthFailure(error)) {

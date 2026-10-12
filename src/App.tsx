@@ -13,12 +13,15 @@ import type { CloudHealth } from '@/shared/cloud-agents'
 import { Sidebar } from '@/layout/Sidebar'
 import { WorkspaceTrustBanner } from '@/features/workspace/WorkspaceTrustBanner'
 import { StatusBar } from '@/layout/StatusBar'
+import {
+  ConnectionStatusStrip,
+  buildConnectionIssues
+} from '@/layout/ConnectionStatusStrip'
 import { useColumnWidths } from '@/layout/useColumnResize'
-import { ChatPanel, MAX_QUEUED_MESSAGES } from '@/features/chat/ChatPanel'
-import { DiffReview } from '@/features/chat/DiffReview'
-import { GitPanel } from '@/features/git/GitPanel'
-import { SearchPanel } from '@/features/search/SearchPanel'
-import { DebugPanel } from '@/features/debug/DebugPanel'
+import type { UsageEntitlement } from '@/shared/api'
+
+/** Keep in sync with ChatPanel.MAX_QUEUED_MESSAGES (avoid eager ChatPanel import). */
+const MAX_QUEUED_MESSAGES = 3
 import { CommandPalette, type CommandItem } from '@/features/palette/CommandPalette'
 import { CreateWorkspaceModal } from '@/features/workspace/CreateWorkspaceModal'
 import { SetupWizard } from '@/features/onboarding/SetupWizard'
@@ -51,6 +54,21 @@ const AgentsPanel = lazy(() =>
 const EvalsPanel = lazy(() =>
   import('@/features/evals/EvalsPanel').then((m) => ({ default: m.EvalsPanel }))
 )
+const ChatPanel = lazy(() =>
+  import('@/features/chat/ChatPanel').then((m) => ({ default: m.ChatPanel }))
+)
+const DiffReview = lazy(() =>
+  import('@/features/chat/DiffReview').then((m) => ({ default: m.DiffReview }))
+)
+const GitPanel = lazy(() =>
+  import('@/features/git/GitPanel').then((m) => ({ default: m.GitPanel }))
+)
+const SearchPanel = lazy(() =>
+  import('@/features/search/SearchPanel').then((m) => ({ default: m.SearchPanel }))
+)
+const DebugPanel = lazy(() =>
+  import('@/features/debug/DebugPanel').then((m) => ({ default: m.DebugPanel }))
+)
 
 function flattenFiles(entries: FileEntry[], out: Array<{ path: string; name: string }> = []) {
   for (const e of entries) {
@@ -81,9 +99,15 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [workspaceModal, setWorkspaceModal] = useState<null | 'create' | 'link'>(null)
   const [showSetupWizard, setShowSetupWizard] = useState(false)
-  const [onboardingReady, setOnboardingReady] = useState(false)
+  /** Leaves the splash once boot IPC finishes (success or failure). */
+  const [bootReady, setBootReady] = useState(false)
+  const [bootError, setBootError] = useState<string | null>(null)
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [cloudHealth, setCloudHealth] = useState<CloudHealth | null>(null)
+  const [entitlement, setEntitlement] = useState<UsageEntitlement | null>(null)
+  const [accountNeedsReauth, setAccountNeedsReauth] = useState(false)
+  const [accountStatusError, setAccountStatusError] = useState<string | null>(null)
+  const [dismissedIssues, setDismissedIssues] = useState<Record<string, true>>({})
   const [terminalNotes, setTerminalNotes] = useState<TerminalNote[]>([])
   const terminalNoteSeq = useRef(0)
   const appendTerminal = useCallback((text: string) => {
@@ -93,7 +117,7 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false
-    const tick = async () => {
+    const tickCloud = async () => {
       try {
         const health = await window.ide.cloudAgentsHealth()
         if (!cancelled) setCloudHealth(health)
@@ -113,13 +137,44 @@ export default function App() {
         }
       }
     }
-    void tick()
-    const id = window.setInterval(() => void tick(), 15_000)
+    const tickAccountUsage = async () => {
+      try {
+        const [acct, usage] = await Promise.all([
+          window.ide.ericServicesStatus(),
+          window.ide.getUsageStats(1)
+        ])
+        if (cancelled) return
+        setAccountNeedsReauth(Boolean(acct.needsReauth))
+        setAccountStatusError(acct.error || null)
+        setEntitlement(usage.entitlement ?? null)
+      } catch {
+        // non-fatal
+      }
+    }
+    // Defer probes so they never race boot IPC / first paint.
+    const startId = window.setTimeout(() => {
+      void tickCloud()
+      void tickAccountUsage()
+    }, 2_500)
+    const cloudId = window.setInterval(() => void tickCloud(), 15_000)
+    const usageId = window.setInterval(() => void tickAccountUsage(), 30_000)
     return () => {
       cancelled = true
-      window.clearInterval(id)
+      window.clearTimeout(startId)
+      window.clearInterval(cloudId)
+      window.clearInterval(usageId)
     }
-  }, [])
+  }, [settings?.ericServices?.linked, settings?.ericServices?.plan])
+
+  // Prefetch Settings chunk after boot so first open isn't a blank wait on the JS chunk.
+  useEffect(() => {
+    if (!bootReady) return
+    const id = window.setTimeout(() => {
+      void import('@/features/settings/SettingsModal')
+      setSettingsMounted(true)
+    }, 600)
+    return () => window.clearTimeout(id)
+  }, [bootReady])
 
   const {
     models,
@@ -259,24 +314,81 @@ export default function App() {
   })
 
   useEffect(() => {
+    let cancelled = false
+    const BOOT_TIMEOUT_MS = 8_000
+
+    const withTimeout = <T,>(promise: Promise<T>, label: string): Promise<T> =>
+      new Promise<T>((resolve, reject) => {
+        const timer = window.setTimeout(
+          () => reject(new Error(`${label} timed out after ${BOOT_TIMEOUT_MS}ms`)),
+          BOOT_TIMEOUT_MS
+        )
+        promise.then(
+          (value) => {
+            window.clearTimeout(timer)
+            resolve(value)
+          },
+          (err) => {
+            window.clearTimeout(timer)
+            reject(err)
+          }
+        )
+      })
+
     void (async () => {
-      const [state, versionInfo] = await Promise.all([
-        window.ide.getAppState(),
-        window.ide.getAppVersion().catch(() => null)
-      ])
-      if (versionInfo?.version) setAppVersion(versionInfo.version)
-      setWorkspaces(state.workspaces)
-      const resolved = await refreshSettings()
-      await refreshModels(resolved)
-      await refreshSkills()
-      const needsOnboarding = !state.onboardingCompletedAt
-      setShowSetupWizard(needsOnboarding)
-      setOnboardingReady(true)
-      if (!needsOnboarding && resolved.general.restoreLastWorkspace && state.lastWorkspaceId) {
-        const last = state.workspaces.find((w) => w.id === state.lastWorkspaceId)
-        if (last) await loadWorkspace(last)
+      // Hard ceiling: never leave the user on "Loading Eris…" forever.
+      const forceReady = window.setTimeout(() => {
+        if (!cancelled) setBootReady(true)
+      }, BOOT_TIMEOUT_MS + 500)
+
+      try {
+        if (!window.ide) {
+          throw new Error('Preload API missing (window.ide)')
+        }
+
+        const state = await withTimeout(window.ide.getAppState(), 'getAppState').catch(() => ({
+          workspaces: [] as Awaited<ReturnType<typeof window.ide.getAppState>>['workspaces'],
+          lastWorkspaceId: null as string | null,
+          onboardingCompletedAt: Date.now() as number | null
+        }))
+        const versionInfo = await window.ide.getAppVersion().catch(() => null)
+        let resolved: Awaited<ReturnType<typeof refreshSettings>> | null = null
+        try {
+          resolved = await withTimeout(refreshSettings(), 'getResolvedSettings')
+        } catch (err) {
+          if (!cancelled) {
+            setBootError(err instanceof Error ? err.message : String(err))
+          }
+        }
+
+        if (cancelled) return
+        if (versionInfo?.version) setAppVersion(versionInfo.version)
+        setWorkspaces(state.workspaces || [])
+        const needsOnboarding = !state.onboardingCompletedAt
+        setShowSetupWizard(needsOnboarding)
+        setBootReady(true)
+
+        if (resolved) {
+          void refreshModels(resolved)
+          void refreshSkills()
+          if (!needsOnboarding && resolved.general.restoreLastWorkspace && state.lastWorkspaceId) {
+            const last = (state.workspaces || []).find((w) => w.id === state.lastWorkspaceId)
+            if (last) void loadWorkspace(last)
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setBootError(err instanceof Error ? err.message : String(err))
+          setBootReady(true)
+        }
+      } finally {
+        window.clearTimeout(forceReady)
       }
     })()
+
+    return () => {
+      cancelled = true
+    }
     // One-time boot; the loaders are recreated on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -475,8 +587,20 @@ export default function App() {
 
   if (settingsOpen && !settingsMounted) setSettingsMounted(true)
 
-  if (!settings || !onboardingReady) {
+  if (!bootReady) {
     return <div className="welcome">Loading Eris…</div>
+  }
+
+  if (!settings) {
+    return (
+      <div className="welcome">
+        <h1>Couldn't load settings</h1>
+        <p>{bootError || 'Settings IPC failed. Try restarting Eris.'}</p>
+        <button type="button" className="btn-primary" onClick={() => window.location.reload()}>
+          Retry
+        </button>
+      </div>
+    )
   }
 
   return (
@@ -525,6 +649,17 @@ export default function App() {
           <button onClick={() => setPaletteOpen(true)}>Commands</button>
         </div>
       </div>
+      <ConnectionStatusStrip
+        issues={buildConnectionIssues({
+          accountNeedsReauth,
+          accountError: accountStatusError,
+          entitlement,
+          onOpenAccount: () => openSettings('account'),
+          onOpenUsage: () => openSettings('usage'),
+          onOpenUpgrade: () => void window.ide.ericServicesOpenUpgrade()
+        }).filter((i) => !dismissedIssues[i.id])}
+        onDismiss={(id) => setDismissedIssues((prev) => ({ ...prev, [id]: true }))}
+      />
       <WorkspaceTrustBanner
         workspacePath={workspacePath}
         onTrustChanged={() => {
@@ -616,82 +751,84 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              <ChatPanel
-                activeThread={activeThread}
-                routeLabel={routeLabel}
-                composerReady={composerReady}
-                modelsOk={ollamaOk}
-                streaming={streaming}
-                thinkingBuffer={thinkingBuffer}
-                answerBuffer={answerBuffer}
-                chatError={chatError}
-                agentStatus={agentStatus}
-                toolActivity={toolActivity}
-                openTabs={tabs.map((t) => ({ path: t.path, name: t.name }))}
-                mentionFiles={[...flattenFiles(tree), ...indexMentions]}
-                attachments={attachments}
-                skills={skills}
-                activeSkills={activeSkills}
-                chatMode={chatMode}
-                onChatModeChange={setChatMode}
-                models={models}
-                selectedModel={selectedModel}
-                onModelChange={(model) => {
-                  setSelectedModel(model)
-                  void window.ide
-                    .setSettings('user', { models: { defaultModel: model } })
-                    .then(setSettings)
-                }}
-                onNewChat={() => {
-                  setChatError(null)
-                  setMessageQueue([])
-                  void newChat()
-                }}
-                onSend={(text, files, skillIds) => void sendMessage(text, files, skillIds)}
-                onStop={stopChat}
-                onRunInBackground={(goal) => void runInBackground(goal)}
-                pendingApproval={pendingApproval}
-                onApprovalDecision={(approvalId, decision) => {
-                  setPendingApproval(null)
-                  void window.ide.respondCommandApproval(approvalId, decision)
-                }}
-                onRerouteLast={(route) => void rerouteLast(route)}
-                resumableRun={resumableRun}
-                onResumeRun={() => void resumeLastRun()}
-                onDismissResume={() => {
-                  if (resumableRun) void window.ide.dismissRun(resumableRun.id)
-                  setResumableRun(null)
-                }}
-                queuedMessages={messageQueue}
-                onQueueMessage={(text, files, skillIds) => {
-                  setMessageQueue((prev) => {
-                    if (prev.length >= MAX_QUEUED_MESSAGES) return prev
-                    return [...prev, { id: uid(), text, attachments: files, skillIds }]
-                  })
-                }}
-                onRemoveQueued={(id) => setMessageQueue((prev) => prev.filter((q) => q.id !== id))}
-                onAttachmentsChange={setAttachments}
-                onActiveSkillsChange={setActiveSkills}
-                onImportFiles={() => void importFiles()}
-                onAttachOpenTab={(path) => {
-                  const tab = tabs.find((t) => t.path === path)
-                  if (tab) addAttachments([{ path: tab.path, name: tab.name }])
-                }}
-                onOpenPath={(path) => {
-                  const abs =
-                    workspacePath && !path.startsWith('/')
-                      ? `${workspacePath}/${path}`
-                      : path.split(' → ')[0]!
-                  void openFile(abs)
-                }}
-                onOpenModelsSettings={() => openSettings('models')}
-                onOpenSkillsSettings={() => {
-                  void refreshSkills()
-                  openSettings('skills')
-                }}
-                onCreateSkill={() => openSettings('skills', true)}
-                onDismissError={() => setChatError(null)}
-              />
+              <Suspense fallback={<div className="welcome">Loading chat…</div>}>
+                <ChatPanel
+                  activeThread={activeThread}
+                  routeLabel={routeLabel}
+                  composerReady={composerReady}
+                  modelsOk={ollamaOk}
+                  streaming={streaming}
+                  thinkingBuffer={thinkingBuffer}
+                  answerBuffer={answerBuffer}
+                  chatError={chatError}
+                  agentStatus={agentStatus}
+                  toolActivity={toolActivity}
+                  openTabs={tabs.map((t) => ({ path: t.path, name: t.name }))}
+                  mentionFiles={[...flattenFiles(tree), ...indexMentions]}
+                  attachments={attachments}
+                  skills={skills}
+                  activeSkills={activeSkills}
+                  chatMode={chatMode}
+                  onChatModeChange={setChatMode}
+                  models={models}
+                  selectedModel={selectedModel}
+                  onModelChange={(model) => {
+                    setSelectedModel(model)
+                    void window.ide
+                      .setSettings('user', { models: { defaultModel: model } })
+                      .then(setSettings)
+                  }}
+                  onNewChat={() => {
+                    setChatError(null)
+                    setMessageQueue([])
+                    void newChat()
+                  }}
+                  onSend={(text, files, skillIds) => void sendMessage(text, files, skillIds)}
+                  onStop={stopChat}
+                  onRunInBackground={(goal) => void runInBackground(goal)}
+                  pendingApproval={pendingApproval}
+                  onApprovalDecision={(approvalId, decision) => {
+                    setPendingApproval(null)
+                    void window.ide.respondCommandApproval(approvalId, decision)
+                  }}
+                  onRerouteLast={(route) => void rerouteLast(route)}
+                  resumableRun={resumableRun}
+                  onResumeRun={() => void resumeLastRun()}
+                  onDismissResume={() => {
+                    if (resumableRun) void window.ide.dismissRun(resumableRun.id)
+                    setResumableRun(null)
+                  }}
+                  queuedMessages={messageQueue}
+                  onQueueMessage={(text, files, skillIds) => {
+                    setMessageQueue((prev) => {
+                      if (prev.length >= MAX_QUEUED_MESSAGES) return prev
+                      return [...prev, { id: uid(), text, attachments: files, skillIds }]
+                    })
+                  }}
+                  onRemoveQueued={(id) => setMessageQueue((prev) => prev.filter((q) => q.id !== id))}
+                  onAttachmentsChange={setAttachments}
+                  onActiveSkillsChange={setActiveSkills}
+                  onImportFiles={() => void importFiles()}
+                  onAttachOpenTab={(path) => {
+                    const tab = tabs.find((t) => t.path === path)
+                    if (tab) addAttachments([{ path: tab.path, name: tab.name }])
+                  }}
+                  onOpenPath={(path) => {
+                    const abs =
+                      workspacePath && !path.startsWith('/')
+                        ? `${workspacePath}/${path}`
+                        : path.split(' → ')[0]!
+                    void openFile(abs)
+                  }}
+                  onOpenModelsSettings={() => openSettings('models')}
+                  onOpenSkillsSettings={() => {
+                    void refreshSkills()
+                    openSettings('skills')
+                  }}
+                  onCreateSkill={() => openSettings('skills', true)}
+                  onDismissError={() => setChatError(null)}
+                />
+              </Suspense>
             )}
           </div>
           <div className={`editor-rail${rightCollapsed ? ' is-collapsed' : ''}`}>
@@ -856,15 +993,17 @@ export default function App() {
             )}
             <div className={`right-panel-body${rightCollapsed ? ' is-hidden' : ''}`}>
               {searchOpen && (
-                <SearchPanel
-                  open
-                  workspacePath={workspacePath}
-                  onClose={() => setSearchOpen(false)}
-                  onOpenPath={(path, line) => {
-                    void openFile(resolveWorkspacePath(path), line)
-                    setSearchOpen(false)
-                  }}
-                />
+                <Suspense fallback={<div className="editor-empty">Loading search…</div>}>
+                  <SearchPanel
+                    open
+                    workspacePath={workspacePath}
+                    onClose={() => setSearchOpen(false)}
+                    onOpenPath={(path, line) => {
+                      void openFile(resolveWorkspacePath(path), line)
+                      setSearchOpen(false)
+                    }}
+                  />
+                </Suspense>
               )}
               {!workspacePath ? (
                 <div className="editor-empty">Open a workspace to edit files.</div>
@@ -878,25 +1017,29 @@ export default function App() {
                   />
                 </Suspense>
               ) : rightPanel === 'git' ? (
-                <GitPanel
-                  open
-                  workspacePath={workspacePath}
-                  onClose={() => showRightPanel('editor')}
-                  onOpenGithubSettings={() => openSettings('github')}
-                  onOpenPath={(path) => {
-                    void openFile(resolveWorkspacePath(path))
-                  }}
-                />
+                <Suspense fallback={<div className="editor-empty">Loading git…</div>}>
+                  <GitPanel
+                    open
+                    workspacePath={workspacePath}
+                    onClose={() => showRightPanel('editor')}
+                    onOpenGithubSettings={() => openSettings('github')}
+                    onOpenPath={(path) => {
+                      void openFile(resolveWorkspacePath(path))
+                    }}
+                  />
+                </Suspense>
               ) : rightPanel === 'debug' ? (
-                <DebugPanel
-                  open
-                  workspacePath={workspacePath}
-                  activeFile={activeFile}
-                  onClose={() => showRightPanel('editor')}
-                  onOpenPath={(path, line) => {
-                    void openFile(resolveWorkspacePath(path), line)
-                  }}
-                />
+                <Suspense fallback={<div className="editor-empty">Loading debug…</div>}>
+                  <DebugPanel
+                    open
+                    workspacePath={workspacePath}
+                    activeFile={activeFile}
+                    onClose={() => showRightPanel('editor')}
+                    onOpenPath={(path, line) => {
+                      void openFile(resolveWorkspacePath(path), line)
+                    }}
+                  />
+                </Suspense>
               ) : rightPanel === 'agents' ? (
                 <Suspense fallback={<div className="editor-empty">Loading agents…</div>}>
                   <AgentsPanel
@@ -1012,6 +1155,7 @@ export default function App() {
 
         {workspacePath && pendingDiffs.length > 0 && (
           <div className="bottom-drawer">
+            <Suspense fallback={null}>
             <DiffReview
               diffs={pendingDiffs}
               onOpenPath={(path) => {
@@ -1086,6 +1230,7 @@ export default function App() {
                 })()
               }}
             />
+            </Suspense>
           </div>
         )}
       </div>
@@ -1097,18 +1242,37 @@ export default function App() {
         composerReady={composerReady}
         modelsOk={ollamaOk}
         cloudHealth={cloudHealth}
+        entitlement={entitlement}
+        accountNeedsReauth={accountNeedsReauth}
         appVersion={appVersion}
         disabled={!workspacePath}
         onOpenSettings={() => openSettings()}
         onOpenAgentSettings={() => openSettings('agent')}
+        onOpenModels={() => openSettings('models')}
+        onOpenUsage={() => openSettings('usage')}
+        onOpenAccount={() => openSettings('account')}
         onAgentChange={setSelectedAgentId}
       />
 
       {settingsMounted && (
-        <Suspense fallback={null}>
+        <Suspense
+          fallback={
+            settingsOpen ? (
+              <div className="modal-backdrop">
+                <div className="modal settings-modal-loading">
+                  <div className="modal-content">
+                    <h2>Settings</h2>
+                    <p className="subtitle">Loading…</p>
+                  </div>
+                </div>
+              </div>
+            ) : null
+          }
+        >
           <SettingsModal
             open={settingsOpen}
             hasWorkspace={Boolean(workspacePath)}
+            seedResolved={settings}
             initialCategory={settingsCategory}
             startCreateSkill={startCreateSkill}
             onClose={() => {

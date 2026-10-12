@@ -1,4 +1,3 @@
-import { safeStorage } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs'
 import { getResolvedSettings } from '../services/settings'
@@ -10,10 +9,13 @@ import { disposeLanguageServers, configureLanguageServers } from '../services/la
 import { userDataRoot } from '../services/paths'
 import { appState } from '../app-state'
 
-/** Plain JSON on disk — never Electron safeStorage / OS Keychain. */
+/** Plain JSON in userData — never Electron safeStorage / OS Keychain. */
 const secretsPath = (): string => join(userDataRoot(), 'secrets.json')
-/** Legacy path from when secrets were safeStorage-encrypted (Keychain on macOS). */
+/** Pre-Keychain-removal path; only plain JSON is migrated, ciphertext is discarded. */
 const legacySecretsPath = (): string => join(userDataRoot(), 'secrets.bin')
+
+/** In-memory cache so hot paths do not re-read secrets.json on every getSecret. */
+let secretsCache: Record<string, string> | null = null
 
 function parseSecretsPayload(raw: string): Record<string, string> | null {
   try {
@@ -29,63 +31,63 @@ function parseSecretsPayload(raw: string): Record<string, string> | null {
   }
 }
 
-function tryDecryptLegacy(buf: Buffer): Record<string, string> | null {
-  // Migration only: older builds wrote safeStorage ciphertext (Keychain on macOS).
+function discardLegacySecretsFile(): void {
+  const binPath = legacySecretsPath()
+  if (!existsSync(binPath)) return
   try {
-    if (!safeStorage.isEncryptionAvailable()) return null
-    return parseSecretsPayload(safeStorage.decryptString(buf))
+    unlinkSync(binPath)
   } catch {
-    return null
+    // best-effort
   }
 }
 
 function readSecretsMap(): Record<string, string> {
+  if (secretsCache) return { ...secretsCache }
+
   const jsonPath = secretsPath()
   if (existsSync(jsonPath)) {
     try {
       const map = parseSecretsPayload(readFileSync(jsonPath, 'utf8'))
-      if (map) return map
+      if (map) {
+        secretsCache = map
+        return { ...map }
+      }
     } catch {
       // fall through
     }
   }
 
   const binPath = legacySecretsPath()
-  if (!existsSync(binPath)) return {}
+  if (!existsSync(binPath)) {
+    secretsCache = {}
+    return {}
+  }
 
+  // Migrate only if the legacy file is already plain JSON. Never call safeStorage —
+  // decrypting it on macOS prompts the OS Keychain.
   try {
-    const buf = readFileSync(binPath)
-    const asUtf8 = parseSecretsPayload(buf.toString('utf8'))
+    const asUtf8 = parseSecretsPayload(readFileSync(binPath, 'utf8'))
     if (asUtf8) {
       writeSecretsMap(asUtf8)
-      return asUtf8
-    }
-    const migrated = tryDecryptLegacy(buf)
-    if (migrated) {
-      writeSecretsMap(migrated)
-      return migrated
+      return { ...asUtf8 }
     }
   } catch {
     // ignore
   }
+  discardLegacySecretsFile()
+  secretsCache = {}
   return {}
 }
 
 function writeSecretsMap(map: Record<string, string>): void {
+  secretsCache = { ...map }
   mkdirSync(userDataRoot(), { recursive: true })
   const payload = JSON.stringify(map)
   const target = secretsPath()
   const tmp = `${target}.${process.pid}.tmp`
   writeFileSync(tmp, payload, 'utf8')
   renameSync(tmp, target)
-  const binPath = legacySecretsPath()
-  if (existsSync(binPath)) {
-    try {
-      unlinkSync(binPath)
-    } catch {
-      // best-effort cleanup of Keychain-era file
-    }
-  }
+  discardLegacySecretsFile()
 }
 
 export function storeSecret(key: string, value: string): void {
@@ -116,11 +118,14 @@ export const refreshIntelligence = () => {
   const settings = getResolvedSettings(appState.currentWorkspace)
   configureLanguageServers(settings, appState.currentWorkspace)
   void syncMcpRuntime(settings, appState.currentWorkspace).catch(() => undefined)
-  try {
-    ensureCodeIndex(appState.currentWorkspace)
-  } catch {
-    // optional
-  }
+  // Index off the interactive path — open workspace should not wait on it.
+  setImmediate(() => {
+    try {
+      if (appState.currentWorkspace) ensureCodeIndex(appState.currentWorkspace)
+    } catch {
+      // optional
+    }
+  })
 }
 
 export const completeControllers = new Map<string, AbortController>()

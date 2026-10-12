@@ -107,6 +107,7 @@ interface Props {
   resolved: AppSettings
   status: ModelsStatus | null
   defaultModel: string
+  compact?: boolean
   onSaveConnections: (connections: ModelConnection[]) => Promise<void>
   onRefresh: () => Promise<void>
   onSetDefaultModel: (model: string) => Promise<void>
@@ -116,6 +117,7 @@ export function ModelConnectionsPanel({
   resolved,
   status,
   defaultModel,
+  compact = false,
   onSaveConnections,
   onRefresh,
   onSetDefaultModel
@@ -270,6 +272,191 @@ export function ModelConnectionsPanel({
     ? PRESETS.find((p) => p.provider === draft.provider) ?? PRESETS[PRESETS.length - 1]!
     : null
 
+  const editor = draft && activePreset && (
+    <div className="model-conn-editor">
+      <div className="model-conn-row-head" style={{ marginBottom: 8 }}>
+        <strong>{draft.isNew ? `Add ${draft.name}` : `Edit ${draft.name}`}</strong>
+        <span className="badge">{draft.provider}</span>
+      </div>
+      <p className="model-conn-hint">{activePreset.hint}</p>
+      <label className="field">
+        <span>Name</span>
+        <input
+          value={draft.name}
+          onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+        />
+      </label>
+      <label className="field">
+        <span>Base URL</span>
+        <input
+          value={draft.baseUrl}
+          onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}
+          placeholder="https://api.example.com/v1"
+        />
+      </label>
+      <label className="field">
+        <span>
+          API key
+          {activePreset.requiresKey ? ' (required)' : ' (optional)'}
+          {draft.hasStoredKey ? ' · saved' : ''}
+        </span>
+        <input
+          type="password"
+          value={draft.apiKey}
+          onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
+          placeholder={draft.hasStoredKey ? '•••••••• (leave blank to keep)' : 'sk-…'}
+          autoComplete="off"
+        />
+      </label>
+      <label className="field">
+        <span>Models (comma-separated; leave empty to auto-discover)</span>
+        <textarea
+          rows={2}
+          value={draft.modelsText}
+          onChange={(e) => setDraft({ ...draft, modelsText: e.target.value })}
+          placeholder="gpt-4o-mini, llama3.2, …"
+          spellCheck={false}
+        />
+      </label>
+      <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <input
+          type="checkbox"
+          checked={draft.enabled}
+          onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
+        />
+        <span>Enabled</span>
+      </label>
+      {error && (
+        <div className="subtitle" style={{ color: 'var(--danger)' }}>
+          {error}
+        </div>
+      )}
+      {info && !error && (
+        <div className="subtitle" style={{ color: 'var(--success, #3d9a5f)' }}>
+          {info}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={busy}
+          onClick={() => void saveDraft(true)}
+        >
+          {busy ? 'Working…' : 'Save & refresh'}
+        </button>
+        <button type="button" className="btn" disabled={busy} onClick={() => void saveDraft(false)}>
+          Save
+        </button>
+        <button
+          type="button"
+          className="btn"
+          disabled={busy}
+          onClick={() => {
+            setDraft(null)
+            setError(null)
+            setInfo(null)
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+
+  if (compact) {
+    return (
+      <div className="model-connections is-compact">
+        <div className="models-add-bar">
+          <select
+            defaultValue=""
+            onChange={(e) => {
+              const preset = PRESETS.find((p) => p.id === e.target.value)
+              e.target.value = ''
+              if (preset) beginPreset(preset)
+            }}
+          >
+            <option value="" disabled>
+              Add provider…
+            </option>
+            {PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {external.length === 0 && !draft && (
+          <div className="models-empty">No providers yet.</div>
+        )}
+
+        {external.length > 0 && (
+          <div className="models-row-list">
+            {external.map((c) => {
+              const live = statusById.get(c.id)
+              const models = live?.models?.length ? live.models : c.models
+              return (
+                <div key={c.id} className={`models-row ${c.enabled ? '' : 'is-disabled'}`}>
+                  <div className="models-row-main">
+                    <span className={`status-dot ${live?.reachable ? 'ok' : ''}`} />
+                    <div className="models-row-copy">
+                      <div className="models-row-title">
+                        <strong>{c.name}</strong>
+                        <span className="models-tag">{c.provider || 'custom'}</span>
+                        {!c.enabled && <span className="models-tag">Off</span>}
+                      </div>
+                      <div className="models-row-meta">
+                        {c.enabled
+                          ? live?.reachable
+                            ? models.length
+                              ? `${models.length} model${models.length === 1 ? '' : 's'}`
+                              : 'Connected'
+                            : live?.error || 'Offline'
+                          : 'Disabled'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="models-row-actions">
+                    <button type="button" className="btn" onClick={() => void beginEdit(c)}>
+                      Edit
+                    </button>
+                    <button type="button" className="btn" onClick={() => void toggleEnabled(c)}>
+                      {c.enabled ? 'Disable' : 'Enable'}
+                    </button>
+                    <button type="button" className="btn" onClick={() => void removeConnection(c.id)}>
+                      Remove
+                    </button>
+                  </div>
+                  {models.length > 0 && c.enabled && (
+                    <div className="model-chip-row models-row-chips">
+                      {models.slice(0, 8).map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          className={`model-chip ${defaultModel === m ? 'active' : ''}`}
+                          title="Use as default model"
+                          onClick={() => void onSetDefaultModel(m)}
+                        >
+                          {m}
+                        </button>
+                      ))}
+                      {models.length > 8 && (
+                        <span className="models-row-meta">+{models.length - 8}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {editor}
+      </div>
+    )
+  }
+
   return (
     <div className="model-connections">
       <div className="model-connections-intro">
@@ -353,102 +540,7 @@ export function ModelConnectionsPanel({
         </div>
       )}
 
-      {draft && activePreset && (
-        <div className="model-conn-editor">
-          <div className="model-conn-row-head" style={{ marginBottom: 8 }}>
-            <strong>{draft.isNew ? `Add ${draft.name}` : `Edit ${draft.name}`}</strong>
-            <span className="badge">{draft.provider}</span>
-          </div>
-          <p className="model-conn-hint">{activePreset.hint}</p>
-          <label className="field">
-            <span>Name</span>
-            <input
-              value={draft.name}
-              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-            />
-          </label>
-          <label className="field">
-            <span>Base URL</span>
-            <input
-              value={draft.baseUrl}
-              onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}
-              placeholder="https://api.example.com/v1"
-            />
-          </label>
-          <label className="field">
-            <span>
-              API key
-              {activePreset.requiresKey ? ' (required)' : ' (optional)'}
-              {draft.hasStoredKey ? ' · saved' : ''}
-            </span>
-            <input
-              type="password"
-              value={draft.apiKey}
-              onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
-              placeholder={draft.hasStoredKey ? '•••••••• (leave blank to keep)' : 'sk-…'}
-              autoComplete="off"
-            />
-          </label>
-          <label className="field">
-            <span>Models (comma-separated; leave empty to auto-discover)</span>
-            <textarea
-              rows={2}
-              value={draft.modelsText}
-              onChange={(e) => setDraft({ ...draft, modelsText: e.target.value })}
-              placeholder="gpt-4o-mini, llama3.2, …"
-              spellCheck={false}
-            />
-          </label>
-          <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <input
-              type="checkbox"
-              checked={draft.enabled}
-              onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
-            />
-            <span>Enabled</span>
-          </label>
-          {error && (
-            <div className="subtitle" style={{ color: 'var(--danger)' }}>
-              {error}
-            </div>
-          )}
-          {info && !error && (
-            <div className="subtitle" style={{ color: 'var(--success, #3d9a5f)' }}>
-              {info}
-            </div>
-          )}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={busy}
-              onClick={() => void saveDraft(true)}
-            >
-              {busy ? 'Working…' : 'Save & refresh models'}
-            </button>
-            <button
-              type="button"
-              className="btn"
-              disabled={busy}
-              onClick={() => void saveDraft(false)}
-            >
-              Save
-            </button>
-            <button
-              type="button"
-              className="btn"
-              disabled={busy}
-              onClick={() => {
-                setDraft(null)
-                setError(null)
-                setInfo(null)
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+      {editor}
     </div>
   )
 }

@@ -11,6 +11,7 @@ import {
   ericServicesPullSettings,
   ericServicesPushSettings,
   ericServicesTokenRef,
+  isEricServicesAuthFailure,
   planPatchFromProfile
 } from '../services/ericservices'
 import { syncMcpRuntime } from '../services/mcp-runtime'
@@ -65,7 +66,15 @@ export function registerEricServicesIpc(): void {
     if (!token || !settings.ericServices.linked) return base
     const me = await ericServicesFetchMe(settings.ericServices.apiBase, token)
     if (!me.ok) {
-      return { ...base, ok: false, error: me.error }
+      const needsReauth = isEricServicesAuthFailure(me.error, me.status)
+      return {
+        ...base,
+        ok: false,
+        error: me.error,
+        needsReauth,
+        // Keep username/email for the re-auth prompt, but treat session as expired.
+        linked: needsReauth ? false : base.linked
+      }
     }
     if (me.profile) {
       const planPatch = planPatchFromProfile(me.profile)

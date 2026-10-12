@@ -448,6 +448,7 @@ export interface IdeApi {
     error?: string
     linked: boolean
     hasToken: boolean
+    needsReauth?: boolean
     apiBase: string
     username: string
     email: string
@@ -809,38 +810,12 @@ export interface IdeApi {
     updatedAt: number
     empty: boolean
   }>
-  emailDiscoverSources: (emlFolder?: string) => Promise<
-    Array<{
-      kind: 'thunderbird' | 'outlook' | 'eml'
-      id: string
-      label: string
-      path?: string
-      available: boolean
-      detail?: string
-    }>
-  >
-  emailPickEmlFolder: () => Promise<{ ok: boolean; path: string | null }>
-  emailPull: (payload: {
-    sourceId: string
-    query?: string
-    maxMessages?: number
-    appendToContext?: boolean
-  }) => Promise<{
-    ok: boolean
-    error?: string
-    messages: Array<{
-      id: string
-      source: string
-      from: string
-      to: string
-      subject: string
-      date: string
-      snippet: string
-    }>
-    writtenPath?: string
-    contextUpdated?: boolean
+  resetWorkspaceContext: () => Promise<{
+    body: string
+    pin: string
+    updatedAt: number
+    empty: boolean
   }>
-  emailReadPulled: () => Promise<{ ok: boolean; detail: string; path?: string }>
   getUsageStats: (days?: number) => Promise<UsageSnapshot>
   clearUsageStats: (payload?: { todayOnly?: boolean }) => Promise<UsageSnapshot>
   onMenu: (channel: string, cb: () => void) => () => void

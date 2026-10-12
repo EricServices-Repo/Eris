@@ -40,7 +40,6 @@ const READ_TOOLS = new Set([
   'related_files',
   'retrieve',
   'read_context',
-  'read_email',
   'list_skills',
   'read_skill',
   'git_status',

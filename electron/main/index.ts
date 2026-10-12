@@ -1,9 +1,13 @@
 import { app, BrowserWindow } from 'electron'
-import { getResolvedSettings, stripLegacySubagentsFromUserSettings } from './services/settings'
+import {
+  getResolvedSettings,
+  migrateLegacyConnectionTypesInUserSettings,
+  stripLegacySubagentsFromUserSettings
+} from './services/settings'
 import { startAutoUpdates } from './services/auto-update'
 import { stopWorkspaceWatcher } from './services/workspace-watcher'
 import { disposeMcpRuntime } from './services/mcp-runtime'
-import { resolveLoginShellPath } from './services/workspace-env'
+import { warmLoginShellPath } from './services/workspace-env'
 import { setDiagnosticsPaused } from './services/diagnostics'
 import { disposePtySession } from './services/pty-session'
 import { disposeLanguageServers } from './services/language-servers'
@@ -15,6 +19,13 @@ import { appState } from './app-state'
 import { createWindow, resolveAppIcon } from './window'
 import { buildMenu } from './menu'
 import { registerIpc } from './ipc'
+
+// Never touch the OS Keychain — secrets live in userData/secrets.json only.
+// Must run before ready; Chromium otherwise uses Keychain for cookie/OSCrypt.
+app.commandLine.appendSwitch('password-store', 'basic')
+if (process.platform === 'darwin') {
+  app.commandLine.appendSwitch('use-mock-keychain')
+}
 
 // macOS may deliver files dropped on the Dock/icon; never load them into the shell.
 app.on('open-file', (event) => {
@@ -33,6 +44,7 @@ app.whenReady().then(() => {
 
   try {
     stripLegacySubagentsFromUserSettings()
+    migrateLegacyConnectionTypesInUserSettings()
   } catch {
     // ignore migrate errors
   }
@@ -52,10 +64,10 @@ app.whenReady().then(() => {
   createWindow()
   startAutoUpdates(() => appState.mainWindow)
 
-  // Warm login-shell PATH off the critical path (Dock launches omit Homebrew/nvm).
+  // Warm login-shell PATH in the background (never block IPC — zsh -ilc can take seconds).
   setImmediate(() => {
     try {
-      resolveLoginShellPath()
+      warmLoginShellPath()
     } catch {
       // ignore
     }
