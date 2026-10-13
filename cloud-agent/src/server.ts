@@ -25,6 +25,13 @@ import {
   getAdminTokenSource,
   verifyAdminToken
 } from './admin.js'
+import {
+  acceptPushedConfig,
+  enrollWithPlatform,
+  fleetStatusPublic,
+  startFleetSync,
+  verifyAgentSecret
+} from './fleet.js'
 
 const store = new JobStore()
 const workers = new WorkerPool(store)
@@ -40,7 +47,8 @@ function send(
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Eris-Client, X-Request-Id',
+    'Access-Control-Allow-Headers':
+      'Content-Type, Authorization, X-Eris-Client, X-Request-Id, X-Eris-Agent-Id, X-Eris-Agent-Secret, X-Eris-Admin-Token',
     'Cache-Control': 'no-store',
     ...extraHeaders
   })
@@ -122,6 +130,9 @@ function healthBody(): Record<string, unknown> {
       adminKillAll: '/v1/admin/kill-all',
       artifacts: '/v1/jobs/:id/artifacts',
       metrics: '/v1/metrics',
+      fleet: '/v1/fleet',
+      fleetConfig: '/v1/fleet/config',
+      fleetEnroll: '/v1/fleet/enroll',
       statusPage: `http://0.0.0.0:${config.statusPort}/`
     },
     adminKillAllConfigured: adminKillConfigured(),
@@ -168,6 +179,58 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
   }
   if (req.method === 'GET' && (path === '/status.json' || path === '/v1/status')) {
     send(res, 200, buildPublicStatus(store), { 'X-Request-Id': requestId })
+    return
+  }
+
+  // Fleet / EricServic.es management — status is public; mutate needs agent secret or admin
+  if (req.method === 'GET' && (path === '/v1/fleet' || path === '/v1/fleet/status')) {
+    send(res, 200, fleetStatusPublic(store), { 'X-Request-Id': requestId })
+    return
+  }
+
+  if (req.method === 'POST' && path === '/v1/fleet/enroll') {
+    // enrollToken in body (or ERIS_CLOUD_FLEET_ENROLL_TOKEN) is the credential
+    try {
+      const raw = await readBody(req)
+      const body = (raw ? JSON.parse(raw) : {}) as { enrollToken?: string }
+      const result = await enrollWithPlatform(body.enrollToken)
+      send(res, result.ok ? 200 : 502, result, { 'X-Request-Id': requestId })
+    } catch (err) {
+      send(res, 400, {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err)
+      })
+    }
+    return
+  }
+
+  if (
+    (req.method === 'PUT' || req.method === 'POST') &&
+    path === '/v1/fleet/config'
+  ) {
+    if (!verifyAgentSecret(req) && !verifyAdminToken(req)) {
+      bumpMetric('authFailures')
+      send(res, 401, {
+        ok: false,
+        error: 'X-Eris-Agent-Secret or admin token required'
+      })
+      return
+    }
+    try {
+      const raw = await readBody(req)
+      const body = (raw ? JSON.parse(raw) : {}) as {
+        revision?: number
+        settings?: Record<string, unknown>
+        config?: Record<string, unknown>
+      }
+      const result = acceptPushedConfig(body)
+      send(res, result.ok ? 200 : 409, result, { 'X-Request-Id': requestId })
+    } catch (err) {
+      send(res, 400, {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err)
+      })
+    }
     return
   }
 
@@ -392,6 +455,7 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
 const admin = ensureAdminToken()
 loadMetricsSnapshot()
 warmLocalModel()
+startFleetSync(store)
 startStatusServer(store, {
   killAll: () => workers.stopAll()
 })

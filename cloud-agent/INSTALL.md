@@ -520,6 +520,11 @@ Set in the Quadlet file (`/etc/containers/systemd/eris-cloud-agent.container`) o
 | `ERIS_CLOUD_MAX_THREADS` | `2` (CPU) / unlimited (GPU) | llama.cpp thread cap — keep low on CPU VMs so SSH stays up |
 | `ERIS_CLOUD_CONTEXT_SIZE` | `2048` (CPU) / `8192` (GPU) | GGUF context — keep ≤2048 on 8g cgroups (7B+4k OOMs) |
 | `ERIS_CLOUD_WARM_ON_START` | `0` (CPU) / `1` (GPU) | Preload GGUF into RAM at boot. **Leave 0 on CPU** or boot OOMs the VM. |
+| `ERIS_CLOUD_FLEET_ENROLL_TOKEN` | _(unset)_ | One-time token from EricServic.es Admin → Cloud Agents |
+| `ERIS_CLOUD_FLEET_AGENT_ID` / `_SECRET` | _(unset)_ | Skip enroll; use existing fleet identity |
+| `ERIS_CLOUD_FLEET_NAME` | _(unset)_ | Display name at enroll |
+
+Fleet / remote config: see [docs/CLOUD_AGENT_FLEET.md](../docs/CLOUD_AGENT_FLEET.md). Website PHP stubs: `cloud-agent/website-stubs/`.
 
 After editing the Quadlet unit:
 
