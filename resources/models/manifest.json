@@ -6,7 +6,7 @@
       "ref": "builtin:composer-lite",
       "name": "Composer Lite",
       "displayName": "Composer Lite (local)",
-      "description": "Local chat + tools model (~1 GB). Always used on this Mac. Heavy workspace jobs use Composer Full on Cloud Agents when signed in.",
+      "description": "Local chat + tools model (~1 GB) for this machine. Heavy workspace jobs use Composer Full on Cloud Agents when signed in.",
       "family": "Qwen2.5-Coder",
       "quant": "Q4_K_M",
       "parameters": "1.5B",

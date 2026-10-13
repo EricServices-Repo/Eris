@@ -4,6 +4,8 @@ import { getMetrics, readPublicAudit } from './observe.js'
 import { getUsageOverview, maskOwner } from './entitlements.js'
 import type { JobStore } from './job-store.js'
 import { adminKillConfigured } from './admin.js'
+import { fleetConfigured, getFleetIdentity } from './fleet.js'
+import { publicRemoteConfig } from './runtime-config.js'
 
 function todayKey(): string {
   return new Date().toISOString().slice(0, 10)
@@ -133,7 +135,14 @@ export function buildPublicStatus(store: JobStore): Record<string, unknown> {
     },
     recentJobs: recent,
     recentAudit: readPublicAudit(24),
-    adminKillAllConfigured: adminKillConfigured()
+    adminKillAllConfigured: adminKillConfigured(),
+    fleet: {
+      linked: fleetConfigured(),
+      agentId: getFleetIdentity()?.agentId || null,
+      displayName: getFleetIdentity()?.displayName || null,
+      lastHeartbeatAt: getFleetIdentity()?.lastHeartbeatAt || null,
+      config: publicRemoteConfig()
+    }
   }
 }
 
@@ -430,7 +439,11 @@ export function statusPageHtml(): string {
           card('Queue cap', d.maxQueue ?? '—', 'max queued'),
           card('Model', (d.localModel && d.localModel.status) || '—',
             (d.localModel && d.localModel.cached ? 'cached · ' : '') + ((d.localModel && d.localModel.gpu === false) ? 'CPU' : ((d.localModel && d.localModel.gpu) || d.gpuMode || ''))),
-          card('Auth', d.authRequired ? 'Required' : 'Open', d.authRequired ? 'EricServic.es Bearer' : 'anonymous allowed')
+          card('Auth', d.authRequired ? 'Required' : 'Open', d.authRequired ? 'EricServic.es Bearer' : 'anonymous allowed'),
+          card('Fleet', (d.fleet && d.fleet.linked) ? 'Linked' : 'Local',
+            (d.fleet && d.fleet.agentId) ? String(d.fleet.agentId).slice(0, 16) :
+            'enroll via EricServic.es',
+            (d.fleet && d.fleet.linked) ? 'ok' : '')
         ].join('');
 
         document.getElementById('usageDay').textContent = u.day ? '· ' + u.day + ' UTC' : '';

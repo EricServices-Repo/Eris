@@ -41,6 +41,9 @@ Environment=ERIS_CLOUD_MAX_THREADS=2
 Environment=ERIS_CLOUD_CONTEXT_SIZE=2048
 # Do NOT mmap the GGUF at process start (was OOM-killing the VM). Loads on first job.
 Environment=ERIS_CLOUD_WARM_ON_START=0
+# Link to EricServic.es Admin → Cloud Agents (optional):
+# Environment=ERIS_CLOUD_FLEET_ENROLL_TOKEN=enr_…
+# Environment=ERIS_CLOUD_FLEET_NAME=prod-cpu-1
 # Uncomment and set a long random secret to enable status-page Force kill all:
 # Environment=ERIS_CLOUD_ADMIN_TOKEN=
 # Hard cap so a runaway job cannot starve SSH (2 CPUs, 8GiB).

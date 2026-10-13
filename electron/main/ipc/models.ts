@@ -43,11 +43,21 @@ export function registerModelsIpc(): void {
       logInfo('Builtin model download complete', { id: modelId, ready: status.ready })
       return status
     } catch (err) {
-      logError('Builtin model download failed', {
-        id: modelId,
-        error: err instanceof Error ? err.message : String(err)
-      })
-      throw err
+      // Flatten cause chain — Electron IPC often drops Error.cause on the renderer.
+      const parts: string[] = []
+      let cur: unknown = err
+      for (let i = 0; i < 5 && cur; i++) {
+        if (cur instanceof Error) {
+          if (cur.message) parts.push(cur.message)
+          cur = (cur as Error & { cause?: unknown }).cause
+        } else {
+          parts.push(String(cur))
+          break
+        }
+      }
+      const message = [...new Set(parts)].join(' — ') || 'Download failed'
+      logError('Builtin model download failed', { id: modelId, error: message })
+      throw new Error(message)
     }
   })
 
