@@ -2,6 +2,7 @@
 
 ## 0.2.19 — 2026-10-12
 
+- Builtin model download: Electron `net.fetch` + Node fallback and clearer Windows errors (fixes opaque `TypeError: fetch failed`).
 - Desktop rebuild: Cloud Agent work runs inline in chat thinking; Agents tree / right-column Agents tab / Background hand-off removed.
 - Cloud Agent **0.2.21**: fleet management — enroll/heartbeat with EricServic.es, pull/push remote settings (`/v1/fleet/*`), website API stubs under `cloud-agent/website-stubs/`.
 - Cloud Agent **0.2.20**: stop VM crash loop on CPU boot — defer GGUF RAM load until first job, stop queued+running on safe-boot, default ctx **2048**, slower systemd restart backoff.

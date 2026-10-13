@@ -1,4 +1,12 @@
+import { setDefaultResultOrder } from 'dns'
 import { app, BrowserWindow } from 'electron'
+
+// Windows/Node undici: prefer IPv4 so HTTPS downloads do not die with opaque "fetch failed".
+try {
+  setDefaultResultOrder('ipv4first')
+} catch {
+  // ignore
+}
 import {
   getResolvedSettings,
   migrateLegacyConnectionTypesInUserSettings,

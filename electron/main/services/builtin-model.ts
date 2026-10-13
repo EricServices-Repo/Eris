@@ -22,6 +22,11 @@ import type {
 } from '../../../src/shared/settings-schema'
 import { builtinModelsDir, modelsManifestPath } from './paths'
 import { logError, logInfo, logWarn } from './logger'
+import {
+  bodyToNodeStream,
+  downloadFetch,
+  formatDownloadNetworkError
+} from './http-download'
 
 type LlamaModule = typeof import('node-llama-cpp')
 
@@ -437,21 +442,26 @@ export async function downloadBuiltinModel(
       unlinkQuiet(verifiedSidecarPath(target))
     }
 
-    const res = await fetch(entry.downloadUrl, {
-      signal: controller.signal,
-      redirect: 'follow',
-      headers: {
-        'User-Agent': 'Eris/0.1',
-        Accept: 'application/octet-stream'
-      }
-    })
+    let res
+    try {
+      res = await downloadFetch(entry.downloadUrl, { signal: controller.signal })
+    } catch (err) {
+      // Already formatted by downloadFetch / formatDownloadNetworkError
+      if (err instanceof Error && /Could not reach|offline/i.test(err.message)) throw err
+      throw formatDownloadNetworkError(err, entry.downloadUrl)
+    }
     if (!res.ok || !res.body) {
-      throw new Error(`Download failed: HTTP ${res.status}`)
+      throw new Error(
+        `Download failed: HTTP ${res.status} from Hugging Face (${res.via}). ` +
+          `If this persists, open the model URL in a browser to confirm the network allows huggingface.co.`
+      )
     }
 
     const contentType = (res.headers.get('content-type') || '').toLowerCase()
     if (contentType.includes('text/html')) {
-      throw new Error('Download failed: received HTML instead of a model file (check the URL / network)')
+      throw new Error(
+        'Download failed: received HTML instead of a model file (blocked, login wall, or bad URL).'
+      )
     }
 
     const total = Number(
@@ -461,10 +471,21 @@ export async function downloadBuiltinModel(
     )
     let downloaded = 0
     progressById.set(id, { downloaded, total })
+    logInfo('Builtin model download streaming', {
+      id,
+      via: res.via,
+      total,
+      urlHost: (() => {
+        try {
+          return new URL(entry.downloadUrl).host
+        } catch {
+          return 'unknown'
+        }
+      })()
+    })
 
     const hasher = createHash('sha256')
-    const { Readable } = await import('stream')
-    const nodeStream = Readable.fromWeb(res.body as import('stream/web').ReadableStream)
+    const nodeStream = bodyToNodeStream(res.body)
     const hashing = new Transform({
       transform(chunk: Buffer, _enc, cb) {
         hasher.update(chunk)
