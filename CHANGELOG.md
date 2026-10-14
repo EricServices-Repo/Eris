@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.26 — 2026-10-13
+
+- Desktop rebuild of Local models / Composer settings split / eGPU preference / update-banner semver guard.
+
 ## 0.2.25 — 2026-10-13
 
 - Settings Models split into **Composer**, **Local models** (GGUF + eGPU), and **Providers** (Ollama + APIs).
