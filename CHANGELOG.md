@@ -1,8 +1,30 @@
 # Changelog
 
+## 0.2.25 — 2026-10-13
+
+- Settings Models split into **Composer**, **Local models** (GGUF + eGPU), and **Providers** (Ollama + APIs).
+- Fix: update banner no longer offers an older public feed release (e.g. 0.2.16) when this build is newer (unsigned Mac path).
+- Settings → Composer shows the underlying GGUF identity (family, size, quant) for Lite and Full.
+
+## 0.2.24 — 2026-10-13
+
+- Chat model dropdown lists only ready/downloaded models (full catalog stays in Settings).
+- **eGPU support**: detect attached eGPUs, prefer them for Local/Composer GGUFs (CUDA/Vulkan device env; Metal high-perf), and show status in Settings → Local models → GPU / eGPU.
+
+## 0.2.23 — 2026-10-13
+
+- Local models catalog expanded (Gemma, Phi-4 Mini, Mistral, more Qwen/Llama sizes) plus **Browse more on Hugging Face** and live Hub GGUF name search (paste repo / `.gguf` URL).
+- Fix: chatting with `local:*` GGUFs no longer demands Ollama (`ollama serve`); readiness uses Local models status.
+
+## 0.2.22 — 2026-10-13
+
+- Settings → Models → **Local models**: download GGUFs that run inside Eris via node-llama-cpp — **no Ollama app required**.
+- Ollama is optional (connect an existing daemon only); curated downloads no longer call `ollama pull`.
+
 ## 0.2.21 — 2026-10-13
 
 - Settings → Models → Ollama: pick and download more local models (incl. **qwen3.8**), search/filter the catalog, or paste an ollama.com/library URL; pulled models register for chat.
+- Ollama download errors: replace opaque `fetch failed` with a clear “start Ollama / ollama serve” message and Install Ollama link when the local API is down.
 
 ## 0.2.20 — 2026-10-13
 

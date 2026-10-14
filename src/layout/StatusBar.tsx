@@ -47,27 +47,27 @@ function modelsLight(
     return {
       tone: 'ok',
       label: 'Models',
-      title: 'Composer Lite and connected providers are ready'
+      title: 'Local / Composer models and connected providers are ready'
     }
   }
   if (composerReady && !modelsOk) {
     return {
-      tone: 'warn',
+      tone: 'ok',
       label: 'Models',
-      title: 'Composer Lite ready · Ollama / API providers offline'
+      title: 'Local or Composer model ready (external Ollama/API optional)'
     }
   }
   if (!composerReady && modelsOk) {
     return {
       tone: 'warn',
       label: 'Models',
-      title: 'External providers ready · download Composer Lite for offline chat'
+      title: 'External providers ready · download a Local model or Composer Lite for offline chat'
     }
   }
   return {
     tone: 'danger',
     label: 'No models',
-    title: 'No local models ready — download Composer Lite or connect Ollama in Settings → Models'
+    title: 'No models ready — download a Local model or Composer Lite in Settings → Models'
   }
 }
 

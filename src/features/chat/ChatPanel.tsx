@@ -301,10 +301,25 @@ export function ChatPanel({
   const queueFull = queuedMessages.length >= MAX_QUEUED_MESSAGES
 
   const modelOptions = useMemo(() => {
-    if (models.length > 0) return models
+    // Chat picker: only models that are downloaded / reachable — not the full catalog.
+    const ready = models.filter((m) => m.ready === true)
+    if (ready.length > 0) return ready
+    if (selectedModel) {
+      return [
+        {
+          name: selectedModel,
+          ready: false,
+          source: selectedModel.startsWith('local:')
+            ? ('local' as const)
+            : selectedModel.startsWith('builtin:')
+              ? ('builtin' as const)
+              : ('connection' as const)
+        }
+      ]
+    }
     return [
       {
-        name: selectedModel || 'builtin:composer-lite',
+        name: 'builtin:composer-lite',
         ready: composerReady,
         source: 'builtin' as const
       }
@@ -312,9 +327,18 @@ export function ChatPanel({
   }, [models, selectedModel, composerReady])
 
   const modelLabel = (m: ModelInfo): string => {
-    const base = m.source === 'builtin' ? m.name.replace(/^builtin:/, '') : m.name
-    return `${base}${m.ready === false ? ' (offline)' : ''}`
+    if (m.source === 'builtin') return m.name.replace(/^builtin:/, '')
+    if (m.source === 'local') return m.name.replace(/^local:/, '')
+    return m.name
   }
+
+  const selectValue = modelOptions.some((m) => m.name === selectedModel)
+    ? selectedModel
+    : modelOptions[0]?.name || 'builtin:composer-lite'
+
+  useEffect(() => {
+    if (selectValue && selectValue !== selectedModel) onModelChange(selectValue)
+  }, [selectValue, selectedModel, onModelChange])
 
   const submit = () => {
     const text = draft.trim()
@@ -368,8 +392,8 @@ export function ChatPanel({
       {!composerReady && !modelsOk && (
         <div className="composer-banner">
           <span>
-            Connect <strong>Ollama</strong> or download <strong>Composer Lite</strong> (~1 GB) in
-            Settings → Models to start chatting.
+            Download a <strong>Local model</strong> or <strong>Composer Lite</strong> in Settings →
+            Models to start chatting (Ollama is optional).
           </span>
           <button className="btn btn-primary" onClick={onOpenModelsSettings}>
             Open Models
@@ -379,8 +403,8 @@ export function ChatPanel({
       {!composerReady && modelsOk && (
         <div className="composer-banner composer-banner-soft">
           <span>
-            Using your connected API / Ollama models. Optional: download Composer Lite for offline
-            built-in chat.
+            Using your connected API / Ollama models. Optional: download a Local model or Composer
+            Lite for offline chat inside Eris.
           </span>
           <button className="btn" onClick={onOpenModelsSettings}>
             Models
@@ -779,10 +803,10 @@ export function ChatPanel({
                 <div className="composer-right">
                   <select
                     className="composer-model-select"
-                    value={selectedModel || 'builtin:composer-lite'}
+                    value={selectValue}
                     disabled={streaming}
                     onChange={(e) => onModelChange(e.target.value)}
-                    title="Model for this chat"
+                    title="Ready models only — download more in Settings → Models"
                     aria-label="Select model"
                   >
                     {modelOptions.map((m) => (

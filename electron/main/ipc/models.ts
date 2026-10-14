@@ -4,13 +4,42 @@ import { connectionsWithDiscoveredModels, getModelsStatus } from '../services/mo
 import {
   cancelBuiltinDownload,
   deleteBuiltinModel,
+  disposeRuntime,
   downloadBuiltinModel,
   getBuiltinStatuses,
   verifyBuiltinModel
 } from '../services/builtin-model'
+import {
+  applyLlamaGpuPreference,
+  getGpuAccelStatus,
+  invalidateGpuAccelCache
+} from '../services/gpu-accel'
+import {
+  cancelLocalDownload,
+  deleteLocalModel,
+  downloadLocalFromHf,
+  downloadLocalModel,
+  getLocalStatuses
+} from '../services/local-model'
+import { HF_GGUF_BROWSE_URL, searchHfGgufModels } from '../services/hf-gguf'
 import { logError, logInfo, logWarn } from '../services/logger'
 import { appState } from '../app-state'
 import { getSecret } from './shared'
+
+function flattenError(err: unknown): string {
+  const parts: string[] = []
+  let cur: unknown = err
+  for (let i = 0; i < 5 && cur; i++) {
+    if (cur instanceof Error) {
+      if (cur.message) parts.push(cur.message)
+      cur = (cur as Error & { cause?: unknown }).cause
+    } else {
+      parts.push(String(cur))
+      break
+    }
+  }
+  return [...new Set(parts)].join(' — ') || 'Download failed'
+}
 
 export function registerModelsIpc(): void {
   ipcMain.handle('models:status', async () => {
@@ -43,19 +72,7 @@ export function registerModelsIpc(): void {
       logInfo('Builtin model download complete', { id: modelId, ready: status.ready })
       return status
     } catch (err) {
-      // Flatten cause chain — Electron IPC often drops Error.cause on the renderer.
-      const parts: string[] = []
-      let cur: unknown = err
-      for (let i = 0; i < 5 && cur; i++) {
-        if (cur instanceof Error) {
-          if (cur.message) parts.push(cur.message)
-          cur = (cur as Error & { cause?: unknown }).cause
-        } else {
-          parts.push(String(cur))
-          break
-        }
-      }
-      const message = [...new Set(parts)].join(' — ') || 'Download failed'
+      const message = flattenError(err)
       logError('Builtin model download failed', { id: modelId, error: message })
       throw new Error(message)
     }
@@ -63,7 +80,8 @@ export function registerModelsIpc(): void {
 
   ipcMain.handle('models:cancelDownload', () => {
     cancelBuiltinDownload()
-    logWarn('Builtin model download cancelled')
+    cancelLocalDownload()
+    logWarn('Model download cancelled')
     return true
   })
 
@@ -73,5 +91,88 @@ export function registerModelsIpc(): void {
 
   ipcMain.handle('models:verifyBuiltin', async (_e, id: string) => {
     return verifyBuiltinModel(id || 'composer-lite')
+  })
+
+  ipcMain.handle('models:localStatus', () => getLocalStatuses())
+
+  ipcMain.handle('models:downloadLocal', async (event, id: string) => {
+    const modelId = String(id || '').trim()
+    if (!modelId) throw new Error('Model id is required')
+    logInfo('Local model download start', { id: modelId })
+    try {
+      const status = await downloadLocalModel(modelId, (progress) => {
+        event.sender.send('models:localDownloadProgress', progress)
+      })
+      logInfo('Local model download complete', { id: modelId, ready: status.ready })
+      return status
+    } catch (err) {
+      const message = flattenError(err)
+      logError('Local model download failed', { id: modelId, error: message })
+      throw new Error(message)
+    }
+  })
+
+  ipcMain.handle('models:deleteLocal', (_e, id: string) => {
+    return deleteLocalModel(String(id || '').trim())
+  })
+
+  ipcMain.handle('models:cancelLocalDownload', () => {
+    cancelLocalDownload()
+    logWarn('Local model download cancelled')
+    return true
+  })
+
+  ipcMain.handle('models:hfBrowseUrl', () => HF_GGUF_BROWSE_URL)
+
+  ipcMain.handle('models:searchHfGguf', async (_e, query: string) => {
+    const q = String(query || '').trim()
+    if (!q) return []
+    try {
+      return await searchHfGgufModels(q, { limit: 24 })
+    } catch (err) {
+      const message = flattenError(err)
+      logError('Hugging Face GGUF search failed', { query: q, error: message })
+      throw new Error(message)
+    }
+  })
+
+  ipcMain.handle('models:downloadLocalFromHf', async (event, repoIdOrUrl: string) => {
+    const ref = String(repoIdOrUrl || '').trim()
+    if (!ref) throw new Error('Hugging Face model id or URL is required')
+    logInfo('Local model download from Hugging Face start', { ref })
+    try {
+      const status = await downloadLocalFromHf(ref, (progress) => {
+        event.sender.send('models:localDownloadProgress', progress)
+      })
+      logInfo('Local model download from Hugging Face complete', {
+        id: status.id,
+        ready: status.ready
+      })
+      return status
+    } catch (err) {
+      const message = flattenError(err)
+      logError('Local model download from Hugging Face failed', { ref, error: message })
+      throw new Error(message)
+    }
+  })
+
+  ipcMain.handle('models:gpuStatus', async () => {
+    const settings = getResolvedSettings(appState.currentWorkspace)
+    return getGpuAccelStatus(settings.models.preferEgpu !== false)
+  })
+
+  ipcMain.handle('models:reloadLlamaGpu', async () => {
+    const settings = getResolvedSettings(appState.currentWorkspace)
+    const prefer = settings.models.preferEgpu !== false
+    invalidateGpuAccelCache()
+    await disposeRuntime()
+    const { status } = await applyLlamaGpuPreference(prefer)
+    logInfo('Reloaded llama GPU preference', {
+      preferEgpu: prefer,
+      egpu: status.egpu?.name || null,
+      usable: status.egpuUsable,
+      backend: status.backend
+    })
+    return status
   })
 }

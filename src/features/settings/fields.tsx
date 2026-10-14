@@ -4,7 +4,9 @@ import type { LayeredSettings } from '@/shared/api'
 export type Category =
   | 'general'
   | 'account'
-  | 'models'
+  | 'composer'
+  | 'localModels'
+  | 'providers'
   | 'usage'
   | 'agent'
   | 'subagents'
@@ -74,14 +76,14 @@ export function settingFields(agentIds: string[]): SettingField[] {
       options: ['debug', 'info', 'warn', 'error']
     },
     {
-      cat: 'models',
+      cat: 'composer',
       label: 'Temperature',
       hint: 'Default sampling temperature for agents without an override',
       path: ['models', 'temperature'],
       type: 'number'
     },
     {
-      cat: 'models',
+      cat: 'composer',
       label: 'Context window',
       hint: 'Tokens available to the model',
       path: ['models', 'contextWindow'],

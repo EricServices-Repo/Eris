@@ -3,6 +3,9 @@ import type {
   ChatThread,
   FileEntry,
   BuiltinModelStatus,
+  GpuAccelStatus,
+  HfGgufSearchHit,
+  LocalModelStatus,
   ModelsStatus,
   ProjectAgentsConfig,
   ResolvedAgent,
@@ -204,10 +207,22 @@ export interface IdeApi {
     error?: string
   }>
   cancelBuiltinDownload: () => Promise<boolean>
+  /** Local GGUFs that run inside Eris (no Ollama). */
+  localModelStatus: () => Promise<LocalModelStatus[]>
+  downloadLocalModel: (id: string) => Promise<LocalModelStatus>
+  deleteLocalModel: (id: string) => Promise<LocalModelStatus | null>
+  cancelLocalDownload: () => Promise<boolean>
+  onLocalDownloadProgress: (cb: (status: LocalModelStatus) => void) => () => void
+  /** Hugging Face Hub — browse / search / download GGUFs into Local models. */
+  hfGgufBrowseUrl: () => Promise<string>
+  searchHfGgufModels: (query: string) => Promise<HfGgufSearchHit[]>
+  downloadLocalModelFromHf: (repoIdOrUrl: string) => Promise<LocalModelStatus>
+  gpuAccelStatus: () => Promise<GpuAccelStatus>
+  reloadLlamaGpu: () => Promise<GpuAccelStatus>
   /** #10 opt-in telemetry: record the user's Keep/Undo decisions for the last run. */
   recordDiffDecision: (payload: { kept?: number; undone?: number }) => Promise<boolean>
   getAgentTelemetry: () => Promise<AgentOutcomeSummary[]>
-  /** Ollama local-model management */
+  /** Optional external Ollama daemon (advanced). Prefer downloadLocalModel. */
   ollamaLibrary: () => Promise<OllamaLibraryEntry[]>
   ollamaInstalled: () => Promise<{ ok: boolean; models: string[]; error?: string }>
   ollamaPull: (name: string) => Promise<{ ok: boolean; model?: string; error?: string }>

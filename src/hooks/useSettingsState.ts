@@ -3,6 +3,10 @@ import type { AppSettings } from '@/shared/settings-schema'
 
 export type SettingsCategory =
   | 'general'
+  | 'composer'
+  | 'localModels'
+  | 'providers'
+  /** @deprecated Prefer composer | localModels | providers */
   | 'models'
   | 'usage'
   | 'account'
@@ -18,6 +22,11 @@ export type SettingsCategory =
   | 'editor'
   | 'workspace'
   | undefined
+
+function normalizeCategory(category?: SettingsCategory): SettingsCategory {
+  if (category === 'models') return 'composer'
+  return category
+}
 
 export function useSettingsState() {
   const [settings, setSettings] = useState<AppSettings | null>(null)
@@ -35,7 +44,7 @@ export function useSettingsState() {
 
   const openSettings = useCallback(
     (category?: SettingsCategory, createSkill = false) => {
-      setSettingsCategory(category)
+      setSettingsCategory(normalizeCategory(category))
       setStartCreateSkill(createSkill)
       setSettingsOpen(true)
     },

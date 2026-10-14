@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   OLLAMA_LIBRARY,
+  formatOllamaUnreachableError,
   isOllamaModelInstalled,
   normalizeOllamaModelRef,
   ollamaNativeHost,
@@ -45,5 +46,15 @@ describe('ollama service', () => {
     expect(isOllamaModelInstalled('qwen2.5-coder:7b', installed)).toBe(true)
     expect(isOllamaModelInstalled('llama3.1:8b', installed)).toBe(false)
     expect(resolveInstalledOllamaName('qwen3.8', installed)).toBe('qwen3.8:latest')
+  })
+
+  it('rewrites opaque fetch failed into an actionable Ollama offline message', () => {
+    const err = formatOllamaUnreachableError(
+      'http://127.0.0.1:11434',
+      Object.assign(new Error('fetch failed'), { cause: { code: 'ECONNREFUSED' } })
+    )
+    expect(err.message).toMatch(/Can't reach Ollama/)
+    expect(err.message).toMatch(/ollama serve/)
+    expect(err.message).not.toBe('fetch failed')
   })
 })

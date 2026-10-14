@@ -13,6 +13,7 @@ import {
   isExactBuiltinReady,
   resolveExactBuiltinRef
 } from './builtin-model'
+import { getLocalStatuses, isLocalRef, resolveExactLocalRef } from './local-model'
 import { streamModelChat } from './chat-runtime'
 import { routeHeuristic, routeMessage } from './router'
 import { learnedRouteFor, readRoutingCorrections, routingExamples } from './routing-feedback'
@@ -75,10 +76,13 @@ function readyModelCandidates(settings: AppSettings): string[] {
   for (const ref of ['builtin:composer-lite', 'builtin:composer'] as const) {
     if (isExactBuiltinReady(ref)) out.push(ref)
   }
+  for (const m of getLocalStatuses()) {
+    if (m.ready) out.push(m.ref)
+  }
   for (const conn of settings.models.connections) {
     if (!conn.enabled || conn.type === 'builtin') continue
     for (const name of conn.models) {
-      if (name && !isBuiltinRef(name)) out.push(name)
+      if (name && !isBuiltinRef(name) && !name.startsWith('local:')) out.push(name)
     }
   }
   return [...new Set(out)]
@@ -227,6 +231,19 @@ export function resolveModelRoles(options: {
   void options.toolPolicy
   void options.preferEscalate
   void options.intent
+
+  if (isLocalRef(selected)) {
+    const ready = resolveExactLocalRef(selected)
+    if (!ready) {
+      return {
+        chat: selected,
+        tools: selected,
+        escalateToFull: false,
+        error: `Local model “${selected}” is not ready. Download it in Settings → Models → Local.`
+      }
+    }
+    return { chat: ready, tools: ready, escalateToFull: false }
+  }
 
   if (!isBuiltinRef(selected)) {
     return { chat: selected, tools: selected, escalateToFull: false }

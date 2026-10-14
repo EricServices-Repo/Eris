@@ -63,7 +63,7 @@ import { decideMidRunAdapt, shouldConsiderMidRunAdapt } from './mid-run-adapt'
 import { buildPreservedWorkerMessages, truncateForModel } from './prompts'
 import { streamThinkingText } from './stream'
 import { argString, parseToolCalls, stripToolBlocks } from './tool-parsing'
-import { isBuiltinRef } from '../builtin-model'
+import { isNativeGgufRef } from '../builtin-model'
 import type { AgentChatMessage, AgentMode, AgentRunnerEvent, ToolCall } from './types'
 import type { AgentHandoffPacket } from '../../../../src/shared/agent-orchestration'
 
@@ -534,7 +534,7 @@ export async function* runAgentWithWorkspaceTools(options: {
     let abortedLoop = false
     let nativeFromStream: ToolCall[] | undefined
     const constrainThisTurn =
-      constrainNextToolCall && localConstrainEnabled && !reviewOnly && isBuiltinRef(workerModel)
+      constrainNextToolCall && localConstrainEnabled && !reviewOnly && isNativeGgufRef(workerModel)
     constrainNextToolCall = false
     for await (const evt of streamThinkingText({
       ...options,

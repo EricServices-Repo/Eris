@@ -81,7 +81,9 @@ export const SettingsSchema = z.object({
     defaultModel: z.string(),
     temperature: z.number().min(0).max(2),
     contextWindow: z.number().int().min(512).max(128000),
-    connections: z.array(ModelConnectionSchema)
+    connections: z.array(ModelConnectionSchema),
+    /** Prefer an attached eGPU (or discrete GPU) for Local / Composer GGUFs. */
+    preferEgpu: z.boolean().default(true)
   }),
   agent: z.object({
     systemPrompt: z.string(),
@@ -263,17 +265,45 @@ export interface ModelInfo {
   name: string
   size?: number
   modifiedAt?: string
-  source?: 'builtin' | 'connection'
+  source?: 'builtin' | 'local' | 'connection'
   connectionId?: string
   ready?: boolean
+}
+
+export interface GpuDeviceInfo {
+  name: string
+  kind: 'integrated' | 'discrete' | 'external'
+  bus?: string
+  vramBytes?: number
+  index: number
+}
+
+/** eGPU / discrete GPU detection for Local model acceleration. */
+export interface GpuAccelStatus {
+  devices: GpuDeviceInfo[]
+  egpu: GpuDeviceInfo | null
+  preferredGpu: GpuDeviceInfo | null
+  preferEgpu: boolean
+  egpuDetected: boolean
+  /** eGPU present and a GPU backend can use it for Local models. */
+  egpuUsable: boolean
+  /** eGPU or discrete GPU can accelerate Local models with current preference. */
+  accelUsable: boolean
+  backend: 'metal' | 'cuda' | 'vulkan' | false | null
+  backendDeviceName: string | null
+  message: string
 }
 
 export interface ModelsStatus {
   ok: boolean
   error?: string
   builtin: BuiltinModelStatus[]
+  /** User-downloaded GGUFs that run inside Eris (no Ollama). */
+  local?: LocalModelStatus[]
   models: ModelInfo[]
   connections: Array<ModelConnection & { reachable?: boolean; error?: string }>
+  /** Local GGUF GPU / eGPU acceleration probe. */
+  gpu?: GpuAccelStatus
 }
 
 export interface RouteResult {
@@ -380,6 +410,55 @@ export interface BuiltinModelStatus {
   downloading?: boolean
   /** Last download error for this model, if any. */
   downloadError?: string | null
+}
+
+/** Curated GGUF that downloads/runs inside Eris (Settings → Local models). */
+export interface LocalModelManifestEntry {
+  id: string
+  ref: string
+  name: string
+  displayName: string
+  description: string
+  family: string
+  quant: string
+  parameters: string
+  contextWindow: number
+  filename: string
+  downloadUrl: string
+  approxBytes: number
+  sha256: string | null
+  sizeLabel: string
+}
+
+export interface LocalModelStatus {
+  id: string
+  ref: string
+  name: string
+  displayName: string
+  description: string
+  family: string
+  parameters: string
+  quant: string
+  filename: string
+  downloadUrl: string
+  approxBytes: number
+  sizeLabel: string
+  installed: boolean
+  ready: boolean
+  localPath: string | null
+  downloadedBytes: number
+  progress: number
+  downloading?: boolean
+  downloadError?: string | null
+}
+
+/** Hugging Face Hub GGUF search hit (Settings → Local models). */
+export interface HfGgufSearchHit {
+  repoId: string
+  url: string
+  downloads: number
+  likes: number
+  name: string
 }
 
 export type SkillScope = 'user' | 'workspace'

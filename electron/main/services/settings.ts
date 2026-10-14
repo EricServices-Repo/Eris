@@ -118,6 +118,9 @@ function sanitizeLegacyModels(raw: Record<string, unknown>): Record<string, unkn
   if (!models.defaultModel || models.defaultModel === '') {
     models.defaultModel = 'builtin:composer-lite'
   }
+  if (typeof models.preferEgpu !== 'boolean') {
+    models.preferEgpu = true
+  }
   return { ...raw, models }
 }
 

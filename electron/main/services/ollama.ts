@@ -212,9 +212,106 @@ export function ollamaNativeHost(baseUrl: string | undefined | null): string {
   return raw.replace(/\/v1$/, '') || 'http://127.0.0.1:11434'
 }
 
+function causeChain(err: unknown): string {
+  const parts: string[] = []
+  let cur: unknown = err
+  for (let i = 0; i < 5 && cur; i++) {
+    if (cur instanceof Error) {
+      if (cur.message) parts.push(cur.message)
+      const code = (cur as NodeJS.ErrnoException).code
+      if (code && !parts.some((p) => p.includes(String(code)))) parts.push(String(code))
+      cur = (cur as Error & { cause?: unknown }).cause
+    } else {
+      parts.push(String(cur))
+      break
+    }
+  }
+  return [...new Set(parts)].join(' — ')
+}
+
+/** Turn opaque undici "fetch failed" into an actionable Ollama offline message. */
+export function formatOllamaUnreachableError(host: string, err: unknown): Error {
+  const detail = causeChain(err) || 'network error'
+  const refused = /ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ECONNRESET|socket hang up|offline/i.test(
+    detail
+  )
+  const opaqueFetch = /^fetch failed$/i.test(detail.trim()) || /fetch failed/i.test(detail)
+  if (refused || opaqueFetch) {
+    return new Error(
+      `Can't reach Ollama at ${host}. Open the Ollama app (or run: ollama serve), then Connect / Retry. ` +
+        `Install from https://ollama.com if needed. (${detail})`
+    )
+  }
+  return new Error(`Ollama request failed at ${host} (${detail})`)
+}
+
+/**
+ * Talk to Ollama's native API. Prefer Electron net.fetch (same stack as model
+ * downloads); fall back to Node fetch. Always rewrite opaque network errors.
+ */
+async function ollamaApiFetch(
+  url: string,
+  init: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal } = {}
+): Promise<Response> {
+  const headers = {
+    Accept: 'application/json',
+    ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+    ...init.headers
+  }
+  const method = init.method || 'GET'
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { net, app } = require('electron') as {
+      net: { fetch: typeof fetch }
+      app: { isReady: () => boolean }
+    }
+    if (app.isReady() && typeof net.fetch === 'function') {
+      return await net.fetch(url, {
+        method,
+        headers,
+        body: init.body,
+        signal: init.signal,
+        redirect: 'follow'
+      })
+    }
+  } catch (err) {
+    // Fall through to Node fetch — but keep the error if Node also fails.
+    try {
+      return await fetch(url, {
+        method,
+        headers,
+        body: init.body,
+        signal: init.signal,
+        redirect: 'follow'
+      })
+    } catch (nodeErr) {
+      throw formatOllamaUnreachableError(url.replace(/\/api\/.*$/, ''), nodeErr ?? err)
+    }
+  }
+
+  try {
+    return await fetch(url, {
+      method,
+      headers,
+      body: init.body,
+      signal: init.signal,
+      redirect: 'follow'
+    })
+  } catch (err) {
+    throw formatOllamaUnreachableError(url.replace(/\/api\/.*$/, ''), err)
+  }
+}
+
 export async function listOllamaInstalled(baseUrl?: string): Promise<string[]> {
   const host = ollamaNativeHost(baseUrl)
-  const res = await fetch(`${host}/api/tags`, { method: 'GET' })
+  let res: Response
+  try {
+    res = await ollamaApiFetch(`${host}/api/tags`, { method: 'GET' })
+  } catch (err) {
+    if (err instanceof Error && /Can't reach Ollama/i.test(err.message)) throw err
+    throw formatOllamaUnreachableError(host, err)
+  }
   if (!res.ok) throw new Error(`Ollama /api/tags failed (${res.status})`)
   const data = (await res.json()) as { models?: Array<{ name?: string }> }
   return (data.models ?? []).map((m) => m.name || '').filter(Boolean)
@@ -222,11 +319,16 @@ export async function listOllamaInstalled(baseUrl?: string): Promise<string[]> {
 
 export async function deleteOllamaModel(name: string, baseUrl?: string): Promise<void> {
   const host = ollamaNativeHost(baseUrl)
-  const res = await fetch(`${host}/api/delete`, {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name })
-  })
+  let res: Response
+  try {
+    res = await ollamaApiFetch(`${host}/api/delete`, {
+      method: 'DELETE',
+      body: JSON.stringify({ name })
+    })
+  } catch (err) {
+    if (err instanceof Error && /Can't reach Ollama/i.test(err.message)) throw err
+    throw formatOllamaUnreachableError(host, err)
+  }
   if (!res.ok && res.status !== 404) {
     throw new Error(`Ollama delete failed (${res.status})`)
   }
@@ -244,20 +346,46 @@ export async function pullOllamaModel(
   const host = ollamaNativeHost(options?.baseUrl)
   const model = normalizeOllamaModelRef(name)
   if (!model) throw new Error('Model name is required')
-  const res = await fetch(`${host}/api/pull`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: model, stream: true }),
-    signal: options?.signal
-  })
+
+  // Fast preflight so we don't sit on a silent pull when Ollama isn't running.
+  try {
+    const tags = await ollamaApiFetch(`${host}/api/tags`, {
+      method: 'GET',
+      signal: options?.signal
+    })
+    if (!tags.ok) {
+      throw new Error(`Ollama /api/tags failed (${tags.status}). Is it running?`)
+    }
+  } catch (err) {
+    if (err instanceof Error && /Can't reach Ollama/i.test(err.message)) throw err
+    throw formatOllamaUnreachableError(host, err)
+  }
+
+  onProgress({ name: model, status: 'starting pull…', done: false })
+
+  let res: Response
+  try {
+    res = await ollamaApiFetch(`${host}/api/pull`, {
+      method: 'POST',
+      body: JSON.stringify({ name: model, stream: true }),
+      signal: options?.signal
+    })
+  } catch (err) {
+    if (err instanceof Error && /Can't reach Ollama/i.test(err.message)) throw err
+    throw formatOllamaUnreachableError(host, err)
+  }
   if (!res.ok || !res.body) {
-    throw new Error(`Ollama pull failed (${res.status}). Is Ollama running? Try: ollama serve`)
+    throw new Error(
+      `Ollama pull failed (HTTP ${res.status}) at ${host}. Is Ollama running? Try: ollama serve`
+    )
   }
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  let sawError: string | null = null
   const emit = (obj: { status?: string; completed?: number; total?: number; error?: string }) => {
     if (obj.error) {
+      sawError = obj.error
       onProgress({ name: model, status: obj.error, done: true, error: obj.error })
       return
     }
@@ -275,21 +403,25 @@ export async function pullOllamaModel(
       done
     })
   }
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    let nl: number
-    while ((nl = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, nl).trim()
-      buffer = buffer.slice(nl + 1)
-      if (!line) continue
-      try {
-        emit(JSON.parse(line))
-      } catch {
-        /* ignore malformed keepalive lines */
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let nl: number
+      while ((nl = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, nl).trim()
+        buffer = buffer.slice(nl + 1)
+        if (!line) continue
+        try {
+          emit(JSON.parse(line))
+        } catch {
+          /* ignore malformed keepalive lines */
+        }
       }
     }
+  } catch (err) {
+    throw formatOllamaUnreachableError(host, err)
   }
   if (buffer.trim()) {
     try {
@@ -297,5 +429,8 @@ export async function pullOllamaModel(
     } catch {
       /* ignore */
     }
+  }
+  if (sawError) {
+    throw new Error(sawError)
   }
 }

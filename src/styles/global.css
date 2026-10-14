@@ -3325,6 +3325,35 @@ select:focus {
   line-height: 1.35;
 }
 
+.models-row-base {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 8px;
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.models-row-base .models-base-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.models-row-base code {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.models-row-desc {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  max-width: 42em;
+}
+
 .models-row-actions {
   display: flex;
   flex-wrap: wrap;
@@ -3584,6 +3613,13 @@ select:focus {
   justify-content: space-between;
 }
 
+.ollama-library-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
 .ollama-library-head strong {
   display: block;
   margin-bottom: 2px;
@@ -3618,6 +3654,73 @@ select:focus {
   border-radius: 6px;
   background: var(--bg-elevated);
   font-family: ui-monospace, Menlo, Monaco, Consolas, monospace;
+}
+
+.gpu-accel-card .gpu-accel-status {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.12);
+  margin-bottom: 10px;
+}
+
+.gpu-accel-card .gpu-accel-status.is-ok {
+  border-color: color-mix(in srgb, var(--ok, #3d9a5f) 55%, var(--border));
+}
+
+.gpu-accel-card .gpu-accel-status.is-warn {
+  border-color: color-mix(in srgb, var(--warn, #c9a227) 55%, var(--border));
+}
+
+.gpu-accel-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  margin: 4px 0 6px;
+  cursor: pointer;
+}
+
+.gpu-accel-toggle input {
+  margin: 0;
+}
+
+.local-models-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  margin-top: 6px;
+}
+
+.local-models-source .btn-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.local-models-hf {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.local-models-hf .ollama-library-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .ollama-catalog-filters {

@@ -93,6 +93,31 @@ function manualInstallOnly(): boolean {
   return process.platform === 'darwin' && !macSupportsInPlaceUpdates()
 }
 
+/** Strip leading `v` and compare dotted numeric semver (pre-release suffixes ignored). */
+export function isRemoteNewer(remote: string | undefined, local: string): boolean {
+  if (!remote) return false
+  const parse = (v: string): number[] =>
+    v
+      .trim()
+      .replace(/^v/i, '')
+      .split(/[-+]/)[0]!
+      .split('.')
+      .map((n) => {
+        const x = parseInt(n, 10)
+        return Number.isFinite(x) ? x : 0
+      })
+  const a = parse(remote)
+  const b = parse(local)
+  const len = Math.max(a.length, b.length)
+  for (let i = 0; i < len; i++) {
+    const x = a[i] ?? 0
+    const y = b[i] ?? 0
+    if (x > y) return true
+    if (x < y) return false
+  }
+  return false
+}
+
 function readUpdatePrefs(): {
   autoCheck: boolean
   autoDownload: boolean
@@ -210,6 +235,32 @@ export function startAutoUpdates(getWin: GetWindow): void {
   })
 
   autoUpdater.on('update-available', (info: UpdateInfo) => {
+    const current = app.getVersion()
+    // Guard: local --dir / ahead-of-feed builds must not offer an older feed release.
+    if (!isRemoteNewer(info.version, current)) {
+      logInfo('Feed version is not newer than this build — ignoring update-available', {
+        feed: info.version,
+        current
+      })
+      lastCheckedAt = new Date().toISOString()
+      publish({
+        state: 'not-available',
+        availableVersion: undefined,
+        releaseName: undefined,
+        releaseNotes: undefined,
+        lastCheckedAt,
+        error: undefined
+      })
+      if (manualCheck) {
+        manualCheck = false
+        void dialog.showMessageBox({
+          type: 'info',
+          message: 'Eris is up to date',
+          detail: `Version ${current} (public feed is ${info.version}).`
+        })
+      }
+      return
+    }
     logInfo('Update available', { version: info.version, manualInstallOnly: manualInstallOnly() })
     publish({
       state: 'available',
@@ -264,17 +315,26 @@ export function startAutoUpdates(getWin: GetWindow): void {
 
   autoUpdater.on('update-not-available', (info: UpdateInfo) => {
     lastCheckedAt = new Date().toISOString()
+    // Do not stash feed version as availableVersion — unsigned-Mac error handling
+    // used to mis-promote that into a fake “update available” banner.
     publish({
       state: 'not-available',
-      availableVersion: info.version,
-      lastCheckedAt
+      availableVersion: undefined,
+      releaseName: undefined,
+      releaseNotes: undefined,
+      lastCheckedAt,
+      error: undefined
     })
     if (manualCheck) {
       manualCheck = false
       void dialog.showMessageBox({
         type: 'info',
         message: 'Eris is up to date',
-        detail: `Version ${app.getVersion()}`
+        detail: `Version ${app.getVersion()}${
+          info.version && info.version !== app.getVersion()
+            ? ` (public feed ${info.version})`
+            : ''
+        }`
       })
     }
   })
@@ -320,12 +380,15 @@ export function startAutoUpdates(getWin: GetWindow): void {
     // Unsigned Mac + Squirrel noise: don't alarm if we already know manual install is required
     if (isSignError && manualInstallOnly()) {
       logWarn('Auto-update skipped (unsigned Mac)', { error: raw })
+      const reallyAvailable = isRemoteNewer(snapshot.availableVersion, app.getVersion())
       publish({
-        state: snapshot.availableVersion ? 'available' : 'idle',
+        state: reallyAvailable ? 'available' : snapshot.state === 'checking' ? 'idle' : snapshot.state,
+        availableVersion: reallyAvailable ? snapshot.availableVersion : undefined,
         error: undefined,
         manualInstallOnly: true
       })
-      if (manualCheck) {
+      // Don't nag with a Releases dialog when this build is already newer than the feed.
+      if (manualCheck && reallyAvailable) {
         manualCheck = false
         void dialog
           .showMessageBox({
@@ -342,6 +405,8 @@ export function startAutoUpdates(getWin: GetWindow): void {
             if (response === 0) void openReleasesPage()
           })
           .catch(() => {})
+      } else if (manualCheck) {
+        manualCheck = false
       }
       return
     }

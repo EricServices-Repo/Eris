@@ -3,6 +3,7 @@
     "defaultModel": "builtin:composer-lite",
     "temperature": 0.3,
     "contextWindow": 32768,
+    "preferEgpu": true,
     "connections": [
       {
         "id": "builtin",

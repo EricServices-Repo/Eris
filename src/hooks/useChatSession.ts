@@ -192,10 +192,12 @@ export function useChatSession({
 
       try {
         const status = await window.ide.modelsStatus()
-        const builtinReady = status.builtin?.some((b) => b.ready)
+        const builtinReady = status.builtin?.some((b) => b.ready) ?? false
+        const localReady = status.local?.some((m) => m.ready) ?? false
         const hasConnection = status.models.some((m) => m.source === 'connection' && m.ready)
-        setComposerReady(Boolean(builtinReady))
-        setOllamaOk(Boolean(builtinReady || hasConnection))
+        // Native GGUFs (Composer + Local models) count as ready — Ollama is optional.
+        setComposerReady(builtinReady || localReady)
+        setOllamaOk(builtinReady || localReady || hasConnection)
 
         let thread = opts?.thread ?? activeThread
         if (!thread) {
@@ -247,23 +249,36 @@ export function useChatSession({
         }
 
         const modelInfo = status.models.find((m) => m.name === runModel)
+        const isLocalModel = runModel.startsWith('local:')
+        const isBuiltinModel = runModel.startsWith('builtin:')
+        const cannotRunLocal =
+          isLocalModel &&
+          !(
+            status.local?.some(
+              (m) => (m.ref === runModel || m.id === runModel.replace(/^local:/, '')) && m.ready
+            ) ??
+            modelInfo?.ready === true
+          )
         const cannotRunBuiltin =
-          runModel.startsWith('builtin:') &&
+          isBuiltinModel &&
           !(
             status.builtin?.some(
               (b) => (b.ref === runModel || b.id === runModel.replace(/^builtin:/, '')) && b.ready
             ) ?? false
           )
         const cannotRunExternal =
-          !runModel.startsWith('builtin:') &&
+          !isLocalModel &&
+          !isBuiltinModel &&
           (!hasConnection || (modelInfo ? modelInfo.ready === false : !hasConnection))
-        if (cannotRunBuiltin || cannotRunExternal) {
+        if (cannotRunLocal || cannotRunBuiltin || cannotRunExternal) {
           setChatError(
-            cannotRunExternal
-              ? `Can’t reach model “${runModel}”. Is Ollama running? Open Settings → Models → Refresh, or run: ollama serve`
-              : hasConnection
-                ? `Model “${runModel}” isn’t installed. Download it in Settings → Models, or pick another model.`
-                : 'No model ready. Connect Ollama (Settings → Models) or download Composer Lite.'
+            cannotRunLocal
+              ? `Local model “${runModel}” isn’t ready. Download it in Settings → Models → Local.`
+              : cannotRunExternal
+                ? `Can’t reach model “${runModel}”. Open Settings → Models, refresh your API/Ollama connection, or pick a Local model.`
+                : hasConnection || localReady
+                  ? `Model “${runModel}” isn’t installed. Download it in Settings → Models, or pick another model.`
+                  : 'No model ready. Download a Local model or Composer Lite in Settings → Models.'
           )
           // Still persist the user turn so the chat isn’t empty
           const displayContent =

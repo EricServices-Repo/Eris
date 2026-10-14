@@ -6,7 +6,14 @@
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
 
 type Incoming =
-  | { type: 'load'; modelPath: string; contextSize: number; requestId: string }
+  | {
+      type: 'load'
+      modelPath: string
+      contextSize: number
+      requestId: string
+      preferEgpu?: boolean
+      gpu?: 'auto' | 'metal' | 'cuda' | 'vulkan' | false
+    }
   | {
       type: 'chat'
       id: string
@@ -80,26 +87,27 @@ async function ensureContext(contextSize: number): Promise<void> {
 async function handleLoad(
   path: string,
   contextSize: number,
-  requestId: string
+  requestId: string,
+  gpu: 'auto' | 'metal' | 'cuda' | 'vulkan' | false = 'auto'
 ): Promise<void> {
   try {
     if (modelPath === path && model) {
       if (!context) await ensureContext(contextSize)
-      post({ type: 'loaded', requestId })
+      post({ type: 'loaded', requestId, gpu: llama?.gpu ?? null })
       return
     }
     await disposeAll()
     const llamaCpp = await import('node-llama-cpp')
     const { getLlama } = llamaCpp
     try {
-      llama = await getLlama()
+      llama = await getLlama({ gpu, progressLogs: false })
     } catch {
-      llama = await getLlama({ gpu: false })
+      llama = await getLlama({ gpu: false, progressLogs: false })
     }
     model = await llama.loadModel({ modelPath: path })
     await ensureContext(contextSize)
     modelPath = path
-    post({ type: 'loaded', requestId })
+    post({ type: 'loaded', requestId, gpu: llama?.gpu ?? null })
   } catch (err) {
     post({
       type: 'load-error',
@@ -234,7 +242,9 @@ function onMessage(raw: Incoming): void {
   if (!raw || typeof raw !== 'object') return
   switch (raw.type) {
     case 'load':
-      enqueue(() => handleLoad(raw.modelPath, raw.contextSize, raw.requestId))
+      enqueue(() =>
+        handleLoad(raw.modelPath, raw.contextSize, raw.requestId, raw.gpu ?? 'auto')
+      )
       break
     case 'chat':
       enqueue(() => handleChat(raw))
