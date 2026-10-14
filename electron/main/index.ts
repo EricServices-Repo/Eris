@@ -81,6 +81,13 @@ app.whenReady().then(() => {
     }
   })
 
+  // Idle-warm default local GGUF after UI is up (first chat shouldn't cold-load).
+  setTimeout(() => {
+    void import('./services/builtin-model')
+      .then(({ warmLocalInference }) => warmLocalInference(getResolvedSettings(null)))
+      .catch(() => undefined)
+  }, 2_500)
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

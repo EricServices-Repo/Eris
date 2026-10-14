@@ -213,7 +213,7 @@ export function ModelConnectionsPanel({
 
       if (alsoRefresh) {
         await onRefresh()
-        const after = await window.ide.modelsStatus()
+        const after = await window.ide.modelsStatus({ probe: true })
         const live = after.connections.find((c) => c.id === draft.id)
         if (live?.reachable && (live.models?.length ?? 0) > 0) {
           const merged = {

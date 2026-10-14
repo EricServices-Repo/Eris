@@ -29,6 +29,8 @@ export interface SettingField {
   path: string[]
   type: 'boolean' | 'string' | 'number' | 'textarea' | 'select'
   options?: string[]
+  /** Optional display labels for select option values. */
+  optionLabels?: Record<string, string>
 }
 
 export function getAt(obj: unknown, path: string[]): unknown {
@@ -221,6 +223,19 @@ export function settingFields(agentIds: string[]): SettingField[] {
     },
     {
       cat: 'editor',
+      label: 'Chat response font',
+      path: ['editor', 'chatFont'],
+      type: 'select',
+      options: ['sans', 'mono', 'serif'],
+      optionLabels: {
+        sans: 'Sans (UI)',
+        mono: 'Monospace',
+        serif: 'Serif'
+      },
+      hint: 'Font for assistant replies; code blocks stay monospace'
+    },
+    {
+      cat: 'editor',
       label: 'Tab size',
       path: ['editor', 'tabSize'],
       type: 'number',
@@ -315,7 +330,7 @@ export function SettingRows({
                 >
                   {row.options?.map((o) => (
                     <option key={o} value={o}>
-                      {o}
+                      {row.optionLabels?.[o] ?? o}
                     </option>
                   ))}
                 </select>

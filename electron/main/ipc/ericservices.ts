@@ -12,49 +12,12 @@ import {
   ericServicesPushSettings,
   ericServicesTokenRef,
   isEricServicesAuthFailure,
+  mergePulledUserSettings,
   planPatchFromProfile
 } from '../services/ericservices'
 import { syncMcpRuntime } from '../services/mcp-runtime'
-import type { SettingsPatch } from '../../../src/shared/settings-schema'
 import { appState } from '../app-state'
 import { getSecret, storeSecret } from './shared'
-
-function mergePulledUserSettings(
-  remote: SettingsPatch,
-  local: ReturnType<typeof getResolvedSettings>
-): SettingsPatch {
-  const patch: SettingsPatch = { ...remote }
-  if (remote.mcp?.servers) {
-    const localById = new Map((local.mcp?.servers || []).map((s) => [s.id, s]))
-    patch.mcp = {
-      servers: remote.mcp.servers.map((rs) => {
-        if (!rs || typeof rs !== 'object' || !('id' in rs)) return rs as never
-        const id = String((rs as { id: string }).id)
-        const loc = localById.get(id)
-        if (!loc) return rs as never
-        const env = { ...((rs as { env?: Record<string, string> }).env || {}) }
-        for (const [k, v] of Object.entries(loc.env || {})) {
-          if (!env[k]) env[k] = v
-        }
-        return { ...(rs as object), env } as never
-      })
-    }
-  }
-  if (remote.models?.connections) {
-    const localById = new Map((local.models?.connections || []).map((c) => [c.id, c]))
-    patch.models = {
-      ...(patch.models || {}),
-      connections: remote.models.connections.map((rc) => {
-        if (!rc || typeof rc !== 'object' || !('id' in rc)) return rc as never
-        const id = String((rc as { id: string }).id)
-        const loc = localById.get(id)
-        if (!loc?.apiKeyRef) return { ...(rc as object), apiKeyRef: '' } as never
-        return { ...(rc as object), apiKeyRef: loc.apiKeyRef } as never
-      })
-    }
-  }
-  return patch
-}
 
 export function registerEricServicesIpc(): void {
   ipcMain.handle('ericServices:status', async () => {

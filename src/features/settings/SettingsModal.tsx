@@ -8,6 +8,7 @@ import type {
   SettingsScope
 } from '@/shared/settings-schema'
 import type { LayeredSettings } from '@/shared/api'
+import { mergeModelsDownloadStatus, upsertDownloadRow } from '@/shared/model-download-ui'
 import { GitHubSettingsPanel } from './GitHubSettingsPanel'
 import { EricServicesAccountPanel } from './EricServicesAccountPanel'
 import { UsagePanel } from './UsagePanel'
@@ -84,7 +85,9 @@ export function SettingsModal({
 
   const load = async () => {
     const layersP = window.ide.getLayeredSettings()
-    const modelsP = window.ide.modelsStatus().catch(() => null)
+    const modelsP = window.ide
+      .modelsStatus({ probe: true, includeGpu: true })
+      .catch(() => null)
     const agentsP = window.ide.getProjectAgents().catch(() => null)
 
     const layers = await layersP
@@ -155,23 +158,31 @@ export function SettingsModal({
     const offBuiltin = window.ide.onBuiltinDownloadProgress((s) => {
       setStatus((prev) =>
         prev
-          ? {
-              ...prev,
-              builtin: prev.builtin.map((b) => (b.id === s.id ? s : b))
-            }
+          ? { ...prev, builtin: upsertDownloadRow(prev.builtin, s) }
           : prev
       )
       if (s.downloading) modelsState.setDownloadingId(s.id)
+      else if (s.ready || s.downloadError) {
+        modelsState.setDownloadingId((cur) => (cur === s.id ? null : cur))
+      }
     })
     const offLocal = window.ide.onLocalDownloadProgress((s) => {
+      // Upsert: HF downloads register a new catalog id that may not be in the list yet.
       setStatus((prev) =>
         prev
-          ? {
-              ...prev,
-              local: (prev.local ?? []).map((m) => (m.id === s.id ? s : m))
+          ? { ...prev, local: upsertDownloadRow(prev.local ?? [], s) }
+          : {
+              ok: true,
+              builtin: [],
+              local: [s],
+              models: [],
+              connections: []
             }
-          : prev
       )
+      if (s.downloading) modelsState.setDownloadingId(s.id)
+      else if (s.ready || s.downloadError) {
+        modelsState.setDownloadingId((cur) => (cur === s.id ? null : cur))
+      }
     })
     return () => {
       offBuiltin()
@@ -180,6 +191,8 @@ export function SettingsModal({
   }, [open])
 
   // Keep progress fresh when Settings was closed mid-download (main process owns the transfer).
+  // Use light builtin/local snapshots — full modelsStatus() probes connections and arrives late,
+  // which made the percentage jump backwards on Windows.
   useEffect(() => {
     if (!open || (category !== 'composer' && category !== 'localModels')) return
     const downloading =
@@ -188,11 +201,26 @@ export function SettingsModal({
       Boolean(status?.local?.some((m) => m.downloading))
     if (!downloading) return
     const id = window.setInterval(() => {
-      void window.ide.modelsStatus().then((models) => {
-        setStatus(models)
+      void Promise.all([
+        window.ide.builtinModelStatus(),
+        window.ide.localModelStatus()
+      ]).then(([builtin, local]) => {
+        setStatus((prev) => {
+          const next = {
+            ...(prev || {
+              ok: true,
+              builtin: [],
+              local: [],
+              models: [],
+              connections: []
+            }),
+            builtin,
+            local
+          } as ModelsStatus
+          return mergeModelsDownloadStatus(prev, next)
+        })
         const still =
-          models.builtin?.find((b) => b.downloading) ||
-          models.local?.find((m) => m.downloading)
+          builtin.find((b) => b.downloading) || local.find((m) => m.downloading)
         modelsState.setDownloadingId(still?.id ?? null)
       })
     }, 1_500)

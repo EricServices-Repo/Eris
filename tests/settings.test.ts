@@ -2,11 +2,17 @@ import { mkdirSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
 import { describe, expect, it } from 'vitest'
 import { userSettingsPath } from '../electron/main/services/paths'
-import { getDefaults, getResolvedSettings } from '../electron/main/services/settings'
+import {
+  getDefaults,
+  getResolvedSettings,
+  invalidateResolvedSettingsCache,
+  setSettings
+} from '../electron/main/services/settings'
 
 function writeUserSettings(raw: unknown) {
   mkdirSync(dirname(userSettingsPath()), { recursive: true })
   writeFileSync(userSettingsPath(), JSON.stringify(raw))
+  invalidateResolvedSettingsCache()
 }
 
 describe('settings defaults', () => {
@@ -15,6 +21,18 @@ describe('settings defaults', () => {
     expect(d.agent.commandApproval).toBe('ask')
     expect(d.agent.allowedCommands).toEqual([])
     expect(d.models.defaultModel).toBe('builtin:composer-lite')
+  })
+
+  it('caches resolved settings until invalidated by a write', () => {
+    writeUserSettings({ editor: { chatFont: 'serif' } })
+    const a = getResolvedSettings(null)
+    const b = getResolvedSettings(null)
+    expect(a).toBe(b)
+    expect(a.editor.chatFont).toBe('serif')
+    setSettings('user', { editor: { chatFont: 'sans' } }, null)
+    const c = getResolvedSettings(null)
+    expect(c.editor.chatFont).toBe('sans')
+    expect(c).not.toBe(a)
   })
 })
 
@@ -36,8 +54,16 @@ describe('settings migrations', () => {
     expect((s.agent as Record<string, unknown>).subagents).toBeUndefined()
     expect(s.general.logging.level).toBe('info')
     expect(s.editor.inlineSuggest).toBe(true)
+    expect(s.editor.chatFont).toBe('mono')
     // New keys missing from old files come from defaults
     expect(s.agent.commandApproval).toBe('ask')
+  })
+
+  it('accepts chat response font choices', () => {
+    writeUserSettings({ editor: { chatFont: 'serif' } })
+    expect(getResolvedSettings(null).editor.chatFont).toBe('serif')
+    writeUserSettings({ editor: { chatFont: 'sans' } })
+    expect(getResolvedSettings(null).editor.chatFont).toBe('sans')
   })
 
   it('ensures builtin connections list both Composer tiers', () => {

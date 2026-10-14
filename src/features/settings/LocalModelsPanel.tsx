@@ -69,10 +69,12 @@ export function LocalModelsPanel({
 
   useEffect(() => {
     return window.ide.onLocalDownloadProgress((s) => {
+      // Parent SettingsModal patches status from this event — do not reload
+      // full modelsStatus() here (slow probes cause % to jump backwards).
       if (s.downloading) setDownloadingId(s.id)
-      void load()
+      else if (s.ready || s.downloadError) setDownloadingId((cur) => (cur === s.id ? null : cur))
     })
-  }, [load])
+  }, [])
 
   useEffect(() => {
     const q = query.trim()
@@ -113,11 +115,18 @@ export function LocalModelsPanel({
   }, [models])
 
   const filtered = useMemo(() => {
-    return models.filter((m) => {
+    // Always keep in-progress downloads visible at the top (ignore search/family filters).
+    const active = models.filter(
+      (m) => m.downloading || m.id === downloadingId || (m.progress > 0 && m.progress < 1 && !m.ready)
+    )
+    const activeIds = new Set(active.map((m) => m.id))
+    const rest = models.filter((m) => {
+      if (activeIds.has(m.id)) return false
       if (family !== 'all' && m.family !== family) return false
       return matchesLocalQuery(m, query)
     })
-  }, [models, query, family])
+    return [...active, ...rest]
+  }, [models, query, family, downloadingId])
 
   const catalogRepoIds = useMemo(() => {
     const set = new Set<string>()
@@ -137,6 +146,7 @@ export function LocalModelsPanel({
 
   const startDownload = (m: LocalModelStatus) => {
     setDownloadingId(m.id)
+    setFamily('all')
     void window.ide
       .downloadLocalModel(m.id)
       .then(async () => {
@@ -154,10 +164,12 @@ export function LocalModelsPanel({
 
   const startHfDownload = (hit: HfGgufSearchHit) => {
     setHfDownloadingRepo(hit.repoId)
-    setDownloadingId(`hf:${hit.repoId}`)
+    setFamily('all')
+    // Progress events carry the real catalog id (hf-…) once Hub resolve finishes.
     void window.ide
       .downloadLocalModelFromHf(hit.repoId)
       .then(async (status) => {
+        setDownloadingId(status.id)
         await load()
         if (!defaultModel || defaultModel.startsWith('builtin:composer')) {
           await apply(['models', 'defaultModel'], status.ref)
@@ -234,6 +246,18 @@ export function LocalModelsPanel({
             const isDownloading = downloadingId === m.id || Boolean(m.downloading)
             const pct = Math.round((m.progress || 0) * 100)
             const isDefault = defaultModel === m.ref
+            const statusLine =
+              m.ready
+                ? null
+                : isDownloading
+                  ? m.downloadPhase === 'verifying'
+                    ? 'Verifying…'
+                    : m.downloadPhase === 'finalizing'
+                      ? 'Installing…'
+                      : pct > 0
+                        ? `Downloading · ${pct}%`
+                        : 'Downloading…'
+                  : null
             return (
               <div key={m.id} className="ollama-catalog-row">
                 <div className="ollama-catalog-main">
@@ -250,11 +274,7 @@ export function LocalModelsPanel({
                       <div style={{ width: `${Math.max(2, pct)}%` }} />
                     </div>
                   )}
-                  {isDownloading && (
-                    <div className="model-conn-meta">
-                      Downloading{pct > 0 ? ` · ${pct}%` : '…'}
-                    </div>
-                  )}
+                  {statusLine && <div className="model-conn-meta">{statusLine}</div>}
                   {m.downloadError && !isDownloading && !m.ready && (
                     <p className="models-download-error" title={m.downloadError}>
                       {m.downloadError}
@@ -366,7 +386,16 @@ export function LocalModelsPanel({
                         <span className="badge">{formatDownloads(hit.downloads)} downloads</span>
                       )}
                     </div>
-                    <p>GGUF repo on Hugging Face — Eris picks a Q4_K_M (or closest) file.</p>
+                    <p>
+                      {busy
+                        ? 'Adding to Local models…'
+                        : 'GGUF repo on Hugging Face — Eris picks a Q4_K_M (or closest) file.'}
+                    </p>
+                    {busy && (
+                      <div className="models-progress">
+                        <div style={{ width: '8%' }} />
+                      </div>
+                    )}
                   </div>
                   <div className="ollama-catalog-actions">
                     {busy ? (

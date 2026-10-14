@@ -10,6 +10,7 @@ import {
 } from 'react'
 import type { FileEntry } from '@/shared/settings-schema'
 import type { CloudHealth } from '@/shared/cloud-agents'
+import { joinWorkspacePath, pathBasename } from '@/shared/paths'
 import { Sidebar } from '@/layout/Sidebar'
 import { WorkspaceTrustBanner } from '@/features/workspace/WorkspaceTrustBanner'
 import { StatusBar } from '@/layout/StatusBar'
@@ -117,6 +118,20 @@ export default function App() {
     const id = ++terminalNoteSeq.current
     setTerminalNotes((prev) => [...prev.slice(-(MAX_TERMINAL_NOTES - 1)), { id, text }])
   }, [])
+
+  useEffect(() => {
+    const chatFont = settings?.editor.chatFont ?? 'mono'
+    const root = document.documentElement
+    root.dataset.chatFont = chatFont
+    root.style.setProperty(
+      '--chat-response-font',
+      chatFont === 'sans'
+        ? 'var(--font-ui)'
+        : chatFont === 'serif'
+          ? 'var(--font-serif)'
+          : 'var(--font-mono)'
+    )
+  }, [settings?.editor.chatFont])
 
   useEffect(() => {
     let cancelled = false
@@ -293,6 +308,7 @@ export default function App() {
     settingsRef,
     selectedModel,
     selectedAgentId,
+    models,
     setComposerReady,
     setOllamaOk,
     skills,
@@ -753,7 +769,7 @@ export default function App() {
             }
             onRemoveWorkspace={(id) => void removeWorkspace(id)}
             onOpenFile={(p) => void openFile(p)}
-            onAttachFile={(path) => addAttachments([{ path, name: path.split('/').pop() || path }])}
+            onAttachFile={(path) => addAttachments([{ path, name: pathBasename(path) }])}
             onSelectThread={(id) => {
               const t = threads.find((x) => x.id === id) ?? null
               setActiveThread(t)
@@ -859,11 +875,9 @@ export default function App() {
                     if (tab) addAttachments([{ path: tab.path, name: tab.name }])
                   }}
                   onOpenPath={(path) => {
-                    const abs =
-                      workspacePath && !path.startsWith('/')
-                        ? `${workspacePath}/${path}`
-                        : path.split(' → ')[0]!
-                    void openFile(abs)
+                    void openFile(
+                      workspacePath ? joinWorkspacePath(workspacePath, path) : path.split(' → ')[0]!
+                    )
                   }}
                   onOpenModelsSettings={() => openSettings('models')}
                   onOpenSkillsSettings={() => {
@@ -1205,7 +1219,9 @@ export default function App() {
               expanded={diffReviewExpanded}
               onExpandedChange={setDiffReviewExpanded}
               onOpenPath={(path) => {
-                const abs = path.startsWith('/') ? path : `${workspacePath}/${path.split(' → ')[0]}`
+                const abs = workspacePath
+                  ? joinWorkspacePath(workspacePath, path)
+                  : path.split(' → ')[0]!
                 void openFile(abs)
               }}
               onKeep={(id) => {

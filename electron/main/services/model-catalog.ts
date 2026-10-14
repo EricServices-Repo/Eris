@@ -9,17 +9,21 @@ import { getLocalStatuses, isLocalRef } from './local-model'
 import { listOpenAIModels } from './openai-compatible'
 import { getGpuAccelStatus } from './gpu-accel'
 
-export async function getModelsStatus(
-  settings: AppSettings,
-  getSecret: (key: string) => string | null
-): Promise<ModelsStatus> {
-  const preferEgpu = settings.models.preferEgpu !== false
-  const [builtin, local, gpu] = await Promise.all([
-    Promise.resolve(getBuiltinStatuses()),
-    Promise.resolve(getLocalStatuses()),
-    getGpuAccelStatus(preferEgpu)
-  ])
-  const models: ModelInfo[] = [
+export type ModelsStatusOptions = {
+  /**
+   * When true, hit every OpenAI-compatible / Ollama `/v1/models` endpoint (slow).
+   * Default false — use persisted connection.models for chat/boot hot paths.
+   */
+  probeConnections?: boolean
+  /** Include GPU accel probe (Settings). Default false on light paths. */
+  includeGpu?: boolean
+}
+
+function catalogModels(
+  builtin: ReturnType<typeof getBuiltinStatuses>,
+  local: ReturnType<typeof getLocalStatuses>
+): ModelInfo[] {
+  return [
     ...builtin.map((b) => ({
       name: b.ref,
       size: b.downloadedBytes || b.approxBytes,
@@ -33,56 +37,109 @@ export async function getModelsStatus(
       ready: m.ready
     }))
   ]
+}
 
+/** Fast path: disk catalog + persisted connection lists (no network). */
+function lightConnectionSnapshot(
+  settings: AppSettings,
+  builtinReady: boolean
+): { connections: ModelsStatus['connections']; models: ModelInfo[] } {
   const connections: ModelsStatus['connections'] = []
-  const externalProbes = settings.models.connections.map(async (conn) => {
+  const models: ModelInfo[] = []
+  for (const conn of settings.models.connections) {
     if (conn.type === 'builtin') {
-      return {
-        connection: { ...conn, reachable: builtin.some((b) => b.ready) },
-        models: [] as ModelInfo[]
-      }
+      connections.push({ ...conn, reachable: builtinReady })
+      continue
     }
     if (!conn.enabled) {
-      return { connection: { ...conn, reachable: false }, models: [] as ModelInfo[] }
+      connections.push({ ...conn, reachable: false })
+      continue
     }
-    const key = conn.apiKeyRef ? getSecret(conn.apiKeyRef) : null
-    try {
-      const remote = await listOpenAIModels(conn.baseUrl, key)
-      const names = remote.length > 0 ? remote : conn.models
-      const discovered: ModelInfo[] = []
-      for (const name of names) {
-        if (isBuiltinRef(name) || isLocalRef(name)) continue
-        discovered.push({
-          name,
-          source: 'connection',
-          connectionId: conn.id,
-          ready: true
-        })
-      }
-      return {
-        connection: { ...conn, reachable: true, models: names },
-        models: discovered
-      }
-    } catch (err) {
-      return {
-        connection: {
-          ...conn,
-          reachable: false,
-          error: err instanceof Error ? err.message : 'Unreachable'
-        },
-        models: conn.models.map((name) => ({
-          name,
-          source: 'connection' as const,
-          connectionId: conn.id,
-          ready: false
-        }))
-      }
+    // Optimistic: listed models are usable without a live probe (chat send / boot).
+    connections.push({ ...conn, reachable: true })
+    for (const name of conn.models) {
+      if (isBuiltinRef(name) || isLocalRef(name)) continue
+      models.push({
+        name,
+        source: 'connection',
+        connectionId: conn.id,
+        ready: true
+      })
     }
-  })
+  }
+  return { connections, models }
+}
 
-  for (const result of await Promise.all(externalProbes)) {
-    connections.push(result.connection)
-    models.push(...result.models)
+export async function getModelsStatus(
+  settings: AppSettings,
+  getSecret: (key: string) => string | null,
+  options: ModelsStatusOptions = {}
+): Promise<ModelsStatus> {
+  const probeConnections = options.probeConnections === true
+  const includeGpu = options.includeGpu === true
+  const preferEgpu = settings.models.preferEgpu !== false
+
+  const builtin = getBuiltinStatuses()
+  const local = getLocalStatuses()
+  const models = catalogModels(builtin, local)
+  const gpu = includeGpu ? await getGpuAccelStatus(preferEgpu) : undefined
+
+  let connections: ModelsStatus['connections'] = []
+
+  if (!probeConnections) {
+    const snap = lightConnectionSnapshot(settings, builtin.some((b) => b.ready))
+    connections = snap.connections
+    models.push(...snap.models)
+  } else {
+    const externalProbes = settings.models.connections.map(async (conn) => {
+      if (conn.type === 'builtin') {
+        return {
+          connection: { ...conn, reachable: builtin.some((b) => b.ready) },
+          models: [] as ModelInfo[]
+        }
+      }
+      if (!conn.enabled) {
+        return { connection: { ...conn, reachable: false }, models: [] as ModelInfo[] }
+      }
+      const key = conn.apiKeyRef ? getSecret(conn.apiKeyRef) : null
+      try {
+        const remote = await listOpenAIModels(conn.baseUrl, key)
+        const names = remote.length > 0 ? remote : conn.models
+        const discovered: ModelInfo[] = []
+        for (const name of names) {
+          if (isBuiltinRef(name) || isLocalRef(name)) continue
+          discovered.push({
+            name,
+            source: 'connection',
+            connectionId: conn.id,
+            ready: true
+          })
+        }
+        return {
+          connection: { ...conn, reachable: true, models: names },
+          models: discovered
+        }
+      } catch (err) {
+        return {
+          connection: {
+            ...conn,
+            reachable: false,
+            error: err instanceof Error ? err.message : 'Unreachable'
+          },
+          models: conn.models.map((name) => ({
+            name,
+            source: 'connection' as const,
+            connectionId: conn.id,
+            ready: false
+          }))
+        }
+      }
+    })
+
+    for (const result of await Promise.all(externalProbes)) {
+      connections.push(result.connection)
+      models.push(...result.models)
+    }
   }
 
   const anyBuiltinReady = builtin.some((b) => b.ready)

@@ -7,7 +7,8 @@ import {
   disposeRuntime,
   downloadBuiltinModel,
   getBuiltinStatuses,
-  verifyBuiltinModel
+  verifyBuiltinModel,
+  warmLocalInference
 } from '../services/builtin-model'
 import {
   applyLlamaGpuPreference,
@@ -42,22 +43,37 @@ function flattenError(err: unknown): string {
 }
 
 export function registerModelsIpc(): void {
-  ipcMain.handle('models:status', async () => {
-    const settings = getResolvedSettings(appState.currentWorkspace)
-    const status = await getModelsStatus(settings, getSecret)
-    // Keep connection.models in sync with live Ollama/API lists so chat can route by model id.
-    const { connections, changed } = connectionsWithDiscoveredModels(settings, status)
-    if (changed) {
-      setSettings('user', { models: { connections } }, appState.currentWorkspace)
-      return {
-        ...status,
-        connections: status.connections.map((c) => {
-          const updated = connections.find((u) => u.id === c.id)
-          return updated ? { ...c, models: updated.models } : c
-        })
+  ipcMain.handle(
+    'models:status',
+    async (_e, options?: { probe?: boolean; includeGpu?: boolean }) => {
+      const settings = getResolvedSettings(appState.currentWorkspace)
+      const probe = options?.probe === true
+      const includeGpu = options?.includeGpu === true || probe
+      const status = await getModelsStatus(settings, getSecret, {
+        probeConnections: probe,
+        includeGpu
+      })
+      // Persist live /v1/models lists only when we actually probed.
+      if (probe) {
+        const { connections, changed } = connectionsWithDiscoveredModels(settings, status)
+        if (changed) {
+          setSettings('user', { models: { connections } }, appState.currentWorkspace)
+          return {
+            ...status,
+            connections: status.connections.map((c) => {
+              const updated = connections.find((u) => u.id === c.id)
+              return updated ? { ...c, models: updated.models } : c
+            })
+          }
+        }
       }
+      return status
     }
-    return status
+  )
+
+  ipcMain.handle('models:warmLocal', async () => {
+    const settings = getResolvedSettings(appState.currentWorkspace)
+    return warmLocalInference(settings)
   })
 
   ipcMain.handle('models:builtinStatus', () => getBuiltinStatuses())
@@ -169,9 +185,12 @@ export function registerModelsIpc(): void {
     const { status } = await applyLlamaGpuPreference(prefer)
     logInfo('Reloaded llama GPU preference', {
       preferEgpu: prefer,
+      preferred: status.preferredGpu?.name || null,
+      tier: status.accelTier,
       egpu: status.egpu?.name || null,
-      usable: status.egpuUsable,
-      backend: status.backend
+      usable: status.accelUsable,
+      backend: status.backend,
+      devices: status.devices.map((d) => `${d.kind}:${d.name}`)
     })
     return status
   })

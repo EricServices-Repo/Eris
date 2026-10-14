@@ -10,6 +10,7 @@ import {
 } from './paths'
 import {
   isWorkspaceTrusted,
+  onWorkspaceTrustChanged,
   riskyWorkspaceSettings,
   setWorkspaceTrusted,
   stripRiskyWorkspaceSettings
@@ -127,6 +128,9 @@ function sanitizeLegacyModels(raw: Record<string, unknown>): Record<string, unkn
 function sanitizeEditor(raw: Record<string, unknown>): Record<string, unknown> {
   const editor = { ...((raw.editor as Record<string, unknown> | undefined) || {}) }
   if (typeof editor.inlineSuggest !== 'boolean') editor.inlineSuggest = true
+  if (editor.chatFont !== 'sans' && editor.chatFont !== 'mono' && editor.chatFont !== 'serif') {
+    editor.chatFont = 'mono'
+  }
   return { ...raw, editor }
 }
 
@@ -258,9 +262,26 @@ function buildResolvedSettings(workspacePath: string | null): AppSettings {
   return getDefaults()
 }
 
+/** Cache key: workspace path string, or '' for no workspace. */
+let resolvedCacheKey: string | undefined
+let resolvedCache: AppSettings | null = null
+
+/** Drop cached resolved settings (call after any disk write / trust change). */
+export function invalidateResolvedSettingsCache(): void {
+  resolvedCache = null
+  resolvedCacheKey = undefined
+}
+
+onWorkspaceTrustChanged(invalidateResolvedSettingsCache)
+
 export function getResolvedSettings(workspacePath: string | null): AppSettings {
+  const key = workspacePath ?? ''
+  if (resolvedCache && resolvedCacheKey === key) return resolvedCache
   try {
-    return buildResolvedSettings(workspacePath)
+    const value = buildResolvedSettings(workspacePath)
+    resolvedCache = value
+    resolvedCacheKey = key
+    return value
   } catch {
     return getDefaults()
   }
@@ -286,6 +307,7 @@ export function migrateLegacyConnectionTypesInUserSettings(): void {
   })
   if (!changed) return
   writeJson(userSettingsPath(), { ...user, models: { ...models, connections } })
+  invalidateResolvedSettingsCache()
 }
 
 export function setSettings(
@@ -314,6 +336,7 @@ export function setSettings(
     if (riskyWorkspaceSettings(patch).length > 0) setWorkspaceTrusted(workspacePath, true)
   }
 
+  invalidateResolvedSettingsCache()
   return getResolvedSettings(workspacePath)
 }
 
@@ -342,6 +365,7 @@ export function resetSettingKey(
     if (!workspacePath) throw new Error('Workspace settings require an open workspace')
     writeJson(workspaceSettingsPath(workspacePath), current)
   }
+  invalidateResolvedSettingsCache()
   return getResolvedSettings(workspacePath)
 }
 
@@ -366,4 +390,5 @@ export function stripLegacySubagentsFromUserSettings(): void {
   if (!agent || !('subagents' in agent)) return
   const { subagents: _removed, ...rest } = agent
   writeJson(userSettingsPath(), { ...user, agent: rest })
+  invalidateResolvedSettingsCache()
 }

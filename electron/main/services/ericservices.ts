@@ -146,20 +146,47 @@ function sanitizeMcpServers(servers: McpServerConfig[]): McpServerConfig[] {
   }))
 }
 
-/** Subset of user settings safe to sync (no secrets / machine paths / API keys). */
+function sanitizeLanguageServers(
+  servers: AppSettings['intelligence']['languageServers']
+): AppSettings['intelligence']['languageServers'] {
+  return (servers || []).map((s) => ({
+    id: s.id,
+    name: s.name,
+    enabled: s.enabled,
+    languageId: s.languageId,
+    extensions: [...(s.extensions || [])],
+    command: s.command,
+    args: [...(s.args || [])]
+  }))
+}
+
+/**
+ * User-preference settings safe for EricServic.es profile sync.
+ * Excludes secrets, machine paths, account session state, and workspace-only git fields.
+ */
 export function buildSyncableSettings(settings: AppSettings): SettingsPatch {
   return {
     editor: {
       fontSize: settings.editor.fontSize,
       tabSize: settings.editor.tabSize,
       theme: settings.editor.theme,
-      inlineSuggest: settings.editor.inlineSuggest
+      inlineSuggest: settings.editor.inlineSuggest,
+      chatFont: settings.editor.chatFont
     },
     general: {
       restoreLastWorkspace: settings.general.restoreLastWorkspace,
+      updates: {
+        autoCheck: settings.general.updates?.autoCheck !== false,
+        autoDownload: settings.general.updates?.autoDownload !== false,
+        channel: settings.general.updates?.channel === 'beta' ? 'beta' : 'stable'
+      },
       logging: {
         enabled: settings.general.logging.enabled,
+        // directory is machine-local — never sync
         level: settings.general.logging.level
+      },
+      telemetry: {
+        agentOutcomes: settings.general.telemetry?.agentOutcomes === true
       }
     },
     agent: {
@@ -167,6 +194,9 @@ export function buildSyncableSettings(settings: AppSettings): SettingsPatch {
       includeOpenFiles: settings.agent.includeOpenFiles,
       maxHistoryMessages: settings.agent.maxHistoryMessages,
       autoKeepDiffs: settings.agent.autoKeepDiffs,
+      commandApproval: settings.agent.commandApproval,
+      allowedCommands: [...(settings.agent.allowedCommands || [])],
+      constrainLocalToolCalls: settings.agent.constrainLocalToolCalls !== false,
       routing: {
         enabled: settings.agent.routing.enabled,
         mode: settings.agent.routing.mode,
@@ -179,6 +209,7 @@ export function buildSyncableSettings(settings: AppSettings): SettingsPatch {
       defaultModel: settings.models.defaultModel,
       temperature: settings.models.temperature,
       contextWindow: settings.models.contextWindow,
+      preferEgpu: settings.models.preferEgpu !== false,
       connections: (settings.models.connections || []).map((c) => ({
         id: c.id,
         name: c.name,
@@ -190,15 +221,113 @@ export function buildSyncableSettings(settings: AppSettings): SettingsPatch {
         models: [...(c.models || [])]
       }))
     },
+    intelligence: {
+      embeddingProvider: settings.intelligence.embeddingProvider,
+      embeddingModel: settings.intelligence.embeddingModel,
+      languageServers: sanitizeLanguageServers(settings.intelligence.languageServers)
+    },
+    evals: {
+      useScoresForRouting: settings.evals.useScoresForRouting,
+      minRuns: settings.evals.minRuns
+      // allowUnsafeCommands stays local — safety policy per machine
+    },
+    backgroundAgents: {
+      maxParallel: settings.backgroundAgents.maxParallel,
+      linkNodeModules: settings.backgroundAgents.linkNodeModules
+    },
     mcp: {
       servers: sanitizeMcpServers(settings.mcp?.servers || [])
     },
     github: {
       host: settings.github.host || 'github.com',
-      preferredProtocol: settings.github.preferredProtocol || 'https'
+      preferredProtocol: settings.github.preferredProtocol || 'https',
+      remoteName: settings.github.remoteName || 'origin',
+      defaultBranch: settings.github.defaultBranch || 'main'
       // tokenRef / repository / linked stay local or workspace-scoped
     }
   }
+}
+
+/**
+ * Apply a pulled profile patch while rehydrating secrets that never leave the device.
+ */
+export function mergePulledUserSettings(
+  remote: SettingsPatch,
+  local: AppSettings
+): SettingsPatch {
+  const patch: SettingsPatch = { ...remote }
+  if (remote.mcp?.servers) {
+    const localById = new Map((local.mcp?.servers || []).map((s) => [s.id, s]))
+    patch.mcp = {
+      servers: remote.mcp.servers.map((rs) => {
+        if (!rs || typeof rs !== 'object' || !('id' in rs)) return rs as never
+        const id = String((rs as { id: string }).id)
+        const loc = localById.get(id)
+        if (!loc) return rs as never
+        const env = { ...((rs as { env?: Record<string, string> }).env || {}) }
+        for (const [k, v] of Object.entries(loc.env || {})) {
+          if (!env[k]) env[k] = v
+        }
+        return { ...(rs as object), env } as never
+      })
+    }
+  }
+  if (remote.models?.connections) {
+    const localById = new Map((local.models?.connections || []).map((c) => [c.id, c]))
+    patch.models = {
+      ...(patch.models || {}),
+      connections: remote.models.connections.map((rc) => {
+        if (!rc || typeof rc !== 'object' || !('id' in rc)) return rc as never
+        const id = String((rc as { id: string }).id)
+        const loc = localById.get(id)
+        if (!loc?.apiKeyRef) return { ...(rc as object), apiKeyRef: '' } as never
+        return { ...(rc as object), apiKeyRef: loc.apiKeyRef } as never
+      })
+    }
+  }
+  if (remote.intelligence?.languageServers) {
+    const localById = new Map(
+      (local.intelligence?.languageServers || []).map((s) => [s.id, s])
+    )
+    patch.intelligence = {
+      ...(patch.intelligence || {}),
+      languageServers: remote.intelligence.languageServers.map((rs) => {
+        if (!rs || typeof rs !== 'object' || !('id' in rs)) return rs as never
+        const id = String((rs as { id: string }).id)
+        const loc = localById.get(id)
+        const remoteCmd = String((rs as { command?: string }).command || '').trim()
+        if (remoteCmd || !loc) return rs as never
+        return {
+          ...(rs as object),
+          command: loc.command,
+          args: [...(loc.args || [])]
+        } as never
+      })
+    }
+  }
+  // Never let remote wipe local secrets / account / workspace git link
+  delete (patch as { ericServices?: unknown }).ericServices
+  if (patch.github) {
+    const g = { ...patch.github } as Record<string, unknown>
+    delete g.tokenRef
+    delete g.repository
+    delete g.linked
+    patch.github = g as SettingsPatch['github']
+  }
+  if (patch.general?.logging) {
+    const logging = { ...patch.general.logging } as Record<string, unknown>
+    delete logging.directory
+    patch.general = {
+      ...patch.general,
+      logging: logging as AppSettings['general']['logging']
+    }
+  }
+  if (patch.evals) {
+    const evals = { ...patch.evals } as Record<string, unknown>
+    delete evals.allowUnsafeCommands
+    patch.evals = evals as SettingsPatch['evals']
+  }
+  return patch
 }
 
 /** Full profile envelope for push (settings + user skills). */

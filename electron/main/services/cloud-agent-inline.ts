@@ -229,10 +229,7 @@ export async function* runCloudAgentInline(options: {
         ? 'Composer Full downloading on cloud…'
         : 'Composer Full warming on cloud…'
     yield { type: 'status', text: detail }
-    yield {
-      type: 'thinking',
-      text: `${detail} First job may take a moment while the worker loads the model.\n`
-    }
+    yield { type: 'thinking', text: `— ${detail}\n` }
   }
 
   let repoUrl: string | null = null
@@ -368,7 +365,7 @@ export async function* runCloudAgentInline(options: {
         yield { type: 'workspace-changed' }
         yield {
           type: 'thinking',
-          text: `\nApplied ${applied.diffs.length} file${applied.diffs.length === 1 ? '' : 's'} — review in Diff Review.\n`
+          text: `\n— Applied ${applied.diffs.length} file${applied.diffs.length === 1 ? '' : 's'}\n`
         }
       } else if (applied.error) {
         logWarn('Cloud inline apply artifacts', { error: applied.error })

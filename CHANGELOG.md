@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.2.33 — 2026-10-14
+
+- Desktop rebuild: stop keeps partials, faster agent/send path, settings cache, mention index + Windows paths.
+
+## 0.2.32 — 2026-10-14
+
+- Stop keeps partial replies (sticky request id) instead of discarding streamed text.
+- Agent TTFT: MCP sync + retrieval run in parallel after early status; LLM router capped at 400ms.
+- Chat send skips `modelsStatus` IPC (uses in-memory catalog), optimistic user turn, parallel save.
+- Cache resolved settings between writes; @-mention index no longer rebuilds on every tree tick.
+- Windows-safe workspace path joins for open/attach/diff.
+
+## 0.2.31 — 2026-10-14
+
+- Faster chat: light `modelsStatus` on send/boot (no provider probes); Settings → Providers still probes live.
+- Idle-warm default local GGUF after launch so the first local turn isn’t a cold load.
+- Streaming replies paint as plain text with stick-to-bottom scroll (full markdown after the turn).
+
+## 0.2.30 — 2026-10-14
+
+- Fix: downloading a Local / Hugging Face model adds it to the catalog list immediately and shows live progress.
+- Chat thinking: compact activity view (status + recent tools + short steps); full log stays behind a toggle; less verbose tool breadcrumbs.
+
+## 0.2.29 — 2026-10-14
+
+- Settings → Local models → GPU: compact device list only; Apple Silicon shows Metal + unified memory (no raw bus keys).
+
+## 0.2.28 — 2026-10-14
+
+- Settings → Editor: **Chat response font** (Sans / Mono / Serif) for assistant replies; code fences stay monospace.
+- EricServic.es profile sync covers far more preferences (updates, telemetry, agent approvals, eGPU, intelligence, evals routing, background agents, GitHub prefs) while still keeping secrets, log paths, and workspace git links local.
+- Fix model downloads (esp. Windows): stable monotonic progress, correct totals (`x-linked-size` / approx), Verifying/Installing phases after bytes finish, idle-timeout + rename retries so large files no longer sit at ~90%.
+- Local models GPU selection: prefer **best GPU → eGPU → GPU → CPU**; Settings → Local models lists every detected GPU and highlights the selected one.
+
 ## 0.2.26 — 2026-10-13
 
 - Desktop rebuild of Local models / Composer settings split / eGPU preference / update-banner semver guard.

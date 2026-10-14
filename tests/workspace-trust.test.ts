@@ -3,7 +3,11 @@ import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { describe, expect, it } from 'vitest'
 import { workspaceSettingsPath } from '../electron/main/services/paths'
-import { getResolvedSettings, setSettings } from '../electron/main/services/settings'
+import {
+  getResolvedSettings,
+  invalidateResolvedSettingsCache,
+  setSettings
+} from '../electron/main/services/settings'
 import {
   addWorkspaceAllowedCommand,
   isWorkspaceTrusted,
@@ -19,6 +23,7 @@ function newWorkspace(settings?: unknown): string {
     mkdirSync(dirname(workspaceSettingsPath(ws)), { recursive: true })
     writeFileSync(workspaceSettingsPath(ws), JSON.stringify(settings))
   }
+  invalidateResolvedSettingsCache()
   return ws
 }
 

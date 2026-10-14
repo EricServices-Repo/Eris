@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { joinWorkspacePath } from '@/shared/paths'
 
 interface Props {
   workspacePath: string | null
@@ -128,7 +129,9 @@ export function CodemapPanel({ workspacePath, onOpenPath, onOpenSettings }: Prop
               <button
                 type="button"
                 onClick={() => {
-                  const abs = s.path.startsWith('/') ? s.path : `${workspacePath}/${s.path}`
+                  const abs = workspacePath
+                    ? joinWorkspacePath(workspacePath, s.path)
+                    : s.path
                   onOpenPath?.(abs, s.line)
                 }}
               >

@@ -3,7 +3,7 @@
  */
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { platform } from 'os'
+import { platform, totalmem } from 'os'
 import type { GpuAccelStatus, GpuDeviceInfo } from '../../../src/shared/settings-schema'
 import { logInfo, logWarn } from './logger'
 
@@ -46,6 +46,29 @@ export function classifyWinName(name: string, pnp: string): GpuDeviceInfo['kind'
   return 'discrete'
 }
 
+/** Human bus/connection label — hide raw system_profiler keys. Exported for tests. */
+export function humanMacBus(bus: string): string | undefined {
+  const b = bus.trim()
+  if (!b) return undefined
+  const lower = b.toLowerCase()
+  if (lower === 'spdisplays_builtin' || lower.includes('built-in') || lower.includes('builtin')) {
+    return 'Built-in'
+  }
+  if (lower.includes('thunderbolt') || lower.includes('usb4')) return 'Thunderbolt'
+  if (lower.includes('pcie') || lower.includes('pci express') || lower === 'pci') return 'PCIe'
+  if (lower.startsWith('spdisplays_') || lower.startsWith('sppci_')) return undefined
+  return b
+}
+
+function parseVramBytes(vramRaw: unknown): number | undefined {
+  if (typeof vramRaw === 'number' && vramRaw > 0) return vramRaw
+  if (typeof vramRaw !== 'string') return undefined
+  const m = vramRaw.match(/([\d.]+)\s*(MB|GB)/i)
+  if (!m) return undefined
+  const n = Number(m[1])
+  return /gb/i.test(m[2]) ? Math.round(n * 1e9) : Math.round(n * 1e6)
+}
+
 async function listMacGpus(): Promise<GpuDeviceInfo[]> {
   try {
     const { stdout } = await execFileAsync('system_profiler', ['SPDisplaysDataType', '-json'], {
@@ -56,24 +79,24 @@ async function listMacGpus(): Promise<GpuDeviceInfo[]> {
       SPDisplaysDataType?: Array<Record<string, unknown>>
     }
     const rows = json.SPDisplaysDataType ?? []
+    const unifiedBytes = totalmem()
     return rows.map((row, index) => {
       const name = String(
         row.sppci_model || row._name || row['spdisplays_device-id'] || `GPU ${index}`
       )
-      const bus = String(row.sppci_bus || row.sppci_slot_name || '')
-      const vramRaw = row.spdisplays_vram || row.sppci_vram || row['spdisplays_vram_shared']
-      let vramBytes: number | undefined
-      if (typeof vramRaw === 'string') {
-        const m = vramRaw.match(/([\d.]+)\s*(MB|GB)/i)
-        if (m) {
-          const n = Number(m[1])
-          vramBytes = /gb/i.test(m[2]) ? Math.round(n * 1e9) : Math.round(n * 1e6)
-        }
+      const rawBus = String(row.sppci_bus || row.sppci_slot_name || '')
+      let vramBytes =
+        parseVramBytes(row.spdisplays_vram) ||
+        parseVramBytes(row.sppci_vram) ||
+        parseVramBytes(row['spdisplays_vram_shared'])
+      // Apple Silicon reports shared/unified memory, not discrete VRAM.
+      if (!vramBytes && /apple\s+m\d/i.test(name) && unifiedBytes > 0) {
+        vramBytes = unifiedBytes
       }
       return {
         name,
-        kind: classifyMacBus(bus, name),
-        bus: bus || undefined,
+        kind: classifyMacBus(rawBus, name),
+        bus: humanMacBus(rawBus),
         vramBytes,
         index
       }
@@ -138,8 +161,34 @@ async function listNvidiaCudaDevices(): Promise<Array<{ index: number; name: str
   }
 }
 
-function pickPreferredGpu(devices: GpuDeviceInfo[]): GpuDeviceInfo | null {
-  return devices.find((d) => d.kind === 'external') || devices.find((d) => d.kind === 'discrete') || null
+/** Kind rank: eGPU > discrete GPU > integrated. Exported for tests. */
+export function rankGpuKind(kind: GpuDeviceInfo['kind']): number {
+  if (kind === 'external') return 3
+  if (kind === 'discrete') return 2
+  return 1
+}
+
+/**
+ * Best GPU for Local models: eGPU first, then discrete (most VRAM), then integrated.
+ * Exported for unit tests.
+ */
+export function pickBestGpu(devices: GpuDeviceInfo[]): GpuDeviceInfo | null {
+  if (!devices.length) return null
+  return [...devices].sort((a, b) => {
+    const byKind = rankGpuKind(b.kind) - rankGpuKind(a.kind)
+    if (byKind !== 0) return byKind
+    return (b.vramBytes ?? 0) - (a.vramBytes ?? 0)
+  })[0]!
+}
+
+function accelTierFor(
+  preferred: GpuDeviceInfo | null,
+  backendOk: boolean,
+  preferBest: boolean
+): 'egpu' | 'gpu' | 'cpu' {
+  if (!preferBest || !backendOk || !preferred) return 'cpu'
+  if (preferred.kind === 'external') return 'egpu'
+  return 'gpu'
 }
 
 async function probeLlamaBackend(): Promise<{
@@ -176,28 +225,41 @@ function statusMessage(options: {
   backend: LlamaGpuBackend
   deviceName: string | null
   preferEgpu: boolean
-  usable: boolean
+  tier: 'egpu' | 'gpu' | 'cpu'
+  deviceCount: number
 }): string {
-  if (options.egpu) {
-    if (options.usable) {
-      return `eGPU detected (${options.egpu.name}) — Local models can use it via ${options.backend || 'GPU'}${
-        options.deviceName ? ` · ${options.deviceName}` : ''
-      }.`
-    }
-    if (!options.preferEgpu) {
-      return `eGPU detected (${options.egpu.name}) but preference is off — using default GPU/CPU.`
-    }
-    return `eGPU detected (${options.egpu.name}) but no compatible GPU backend is available yet (need Metal/CUDA/Vulkan).`
+  const backendLabel = options.backend
+    ? `${options.backend}${options.deviceName ? ` · ${options.deviceName}` : ''}`
+    : null
+  const priority = 'Priority: best GPU → eGPU → GPU → CPU'
+
+  if (!options.preferEgpu) {
+    return `${priority}. Preference off — Local models use the default ${backendLabel || 'GPU/CPU'} path.`
   }
-  if (options.preferred?.kind === 'discrete' && options.usable) {
-    return `Discrete GPU (${options.preferred.name}) available for Local models via ${options.backend}.`
+
+  if (options.tier === 'egpu' && options.egpu) {
+    return `${priority}. Using eGPU (${options.egpu.name}) via ${backendLabel || 'GPU'}.`
   }
+
+  if (options.tier === 'gpu' && options.preferred) {
+    const kind =
+      options.preferred.kind === 'discrete' ? 'discrete GPU' : 'integrated GPU'
+    return `${priority}. Using ${kind} (${options.preferred.name}) via ${backendLabel || 'GPU'}.`
+  }
+
+  if (options.egpu && !options.backend) {
+    return `${priority}. eGPU detected (${options.egpu.name}) but no Metal/CUDA/Vulkan backend — falling back to CPU.`
+  }
+
+  if (options.deviceCount > 0 && options.backend) {
+    return `${priority}. GPU listed, but selection fell through to ${backendLabel}.`
+  }
+
   if (options.backend) {
-    return `No eGPU detected. Local models use ${options.backend}${
-      options.deviceName ? ` (${options.deviceName})` : ''
-    }.`
+    return `${priority}. No dedicated GPU selected — Local models use ${backendLabel}.`
   }
-  return 'No eGPU detected. Local models will run on CPU.'
+
+  return `${priority}. No usable GPU — Local models will run on CPU.`
 }
 
 export async function getGpuAccelStatus(preferEgpu = true): Promise<GpuAccelStatus> {
@@ -209,7 +271,7 @@ export async function getGpuAccelStatus(preferEgpu = true): Promise<GpuAccelStat
   const devices =
     os === 'darwin' ? await listMacGpus() : os === 'win32' ? await listWinGpus() : []
   const egpu = devices.find((d) => d.kind === 'external') ?? null
-  const preferred = pickPreferredGpu(devices)
+  const preferred = pickBestGpu(devices)
   const probed = await probeLlamaBackend()
   const backend = probed.backend ?? lastBackend
   // Prefer a concrete device name from a real model load when available.
@@ -219,11 +281,10 @@ export async function getGpuAccelStatus(preferEgpu = true): Promise<GpuAccelStat
     lastBackendDevice
   if (backend !== null && backend !== undefined) lastBackend = backend
 
-  const wantsDiscrete = preferEgpu && !egpu && preferred?.kind === 'discrete'
   const backendOk = backend === 'metal' || backend === 'cuda' || backend === 'vulkan'
-  // eGPU "usable" = external present + GPU backend available (Metal/CUDA/Vulkan).
   const egpuUsable = Boolean(egpu && preferEgpu && backendOk)
-  const accelUsable = egpuUsable || Boolean(wantsDiscrete && backendOk)
+  const accelUsable = Boolean(preferEgpu && preferred && backendOk)
+  const accelTier = accelTierFor(preferred, backendOk, preferEgpu)
 
   const status: GpuAccelStatus = {
     devices,
@@ -233,6 +294,7 @@ export async function getGpuAccelStatus(preferEgpu = true): Promise<GpuAccelStat
     egpuDetected: Boolean(egpu),
     egpuUsable,
     accelUsable,
+    accelTier,
     backend,
     backendDeviceName: deviceName,
     message: statusMessage({
@@ -241,7 +303,8 @@ export async function getGpuAccelStatus(preferEgpu = true): Promise<GpuAccelStat
       backend,
       deviceName,
       preferEgpu,
-      usable: egpuUsable || (Boolean(egpu) && backendOk)
+      tier: accelTier,
+      deviceCount: devices.length
     })
   }
   cached = { at: Date.now(), status }
@@ -263,31 +326,31 @@ export async function applyLlamaGpuPreference(preferEgpu = true): Promise<{
 }> {
   const status = await getGpuAccelStatus(preferEgpu)
   const env: Record<string, string> = {}
-  const preferred = status.egpu || (preferEgpu ? status.preferredGpu : null)
+  // Best GPU when preference is on: eGPU → discrete → integrated.
+  const preferred = preferEgpu ? status.preferredGpu : null
 
   if (preferEgpu && preferred && status.backend === 'cuda') {
     const cuda = await listNvidiaCudaDevices()
     const match =
       cuda.find((d) => preferred.name.toLowerCase().includes(d.name.toLowerCase())) ||
       cuda.find((d) => d.name.toLowerCase().includes(preferred.name.toLowerCase().slice(0, 12))) ||
-      (preferred.kind === 'external' || preferred.kind === 'discrete' ? cuda[cuda.length - 1] : null)
+      (preferred.kind === 'external' || preferred.kind === 'discrete'
+        ? cuda[cuda.length - 1]
+        : cuda[0] || null)
     if (match) {
       env.CUDA_VISIBLE_DEVICES = String(match.index)
     }
   }
 
   if (preferEgpu && preferred && status.backend === 'vulkan') {
-    // Prefer non-zero index when multiple devices; index 0 is often iGPU.
-    const idx =
-      preferred.kind === 'external' || preferred.kind === 'discrete'
-        ? Math.max(0, preferred.index)
-        : 0
+    // Prefer the preferred device index; index 0 is often iGPU when a dGPU exists.
+    const idx = Math.max(0, preferred.index)
     env.GGML_VK_VISIBLE_DEVICES = String(idx)
   }
 
   // Metal uses the system default device; macOS "Prefer External GPU" / high-perf
   // policy routes MTLCreateSystemDefaultDevice to the eGPU when attached.
-  if (preferEgpu && status.egpu && status.backend === 'metal') {
+  if (preferEgpu && preferred?.kind === 'external' && status.backend === 'metal') {
     env.GGML_METAL_DEVICES = '1'
   }
 
