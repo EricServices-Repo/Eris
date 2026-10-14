@@ -30,9 +30,11 @@ interface Props {
   /** Notify parent when expand toggles (taller drawer). */
   expanded?: boolean
   onExpandedChange?: (expanded: boolean) => void
-  /** Git: stage kept files, commit, open PR */
+  /** Git: stage kept files, commit, push, open PR */
   onStageKept?: () => void
   onCommitKept?: () => void
+  /** Stage → commit (default message) → push — primary finish flow */
+  onCommitAndPush?: () => void
   onCreatePr?: () => void
   gitBusy?: boolean
 }
@@ -74,6 +76,7 @@ export function DiffReview({
   onExpandedChange,
   onStageKept,
   onCommitKept,
+  onCommitAndPush,
   onCreatePr,
   gitBusy = false
 }: Props) {
@@ -224,6 +227,17 @@ export function DiffReview({
           <button type="button" className="btn" disabled={!pending.length} onClick={onUndoAll}>
             Undo all
           </button>
+          {onCommitAndPush && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={gitBusy || kept.length === 0}
+              title="Stage kept files, commit with a default message, and push"
+              onClick={onCommitAndPush}
+            >
+              {gitBusy ? 'Working…' : 'Commit & Push'}
+            </button>
+          )}
           {onStageKept && (
             <button
               type="button"
@@ -238,9 +252,9 @@ export function DiffReview({
           {onCommitKept && (
             <button
               type="button"
-              className="btn btn-primary"
+              className="btn"
               disabled={gitBusy || kept.length === 0}
-              title="Stage kept files and commit"
+              title="Stage kept files and commit (local only)"
               onClick={onCommitKept}
             >
               Commit…

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { AppSettings, BuiltinModelStatus, ModelsStatus } from '@/shared/settings-schema'
 import type { ApplySetting } from '../fields'
 import { ModelConnectionsPanel } from '../ModelConnectionsPanel'
@@ -39,18 +39,48 @@ function BuiltinRow({
   load: () => Promise<void>
   currentDefault?: string
 }) {
-  const isDownloading = downloadingId === b.id
+  const isDownloading = downloadingId === b.id || Boolean(b.downloading)
   const size = sizeLabel(b.approxBytes)
+  const pct = Math.round((b.progress || 0) * 100)
   const statusText = b.ready
     ? 'Ready'
-    : b.installed
-      ? 'Needs re-download'
-      : `Not installed · ${size}`
+    : isDownloading
+      ? pct > 0
+        ? `Downloading · ${pct}%`
+        : 'Downloading…'
+      : b.installed
+        ? 'Needs re-download'
+        : `Not installed · ${size}`
+
+  const startDownload = () => {
+    setDownloadingId(b.id)
+    void window.ide
+      .downloadBuiltinModel(b.id)
+      .then(async () => {
+        await load()
+        const shouldPromote =
+          b.tier === 'lite' &&
+          (!currentDefault?.startsWith('builtin:') ||
+            currentDefault === b.ref ||
+            currentDefault === 'builtin:composer')
+        if (shouldPromote) await apply(['models', 'defaultModel'], b.ref)
+      })
+      .catch(async (err: unknown) => {
+        await load()
+        const msg = err instanceof Error ? err.message : 'Download failed'
+        window.alert(
+          `${msg}\n\nTip: Retry, check VPN/firewall, or open the Hugging Face URL in a browser.`
+        )
+      })
+      .finally(() => setDownloadingId(null))
+  }
 
   return (
     <div className={`models-row${isDefault ? ' is-default' : ''}${b.ready ? ' is-ready' : ''}`}>
       <div className="models-row-main">
-        <span className={`status-dot ${b.ready ? 'ok' : isDownloading ? 'warn' : ''}`} />
+        <span
+          className={`status-dot ${b.ready ? 'ok' : isDownloading ? 'warn' : b.downloadError ? 'danger' : ''}`}
+        />
         <div className="models-row-copy">
           <div className="models-row-title">
             <strong>{b.displayName}</strong>
@@ -58,14 +88,16 @@ function BuiltinRow({
             {b.tier === 'full' && <span className="models-tag">Worker</span>}
             {isDefault && <span className="models-tag is-accent">Default</span>}
           </div>
-          <div className="models-row-meta">
-            {statusText}
-            {isDownloading && b.progress > 0 ? ` · ${Math.round(b.progress * 100)}%` : ''}
-          </div>
-          {!b.ready && b.progress > 0 && b.progress < 1 && (
+          <div className="models-row-meta">{statusText}</div>
+          {(isDownloading || (!b.ready && b.progress > 0 && b.progress < 1)) && (
             <div className="models-progress">
-              <div style={{ width: `${Math.round(b.progress * 100)}%` }} />
+              <div style={{ width: `${Math.max(2, pct)}%` }} />
             </div>
+          )}
+          {b.downloadError && !isDownloading && !b.ready && (
+            <p className="models-download-error" title={b.downloadError}>
+              {b.downloadError}
+            </p>
           )}
         </div>
       </div>
@@ -120,39 +152,31 @@ function BuiltinRow({
             onClick={() => {
               void window.ide.cancelBuiltinDownload()
               setDownloadingId(null)
+              void load()
             }}
           >
             Cancel
           </button>
-        ) : downloadingId ? (
+        ) : downloadingId && downloadingId !== b.id ? (
           <button type="button" className="btn" disabled>
             Waiting
           </button>
         ) : (
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => {
-              setDownloadingId(b.id)
-              void window.ide
-                .downloadBuiltinModel(b.id)
-                .then(async () => {
-                  await load()
-                  const shouldPromote =
-                    b.tier === 'lite' &&
-                    (!currentDefault?.startsWith('builtin:') ||
-                      currentDefault === b.ref ||
-                      currentDefault === 'builtin:composer')
-                  if (shouldPromote) await apply(['models', 'defaultModel'], b.ref)
-                })
-                .catch((err: unknown) => {
-                  window.alert(err instanceof Error ? err.message : 'Download failed')
-                })
-                .finally(() => setDownloadingId(null))
-            }}
-          >
-            Download
-          </button>
+          <>
+            <button type="button" className="btn btn-primary" onClick={startDownload}>
+              {b.downloadError ? 'Retry' : 'Download'}
+            </button>
+            {b.downloadUrl ? (
+              <button
+                type="button"
+                className="btn"
+                title="Open the Hugging Face download URL in your browser"
+                onClick={() => void window.ide.openExternal(b.downloadUrl)}
+              >
+                Open URL
+              </button>
+            ) : null}
+          </>
         )}
       </div>
     </div>
@@ -176,6 +200,13 @@ export function ModelsPanel({
   const [showApis, setShowApis] = useState(false)
 
   const builtins = status?.builtin ?? []
+
+  // Restore in-progress download after Settings was closed (main process keeps progress).
+  useEffect(() => {
+    const active = builtins.find((b) => b.downloading)
+    if (active) setDownloadingId(active.id)
+  }, [builtins, setDownloadingId])
+
   const readyOptions = useMemo(() => {
     const opts: Array<{ value: string; label: string }> = []
     for (const b of builtins) {
@@ -228,6 +259,10 @@ export function ModelsPanel({
             Refresh
           </button>
         </header>
+        <p className="models-hint" style={{ marginTop: 0 }}>
+          Downloads continue if you close Settings. On flaky networks, use Retry or Open URL in a
+          browser to confirm Hugging Face is reachable.
+        </p>
         <div className="models-row-list">
           {builtins.map((b) => (
             <BuiltinRow

@@ -153,8 +153,26 @@ export function SettingsModal({
             }
           : prev
       )
+      if (s.downloading) modelsState.setDownloadingId(s.id)
     })
   }, [open])
+
+  // Keep progress fresh when Settings was closed mid-download (main process owns the transfer).
+  useEffect(() => {
+    if (!open || category !== 'models') return
+    const downloading =
+      Boolean(modelsState.downloadingId) ||
+      Boolean(status?.builtin?.some((b) => b.downloading))
+    if (!downloading) return
+    const id = window.setInterval(() => {
+      void window.ide.modelsStatus().then((models) => {
+        setStatus(models)
+        const still = models.builtin?.find((b) => b.downloading)
+        modelsState.setDownloadingId(still?.id ?? null)
+      })
+    }, 1_500)
+    return () => window.clearInterval(id)
+  }, [open, category, modelsState.downloadingId])
 
   useEffect(() => {
     if (!hasWorkspace && scope === 'workspace') setScope('user')

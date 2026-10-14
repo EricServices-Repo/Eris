@@ -1,9 +1,22 @@
 # Changelog
 
+## 0.2.21 — 2026-10-13
+
+- Settings → Models → Ollama: pick and download more local models (incl. **qwen3.8**), search/filter the catalog, or paste an ollama.com/library URL; pulled models register for chat.
+
+## 0.2.20 — 2026-10-13
+
+- Settings → Usage: account vs device totals, last sync time, and a soft “Syncing…” state when profile `usage.php` is slow/offline.
+- Faster first Cloud job: prefetch health/model status after login; chat shows “Composer Full warming on cloud…” instead of a silent wait.
+- Diff Review: primary **Commit & Push** (stage → commit → push) with a default message after Keep.
+- Builtin model install UX: Retry / Open URL on Hugging Face failures; download progress survives closing Settings.
+- Usage metrics sync to **www.ericservic.es** profile (`/api/eris/v1/usage.php`) — desktop + Cloud Agent; Free caps use max(local, profile).
+
 ## 0.2.19 — 2026-10-12
 
 - Builtin model download: Electron `net.fetch` + Node fallback and clearer Windows errors (fixes opaque `TypeError: fetch failed`).
 - Desktop rebuild: Cloud Agent work runs inline in chat thinking; Agents tree / right-column Agents tab / Background hand-off removed.
+- Cloud Agent **0.2.22**: report Cloud Agent jobs to profile `usage.php`; Free gate uses max(local, profile).
 - Cloud Agent **0.2.21**: fleet management — enroll/heartbeat with EricServic.es, pull/push remote settings (`/v1/fleet/*`), website API stubs under `cloud-agent/website-stubs/`.
 - Cloud Agent **0.2.20**: stop VM crash loop on CPU boot — defer GGUF RAM load until first job, stop queued+running on safe-boot, default ctx **2048**, slower systemd restart backoff.
 - Cloud Agent **0.2.19**: port **:80** status page is a usage overview (live capacity, today outcomes, free-plan caps, process metrics, plan/status bars, masked top users, recent audit).

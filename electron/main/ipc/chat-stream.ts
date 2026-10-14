@@ -31,6 +31,8 @@ import { appState } from '../app-state'
 import { getSecret, abortAllCompletes } from './shared'
 import { addWorkspaceAllowedCommand, workspaceAllowedCommands } from '../services/workspace-trust'
 import { assertChatWithinPlan, assertCloudJobWithinPlan } from '../services/eris-entitlements'
+import { isBuiltinRef } from '../services/builtin-model'
+import { recordAgentRun } from '../services/agent-telemetry'
 import {
   cloudInlineAvailable,
   runCloudAgentInline
@@ -134,6 +136,26 @@ export function registerChatStreamIpc(): void {
       }
       let run: AgentRunRecord | null = null
       let runIncomplete = false
+      // #10 opt-in agent telemetry
+      const telemetryOn = settings.general.telemetry?.agentOutcomes === true
+      let telemetrySteps = 0
+      let telemetryMutated = false
+      let usedCloud = false
+      const recordTelemetry = (outcome: 'done' | 'incomplete' | 'aborted') => {
+        if (!telemetryOn) return
+        try {
+          recordAgentRun({
+            model: usedCloud ? 'composer' : turnPlan.models.tools,
+            intent: turnPlan.intent,
+            steps: telemetrySteps,
+            mutated: telemetryMutated,
+            incomplete: outcome === 'incomplete',
+            aborted: outcome === 'aborted'
+          })
+        } catch {
+          /* telemetry is best-effort */
+        }
+      }
       const persistRun = (patch: Partial<AgentRunRecord>) => {
         if (!run || !appState.currentWorkspace) return
         run = { ...run, ...patch }
@@ -170,15 +192,22 @@ export function registerChatStreamIpc(): void {
 
         // Agent mode: prefer Cloud Composer inline in chat (thinking/tools/answer),
         // not a background Agents-panel job. Fall back to local Lite on failure.
+        // Only hand off to Cloud Composer when the turn would otherwise run the
+        // built-in local model. If the user picked their own API/cloud model
+        // (OpenAI, Anthropic, OpenRouter, Ollama, …), run it directly in the
+        // local agent loop so BYO keys are first-class in Agent mode.
+        const toolsModelIsBuiltin = isBuiltinRef(turnPlan.models.tools)
         const wantCloudInline =
           (mode ?? 'agent') === 'agent' &&
           turnPlan.mode === 'agent' &&
           Boolean(appState.currentWorkspace) &&
+          toolsModelIsBuiltin &&
           !resume
 
         if (wantCloudInline && (await cloudInlineAvailable(settings, getSecret))) {
           try {
             assertCloudJobWithinPlan(settings, getSecret)
+            usedCloud = true
             event.sender.send('chat:model', {
               requestId,
               model: 'composer',
@@ -205,6 +234,7 @@ export function registerChatStreamIpc(): void {
                 if (evt.type === 'tool') {
                   event.sender.send('chat:tool', { requestId, tool: evt.tool })
                 } else if (evt.type === 'diff') {
+                  telemetryMutated = true
                   event.sender.send('chat:diff', { requestId, diff: evt.diff })
                 } else if (evt.type === 'checkpoint') {
                   event.sender.send('chat:checkpoint', {
@@ -227,6 +257,7 @@ export function registerChatStreamIpc(): void {
             }
             flushStreamChunks()
             persistRun({ status: 'done' })
+            recordTelemetry('done')
             event.sender.send('chat:done', { requestId })
             logInfo('Chat stream done (cloud inline)', { requestId })
             return true
@@ -368,6 +399,7 @@ export function registerChatStreamIpc(): void {
             if (evt.type === 'tool') {
               event.sender.send('chat:tool', { requestId, tool: evt.tool })
             } else if (evt.type === 'diff') {
+              telemetryMutated = true
               event.sender.send('chat:diff', { requestId, diff: evt.diff })
             } else if (evt.type === 'checkpoint') {
               event.sender.send('chat:checkpoint', {
@@ -394,6 +426,8 @@ export function registerChatStreamIpc(): void {
               }
             } else if (evt.type === 'progress') {
               if (evt.incomplete) runIncomplete = true
+              telemetrySteps = evt.step
+              if (evt.filesTouched.length) telemetryMutated = true
               persistRun({
                 step: evt.step,
                 actionLog: evt.actionLog.slice(-120),
@@ -430,6 +464,7 @@ export function registerChatStreamIpc(): void {
         }
         flushStreamChunks()
         persistRun({ status: runIncomplete ? 'incomplete' : 'done' })
+        recordTelemetry(runIncomplete ? 'incomplete' : 'done')
         event.sender.send('chat:done', { requestId })
         logInfo('Chat stream done', { requestId, model: resolvedModel })
         return true
@@ -437,6 +472,7 @@ export function registerChatStreamIpc(): void {
         flushStreamChunks()
         if ((err as Error).name === 'AbortError') {
           persistRun({ status: 'stopped' })
+          recordTelemetry('aborted')
           logWarn('Chat stream aborted', { requestId })
           event.sender.send('chat:done', { requestId, aborted: true })
           return false

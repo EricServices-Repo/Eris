@@ -32,7 +32,8 @@
       "routerModel": "builtin:composer-lite",
       "useLlmRouter": false,
       "fallbackAgentId": "composer"
-    }
+    },
+    "constrainLocalToolCalls": true
   },
   "intelligence": {
     "embeddingProvider": "auto",
@@ -118,12 +119,16 @@
     "restoreLastWorkspace": true,
     "updates": {
       "autoCheck": true,
-      "autoDownload": true
+      "autoDownload": true,
+      "channel": "stable"
     },
     "logging": {
       "enabled": true,
       "directory": "",
       "level": "info"
+    },
+    "telemetry": {
+      "agentOutcomes": false
     }
   }
 }

@@ -2,6 +2,18 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { userDataRoot } from './paths'
 
+function notifyProfileUsageDelta(delta: {
+  requests?: number
+  inputTokens?: number
+  outputTokens?: number
+  cloudJobs?: number
+}): void {
+  // Dynamic import avoids a circular dependency with usage-sync.ts
+  void import('./usage-sync')
+    .then((m) => m.queueUsageDelta(delta))
+    .catch(() => undefined)
+}
+
 export type ModelUsageKind = 'builtin' | 'openai-compatible' | 'other'
 
 export type ModelUsageEntry = {
@@ -159,6 +171,12 @@ export function recordModelUsage(options: {
   day.totalOutputTokens += outputTokens
   file.days[date] = day
   saveFile(file)
+  notifyProfileUsageDelta({
+    requests: 1,
+    inputTokens,
+    outputTokens,
+    cloudJobs: 0
+  })
 }
 
 /** Count a Cloud Agent enqueue toward Free-tier daily caps. */
@@ -168,6 +186,59 @@ export function recordCloudJobEnqueue(): void {
   const day = file.days[date] || emptyDay(date)
   day.cloudJobs = (day.cloudJobs || 0) + 1
   file.days[date] = day
+  saveFile(file)
+  notifyProfileUsageDelta({ cloudJobs: 1 })
+}
+
+export type DayUsageTotals = {
+  requests: number
+  inputTokens: number
+  outputTokens: number
+  cloudJobs: number
+}
+
+export function getLocalDayTotals(date = todayKey()): DayUsageTotals {
+  const file = loadFile()
+  const day = file.days[date] || emptyDay(date)
+  return {
+    requests: day.totalRequests || 0,
+    inputTokens: day.totalInputTokens || 0,
+    outputTokens: day.totalOutputTokens || 0,
+    cloudJobs: day.cloudJobs || 0
+  }
+}
+
+/**
+ * Merge remote profile day into local file (max per counter) so UI matches Control Hub.
+ */
+export function applyRemoteDayUsage(remote: {
+  day: string
+  requests: number
+  inputTokens: number
+  outputTokens: number
+  cloudJobs: number
+}): void {
+  if (!remote?.day) return
+  const file = loadFile()
+  const day = file.days[remote.day] || emptyDay(remote.day)
+  const nextRequests = Math.max(day.totalRequests || 0, remote.requests || 0)
+  const nextIn = Math.max(day.totalInputTokens || 0, remote.inputTokens || 0)
+  const nextOut = Math.max(day.totalOutputTokens || 0, remote.outputTokens || 0)
+  const nextCloud = Math.max(day.cloudJobs || 0, remote.cloudJobs || 0)
+  if (
+    nextRequests === (day.totalRequests || 0) &&
+    nextIn === (day.totalInputTokens || 0) &&
+    nextOut === (day.totalOutputTokens || 0) &&
+    nextCloud === (day.cloudJobs || 0)
+  ) {
+    return
+  }
+  // Bump aggregate totals only — per-model breakdown stays local-device detail.
+  day.totalRequests = nextRequests
+  day.totalInputTokens = nextIn
+  day.totalOutputTokens = nextOut
+  day.cloudJobs = nextCloud
+  file.days[remote.day] = day
   saveFile(file)
 }
 

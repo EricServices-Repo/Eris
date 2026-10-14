@@ -147,7 +147,11 @@ function sanitizeGeneral(raw: Record<string, unknown>): Record<string, unknown> 
   const updates = { ...((general.updates as Record<string, unknown> | undefined) || {}) }
   if (typeof updates.autoCheck !== 'boolean') updates.autoCheck = true
   if (typeof updates.autoDownload !== 'boolean') updates.autoDownload = true
+  if (updates.channel !== 'stable' && updates.channel !== 'beta') updates.channel = 'stable'
   general.updates = updates
+  const telemetry = { ...((general.telemetry as Record<string, unknown> | undefined) || {}) }
+  if (typeof telemetry.agentOutcomes !== 'boolean') telemetry.agentOutcomes = false
+  general.telemetry = telemetry
   return { ...raw, general }
 }
 

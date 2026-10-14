@@ -97,6 +97,7 @@ export default function App() {
   } = useSettingsState()
   const [settingsMounted, setSettingsMounted] = useState(false)
   const [diffReviewExpanded, setDiffReviewExpanded] = useState(true)
+  const [diffGitBusy, setDiffGitBusy] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [workspaceModal, setWorkspaceModal] = useState<null | 'create' | 'link'>(null)
   const [showSetupWizard, setShowSetupWizard] = useState(false)
@@ -1207,15 +1208,20 @@ export default function App() {
                 const abs = path.startsWith('/') ? path : `${workspacePath}/${path.split(' → ')[0]}`
                 void openFile(abs)
               }}
-              onKeep={(id) =>
+              onKeep={(id) => {
+                void window.ide.recordDiffDecision({ kept: 1 }).catch(() => undefined)
                 setPendingDiffs((prev) =>
                   prev.map((d) => (d.id === id ? { ...d, status: 'kept' } : d))
                 )
-              }
+              }}
               onKeepAll={() =>
-                setPendingDiffs((prev) =>
-                  prev.map((d) => (d.status === 'pending' ? { ...d, status: 'kept' as const } : d))
-                )
+                setPendingDiffs((prev) => {
+                  const n = prev.filter((d) => d.status === 'pending').length
+                  if (n > 0) void window.ide.recordDiffDecision({ kept: n }).catch(() => undefined)
+                  return prev.map((d) =>
+                    d.status === 'pending' ? { ...d, status: 'kept' as const } : d
+                  )
+                })
               }
               autoKeepDiffs={Boolean(settings?.agent.autoKeepDiffs)}
               onAutoKeepDiffsChange={(enabled) => {
@@ -1231,15 +1237,21 @@ export default function App() {
                 }
               }}
               onDismiss={() => setPendingDiffs([])}
+              gitBusy={diffGitBusy}
               onStageKept={() => {
                 void (async () => {
                   const paths = pendingDiffs
                     .filter((d) => d.status === 'kept')
                     .map((d) => d.path.split(' → ')[0] || d.path)
                   if (!paths.length) return
-                  const res = await window.ide.gitStage(paths)
-                  if (!res.ok) setChatError(res.error || 'Stage failed')
-                  else setAgentStatus(`Staged ${paths.length} file(s)`)
+                  setDiffGitBusy(true)
+                  try {
+                    const res = await window.ide.gitStage(paths)
+                    if (!res.ok) setChatError(res.error || 'Stage failed')
+                    else setAgentStatus(`Staged ${paths.length} file(s)`)
+                  } finally {
+                    setDiffGitBusy(false)
+                  }
                 })()
               }}
               onCommitKept={() => {
@@ -1251,14 +1263,52 @@ export default function App() {
                   const message =
                     window.prompt('Commit message', `Agent: update ${paths.length} file(s)`) || ''
                   if (!message.trim()) return
-                  const staged = await window.ide.gitStage(paths)
-                  if (!staged.ok) {
-                    setChatError(staged.error || 'Stage failed')
-                    return
+                  setDiffGitBusy(true)
+                  try {
+                    const staged = await window.ide.gitStage(paths)
+                    if (!staged.ok) {
+                      setChatError(staged.error || 'Stage failed')
+                      return
+                    }
+                    const committed = await window.ide.gitCommit(message.trim())
+                    if (!committed.ok) setChatError(committed.error || 'Commit failed')
+                    else setAgentStatus('Committed kept changes')
+                  } finally {
+                    setDiffGitBusy(false)
                   }
-                  const committed = await window.ide.gitCommit(message.trim())
-                  if (!committed.ok) setChatError(committed.error || 'Commit failed')
-                  else setAgentStatus('Committed kept changes')
+                })()
+              }}
+              onCommitAndPush={() => {
+                void (async () => {
+                  const paths = pendingDiffs
+                    .filter((d) => d.status === 'kept')
+                    .map((d) => d.path.split(' → ')[0] || d.path)
+                  if (!paths.length) return
+                  const defaultMsg = `Agent: update ${paths.length} file(s)`
+                  const message = window.prompt('Commit message', defaultMsg) || ''
+                  if (!message.trim()) return
+                  setDiffGitBusy(true)
+                  try {
+                    const staged = await window.ide.gitStage(paths)
+                    if (!staged.ok) {
+                      setChatError(staged.error || 'Stage failed')
+                      return
+                    }
+                    const committed = await window.ide.gitCommit(message.trim())
+                    if (!committed.ok) {
+                      setChatError(committed.error || 'Commit failed')
+                      return
+                    }
+                    const pushed = await window.ide.githubSync('push')
+                    if (!pushed.ok) {
+                      setChatError(pushed.error || 'Push failed')
+                      setAgentStatus('Committed locally — push failed')
+                      return
+                    }
+                    setAgentStatus('Committed & pushed kept changes')
+                  } finally {
+                    setDiffGitBusy(false)
+                  }
                 })()
               }}
               onCreatePr={() => {
@@ -1271,24 +1321,29 @@ export default function App() {
                     window.prompt('Pull request title', `Agent updates (${paths.length} files)`) ||
                     ''
                   if (!title.trim()) return
-                  const staged = await window.ide.gitStage(paths)
-                  if (!staged.ok) {
-                    setChatError(staged.error || 'Stage failed')
-                    return
-                  }
-                  const committed = await window.ide.gitCommit(title.trim())
-                  if (!committed.ok) {
-                    setChatError(committed.error || 'Commit failed')
-                    return
-                  }
-                  const pr = await window.ide.githubCreatePullRequest({ title: title.trim() })
-                  if (!pr.ok) setChatError(pr.error || 'Could not create pull request')
-                  else {
-                    setAgentStatus(
-                      typeof pr.number === 'number'
-                        ? `Opened PR #${pr.number}${pr.htmlUrl ? ` · ${pr.htmlUrl}` : ''}`
-                        : pr.htmlUrl || 'Opened pull request'
-                    )
+                  setDiffGitBusy(true)
+                  try {
+                    const staged = await window.ide.gitStage(paths)
+                    if (!staged.ok) {
+                      setChatError(staged.error || 'Stage failed')
+                      return
+                    }
+                    const committed = await window.ide.gitCommit(title.trim())
+                    if (!committed.ok) {
+                      setChatError(committed.error || 'Commit failed')
+                      return
+                    }
+                    const pr = await window.ide.githubCreatePullRequest({ title: title.trim() })
+                    if (!pr.ok) setChatError(pr.error || 'Could not create pull request')
+                    else {
+                      setAgentStatus(
+                        typeof pr.number === 'number'
+                          ? `Opened PR #${pr.number}${pr.htmlUrl ? ` · ${pr.htmlUrl}` : ''}`
+                          : pr.htmlUrl || 'Opened pull request'
+                      )
+                    }
+                  } finally {
+                    setDiffGitBusy(false)
                   }
                 })()
               }}
@@ -1297,6 +1352,7 @@ export default function App() {
                   const target = pendingDiffs.find((d) => d.id === id)
                   if (!target || target.status !== 'pending') return
                   await window.ide.restoreCheckpointOp(target.checkpointId, target.opIndex)
+                  void window.ide.recordDiffDecision({ undone: 1 }).catch(() => undefined)
                   setPendingDiffs((prev) =>
                     prev.map((d) => (d.id === id ? { ...d, status: 'undone' } : d))
                   )
@@ -1319,7 +1375,11 @@ export default function App() {
                 void (async () => {
                   if (!activeCheckpointId) return
                   await window.ide.restoreCheckpoint(activeCheckpointId)
-                  setPendingDiffs((prev) => prev.map((d) => ({ ...d, status: 'undone' as const })))
+                  setPendingDiffs((prev) => {
+                    const n = prev.filter((d) => d.status === 'pending').length
+                    if (n > 0) void window.ide.recordDiffDecision({ undone: n }).catch(() => undefined)
+                    return prev.map((d) => ({ ...d, status: 'undone' as const }))
+                  })
                   setTree(await window.ide.listTree(workspacePath))
                   for (const t of tabsRef.current) {
                     try {

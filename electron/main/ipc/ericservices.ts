@@ -90,6 +90,12 @@ export function registerEricServicesIpc(): void {
         appState.currentWorkspace
       )
     }
+    try {
+      const { pullUsageFromProfile } = await import('../services/usage-sync')
+      await pullUsageFromProfile()
+    } catch {
+      /* usage.php may not be deployed yet */
+    }
     return {
       ...buildEricServicesStatus(getResolvedSettings(appState.currentWorkspace), true),
       profile: me.profile ?? null
@@ -139,6 +145,22 @@ export function registerEricServicesIpc(): void {
           // Push local prefs if nothing remote yet
           sync = await syncEricServicesProfile('push', result.token)
         }
+      }
+
+      try {
+        const { pullUsageFromProfile } = await import('../services/usage-sync')
+        await pullUsageFromProfile()
+      } catch {
+        /* usage.php optional until deployed */
+      }
+
+      // Warm Cloud health/model status so the first Agent job isn't a silent cold start.
+      try {
+        const resolved = getResolvedSettings(appState.currentWorkspace)
+        const { prefetchCloudAgentsWarm } = await import('../services/cloud-agent-inline')
+        void prefetchCloudAgentsWarm(resolved, getSecret)
+      } catch {
+        /* best effort */
       }
 
       return {

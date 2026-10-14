@@ -25,6 +25,8 @@ export async function* streamModelChat(options: {
   tools?: OpenAIToolDef[]
   toolChoice?: 'auto' | 'none' | 'required'
   onNativeToolCalls?: (calls: NativeToolCall[]) => void
+  /** Constrain built-in GGUF output to this JSON schema (grammar decoding). */
+  builtinJsonSchema?: Record<string, unknown>
 }): AsyncGenerator<string, void, unknown> {
   let model =
     options.model || options.settings.models.defaultModel || 'builtin:composer-lite'
@@ -71,7 +73,8 @@ export async function* streamModelChat(options: {
             content: typeof m.content === 'string' ? m.content : ''
           })),
         temperature: options.temperature,
-        signal: options.signal
+        signal: options.signal,
+        jsonSchema: options.builtinJsonSchema
       })) {
         outputText += chunk
         yield chunk

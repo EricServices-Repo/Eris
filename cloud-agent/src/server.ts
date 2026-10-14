@@ -405,7 +405,7 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
     try {
       const raw = await readBody(req)
       const body = (raw ? JSON.parse(raw) : {}) as Partial<CloudJobCreateRequest>
-      const job = workers.enqueue(
+      const job = await workers.enqueue(
         {
           goal: body.goal || prev.goal,
           agentId: body.agentId || prev.agentId,
@@ -437,7 +437,7 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
     try {
       const raw = await readBody(req)
       const body = (raw ? JSON.parse(raw) : {}) as CloudJobCreateRequest
-      const job = workers.enqueue(body, auth)
+      const job = await workers.enqueue(body, auth)
       send(res, 201, { ok: true, job, requestId })
     } catch (err) {
       send(res, 400, {

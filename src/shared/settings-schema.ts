@@ -93,6 +93,8 @@ export const SettingsSchema = z.object({
     commandApproval: z.enum(['ask', 'auto']),
     /** Exact commands the user chose "Always allow" for (workspace scope) */
     allowedCommands: z.array(z.string()),
+    /** Constrain local (GGUF) tool-call retries to valid JSON via a grammar. */
+    constrainLocalToolCalls: z.boolean().default(true),
     routing: z.object({
       enabled: z.boolean(),
       mode: z.enum(['auto', 'manual', 'off']),
@@ -179,14 +181,22 @@ export const SettingsSchema = z.object({
       /** Periodically check GitHub for a newer release */
       autoCheck: z.boolean(),
       /** Download in the background when an update is found */
-      autoDownload: z.boolean()
+      autoDownload: z.boolean(),
+      /** stable = tagged releases only; beta = also offer GitHub prereleases */
+      channel: z.enum(['stable', 'beta']).default('stable')
     }),
     logging: z.object({
       enabled: z.boolean(),
       /** Empty = app default logs folder under Application Support */
       directory: z.string(),
       level: z.enum(['debug', 'info', 'warn', 'error'])
-    })
+    }),
+    /** Opt-in: record anonymous agent-run outcomes locally to improve routing. */
+    telemetry: z
+      .object({
+        agentOutcomes: z.boolean().default(false)
+      })
+      .default({ agentOutcomes: false })
   })
 })
 
@@ -290,7 +300,7 @@ export interface TurnPlan {
   requiresTools: boolean
   escalateToFull: boolean
   reason: string
-  method: 'manual' | 'heuristic' | 'llm' | 'default' | 'override' | 'learned' | 'eval'
+  method: 'manual' | 'heuristic' | 'llm' | 'default' | 'override' | 'learned' | 'eval' | 'telemetry'
   /** Intent the classifier picked before any override / learned correction */
   classifiedIntent?: ChatIntent
   /** Set when the selected chat model cannot run (e.g. builtin not downloaded). */
@@ -366,6 +376,10 @@ export interface BuiltinModelStatus {
   downloadedBytes: number
   progress: number
   tier?: 'lite' | 'full'
+  /** True while a download is in progress (survives Settings close). */
+  downloading?: boolean
+  /** Last download error for this model, if any. */
+  downloadError?: string | null
 }
 
 export type SkillScope = 'user' | 'workspace'

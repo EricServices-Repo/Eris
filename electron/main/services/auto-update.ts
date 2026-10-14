@@ -93,15 +93,20 @@ function manualInstallOnly(): boolean {
   return process.platform === 'darwin' && !macSupportsInPlaceUpdates()
 }
 
-function readUpdatePrefs(): { autoCheck: boolean; autoDownload: boolean } {
+function readUpdatePrefs(): {
+  autoCheck: boolean
+  autoDownload: boolean
+  channel: 'stable' | 'beta'
+} {
   try {
     const g = getResolvedSettings(null).general.updates
     return {
       autoCheck: g?.autoCheck !== false,
-      autoDownload: g?.autoDownload !== false
+      autoDownload: g?.autoDownload !== false,
+      channel: g?.channel === 'beta' ? 'beta' : 'stable'
     }
   } catch {
-    return { autoCheck: true, autoDownload: true }
+    return { autoCheck: true, autoDownload: true, channel: 'stable' }
   }
 }
 
@@ -162,6 +167,9 @@ function applyFeedPrefs(): void {
   const manualOnly = manualInstallOnly()
   autoUpdater.autoDownload = manualOnly ? false : prefs.autoDownload
   autoUpdater.autoInstallOnAppQuit = !manualOnly
+  // Beta channel also picks up GitHub prereleases; stable sees tagged releases only.
+  autoUpdater.allowPrerelease = prefs.channel === 'beta'
+  autoUpdater.channel = prefs.channel === 'beta' ? 'beta' : 'latest'
 }
 
 /** Public GitHub Releases — no PAT required on clients. */

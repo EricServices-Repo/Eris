@@ -65,6 +65,9 @@ function enqueueRuntime<T>(fn: () => Promise<T>): Promise<T> {
   return run
 }
 const progressById = new Map<string, { downloaded: number; total: number }>()
+/** Active download id (survives Settings UI unmount). */
+let activeDownloadId: string | null = null
+const downloadErrorById = new Map<string, string>()
 
 function verifiedSidecarPath(modelPath: string): string {
   return `${modelPath}.sha256`
@@ -270,6 +273,7 @@ export function getBuiltinStatuses(): BuiltinModelStatus[] {
       : progressById.get(entry.id)?.downloaded ?? 0
     const total = progressById.get(entry.id)?.total || entry.approxBytes
     const progress = total > 0 ? Math.min(1, downloadedBytes / total) : valid ? 1 : 0
+    const downloading = activeDownloadId === entry.id
     return {
       id: entry.id,
       ref: entry.ref,
@@ -287,7 +291,9 @@ export function getBuiltinStatuses(): BuiltinModelStatus[] {
       localPath: installed ? path : null,
       downloadedBytes,
       progress: valid ? 1 : progress,
-      tier: entry.tier
+      tier: entry.tier,
+      downloading,
+      downloadError: downloadErrorById.get(entry.id) || null
     }
   })
 }
@@ -428,6 +434,8 @@ export async function downloadBuiltinModel(
 
   const controller = new AbortController()
   downloadAbort = controller
+  activeDownloadId = id
+  downloadErrorById.delete(id)
   const partial = `${target}.partial.${process.pid}.${Date.now()}`
 
   try {
@@ -453,7 +461,7 @@ export async function downloadBuiltinModel(
     if (!res.ok || !res.body) {
       throw new Error(
         `Download failed: HTTP ${res.status} from Hugging Face (${res.via}). ` +
-          `If this persists, open the model URL in a browser to confirm the network allows huggingface.co.`
+          `Retry, or open the model URL in a browser to confirm huggingface.co is reachable.`
       )
     }
 
@@ -529,12 +537,21 @@ export async function downloadBuiltinModel(
     progressById.set(id, { downloaded, total: downloaded })
     await disposeRuntime()
     logInfo('Builtin model download complete', { id, bytes: downloaded, sha256: digest })
+    downloadErrorById.delete(id)
     return getBuiltinStatuses().find((s) => s.id === id)!
   } catch (err) {
     unlinkQuiet(partial)
+    const message = err instanceof Error ? err.message : String(err)
+    if (!/abort/i.test(message)) {
+      downloadErrorById.set(
+        id,
+        `${message} Tip: Retry, check VPN/firewall, or open the Hugging Face URL in a browser.`
+      )
+    }
     throw err
   } finally {
     if (downloadAbort === controller) downloadAbort = null
+    if (activeDownloadId === id) activeDownloadId = null
     releaseGate()
   }
 }
@@ -811,6 +828,7 @@ async function* streamBuiltinChatInProcess(options: {
   signal?: AbortSignal
   entry: BuiltinModelManifestEntry
   path: string
+  jsonSchema?: Record<string, unknown>
 }): AsyncGenerator<string, void, unknown> {
   const llamaCpp = await loadLlamaModule()
   const { LlamaChatSession } = llamaCpp
@@ -856,16 +874,29 @@ async function* streamBuiltinChatInProcess(options: {
     }
     options.signal?.addEventListener('abort', onAbortWake)
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let grammar: any = undefined
+    if (options.jsonSchema) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        grammar = await (state.llama as any).createGrammarForJsonSchema(options.jsonSchema)
+      } catch {
+        grammar = undefined
+      }
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const inProcPromptOpts: any = {
+      temperature: options.temperature,
+      signal: options.signal,
+      maxTokens: options.entry.tier === 'lite' ? 1024 : 4096,
+      ...(grammar ? { grammar } : {}),
+      onTextChunk(chunk: string) {
+        queue.push(chunk)
+        wake()
+      }
+    }
     const run = session
-      .prompt(prompt, {
-        temperature: options.temperature,
-        signal: options.signal,
-        maxTokens: options.entry.tier === 'lite' ? 1024 : 4096,
-        onTextChunk(chunk: string) {
-          queue.push(chunk)
-          wake()
-        }
-      })
+      .prompt(prompt, inProcPromptOpts)
       .then(() => {
         done = true
         wake()
@@ -924,6 +955,7 @@ async function* streamBuiltinChatViaWorker(options: {
   signal?: AbortSignal
   entry: BuiltinModelManifestEntry
   path: string
+  jsonSchema?: Record<string, unknown>
 }): AsyncGenerator<string, void, unknown> {
   await ensureWorkerModel(options.path, options.entry)
 
@@ -973,7 +1005,8 @@ async function* streamBuiltinChatViaWorker(options: {
     id,
     messages: options.messages,
     temperature: options.temperature,
-    maxTokens: options.entry.tier === 'lite' ? 1024 : 4096
+    maxTokens: options.entry.tier === 'lite' ? 1024 : 4096,
+    jsonSchema: options.jsonSchema
   })
 
   try {
@@ -1010,6 +1043,8 @@ export async function* streamBuiltinChat(options: {
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
   temperature: number
   signal?: AbortSignal
+  /** Constrain decoding to this JSON schema via a GBNF grammar (tool-call retries). */
+  jsonSchema?: Record<string, unknown>
 }): AsyncGenerator<string, void, unknown> {
   const entry = findBuiltinEntry(options.modelRef) ?? getComposerManifest()
   const path = localModelPath(entry)

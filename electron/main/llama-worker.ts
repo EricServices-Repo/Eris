@@ -13,6 +13,7 @@ type Incoming =
       messages: ChatMessage[]
       temperature: number
       maxTokens: number
+      jsonSchema?: Record<string, unknown>
     }
   | { type: 'abort'; id: string }
   | { type: 'dispose' }
@@ -113,6 +114,7 @@ async function runPrompt(options: {
   temperature: number
   maxTokens: number
   signal: AbortSignal
+  jsonSchema?: Record<string, unknown>
   onChunk: (text: string) => void
 }): Promise<void> {
   const llamaCpp = await import('node-llama-cpp')
@@ -141,14 +143,26 @@ async function runPrompt(options: {
       .filter(Boolean)
       .join('\n\n')
 
-    await session.prompt(prompt, {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let grammar: any = undefined
+    if (options.jsonSchema && llama?.createGrammarForJsonSchema) {
+      try {
+        grammar = await llama.createGrammarForJsonSchema(options.jsonSchema)
+      } catch {
+        grammar = undefined
+      }
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const promptOpts: any = {
       temperature: options.temperature,
       signal: options.signal,
       maxTokens: options.maxTokens,
+      ...(grammar ? { grammar } : {}),
       onTextChunk(chunk: string) {
         options.onChunk(chunk)
       }
-    })
+    }
+    await session.prompt(prompt, promptOpts)
   } finally {
     try {
       await sequence?.dispose?.()
@@ -163,6 +177,7 @@ async function handleChat(msg: {
   messages: ChatMessage[]
   temperature: number
   maxTokens: number
+  jsonSchema?: Record<string, unknown>
 }): Promise<void> {
   if (!model) {
     post({ type: 'error', id: msg.id, error: 'Model not loaded' })
@@ -179,6 +194,7 @@ async function handleChat(msg: {
         temperature: msg.temperature,
         maxTokens: msg.maxTokens,
         signal: ac.signal,
+        jsonSchema: msg.jsonSchema,
         onChunk: (text) => post({ type: 'chunk', id: msg.id, text })
       })
 

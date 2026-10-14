@@ -1,6 +1,6 @@
 {
   "name": "eris",
-  "version": "0.2.19",
+  "version": "0.2.21",
   "description": "Eris — AI-first desktop IDE for macOS and Windows",
   "main": "./out/main/index.js",
   "author": "Eris",

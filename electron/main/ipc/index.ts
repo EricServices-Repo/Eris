@@ -2,6 +2,7 @@ import { registerWorkspaceIpc } from './workspace'
 import { registerAppIpc } from './app'
 import { registerSettingsIpc } from './settings'
 import { registerModelsIpc } from './models'
+import { registerOllamaIpc } from './ollama'
 import { registerChatsIpc } from './chats'
 import { registerAgentsIpc } from './agents'
 import { registerChatStreamIpc } from './chat-stream'
@@ -27,6 +28,7 @@ export function registerIpc(): void {
   registerAppIpc()
   registerSettingsIpc()
   registerModelsIpc()
+  registerOllamaIpc()
   registerChatsIpc()
   registerAgentsIpc()
   registerChatStreamIpc()

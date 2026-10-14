@@ -4,6 +4,7 @@
  */
 import type { AppSettings } from '../../../src/shared/settings-schema'
 import {
+  isCloudAgentsReady,
   shouldUseCloudAgents,
   type CloudHealth,
   type CloudJob
@@ -78,6 +79,36 @@ function syncAuth(settings: AppSettings, getSecret: (ref: string) => string | nu
 let healthCache: { at: number; health: CloudHealth } | null = null
 const HEALTH_CACHE_MS = 20_000
 
+async function refreshInlineHealth(force = false): Promise<CloudHealth | null> {
+  if (!force && healthCache && Date.now() - healthCache.at < HEALTH_CACHE_MS) {
+    return healthCache.health
+  }
+  try {
+    const health = await cloudAgentsHealth(true)
+    healthCache = { at: Date.now(), health }
+    return health
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Prefetch Cloud health after login so the first Agent turn is less cold
+ * (TLS, auth, model status). Best-effort — never throws.
+ */
+export async function prefetchCloudAgentsWarm(
+  settings: AppSettings,
+  getSecret: (ref: string) => string | null
+): Promise<void> {
+  if (!syncAuth(settings, getSecret)) return
+  healthCache = null
+  await refreshInlineHealth(true)
+  // Second probe a moment later catches model status flipping to ready/downloading.
+  void sleep(1_500)
+    .then(() => refreshInlineHealth(true))
+    .catch(() => undefined)
+}
+
 /**
  * Returns true if Cloud can take this Agent-mode turn (caller falls back to local if false).
  */
@@ -87,11 +118,7 @@ export async function cloudInlineAvailable(
 ): Promise<boolean> {
   if (!syncAuth(settings, getSecret)) return false
   try {
-    if (healthCache && Date.now() - healthCache.at < HEALTH_CACHE_MS) {
-      return shouldUseCloudAgents(healthCache.health)
-    }
-    const health = await cloudAgentsHealth(true)
-    healthCache = { at: Date.now(), health }
+    const health = await refreshInlineHealth(false)
     return shouldUseCloudAgents(health)
   } catch {
     return false
@@ -194,6 +221,20 @@ export async function* runCloudAgentInline(options: {
   yield { type: 'thinking', text: 'Routing to Cloud Composer…\n' }
   yield { type: 'status', text: 'Starting Cloud Agent…' }
 
+  const health = await refreshInlineHealth(false)
+  const cloudWarming = Boolean(health && shouldUseCloudAgents(health) && !isCloudAgentsReady(health))
+  if (cloudWarming) {
+    const detail =
+      health?.localModel?.status === 'downloading'
+        ? 'Composer Full downloading on cloud…'
+        : 'Composer Full warming on cloud…'
+    yield { type: 'status', text: detail }
+    yield {
+      type: 'thinking',
+      text: `${detail} First job may take a moment while the worker loads the model.\n`
+    }
+  }
+
   let repoUrl: string | null = null
   let branch: string | null = null
   if (settings.github.linked && settings.github.repository) {
@@ -229,17 +270,25 @@ export async function* runCloudAgentInline(options: {
   logInfo('Cloud inline job started', {
     id: job.id,
     files: files.length,
-    clone: Boolean(repoUrl && githubToken)
+    clone: Boolean(repoUrl && githubToken),
+    warming: cloudWarming
   })
 
   const state = {
     lastThinking: '',
-    lastLive: '',
+    lastLive: cloudWarming ? 'Composer Full warming on cloud…' : '',
     lastAnswer: '',
     seenTools: new Map<string, string>()
   }
   let current: CloudJob = job
   yield* emitJobDelta(current, state)
+  if (
+    cloudWarming &&
+    !current.liveStatus &&
+    (current.status === 'queued' || current.status === 'running')
+  ) {
+    yield { type: 'status', text: 'Composer Full warming on cloud…' }
+  }
 
   try {
     let stream: AsyncGenerator<CloudJob>

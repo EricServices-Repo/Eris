@@ -104,6 +104,17 @@ export function SetupWizard({
     }
   }
 
+  // Start the (~1 GB) Lite download without blocking setup — the first chat can
+  // run on Cloud Composer or a connected API model while it finishes.
+  const startDownloadAndContinue = (id: string) => {
+    setError(null)
+    void window.ide.downloadBuiltinModel(id).then(
+      () => void refreshBuiltins().catch(() => undefined),
+      (err) => setError(err instanceof Error ? err.message : 'Download failed')
+    )
+    setStep('workspace')
+  }
+
   if (!open) return null
 
   return (
@@ -216,6 +227,22 @@ export function SetupWizard({
                   )
                 })}
               </div>
+              {lite && !lite.ready && (
+                <div className="setup-inline-actions" style={{ marginTop: 10 }}>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={Boolean(downloadingId)}
+                    onClick={() => startDownloadAndContinue(lite.id)}
+                  >
+                    Download in background &amp; continue
+                  </button>
+                  <span className="model-conn-hint" style={{ alignSelf: 'center' }}>
+                    Your first chat can run on Cloud Composer or a connected API model
+                    while Lite downloads.
+                  </span>
+                </div>
+              )}
               {!lite && (
                 <p className="model-conn-hint">Loading model catalog…</p>
               )}
@@ -256,7 +283,7 @@ export function SetupWizard({
                 you&apos;re shipping.
               </p>
               <ul className="setup-checklist">
-                <li>Composer Lite answers in chat</li>
+                <li>Runs on Composer Lite locally, or Cloud Composer / your API model while Lite downloads</li>
                 <li>Agent mode can propose file edits</li>
                 <li>Diff Review lets you Keep or Undo each file</li>
               </ul>
@@ -293,7 +320,9 @@ export function SetupWizard({
               <ul className="setup-checklist">
                 <li>
                   Composer Lite:{' '}
-                  {lite?.ready ? 'ready' : 'not installed — chat will ask you to download'}
+                  {lite?.ready
+                    ? 'ready'
+                    : 'downloading or not installed — chat falls back to Cloud / your API model meanwhile'}
                 </li>
                 <li>
                   Composer Full:{' '}

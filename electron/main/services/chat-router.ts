@@ -17,6 +17,7 @@ import { streamModelChat } from './chat-runtime'
 import { routeHeuristic, routeMessage } from './router'
 import { learnedRouteFor, readRoutingCorrections, routingExamples } from './routing-feedback'
 import { bestEvalModelForIntent } from './eval-store'
+import { bestModelForIntent as bestTelemetryModel } from './agent-telemetry'
 
 /** LLM router hints below this confidence are ignored. */
 const LLM_MIN_CONFIDENCE = 0.55
@@ -285,7 +286,8 @@ function formatReason(parts: {
     default: 'Auto',
     override: 'Override',
     learned: 'Learned',
-    eval: 'Eval'
+    eval: 'Eval',
+    telemetry: 'Usage'
   }
   return `${label[parts.method]} → ${parts.agentName} · ${parts.intent} · ${modelBit}`
 }
@@ -485,6 +487,18 @@ export async function planChatTurn(options: {
     if (winner && winner !== selectedModel) {
       modelForRoles = winner
       method = 'eval'
+    } else if (options.settings.general.telemetry?.agentOutcomes) {
+      // No eval winner — fall back to the model with the best real-world outcome
+      // for this intent (opt-in telemetry).
+      const telemetryWinner = bestTelemetryModel(
+        intent,
+        readyModelCandidates(options.settings),
+        options.settings.evals.minRuns
+      )
+      if (telemetryWinner && telemetryWinner !== selectedModel) {
+        modelForRoles = telemetryWinner
+        method = 'telemetry'
+      }
     }
   }
   const roles = resolveModelRoles({
@@ -535,7 +549,7 @@ export function turnPlanToRouteResult(plan: TurnPlan): RouteResult {
     method:
       plan.method === 'override'
         ? 'manual'
-        : plan.method === 'learned' || plan.method === 'eval'
+        : plan.method === 'learned' || plan.method === 'eval' || plan.method === 'telemetry'
           ? 'heuristic'
           : plan.method
   }

@@ -23,7 +23,7 @@
       "ref": "builtin:composer",
       "name": "Composer",
       "displayName": "Composer Full (Cloud Agents)",
-      "description": "Full 7B worker (~4.7 GB) runs on Cloud Agents when signed in — not required locally. Desktop Eris stays on Composer Lite.",
+      "description": "Full 7B worker (~4.7 GB) runs on Cloud Agents when signed in \u2014 not required locally. Desktop Eris stays on Composer Lite.",
       "family": "Qwen2.5-Coder",
       "quant": "Q4_K_M",
       "parameters": "7B",
@@ -63,6 +63,15 @@
       "baseUrl": "https://api.openai.com/v1",
       "requiresKey": true,
       "hint": "GPT models via the OpenAI API. Paste your API key from platform.openai.com."
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic (Claude)",
+      "provider": "anthropic",
+      "type": "openai-compatible",
+      "baseUrl": "https://api.anthropic.com/v1",
+      "requiresKey": true,
+      "hint": "Claude models via Anthropic's OpenAI-compatible endpoint. Paste an API key from console.anthropic.com, then refresh models."
     },
     {
       "id": "openrouter",
