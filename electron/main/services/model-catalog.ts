@@ -5,19 +5,34 @@ import type {
   ModelsStatus
 } from '../../../src/shared/settings-schema'
 import { getBuiltinStatuses, isBuiltinRef, resolveReadyBuiltinRef } from './builtin-model'
+import { getLocalStatuses, isLocalRef } from './local-model'
 import { listOpenAIModels } from './openai-compatible'
+import { getGpuAccelStatus } from './gpu-accel'
 
 export async function getModelsStatus(
   settings: AppSettings,
   getSecret: (key: string) => string | null
 ): Promise<ModelsStatus> {
-  const builtin = getBuiltinStatuses()
-  const models: ModelInfo[] = builtin.map((b) => ({
-    name: b.ref,
-    size: b.downloadedBytes || b.approxBytes,
-    source: 'builtin' as const,
-    ready: b.ready
-  }))
+  const preferEgpu = settings.models.preferEgpu !== false
+  const [builtin, local, gpu] = await Promise.all([
+    Promise.resolve(getBuiltinStatuses()),
+    Promise.resolve(getLocalStatuses()),
+    getGpuAccelStatus(preferEgpu)
+  ])
+  const models: ModelInfo[] = [
+    ...builtin.map((b) => ({
+      name: b.ref,
+      size: b.downloadedBytes || b.approxBytes,
+      source: 'builtin' as const,
+      ready: b.ready
+    })),
+    ...local.map((m) => ({
+      name: m.ref,
+      size: m.downloadedBytes || m.approxBytes,
+      source: 'local' as const,
+      ready: m.ready
+    }))
+  ]
 
   const connections: ModelsStatus['connections'] = []
   const externalProbes = settings.models.connections.map(async (conn) => {
@@ -36,7 +51,7 @@ export async function getModelsStatus(
       const names = remote.length > 0 ? remote : conn.models
       const discovered: ModelInfo[] = []
       for (const name of names) {
-        if (isBuiltinRef(name)) continue
+        if (isBuiltinRef(name) || isLocalRef(name)) continue
         discovered.push({
           name,
           source: 'connection',
@@ -71,15 +86,18 @@ export async function getModelsStatus(
   }
 
   const anyBuiltinReady = builtin.some((b) => b.ready)
+  const anyLocalReady = local.some((m) => m.ready)
   const anyConnectionReady = models.some((m) => m.source === 'connection' && m.ready)
   return {
-    ok: anyBuiltinReady || anyConnectionReady,
-    error: anyBuiltinReady || anyConnectionReady
+    ok: anyBuiltinReady || anyLocalReady || anyConnectionReady,
+    error: anyBuiltinReady || anyLocalReady || anyConnectionReady
       ? undefined
-      : 'No models ready — download Composer Lite, or add Ollama / a cloud API in Settings → Models',
+      : 'No models ready — download Composer Lite or a Local model, or add an API in Settings → Models',
     builtin,
+    local,
     models,
-    connections
+    connections,
+    gpu
   }
 }
 
@@ -88,14 +106,14 @@ export function resolveConnectionForModel(
   model: string,
   hintConnectionId?: string | null
 ): ModelConnection | null {
-  if (isBuiltinRef(model)) {
-    const ready = resolveReadyBuiltinRef(model)
+  if (isBuiltinRef(model) || isLocalRef(model)) {
+    const ready = isBuiltinRef(model) ? resolveReadyBuiltinRef(model) : model
     return (
       settings.models.connections.find((c) => c.type === 'builtin') ?? {
         id: 'builtin',
-        name: 'Built-in Composer',
+        name: isLocalRef(model) ? 'Local GGUF' : 'Built-in Composer',
         type: 'builtin',
-        provider: 'builtin',
+        provider: isLocalRef(model) ? 'local' : 'builtin',
         enabled: true,
         baseUrl: '',
         apiKeyRef: '',
@@ -145,6 +163,13 @@ export function formatAvailableModelsPrompt(
     for (const b of builtins) {
       const label = b.ready ? 'ready' : 'not downloaded'
       lines.push(`- ${b.ref} (${label}${b.tier ? `, ${b.tier}` : ''})`)
+    }
+  }
+  const locals = getLocalStatuses()
+  if (locals.length) {
+    lines.push('Local models (run inside Eris, no Ollama):')
+    for (const m of locals) {
+      lines.push(`- ${m.ref} (${m.ready ? 'ready' : 'not downloaded'})`)
     }
   }
   const external = settings.models.connections.filter(

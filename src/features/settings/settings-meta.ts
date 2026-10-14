@@ -13,7 +13,7 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
   },
   {
     label: 'AI',
-    items: ['models', 'usage', 'agent', 'subagents', 'skills']
+    items: ['composer', 'localModels', 'providers', 'usage', 'agent', 'subagents', 'skills']
   },
   {
     label: 'Project',
@@ -30,7 +30,9 @@ export const SETTINGS_LABELS: Record<Category, string> = {
   account: 'Account',
   feedback: 'Feedback',
   logging: 'Logging',
-  models: 'Models',
+  composer: 'Composer',
+  localModels: 'Local models',
+  providers: 'Providers',
   usage: 'Usage',
   agent: 'Agent',
   subagents: 'Subagents',
@@ -48,7 +50,9 @@ export const SETTINGS_SUBTITLES: Record<Category, string> = {
   account: 'EricServic.es profile, plan, and sync',
   feedback: 'Report bugs and ideas without leaving Eris',
   logging: 'App log files, level, and directory',
-  models: 'Built-in Composer, Ollama, and cloud providers',
+  composer: 'Built-in Composer Lite / Full and default chat model',
+  localModels: 'Download GGUFs that run inside Eris, plus eGPU acceleration',
+  providers: 'Optional Ollama and cloud / custom OpenAI-compatible APIs',
   usage: 'Plan limits and daily model usage',
   agent: 'Routing, Cloud Agents, and background jobs',
   subagents: 'Project specialists in .eris/agents.json',
@@ -65,7 +69,7 @@ export const SETTINGS_SUBTITLES: Record<Category, string> = {
 export const SETTINGS_ROWS_CATEGORIES = new Set<Category>([
   'general',
   'logging',
-  'models',
+  'composer',
   'agent',
   'editor'
 ])
@@ -74,7 +78,9 @@ export const SETTINGS_ROWS_CATEGORIES = new Set<Category>([
 export const SETTINGS_SCOPE_CATEGORIES = new Set<Category>([
   'general',
   'logging',
-  'models',
+  'composer',
+  'localModels',
+  'providers',
   'agent',
   'editor'
 ])
@@ -85,7 +91,30 @@ export const SETTINGS_PAGE_KEYWORDS: Record<Category, string[]> = {
   account: ['login', 'sign in', 'eric', 'sync', 'plan', 'pro'],
   feedback: ['bug', 'report', 'issue', 'idea'],
   logging: ['logs', 'debug', 'trace', 'directory'],
-  models: ['composer', 'ollama', 'openai', 'temperature', 'download'],
+  composer: ['composer', 'lite', 'full', 'builtin', 'temperature', 'download', 'models'],
+  localModels: [
+    'local',
+    'gguf',
+    'qwen',
+    'llama',
+    'gemma',
+    'phi',
+    'egpu',
+    'gpu',
+    'huggingface',
+    'download'
+  ],
+  providers: [
+    'ollama',
+    'openai',
+    'openrouter',
+    'lm studio',
+    'api',
+    'endpoint',
+    'groq',
+    'anthropic',
+    'connection'
+  ],
   usage: ['quota', 'limits', 'tokens', 'upgrade'],
   agent: ['routing', 'cloud', 'background', 'approval'],
   subagents: ['specialist', 'orchestrator', 'agents.json'],
@@ -96,4 +125,12 @@ export const SETTINGS_PAGE_KEYWORDS: Record<Category, string[]> = {
   github: ['git', 'repository', 'pr', 'pull request'],
   workspace: ['.eris', 'project', 'folder'],
   editor: ['font', 'theme', 'tab', 'inline', 'suggest', 'ghost']
+}
+
+/** Map legacy Settings category ids (e.g. openSettings('models')). */
+export function resolveSettingsCategory(id: string | undefined): Category | undefined {
+  if (!id) return undefined
+  if (id === 'models') return 'composer'
+  if (id in SETTINGS_LABELS) return id as Category
+  return undefined
 }

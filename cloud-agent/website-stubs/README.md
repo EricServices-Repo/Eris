@@ -13,4 +13,6 @@ Data defaults to `data/eris-cloud-agents/agents.json` (override with `ERIS_CLOUD
 
 Wire `eris_ca_require_admin()` in `_store.php` to your real `eseris_` admin session before production.
 
+Also deploy sibling **`../usage.php`** (profile usage) — see [docs/ERIS_USAGE.md](../../docs/ERIS_USAGE.md).
+
 See [docs/CLOUD_AGENT_FLEET.md](../../docs/CLOUD_AGENT_FLEET.md) for the full contract and agent env vars.

@@ -18,7 +18,7 @@ import {
 } from '../workspace-context'
 import { runVerify } from '../verify'
 import type { OpenAIToolDef } from '../chat-runtime'
-import { COMPOSER_OPENAI_TOOLS, mcpToolsToOpenAI } from '../tool-registry'
+import { COMPOSER_OPENAI_TOOLS, mcpToolsToOpenAI, toolCallJsonSchema } from '../tool-registry'
 import {
   createCheckpoint,
   pruneOldCheckpoints,
@@ -63,6 +63,7 @@ import { decideMidRunAdapt, shouldConsiderMidRunAdapt } from './mid-run-adapt'
 import { buildPreservedWorkerMessages, truncateForModel } from './prompts'
 import { streamThinkingText } from './stream'
 import { argString, parseToolCalls, stripToolBlocks } from './tool-parsing'
+import { isNativeGgufRef } from '../builtin-model'
 import type { AgentChatMessage, AgentMode, AgentRunnerEvent, ToolCall } from './types'
 import type { AgentHandoffPacket } from '../../../../src/shared/agent-orchestration'
 
@@ -309,6 +310,11 @@ export async function* runAgentWithWorkspaceTools(options: {
   let rerouteCount = 0
   const reviewOnly = plan.intent === 'review' || isReviewOnlyGoal(originalUserGoal)
   let promptBudget = contextBudgetTokens(options.settings, workerModel)
+  // #4 grammar-constrained local tool calls: when a retry needs a tool and the
+  // worker is the built-in GGUF model, force valid tool-call JSON via a grammar.
+  const localConstrainEnabled = options.settings.agent.constrainLocalToolCalls !== false
+  const toolCallSchema = toolCallJsonSchema(mcpTools.map((t) => t.fqName))
+  let constrainNextToolCall = false
 
   async function* tryMidRunAdapt(trigger: string): AsyncGenerator<AgentRunnerEvent, boolean, unknown> {
     if (
@@ -527,12 +533,16 @@ export async function* runAgentWithWorkspaceTools(options: {
     let assistantText = ''
     let abortedLoop = false
     let nativeFromStream: ToolCall[] | undefined
+    const constrainThisTurn =
+      constrainNextToolCall && localConstrainEnabled && !reviewOnly && isNativeGgufRef(workerModel)
+    constrainNextToolCall = false
     for await (const evt of streamThinkingText({
       ...options,
       model: workerModel,
       messages: workerMessages,
       stopOnToolCall: true,
-      tools: openaiTools
+      tools: openaiTools,
+      builtinJsonSchema: constrainThisTurn ? toolCallSchema : undefined
     })) {
       if (evt.kind === 'thinking') yield { type: 'thinking', text: evt.text }
       else {
@@ -564,6 +574,8 @@ export async function* runAgentWithWorkspaceTools(options: {
 
       if (keepGoing) {
         noProgressStreak++
+        // Next turn, force a valid tool-call JSON on the local model.
+        constrainNextToolCall = true
         yield {
           type: 'thinking',
           text:

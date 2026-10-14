@@ -41,6 +41,19 @@ export function GeneralPanel({
             <em>Fetch installers when an update is available</em>
           </span>
         </label>
+        <label className="settings-check">
+          <input
+            type="checkbox"
+            checked={resolved.general.updates?.channel === 'beta'}
+            onChange={(e) =>
+              void apply(['general', 'updates', 'channel'], e.target.checked ? 'beta' : 'stable')
+            }
+          />
+          <span>
+            <strong>Join the beta channel</strong>
+            <em>Get prerelease builds early — may be less stable</em>
+          </span>
+        </label>
         <div className="settings-inline-actions" style={{ marginTop: 4 }}>
           <button
             type="button"

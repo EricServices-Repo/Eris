@@ -9,6 +9,29 @@ interface Props {
   onDismiss: () => void
 }
 
+function isVersionNewer(remote: string, local: string): boolean {
+  const parse = (v: string): number[] =>
+    v
+      .trim()
+      .replace(/^v/i, '')
+      .split(/[-+]/)[0]!
+      .split('.')
+      .map((n) => {
+        const x = parseInt(n, 10)
+        return Number.isFinite(x) ? x : 0
+      })
+  const a = parse(remote)
+  const b = parse(local)
+  const len = Math.max(a.length, b.length)
+  for (let i = 0; i < len; i++) {
+    const x = a[i] ?? 0
+    const y = b[i] ?? 0
+    if (x > y) return true
+    if (x < y) return false
+  }
+  return false
+}
+
 function progressLabel(status: UpdateStatusSnapshot): string {
   if (status.state === 'downloading' && typeof status.percent === 'number') {
     return `${Math.round(status.percent)}%`
@@ -30,6 +53,16 @@ export function UpdateBanner({
     status.state !== 'downloading' &&
     status.state !== 'downloaded' &&
     status.state !== 'error'
+  ) {
+    return null
+  }
+  // Defense: never advertise a feed version older than / equal to this build.
+  if (
+    (status.state === 'available' ||
+      status.state === 'downloading' ||
+      status.state === 'downloaded') &&
+    status.availableVersion &&
+    !isVersionNewer(status.availableVersion, status.currentVersion)
   ) {
     return null
   }

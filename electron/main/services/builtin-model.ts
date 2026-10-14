@@ -27,6 +27,13 @@ import {
   downloadFetch,
   formatDownloadNetworkError
 } from './http-download'
+import {
+  applyLlamaGpuPreference,
+  noteLlamaBackend,
+  type LlamaGpuBackend
+} from './gpu-accel'
+import { getResolvedSettings } from './settings'
+import { appState } from '../app-state'
 
 type LlamaModule = typeof import('node-llama-cpp')
 
@@ -65,6 +72,9 @@ function enqueueRuntime<T>(fn: () => Promise<T>): Promise<T> {
   return run
 }
 const progressById = new Map<string, { downloaded: number; total: number }>()
+/** Active download id (survives Settings UI unmount). */
+let activeDownloadId: string | null = null
+const downloadErrorById = new Map<string, string>()
 
 function verifiedSidecarPath(modelPath: string): string {
   return `${modelPath}.sha256`
@@ -270,6 +280,7 @@ export function getBuiltinStatuses(): BuiltinModelStatus[] {
       : progressById.get(entry.id)?.downloaded ?? 0
     const total = progressById.get(entry.id)?.total || entry.approxBytes
     const progress = total > 0 ? Math.min(1, downloadedBytes / total) : valid ? 1 : 0
+    const downloading = activeDownloadId === entry.id
     return {
       id: entry.id,
       ref: entry.ref,
@@ -287,13 +298,20 @@ export function getBuiltinStatuses(): BuiltinModelStatus[] {
       localPath: installed ? path : null,
       downloadedBytes,
       progress: valid ? 1 : progress,
-      tier: entry.tier
+      tier: entry.tier,
+      downloading,
+      downloadError: downloadErrorById.get(entry.id) || null
     }
   })
 }
 
 export function isBuiltinRef(model: string): boolean {
   return model.startsWith('builtin:')
+}
+
+/** Built-in Composer or user-downloaded local GGUF (runs via node-llama-cpp). */
+export function isNativeGgufRef(model: string): boolean {
+  return model.startsWith('builtin:') || model.startsWith('local:')
 }
 
 export async function ensureComposerDownloaded(
@@ -428,6 +446,8 @@ export async function downloadBuiltinModel(
 
   const controller = new AbortController()
   downloadAbort = controller
+  activeDownloadId = id
+  downloadErrorById.delete(id)
   const partial = `${target}.partial.${process.pid}.${Date.now()}`
 
   try {
@@ -453,7 +473,7 @@ export async function downloadBuiltinModel(
     if (!res.ok || !res.body) {
       throw new Error(
         `Download failed: HTTP ${res.status} from Hugging Face (${res.via}). ` +
-          `If this persists, open the model URL in a browser to confirm the network allows huggingface.co.`
+          `Retry, or open the model URL in a browser to confirm huggingface.co is reachable.`
       )
     }
 
@@ -529,12 +549,21 @@ export async function downloadBuiltinModel(
     progressById.set(id, { downloaded, total: downloaded })
     await disposeRuntime()
     logInfo('Builtin model download complete', { id, bytes: downloaded, sha256: digest })
+    downloadErrorById.delete(id)
     return getBuiltinStatuses().find((s) => s.id === id)!
   } catch (err) {
     unlinkQuiet(partial)
+    const message = err instanceof Error ? err.message : String(err)
+    if (!/abort/i.test(message)) {
+      downloadErrorById.set(
+        id,
+        `${message} Tip: Retry, check VPN/firewall, or open the Hugging Face URL in a browser.`
+      )
+    }
     throw err
   } finally {
     if (downloadAbort === controller) downloadAbort = null
+    if (activeDownloadId === id) activeDownloadId = null
     releaseGate()
   }
 }
@@ -572,70 +601,76 @@ function ensureLlamaChild(): Promise<void> {
   if (preferInProcess) return Promise.reject(new Error('in-process'))
   if (llamaChild && llamaChildReady) return llamaChildReady
 
-  llamaChildReady = new Promise<void>((resolve, reject) => {
-    let settled = false
-    const settle = (err?: Error) => {
-      if (settled) return
-      settled = true
-      if (err) reject(err)
-      else resolve()
+  llamaChildReady = (async () => {
+    // Lazy require so typecheck works without electron types in all contexts
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { utilityProcess } = require('electron') as {
+      utilityProcess: {
+        fork: (
+          modulePath: string,
+          args?: string[],
+          opts?: { serviceName?: string; env?: NodeJS.ProcessEnv }
+        ) => {
+          on: (event: string, cb: (...args: unknown[]) => void) => void
+          removeListener?: (event: string, cb: (...args: unknown[]) => void) => void
+          postMessage: (msg: unknown) => void
+          kill: () => void
+          pid?: number
+        }
+      }
     }
-    try {
-      // Lazy require so typecheck works without electron types in all contexts
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { utilityProcess } = require('electron') as {
-        utilityProcess: {
-          fork: (
-            modulePath: string,
-            args?: string[],
-            opts?: { serviceName?: string }
-          ) => {
-            on: (event: string, cb: (...args: unknown[]) => void) => void
-            removeListener?: (event: string, cb: (...args: unknown[]) => void) => void
-            postMessage: (msg: unknown) => void
-            kill: () => void
-            pid?: number
+    const script = workerScriptPath()
+    if (!existsSync(script)) {
+      preferInProcess = true
+      throw new Error(`llama worker missing: ${script}`)
+    }
+    const preferEgpu =
+      getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
+    const { env: gpuEnv } = await applyLlamaGpuPreference(preferEgpu)
+    await new Promise<void>((resolve, reject) => {
+      let settled = false
+      const settle = (err?: Error) => {
+        if (settled) return
+        settled = true
+        if (err) reject(err)
+        else resolve()
+      }
+      try {
+        const child = utilityProcess.fork(script, [], {
+          serviceName: 'eris-llama',
+          env: { ...process.env, ...gpuEnv }
+        })
+        llamaChild = child
+        const onReady = (raw: unknown) => {
+          const msg = (raw && typeof raw === 'object' && 'data' in (raw as object)
+            ? (raw as { data: WorkerMsg }).data
+            : raw) as WorkerMsg
+          if (msg?.type === 'ready') {
+            try {
+              child.removeListener?.('message', onReady)
+            } catch {
+              // ignore
+            }
+            settle()
           }
         }
-      }
-      const script = workerScriptPath()
-      if (!existsSync(script)) {
+        child.on('message', onReady)
+        child.on('exit', () => {
+          llamaChild = null
+          llamaChildReady = null
+          workerModelPath = null
+        })
+        setTimeout(() => {
+          if (llamaChild === child) settle()
+        }, 800)
+      } catch (err) {
         preferInProcess = true
-        settle(new Error(`llama worker missing: ${script}`))
-        return
-      }
-      const child = utilityProcess.fork(script, [], { serviceName: 'eris-llama' })
-      llamaChild = child
-      const onReady = (raw: unknown) => {
-        const msg = (raw && typeof raw === 'object' && 'data' in (raw as object)
-          ? (raw as { data: WorkerMsg }).data
-          : raw) as WorkerMsg
-        if (msg?.type === 'ready') {
-          try {
-            child.removeListener?.('message', onReady)
-          } catch {
-            // ignore
-          }
-          settle()
-        }
-      }
-      child.on('message', onReady)
-      child.on('exit', () => {
         llamaChild = null
         llamaChildReady = null
-        workerModelPath = null
-      })
-      // Fallback if ready was missed (some Electron builds deliver it before the listener)
-      setTimeout(() => {
-        if (llamaChild === child) settle()
-      }, 800)
-    } catch (err) {
-      preferInProcess = true
-      llamaChild = null
-      llamaChildReady = null
-      settle(err instanceof Error ? err : new Error(String(err)))
-    }
-  })
+        settle(err instanceof Error ? err : new Error(String(err)))
+      }
+    })
+  })()
 
   return llamaChildReady
 }
@@ -729,17 +764,29 @@ async function ensureRuntimeInProcess(
 
     const llamaCpp = await loadLlamaModule()
     const { getLlama } = llamaCpp
+    const preferEgpu =
+      getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
+    const { status: gpuStatus } = await applyLlamaGpuPreference(preferEgpu)
     let llama
     try {
-      llama = await getLlama()
+      llama = await getLlama({ gpu: 'auto', progressLogs: false })
     } catch (err) {
       logWarn('getLlama default failed, retrying GPU disabled', {
         error: err instanceof Error ? err.message : String(err)
       })
-      llama = await getLlama({ gpu: false })
+      llama = await getLlama({ gpu: false, progressLogs: false })
     }
+    noteLlamaBackend(
+      (llama.gpu === false ? false : llama.gpu) as LlamaGpuBackend,
+      gpuStatus.backendDeviceName
+    )
 
-    logInfo('Loading builtin model (in-process)', { path: modelPath, gpu: llama.gpu })
+    logInfo('Loading builtin model (in-process)', {
+      path: modelPath,
+      gpu: llama.gpu,
+      egpu: gpuStatus.egpu?.name || null,
+      preferEgpu
+    })
     let model
     try {
       model = await llama.loadModel({ modelPath })
@@ -792,8 +839,23 @@ async function ensureWorkerModel(
   }
   const requestId = `load-${Date.now()}`
   const contextSize = entry.tier === 'lite' ? 4096 : 8192
-  logInfo('Loading builtin model (utilityProcess)', { path: modelPath })
-  postToWorker({ type: 'load', modelPath, contextSize, requestId })
+  const preferEgpu =
+    getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
+  const { status: gpuStatus } = await applyLlamaGpuPreference(preferEgpu)
+  logInfo('Loading builtin model (utilityProcess)', {
+    path: modelPath,
+    egpu: gpuStatus.egpu?.name || null,
+    preferEgpu,
+    backend: gpuStatus.backend
+  })
+  postToWorker({
+    type: 'load',
+    modelPath,
+    contextSize,
+    requestId,
+    preferEgpu,
+    gpu: 'auto'
+  })
   const result = await onceWorkerMessage(
     (m) =>
       (m.type === 'loaded' || m.type === 'load-error') && m.requestId === requestId
@@ -811,6 +873,7 @@ async function* streamBuiltinChatInProcess(options: {
   signal?: AbortSignal
   entry: BuiltinModelManifestEntry
   path: string
+  jsonSchema?: Record<string, unknown>
 }): AsyncGenerator<string, void, unknown> {
   const llamaCpp = await loadLlamaModule()
   const { LlamaChatSession } = llamaCpp
@@ -856,16 +919,29 @@ async function* streamBuiltinChatInProcess(options: {
     }
     options.signal?.addEventListener('abort', onAbortWake)
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let grammar: any = undefined
+    if (options.jsonSchema) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        grammar = await (state.llama as any).createGrammarForJsonSchema(options.jsonSchema)
+      } catch {
+        grammar = undefined
+      }
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const inProcPromptOpts: any = {
+      temperature: options.temperature,
+      signal: options.signal,
+      maxTokens: options.entry.tier === 'lite' ? 1024 : 4096,
+      ...(grammar ? { grammar } : {}),
+      onTextChunk(chunk: string) {
+        queue.push(chunk)
+        wake()
+      }
+    }
     const run = session
-      .prompt(prompt, {
-        temperature: options.temperature,
-        signal: options.signal,
-        maxTokens: options.entry.tier === 'lite' ? 1024 : 4096,
-        onTextChunk(chunk: string) {
-          queue.push(chunk)
-          wake()
-        }
-      })
+      .prompt(prompt, inProcPromptOpts)
       .then(() => {
         done = true
         wake()
@@ -924,6 +1000,7 @@ async function* streamBuiltinChatViaWorker(options: {
   signal?: AbortSignal
   entry: BuiltinModelManifestEntry
   path: string
+  jsonSchema?: Record<string, unknown>
 }): AsyncGenerator<string, void, unknown> {
   await ensureWorkerModel(options.path, options.entry)
 
@@ -973,7 +1050,8 @@ async function* streamBuiltinChatViaWorker(options: {
     id,
     messages: options.messages,
     temperature: options.temperature,
-    maxTokens: options.entry.tier === 'lite' ? 1024 : 4096
+    maxTokens: options.entry.tier === 'lite' ? 1024 : 4096,
+    jsonSchema: options.jsonSchema
   })
 
   try {
@@ -1010,18 +1088,38 @@ export async function* streamBuiltinChat(options: {
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
   temperature: number
   signal?: AbortSignal
+  /** Constrain decoding to this JSON schema via a GBNF grammar (tool-call retries). */
+  jsonSchema?: Record<string, unknown>
 }): AsyncGenerator<string, void, unknown> {
-  const entry = findBuiltinEntry(options.modelRef) ?? getComposerManifest()
-  const path = localModelPath(entry)
-  if (!existsSync(path)) {
-    throw new Error(
-      `${entry.displayName} is not installed yet. Open Settings → Models and download it (~${formatApproxSize(entry.approxBytes)}).`
-    )
-  }
-  if (!isValidModelFile(path, entry)) {
-    throw new Error(
-      `${entry.displayName} file looks incomplete or corrupted. Open Settings → Models and download it again.`
-    )
+  let entry: BuiltinModelManifestEntry
+  let path: string
+
+  if (options.modelRef.startsWith('local:')) {
+    const { findLocalEntry, localModelFilePath, localEntryAsBuiltin } = await import('./local-model')
+    const local = findLocalEntry(options.modelRef)
+    if (!local) {
+      throw new Error(`Unknown local model “${options.modelRef}”. Open Settings → Models.`)
+    }
+    entry = localEntryAsBuiltin(local)
+    path = localModelFilePath(local)
+    if (!existsSync(path)) {
+      throw new Error(
+        `${entry.displayName} is not installed yet. Open Settings → Models → Local and download it (~${formatApproxSize(entry.approxBytes)}).`
+      )
+    }
+  } else {
+    entry = findBuiltinEntry(options.modelRef) ?? getComposerManifest()
+    path = localModelPath(entry)
+    if (!existsSync(path)) {
+      throw new Error(
+        `${entry.displayName} is not installed yet. Open Settings → Models and download it (~${formatApproxSize(entry.approxBytes)}).`
+      )
+    }
+    if (!isValidModelFile(path, entry)) {
+      throw new Error(
+        `${entry.displayName} file looks incomplete or corrupted. Open Settings → Models and download it again.`
+      )
+    }
   }
 
   // Prefer utilityProcess so Metal/CPU inference does not freeze the Electron UI.

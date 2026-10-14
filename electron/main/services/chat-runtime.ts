@@ -1,5 +1,6 @@
 import type { AppSettings } from '../../../src/shared/settings-schema'
-import { isBuiltinRef, resolveExactBuiltinRef, streamBuiltinChat } from './builtin-model'
+import { isNativeGgufRef, resolveExactBuiltinRef, streamBuiltinChat } from './builtin-model'
+import { isLocalRef, resolveExactLocalRef } from './local-model'
 import {
   streamOpenAICompatible,
   type ChatRequestMessage,
@@ -25,6 +26,8 @@ export async function* streamModelChat(options: {
   tools?: OpenAIToolDef[]
   toolChoice?: 'auto' | 'none' | 'required'
   onNativeToolCalls?: (calls: NativeToolCall[]) => void
+  /** Constrain built-in GGUF output to this JSON schema (grammar decoding). */
+  builtinJsonSchema?: Record<string, unknown>
 }): AsyncGenerator<string, void, unknown> {
   let model =
     options.model || options.settings.models.defaultModel || 'builtin:composer-lite'
@@ -53,15 +56,26 @@ export async function* streamModelChat(options: {
   }
 
   try {
-    if (isBuiltinRef(model)) {
-      const ready = resolveExactBuiltinRef(model)
-      if (!ready) {
-        throw new Error(
-          `Built-in model “${model}” is not ready. Open Settings → Models and download it.`
-        )
+    if (isNativeGgufRef(model)) {
+      if (isLocalRef(model)) {
+        const ready = resolveExactLocalRef(model)
+        if (!ready) {
+          throw new Error(
+            `Local model “${model}” is not ready. Open Settings → Models → Local and download it.`
+          )
+        }
+        model = ready
+        provider = 'local'
+      } else {
+        const ready = resolveExactBuiltinRef(model)
+        if (!ready) {
+          throw new Error(
+            `Built-in model “${model}” is not ready. Open Settings → Models and download it.`
+          )
+        }
+        model = ready
+        provider = 'builtin'
       }
-      model = ready
-      provider = 'builtin'
       for await (const chunk of streamBuiltinChat({
         modelRef: model,
         messages: options.messages
@@ -71,7 +85,8 @@ export async function* streamModelChat(options: {
             content: typeof m.content === 'string' ? m.content : ''
           })),
         temperature: options.temperature,
-        signal: options.signal
+        signal: options.signal,
+        jsonSchema: options.builtinJsonSchema
       })) {
         outputText += chunk
         yield chunk

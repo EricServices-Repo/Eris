@@ -10,7 +10,7 @@ import {
   type ErisPlanLimits,
   type UsageLimitMeter
 } from '../../../src/shared/eris-plan'
-import { getUsageSnapshot } from './usage-stats'
+import { getEffectiveTodayTotals } from './usage-sync'
 import { isEricServicesAuthenticated } from './ericservices'
 
 export type UsageEntitlement = {
@@ -25,6 +25,8 @@ export type UsageEntitlement = {
   blockedReason: string | null
   upgradeUrl: string
   accountUrl: string
+  /** True when today's totals include a pull from www.ericservic.es. */
+  profileSynced?: boolean
 }
 
 export function resolvePlanLimits(settings: AppSettings): {
@@ -63,20 +65,26 @@ export function getUsageEntitlement(
     : null
   const authenticated = isEricServicesAuthenticated(settings, token)
   const { plan, limits } = resolvePlanLimits(settings)
-  const snap = getUsageSnapshot(1)
-  const usedRequests = snap.today.totalRequests
-  const usedTokens = snap.today.totalInputTokens + snap.today.totalOutputTokens
-  const usedCloud = snap.today.cloudJobs || 0
+  // Prefer max(local, profile) so Free caps apply across devices when signed in
+  const eff = getEffectiveTodayTotals()
+  const usedRequests = eff.requests
+  const usedTokens = eff.inputTokens + eff.outputTokens
+  const usedCloud = eff.cloudJobs || 0
 
   const requests = meterAgainstLimit(usedRequests, limits.dailyRequests)
   const tokens = meterAgainstLimit(usedTokens, limits.dailyTokens)
   const cloudJobs = meterAgainstLimit(usedCloud, limits.cloudJobsPerDay)
 
+  // Local chat/tokens are free (they run on the user's machine). Only usage that
+  // spends our compute — Cloud Agent jobs — can block, and that is enforced in
+  // assertCloudJobWithinPlan at the cloud entry point, not here. A non-null
+  // request/token limit (set by an admin override) is still honored for display
+  // and as a backstop.
   let blockedReason: string | null = null
   if (plan === 'free') {
-    if (requests.exhausted) {
+    if (limits.dailyRequests != null && requests.exhausted) {
       blockedReason = `Free plan daily request limit reached (${limits.dailyRequests}). Upgrade to Pro for unlimited usage.`
-    } else if (tokens.exhausted) {
+    } else if (limits.dailyTokens != null && tokens.exhausted) {
       blockedReason = `Free plan daily token limit reached (${limits.dailyTokens}). Upgrade to Pro for unlimited usage.`
     }
   }
@@ -92,10 +100,16 @@ export function getUsageEntitlement(
     overLimit: Boolean(blockedReason),
     blockedReason,
     upgradeUrl: erisUpgradeUrl(settings.ericServices.apiBase),
-    accountUrl: erisAccountUrl(settings.ericServices.apiBase)
+    accountUrl: erisAccountUrl(settings.ericServices.apiBase),
+    profileSynced: eff.synced
   }
 }
 
+/**
+ * Local chat is always allowed on Free — Composer Lite runs on the user's own
+ * machine. This only trips if an admin set an explicit request/token override
+ * (blockedReason stays null for the default unlimited-local Free plan).
+ */
 export function assertChatWithinPlan(
   settings: AppSettings,
   getSecret: (key: string) => string | null

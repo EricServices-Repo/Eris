@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { UsageEntitlement, UsageLimitMeter, UsageSnapshot } from '@/shared/api'
+import type {
+  UsageDayTotals,
+  UsageEntitlement,
+  UsageLimitMeter,
+  UsageSnapshot,
+  UsageSyncMeta
+} from '@/shared/api'
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`
@@ -19,6 +25,45 @@ function kindAccent(kind: string): string {
   if (kind === 'builtin') return 'usage-accent-builtin'
   if (kind === 'openai-compatible') return 'usage-accent-api'
   return 'usage-accent-other'
+}
+
+function formatSyncTime(iso: string | null): string {
+  if (!iso) return 'never'
+  try {
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return 'never'
+    return d.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    })
+  } catch {
+    return 'never'
+  }
+}
+
+function syncLabel(sync: UsageSyncMeta | undefined, refreshing: boolean): string {
+  if (refreshing || sync?.state === 'syncing') return 'Syncing…'
+  if (!sync?.authenticated) return 'Sign in to sync account usage'
+  if (sync.state === 'ok') return `Synced ${formatSyncTime(sync.lastSyncedAt)}`
+  if (sync.state === 'offline') {
+    return sync.lastError
+      ? `Offline — ${sync.lastError}`
+      : 'Offline — showing device totals until sync works'
+  }
+  if (sync.state === 'error') {
+    return sync.lastError ? `Sync error — ${sync.lastError}` : 'Sync error'
+  }
+  return sync.lastSyncedAt
+    ? `Last synced ${formatSyncTime(sync.lastSyncedAt)}`
+    : 'Account sync idle'
+}
+
+function totalsLine(t: UsageDayTotals | null | undefined): string {
+  if (!t) return '—'
+  const tokens = t.inputTokens + t.outputTokens
+  return `${t.requests} req · ${formatTokens(tokens)} tok · ${t.cloudJobs} cloud`
 }
 
 function LimitMeter({
@@ -81,7 +126,10 @@ export function UsagePanel() {
 
   const today = stats?.today
   const ent: UsageEntitlement | undefined = stats?.entitlement
+  const profile = stats?.profile
+  const sync = profile?.sync
   const isPro = ent?.plan === 'pro'
+  const syncing = busy || sync?.state === 'syncing'
   const totalToday =
     (today?.totalInputTokens || 0) + (today?.totalOutputTokens || 0)
   const maxModel = Math.max(1, ...(stats?.byModel.map((m) => m.totalTokens) || [1]))
@@ -97,6 +145,41 @@ export function UsagePanel() {
 
   return (
     <div className="usage-panel">
+      {ent?.authenticated && (
+        <div className={`usage-sync-card${syncing ? ' is-syncing' : ''}`}>
+          <div className="usage-sync-head">
+            <strong>Account usage</strong>
+            <span className="usage-sync-status">{syncLabel(sync, busy)}</span>
+          </div>
+          <p className="usage-sync-copy">
+            Free daily caps use the higher of this device and your EricServic.es profile, so
+            multi-device use stays honest.
+          </p>
+          <div className="usage-sync-grid">
+            <div className="usage-sync-cell">
+              <div className="usage-sync-cell-label">This device</div>
+              <div className="usage-sync-cell-value">
+                {totalsLine(profile?.deviceToday)}
+              </div>
+            </div>
+            <div className="usage-sync-cell">
+              <div className="usage-sync-cell-label">Account (profile)</div>
+              <div className="usage-sync-cell-value">
+                {syncing && !profile?.accountToday
+                  ? 'Syncing…'
+                  : totalsLine(profile?.accountToday)}
+              </div>
+            </div>
+            <div className="usage-sync-cell is-effective">
+              <div className="usage-sync-cell-label">Counted toward Free caps</div>
+              <div className="usage-sync-cell-value">
+                {totalsLine(profile?.effectiveToday)}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className={`usage-plan-banner${isPro ? ' is-pro' : ' is-free'}`}>
         <div className="usage-plan-banner-main">
           <div className="usage-plan-badge">{ent?.planLabel || 'Free'}</div>
@@ -164,13 +247,13 @@ export function UsagePanel() {
       )}
 
       <p className="subtitle" style={{ marginTop: 0 }}>
-        Local accounting of model requests and estimated tokens (chars÷4 when providers don’t
-        report usage). Resets per calendar day on this machine.
+        Charts below are this device’s model breakdown (chars÷4 when providers don’t report
+        usage). Allowance meters above use account-aware Free caps when signed in.
       </p>
 
       <div className="usage-hero">
         <div className="usage-hero-card">
-          <div className="usage-hero-label">Today</div>
+          <div className="usage-hero-label">Today (device)</div>
           <div className="usage-hero-value">{formatTokens(totalToday)}</div>
           <div className="usage-hero-sub">tokens · {today?.totalRequests || 0} requests</div>
         </div>
@@ -327,7 +410,7 @@ export function UsagePanel() {
 
       <div className="model-conn-actions" style={{ marginTop: 8 }}>
         <button type="button" className="btn" disabled={busy} onClick={() => void refresh()}>
-          Refresh
+          {syncing ? 'Syncing…' : 'Refresh'}
         </button>
         <button
           type="button"
@@ -335,7 +418,7 @@ export function UsagePanel() {
           disabled={busy}
           onClick={() =>
             void (async () => {
-              if (!window.confirm('Clear today’s usage counters?')) return
+              if (!window.confirm('Clear today’s usage counters on this device?')) return
               setBusy(true)
               try {
                 setStats(await window.ide.clearUsageStats({ todayOnly: true }))
@@ -353,7 +436,7 @@ export function UsagePanel() {
           disabled={busy}
           onClick={() =>
             void (async () => {
-              if (!window.confirm('Clear all stored usage history on this Mac?')) return
+              if (!window.confirm('Clear all stored usage history on this device?')) return
               setBusy(true)
               try {
                 setStats(await window.ide.clearUsageStats())

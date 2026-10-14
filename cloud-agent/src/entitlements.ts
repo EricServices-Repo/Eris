@@ -30,10 +30,10 @@ function saveUsage(u: DayUsage): void {
   writeFileSync(usagePath(), JSON.stringify(u, null, 2), 'utf8')
 }
 
-export function assertCanEnqueue(
+export async function assertCanEnqueue(
   auth: AuthContext,
   store: JobStore
-): { ok: true } | { ok: false; error: string } {
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const owner = auth.owner
   const running = store
     .list(500)
@@ -57,7 +57,9 @@ export function assertCanEnqueue(
 
   if (auth.plan === 'free') {
     const usage = loadUsage()
-    const used = usage.jobs[owner] || 0
+    const localUsed = usage.jobs[owner] || 0
+    const remoteUsed = await remoteCloudJobsToday(auth)
+    const used = Math.max(localUsed, remoteUsed ?? 0)
     if (used >= config.freeJobsPerDay) {
       return {
         ok: false,
@@ -73,6 +75,66 @@ export function recordEnqueue(auth: AuthContext): void {
   const usage = loadUsage()
   usage.jobs[auth.owner] = (usage.jobs[auth.owner] || 0) + 1
   saveUsage(usage)
+  void reportCloudJobToProfile(auth)
+}
+
+/** Push +1 cloud job to the user's EricServic.es profile (best-effort). */
+async function reportCloudJobToProfile(auth: AuthContext): Promise<void> {
+  if (!auth.token) return
+  const day = todayKey()
+  const url = `${config.erisApiBase.replace(/\/+$/, '')}/usage.php`
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${auth.token}`,
+        'User-Agent': 'eris-cloud-agent',
+        'X-Eris-Client': 'eris-cloud-agent'
+      },
+      body: JSON.stringify({
+        day,
+        delta: { cloudJobs: 1, requests: 0, inputTokens: 0, outputTokens: 0 },
+        source: 'cloud-agent'
+      }),
+      signal: AbortSignal.timeout(8_000)
+    })
+    if (!res.ok) {
+      // Soft-fail — local worker cap still applies
+      return
+    }
+  } catch {
+    // ignore network errors
+  }
+}
+
+/**
+ * Prefer profile cloudJobs when available so Free caps apply across devices/agents.
+ */
+export async function remoteCloudJobsToday(auth: AuthContext): Promise<number | null> {
+  if (!auth.token) return null
+  const url = `${config.erisApiBase.replace(/\/+$/, '')}/usage.php?day=${encodeURIComponent(todayKey())}`
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${auth.token}`,
+        'User-Agent': 'eris-cloud-agent'
+      },
+      signal: AbortSignal.timeout(6_000)
+    })
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean
+      usage?: { cloudJobs?: number }
+    }
+    if (!res.ok || data.ok === false) return null
+    const n = Number(data.usage?.cloudJobs)
+    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : null
+  } catch {
+    return null
+  }
 }
 
 /** Mask owner for the public :80 status page (no full emails/usernames). */

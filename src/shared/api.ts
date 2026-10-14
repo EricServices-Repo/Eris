@@ -3,6 +3,9 @@ import type {
   ChatThread,
   FileEntry,
   BuiltinModelStatus,
+  GpuAccelStatus,
+  HfGgufSearchHit,
+  LocalModelStatus,
   ModelsStatus,
   ProjectAgentsConfig,
   ResolvedAgent,
@@ -29,6 +32,8 @@ import type {
   BackgroundJobEvent,
   EnqueueBackgroundJobRequest
 } from './background-agents'
+import type { AgentOutcomeSummary } from './agent-telemetry'
+import type { OllamaLibraryEntry, OllamaPullProgress } from './ollama-types'
 
 export interface AppState {
   workspaces: WorkspaceRecord[]
@@ -91,6 +96,22 @@ export type UsageEntitlement = {
   blockedReason: string | null
   upgradeUrl: string
   accountUrl: string
+  /** True when today's totals include a pull from www.ericservic.es profile usage. */
+  profileSynced?: boolean
+}
+
+export type UsageDayTotals = {
+  requests: number
+  inputTokens: number
+  outputTokens: number
+  cloudJobs: number
+}
+
+export type UsageSyncMeta = {
+  state: 'idle' | 'syncing' | 'ok' | 'offline' | 'error'
+  lastSyncedAt: string | null
+  lastError: string | null
+  authenticated: boolean
 }
 
 export type UsageSnapshot = {
@@ -111,6 +132,13 @@ export type UsageSnapshot = {
     totalInputTokens: number
     totalOutputTokens: number
     cloudJobs?: number
+  }
+  /** Account vs device breakdown when signed in */
+  profile?: {
+    sync: UsageSyncMeta
+    deviceToday: UsageDayTotals
+    accountToday: UsageDayTotals | null
+    effectiveToday: UsageDayTotals
   }
   days: Array<{
     date: string
@@ -143,6 +171,7 @@ export type UsageSnapshot = {
 export interface IdeApi {
   getAppState: () => Promise<AppState>
   getAppVersion: () => Promise<AppVersionInfo>
+  openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>
   completeOnboarding: () => Promise<AppState>
   resetOnboarding: () => Promise<AppState>
   listWorkspaces: () => Promise<WorkspaceRecord[]>
@@ -178,6 +207,27 @@ export interface IdeApi {
     error?: string
   }>
   cancelBuiltinDownload: () => Promise<boolean>
+  /** Local GGUFs that run inside Eris (no Ollama). */
+  localModelStatus: () => Promise<LocalModelStatus[]>
+  downloadLocalModel: (id: string) => Promise<LocalModelStatus>
+  deleteLocalModel: (id: string) => Promise<LocalModelStatus | null>
+  cancelLocalDownload: () => Promise<boolean>
+  onLocalDownloadProgress: (cb: (status: LocalModelStatus) => void) => () => void
+  /** Hugging Face Hub — browse / search / download GGUFs into Local models. */
+  hfGgufBrowseUrl: () => Promise<string>
+  searchHfGgufModels: (query: string) => Promise<HfGgufSearchHit[]>
+  downloadLocalModelFromHf: (repoIdOrUrl: string) => Promise<LocalModelStatus>
+  gpuAccelStatus: () => Promise<GpuAccelStatus>
+  reloadLlamaGpu: () => Promise<GpuAccelStatus>
+  /** #10 opt-in telemetry: record the user's Keep/Undo decisions for the last run. */
+  recordDiffDecision: (payload: { kept?: number; undone?: number }) => Promise<boolean>
+  getAgentTelemetry: () => Promise<AgentOutcomeSummary[]>
+  /** Optional external Ollama daemon (advanced). Prefer downloadLocalModel. */
+  ollamaLibrary: () => Promise<OllamaLibraryEntry[]>
+  ollamaInstalled: () => Promise<{ ok: boolean; models: string[]; error?: string }>
+  ollamaPull: (name: string) => Promise<{ ok: boolean; model?: string; error?: string }>
+  ollamaDelete: (name: string) => Promise<{ ok: boolean; error?: string }>
+  onOllamaPullProgress: (cb: (p: OllamaPullProgress) => void) => () => void
   onBuiltinDownloadProgress: (cb: (status: BuiltinModelStatus) => void) => () => void
   listAgents: () => Promise<ResolvedAgent[]>
   getProjectAgents: () => Promise<ProjectAgentsConfig>

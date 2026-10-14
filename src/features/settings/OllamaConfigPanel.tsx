@@ -18,6 +18,10 @@ interface Props {
   onSetDefaultModel: (model: string) => Promise<void>
 }
 
+/**
+ * Optional external Ollama connection. Curated downloads run natively in Eris
+ * via Settings → Local models — this panel is only for users who already run Ollama.
+ */
 export function OllamaConfigPanel({
   resolved,
   status,
@@ -98,7 +102,7 @@ export function OllamaConfigPanel({
       } else if (liveAfter && !liveAfter.reachable) {
         setError(liveAfter.error || 'Could not reach Ollama. Is it running? Try: ollama serve')
       } else {
-        setInfo('Saved. Pull a model with ollama pull, then refresh again.')
+        setInfo('Saved. Prefer Local models above if you do not already use Ollama.')
       }
       await onRefresh()
     } catch (err) {
@@ -162,7 +166,7 @@ export function OllamaConfigPanel({
             <span className={`status-dot ${reachable && enabled ? 'ok' : ''}`} />
             <div className="models-row-copy">
               <div className="models-row-title">
-                <strong>Local Ollama</strong>
+                <strong>External Ollama</strong>
               </div>
               <div className="models-row-meta">{statusLabel}</div>
             </div>
@@ -227,11 +231,10 @@ export function OllamaConfigPanel({
           </div>
         )}
 
-        {!ollama && !error && !info && (
-          <p className="models-hint">
-            Install Ollama, run <code>ollama pull …</code>, then Connect.
-          </p>
-        )}
+        <p className="models-hint">
+          Prefer <strong>Local models</strong> above — they download and run inside Eris. Use this
+          only if you already run Ollama separately.
+        </p>
       </div>
     )
   }
@@ -242,28 +245,15 @@ export function OllamaConfigPanel({
         <div className="ollama-config-title">
           <span className={`status-dot ${reachable && enabled ? 'ok' : ''}`} />
           <strong>Ollama</strong>
-          <span className="badge">local</span>
+          <span className="badge">optional</span>
           {ollama && !enabled && <span className="badge">off</span>}
           {reachable && enabled && <span className="badge">connected</span>}
         </div>
         <p>
-          Run local models through Ollama’s OpenAI-compatible API. Install Ollama, pull models, then
-          connect — they show up in the model picker when reachable.
+          Advanced: connect an existing Ollama daemon. For most users, download models under{' '}
+          <strong>Local models</strong> — they run inside Eris with no separate app.
         </p>
       </div>
-
-      <ol className="model-conn-steps">
-        <li>
-          Install from <code>ollama.com</code> and keep the app (or <code>ollama serve</code>) running.
-        </li>
-        <li>
-          Pull a model, e.g. <code>ollama pull qwen2.5-coder:7b</code>
-        </li>
-        <li>
-          Connect / Refresh below, click a model chip (or pick it in the chat model menu). Chat uses
-          that model for Ask and Agent.
-        </li>
-      </ol>
 
       <label className="field ollama-url-field">
         <span>Base URL</span>
@@ -307,14 +297,6 @@ export function OllamaConfigPanel({
       {info && !error && (
         <div className="subtitle" style={{ color: 'var(--success, #3d9a5f)', marginBottom: 8 }}>
           {info}
-        </div>
-      )}
-      {!ollama && !error && !info && (
-        <div className="model-conn-meta">Not connected yet — click Connect to add Ollama.</div>
-      )}
-      {ollama && reachable && models.length === 0 && !error && (
-        <div className="model-conn-meta">
-          Connected, but no models listed. Run <code>ollama pull …</code> then refresh.
         </div>
       )}
 

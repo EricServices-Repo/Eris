@@ -18,7 +18,13 @@ import { FeedbackPanel } from './panels/FeedbackPanel'
 import { GeneralPanel } from './panels/GeneralPanel'
 import { LoggingPanel, useLogsState } from './panels/LoggingPanel'
 import { McpPanel, useMcpPanelState } from './panels/McpPanel'
-import { ModelsPanel, useModelsPanelState } from './panels/ModelsPanel'
+import {
+  ComposerModelsPanel,
+  LocalModelsSettingsPanel,
+  ProvidersModelsPanel,
+  useModelsPanelState
+} from './panels/ModelsPanel'
+import { resolveSettingsCategory } from './settings-meta'
 import { RulesPanel, useRulesPanelState } from './panels/RulesPanel'
 import { SkillsPanel, useSkillsPanelState } from './panels/SkillsPanel'
 import { SubagentsPanel } from './panels/SubagentsPanel'
@@ -38,7 +44,8 @@ interface Props {
   hasWorkspace: boolean
   /** Already-loaded app settings for instant paint before IPC returns. */
   seedResolved?: AppSettings | null
-  initialCategory?: Category
+  /** Accepts legacy `models` (mapped to Composer). */
+  initialCategory?: Category | 'models'
   startCreateSkill?: boolean
   onClose: () => void
   onChanged: (resolved: AppSettings) => void
@@ -55,7 +62,7 @@ export function SettingsModal({
   onChanged,
   onRerunSetup
 }: Props) {
-  const [category, setCategory] = useState<Category>('models')
+  const [category, setCategory] = useState<Category>('composer')
   const [layered, setLayered] = useState<LayeredSettings | null>(null)
   const [scope, setScope] = useState<SettingsScope>('user')
   const [status, setStatus] = useState<ModelsStatus | null>(null)
@@ -111,11 +118,12 @@ export function SettingsModal({
       return
     }
     if (initialCategory) {
-      setCategory(initialCategory)
-      if (initialCategory === 'skills') void loadSkills(null, false)
-      if (initialCategory === 'rules') void loadRules()
-      if (initialCategory === 'context') void loadWorkspaceContextDoc()
-      if (initialCategory === 'logging') void loadLogs()
+      const resolvedCat = resolveSettingsCategory(initialCategory) || 'composer'
+      setCategory(resolvedCat)
+      if (resolvedCat === 'skills') void loadSkills(null, false)
+      if (resolvedCat === 'rules') void loadRules()
+      if (resolvedCat === 'context') void loadWorkspaceContextDoc()
+      if (resolvedCat === 'logging') void loadLogs()
     }
   }, [open, initialCategory, startCreateSkill])
 
@@ -144,7 +152,7 @@ export function SettingsModal({
 
   useEffect(() => {
     if (!open) return
-    return window.ide.onBuiltinDownloadProgress((s) => {
+    const offBuiltin = window.ide.onBuiltinDownloadProgress((s) => {
       setStatus((prev) =>
         prev
           ? {
@@ -153,8 +161,43 @@ export function SettingsModal({
             }
           : prev
       )
+      if (s.downloading) modelsState.setDownloadingId(s.id)
     })
+    const offLocal = window.ide.onLocalDownloadProgress((s) => {
+      setStatus((prev) =>
+        prev
+          ? {
+              ...prev,
+              local: (prev.local ?? []).map((m) => (m.id === s.id ? s : m))
+            }
+          : prev
+      )
+    })
+    return () => {
+      offBuiltin()
+      offLocal()
+    }
   }, [open])
+
+  // Keep progress fresh when Settings was closed mid-download (main process owns the transfer).
+  useEffect(() => {
+    if (!open || (category !== 'composer' && category !== 'localModels')) return
+    const downloading =
+      Boolean(modelsState.downloadingId) ||
+      Boolean(status?.builtin?.some((b) => b.downloading)) ||
+      Boolean(status?.local?.some((m) => m.downloading))
+    if (!downloading) return
+    const id = window.setInterval(() => {
+      void window.ide.modelsStatus().then((models) => {
+        setStatus(models)
+        const still =
+          models.builtin?.find((b) => b.downloading) ||
+          models.local?.find((m) => m.downloading)
+        modelsState.setDownloadingId(still?.id ?? null)
+      })
+    }, 1_500)
+    return () => window.clearInterval(id)
+  }, [open, category, modelsState.downloadingId])
 
   useEffect(() => {
     if (!hasWorkspace && scope === 'workspace') setScope('user')
@@ -216,7 +259,7 @@ export function SettingsModal({
 
   const showScope = SETTINGS_SCOPE_CATEGORIES.has(category)
   const rowsTitle =
-    category === 'models'
+    category === 'composer'
       ? 'Sampling'
       : category === 'agent'
         ? 'Agent preferences'
@@ -340,9 +383,27 @@ export function SettingsModal({
 
           {category === 'usage' && <UsagePanel />}
 
-          {category === 'models' && (
-            <ModelsPanel
+          {category === 'composer' && (
+            <ComposerModelsPanel
               state={modelsState}
+              resolved={resolved}
+              status={status}
+              apply={apply}
+              load={load}
+            />
+          )}
+
+          {category === 'localModels' && (
+            <LocalModelsSettingsPanel
+              resolved={resolved}
+              status={status}
+              apply={apply}
+              load={load}
+            />
+          )}
+
+          {category === 'providers' && (
+            <ProvidersModelsPanel
               resolved={resolved}
               status={status}
               apply={apply}

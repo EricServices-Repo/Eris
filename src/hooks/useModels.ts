@@ -15,8 +15,13 @@ export function useModels(settings: AppSettings | null) {
       window.ide.listAgents()
     ])
     const builtinReady = status.builtin?.some((b) => b.ready) ?? false
-    setComposerReady(builtinReady)
-    setOllamaOk(builtinReady || Boolean(status.models.some((m) => m.source === 'connection' && m.ready)))
+    const localReady = status.local?.some((m) => m.ready) ?? false
+    setComposerReady(builtinReady || localReady)
+    setOllamaOk(
+      builtinReady ||
+        localReady ||
+        Boolean(status.models.some((m) => m.source === 'connection' && m.ready))
+    )
     setModels(
       status.models.length > 0
         ? status.models
@@ -46,13 +51,18 @@ export function useModels(settings: AppSettings | null) {
     setSelectedModel((prev) => {
       // Prefer Lite locally; Composer Full is Cloud Agents only.
       if (prev === 'builtin:composer' && liteReady) return 'builtin:composer-lite'
-      if (prev && prev !== 'builtin:composer' && status.models.some((m) => m.name === prev)) {
+      // Keep current selection only if that model is ready/downloaded.
+      if (
+        prev &&
+        prev !== 'builtin:composer' &&
+        status.models.some((m) => m.name === prev && m.ready === true)
+      ) {
         return prev
       }
       if (
         s?.models.defaultModel &&
         s.models.defaultModel !== 'builtin:composer' &&
-        status.models.some((m) => m.name === s.models.defaultModel)
+        status.models.some((m) => m.name === s.models.defaultModel && m.ready === true)
       ) {
         return s.models.defaultModel
       }

@@ -36,6 +36,8 @@ export async function* streamThinkingText(options: {
   stopOnToolCall?: boolean
   /** OpenAI-compatible native tools (skipped for builtin GGUF). */
   tools?: OpenAIToolDef[]
+  /** Constrain builtin GGUF decoding to a tool-call JSON schema (retry nudges). */
+  builtinJsonSchema?: Record<string, unknown>
 }): AsyncGenerator<
   | { kind: 'thinking'; text: string }
   | {
@@ -84,6 +86,7 @@ export async function* streamThinkingText(options: {
       temperature: options.temperature,
       signal: localAbort.signal,
       getSecret: options.getSecret,
+      builtinJsonSchema: options.builtinJsonSchema,
       tools: useNativeTools ? options.tools : undefined,
       toolChoice: useNativeTools ? 'auto' : undefined,
       onNativeToolCalls: useNativeTools

@@ -1,6 +1,6 @@
 {
   "name": "eris",
-  "version": "0.2.19",
+  "version": "0.2.26",
   "description": "Eris — AI-first desktop IDE for macOS and Windows",
   "main": "./out/main/index.js",
   "author": "Eris",
@@ -144,7 +144,11 @@
       ],
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
       "entitlements": "resources/entitlements.mac.plist",
-      "entitlementsInherit": "resources/entitlements.mac.plist"
+      "entitlementsInherit": "resources/entitlements.mac.plist",
+      "extendInfo": {
+        "NSSupportsAutomaticGraphicsSwitching": false,
+        "NSHighResolutionCapable": true
+      }
     },
     "dmg": {
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}"

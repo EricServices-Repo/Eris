@@ -168,6 +168,26 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   )
 ]
 
+/**
+ * A permissive JSON schema describing a single tool call, for grammar-constrained
+ * decoding on the local GGUF model. Forces valid JSON with a known tool name and
+ * scalar arguments, so Composer Lite can't emit malformed/partial tool calls.
+ * Used only on retries where a tool is required (never when a prose answer is OK).
+ */
+export function toolCallJsonSchema(extraNames: string[] = []): Record<string, unknown> {
+  const names = [
+    ...COMPOSER_OPENAI_TOOLS.map((t) => t.function.name),
+    ...extraNames
+  ].filter(Boolean)
+  return {
+    type: 'object',
+    properties: {
+      name: { enum: Array.from(new Set(names)) }
+    },
+    additionalProperties: { type: ['string', 'number', 'boolean'] }
+  }
+}
+
 export function mcpToolsToOpenAI(
   tools: Array<{ fqName: string; description?: string }>
 ): OpenAIToolDef[] {

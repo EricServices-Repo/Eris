@@ -139,3 +139,8 @@ export function modelsManifestPath(): string {
 export function builtinModelsDir(): string {
   return join(userDataRoot(), 'models', 'builtin')
 }
+
+/** User-downloaded local GGUFs (Settings → Models → Local), separate from Composer builtins. */
+export function localModelsDir(): string {
+  return join(userDataRoot(), 'models', 'local')
+}

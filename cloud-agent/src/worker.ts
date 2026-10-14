@@ -49,13 +49,13 @@ export class WorkerPool {
     void this.pump()
   }
 
-  enqueue(req: CloudJobCreateRequest, auth: AuthContext): CloudJob {
+  async enqueue(req: CloudJobCreateRequest, auth: AuthContext): Promise<CloudJob> {
     const local = getLocalModelStatus()
     if (!config.llmBase && local.status === 'error') {
       throw new Error(local.error || 'Local cloud model failed to load')
     }
 
-    const gate = assertCanEnqueue(auth, this.store)
+    const gate = await assertCanEnqueue(auth, this.store)
     if (!gate.ok) throw new Error(gate.error)
 
     // Resume path: clone metadata from previous job, reuse workspace/checkpoint
@@ -97,7 +97,10 @@ export class WorkerPool {
     return job
   }
 
-  private enqueueResume(req: CloudJobCreateRequest, auth: AuthContext): CloudJob {
+  private async enqueueResume(
+    req: CloudJobCreateRequest,
+    auth: AuthContext
+  ): Promise<CloudJob> {
     const prev = this.store.get(String(req.resumeFromJobId))
     if (!prev) throw new Error('resumeFromJobId not found')
     if (prev.ownerId && prev.ownerId !== auth.owner && auth.owner !== 'anonymous') {
@@ -106,9 +109,6 @@ export class WorkerPool {
     if (!prev.resumable && prev.status !== 'failed' && prev.status !== 'stopped') {
       throw new Error('Job is not resumable')
     }
-
-    const gate = assertCanEnqueue(auth, this.store)
-    if (!gate.ok) throw new Error(gate.error)
 
     const job = this.store.create(
       {
