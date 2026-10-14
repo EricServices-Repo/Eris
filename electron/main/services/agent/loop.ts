@@ -210,18 +210,12 @@ export async function* runAgentWithWorkspaceTools(options: {
 
   const workspacePath = options.workspacePath as string
   const mcpMode = options.mcp ?? 'sync'
-  if (mcpMode === 'sync') {
-    try {
-      await syncMcpRuntime(options.settings, workspacePath)
-    } catch {
-      // MCP optional
-    }
-  }
-  const mcpTools = mcpMode === 'off' ? [] : listMcpTools()
-  const checkpoint = createCheckpoint(workspacePath)
-  pruneOldCheckpoints(workspacePath, 20)
-  yield { type: 'checkpoint', checkpointId: checkpoint.id }
 
+  // Paint status immediately — don't wait on MCP sync / workspace retrieval.
+  yield {
+    type: 'status',
+    text: `${plan.agentName} · ${plan.intent} · ${workerModel.replace(/^builtin:/, '')}…`
+  }
   yield { type: 'model', model: workerModel }
   if (plan.escalateToFull) {
     yield {
@@ -237,20 +231,24 @@ export async function* runAgentWithWorkspaceTools(options: {
       agentName: plan.agentName
     }
   }
-  yield {
-    type: 'status',
-    text: `${plan.agentName} · ${plan.intent} · ${workerModel.replace(/^builtin:/, '')}…`
-  }
+
+  const mcpSyncP =
+    mcpMode === 'sync'
+      ? syncMcpRuntime(options.settings, workspacePath).catch(() => undefined)
+      : Promise.resolve()
+  const retrieveP = retrieveContextAsync(workspacePath, originalUserGoal, 6).catch(() => null)
+
+  const checkpoint = createCheckpoint(workspacePath)
+  pruneOldCheckpoints(workspacePath, 20)
+  yield { type: 'checkpoint', checkpointId: checkpoint.id }
+
+  const [, retrieved] = await Promise.all([mcpSyncP, retrieveP])
+  const mcpTools = mcpMode === 'off' ? [] : listMcpTools()
 
   let retrievalHint = ''
-  try {
-    const retrieved = await retrieveContextAsync(workspacePath, originalUserGoal, 6)
-    if (retrieved.paths.length > 0) {
-      retrievalHint =
-        `\n\n[Eris retrieval — likely relevant files]\n${retrieved.paths.map((p) => `- ${p}`).join('\n')}`
-    }
-  } catch {
-    // optional
+  if (retrieved && retrieved.paths.length > 0) {
+    retrievalHint =
+      `\n\n[Eris retrieval — likely relevant files]\n${retrieved.paths.map((p) => `- ${p}`).join('\n')}`
   }
   const mcpToolCount = mcpTools.length
   const openaiTools: OpenAIToolDef[] = filterToolsByPolicy(
@@ -1463,11 +1461,12 @@ export async function* runAgentWithWorkspaceTools(options: {
           detail: result.detail.slice(0, 2000)
         }
       }
+      // Short breadcrumb only — detail stays on the tool row, not a wall of thinking text.
       yield {
         type: 'thinking',
         text: `\n[${result.ok ? 'ok' : 'error'}] ${call.name}${
           result.path ? ` ${result.path}` : ''
-        }: ${result.detail.slice(0, 240)}\n`
+        }\n`
       }
       resultParts.push(
         `TOOL_RESULT ${call.name}${result.path ? ` path=${result.path}` : ''}:\n${truncateForModel(result.detail)}`

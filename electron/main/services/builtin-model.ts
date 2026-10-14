@@ -8,7 +8,6 @@ import {
   readdirSync,
   readFileSync,
   readSync,
-  renameSync,
   statSync,
   unlinkSync,
   writeFileSync
@@ -17,15 +16,22 @@ import { join } from 'path'
 import { pipeline } from 'stream/promises'
 import { Transform } from 'stream'
 import type {
+  AppSettings,
   BuiltinModelManifestEntry,
   BuiltinModelStatus
 } from '../../../src/shared/settings-schema'
 import { builtinModelsDir, modelsManifestPath } from './paths'
 import { logError, logInfo, logWarn } from './logger'
 import {
+  attachIdleTimeout,
   bodyToNodeStream,
+  createThrottledProgress,
+  DOWNLOAD_IDLE_TIMEOUT_MS,
   downloadFetch,
-  formatDownloadNetworkError
+  formatDownloadNetworkError,
+  publishDownloadedFile,
+  resolveDownloadTotal,
+  type DownloadPhase
 } from './http-download'
 import {
   applyLlamaGpuPreference,
@@ -71,7 +77,10 @@ function enqueueRuntime<T>(fn: () => Promise<T>): Promise<T> {
   )
   return run
 }
-const progressById = new Map<string, { downloaded: number; total: number }>()
+const progressById = new Map<
+  string,
+  { downloaded: number; total: number; phase?: DownloadPhase }
+>()
 /** Active download id (survives Settings UI unmount). */
 let activeDownloadId: string | null = null
 const downloadErrorById = new Map<string, string>()
@@ -275,11 +284,15 @@ export function getBuiltinStatuses(): BuiltinModelStatus[] {
     const path = localModelPath(entry)
     const installed = existsSync(path)
     const valid = installed && isValidModelFile(path, entry)
+    const live = progressById.get(entry.id)
     const downloadedBytes = installed
       ? statSync(path).size
-      : progressById.get(entry.id)?.downloaded ?? 0
-    const total = progressById.get(entry.id)?.total || entry.approxBytes
-    const progress = total > 0 ? Math.min(1, downloadedBytes / total) : valid ? 1 : 0
+      : live?.downloaded ?? 0
+    const total = live?.total || entry.approxBytes
+    const phase = downloadingPhase(entry.id, live?.phase)
+    let progress = total > 0 ? Math.min(1, downloadedBytes / total) : valid ? 1 : 0
+    if (phase === 'verifying') progress = Math.max(progress, 0.96)
+    if (phase === 'finalizing') progress = Math.max(progress, 0.99)
     const downloading = activeDownloadId === entry.id
     return {
       id: entry.id,
@@ -300,9 +313,18 @@ export function getBuiltinStatuses(): BuiltinModelStatus[] {
       progress: valid ? 1 : progress,
       tier: entry.tier,
       downloading,
+      downloadPhase: downloading ? phase : null,
       downloadError: downloadErrorById.get(entry.id) || null
     }
   })
+}
+
+function downloadingPhase(
+  id: string,
+  phase?: DownloadPhase
+): DownloadPhase | null {
+  if (activeDownloadId !== id) return null
+  return phase || 'downloading'
 }
 
 export function isBuiltinRef(model: string): boolean {
@@ -484,17 +506,21 @@ export async function downloadBuiltinModel(
       )
     }
 
-    const total = Number(
-      res.headers.get('content-length') ||
-        res.headers.get('x-linked-size') ||
-        entry.approxBytes
-    )
+    const resolved = resolveDownloadTotal(res.headers, entry.approxBytes)
+    let total = resolved.total
     let downloaded = 0
-    progressById.set(id, { downloaded, total })
+    progressById.set(id, { downloaded, total, phase: 'downloading' })
+    const emitProgress = createThrottledProgress(() => {
+      if (!onProgress) return
+      const status = getBuiltinStatuses().find((s) => s.id === id)
+      if (status) onProgress(status)
+    })
+    emitProgress.flush()
     logInfo('Builtin model download streaming', {
       id,
       via: res.via,
       total,
+      totalSource: resolved.source,
       urlHost: (() => {
         try {
           return new URL(entry.downloadUrl).host
@@ -506,22 +532,34 @@ export async function downloadBuiltinModel(
 
     const hasher = createHash('sha256')
     const nodeStream = bodyToNodeStream(res.body)
+    const clearIdle = attachIdleTimeout(nodeStream, DOWNLOAD_IDLE_TIMEOUT_MS, (err) => {
+      controller.abort()
+      logWarn('Builtin model download idle timeout', { id, error: err.message })
+    })
     const hashing = new Transform({
       transform(chunk: Buffer, _enc, cb) {
         hasher.update(chunk)
         downloaded += chunk.length
-        progressById.set(id, { downloaded, total })
-        if (onProgress) {
-          const status = getBuiltinStatuses().find((s) => s.id === id)
-          if (status) onProgress(status)
-        }
+        if (total > 0 && downloaded > total) total = downloaded
+        progressById.set(id, { downloaded, total, phase: 'downloading' })
+        emitProgress.ping()
         cb(null, chunk)
       }
     })
 
-    await pipeline(nodeStream, hashing, createWriteStream(partial))
+    try {
+      await pipeline(nodeStream, hashing, createWriteStream(partial))
+    } finally {
+      clearIdle()
+    }
 
-    if (downloaded < Math.floor(entry.approxBytes * 0.98)) {
+    // Bytes finished — bump total to actual size so the bar leaves ~90% when approx was high.
+    total = Math.max(total, downloaded)
+    progressById.set(id, { downloaded, total, phase: 'verifying' })
+    emitProgress.flush()
+
+    const minExpected = Math.floor(entry.approxBytes * 0.85)
+    if (entry.approxBytes > 0 && downloaded < minExpected) {
       unlinkQuiet(partial)
       throw new Error(
         `Download incomplete (${formatApproxSize(downloaded)} of ~${formatApproxSize(entry.approxBytes)}). Try again.`
@@ -543,14 +581,24 @@ export async function downloadBuiltinModel(
       )
     }
 
-    unlinkQuiet(target)
-    renameSync(partial, target)
+    progressById.set(id, { downloaded, total, phase: 'finalizing' })
+    emitProgress.flush()
+    await publishDownloadedFile(partial, target)
     writeVerifiedSidecar(target, digest)
-    progressById.set(id, { downloaded, total: downloaded })
-    await disposeRuntime()
+    progressById.set(id, { downloaded, total: downloaded, phase: 'finalizing' })
+    emitProgress.flush()
+    // Don't block the Settings UI on GPU runtime teardown.
+    void disposeRuntime().catch((err) => {
+      logWarn('disposeRuntime after builtin download failed', {
+        id,
+        error: err instanceof Error ? err.message : String(err)
+      })
+    })
     logInfo('Builtin model download complete', { id, bytes: downloaded, sha256: digest })
     downloadErrorById.delete(id)
-    return getBuiltinStatuses().find((s) => s.id === id)!
+    const done = getBuiltinStatuses().find((s) => s.id === id)!
+    if (onProgress) onProgress({ ...done, downloading: false, downloadPhase: null, progress: 1 })
+    return done
   } catch (err) {
     unlinkQuiet(partial)
     const message = err instanceof Error ? err.message : String(err)
@@ -1081,6 +1129,71 @@ async function* streamBuiltinChatViaWorker(options: {
       // ignore
     }
   }
+}
+
+let warmInFlight: Promise<{ ok: boolean; model?: string; error?: string }> | null = null
+
+/**
+ * Background-load the default ready GGUF into the llama worker so the first
+ * local chat turn is not a cold fork + model load.
+ */
+export function warmLocalInference(
+  settings?: AppSettings
+): Promise<{ ok: boolean; model?: string; error?: string }> {
+  if (process.env.VITEST || process.env.ERIS_SKIP_LLAMA_WARM === '1') {
+    return Promise.resolve({ ok: false, error: 'skipped' })
+  }
+  if (warmInFlight) return warmInFlight
+  warmInFlight = (async () => {
+    try {
+      const s = settings ?? getResolvedSettings(appState.currentWorkspace)
+      const preferred = s.models.defaultModel || 'builtin:composer-lite'
+      let entry: BuiltinModelManifestEntry | null = null
+      let path = ''
+
+      const lite = findBuiltinEntry('composer-lite')
+      if (lite && resolveExactBuiltinRef(lite.ref)) {
+        entry = lite
+        path = localModelPath(lite)
+      } else if (preferred.startsWith('local:')) {
+        const { findLocalEntry, localModelFilePath, localEntryAsBuiltin, isLocalModelReady } =
+          await import('./local-model')
+        if (isLocalModelReady(preferred)) {
+          const local = findLocalEntry(preferred)
+          if (local) {
+            entry = localEntryAsBuiltin(local)
+            path = localModelFilePath(local)
+          }
+        }
+      } else if (preferred.startsWith('builtin:') && resolveExactBuiltinRef(preferred)) {
+        entry = findBuiltinEntry(preferred)
+        if (entry) path = localModelPath(entry)
+      }
+
+      if (!entry || !path) {
+        const ready = getBuiltinStatuses().find((b) => b.ready)
+        if (ready) {
+          entry = findBuiltinEntry(ready.id)
+          if (entry) path = localModelPath(entry)
+        }
+      }
+
+      if (!entry || !path) {
+        return { ok: false, error: 'no ready local model' }
+      }
+
+      await ensureWorkerModel(path, entry)
+      logInfo('Warmed local inference', { model: entry.ref })
+      return { ok: true, model: entry.ref }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      logWarn('Local inference warm failed', { error: message })
+      return { ok: false, error: message }
+    }
+  })().finally(() => {
+    warmInFlight = null
+  })
+  return warmInFlight
 }
 
 export async function* streamBuiltinChat(options: {

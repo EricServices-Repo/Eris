@@ -114,7 +114,8 @@
     "fontSize": 14,
     "tabSize": 2,
     "theme": "vs-dark",
-    "inlineSuggest": true
+    "inlineSuggest": true,
+    "chatFont": "mono"
   },
   "general": {
     "restoreLastWorkspace": true,

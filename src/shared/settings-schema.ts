@@ -174,7 +174,9 @@ export const SettingsSchema = z.object({
     tabSize: z.number().int().min(1).max(8),
     theme: z.enum(['vs-dark', 'vs', 'hc-black']),
     /** Debounced as-you-type ghost completions (⌥\\ still forces one). */
-    inlineSuggest: z.boolean()
+    inlineSuggest: z.boolean(),
+    /** Font family for assistant chat replies (code fences stay monospace). */
+    chatFont: z.enum(['sans', 'mono', 'serif']).default('mono')
   }),
   general: z.object({
     restoreLastWorkspace: z.boolean(),
@@ -278,17 +280,26 @@ export interface GpuDeviceInfo {
   index: number
 }
 
+/** Selection tier for Local / Composer GGUF inference. */
+export type GpuAccelTier = 'egpu' | 'gpu' | 'cpu'
+
 /** eGPU / discrete GPU detection for Local model acceleration. */
 export interface GpuAccelStatus {
   devices: GpuDeviceInfo[]
   egpu: GpuDeviceInfo | null
+  /** Best device: eGPU → discrete (most VRAM) → integrated. */
   preferredGpu: GpuDeviceInfo | null
   preferEgpu: boolean
   egpuDetected: boolean
   /** eGPU present and a GPU backend can use it for Local models. */
   egpuUsable: boolean
-  /** eGPU or discrete GPU can accelerate Local models with current preference. */
+  /** Any GPU (eGPU / discrete / integrated) can accelerate with current preference. */
   accelUsable: boolean
+  /**
+   * Effective target when prefer-best-GPU is on:
+   * egpu → discrete/integrated GPU → CPU.
+   */
+  accelTier: GpuAccelTier
   backend: 'metal' | 'cuda' | 'vulkan' | false | null
   backendDeviceName: string | null
   message: string
@@ -408,6 +419,8 @@ export interface BuiltinModelStatus {
   tier?: 'lite' | 'full'
   /** True while a download is in progress (survives Settings close). */
   downloading?: boolean
+  /** Post-transfer work (checksum / install) after bytes finish. */
+  downloadPhase?: 'downloading' | 'verifying' | 'finalizing' | null
   /** Last download error for this model, if any. */
   downloadError?: string | null
 }
@@ -449,6 +462,8 @@ export interface LocalModelStatus {
   downloadedBytes: number
   progress: number
   downloading?: boolean
+  /** Post-transfer work (checksum / install) after bytes finish. */
+  downloadPhase?: 'downloading' | 'verifying' | 'finalizing' | null
   downloadError?: string | null
 }
 

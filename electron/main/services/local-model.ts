@@ -10,7 +10,6 @@ import {
   openSync,
   readFileSync,
   readSync,
-  renameSync,
   statSync,
   unlinkSync,
   writeFileSync
@@ -27,9 +26,15 @@ import type {
 import { localModelsDir, modelsManifestPath } from './paths'
 import { logError, logInfo, logWarn } from './logger'
 import {
+  attachIdleTimeout,
   bodyToNodeStream,
+  createThrottledProgress,
+  DOWNLOAD_IDLE_TIMEOUT_MS,
   downloadFetch,
-  formatDownloadNetworkError
+  formatDownloadNetworkError,
+  publishDownloadedFile,
+  resolveDownloadTotal,
+  type DownloadPhase
 } from './http-download'
 import {
   parseHfGgufFileUrl,
@@ -46,7 +51,10 @@ function formatApproxSize(bytes: number): string {
 let downloadAbort: AbortController | null = null
 let downloadGate: Promise<void> = Promise.resolve()
 let activeDownloadId: string | null = null
-const progressById = new Map<string, { downloaded: number; total: number }>()
+const progressById = new Map<
+  string,
+  { downloaded: number; total: number; phase?: DownloadPhase }
+>()
 const downloadErrorById = new Map<string, string>()
 
 function verifiedSidecarPath(modelPath: string): string {
@@ -174,6 +182,15 @@ export function entryFromHfFile(file: HfGgufFile): LocalModelManifestEntry {
   }
 }
 
+function emitLocalProgress(
+  id: string,
+  onProgress?: (status: LocalModelStatus) => void
+): void {
+  if (!onProgress) return
+  const status = getLocalStatuses().find((s) => s.id === id)
+  if (status) onProgress(status)
+}
+
 /** Register (or reuse) a Hub GGUF in the local catalog, then download it. */
 export async function downloadLocalFromHf(
   repoIdOrUrl: string,
@@ -191,6 +208,18 @@ export async function downloadLocalFromHf(
   )
   const entry = existing ?? entryFromHfFile(file)
   if (!existing) upsertExtraEntry(entry)
+  // Surface the new catalog row in Settings immediately (before the byte stream).
+  if (onProgress) {
+    const preview = getLocalStatuses().find((s) => s.id === entry.id)
+    if (preview) {
+      onProgress({
+        ...preview,
+        downloading: true,
+        downloadPhase: 'downloading',
+        progress: preview.progress || 0
+      })
+    }
+  }
   return downloadLocalModel(entry.id, onProgress)
 }
 
@@ -264,11 +293,17 @@ export function getLocalStatuses(): LocalModelStatus[] {
     const path = localModelFilePath(entry)
     const installed = existsSync(path)
     const valid = installed && isValidLocalFile(path, entry)
+    const live = progressById.get(entry.id)
     const downloadedBytes = installed
       ? statSync(path).size
-      : progressById.get(entry.id)?.downloaded ?? 0
-    const total = progressById.get(entry.id)?.total || entry.approxBytes
-    const progress = total > 0 ? Math.min(1, downloadedBytes / total) : valid ? 1 : 0
+      : live?.downloaded ?? 0
+    const total = live?.total || entry.approxBytes
+    const downloading = activeDownloadId === entry.id
+    const phase =
+      downloading ? live?.phase || 'downloading' : null
+    let progress = total > 0 ? Math.min(1, downloadedBytes / total) : valid ? 1 : 0
+    if (phase === 'verifying') progress = Math.max(progress, 0.96)
+    if (phase === 'finalizing') progress = Math.max(progress, 0.99)
     return {
       id: entry.id,
       ref: entry.ref,
@@ -287,7 +322,8 @@ export function getLocalStatuses(): LocalModelStatus[] {
       localPath: installed ? path : null,
       downloadedBytes,
       progress: valid ? 1 : progress,
-      downloading: activeDownloadId === entry.id,
+      downloading,
+      downloadPhase: phase,
       downloadError: downloadErrorById.get(entry.id) || null
     }
   })
@@ -350,6 +386,15 @@ export async function downloadLocalModel(
   downloadAbort = controller
   activeDownloadId = entry.id
   downloadErrorById.delete(entry.id)
+  if (!progressById.has(entry.id)) {
+    progressById.set(entry.id, {
+      downloaded: 0,
+      total: entry.approxBytes > 0 ? entry.approxBytes : 0,
+      phase: 'downloading'
+    })
+  }
+  // Immediate UI update so Settings lists the row as downloading before the first byte.
+  emitLocalProgress(entry.id, onProgress)
   const partial = `${target}.partial.${process.pid}.${Date.now()}`
 
   try {
@@ -382,37 +427,52 @@ export async function downloadLocalModel(
       )
     }
 
-    const total = Number(
-      res.headers.get('content-length') ||
-        res.headers.get('x-linked-size') ||
-        entry.approxBytes
-    )
+    const resolved = resolveDownloadTotal(res.headers, entry.approxBytes)
+    let total = resolved.total
     let downloaded = 0
-    progressById.set(entry.id, { downloaded, total })
+    progressById.set(entry.id, { downloaded, total, phase: 'downloading' })
+    const emitProgress = createThrottledProgress(() => {
+      if (!onProgress) return
+      const status = getLocalStatuses().find((s) => s.id === entry.id)
+      if (status) onProgress(status)
+    })
+    emitProgress.flush()
     logInfo('Local model download streaming', {
       id: entry.id,
       via: res.via,
-      total
+      total,
+      totalSource: resolved.source
     })
 
     const hasher = createHash('sha256')
     const nodeStream = bodyToNodeStream(res.body)
+    const clearIdle = attachIdleTimeout(nodeStream, DOWNLOAD_IDLE_TIMEOUT_MS, (err) => {
+      controller.abort()
+      logWarn('Local model download idle timeout', { id: entry.id, error: err.message })
+    })
     const hashing = new Transform({
       transform(chunk: Buffer, _enc, cb) {
         hasher.update(chunk)
         downloaded += chunk.length
-        progressById.set(entry.id, { downloaded, total })
-        if (onProgress) {
-          const status = getLocalStatuses().find((s) => s.id === entry.id)
-          if (status) onProgress(status)
-        }
+        if (total > 0 && downloaded > total) total = downloaded
+        progressById.set(entry.id, { downloaded, total, phase: 'downloading' })
+        emitProgress.ping()
         cb(null, chunk)
       }
     })
 
-    await pipeline(nodeStream, hashing, createWriteStream(partial))
+    try {
+      await pipeline(nodeStream, hashing, createWriteStream(partial))
+    } finally {
+      clearIdle()
+    }
 
-    if (downloaded < Math.floor(entry.approxBytes * 0.9)) {
+    total = Math.max(total, downloaded)
+    progressById.set(entry.id, { downloaded, total, phase: 'verifying' })
+    emitProgress.flush()
+
+    const minExpected = Math.floor(entry.approxBytes * 0.85)
+    if (entry.approxBytes > 0 && downloaded < minExpected) {
       unlinkQuiet(partial)
       throw new Error(
         `Download incomplete (${formatApproxSize(downloaded)} of ~${formatApproxSize(entry.approxBytes)}). Try again.`
@@ -420,21 +480,23 @@ export async function downloadLocalModel(
     }
 
     const digest = hasher.digest('hex')
-    renameSync(partial, target)
-    if (entry.sha256) {
-      if (digest !== entry.sha256.toLowerCase()) {
-        unlinkQuiet(target)
-        throw new Error('Download checksum mismatch — file may be corrupt. Try again.')
-      }
-      writeVerifiedSidecar(target, digest)
-    } else {
-      writeVerifiedSidecar(target, digest)
+    if (entry.sha256 && digest !== entry.sha256.toLowerCase()) {
+      unlinkQuiet(partial)
+      throw new Error('Download checksum mismatch — file may be corrupt. Try again.')
     }
 
-    progressById.set(entry.id, { downloaded, total: downloaded })
+    progressById.set(entry.id, { downloaded, total, phase: 'finalizing' })
+    emitProgress.flush()
+    await publishDownloadedFile(partial, target)
+    writeVerifiedSidecar(target, digest)
+
+    progressById.set(entry.id, { downloaded, total: downloaded, phase: 'finalizing' })
+    emitProgress.flush()
     downloadErrorById.delete(entry.id)
     logInfo('Local model download complete', { id: entry.id, bytes: downloaded })
-    return getLocalStatuses().find((s) => s.id === entry.id)!
+    const done = getLocalStatuses().find((s) => s.id === entry.id)!
+    if (onProgress) onProgress({ ...done, downloading: false, downloadPhase: null, progress: 1 })
+    return done
   } catch (err) {
     unlinkQuiet(partial)
     const message = err instanceof Error ? err.message : String(err)

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatThread, ModelInfo, SkillRecord } from '@/shared/settings-schema'
+import { pathBasename } from '@/shared/paths'
 import { ThinkingBlock, type ToolActivityItem } from './ThinkingBlock'
 import { MarkdownMessage } from './MarkdownMessage'
 
@@ -160,8 +161,11 @@ export function ChatPanel({
   const [caret, setCaret] = useState(0)
   const [attachMenuOpen, setAttachMenuOpen] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollRootRef = useRef<HTMLElement | null>(null)
   const attachMenuRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const stickToBottomRef = useRef(true)
+  const scrollRafRef = useRef(0)
 
   useEffect(() => {
     if (!attachMenuOpen) return
@@ -173,8 +177,37 @@ export function ChatPanel({
   }, [attachMenuOpen])
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [activeThread?.messages, thinkingBuffer, answerBuffer, routeLabel, chatError, toolActivity])
+    const el = bottomRef.current?.parentElement
+    if (!el) return
+    scrollRootRef.current = el
+    const onScroll = () => {
+      const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+      stickToBottomRef.current = dist < 96
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [activeThread?.id])
+
+  useEffect(() => {
+    if (!stickToBottomRef.current) return
+    if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current)
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = 0
+      // Instant during stream — smooth scroll fights token paint and feels laggy.
+      bottomRef.current?.scrollIntoView({ behavior: streaming ? 'auto' : 'smooth' })
+    })
+    return () => {
+      if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current)
+    }
+  }, [
+    activeThread?.messages,
+    thinkingBuffer,
+    answerBuffer,
+    routeLabel,
+    chatError,
+    toolActivity,
+    streaming
+  ])
 
   const slashQuery = parseSlashQuery(draft)
   const atQuery = parseAtQuery(draft, caret)
@@ -495,7 +528,7 @@ export function ChatPanel({
                     thinking={thinkingBuffer}
                     status={answerBuffer ? null : agentStatus}
                     tools={toolActivity}
-                    defaultOpen={!answerBuffer}
+                    defaultOpen={false}
                     live={!answerBuffer}
                   />
                   {pendingApproval && onApprovalDecision && (
@@ -531,7 +564,11 @@ export function ChatPanel({
                   )}
                   {answerBuffer ? (
                     <div className="answer-text">
-                      <MarkdownMessage content={answerBuffer} onOpenPath={onOpenPath} />
+                      <MarkdownMessage
+                        content={answerBuffer}
+                        onOpenPath={onOpenPath}
+                        plain
+                      />
                     </div>
                   ) : (
                     !thinkingBuffer && (
@@ -580,7 +617,7 @@ export function ChatPanel({
             const next = [...attachments]
             for (const path of paths) {
               if (next.some((a) => a.path === path)) continue
-              next.push({ path, name: path.split('/').pop() || path })
+              next.push({ path, name: pathBasename(path) })
             }
             onAttachmentsChange(next)
           }}

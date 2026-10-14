@@ -51,7 +51,7 @@ export const SETTINGS_SUBTITLES: Record<Category, string> = {
   feedback: 'Report bugs and ideas without leaving Eris',
   logging: 'App log files, level, and directory',
   composer: 'Built-in Composer Lite / Full and default chat model',
-  localModels: 'Download GGUFs that run inside Eris, plus eGPU acceleration',
+  localModels: 'Download GGUFs that run inside Eris, plus GPU / eGPU acceleration',
   providers: 'Optional Ollama and cloud / custom OpenAI-compatible APIs',
   usage: 'Plan limits and daily model usage',
   agent: 'Routing, Cloud Agents, and background jobs',
@@ -62,7 +62,7 @@ export const SETTINGS_SUBTITLES: Record<Category, string> = {
   mcp: 'Model Context Protocol servers for the agent',
   github: 'Link this project to a GitHub repository',
   workspace: 'Project files under .eris/ for this folder',
-  editor: 'Editor appearance, tabs, and suggestions'
+  editor: 'Editor appearance, chat fonts, tabs, and suggestions'
 }
 
 /** Pages that use the generic layered SettingRows list. */
@@ -124,7 +124,7 @@ export const SETTINGS_PAGE_KEYWORDS: Record<Category, string[]> = {
   mcp: ['mcp', 'protocol', 'server', 'tools'],
   github: ['git', 'repository', 'pr', 'pull request'],
   workspace: ['.eris', 'project', 'folder'],
-  editor: ['font', 'theme', 'tab', 'inline', 'suggest', 'ghost']
+  editor: ['font', 'theme', 'tab', 'inline', 'suggest', 'ghost', 'chat', 'serif', 'sans', 'mono']
 }
 
 /** Map legacy Settings category ids (e.g. openSettings('models')). */

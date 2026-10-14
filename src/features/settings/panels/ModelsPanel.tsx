@@ -5,10 +5,38 @@ import type {
   GpuAccelStatus,
   ModelsStatus
 } from '@/shared/settings-schema'
+import { downloadStatusLabel } from '@/shared/model-download-ui'
 import type { ApplySetting } from '../fields'
 import { LocalModelsPanel } from '../LocalModelsPanel'
 import { ModelConnectionsPanel } from '../ModelConnectionsPanel'
 import { OllamaConfigPanel } from '../OllamaConfigPanel'
+
+function gpuKindLabel(
+  kind: 'integrated' | 'discrete' | 'external',
+  name: string,
+  backend?: GpuAccelStatus['backend']
+): string {
+  if (kind === 'external') return 'eGPU'
+  if (/apple\s+m\d/i.test(name) || backend === 'metal') return 'Metal'
+  if (kind === 'discrete') return 'GPU'
+  return 'Integrated'
+}
+
+function formatMemoryStat(name: string, bytes?: number): string | null {
+  if (!bytes || bytes <= 0) return null
+  const size =
+    bytes >= 1e9 ? `${(bytes / 1e9).toFixed(bytes >= 10e9 ? 0 : 1)} GB` : `${Math.round(bytes / 1e6)} MB`
+  if (/apple\s+m\d/i.test(name)) return `Unified ${size}`
+  return size
+}
+
+function gpuStatLine(d: { name: string; bus?: string; vramBytes?: number }): string {
+  const parts: string[] = []
+  const mem = formatMemoryStat(d.name, d.vramBytes)
+  if (mem) parts.push(mem)
+  if (d.bus) parts.push(d.bus)
+  return parts.join(' · ')
+}
 
 function GpuAccelCard({
   gpu,
@@ -22,14 +50,6 @@ function GpuAccelCard({
   onRefresh: () => Promise<void>
 }) {
   const [busy, setBusy] = useState(false)
-  const egpu = gpu?.egpu
-  const tone = egpu
-    ? gpu?.egpuUsable
-      ? 'ok'
-      : preferEgpu
-        ? 'warn'
-        : 'muted'
-    : 'muted'
 
   const setPrefer = async (next: boolean) => {
     setBusy(true)
@@ -42,12 +62,16 @@ function GpuAccelCard({
     }
   }
 
+  const devices = gpu?.devices ?? []
+  const preferredId = gpu?.preferredGpu
+    ? `${gpu.preferredGpu.index}:${gpu.preferredGpu.name}`
+    : null
+
   return (
     <section className="models-card gpu-accel-card">
       <header className="models-card-head">
         <div>
-          <h3>GPU / eGPU</h3>
-          <p>Local and Composer GGUFs can use an attached eGPU when available.</p>
+          <h3>GPU</h3>
         </div>
         <button
           type="button"
@@ -65,34 +89,34 @@ function GpuAccelCard({
         </button>
       </header>
 
-      <div className={`gpu-accel-status is-${tone}`}>
-        <span className={`status-dot ${tone === 'ok' ? 'ok' : tone === 'warn' ? 'warn' : ''}`} />
-        <div>
-          <strong>
-            {egpu
-              ? gpu?.egpuUsable
-                ? 'eGPU detected and usable'
-                : 'eGPU detected'
-              : 'No eGPU detected'}
-          </strong>
-          <p className="models-hint" style={{ margin: '4px 0 0' }}>
-            {gpu?.message || 'Scanning GPUs…'}
-          </p>
-          {egpu && (
-            <p className="model-conn-meta" style={{ marginTop: 6 }}>
-              {egpu.name}
-              {egpu.bus ? ` · ${egpu.bus}` : ''}
-              {gpu?.backend ? ` · backend ${gpu.backend}` : ''}
-              {gpu?.backendDeviceName ? ` · ${gpu.backendDeviceName}` : ''}
-            </p>
-          )}
-          {!egpu && gpu?.backend && (
-            <p className="model-conn-meta" style={{ marginTop: 6 }}>
-              Active: {gpu.backend}
-              {gpu.backendDeviceName ? ` · ${gpu.backendDeviceName}` : ''}
-            </p>
-          )}
-        </div>
+      <div className="gpu-device-list">
+        {devices.length === 0 ? (
+          <p className="models-hint">No GPUs found</p>
+        ) : (
+          <ul>
+            {devices.map((d) => {
+              const id = `${d.index}:${d.name}`
+              const selected = preferEgpu && id === preferredId
+              const stats = gpuStatLine(d)
+              const tag = gpuKindLabel(d.kind, d.name, gpu?.backend)
+              return (
+                <li key={id} className={selected ? 'is-selected' : undefined}>
+                  <span
+                    className={`gpu-kind-tag kind-${d.kind}${
+                      tag === 'Metal' ? ' kind-metal' : ''
+                    }`}
+                  >
+                    {tag}
+                  </span>
+                  <div className="gpu-device-copy">
+                    <strong>{d.name}</strong>
+                    {stats ? <span className="model-conn-meta">{stats}</span> : null}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
       </div>
 
       <label className="gpu-accel-toggle">
@@ -102,12 +126,8 @@ function GpuAccelCard({
           disabled={busy}
           onChange={(e) => void setPrefer(e.target.checked)}
         />
-        <span>Prefer eGPU for Local models when attached</span>
+        <span>Prefer best GPU</span>
       </label>
-      <p className="models-hint">
-        On macOS, also enable Finder → Eris → Get Info → <em>Prefer External GPU</em> if the
-        checkbox is available. Windows uses CUDA/Vulkan device selection when present.
-      </p>
     </section>
   )
 }
@@ -150,15 +170,10 @@ function BuiltinRow({
   const isDownloading = downloadingId === b.id || Boolean(b.downloading)
   const size = sizeLabel(b.approxBytes)
   const pct = Math.round((b.progress || 0) * 100)
-  const statusText = b.ready
-    ? 'Ready'
-    : isDownloading
-      ? pct > 0
-        ? `Downloading · ${pct}%`
-        : 'Downloading…'
-      : b.installed
-        ? 'Needs re-download'
-        : `Not installed · ${size}`
+  const statusText = downloadStatusLabel(
+    { ...b, downloading: isDownloading },
+    b.installed ? 'Needs re-download' : `Not installed · ${size}`
+  )
 
   const baseModelLabel = [
     b.family,

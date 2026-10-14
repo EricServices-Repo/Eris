@@ -13,6 +13,7 @@ import type {
   ChatIntent,
   ChatThread,
   FileEntry,
+  ModelInfo,
   SkillRecord
 } from '@/shared/settings-schema'
 import type { OpenTab } from '@/features/editor/EditorArea'
@@ -24,6 +25,7 @@ import type {
   QueuedChatMessage
 } from '@/features/chat/ChatPanel'
 import type { PendingDiff } from '@/features/chat/DiffReview'
+import { joinWorkspacePath, pathBasename } from '@/shared/paths'
 import type { RightPanel } from './useLayout'
 import { uid } from './uid'
 
@@ -40,6 +42,8 @@ export type UseChatSessionDeps = {
   settingsRef: MutableRefObject<AppSettings | null>
   selectedModel: string
   selectedAgentId: string | 'auto'
+  /** In-memory catalog from useModels — avoids modelsStatus IPC on every send. */
+  models: ModelInfo[]
   setComposerReady: Dispatch<SetStateAction<boolean>>
   setOllamaOk: Dispatch<SetStateAction<boolean>>
   skills: SkillRecord[]
@@ -68,6 +72,7 @@ export function useChatSession({
   settingsRef,
   selectedModel,
   selectedAgentId,
+  models,
   setComposerReady,
   setOllamaOk,
   skills,
@@ -108,6 +113,8 @@ export function useChatSession({
   const [pendingDiffs, setPendingDiffs] = useState<PendingDiff[]>([])
   const [activeCheckpointId, setActiveCheckpointId] = useState<string | null>(null)
   const requestIdRef = useRef<string | null>(null)
+  /** Survives Stop so late chat:done/error still match the turn we aborted. */
+  const lastRequestIdRef = useRef<string | null>(null)
   const thinkingAcc = useRef('')
   const answerAcc = useRef('')
   const routeMetaRef = useRef<{ agentId?: string; agentName?: string; model?: string }>({})
@@ -118,10 +125,10 @@ export function useChatSession({
   const stopChat = useCallback(() => {
     userStoppedRef.current = true
     setStreaming(false)
-    setThinkingBuffer('')
-    setAnswerBuffer('')
     setAgentStatus(null)
+    lastRequestIdRef.current = requestIdRef.current
     requestIdRef.current = null
+    // Keep thinking/answer buffers visible until done flushes the partial reply.
     void window.ide.stopChat()
   }, [])
 
@@ -156,7 +163,7 @@ export function useChatSession({
     addAttachments(
       paths.map((path) => ({
         path,
-        name: path.split('/').pop() || path
+        name: pathBasename(path)
       }))
     )
   }, [addAttachments])
@@ -184,18 +191,29 @@ export function useChatSession({
       setThinkingBuffer('')
       setAnswerBuffer('')
       setToolActivity([])
-      setAgentStatus(null)
+      // Paint Working immediately — don't wait on status/plan probes for first UI feedback.
+      setAgentStatus('Working…')
+      setStreaming(true)
       if (chatMode === 'agent') {
         setPendingDiffs([])
         setActiveCheckpointId(null)
       }
 
+      const requestId = uid()
+      requestIdRef.current = requestId
+      lastRequestIdRef.current = requestId
+      userStoppedRef.current = false
+
       try {
-        const status = await window.ide.modelsStatus()
-        const builtinReady = status.builtin?.some((b) => b.ready) ?? false
-        const localReady = status.local?.some((m) => m.ready) ?? false
-        const hasConnection = status.models.some((m) => m.source === 'connection' && m.ready)
-        // Native GGUFs (Composer + Local models) count as ready — Ollama is optional.
+        // Prefer in-memory catalog from boot/refresh — no modelsStatus IPC on the hot path.
+        let catalog = models
+        if (catalog.length === 0) {
+          const status = await window.ide.modelsStatus()
+          catalog = status.models
+        }
+        const builtinReady = catalog.some((m) => m.source === 'builtin' && m.ready)
+        const localReady = catalog.some((m) => m.source === 'local' && m.ready)
+        const hasConnection = catalog.some((m) => m.source === 'connection' && m.ready)
         setComposerReady(builtinReady || localReady)
         setOllamaOk(builtinReady || localReady || hasConnection)
 
@@ -227,7 +245,16 @@ export function useChatSession({
           model: runModel
         }
 
+        const abortUi = () => {
+          if (requestIdRef.current === requestId || lastRequestIdRef.current === requestId) {
+            setStreaming(false)
+            setAgentStatus(null)
+            requestIdRef.current = null
+          }
+        }
+
         if (turnPlan.error) {
+          abortUi()
           setChatError(turnPlan.error)
           const displayContent =
             files.length > 0
@@ -248,29 +275,17 @@ export function useChatSession({
           return
         }
 
-        const modelInfo = status.models.find((m) => m.name === runModel)
+        const modelInfo = catalog.find((m) => m.name === runModel)
         const isLocalModel = runModel.startsWith('local:')
         const isBuiltinModel = runModel.startsWith('builtin:')
-        const cannotRunLocal =
-          isLocalModel &&
-          !(
-            status.local?.some(
-              (m) => (m.ref === runModel || m.id === runModel.replace(/^local:/, '')) && m.ready
-            ) ??
-            modelInfo?.ready === true
-          )
-        const cannotRunBuiltin =
-          isBuiltinModel &&
-          !(
-            status.builtin?.some(
-              (b) => (b.ref === runModel || b.id === runModel.replace(/^builtin:/, '')) && b.ready
-            ) ?? false
-          )
+        const cannotRunLocal = isLocalModel && modelInfo?.ready !== true
+        const cannotRunBuiltin = isBuiltinModel && modelInfo?.ready !== true
         const cannotRunExternal =
           !isLocalModel &&
           !isBuiltinModel &&
           (!hasConnection || (modelInfo ? modelInfo.ready === false : !hasConnection))
         if (cannotRunLocal || cannotRunBuiltin || cannotRunExternal) {
+          abortUi()
           setChatError(
             cannotRunLocal
               ? `Local model “${runModel}” isn’t ready. Download it in Settings → Models → Local.`
@@ -280,7 +295,6 @@ export function useChatSession({
                   ? `Model “${runModel}” isn’t installed. Download it in Settings → Models, or pick another model.`
                   : 'No model ready. Download a Local model or Composer Lite in Settings → Models.'
           )
-          // Still persist the user turn so the chat isn’t empty
           const displayContent =
             files.length > 0
               ? `${text}\n\nAttached: ${files.map((f) => f.name).join(', ')}`
@@ -323,21 +337,23 @@ export function useChatSession({
           model: runModel,
           messages: [...thread.messages, userMsg]
         }
-        const saved = await window.ide.saveChat(withUser)
-        setActiveThread(saved)
-        setThreads((prev) => [saved, ...prev.filter((t) => t.id !== saved.id)])
+        // Optimistic paint + persist in parallel with stream start.
+        setActiveThread(withUser)
+        activeThreadRef.current = withUser
+        setThreads((prev) => [withUser, ...prev.filter((t) => t.id !== withUser.id)])
         setAttachments([])
         setActiveSkills([])
+        void window.ide.saveChat(withUser).then((saved) => {
+          if (requestIdRef.current !== requestId && lastRequestIdRef.current !== requestId) return
+          setActiveThread(saved)
+          activeThreadRef.current = saved
+          setThreads((prev) => [saved, ...prev.filter((t) => t.id !== saved.id)])
+        })
 
-        // Agent mode uses Cloud Composer inline via chat:stream (thinking UI) when available.
-        const requestId = uid()
-        requestIdRef.current = requestId
-        userStoppedRef.current = false
         thinkingAcc.current = ''
         answerAcc.current = ''
         setThinkingBuffer('')
         setAnswerBuffer('')
-        setStreaming(true)
 
         const ok = await window.ide.streamChat({
           requestId,
@@ -365,9 +381,9 @@ export function useChatSession({
             resumeRunId: opts?.resumeRunId
           }
         })
-        // Error path also emits chat:error; this covers a missed event
         if (!ok && requestIdRef.current === requestId) {
           setStreaming(false)
+          setAgentStatus(null)
           requestIdRef.current = null
           setChatError(
             (prev) =>
@@ -377,6 +393,7 @@ export function useChatSession({
         }
       } catch (err) {
         setStreaming(false)
+        setAgentStatus(null)
         requestIdRef.current = null
         setChatError(err instanceof Error ? err.message : 'Chat failed')
       }
@@ -386,6 +403,7 @@ export function useChatSession({
       activeThread,
       selectedModel,
       selectedAgentId,
+      models,
       tabs,
       activeFile,
       streaming,
@@ -394,6 +412,7 @@ export function useChatSession({
       setComposerReady,
       setOllamaOk,
       setActiveThread,
+      activeThreadRef,
       setThreads,
       setActiveSkills
     ]
@@ -521,9 +540,7 @@ export function useChatSession({
         }
       ])
       if (workspacePath) {
-        const rel = diff.path.split(' → ')[0] || diff.path
-        const abs = rel.startsWith('/') ? rel : `${workspacePath}/${rel}`
-        void openFile(abs).catch(() => undefined)
+        void openFile(joinWorkspacePath(workspacePath, diff.path)).catch(() => undefined)
       }
     })
     const offCheckpoint = window.ide.onChatCheckpoint(({ requestId, checkpointId }) => {
@@ -614,14 +631,25 @@ export function useChatSession({
       setRouteLabel(`${name} · ${modelLabel}`)
     })
     const offDone = window.ide.onChatDone(async ({ requestId, aborted }) => {
-      // Stop may have cleared requestIdRef already — still accept the matching done.
-      if (requestIdRef.current && requestId !== requestIdRef.current) return
+      const matches =
+        requestId === requestIdRef.current || requestId === lastRequestIdRef.current
+      if (!matches) return
       if (paintRaf.current) {
         cancelAnimationFrame(paintRaf.current)
         paintRaf.current = 0
       }
-      const content = answerAcc.current || thinkingAcc.current
       const thinking = thinkingAcc.current
+      let content = answerAcc.current
+      if (!content && thinking && !aborted) content = thinking
+      if (aborted) {
+        if (content) {
+          content = content.endsWith('\n')
+            ? `${content}_(stopped)_`
+            : `${content}\n\n_(stopped)_`
+        } else if (thinking) {
+          content = '_(stopped)_'
+        }
+      }
       const threadId = activeThreadRef.current?.id
       const meta = routeMetaRef.current
       setStreaming(false)
@@ -630,12 +658,9 @@ export function useChatSession({
       setAgentStatus(null)
       setPendingApproval(null)
       requestIdRef.current = null
-      if (aborted) {
-        userStoppedRef.current = true
-        thinkingAcc.current = ''
-        answerAcc.current = ''
-        return
-      }
+      if (aborted) userStoppedRef.current = true
+      thinkingAcc.current = ''
+      answerAcc.current = ''
       if (!content || !threadId) return
       const latest = (await window.ide.getChat(threadId)) ?? activeThreadRef.current
       if (!latest) return
@@ -669,7 +694,7 @@ export function useChatSession({
       void refreshChats(saved.id)
     })
     const offError = window.ide.onChatError(({ requestId, error }) => {
-      if (requestId !== requestIdRef.current) return
+      if (requestId !== requestIdRef.current && requestId !== lastRequestIdRef.current) return
       setStreaming(false)
       setThinkingBuffer('')
       setAnswerBuffer('')

@@ -14,6 +14,7 @@ import type {
 } from '@/shared/settings-schema'
 import type { OpenTab } from '@/features/editor/EditorArea'
 import type { ActiveSkillRef } from '@/features/chat/ChatPanel'
+import { joinWorkspacePath, pathBasename } from '@/shared/paths'
 import type { RightPanel } from './useLayout'
 
 export type UseWorkspaceDeps = {
@@ -210,30 +211,40 @@ export function useWorkspace({
 
   const resolveWorkspacePath = useCallback(
     (path: string) => {
-      if (path.startsWith('/')) return path
       if (!workspacePath) return path
-      return `${workspacePath}/${path.split(' → ')[0]}`
+      return joinWorkspacePath(workspacePath, path)
     },
     [workspacePath]
   )
 
+  // Index @-mentions once per workspace — not on every tree rebuild (FS storms).
   useEffect(() => {
     if (!workspacePath) {
       setIndexMentions([])
       return
     }
-    void window.ide
-      .searchGlob('**/*.{ts,tsx,js,jsx,py,go,rs,md}')
-      .then((r) => {
-        setIndexMentions(
-          (r.paths || []).slice(0, 200).map((path) => ({
-            path,
-            name: path.split('/').pop() || path
-          }))
-        )
-      })
-      .catch(() => setIndexMentions([]))
-  }, [workspacePath, tree])
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      void window.ide
+        .searchGlob('**/*.{ts,tsx,js,jsx,py,go,rs,md}')
+        .then((r) => {
+          if (cancelled) return
+          setIndexMentions(
+            (r.paths || []).slice(0, 200).map((path) => ({
+              path,
+              name: pathBasename(path)
+            }))
+          )
+        })
+        .catch(() => {
+          if (!cancelled) setIndexMentions([])
+        })
+    }, 150)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [workspacePath])
 
   useEffect(() => {
     const onGoto = (e: Event) => {

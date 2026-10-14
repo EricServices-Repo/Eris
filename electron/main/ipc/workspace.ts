@@ -22,7 +22,7 @@ import { userDataRoot } from '../services/paths'
 import type { WorkspaceMeta } from '../../../src/shared/settings-schema'
 import { appState } from '../app-state'
 import { refreshIntelligence } from './shared'
-import { getWorkspaceSettings } from '../services/settings'
+import { getWorkspaceSettings, invalidateResolvedSettingsCache } from '../services/settings'
 import {
   isWorkspaceTrusted,
   riskyWorkspaceSettings,
@@ -138,6 +138,7 @@ export function registerWorkspaceIpc(): void {
     const ws = appState.currentWorkspace
     if (!ws) return false
     setWorkspaceTrusted(ws, Boolean(trusted))
+    invalidateResolvedSettingsCache()
     logInfo('Workspace trust changed', { path: ws, trusted: Boolean(trusted) })
     refreshIntelligence()
     return true

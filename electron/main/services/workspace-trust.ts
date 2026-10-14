@@ -62,6 +62,13 @@ export function isWorkspaceTrusted(workspacePath: string | null): boolean {
   return readStore().trusted.includes(workspaceKey(workspacePath))
 }
 
+/** Optional hook — settings registers cache invalidation without a circular import. */
+let trustChangedHook: (() => void) | null = null
+
+export function onWorkspaceTrustChanged(fn: () => void): void {
+  trustChangedHook = fn
+}
+
 export function setWorkspaceTrusted(workspacePath: string, trusted: boolean): void {
   const store = readStore()
   const key = workspaceKey(workspacePath)
@@ -69,6 +76,8 @@ export function setWorkspaceTrusted(workspacePath: string, trusted: boolean): vo
   if (trusted) next.add(key)
   else next.delete(key)
   writeStore({ ...store, trusted: [...next] })
+  // Trust changes which workspace layer keys apply — drop resolved cache.
+  trustChangedHook?.()
 }
 
 function hasPath(obj: unknown, path: string[]): boolean {

@@ -432,14 +432,18 @@ export async function planChatTurn(options: {
     !options.context.manualAgentId
   ) {
     const agents = allAgentsFlat(options.workspacePath).filter((a) => a.enabled)
-    const hint = await llmRouteHint({
-      settings: options.settings,
-      text,
-      agents,
-      getSecret: options.getSecret,
-      signal: options.signal,
-      examples: routingExamples(corrections)
-    })
+    // Cap LLM router wait so TTFT isn't blocked on a cold local/router call.
+    const hint = await Promise.race([
+      llmRouteHint({
+        settings: options.settings,
+        text,
+        agents,
+        getSecret: options.getSecret,
+        signal: options.signal,
+        examples: routingExamples(corrections)
+      }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 400))
+    ])
     if (hint?.intent) intent = hint.intent
     if (hint?.agentId) {
       const picked = findAgent(options.workspacePath, hint.agentId)

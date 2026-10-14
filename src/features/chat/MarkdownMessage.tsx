@@ -3,6 +3,8 @@ import { Fragment, type ReactNode } from 'react'
 interface Props {
   content: string
   onOpenPath?: (path: string) => void
+  /** Skip markdown parse while tokens stream (cheaper paint / lower TTFT). */
+  plain?: boolean
 }
 
 function renderInline(text: string, onOpenPath?: (path: string) => void): ReactNode[] {
@@ -64,7 +66,14 @@ function renderInline(text: string, onOpenPath?: (path: string) => void): ReactN
   return nodes
 }
 
-export function MarkdownMessage({ content, onOpenPath }: Props) {
+export function MarkdownMessage({ content, onOpenPath, plain }: Props) {
+  if (plain) {
+    return (
+      <div className="md-body md-plain">
+        <pre className="md-plain-pre">{content}</pre>
+      </div>
+    )
+  }
   const blocks = content.split(/(```[\s\S]*?```)/g)
   return (
     <div className="md-body">

@@ -90,7 +90,7 @@ export function OllamaConfigPanel({
       setBaseUrl(url)
 
       await onRefresh()
-      const after = await window.ide.modelsStatus()
+      const after = await window.ide.modelsStatus({ probe: true })
       const liveAfter = after.connections.find((c) => c.id === next.id)
       if (liveAfter?.reachable && (liveAfter.models?.length ?? 0) > 0) {
         const withModels = {

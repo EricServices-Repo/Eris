@@ -196,7 +196,10 @@ export interface IdeApi {
   readFile: (path: string) => Promise<{ path: string; content: string; name: string; language: string }>
   writeFile: (path: string, content: string) => Promise<boolean>
   pickFiles: () => Promise<string[]>
-  modelsStatus: () => Promise<ModelsStatus>
+  /** Light by default (no connection probes). Pass `{ probe: true }` from Settings → Providers. */
+  modelsStatus: (opts?: { probe?: boolean; includeGpu?: boolean }) => Promise<ModelsStatus>
+  /** Background-load default ready GGUF into the llama worker. */
+  warmLocalModel: () => Promise<{ ok: boolean; model?: string; error?: string }>
   builtinModelStatus: () => Promise<BuiltinModelStatus[]>
   downloadBuiltinModel: (id?: string) => Promise<BuiltinModelStatus>
   deleteBuiltinModel: (id?: string) => Promise<boolean>
