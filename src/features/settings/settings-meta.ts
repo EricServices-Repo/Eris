@@ -52,7 +52,7 @@ export const SETTINGS_SUBTITLES: Record<Category, string> = {
   logging: 'App log files, level, and directory',
   composer: 'Built-in Composer Lite / Full and default chat model',
   localModels: 'Download GGUFs that run inside Eris, plus GPU / eGPU acceleration',
-  providers: 'Optional Ollama and cloud / custom OpenAI-compatible APIs',
+  providers: 'Optional cloud APIs and local servers (LM Studio, Ollama)',
   usage: 'Plan limits and daily model usage',
   agent: 'Routing, Cloud Agents, and background jobs',
   subagents: 'Project specialists in .eris/agents.json',

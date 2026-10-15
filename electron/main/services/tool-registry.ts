@@ -165,6 +165,19 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
       }
     },
     []
+  ),
+  tool(
+    'ask_user',
+    'Ask the user a short clarifying question before continuing. They have ~15s to reply inline; if they do not, proceed with best judgment.',
+    {
+      question: { type: 'string', description: 'One clear question for the user' },
+      choices: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Optional short reply chips (max 6)'
+      }
+    },
+    ['question']
   )
 ]
 

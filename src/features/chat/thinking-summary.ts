@@ -73,7 +73,17 @@ export function thinkingPreviewLine(
   if (running) {
     return running.path ? `${running.name} ${running.path}` : running.name
   }
-  if (status?.trim()) return status.trim().slice(0, MAX_STEP_CHARS)
   const steps = summarizeThinkingSteps(thinking)
-  return steps[steps.length - 1] || ''
+  const lastStep = steps[steps.length - 1] || ''
+  const statusText = status?.trim() || ''
+  // Prefer a concrete step over a generic Working… status.
+  if (lastStep && (!statusText || /^(working|thinking)…?$/i.test(statusText))) {
+    return lastStep
+  }
+  if (statusText) return statusText.slice(0, MAX_STEP_CHARS)
+  if (lastStep) return lastStep
+  // Live model tokens without breadcrumbs — show a short tail.
+  const tail = thinking.trim().replace(/\s+/g, ' ')
+  if (tail.length > 12) return tail.slice(-MAX_STEP_CHARS)
+  return ''
 }

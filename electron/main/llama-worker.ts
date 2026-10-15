@@ -1,6 +1,6 @@
 /**
  * Electron utilityProcess entry — runs node-llama-cpp off the UI/main thread.
- * All load/chat work is serialized (context has a single sequence by default).
+ * All load/chat work is serialized. Job sessions keep KV warm across agent steps.
  */
 
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
@@ -22,6 +22,19 @@ type Incoming =
       maxTokens: number
       jsonSchema?: Record<string, unknown>
     }
+  | {
+      type: 'chat-turn'
+      id: string
+      sessionKey: string
+      userMessage: string
+      /** Seed history when creating the session (all messages before this user turn). */
+      seedMessages?: ChatMessage[]
+      systemPrompt?: string
+      temperature: number
+      maxTokens: number
+      jsonSchema?: Record<string, unknown>
+    }
+  | { type: 'chat-release'; sessionKey: string }
   | { type: 'abort'; id: string }
   | { type: 'dispose' }
 
@@ -34,7 +47,10 @@ let context: any = null
 let modelPath: string | null = null
 let loadedContextSize = 4096
 const abortControllers = new Map<string, AbortController>()
-/** Serialize load/chat — node-llama-cpp contexts default to 1 sequence. */
+/** Per-chat-run sessions — keep KV cache warm across tool steps. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const jobSessions = new Map<string, { session: any; sequence: any }>()
+/** Serialize load/chat — node-llama-cpp contexts have a small sequence pool. */
 let chain: Promise<void> = Promise.resolve()
 
 function post(msg: Record<string, unknown>): void {
@@ -51,7 +67,37 @@ function enqueue(fn: () => Promise<void>): void {
   )
 }
 
+function messagesToHistory(messages: ChatMessage[]): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = []
+  for (const m of messages) {
+    if (m.role === 'system') out.push({ type: 'system', text: m.content })
+    else if (m.role === 'user') out.push({ type: 'user', text: m.content })
+    else out.push({ type: 'model', response: [m.content] })
+  }
+  return out
+}
+
+function releaseSession(sessionKey: string): void {
+  const entry = jobSessions.get(sessionKey)
+  if (!entry) return
+  jobSessions.delete(sessionKey)
+  try {
+    entry.session.dispose?.({ disposeSequence: true })
+  } catch {
+    try {
+      entry.sequence?.dispose?.()
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function releaseAllSessions(): void {
+  for (const key of [...jobSessions.keys()]) releaseSession(key)
+}
+
 async function disposeContextOnly(): Promise<void> {
+  releaseAllSessions()
   try {
     await context?.dispose?.()
   } catch {
@@ -77,11 +123,52 @@ async function disposeAll(): Promise<void> {
 async function ensureContext(contextSize: number): Promise<void> {
   if (context) return
   if (!model) throw new Error('Model not loaded')
+  // 2 sequences: one long-lived job session + one oneshot/fallback.
   context = await model.createContext({
     contextSize,
-    sequences: 1
+    sequences: 2
   })
   loadedContextSize = contextSize
+}
+
+async function getOrCreateSession(
+  sessionKey: string,
+  systemPrompt?: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<{ session: any; sequence: any }> {
+  const existing = jobSessions.get(sessionKey)
+  if (existing && !existing.session.disposed) return existing
+
+  const llamaCpp = await import('node-llama-cpp')
+  const { LlamaChatSession } = llamaCpp
+  if (!context) await ensureContext(loadedContextSize)
+  if (typeof context.sequencesLeft === 'number' && context.sequencesLeft < 1) {
+    // Drop idle sessions that may be leaking sequences, then retry once.
+    if (jobSessions.size > 0) {
+      for (const [key, entry] of jobSessions) {
+        if (key === sessionKey) continue
+        try {
+          entry.session.dispose?.({ disposeSequence: true })
+        } catch {
+          // ignore
+        }
+        jobSessions.delete(key)
+      }
+    }
+    if (typeof context.sequencesLeft === 'number' && context.sequencesLeft < 1) {
+      await disposeContextOnly()
+      await ensureContext(loadedContextSize)
+    }
+  }
+  const sequence = context.getSequence()
+  const session = new LlamaChatSession({
+    contextSequence: sequence,
+    systemPrompt: systemPrompt || undefined,
+    autoDisposeSequence: false
+  })
+  const entry = { session, sequence }
+  jobSessions.set(sessionKey, entry)
+  return entry
 }
 
 async function handleLoad(
@@ -117,7 +204,17 @@ async function handleLoad(
   }
 }
 
-async function runPrompt(options: {
+async function buildGrammar(jsonSchema?: Record<string, unknown>): Promise<unknown> {
+  if (!jsonSchema || !llama?.createGrammarForJsonSchema) return undefined
+  try {
+    return await llama.createGrammarForJsonSchema(jsonSchema)
+  } catch {
+    return undefined
+  }
+}
+
+/** Legacy oneshot: flatten full transcript, dispose sequence after. */
+async function runPromptOneshot(options: {
   messages: ChatMessage[]
   temperature: number
   maxTokens: number
@@ -151,15 +248,7 @@ async function runPrompt(options: {
       .filter(Boolean)
       .join('\n\n')
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let grammar: any = undefined
-    if (options.jsonSchema && llama?.createGrammarForJsonSchema) {
-      try {
-        grammar = await llama.createGrammarForJsonSchema(options.jsonSchema)
-      } catch {
-        grammar = undefined
-      }
-    }
+    const grammar = await buildGrammar(options.jsonSchema)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const promptOpts: any = {
       temperature: options.temperature,
@@ -180,6 +269,55 @@ async function runPrompt(options: {
   }
 }
 
+async function runSessionTurn(options: {
+  sessionKey: string
+  userMessage: string
+  seedMessages?: ChatMessage[]
+  systemPrompt?: string
+  temperature: number
+  maxTokens: number
+  signal: AbortSignal
+  jsonSchema?: Record<string, unknown>
+  onChunk: (text: string) => void
+}): Promise<void> {
+  const existing = jobSessions.get(options.sessionKey)
+  const isNew = !existing || existing.session.disposed
+
+  if (isNew) {
+    const system =
+      options.systemPrompt ||
+      options.seedMessages
+        ?.filter((m) => m.role === 'system')
+        .map((m) => m.content)
+        .join('\n\n') ||
+      undefined
+    const { session } = await getOrCreateSession(options.sessionKey, system)
+    const seed = (options.seedMessages || []).filter((m) => m.role !== 'system')
+    if (seed.length) {
+      try {
+        session.setChatHistory(messagesToHistory(options.seedMessages || []))
+      } catch {
+        // History seed optional — next prompt still works from empty session.
+      }
+    }
+  }
+
+  const { session } = await getOrCreateSession(options.sessionKey)
+  const grammar = await buildGrammar(options.jsonSchema)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const promptOpts: any = {
+    temperature: options.temperature,
+    signal: options.signal,
+    maxTokens: options.maxTokens,
+    stopOnAbortSignal: true,
+    ...(grammar ? { grammar } : {}),
+    onTextChunk(chunk: string) {
+      options.onChunk(chunk)
+    }
+  }
+  await session.prompt(options.userMessage, promptOpts)
+}
+
 async function handleChat(msg: {
   id: string
   messages: ChatMessage[]
@@ -197,7 +335,7 @@ async function handleChat(msg: {
 
   try {
     const run = () =>
-      runPrompt({
+      runPromptOneshot({
         messages: msg.messages,
         temperature: msg.temperature,
         maxTokens: msg.maxTokens,
@@ -211,7 +349,6 @@ async function handleChat(msg: {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       if (/no sequences left/i.test(message) && !ac.signal.aborted) {
-        // Recycle context and retry once — usually a leaked sequence from a race.
         await disposeContextOnly()
         await ensureContext(loadedContextSize)
         await run()
@@ -238,6 +375,77 @@ async function handleChat(msg: {
   }
 }
 
+async function handleChatTurn(msg: {
+  id: string
+  sessionKey: string
+  userMessage: string
+  seedMessages?: ChatMessage[]
+  systemPrompt?: string
+  temperature: number
+  maxTokens: number
+  jsonSchema?: Record<string, unknown>
+}): Promise<void> {
+  if (!model) {
+    post({ type: 'error', id: msg.id, error: 'Model not loaded' })
+    return
+  }
+
+  const ac = new AbortController()
+  abortControllers.set(msg.id, ac)
+
+  try {
+    const run = () =>
+      runSessionTurn({
+        sessionKey: msg.sessionKey,
+        userMessage: msg.userMessage,
+        seedMessages: msg.seedMessages,
+        systemPrompt: msg.systemPrompt,
+        temperature: msg.temperature,
+        maxTokens: msg.maxTokens,
+        signal: ac.signal,
+        jsonSchema: msg.jsonSchema,
+        onChunk: (text) => post({ type: 'chunk', id: msg.id, text })
+      })
+
+    try {
+      await run()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      // Context overflow / sequence issues → drop session and retry once with full seed.
+      if (
+        !ac.signal.aborted &&
+        (/no sequences left|context size|exceed|overflow/i.test(message) ||
+          /setChatHistory/i.test(message))
+      ) {
+        releaseSession(msg.sessionKey)
+        if (/no sequences left/i.test(message)) {
+          await disposeContextOnly()
+          await ensureContext(loadedContextSize)
+        }
+        await run()
+      } else {
+        throw err
+      }
+    }
+
+    if (ac.signal.aborted) {
+      post({ type: 'error', id: msg.id, error: 'Aborted' })
+    } else {
+      post({ type: 'done', id: msg.id, sessionKey: msg.sessionKey })
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    const name = err instanceof Error ? err.name : ''
+    if (name === 'AbortError' || /abort/i.test(message) || ac.signal.aborted) {
+      post({ type: 'error', id: msg.id, error: 'Aborted' })
+    } else {
+      post({ type: 'error', id: msg.id, error: message })
+    }
+  } finally {
+    abortControllers.delete(msg.id)
+  }
+}
+
 function onMessage(raw: Incoming): void {
   if (!raw || typeof raw !== 'object') return
   switch (raw.type) {
@@ -248,6 +456,15 @@ function onMessage(raw: Incoming): void {
       break
     case 'chat':
       enqueue(() => handleChat(raw))
+      break
+    case 'chat-turn':
+      enqueue(() => handleChatTurn(raw))
+      break
+    case 'chat-release':
+      enqueue(async () => {
+        releaseSession(raw.sessionKey)
+        post({ type: 'released', sessionKey: raw.sessionKey })
+      })
       break
     case 'abort': {
       abortControllers.get(raw.id)?.abort()

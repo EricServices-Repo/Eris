@@ -1,4 +1,4 @@
-import { parseToolCalls } from './tool-parsing'
+import { parseToolCalls, stripToolBlocks } from './tool-parsing'
 import type { ToolCall } from './types'
 
 export function looksLikeRefusal(text: string): boolean {
@@ -59,6 +59,26 @@ export function talksAboutToolsWithoutCalling(text: string): boolean {
   return mentions || longPlan
 }
 
+/**
+ * Model is asking the user for workspace facts it should discover with tools
+ * (tree / list_dir / retrieve / read_file) — never pause or finish on these.
+ */
+export function looksLikeAsksForWorkspaceInfo(text: string): boolean {
+  const t = stripToolBlocks(text).trim().toLowerCase()
+  if (!t) return false
+  if (parseToolCalls(text).length > 0) return false
+  return (
+    /\b(provide|share|send|paste|give me|upload)\b[\s\S]{0,40}\b(structure|folder|directory|tree|files?|code|project|repo|workspace|sources?)\b/i.test(
+      t
+    ) ||
+    /\b(project|folder|directory|repo|workspace)\s+(structure|layout|tree)\b/i.test(t) ||
+    /\b(which files|what files|list (the )?files|show me (the )?(files|structure|tree))\b/i.test(
+      t
+    ) ||
+    /\bcould you please provide\b[\s\S]{0,80}\b(structure|files?|folder)\b/i.test(t)
+  )
+}
+
 /** Model claims the job is finished (no more tools needed). */
 export function looksLikeTaskComplete(text: string): boolean {
   const t = text.trim()
@@ -66,20 +86,49 @@ export function looksLikeTaskComplete(text: string): boolean {
   if (looksLikeRefusal(t) || looksLikeDegenerateLoop(t) || talksAboutToolsWithoutCalling(t)) {
     return false
   }
+  if (looksLikeAsksForWorkspaceInfo(t)) return false
+  // Questions are not a finished review/edit.
+  if (/\?\s*$/.test(t) || (t.match(/\?/g) || []).length >= 2) return false
   const lower = t.toLowerCase()
   if (
-    /\b(next i (will|shall)|still need|not (yet )?done|todo\b|remaining|i('ll| will) (now|next)|let me (now )?)/i.test(
+    /\b(next i (will|shall)|still need|not (yet )?done|todo\b|remaining|i('ll| will) (now|next)|let me (now )?)\b/i.test(
       lower
     )
   ) {
     return false
   }
   if ((t.match(/^\s*\d+\.\s+/gm) || []).length >= 3) return false
-  return (
-    /\b(done|complete|completed|finished|created|updated|ready|all set|implemented|here'?s what|working)\b/i.test(
-      lower
-    ) || (t.length >= 12 && t.length < 800)
+  // Require an actual completion signal — short prose alone used to match and
+  // let review runs stop on "please provide the project structure?"
+  return /\b(done|complete|completed|finished|created|updated|ready|all set|implemented|here'?s what|working|findings|reviewed|looks good|issues?:)\b/i.test(
+    lower
   )
+}
+
+/**
+ * True when the model is asking the user to choose before continuing
+ * (not a rhetorical DONE summary that happens to end with "?").
+ */
+export function looksLikeClarifyingQuestion(text: string): boolean {
+  const t = stripToolBlocks(text).trim()
+  if (t.length < 24 || t.length > 1400) return false
+  if (parseToolCalls(text).length > 0) return false
+  // Never treat "please paste the repo tree" as an inline user question.
+  if (looksLikeAsksForWorkspaceInfo(t)) return false
+  // Already sounds finished — don't hijack.
+  if (
+    /\b(done|finished|complete|here's what|here is what|summary:)\b/i.test(t) &&
+    !/\?\s*$/.test(t)
+  ) {
+    return false
+  }
+  const askVerb =
+    /\b(should I|do you want|would you like|which (one|option|approach)|prefer|please (choose|confirm|reply|let me know)|can you (confirm|clarify)|before I (continue|proceed|start))\b/i.test(
+      t
+    )
+  const endsQuestion = /\?\s*$/.test(t)
+  const numberedChoice = /(?:^|\n)\s*(?:[-*]|\d+[.)])\s+\S+/m.test(t) && endsQuestion
+  return (endsQuestion && askVerb) || numberedChoice
 }
 
 /** Review/confirm goals should finish without write_file. */
@@ -90,7 +139,7 @@ export function isReviewOnlyGoal(text: string): boolean {
       t
     )
   const edit =
-    /\b(create|implement|fix|add |build|scaffold|write|refactor|delete|rename|update the|make a)\b/i.test(
+    /\b(create|implement|fix|add |build|scaffold|write|refactor|delete|rename|update the|make a|improv(e|ements?)|polish|enhance)\b/i.test(
       t
     )
   return review && !edit
@@ -123,6 +172,7 @@ export function shouldKeepWorking(opts: {
   if (!needsTools) return false
   if (!assistantText.trim()) return true
   if (looksLikeRefusal(assistantText)) return true
+  if (looksLikeAsksForWorkspaceInfo(assistantText)) return true
   if (talksAboutToolsWithoutCalling(assistantText)) return true
   if (looksLikeDegenerateLoop(assistantText)) return true
 

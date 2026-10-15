@@ -79,6 +79,17 @@ interface Props {
   onDismissError: () => void
   pendingApproval?: PendingCommandApproval | null
   onApprovalDecision?: (approvalId: string, decision: 'allow' | 'always' | 'deny') => void
+  pendingQuestion?: PendingUserQuestion | null
+  onQuestionReply?: (questionId: string, reply: string | null) => void
+  memoryNotice?: {
+    kind: 'updated' | 'proposal'
+    preview: string
+    note?: string
+    summary?: string
+  } | null
+  onMemoryRemember?: () => void
+  onMemoryDismiss?: () => void
+  onMemoryUndo?: () => void
   /** Re-run the last user message with a forced route */
   onRerouteLast?: (intent: 'tools' | 'answer') => void
   resumableRun?: { goal: string; updatedAt: string; step: number } | null
@@ -90,6 +101,13 @@ export interface PendingCommandApproval {
   approvalId: string
   kind: 'run' | 'push'
   command: string
+}
+
+export interface PendingUserQuestion {
+  questionId: string
+  question: string
+  choices?: string[]
+  timeoutMs: number
 }
 
 function parseAtQuery(draft: string, caret: number): { query: string; start: number } | null {
@@ -109,6 +127,71 @@ function parseSlashQuery(draft: string): string | null {
   const token = draft.slice(1)
   if (token.includes(' ')) return null
   return token.toLowerCase()
+}
+
+function InlineAgentQuestion({
+  question,
+  onReply
+}: {
+  question: PendingUserQuestion
+  onReply: (reply: string | null) => void
+}) {
+  const [draft, setDraft] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+  const timeoutMs = Math.max(1000, question.timeoutMs || 15_000)
+
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [question.questionId])
+
+  const submit = (text: string | null) => {
+    onReply(text)
+  }
+
+  return (
+    <div className="question-card" role="form" aria-label="Agent question">
+      <div className="question-timeout-track" aria-hidden>
+        <div
+          className="question-timeout-bar"
+          style={{ animationDuration: `${timeoutMs}ms` }}
+        />
+      </div>
+      <div className="question-title">Composer needs a quick answer</div>
+      <div className="question-text">{question.question}</div>
+      {question.choices && question.choices.length > 0 && (
+        <div className="question-choices">
+          {question.choices.map((c) => (
+            <button key={c} type="button" className="btn" onClick={() => submit(c)}>
+              {c}
+            </button>
+          ))}
+        </div>
+      )}
+      <form
+        className="question-reply-row"
+        onSubmit={(e) => {
+          e.preventDefault()
+          submit(draft.trim() || null)
+        }}
+      >
+        <input
+          ref={inputRef}
+          className="question-reply-input"
+          value={draft}
+          placeholder="Type a reply…"
+          spellCheck={false}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+        <button type="submit" className="btn btn-primary" disabled={!draft.trim()}>
+          Reply
+        </button>
+        <button type="button" className="btn" onClick={() => submit(null)} title="Continue without answering">
+          Skip
+        </button>
+      </form>
+      <div className="question-hint">Continues automatically if you don’t reply</div>
+    </div>
+  )
 }
 
 export function ChatPanel({
@@ -149,6 +232,12 @@ export function ChatPanel({
   onDismissError,
   pendingApproval = null,
   onApprovalDecision,
+  pendingQuestion = null,
+  onQuestionReply,
+  memoryNotice = null,
+  onMemoryRemember,
+  onMemoryDismiss,
+  onMemoryUndo,
   onRerouteLast,
   resumableRun = null,
   onResumeRun,
@@ -462,6 +551,44 @@ export function ChatPanel({
         </div>
       )}
 
+      {memoryNotice && (
+        <div className="composer-banner composer-banner-soft memory-banner">
+          <span title={memoryNotice.preview}>
+            {memoryNotice.kind === 'proposal'
+              ? 'Remember this in project memory?'
+              : 'Project memory updated'}
+            {memoryNotice.preview ? `: ${memoryNotice.preview.slice(0, 100)}` : ''}
+          </span>
+          {memoryNotice.kind === 'proposal' ? (
+            <>
+              {onMemoryRemember && (
+                <button type="button" className="btn btn-primary" onClick={onMemoryRemember}>
+                  Remember
+                </button>
+              )}
+              {onMemoryDismiss && (
+                <button type="button" className="btn" onClick={onMemoryDismiss}>
+                  Dismiss
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              {onMemoryUndo && (
+                <button type="button" className="btn" onClick={onMemoryUndo}>
+                  Undo
+                </button>
+              )}
+              {onMemoryDismiss && (
+                <button type="button" className="btn" onClick={onMemoryDismiss}>
+                  Dismiss
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       <div className="agent-main">
         <div className="agent-messages">
           {!activeThread && !streaming && !chatError ? (
@@ -561,6 +688,13 @@ export function ChatPanel({
                         </button>
                       </div>
                     </div>
+                  )}
+                  {pendingQuestion && onQuestionReply && (
+                    <InlineAgentQuestion
+                      key={pendingQuestion.questionId}
+                      question={pendingQuestion}
+                      onReply={(reply) => onQuestionReply(pendingQuestion.questionId, reply)}
+                    />
                   )}
                   {answerBuffer ? (
                     <div className="answer-text">

@@ -28,7 +28,8 @@ vi.mock('../electron/main/services/mcp-runtime', () => ({
   syncMcpRuntime: async () => undefined,
   listMcpTools: () => [],
   isMcpToolName: () => false,
-  callMcpTool: async () => ({ ok: false, detail: 'no mcp' })
+  callMcpTool: async () => ({ ok: false, detail: 'no mcp' }),
+  formatLiveMcpToolsPrompt: () => ''
 }))
 vi.mock('../electron/main/services/workspace-search', () => ({
   retrieveContextAsync: async () => ({ ok: true, paths: [], detail: '' }),

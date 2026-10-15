@@ -30,9 +30,11 @@ export function ThinkingBlock({
   // Live: keep the compact panel open. Historical: collapsed by default.
   const [open, setOpen] = useState(defaultOpen || live)
   const [showLog, setShowLog] = useState(false)
+  const liveRef = useRef<HTMLPreElement>(null)
   const logRef = useRef<HTMLPreElement>(null)
   const hasTools = tools.length > 0
-  const hasBody = Boolean(thinking.trim() || status || hasTools)
+  const hasThinking = Boolean(thinking.trim())
+  const hasBody = Boolean(hasThinking || status || hasTools)
 
   const steps = useMemo(() => summarizeThinkingSteps(thinking), [thinking])
   const preview = useMemo(
@@ -46,6 +48,11 @@ export function ThinkingBlock({
     if (live) setOpen(true)
     else if (!defaultOpen) setOpen(false)
   }, [live, defaultOpen])
+
+  useEffect(() => {
+    if (!live || !open || !liveRef.current) return
+    liveRef.current.scrollTop = liveRef.current.scrollHeight
+  }, [thinking, status, tools, open, live])
 
   useEffect(() => {
     if (!showLog || !live || !logRef.current) return
@@ -67,11 +74,16 @@ export function ThinkingBlock({
           Thinking
           {live && <span className="thinking-live-dot" aria-hidden />}
         </span>
-        {preview ? (
+        {status?.trim() && (
+          <span className="thinking-status-inline" title={status}>
+            {status.trim()}
+          </span>
+        )}
+        {preview && preview !== status?.trim() ? (
           <span className="thinking-preview" title={preview}>
             {preview}
           </span>
-        ) : live ? (
+        ) : live && !status?.trim() ? (
           <span className="thinking-preview">Working…</span>
         ) : null}
         {steps.length > 0 && !live && (
@@ -108,11 +120,18 @@ export function ThinkingBlock({
             </ul>
           )}
 
-          {!steps.length && !hasTools && live && (
-            <div className="thinking-idle">Working…</div>
+          {/* Live: stream the raw thinking so progress is visible while the model runs. */}
+          {live && (
+            <pre ref={liveRef} className="thinking-text thinking-text-live">
+              {hasThinking ? thinking : status?.trim() || 'Working…'}
+            </pre>
           )}
 
-          {thinking.trim() && (
+          {!live && !steps.length && !hasTools && (
+            <div className="thinking-idle">No activity recorded.</div>
+          )}
+
+          {!live && hasThinking && (
             <div className="thinking-log-wrap">
               <button
                 type="button"

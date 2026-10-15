@@ -8,8 +8,10 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   readSync,
+  renameSync,
   statSync,
   unlinkSync,
   writeFileSync
@@ -31,9 +33,13 @@ import {
   createThrottledProgress,
   DOWNLOAD_IDLE_TIMEOUT_MS,
   downloadFetch,
+  findResumablePartial,
   formatDownloadNetworkError,
+  hashFileInto,
+  peekPartialBytes,
   publishDownloadedFile,
-  resolveDownloadTotal,
+  resolveResumeDownloadTotal,
+  stablePartialPath,
   type DownloadPhase
 } from './http-download'
 import {
@@ -294,9 +300,10 @@ export function getLocalStatuses(): LocalModelStatus[] {
     const installed = existsSync(path)
     const valid = installed && isValidLocalFile(path, entry)
     const live = progressById.get(entry.id)
+    const pausedBytes = !installed && !live ? peekPartialBytes(path) : 0
     const downloadedBytes = installed
       ? statSync(path).size
-      : live?.downloaded ?? 0
+      : live?.downloaded ?? pausedBytes
     const total = live?.total || entry.approxBytes
     const downloading = activeDownloadId === entry.id
     const phase =
@@ -351,6 +358,19 @@ export function deleteLocalModel(id: string): LocalModelStatus | null {
   const path = localModelFilePath(entry)
   unlinkQuiet(path)
   unlinkQuiet(verifiedSidecarPath(path))
+  unlinkQuiet(stablePartialPath(path))
+  // Clean legacy pid/timestamp partials.
+  try {
+    const dir = localModelsDir()
+    const base = `${entry.filename}.partial.`
+    for (const name of readdirSync(dir)) {
+      if (name === `${entry.filename}.partial` || name.startsWith(base)) {
+        unlinkQuiet(join(dir, name))
+      }
+    }
+  } catch {
+    // ignore
+  }
   progressById.delete(entry.id)
   downloadErrorById.delete(entry.id)
   // Drop Hub-added catalog rows once the file is gone (curated manifest stays).
@@ -386,16 +406,15 @@ export async function downloadLocalModel(
   downloadAbort = controller
   activeDownloadId = entry.id
   downloadErrorById.delete(entry.id)
-  if (!progressById.has(entry.id)) {
-    progressById.set(entry.id, {
-      downloaded: 0,
-      total: entry.approxBytes > 0 ? entry.approxBytes : 0,
-      phase: 'downloading'
-    })
-  }
+  const earlyPartial = findResumablePartial(target)
+  progressById.set(entry.id, {
+    downloaded: earlyPartial?.size ?? progressById.get(entry.id)?.downloaded ?? 0,
+    total: entry.approxBytes > 0 ? entry.approxBytes : progressById.get(entry.id)?.total ?? 0,
+    phase: 'downloading'
+  })
   // Immediate UI update so Settings lists the row as downloading before the first byte.
   emitLocalProgress(entry.id, onProgress)
-  const partial = `${target}.partial.${process.pid}.${Date.now()}`
+  const partial = stablePartialPath(target)
 
   try {
     if (existsSync(target)) {
@@ -407,29 +426,75 @@ export async function downloadLocalModel(
       unlinkQuiet(verifiedSidecarPath(target))
     }
 
+    // Resume from a previous cancel/stall when possible.
+    let existing = 0
+    const found = findResumablePartial(target)
+    if (found) {
+      if (found.path !== partial) {
+        try {
+          renameSync(found.path, partial)
+        } catch {
+          // use found.path below via size only — prefer stable path
+        }
+      }
+      existing = found.size
+      // Tiny leftovers are usually a failed HTML/error page — start clean.
+      if (existing > 0 && existing < 1024 * 1024) {
+        unlinkQuiet(partial)
+        existing = 0
+      }
+    }
+
+    const reqHeaders: Record<string, string> = {}
+    if (existing > 0) reqHeaders.Range = `bytes=${existing}-`
+
     let res
     try {
-      res = await downloadFetch(entry.downloadUrl, { signal: controller.signal })
+      res = await downloadFetch(entry.downloadUrl, {
+        signal: controller.signal,
+        headers: reqHeaders
+      })
     } catch (err) {
       if (err instanceof Error && /Could not reach|offline/i.test(err.message)) throw err
       throw formatDownloadNetworkError(err, entry.downloadUrl)
     }
-    if (!res.ok || !res.body) {
+
+    // 416 = server thinks we already have the whole file — verify what's on disk.
+    if (existing > 0 && res.status === 416) {
+      logInfo('Local model Range 416 — verifying existing partial', {
+        id: entry.id,
+        existing
+      })
+    } else if (existing > 0 && res.status === 200) {
+      // Server ignored Range — restart from byte 0.
+      logWarn('Local model server ignored Range; restarting download', {
+        id: entry.id,
+        existing
+      })
+      unlinkQuiet(partial)
+      existing = 0
+    } else if (!(res.ok || res.status === 206) || (!res.body && res.status !== 416)) {
       throw new Error(
         `Download failed: HTTP ${res.status} (${res.via}). Retry, or open the model URL in a browser.`
       )
     }
 
     const contentType = (res.headers.get('content-type') || '').toLowerCase()
-    if (contentType.includes('text/html')) {
+    if (res.body && contentType.includes('text/html')) {
+      unlinkQuiet(partial)
       throw new Error(
         'Download failed: received HTML instead of a model file (blocked or bad URL).'
       )
     }
 
-    const resolved = resolveDownloadTotal(res.headers, entry.approxBytes)
+    const resolved = resolveResumeDownloadTotal(
+      res.headers,
+      entry.approxBytes,
+      existing,
+      res.status
+    )
     let total = resolved.total
-    let downloaded = 0
+    let downloaded = existing
     progressById.set(entry.id, { downloaded, total, phase: 'downloading' })
     const emitProgress = createThrottledProgress(() => {
       if (!onProgress) return
@@ -441,31 +506,48 @@ export async function downloadLocalModel(
       id: entry.id,
       via: res.via,
       total,
-      totalSource: resolved.source
+      totalSource: resolved.source,
+      resumeFrom: existing,
+      status: res.status
     })
 
     const hasher = createHash('sha256')
-    const nodeStream = bodyToNodeStream(res.body)
-    const clearIdle = attachIdleTimeout(nodeStream, DOWNLOAD_IDLE_TIMEOUT_MS, (err) => {
-      controller.abort()
-      logWarn('Local model download idle timeout', { id: entry.id, error: err.message })
-    })
-    const hashing = new Transform({
-      transform(chunk: Buffer, _enc, cb) {
-        hasher.update(chunk)
-        downloaded += chunk.length
-        if (total > 0 && downloaded > total) total = downloaded
-        progressById.set(entry.id, { downloaded, total, phase: 'downloading' })
-        emitProgress.ping()
-        cb(null, chunk)
-      }
-    })
-
-    try {
-      await pipeline(nodeStream, hashing, createWriteStream(partial))
-    } finally {
-      clearIdle()
+    if (existing > 0 && existsSync(partial)) {
+      await hashFileInto(hasher, partial)
     }
+
+    if (res.body && (res.status === 200 || res.status === 206)) {
+      const nodeStream = bodyToNodeStream(res.body)
+      const clearIdle = attachIdleTimeout(nodeStream, DOWNLOAD_IDLE_TIMEOUT_MS, (err) => {
+        controller.abort()
+        logWarn('Local model download idle timeout', { id: entry.id, error: err.message })
+      })
+      const hashing = new Transform({
+        transform(chunk: Buffer, _enc, cb) {
+          hasher.update(chunk)
+          downloaded += chunk.length
+          if (total > 0 && downloaded > total) total = downloaded
+          progressById.set(entry.id, { downloaded, total, phase: 'downloading' })
+          emitProgress.ping()
+          cb(null, chunk)
+        }
+      })
+      const append = existing > 0 && res.status === 206
+      try {
+        await pipeline(
+          nodeStream,
+          hashing,
+          createWriteStream(partial, { flags: append ? 'a' : 'w' })
+        )
+      } finally {
+        clearIdle()
+      }
+    }
+
+    if (!existsSync(partial)) {
+      throw new Error('Download produced no file')
+    }
+    downloaded = statSync(partial).size
 
     total = Math.max(total, downloaded)
     progressById.set(entry.id, { downloaded, total, phase: 'verifying' })
@@ -473,9 +555,9 @@ export async function downloadLocalModel(
 
     const minExpected = Math.floor(entry.approxBytes * 0.85)
     if (entry.approxBytes > 0 && downloaded < minExpected) {
-      unlinkQuiet(partial)
+      // Keep partial so Retry can Range-resume.
       throw new Error(
-        `Download incomplete (${formatApproxSize(downloaded)} of ~${formatApproxSize(entry.approxBytes)}). Try again.`
+        `Download incomplete (${formatApproxSize(downloaded)} of ~${formatApproxSize(entry.approxBytes)}). Retry to resume.`
       )
     }
 
@@ -493,19 +575,31 @@ export async function downloadLocalModel(
     progressById.set(entry.id, { downloaded, total: downloaded, phase: 'finalizing' })
     emitProgress.flush()
     downloadErrorById.delete(entry.id)
-    logInfo('Local model download complete', { id: entry.id, bytes: downloaded })
+    logInfo('Local model download complete', {
+      id: entry.id,
+      bytes: downloaded,
+      resumed: existing > 0
+    })
     const done = getLocalStatuses().find((s) => s.id === entry.id)!
     if (onProgress) onProgress({ ...done, downloading: false, downloadPhase: null, progress: 1 })
     return done
   } catch (err) {
-    unlinkQuiet(partial)
     const message = err instanceof Error ? err.message : String(err)
+    const discard =
+      /checksum|HTML instead|corrupt|not a valid/i.test(message)
+    if (discard) unlinkQuiet(partial)
+    // Abort / stall / network: keep .partial so the next attempt resumes.
     if (!/abort/i.test(message)) {
       downloadErrorById.set(
         entry.id,
-        `${message} Tip: Retry, check VPN/firewall, or open the download URL in a browser.`
+        `${message} Tip: Retry resumes from where it left off when possible.`
       )
       logError('Local model download failed', { id: entry.id, error: message })
+    } else {
+      logInfo('Local model download canceled — partial kept for resume', {
+        id: entry.id,
+        partialBytes: existsSync(partial) ? statSync(partial).size : 0
+      })
     }
     throw err
   } finally {

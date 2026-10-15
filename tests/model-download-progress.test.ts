@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { resolveDownloadTotal } from '../electron/main/services/http-download'
+import {
+  resolveContentRangeTotal,
+  resolveDownloadTotal,
+  resolveResumeDownloadTotal,
+  stablePartialPath
+} from '../electron/main/services/http-download'
 import {
   downloadStatusLabel,
   mergeDownloadProgressRow,
@@ -9,6 +14,29 @@ import {
 function headers(init: Record<string, string>): Headers {
   return new Headers(init)
 }
+
+describe('resume helpers', () => {
+  it('builds a stable .partial path', () => {
+    expect(stablePartialPath('/models/foo.gguf')).toBe('/models/foo.gguf.partial')
+  })
+
+  it('parses Content-Range totals', () => {
+    expect(
+      resolveContentRangeTotal(headers({ 'content-range': 'bytes 100-999/5000' }))
+    ).toBe(5000)
+    expect(resolveContentRangeTotal(headers({}))).toBeNull()
+  })
+
+  it('adds content-length to existing bytes on HTTP 206', () => {
+    const r = resolveResumeDownloadTotal(
+      headers({ 'content-length': '900' }),
+      2000,
+      100,
+      206
+    )
+    expect(r).toEqual({ total: 1000, source: 'content-length+offset' })
+  })
+})
 
 describe('resolveDownloadTotal', () => {
   it('prefers x-linked-size from Hugging Face', () => {

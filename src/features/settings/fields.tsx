@@ -122,6 +122,14 @@ export function settingFields(agentIds: string[]): SettingField[] {
     },
     {
       cat: 'agent',
+      label: 'Project memory',
+      hint: 'auto = write .eris/context.md after agent runs; ask = confirm in chat; off = never',
+      path: ['agent', 'projectMemory'],
+      type: 'select',
+      options: ['auto', 'ask', 'off']
+    },
+    {
+      cat: 'agent',
       label: 'Max history messages',
       hint: 'Trim older turns from context',
       path: ['agent', 'maxHistoryMessages'],

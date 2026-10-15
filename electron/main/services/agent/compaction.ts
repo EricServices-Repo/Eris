@@ -41,7 +41,7 @@ function estimateTokens(messages: AgentChatMessage[]): number {
 export function contextBudgetTokens(settings: AppSettings, workerModel: string): number {
   if (isBuiltinRef(workerModel)) {
     const entry = findBuiltinEntry(workerModel)
-    const ctx = entry?.tier === 'lite' ? 4096 : 8192
+    const ctx = entry?.tier === 'lite' ? 4096 : 16384
     return Math.floor(ctx * COMPACT_BUDGET_RATIO)
   }
   const window = settings.models.contextWindow || 32768
@@ -143,9 +143,11 @@ async function summarizeMiddleWithLite(options: {
     {
       role: 'system',
       content:
-        'You compress agent working memory for a coding worker that will continue the same task. ' +
-        'Write a dense progress brief (max ~20 short bullets or 250 words). Include: what was done, ' +
-        'key findings, files changed, failures/blockers, and what remains. ' +
+        'You compress agent working memory for an Eris coding worker that will continue the same task.\n' +
+        'Write a dense progress brief (max ~20 short bullets or 250 words) the next model turn can trust.\n' +
+        'Include: goal restated in one line; what was done; key findings; files changed; ' +
+        'failures/blockers; exact next actions remaining.\n' +
+        'Be concrete (paths, commands, error phrases). Drop chatter and repeated tool dumps.\n' +
         'No tools. No CALL_FULL. No markdown fences. Plain text only.'
     },
     {
@@ -153,7 +155,7 @@ async function summarizeMiddleWithLite(options: {
       content:
         `Original request:\n${options.goal.slice(0, 1200)}\n\n` +
         (options.priorMemory
-          ? `Previous memory (fold into the new brief):\n${options.priorMemory.slice(0, 1500)}\n\n`
+          ? `Previous memory (fold into the new brief; do not discard open work):\n${options.priorMemory.slice(0, 1500)}\n\n`
           : '') +
         `Files touched: ${
           options.filesTouched.length

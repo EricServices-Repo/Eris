@@ -488,30 +488,55 @@ export function LocalModelsSettingsPanel({
   )
 }
 
-/** Settings → Providers — optional Ollama + cloud/custom APIs. */
+/** Settings → Providers — cloud/custom APIs first; Ollama as advanced. */
 export function ProvidersModelsPanel({
   resolved,
   status,
   apply,
   load
 }: Omit<SharedProps, 'state'>) {
+  const [showOllama, setShowOllama] = useState(false)
+
+  const ollamaLive = useMemo(() => {
+    const conn = (resolved.models.connections ?? []).find(
+      (c) => c.type !== 'builtin' && (c.provider === 'ollama' || c.id === 'ollama')
+    )
+    if (!conn) return { present: false, reachable: false, enabled: false }
+    const live = status?.connections?.find((c) => c.id === conn.id)
+    return {
+      present: true,
+      enabled: conn.enabled !== false,
+      reachable: Boolean(live?.reachable)
+    }
+  }, [resolved.models.connections, status])
+
+  useEffect(() => {
+    if (ollamaLive.present && ollamaLive.enabled) setShowOllama(true)
+  }, [ollamaLive.present, ollamaLive.enabled])
+
+  const saveConnections = async (connections: AppSettings['models']['connections']) => {
+    await apply(['models', 'connections'], connections)
+  }
+
   return (
-    <div className="models-page">
+    <div className="models-page providers-page">
       <section className="models-card">
         <header className="models-card-head">
           <div>
-            <h3>Ollama (optional)</h3>
-            <p>Connect an existing Ollama install if you already use one.</p>
+            <h3>API providers</h3>
+            <p>
+              Optional. Most chats use <strong>Composer</strong> or{' '}
+              <strong>Local models</strong>. Add a cloud API or local server when you need one.
+            </p>
           </div>
         </header>
-        <OllamaConfigPanel
+
+        <ModelConnectionsPanel
           resolved={resolved}
           status={status}
           defaultModel={resolved.models.defaultModel}
           compact
-          onSaveConnections={async (connections) => {
-            await apply(['models', 'connections'], connections)
-          }}
+          onSaveConnections={saveConnections}
           onRefresh={async () => {
             await load()
           }}
@@ -521,28 +546,54 @@ export function ProvidersModelsPanel({
         />
       </section>
 
-      <section className="models-card">
-        <header className="models-card-head">
-          <div>
-            <h3>Cloud &amp; other APIs</h3>
-            <p>OpenAI, OpenRouter, LM Studio, and custom /v1 endpoints.</p>
+      <section className={`models-card providers-advanced${showOllama ? ' is-open' : ''}`}>
+        <button
+          type="button"
+          className="providers-advanced-toggle"
+          aria-expanded={showOllama}
+          onClick={() => setShowOllama((v) => !v)}
+        >
+          <span className="providers-advanced-title">
+            <span
+              className={`status-dot ${
+                ollamaLive.reachable && ollamaLive.enabled ? 'ok' : ''
+              }`}
+            />
+            <strong>Ollama daemon</strong>
+            <span className="models-tag">Advanced</span>
+          </span>
+          <span className="providers-advanced-meta">
+            {ollamaLive.reachable && ollamaLive.enabled
+              ? 'Connected'
+              : ollamaLive.present && !ollamaLive.enabled
+                ? 'Disabled'
+                : 'Optional · separate app'}
+            <span className="providers-chevron" aria-hidden>
+              {showOllama ? '▾' : '▸'}
+            </span>
+          </span>
+        </button>
+        {showOllama && (
+          <div className="providers-advanced-body">
+            <p className="models-hint">
+              Only if you already run Ollama. Prefer <strong>Local models</strong> for GGUFs that
+              run inside Eris.
+            </p>
+            <OllamaConfigPanel
+              resolved={resolved}
+              status={status}
+              defaultModel={resolved.models.defaultModel}
+              compact
+              onSaveConnections={saveConnections}
+              onRefresh={async () => {
+                await load()
+              }}
+              onSetDefaultModel={async (model) => {
+                await apply(['models', 'defaultModel'], model)
+              }}
+            />
           </div>
-        </header>
-        <ModelConnectionsPanel
-          resolved={resolved}
-          status={status}
-          defaultModel={resolved.models.defaultModel}
-          compact
-          onSaveConnections={async (connections) => {
-            await apply(['models', 'connections'], connections)
-          }}
-          onRefresh={async () => {
-            await load()
-          }}
-          onSetDefaultModel={async (model) => {
-            await apply(['models', 'defaultModel'], model)
-          }}
-        />
+        )}
       </section>
     </div>
   )

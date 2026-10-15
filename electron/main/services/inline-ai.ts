@@ -36,8 +36,10 @@ export async function completeAtCursor(options: {
           {
             role: 'system',
             content:
-              'You are an inline code completion engine. Continue the code at the cursor. ' +
-              'Reply with ONLY the completion text to insert — no markdown fences, no explanations.'
+              'You are Eris’s inline code completion engine.\n' +
+              'Continue the code at the cursor so it fits the surrounding file.\n' +
+              'Match indentation, naming, and style from the prefix.\n' +
+              'Reply with ONLY the completion text to insert — no markdown fences, no explanations, no repeating the prefix.'
           },
           {
             role: 'user',
@@ -49,7 +51,8 @@ export async function completeAtCursor(options: {
               'Code after cursor:',
               suffix || '(eof)',
               '',
-              'Write the next 1–12 lines (or rest of expression) that belong at ⟨cursor⟩.'
+              'Write the next 1–12 lines (or the rest of the current expression) that belong at ⟨cursor⟩.',
+              'Stop before duplicating code that already exists after the cursor.'
             ].join('\n')
           }
         ]
@@ -95,18 +98,22 @@ export async function inlineEdit(options: {
           {
             role: 'system',
             content:
-              'You edit code in place. Return ONLY the replacement code for the selection ' +
-              '(or full snippet if no selection). No markdown fences, no commentary.'
+              'You are Eris’s inline code editor.\n' +
+              'Apply the user instruction to the selection and return ONLY the replacement code ' +
+              '(or the full snippet if there is no selection).\n' +
+              'Preserve surrounding style and imports unless the instruction requires changes.\n' +
+              'No markdown fences, no commentary, no explanations.'
           },
           {
             role: 'user',
             content: [
               `File: ${options.path} (${options.language})`,
-              `Instruction: ${options.instruction || 'Improve this code'}`,
+              `Instruction: ${options.instruction || 'Improve this code for clarity and correctness'}`,
               options.before ? `Context before:\n${options.before.slice(-800)}` : '',
               'Selection to replace:',
-              selection || '(empty — insert new code)',
-              options.after ? `Context after:\n${options.after.slice(0, 800)}` : ''
+              selection || '(empty — insert new code at this location)',
+              options.after ? `Context after:\n${options.after.slice(0, 800)}` : '',
+              'Return only the new selection text.'
             ]
               .filter(Boolean)
               .join('\n\n')

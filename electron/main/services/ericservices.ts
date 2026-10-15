@@ -197,6 +197,7 @@ export function buildSyncableSettings(settings: AppSettings): SettingsPatch {
       commandApproval: settings.agent.commandApproval,
       allowedCommands: [...(settings.agent.allowedCommands || [])],
       constrainLocalToolCalls: settings.agent.constrainLocalToolCalls !== false,
+      projectMemory: settings.agent.projectMemory ?? 'auto',
       routing: {
         enabled: settings.agent.routing.enabled,
         mode: settings.agent.routing.mode,

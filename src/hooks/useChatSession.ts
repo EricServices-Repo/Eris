@@ -22,6 +22,7 @@ import type {
   ChatAttachment,
   ChatMode,
   PendingCommandApproval,
+  PendingUserQuestion,
   QueuedChatMessage
 } from '@/features/chat/ChatPanel'
 import type { PendingDiff } from '@/features/chat/DiffReview'
@@ -104,6 +105,13 @@ export function useChatSession({
   const [toolActivity, setToolActivity] = useState<ToolActivityItem[]>([])
   const [agentStatus, setAgentStatus] = useState<string | null>(null)
   const [pendingApproval, setPendingApproval] = useState<PendingCommandApproval | null>(null)
+  const [pendingQuestion, setPendingQuestion] = useState<PendingUserQuestion | null>(null)
+  const [memoryNotice, setMemoryNotice] = useState<{
+    kind: 'updated' | 'proposal'
+    preview: string
+    note?: string
+    summary?: string
+  } | null>(null)
   const [resumableRun, setResumableRun] = useState<AgentRunSummary | null>(null)
   const lastTurnRef = useRef<{ text: string; intent: ChatIntent; agentId: string } | null>(null)
   const [chatMode, setChatMode] = useState<ChatMode>('agent')
@@ -126,6 +134,7 @@ export function useChatSession({
     userStoppedRef.current = true
     setStreaming(false)
     setAgentStatus(null)
+    setPendingQuestion(null)
     lastRequestIdRef.current = requestIdRef.current
     requestIdRef.current = null
     // Keep thinking/answer buffers visible until done flushes the partial reply.
@@ -191,6 +200,7 @@ export function useChatSession({
       setThinkingBuffer('')
       setAnswerBuffer('')
       setToolActivity([])
+      setPendingQuestion(null)
       // Paint Working immediately — don't wait on status/plan probes for first UI feedback.
       setAgentStatus('Working…')
       setStreaming(true)
@@ -613,6 +623,24 @@ export function useChatSession({
     const offApprovalResolved = window.ide.onChatApprovalResolved(({ approvalId }) => {
       setPendingApproval((cur) => (cur?.approvalId === approvalId ? null : cur))
     })
+    const offQuestion = window.ide.onChatQuestionRequest(
+      ({ requestId, questionId, question, choices, timeoutMs }) => {
+        if (requestId !== requestIdRef.current) {
+          void window.ide.respondUserQuestion(questionId, null)
+          return
+        }
+        setPendingQuestion({ questionId, question, choices, timeoutMs })
+      }
+    )
+    const offQuestionResolved = window.ide.onChatQuestionResolved(({ questionId }) => {
+      setPendingQuestion((cur) => (cur?.questionId === questionId ? null : cur))
+    })
+    const offMemoryUpdated = window.ide.onChatMemoryUpdated(({ preview }) => {
+      setMemoryNotice({ kind: 'updated', preview })
+    })
+    const offMemoryProposal = window.ide.onChatMemoryProposal(({ preview, note, summary }) => {
+      setMemoryNotice({ kind: 'proposal', preview, note, summary })
+    })
     const offModel = window.ide.onChatModel(({ requestId, model, agentId, agentName }) => {
       if (requestId !== requestIdRef.current) return
       routeMetaRef.current = {
@@ -657,6 +685,7 @@ export function useChatSession({
       setAnswerBuffer('')
       setAgentStatus(null)
       setPendingApproval(null)
+      setPendingQuestion(null)
       requestIdRef.current = null
       if (aborted) userStoppedRef.current = true
       thinkingAcc.current = ''
@@ -699,6 +728,7 @@ export function useChatSession({
       setThinkingBuffer('')
       setAnswerBuffer('')
       setAgentStatus(null)
+      setPendingQuestion(null)
       setChatError(error)
       requestIdRef.current = null
     })
@@ -715,6 +745,10 @@ export function useChatSession({
       offStatus()
       offApproval()
       offApprovalResolved()
+      offQuestion()
+      offQuestionResolved()
+      offMemoryUpdated()
+      offMemoryProposal()
       offModel()
       offDone()
       offError()
@@ -756,6 +790,10 @@ export function useChatSession({
     setAgentStatus,
     pendingApproval,
     setPendingApproval,
+    pendingQuestion,
+    setPendingQuestion,
+    memoryNotice,
+    setMemoryNotice,
     resumableRun,
     setResumableRun,
     chatMode,

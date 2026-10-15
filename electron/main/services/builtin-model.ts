@@ -40,6 +40,7 @@ import {
 } from './gpu-accel'
 import { getResolvedSettings } from './settings'
 import { appState } from '../app-state'
+import { messagesToLlamaHistory, splitSessionPrompt } from '../../../src/shared/llama-session'
 
 type LlamaModule = typeof import('node-llama-cpp')
 
@@ -632,11 +633,17 @@ let llamaChildReady: Promise<void> | null = null
 let workerModelPath: string | null = null
 let preferInProcess = false
 let chatSeq = 0
+/** Sessions known to exist in the llama worker (or in-process map). */
+const activeChatSessions = new Set<string>()
+/** In-process per-run sessions (worker path keeps its own map). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const inProcessSessions = new Map<string, { session: any; sequence: any }>()
 
 type WorkerMsg = {
   type: string
   id?: string
   requestId?: string
+  sessionKey?: string
   text?: string
   error?: string
 }
@@ -766,7 +773,43 @@ function onceWorkerMessage(
   })
 }
 
+function releaseInProcessSession(sessionKey: string): void {
+  const entry = inProcessSessions.get(sessionKey)
+  if (!entry) return
+  inProcessSessions.delete(sessionKey)
+  activeChatSessions.delete(sessionKey)
+  try {
+    entry.session.dispose?.({ disposeSequence: true })
+  } catch {
+    try {
+      entry.sequence?.dispose?.()
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function releaseAllInProcessSessions(): void {
+  for (const key of [...inProcessSessions.keys()]) releaseInProcessSession(key)
+}
+
+/** Drop a chat-run session (keeps the loaded GGUF). Safe to call if unknown. */
+export function releaseLocalChatSession(sessionKey: string): void {
+  if (!sessionKey) return
+  activeChatSessions.delete(sessionKey)
+  releaseInProcessSession(sessionKey)
+  if (llamaChild) {
+    try {
+      postToWorker({ type: 'chat-release', sessionKey })
+    } catch {
+      // ignore
+    }
+  }
+}
+
 async function disposeRuntimeUnlocked(): Promise<void> {
+  releaseAllInProcessSessions()
+  activeChatSessions.clear()
   if (llamaChild) {
     try {
       postToWorker({ type: 'dispose' })
@@ -867,8 +910,9 @@ async function ensureRuntimeInProcess(
         .catch(() => undefined)
     }
 
-    const contextSize = entry.tier === 'lite' ? 4096 : 8192
-    const context = await model.createContext({ contextSize })
+    const contextSize = entry.tier === 'lite' ? 4096 : 16384
+    // 2 sequences: long-lived job session + oneshot/fallback.
+    const context = await model.createContext({ contextSize, sequences: 2 })
     runtime = { modelPath, llama, model, context }
     return runtime
   })
@@ -880,13 +924,16 @@ async function ensureWorkerModel(
 ): Promise<void> {
   await ensureLlamaChild()
   if (workerModelPath === modelPath) return
+  // Model swap drops all KV sessions in the worker.
+  activeChatSessions.clear()
+  releaseAllInProcessSessions()
   if (!isValidModelFile(modelPath, entry)) {
     throw new Error(
       `${entry.displayName} file is missing or corrupted. Open Settings → Models and download it again.`
     )
   }
   const requestId = `load-${Date.now()}`
-  const contextSize = entry.tier === 'lite' ? 4096 : 8192
+  const contextSize = entry.tier === 'lite' ? 4096 : 16384
   const preferEgpu =
     getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
   const { status: gpuStatus } = await applyLlamaGpuPreference(preferEgpu)
@@ -922,17 +969,132 @@ async function* streamBuiltinChatInProcess(options: {
   entry: BuiltinModelManifestEntry
   path: string
   jsonSchema?: Record<string, unknown>
+  sessionKey?: string
 }): AsyncGenerator<string, void, unknown> {
   const llamaCpp = await loadLlamaModule()
   const { LlamaChatSession } = llamaCpp
   const state = await ensureRuntimeInProcess(options.path, options.entry)
+  const maxTokens = options.entry.tier === 'lite' ? 1024 : 4096
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let grammar: any = undefined
+  if (options.jsonSchema) {
+    try {
+      grammar = await state.llama.createGrammarForJsonSchema(options.jsonSchema)
+    } catch {
+      grammar = undefined
+    }
+  }
+
+  const split = options.sessionKey ? splitSessionPrompt(options.messages) : null
+
+  if (options.sessionKey && split) {
+    const key = options.sessionKey
+    let entry = inProcessSessions.get(key)
+    if (!entry || entry.session.disposed) {
+      const system =
+        split.seed
+          .filter((m) => m.role === 'system')
+          .map((m) => m.content)
+          .join('\n\n') || undefined
+      const sequence = state.context.getSequence()
+      const session = new LlamaChatSession({
+        contextSequence: sequence,
+        systemPrompt: system,
+        autoDisposeSequence: false
+      })
+      entry = { session, sequence }
+      inProcessSessions.set(key, entry)
+      activeChatSessions.add(key)
+      if (split.seed.length) {
+        try {
+          // node-llama-cpp ChatHistoryItem — keep loosely typed across versions.
+          session.setChatHistory(messagesToLlamaHistory(split.seed) as never)
+        } catch {
+          // optional
+        }
+      }
+    }
+
+    const queue: string[] = []
+    let done = false
+    let caughtError: unknown = null
+    let notify: (() => void) | null = null
+    const wait = () =>
+      new Promise<void>((resolve) => {
+        notify = resolve
+      })
+    const wake = () => {
+      notify?.()
+      notify = null
+    }
+    const onAbortWake = () => {
+      done = true
+      wake()
+    }
+    options.signal?.addEventListener('abort', onAbortWake)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const promptOpts: any = {
+      temperature: options.temperature,
+      signal: options.signal,
+      maxTokens,
+      stopOnAbortSignal: true,
+      ...(grammar ? { grammar } : {}),
+      onTextChunk(chunk: string) {
+        queue.push(chunk)
+        wake()
+      }
+    }
+    const run = entry.session
+      .prompt(split.userMessage, promptOpts)
+      .then(() => {
+        done = true
+        wake()
+      })
+      .catch((err: unknown) => {
+        caughtError = err
+        done = true
+        wake()
+      })
+    try {
+      while (!done || queue.length > 0) {
+        if (options.signal?.aborted) {
+          const err = new Error('Aborted')
+          err.name = 'AbortError'
+          throw err
+        }
+        if (queue.length === 0) await wait()
+        while (queue.length > 0) yield queue.shift() as string
+      }
+      await run
+      if (options.signal?.aborted) {
+        const err = new Error('Aborted')
+        err.name = 'AbortError'
+        throw err
+      }
+      if (caughtError) {
+        const message =
+          caughtError instanceof Error ? caughtError.message : String(caughtError)
+        const name = caughtError instanceof Error ? caughtError.name : ''
+        if (name === 'AbortError' || /abort/i.test(message)) {
+          const err = new Error('Aborted')
+          err.name = 'AbortError'
+          throw err
+        }
+        throw caughtError instanceof Error ? caughtError : new Error(message)
+      }
+    } finally {
+      options.signal?.removeEventListener('abort', onAbortWake)
+    }
+    return
+  }
+
+  // Oneshot path — dispose sequence after the turn.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let sequence: any = null
-
   try {
     sequence = state.context.getSequence()
     const session = new LlamaChatSession({ contextSequence: sequence })
-
     const system = options.messages
       .filter((m) => m.role === 'system')
       .map((m) => m.content)
@@ -950,38 +1112,24 @@ async function* streamBuiltinChatInProcess(options: {
     let done = false
     let caughtError: unknown = null
     let notify: (() => void) | null = null
-
     const wait = () =>
       new Promise<void>((resolve) => {
         notify = resolve
       })
-
     const wake = () => {
       notify?.()
       notify = null
     }
-
     const onAbortWake = () => {
       done = true
       wake()
     }
     options.signal?.addEventListener('abort', onAbortWake)
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let grammar: any = undefined
-    if (options.jsonSchema) {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        grammar = await (state.llama as any).createGrammarForJsonSchema(options.jsonSchema)
-      } catch {
-        grammar = undefined
-      }
-    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const inProcPromptOpts: any = {
       temperature: options.temperature,
       signal: options.signal,
-      maxTokens: options.entry.tier === 'lite' ? 1024 : 4096,
+      maxTokens,
       ...(grammar ? { grammar } : {}),
       onTextChunk(chunk: string) {
         queue.push(chunk)
@@ -999,7 +1147,6 @@ async function* streamBuiltinChatInProcess(options: {
         done = true
         wake()
       })
-
     try {
       while (!done || queue.length > 0) {
         if (options.signal?.aborted) {
@@ -1008,9 +1155,7 @@ async function* streamBuiltinChatInProcess(options: {
           throw err
         }
         if (queue.length === 0) await wait()
-        while (queue.length > 0) {
-          yield queue.shift() as string
-        }
+        while (queue.length > 0) yield queue.shift() as string
       }
       await run
       if (options.signal?.aborted) {
@@ -1049,6 +1194,7 @@ async function* streamBuiltinChatViaWorker(options: {
   entry: BuiltinModelManifestEntry
   path: string
   jsonSchema?: Record<string, unknown>
+  sessionKey?: string
 }): AsyncGenerator<string, void, unknown> {
   await ensureWorkerModel(options.path, options.entry)
 
@@ -1076,6 +1222,7 @@ async function* streamBuiltinChatViaWorker(options: {
       queue.push(msg.text)
       wake()
     } else if (msg.type === 'done') {
+      if (options.sessionKey) activeChatSessions.add(options.sessionKey)
       done = true
       wake()
     } else if (msg.type === 'error') {
@@ -1093,14 +1240,29 @@ async function* streamBuiltinChatViaWorker(options: {
   }
   options.signal?.addEventListener('abort', onAbort)
 
-  postToWorker({
-    type: 'chat',
-    id,
-    messages: options.messages,
-    temperature: options.temperature,
-    maxTokens: options.entry.tier === 'lite' ? 1024 : 4096,
-    jsonSchema: options.jsonSchema
-  })
+  const split = options.sessionKey ? splitSessionPrompt(options.messages) : null
+  if (options.sessionKey && split) {
+    const isNew = !activeChatSessions.has(options.sessionKey)
+    postToWorker({
+      type: 'chat-turn',
+      id,
+      sessionKey: options.sessionKey,
+      userMessage: split.userMessage,
+      seedMessages: isNew ? split.seed : undefined,
+      temperature: options.temperature,
+      maxTokens: options.entry.tier === 'lite' ? 1024 : 4096,
+      jsonSchema: options.jsonSchema
+    })
+  } else {
+    postToWorker({
+      type: 'chat',
+      id,
+      messages: options.messages,
+      temperature: options.temperature,
+      maxTokens: options.entry.tier === 'lite' ? 1024 : 4096,
+      jsonSchema: options.jsonSchema
+    })
+  }
 
   try {
     while (!done || queue.length > 0) {
@@ -1203,6 +1365,11 @@ export async function* streamBuiltinChat(options: {
   signal?: AbortSignal
   /** Constrain decoding to this JSON schema via a GBNF grammar (tool-call retries). */
   jsonSchema?: Record<string, unknown>
+  /**
+   * When set, reuse a LlamaChatSession / KV cache across agent steps.
+   * Pass the same key for the whole chat run; call releaseLocalChatSession when done.
+   */
+  sessionKey?: string
 }): AsyncGenerator<string, void, unknown> {
   let entry: BuiltinModelManifestEntry
   let path: string

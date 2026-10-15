@@ -1,5 +1,15 @@
 import { setDefaultResultOrder } from 'dns'
-import { copyFileSync, renameSync, unlinkSync } from 'fs'
+import {
+  copyFileSync,
+  createReadStream,
+  existsSync,
+  readdirSync,
+  renameSync,
+  statSync,
+  unlinkSync
+} from 'fs'
+import { basename, dirname, join } from 'path'
+import type { Hash } from 'crypto'
 import { Readable } from 'stream'
 import { logWarn } from './logger'
 
@@ -42,6 +52,131 @@ export function resolveDownloadTotal(
     return { total: contentLength, source: 'content-length' }
   }
   return { total: 0, source: 'approx' }
+}
+
+/** Parse `Content-Range: bytes start-end/total` → total size. */
+export function resolveContentRangeTotal(headers: Headers): number | null {
+  const cr = headers.get('content-range')
+  if (!cr) return null
+  const m = /\/(\d+)\s*$/.exec(cr.trim())
+  if (!m) return null
+  const n = Number(m[1])
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/** Stable partial path so canceled downloads can resume with Range. */
+export function stablePartialPath(target: string): string {
+  return `${target}.partial`
+}
+
+/** Read-only: largest partial size on disk (stable or legacy naming). */
+export function peekPartialBytes(target: string): number {
+  const stable = stablePartialPath(target)
+  let best = 0
+  if (existsSync(stable)) {
+    try {
+      best = Math.max(best, statSync(stable).size)
+    } catch {
+      // ignore
+    }
+  }
+  const dir = dirname(target)
+  const base = basename(target)
+  const prefix = `${base}.partial.`
+  try {
+    for (const name of readdirSync(dir)) {
+      if (!name.startsWith(prefix)) continue
+      try {
+        best = Math.max(best, statSync(join(dir, name)).size)
+      } catch {
+        // ignore
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return best
+}
+
+/**
+ * Find bytes already on disk for a target download.
+ * Prefers `file.partial`; also adopts the largest legacy `file.partial.*` orphan.
+ */
+export function findResumablePartial(target: string): { path: string; size: number } | null {
+  const stable = stablePartialPath(target)
+  if (existsSync(stable)) {
+    try {
+      const size = statSync(stable).size
+      if (size > 0) return { path: stable, size }
+    } catch {
+      // ignore
+    }
+  }
+
+  const dir = dirname(target)
+  const base = basename(target)
+  const prefix = `${base}.partial.`
+  let best: { path: string; size: number } | null = null
+  try {
+    for (const name of readdirSync(dir)) {
+      if (name !== `${base}.partial` && !name.startsWith(prefix)) continue
+      const path = join(dir, name)
+      try {
+        const size = statSync(path).size
+        if (size > 0 && (!best || size > best.size)) best = { path, size }
+      } catch {
+        // ignore
+      }
+    }
+  } catch {
+    // ignore
+  }
+  if (!best) return null
+  if (best.path !== stable) {
+    try {
+      if (existsSync(stable)) unlinkSync(stable)
+      renameSync(best.path, stable)
+      return { path: stable, size: best.size }
+    } catch {
+      return best
+    }
+  }
+  return best
+}
+
+/** Feed an existing partial into a hasher so resume can still verify sha256. */
+export async function hashFileInto(hasher: Hash, path: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const rs = createReadStream(path)
+    rs.on('data', (chunk: string | Buffer) => hasher.update(chunk))
+    rs.on('error', reject)
+    rs.on('end', () => resolve())
+  })
+}
+
+/** Totals for a 206 resume response (or full 200). */
+export function resolveResumeDownloadTotal(
+  headers: Headers,
+  approxBytes: number,
+  existingBytes: number,
+  status: number
+): { total: number; source: string } {
+  const fromRange = resolveContentRangeTotal(headers)
+  if (fromRange) return { total: fromRange, source: 'content-range' }
+
+  const linked = Number(headers.get('x-linked-size') || 0)
+  if (Number.isFinite(linked) && linked > 0) {
+    return { total: linked, source: 'x-linked-size' }
+  }
+
+  if (status === 206 && existingBytes > 0) {
+    const contentLength = Number(headers.get('content-length') || 0)
+    if (Number.isFinite(contentLength) && contentLength > 0) {
+      return { total: existingBytes + contentLength, source: 'content-length+offset' }
+    }
+  }
+
+  return resolveDownloadTotal(headers, approxBytes)
 }
 
 export function createThrottledProgress(emit: () => void, intervalMs = DOWNLOAD_PROGRESS_THROTTLE_MS) {

@@ -9,6 +9,12 @@ import {
   resolveCommandApproval,
   type CommandApprovalDecision
 } from '../services/command-approval'
+import {
+  cancelAllPendingQuestions,
+  requestUserQuestion,
+  resolveUserQuestion,
+  USER_QUESTION_TIMEOUT_MS
+} from '../services/user-question'
 import type { ChatPromptInput, TurnPlan } from '../../../src/shared/settings-schema'
 import { buildChatMessages } from '../services/chat-prompt'
 import {
@@ -37,6 +43,7 @@ import {
   cloudInlineAvailable,
   runCloudAgentInline
 } from '../services/cloud-agent-inline'
+import { rememberAgentRun, rememberAskUserReply } from '../services/project-memory'
 
 export function registerChatStreamIpc(): void {
   ipcMain.handle(
@@ -136,6 +143,9 @@ export function registerChatStreamIpc(): void {
       }
       let run: AgentRunRecord | null = null
       let runIncomplete = false
+      /** Accumulated for project memory even when no checkpoint/run record exists. */
+      let memoryFiles: string[] = []
+      let memoryActions: string[] = []
       // #10 opt-in agent telemetry
       const telemetryOn = settings.general.telemetry?.agentOutcomes === true
       let telemetrySteps = 0
@@ -258,6 +268,34 @@ export function registerChatStreamIpc(): void {
             flushStreamChunks()
             persistRun({ status: 'done' })
             recordTelemetry('done')
+            try {
+              const mem = rememberAgentRun(
+                appState.currentWorkspace,
+                getResolvedSettings(appState.currentWorkspace),
+                {
+                  goal: userText,
+                  filesTouched: memoryFiles,
+                  actionLog: memoryActions,
+                  aborted: false
+                }
+              )
+              if (mem.needsConfirm) {
+                event.sender.send('chat:memory-proposal', {
+                  requestId,
+                  note: mem.note,
+                  summary: mem.summary,
+                  preview: mem.preview
+                })
+              } else if (mem.wrote) {
+                event.sender.send('chat:memory-updated', {
+                  requestId,
+                  kind: mem.kind,
+                  preview: mem.preview
+                })
+              }
+            } catch {
+              /* memory is best-effort */
+            }
             event.sender.send('chat:done', { requestId })
             logInfo('Chat stream done (cloud inline)', { requestId })
             return true
@@ -386,6 +424,43 @@ export function registerChatStreamIpc(): void {
               }
             }
             return decision !== 'deny'
+          },
+          askUser: async (question, choices) => {
+            flushStreamChunks()
+            const outcome = await requestUserQuestion(event.sender, requestId, question, {
+              choices,
+              timeoutMs: USER_QUESTION_TIMEOUT_MS,
+              signal: appState.chatAbort?.signal
+            })
+            logInfo('User question', {
+              requestId,
+              kind: outcome.kind,
+              question: question.slice(0, 120)
+            })
+            if (outcome.kind === 'reply') {
+              const mem = rememberAskUserReply(
+                appState.currentWorkspace,
+                getResolvedSettings(appState.currentWorkspace),
+                question,
+                outcome.text
+              )
+              if (mem.needsConfirm) {
+                event.sender.send('chat:memory-proposal', {
+                  requestId,
+                  note: mem.note,
+                  summary: mem.summary,
+                  preview: mem.preview
+                })
+              } else if (mem.wrote) {
+                event.sender.send('chat:memory-updated', {
+                  requestId,
+                  kind: mem.kind,
+                  preview: mem.preview
+                })
+              }
+              return outcome.text
+            }
+            return null
           }
         })) {
           if (evt.type === 'thinking') {
@@ -428,10 +503,12 @@ export function registerChatStreamIpc(): void {
               if (evt.incomplete) runIncomplete = true
               telemetrySteps = evt.step
               if (evt.filesTouched.length) telemetryMutated = true
+              memoryFiles = [...new Set(evt.filesTouched)].slice(-200)
+              memoryActions = evt.actionLog.slice(-120)
               persistRun({
                 step: evt.step,
-                actionLog: evt.actionLog.slice(-120),
-                filesTouched: [...new Set(evt.filesTouched)].slice(-200)
+                actionLog: memoryActions,
+                filesTouched: memoryFiles
               })
             } else if (evt.type === 'terminal') {
               event.sender.send('chat:terminal', { requestId, text: evt.text })
@@ -465,6 +542,42 @@ export function registerChatStreamIpc(): void {
         flushStreamChunks()
         persistRun({ status: runIncomplete ? 'incomplete' : 'done' })
         recordTelemetry(runIncomplete ? 'incomplete' : 'done')
+        try {
+          const mem = rememberAgentRun(
+            appState.currentWorkspace,
+            getResolvedSettings(appState.currentWorkspace),
+            {
+              goal: userText,
+              filesTouched: memoryFiles.length
+                ? memoryFiles
+                : (run?.filesTouched ?? []),
+              actionLog: memoryActions.length
+                ? memoryActions
+                : (run?.actionLog ?? []),
+              incomplete: runIncomplete,
+              aborted: false
+            }
+          )
+          if (mem.needsConfirm) {
+            event.sender.send('chat:memory-proposal', {
+              requestId,
+              note: mem.note,
+              summary: mem.summary,
+              preview: mem.preview
+            })
+          } else if (mem.wrote) {
+            event.sender.send('chat:memory-updated', {
+              requestId,
+              kind: mem.kind,
+              preview: mem.preview
+            })
+          }
+        } catch (memErr) {
+          logWarn('Project memory write skipped', {
+            requestId,
+            error: memErr instanceof Error ? memErr.message : String(memErr)
+          })
+        }
         event.sender.send('chat:done', { requestId })
         logInfo('Chat stream done', { requestId, model: resolvedModel })
         return true
@@ -503,6 +616,10 @@ export function registerChatStreamIpc(): void {
       )
   )
 
+  ipcMain.handle('chat:questionRespond', (_e, questionId: string, reply: string | null) =>
+    resolveUserQuestion(String(questionId), reply == null ? null : String(reply))
+  )
+
   ipcMain.handle('runs:resumable', () =>
     loadResumableRun(appState.currentWorkspace, appState.chatStreamActive ? appState.activeChatRequestId : null)
   )
@@ -511,7 +628,10 @@ export function registerChatStreamIpc(): void {
   )
 
   ipcMain.handle('chat:stop', () => {
-    if (appState.activeChatRequestId) denyAllPendingApprovals(appState.activeChatRequestId)
+    if (appState.activeChatRequestId) {
+      denyAllPendingApprovals(appState.activeChatRequestId)
+      cancelAllPendingQuestions(appState.activeChatRequestId)
+    }
     if (appState.chatAbort) {
       appState.chatAbort.abort()
       // Keep the controller so in-flight code still sees signal.aborted === true.

@@ -21,6 +21,8 @@ export function downloadStatusLabel(
     const pct = Math.round((row.progress || 0) * 100)
     return pct > 0 ? `Downloading · ${pct}%` : 'Downloading…'
   }
+  const pausedPct = Math.round((row.progress || 0) * 100)
+  if (pausedPct > 0 && pausedPct < 100) return `Paused · ${pausedPct}% — Resume`
   return fallbackNotReady
 }
 

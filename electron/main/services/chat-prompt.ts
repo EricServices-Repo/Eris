@@ -34,9 +34,9 @@ export function buildChatMessages(
   const agent = findAgent(workspacePath, input.agentId)
   const isOrchestrator = getProjectAgents(workspacePath).orchestrator.id === input.agentId
   const parts: string[] = [
-    settings.agent.systemPrompt.slice(0, lean ? 1200 : 4000),
+    settings.agent.systemPrompt.slice(0, lean ? 2000 : 5000),
     agent
-      ? `You are the “${agent.name}” ${isOrchestrator ? 'orchestrator' : 'subagent'}.\n${agent.systemPrompt.slice(0, lean ? 1500 : 6000)}`
+      ? `You are the “${agent.name}” ${isOrchestrator ? 'orchestrator' : 'subagent'}.\n${agent.systemPrompt.slice(0, lean ? 2800 : 8000)}`
       : `You are the “${input.agentName || input.agentId}” agent.`
   ].filter(Boolean)
 

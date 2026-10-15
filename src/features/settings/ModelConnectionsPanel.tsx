@@ -365,85 +365,201 @@ export function ModelConnectionsPanel({
   )
 
   if (compact) {
+    // Focused editor: hide the list so add/edit is one clear task.
+    if (draft && activePreset) {
+      return (
+        <div className="model-connections is-compact providers-editor-focus">
+          <div className="providers-editor-bar">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={busy}
+              onClick={() => {
+                setDraft(null)
+                setError(null)
+                setInfo(null)
+              }}
+            >
+              ← Back
+            </button>
+            <strong>{draft.isNew ? `Add ${activePreset.name}` : `Edit ${draft.name}`}</strong>
+          </div>
+          <p className="model-conn-hint">{activePreset.hint}</p>
+          <label className="field">
+            <span>Name</span>
+            <input
+              value={draft.name}
+              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+            />
+          </label>
+          <label className="field">
+            <span>Base URL</span>
+            <input
+              value={draft.baseUrl}
+              onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}
+              placeholder="https://api.example.com/v1"
+              spellCheck={false}
+            />
+          </label>
+          <label className="field">
+            <span>
+              API key
+              {activePreset.requiresKey ? '' : ' (optional)'}
+              {draft.hasStoredKey ? ' · saved on this device' : ''}
+            </span>
+            <input
+              type="password"
+              value={draft.apiKey}
+              onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
+              placeholder={draft.hasStoredKey ? 'Leave blank to keep current key' : 'sk-…'}
+              autoComplete="off"
+            />
+          </label>
+          <label className="field">
+            <span>Models (optional — leave empty to discover)</span>
+            <textarea
+              rows={2}
+              value={draft.modelsText}
+              onChange={(e) => setDraft({ ...draft, modelsText: e.target.value })}
+              placeholder="gpt-4o-mini, …"
+              spellCheck={false}
+            />
+          </label>
+          <label className="providers-enable-row">
+            <input
+              type="checkbox"
+              checked={draft.enabled}
+              onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
+            />
+            <span>Enabled for chat</span>
+          </label>
+          {(error || info) && (
+            <div
+              className="models-inline-msg"
+              data-tone={error ? 'danger' : 'ok'}
+            >
+              {error || info}
+            </div>
+          )}
+          <div className="providers-editor-actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy}
+              onClick={() => void saveDraft(true)}
+            >
+              {busy ? 'Working…' : draft.isNew ? 'Connect' : 'Save & test'}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={busy}
+              onClick={() => void saveDraft(false)}
+            >
+              Save without testing
+            </button>
+          </div>
+        </div>
+      )
+    }
+
     return (
       <div className="model-connections is-compact">
-        <div className="models-add-bar">
-          <select
-            defaultValue=""
-            onChange={(e) => {
-              const preset = PRESETS.find((p) => p.id === e.target.value)
-              e.target.value = ''
-              if (preset) beginPreset(preset)
-            }}
-          >
-            <option value="" disabled>
-              Add provider…
-            </option>
-            {PRESETS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
+        <div className="providers-preset-grid" role="list">
+          {PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className="providers-preset-btn"
+              role="listitem"
+              title={p.hint}
+              onClick={() => beginPreset(p)}
+            >
+              <strong>{p.name}</strong>
+              <span>{p.requiresKey ? 'API key' : 'Local'}</span>
+            </button>
+          ))}
         </div>
 
-        {external.length === 0 && !draft && (
-          <div className="models-empty">No providers yet.</div>
-        )}
-
-        {external.length > 0 && (
-          <div className="models-row-list">
+        {external.length === 0 ? (
+          <div className="providers-empty">
+            <p>No API providers yet.</p>
+            <p className="models-hint">Pick one above — OpenRouter is a good all-around start.</p>
+          </div>
+        ) : (
+          <div className="models-row-list providers-conn-list">
             {external.map((c) => {
               const live = statusById.get(c.id)
               const models = live?.models?.length ? live.models : c.models
+              const statusText = !c.enabled
+                ? 'Off'
+                : live?.reachable
+                  ? models.length
+                    ? `${models.length} model${models.length === 1 ? '' : 's'}`
+                    : 'Connected'
+                  : live?.error || 'Offline'
               return (
-                <div key={c.id} className={`models-row ${c.enabled ? '' : 'is-disabled'}`}>
+                <div
+                  key={c.id}
+                  className={`models-row providers-conn-row ${c.enabled ? '' : 'is-disabled'}`}
+                >
                   <div className="models-row-main">
-                    <span className={`status-dot ${live?.reachable ? 'ok' : ''}`} />
+                    <span className={`status-dot ${live?.reachable && c.enabled ? 'ok' : ''}`} />
                     <div className="models-row-copy">
                       <div className="models-row-title">
                         <strong>{c.name}</strong>
                         <span className="models-tag">{c.provider || 'custom'}</span>
                         {!c.enabled && <span className="models-tag">Off</span>}
+                        {c.enabled &&
+                          models.includes(defaultModel) && (
+                            <span className="models-tag is-accent">Default</span>
+                          )}
                       </div>
-                      <div className="models-row-meta">
-                        {c.enabled
-                          ? live?.reachable
-                            ? models.length
-                              ? `${models.length} model${models.length === 1 ? '' : 's'}`
-                              : 'Connected'
-                            : live?.error || 'Offline'
-                          : 'Disabled'}
+                      <div className="models-row-meta" title={c.baseUrl}>
+                        {statusText}
+                        {c.enabled && live?.reachable ? ` · ${c.baseUrl.replace(/^https?:\/\//, '')}` : ''}
                       </div>
                     </div>
                   </div>
                   <div className="models-row-actions">
-                    <button type="button" className="btn" onClick={() => void beginEdit(c)}>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => void beginEdit(c)}
+                    >
                       Edit
                     </button>
                     <button type="button" className="btn" onClick={() => void toggleEnabled(c)}>
                       {c.enabled ? 'Disable' : 'Enable'}
                     </button>
-                    <button type="button" className="btn" onClick={() => void removeConnection(c.id)}>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      title="Remove connection"
+                      onClick={() => void removeConnection(c.id)}
+                    >
                       Remove
                     </button>
                   </div>
                   {models.length > 0 && c.enabled && (
-                    <div className="model-chip-row models-row-chips">
-                      {models.slice(0, 8).map((m) => (
-                        <button
-                          key={m}
-                          type="button"
-                          className={`model-chip ${defaultModel === m ? 'active' : ''}`}
-                          title="Use as default model"
-                          onClick={() => void onSetDefaultModel(m)}
-                        >
-                          {m}
-                        </button>
-                      ))}
-                      {models.length > 8 && (
-                        <span className="models-row-meta">+{models.length - 8}</span>
-                      )}
+                    <div className="providers-models-block">
+                      <span className="providers-models-label">Set chat default</span>
+                      <div className="model-chip-row models-row-chips">
+                        {models.slice(0, 8).map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            className={`model-chip ${defaultModel === m ? 'active' : ''}`}
+                            title={`Use ${m} as default chat model`}
+                            onClick={() => void onSetDefaultModel(m)}
+                          >
+                            {m}
+                          </button>
+                        ))}
+                        {models.length > 8 && (
+                          <span className="models-row-meta">+{models.length - 8}</span>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -451,8 +567,6 @@ export function ModelConnectionsPanel({
             })}
           </div>
         )}
-
-        {editor}
       </div>
     )
   }

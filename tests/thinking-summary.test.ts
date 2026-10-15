@@ -39,4 +39,18 @@ describe('thinkingPreviewLine', () => {
     expect(thinkingPreviewLine('— done', 'Composer · edit…', [])).toBe('Composer · edit…')
     expect(thinkingPreviewLine('— Applied 2 files\n', null, [])).toMatch(/Applied 2/)
   })
+
+  it('prefers a concrete step over generic Working… status', () => {
+    expect(thinkingPreviewLine('— Reading App.tsx\n', 'Working…', [])).toMatch(/Reading/)
+  })
+
+  it('falls back to a thinking tail when there are no breadcrumbs', () => {
+    const preview = thinkingPreviewLine(
+      'Inspecting the router and preparing a patch for LocalModelsPanel.',
+      null,
+      []
+    )
+    expect(preview.length).toBeGreaterThan(8)
+    expect(preview).toMatch(/router|LocalModels/i)
+  })
 })
