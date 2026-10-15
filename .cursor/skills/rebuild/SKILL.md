@@ -42,7 +42,7 @@ Confirm the plist version matches the bumped version and Eris is running.
 ## Rules
 
 - Do **not** create a git commit or tag unless the user explicitly asks.
-- Do **not** push a public Eris-updates release unless the user explicitly asks.
+- Do **not** push a public Eris-updates release unless the user explicitly asks — use `/update-github` for that.
 - Do **not** skip the version bump (rebuild alone is not enough).
 - Prefer `npm run start:app` over bare `dist:mac` so the new build launches.
 - If `dist/mac-arm64` is missing but `dist/mac` exists, use whichever `dist/mac*/Eris.app` `start:app` opened.
