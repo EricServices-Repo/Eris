@@ -130,7 +130,12 @@ export function classifyIntent(text: string, mode: 'ask' | 'agent'): ChatIntent 
     /\b(npm (test|run|start|install)|yarn |pnpm |bun |pytest|cargo test|docker )\b/i.test(t) ||
     // Makefile targets only — not "make a new app/project"
     /\bmake\s+(test|check|build|all|install|clean|run|lint)\b/i.test(t) ||
-    /\b(run|execute|start)\b[\s\S]{0,24}\b(test|tests|build|server|dev)\b/i.test(t)
+    /\b(run|execute|start)\b[\s\S]{0,24}\b(test|tests|build|server|dev)\b/i.test(t) ||
+    // "how do I launch/run/start this app?" → run/inspect, not a tool-less FAQ answer
+    /\b(how (do|can|to)|where do)\b[\s\S]{0,40}\b(launch|run|start|open|build)\b[\s\S]{0,40}\b(app|application|\.app|project|xcode|scheme)\b/i.test(
+      t
+    ) ||
+    /\b(launch|run|start|open)\b[\s\S]{0,24}\b(the\s+)?(app|application|\.app)\b/i.test(t)
   ) {
     return 'run'
   }
@@ -155,6 +160,9 @@ export function classifyIntent(text: string, mode: 'ask' | 'agent'): ChatIntent 
     /\b(build|create|make|scaffold|generate)\s+(me\s+)?(a|an|the)\b/i.test(t) ||
     /\bnew\s+(app|application|project|package|module|component)\b/i.test(t) ||
     /\b(make sure|ensure)\b[\s\S]{0,40}\b(work|working|builds?|passes?)\b/i.test(t) ||
+    // "Make it so it works" / "get it working"
+    /\bmake\b[\s\S]{0,32}\b(it\s+)?(so\s+it\s+)?works?\b/i.test(t) ||
+    /\b(get|make)\b[\s\S]{0,24}\b(it|this|the app)\b[\s\S]{0,24}\bwork/i.test(t) ||
     /\b(write|add)\b[\s\S]{0,20}\b(skill|skills)\b/i.test(t)
   ) {
     return 'edit'
@@ -214,7 +222,10 @@ export function effectiveToolPolicy(
 ): AgentToolsCeiling {
   if (mode === 'ask' || intent === 'answer' || intent === 'capability') return 'none'
   const floor = intentToolFloor(intent)
-  const ceiling = agent.tools ?? 'edit'
+  let ceiling = agent.tools ?? 'edit'
+  // Never let a "tools: none" specialist (e.g. Fast) strip workspace tools from
+  // explore/edit/review/run — those intents require at least the intent floor.
+  if (ceiling === 'none' && floor !== 'none') ceiling = floor
   return minCeiling(ceiling, floor)
 }
 
