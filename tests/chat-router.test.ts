@@ -70,6 +70,8 @@ describe('classifyIntent', () => {
     ['code review this PR', 'agent', 'review'],
     ['run npm test', 'agent', 'run'],
     ['how does the app work?', 'agent', 'answer'],
+    ['how do I launch this app?', 'agent', 'run'],
+    ['Make it so it works', 'agent', 'edit'],
     ['fix the bug in the parser code', 'agent', 'edit'],
     [
       'Build a OSX App to review images, it should be able to tell if a car is in the photo or not',
@@ -94,7 +96,9 @@ describe('classifyIntent', () => {
 describe('effectiveToolPolicy', () => {
   it('is min(agent ceiling, intent floor)', () => {
     expect(effectiveToolPolicy(agent('full'), 'capability', 'agent')).toBe('none')
-    expect(effectiveToolPolicy(agent('none'), 'edit', 'agent')).toBe('none')
+    // tools:none specialists must not strip explore/edit/run floors
+    expect(effectiveToolPolicy(agent('none'), 'edit', 'agent')).toBe('edit')
+    expect(effectiveToolPolicy(agent('none'), 'explore', 'agent')).toBe('read')
     expect(effectiveToolPolicy(agent('read'), 'edit', 'agent')).toBe('read')
     expect(effectiveToolPolicy(agent('full'), 'edit', 'agent')).toBe('edit')
     expect(effectiveToolPolicy(agent('full'), 'run', 'agent')).toBe('full')

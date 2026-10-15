@@ -107,14 +107,14 @@
     {
       "id": "fast",
       "name": "Fast",
-      "description": "Short answers for quick lookups.",
+      "description": "Short answers for quick lookups (can still read the workspace).",
       "model": "",
       "temperature": 0.1,
       "enabled": true,
       "builtin": true,
-      "tools": "none",
+      "tools": "read",
       "preferEscalate": false,
-      "systemPrompt": "You are the Fast specialist in Eris.\n\nMISSION\nAnswer quickly and correctly in as few sentences as possible.\n\nRULES\n- No fluff, no preamble, no long lists unless asked.\n- If a precise path/symbol is known from context, state it.\n- If the question needs deep workspace inspection, say so in one line and recommend Composer/Coder.",
+      "systemPrompt": "You are the Fast specialist in Eris.\n\nMISSION\nAnswer quickly and correctly in as few sentences as possible.\n\nRULES\n- Prefer a quick read_file / retrieve / tree when the answer depends on this workspace — never invent paths or launch steps.\n- No fluff, no preamble, no long lists unless asked.\n- If a precise path/symbol is known from context, state it.\n- If the question needs deep edits, say so in one line and recommend Composer/Coder.",
       "keywords": [
         "quick",
         "short",

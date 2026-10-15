@@ -170,7 +170,13 @@ export async function* runAgentWithWorkspaceTools(options: {
       (/\breview\b/i.test(originalUserGoal) &&
         /\b(project|folder|codebase|workspace|repo|app|code|calculator)\b/i.test(
           originalUserGoal
-        )))
+        )) ||
+      // "how do I launch / make it work / build the .app" must inspect the workspace
+      /\b(launch|run|start|open|build)\b[\s\S]{0,40}\b(app|application|\.app|xcode|scheme|project)\b/i.test(
+        originalUserGoal
+      ) ||
+      /\bmake\b[\s\S]{0,32}\b(it\s+)?(so\s+it\s+)?works?\b/i.test(originalUserGoal) ||
+      /\b(get|make)\b[\s\S]{0,24}\b(it|this|the app)\b[\s\S]{0,24}\bwork/i.test(originalUserGoal))
   const answerOnly =
     !forceWorkspaceTools &&
     (!plan.requiresTools ||
