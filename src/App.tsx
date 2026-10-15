@@ -289,6 +289,10 @@ export default function App() {
     setAgentStatus,
     pendingApproval,
     setPendingApproval,
+    pendingQuestion,
+    setPendingQuestion,
+    memoryNotice,
+    setMemoryNotice,
     resumableRun,
     setResumableRun,
     chatMode,
@@ -851,6 +855,27 @@ export default function App() {
                   onApprovalDecision={(approvalId, decision) => {
                     setPendingApproval(null)
                     void window.ide.respondCommandApproval(approvalId, decision)
+                  }}
+                  pendingQuestion={pendingQuestion}
+                  onQuestionReply={(questionId, reply) => {
+                    setPendingQuestion(null)
+                    void window.ide.respondUserQuestion(questionId, reply)
+                  }}
+                  memoryNotice={memoryNotice}
+                  onMemoryRemember={() => {
+                    if (!memoryNotice || memoryNotice.kind !== 'proposal') return
+                    const { note, summary } = memoryNotice
+                    setMemoryNotice(null)
+                    void window.ide.confirmProjectMemory({ note, summary }).then((r) => {
+                      if (r.wrote) {
+                        setMemoryNotice({ kind: 'updated', preview: r.preview })
+                      }
+                    })
+                  }}
+                  onMemoryDismiss={() => setMemoryNotice(null)}
+                  onMemoryUndo={() => {
+                    setMemoryNotice(null)
+                    void window.ide.undoProjectMemory()
                   }}
                   onRerouteLast={(route) => void rerouteLast(route)}
                   resumableRun={resumableRun}

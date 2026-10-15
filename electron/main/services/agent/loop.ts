@@ -45,6 +45,8 @@ import {
 import { executeTool } from './execute-tool'
 import {
   isReviewOnlyGoal,
+  looksLikeAsksForWorkspaceInfo,
+  looksLikeClarifyingQuestion,
   looksLikeDegenerateLoop,
   pathNeedsProjectVerify,
   shouldKeepWorking,
@@ -63,7 +65,7 @@ import { decideMidRunAdapt, shouldConsiderMidRunAdapt } from './mid-run-adapt'
 import { buildPreservedWorkerMessages, truncateForModel } from './prompts'
 import { streamThinkingText } from './stream'
 import { argString, parseToolCalls, stripToolBlocks } from './tool-parsing'
-import { isNativeGgufRef } from '../builtin-model'
+import { isNativeGgufRef, releaseLocalChatSession } from '../builtin-model'
 import type { AgentChatMessage, AgentMode, AgentRunnerEvent, ToolCall } from './types'
 import type { AgentHandoffPacket } from '../../../../src/shared/agent-orchestration'
 
@@ -98,6 +100,11 @@ export async function* runAgentWithWorkspaceTools(options: {
   turnPlan?: TurnPlan
   /** Resolves false when the user denies a shell command / push. Absent = always allow. */
   approveCommand?: (kind: 'run' | 'push', command: string) => Promise<boolean>
+  /**
+   * Ask the user a clarifying question inline (~15s). Absent = auto-timeout / proceed.
+   * Returns reply text, or null when timed out / skipped.
+   */
+  askUser?: (question: string, choices?: string[]) => Promise<string | null>
   /** Continue an interrupted run instead of starting fresh. */
   resume?: { goal: string; actionLog: string[]; filesTouched: string[] }
   /**
@@ -153,13 +160,25 @@ export async function* runAgentWithWorkspaceTools(options: {
   const chatModel = plan.models.chat
   let workerModel = plan.models.tools
   const modelsCatalog = formatAvailableModelsPrompt(options.settings, chatModel)
+  // Safety net: "review/improve the project folder" must never go answer-only just
+  // because a weak router labeled the turn as answer.
+  const forceWorkspaceTools =
+    Boolean(options.workspacePath) &&
+    mode === 'agent' &&
+    plan.intent !== 'capability' &&
+    (/\b(improv(e|es|ed|ing|ement|ements)|polish|enhance|refactor)\b/i.test(originalUserGoal) ||
+      (/\breview\b/i.test(originalUserGoal) &&
+        /\b(project|folder|codebase|workspace|repo|app|code|calculator)\b/i.test(
+          originalUserGoal
+        )))
   const answerOnly =
-    !plan.requiresTools ||
-    plan.toolPolicy === 'none' ||
-    !options.workspacePath ||
-    mode === 'ask' ||
-    plan.intent === 'answer' ||
-    plan.intent === 'capability'
+    !forceWorkspaceTools &&
+    (!plan.requiresTools ||
+      plan.toolPolicy === 'none' ||
+      !options.workspacePath ||
+      mode === 'ask' ||
+      plan.intent === 'answer' ||
+      plan.intent === 'capability')
 
   if (answerOnly) {
     yield { type: 'model', model: chatModel }
@@ -176,12 +195,14 @@ export async function* runAgentWithWorkspaceTools(options: {
     const tips: string[] = [modelsCatalog, `Routing: ${plan.reason}`]
     if (mode === 'ask') {
       tips.push(
-        'You are in Ask mode. Answer clearly using markdown. Do not edit files or call tools.'
+        'You are in Ask mode. Answer clearly in markdown with concrete paths/symbols when relevant. ' +
+          'Do not edit files or call workspace tools. If the user needs changes, say they should switch to Agent mode.'
       )
     }
     if (plan.intent === 'capability' || isErisCapabilityQuestion(originalUserGoal)) {
       tips.push(
-        'The user asked about Eris AI models/providers. Answer ONLY from the [Eris AI models] catalog above. Do not retrieve or search the workspace.'
+        'The user asked about Eris AI models/providers. Answer ONLY from the [Eris AI models] catalog above. ' +
+          'Do not retrieve, tree, or search the workspace for “models”.'
       )
     }
     const tip = tips.join('\n\n')
@@ -194,14 +215,21 @@ export async function* runAgentWithWorkspaceTools(options: {
     } else {
       askMessages.unshift({ role: 'system', content: tip })
     }
+    const askSessionKey =
+      isNativeGgufRef(chatModel) && options.jobId ? `gguf:${options.jobId}` : undefined
     let full = ''
-    for await (const evt of streamThinkingText({
-      ...options,
-      model: chatModel,
-      messages: askMessages
-    })) {
-      if (evt.kind === 'thinking') yield { type: 'thinking', text: evt.text }
-      else full = evt.full
+    try {
+      for await (const evt of streamThinkingText({
+        ...options,
+        model: chatModel,
+        messages: askMessages,
+        sessionKey: askSessionKey
+      })) {
+        if (evt.kind === 'thinking') yield { type: 'thinking', text: evt.text }
+        else full = evt.full
+      }
+    } finally {
+      if (askSessionKey) releaseLocalChatSession(askSessionKey)
     }
     const answer = stripToolBlocks(full) || full
     if (answer) yield { type: 'answer', text: answer }
@@ -210,6 +238,12 @@ export async function* runAgentWithWorkspaceTools(options: {
 
   const workspacePath = options.workspacePath as string
   const mcpMode = options.mcp ?? 'sync'
+  /** Local GGUF KV session for this chat run (multi-step reuse). */
+  const ggufSessionKey =
+    options.jobId && isNativeGgufRef(workerModel) ? `gguf:${options.jobId}` : undefined
+  const releaseGgufSession = () => {
+    if (ggufSessionKey) releaseLocalChatSession(ggufSessionKey)
+  }
 
   // Paint status immediately — don't wait on MCP sync / workspace retrieval.
   yield {
@@ -278,6 +312,9 @@ export async function* runAgentWithWorkspaceTools(options: {
   let workspaceMutated = false
   /** True only when product source (not .eris skills/rules/context) changed. */
   let codeMutated = false
+  /** Cap inline clarifying prompts so a run cannot stall forever. */
+  let askUserCount = 0
+  const MAX_ASK_USER = 2
   const filesTouched: string[] = [...(options.resume?.filesTouched ?? [])]
   const actionLog: string[] = [...(options.resume?.actionLog ?? [])]
   if (options.resume) {
@@ -354,6 +391,8 @@ export async function* runAgentWithWorkspaceTools(options: {
       consecutiveToolErrors = 0
       noProgressStreak = 0
       verifyFailures = Math.max(0, verifyFailures - 1)
+      // Model swap — previous GGUF session is invalid.
+      releaseGgufSession()
       yield { type: 'model', model: workerModel }
       yield {
         type: 'adapt',
@@ -443,53 +482,59 @@ export async function* runAgentWithWorkspaceTools(options: {
     workerMessages.length = 0
     workerMessages.push(...compacted.messages)
     contextMemory = compacted.memory || contextMemory
+    // History rewritten — drop KV session so the next turn re-seeds.
+    releaseGgufSession()
   }
 
   const nudgeToTools = (reason: string): AgentChatMessage => ({
     role: 'user',
     content:
-      `${reason}\n` +
+      `${reason}\n\n` +
       (lastTreeResult
-        ? `Tree already known — do NOT call tree/list_dir again.\nUser request:\n${originalUserGoal.slice(0, 1500)}\n\n` +
+        ? `The workspace listing is already in context — do NOT call tree/list_dir again.\n` +
+          `Active user request:\n${originalUserGoal.slice(0, 1500)}\n\n` +
           (reviewOnly
-            ? `Emit read_file or run (e.g. npm test) tool JSON, then a DONE summary when confirmed.`
-            : `Emit write_file/mkdir/read_file tool JSON now. Do not stop until the request is fully done.`)
-        : `Emit ONLY this JSON tool call:\n\n{"name":"tree","path":"."}\n\n` +
-          `Then continue with read_file/run` +
-          (reviewOnly ? '' : '/write_file') +
-          ` until done.`)
+            ? `Next step: emit read_file on key sources and/or {"name":"run","command":"npm test"} (or typecheck). ` +
+              `Then a DONE summary with blockers → risks → suggestions. Do not ask the user for files.`
+            : `Next step: emit search_replace / write_file / mkdir / read_file tool JSON now. ` +
+              `Keep tooling until the request is fully done, then a short DONE summary.`)
+        : `Emit ONLY this tool call next:\n\n{"name":"tree","path":"."}\n\n` +
+          `Then continue with retrieve/read_file` +
+          (reviewOnly ? '/run' : '/search_replace/write_file/run') +
+          ` until the request is done. Never ask the user for project structure.`)
   })
 
   const nudgeAfterInspect = (snapshot: string): AgentChatMessage => ({
     role: 'user',
     content:
       `TOOL_RESULT (listing already in context):\n${truncateForModel(snapshot, 4000)}\n\n` +
-      `Do NOT call tree or list_dir again — you already have the listing.\n` +
-      `User request:\n${originalUserGoal.slice(0, 1500)}\n\n` +
+      `Do NOT call tree or list_dir again — you already have the listing above.\n` +
+      `Active user request:\n${originalUserGoal.slice(0, 1500)}\n\n` +
       (reviewOnly
-        ? `Next: emit read_file on key source files and/or {"name":"run","command":"npm test"} (or typecheck). ` +
-          `When you can confirm the app works, reply with a short DONE summary and no tools.`
-        : `Emit write_file (and mkdir if needed) or read_file tool JSON now. Keep going until fully done; ` +
-          `only then reply with a short DONE summary and no tools.`)
+        ? `Next: emit read_file on the important source files, optionally run tests/typecheck, ` +
+          `then DONE summary (blockers → risks → suggestions → nits) with concrete paths.`
+        : `Next: emit search_replace or write_file (and mkdir if needed), or read_file if you still need detail. ` +
+          `Keep going until the full request is satisfied; only then a short DONE summary with no tools.`)
   })
 
   const nudgeContinueWork = (reason: string): AgentChatMessage => ({
     role: 'user',
     content:
-      `${reason}\n` +
-      `User request (still active):\n${originalUserGoal.slice(0, 1500)}\n` +
+      `${reason}\n\n` +
+      `Active user request:\n${originalUserGoal.slice(0, 1500)}\n` +
       (filesTouched.length
         ? `Already touched: ${[...new Set(filesTouched)].join(', ')}\n`
         : reviewOnly
-          ? 'This is a review task — do not invent file edits.\n'
-          : 'No files written yet.\n') +
+          ? 'This is a review/improve-inspection phase — gather facts with tools before concluding.\n'
+          : 'No files written yet — you still need to make progress with tools.\n') +
       (reviewOnly
-        ? `Emit read_file or run tool JSON, OR if you already confirmed the project, reply DONE summary with no tools.`
-        : `You are NOT finished. Emit the next write_file/mkdir/read_file tool JSON now. ` +
+        ? `Emit read_file or run tool JSON, OR if you already have enough evidence, reply with a DONE review summary and no tools.`
+        : `You are NOT finished. Emit the next search_replace / write_file / mkdir / read_file / run tool JSON now. ` +
           `When — and only when — the full request is satisfied, reply with a short DONE summary and no tools.`)
   })
 
   // Loop until done, abort, or hard budgets.
+  try {
   for (;;) {
     throwIfAborted(options.signal)
 
@@ -540,7 +585,8 @@ export async function* runAgentWithWorkspaceTools(options: {
       messages: workerMessages,
       stopOnToolCall: true,
       tools: openaiTools,
-      builtinJsonSchema: constrainThisTurn ? toolCallSchema : undefined
+      builtinJsonSchema: constrainThisTurn ? toolCallSchema : undefined,
+      sessionKey: isNativeGgufRef(workerModel) ? ggufSessionKey : undefined
     })) {
       if (evt.kind === 'thinking') yield { type: 'thinking', text: evt.text }
       else {
@@ -558,6 +604,98 @@ export async function* runAgentWithWorkspaceTools(options: {
         : parseToolCalls(assistantText)
 
     if (toolCalls.length === 0) {
+      // Local models often ask "please provide the project structure" instead of
+      // calling tree — run tree ourselves and continue (don't stop or ask the user).
+      if (looksLikeAsksForWorkspaceInfo(assistantText) && !lastTreeResult) {
+        const id = `t${toolExecRounds}_auto_tree`
+        yield {
+          type: 'status',
+          text: 'Inspecting workspace (model asked for structure)…'
+        }
+        yield {
+          type: 'thinking',
+          text: '\n\n— Skipping user ask — listing the workspace with tools…\n'
+        }
+        yield {
+          type: 'tool',
+          tool: { id, name: 'tree', path: '.', status: 'running', detail: 'Running…' }
+        }
+        const treeResult = executeTool(workspacePath, {
+          name: 'tree',
+          args: { path: '.', maxDepth: 3 },
+          raw: ''
+        })
+        lastTreeResult = treeResult.detail
+        lastInspectResult = treeResult.detail
+        inspectRounds++
+        actionLog.push('Listed tree .')
+        yield {
+          type: 'tool',
+          tool: {
+            id,
+            name: 'tree',
+            path: '.',
+            status: treeResult.ok ? 'ok' : 'error',
+            detail: treeResult.detail.slice(0, 2000)
+          }
+        }
+        workerMessages.push({
+          role: 'assistant',
+          content: stripToolBlocks(assistantText).slice(0, 800)
+        })
+        workerMessages.push({
+          role: 'user',
+          content:
+            `TOOL_RESULT tree path=.\n${truncateForModel(treeResult.detail, 6000)}\n\n` +
+            `Do NOT ask the user for project structure or files — you have the listing above. ` +
+            `Continue the original request with read_file / search_replace / write_file / run as needed.\n` +
+            `User request:\n${originalUserGoal.slice(0, 1500)}`
+        })
+        constrainNextToolCall = true
+        continue
+      }
+
+      // Pause for an inline answer when the model asks before continuing (even if
+      // shouldKeepWorking would otherwise nudge tools immediately).
+      const clarifyText = stripToolBlocks(assistantText).trim()
+      if (
+        options.askUser &&
+        askUserCount < MAX_ASK_USER &&
+        looksLikeClarifyingQuestion(assistantText)
+      ) {
+        askUserCount++
+        yield { type: 'status', text: 'Waiting for your reply…' }
+        yield {
+          type: 'thinking',
+          text: `\n\n— Asking you: ${clarifyText.slice(0, 200)}${clarifyText.length > 200 ? '…' : ''}\n`
+        }
+        const reply = await options.askUser(clarifyText)
+        throwIfAborted(options.signal)
+        workerMessages.push({ role: 'assistant', content: clarifyText.slice(0, 2000) })
+        if (reply) {
+          yield { type: 'thinking', text: `\n\n— You replied: ${reply.slice(0, 160)}\n` }
+          workerMessages.push({
+            role: 'user',
+            content:
+              `USER_REPLY:\n${reply}\n\n` +
+              `Continue the original request with this answer. Prefer tools over more questions.`
+          })
+        } else {
+          yield {
+            type: 'thinking',
+            text: '\n\n— No reply (15s) — continuing with best judgment…\n'
+          }
+          workerMessages.push({
+            role: 'user',
+            content:
+              `The user did not reply within 15 seconds. Proceed with the original request ` +
+              `using your best judgment. Do not ask another clarifying question unless you are blocked.`
+          })
+        }
+        yield { type: 'status', text: `${plan.agentName} continuing…` }
+        continue
+      }
+
       const keepGoing =
         shouldKeepWorking({
           needsTools: plan.requiresTools,
@@ -598,9 +736,15 @@ export async function* runAgentWithWorkspaceTools(options: {
             ? nudgeContinueWork(
                 abortedLoop || looksLikeDegenerateLoop(assistantText)
                   ? 'You got stuck or answered before finishing.'
-                  : 'That reply did not finish the user request.'
+                  : looksLikeAsksForWorkspaceInfo(assistantText)
+                    ? 'Do not ask the user for project structure or files — you already have a listing; read_file/run next.'
+                    : 'That reply did not finish the user request.'
               )
-            : nudgeToTools('You must use tools to finish this request.')
+            : nudgeToTools(
+                looksLikeAsksForWorkspaceInfo(assistantText)
+                  ? 'Do not ask the user for project structure or files. Inspect the workspace with tools.'
+                  : 'You must use tools to finish this request.'
+              )
         )
         continue
       }
@@ -1063,6 +1207,67 @@ export async function* runAgentWithWorkspaceTools(options: {
             path: '.eris/context.md',
             mutated: false
           }
+        }
+      } else if (call.name === 'ask_user') {
+        const question =
+          argString(call.args, 'question') ||
+          argString(call.args, 'prompt') ||
+          argString(call.args, 'text')
+        const choices = Array.isArray(call.args.choices)
+          ? call.args.choices.map((c) => String(c)).filter(Boolean).slice(0, 6)
+          : undefined
+        if (!question.trim()) {
+          result = { ok: false, detail: 'ask_user requires question', mutated: false }
+        } else if (askUserCount >= MAX_ASK_USER) {
+          result = {
+            ok: true,
+            detail:
+              'Ask budget exhausted for this run. Proceed with best judgment; do not ask again.',
+            mutated: false
+          }
+          yield {
+            type: 'thinking',
+            text: '\n\n— Skipping further questions (limit reached) — continuing…\n'
+          }
+        } else if (!options.askUser) {
+          result = {
+            ok: true,
+            detail:
+              'User prompt UI unavailable. Proceed with best judgment on the original request.',
+            mutated: false
+          }
+        } else {
+          askUserCount++
+          yield { type: 'status', text: 'Waiting for your reply…' }
+          yield {
+            type: 'thinking',
+            text: `\n\n— Asking you: ${question.slice(0, 200)}${question.length > 200 ? '…' : ''}\n`
+          }
+          const reply = await options.askUser(question.trim(), choices)
+          throwIfAborted(options.signal)
+          if (reply) {
+            result = {
+              ok: true,
+              detail: `User replied:\n${reply}\n\nContinue with this answer. Prefer tools over more questions.`,
+              mutated: false
+            }
+            yield {
+              type: 'thinking',
+              text: `\n\n— You replied: ${reply.slice(0, 160)}\n`
+            }
+          } else {
+            result = {
+              ok: true,
+              detail:
+                'User did not reply within 15 seconds. Proceed with the original request using your best judgment. Do not ask another clarifying question unless you are blocked.',
+              mutated: false
+            }
+            yield {
+              type: 'thinking',
+              text: '\n\n— No reply (15s) — continuing with best judgment…\n'
+            }
+          }
+          yield { type: 'status', text: `${plan.agentName} continuing…` }
         }
       } else if (call.name === 'delegate_to_agent') {
         const agentId = argString(call.args, 'agent_id') || argString(call.args, 'agentId')
@@ -1586,5 +1791,8 @@ export async function* runAgentWithWorkspaceTools(options: {
               `Do not call tree again unless the user asks for another listing.`)
       })
     }
+  }
+  } finally {
+    releaseGgufSession()
   }
 }

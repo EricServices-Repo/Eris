@@ -28,6 +28,8 @@ export async function* streamModelChat(options: {
   onNativeToolCalls?: (calls: NativeToolCall[]) => void
   /** Constrain built-in GGUF output to this JSON schema (grammar decoding). */
   builtinJsonSchema?: Record<string, unknown>
+  /** Reuse local GGUF KV / chat session across agent steps. */
+  sessionKey?: string
 }): AsyncGenerator<string, void, unknown> {
   let model =
     options.model || options.settings.models.defaultModel || 'builtin:composer-lite'
@@ -86,7 +88,8 @@ export async function* streamModelChat(options: {
           })),
         temperature: options.temperature,
         signal: options.signal,
-        jsonSchema: options.builtinJsonSchema
+        jsonSchema: options.builtinJsonSchema,
+        sessionKey: options.sessionKey
       })) {
         outputText += chunk
         yield chunk

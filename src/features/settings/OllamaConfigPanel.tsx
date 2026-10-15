@@ -43,7 +43,6 @@ export function OllamaConfigPanel({
 
   const [baseUrl, setBaseUrl] = useState(ollama?.baseUrl || OLLAMA_DEFAULT_URL)
   const [urlDirty, setUrlDirty] = useState(false)
-  const [showUrl, setShowUrl] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
@@ -161,39 +160,9 @@ export function OllamaConfigPanel({
   if (compact) {
     return (
       <div className="ollama-config is-compact">
-        <div className="models-row">
-          <div className="models-row-main">
-            <span className={`status-dot ${reachable && enabled ? 'ok' : ''}`} />
-            <div className="models-row-copy">
-              <div className="models-row-title">
-                <strong>External Ollama</strong>
-              </div>
-              <div className="models-row-meta">{statusLabel}</div>
-            </div>
-          </div>
-          <div className="models-row-actions">
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={busy}
-              onClick={() => void ensureAndRefresh()}
-            >
-              {busy ? '…' : ollama ? 'Refresh' : 'Connect'}
-            </button>
-            {ollama && (
-              <button type="button" className="btn" disabled={busy} onClick={() => void toggleEnabled()}>
-                {enabled ? 'Disable' : 'Enable'}
-              </button>
-            )}
-            <button type="button" className="btn" onClick={() => setShowUrl((v) => !v)}>
-              {showUrl ? 'Hide URL' : 'URL'}
-            </button>
-          </div>
-        </div>
-
-        {showUrl && (
-          <label className="field ollama-url-field">
-            <span>Base URL</span>
+        <label className="field ollama-url-field">
+          <span>Base URL</span>
+          <div className="providers-url-row">
             <input
               value={displayUrl}
               onChange={(e) => {
@@ -203,22 +172,53 @@ export function OllamaConfigPanel({
               placeholder={OLLAMA_DEFAULT_URL}
               spellCheck={false}
             />
-          </label>
-        )}
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy}
+              onClick={() => void ensureAndRefresh()}
+            >
+              {busy ? '…' : ollama ? 'Refresh' : 'Connect'}
+            </button>
+          </div>
+        </label>
+
+        <div className="providers-ollama-status">
+          <span className={`status-dot ${reachable && enabled ? 'ok' : ''}`} />
+          <span>{statusLabel}</span>
+          {ollama && (
+            <div className="providers-ollama-actions">
+              <button type="button" className="btn" disabled={busy} onClick={() => void toggleEnabled()}>
+                {enabled ? 'Disable' : 'Enable'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={busy}
+                onClick={() => void removeOllama()}
+              >
+                Remove
+              </button>
+            </div>
+          )}
+        </div>
 
         {models.length > 0 && (
-          <div className="model-chip-row">
-            {models.map((m) => (
-              <button
-                key={m}
-                type="button"
-                className={`model-chip ${defaultModel === m ? 'active' : ''}`}
-                title="Use as default model"
-                onClick={() => void onSetDefaultModel(m)}
-              >
-                {m}
-              </button>
-            ))}
+          <div className="providers-models-block">
+            <span className="providers-models-label">Set chat default</span>
+            <div className="model-chip-row">
+              {models.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={`model-chip ${defaultModel === m ? 'active' : ''}`}
+                  title={`Use ${m} as default chat model`}
+                  onClick={() => void onSetDefaultModel(m)}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
@@ -230,11 +230,6 @@ export function OllamaConfigPanel({
             {error || (!reachable ? live?.error : null) || info}
           </div>
         )}
-
-        <p className="models-hint">
-          Prefer <strong>Local models</strong> above — they download and run inside Eris. Use this
-          only if you already run Ollama separately.
-        </p>
       </div>
     )
   }

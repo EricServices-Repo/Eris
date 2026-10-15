@@ -97,6 +97,13 @@ export const SettingsSchema = z.object({
     allowedCommands: z.array(z.string()),
     /** Constrain local (GGUF) tool-call retries to valid JSON via a grammar. */
     constrainLocalToolCalls: z.boolean().default(true),
+    /**
+     * Living project memory (.eris/context.md):
+     * auto = write after agent runs / ask_user replies;
+     * ask = propose in chat and wait for Remember;
+     * off = never auto-write.
+     */
+    projectMemory: z.enum(['auto', 'ask', 'off']).default('auto'),
     routing: z.object({
       enabled: z.boolean(),
       mode: z.enum(['auto', 'manual', 'off']),

@@ -91,6 +91,10 @@ const api: IdeApi = {
     ipcRenderer.invoke('chat:approvalRespond', approvalId, decision),
   onChatApprovalRequest: (cb) => subscribe('chat:approval-request', cb),
   onChatApprovalResolved: (cb) => subscribe('chat:approval-resolved', cb),
+  respondUserQuestion: (questionId, reply) =>
+    ipcRenderer.invoke('chat:questionRespond', questionId, reply),
+  onChatQuestionRequest: (cb) => subscribe('chat:question-request', cb),
+  onChatQuestionResolved: (cb) => subscribe('chat:question-resolved', cb),
   onChatThinking: (cb) => subscribe('chat:thinking', cb),
   onChatAnswer: (cb) => subscribe('chat:answer', cb),
   onChatDone: (cb) => subscribe('chat:done', cb),
@@ -210,6 +214,11 @@ const api: IdeApi = {
   setWorkspaceContextSummary: (summary) => ipcRenderer.invoke('context:setSummary', summary),
   appendWorkspaceContextNote: (note) => ipcRenderer.invoke('context:appendNote', note),
   resetWorkspaceContext: () => ipcRenderer.invoke('context:reset'),
+  canUndoProjectMemory: () => ipcRenderer.invoke('context:canUndoMemory'),
+  undoProjectMemory: () => ipcRenderer.invoke('context:undoMemory'),
+  confirmProjectMemory: (proposal) => ipcRenderer.invoke('context:confirmMemory', proposal),
+  onChatMemoryUpdated: (cb) => subscribe('chat:memory-updated', cb),
+  onChatMemoryProposal: (cb) => subscribe('chat:memory-proposal', cb),
   getUsageStats: (days) => ipcRenderer.invoke('usage:get', days),
   clearUsageStats: (payload) => ipcRenderer.invoke('usage:clear', payload),
   onMenu: (channel, cb) => {

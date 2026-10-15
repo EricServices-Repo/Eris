@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.2.39 — 2026-10-14
+
+- Living project memory: agent runs and ask_user replies update `.eris/context.md` (auto/ask/off); chat chip + undo.
+- Composer Full local context window raised from 8k → 16k (Lite stays 4k).
+
+## 0.2.38 — 2026-10-14
+
+- Desktop rebuild: higher-quality Composer/tool/router prompts + force tools for review/improve (no more “paste the folder structure”).
+
+## 0.2.37 — 2026-10-14
+
+- Agent clarifying questions pause inline (15s shrinking bar); no reply → continue with best judgment.
+- Reject “please provide project structure/files” answers; stronger Composer tool playbooks + live Thinking stream.
+- Fix: “review/improve the project…” no longer routes answer-only (no tools); auto-run `tree` when the model asks for structure.
+- Higher-quality internal prompts: Composer/specialists, tool playbooks, router, Ask mode, inline AI, and compaction memory.
+
+## 0.2.36 — 2026-10-14
+
+- Local models: show completed (and in-progress) downloads above search under On this device.
+
+## 0.2.35 — 2026-10-14
+
+- Local model downloads resume from `.partial` via HTTP Range after cancel/stall (Retry → Resume).
+- Desktop rebuild: Providers UX refresh + local GGUF KV session reuse across agent steps.
+
+## 0.2.34 — 2026-10-14
+
+- Settings → Providers: clearer add flow (preset grid), focused connect/edit, Ollama moved to Advanced.
+- Local GGUF agent steps reuse one LlamaChatSession / KV cache (Cloud-style); steps 2+ prompt only the new turn.
+
 ## 0.2.33 — 2026-10-14
 
 - Desktop rebuild: stop keeps partials, faster agent/send path, settings cache, mention index + Windows paths.

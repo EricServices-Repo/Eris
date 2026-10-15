@@ -114,19 +114,29 @@ export function LocalModelsPanel({
     return ['all', ...Array.from(set)]
   }, [models])
 
-  const filtered = useMemo(() => {
-    // Always keep in-progress downloads visible at the top (ignore search/family filters).
+  const installed = useMemo(() => {
+    // Ready + in-progress / paused — always above search (not filtered).
+    const ready = models.filter((m) => m.ready)
     const active = models.filter(
-      (m) => m.downloading || m.id === downloadingId || (m.progress > 0 && m.progress < 1 && !m.ready)
+      (m) =>
+        !m.ready &&
+        (m.downloading ||
+          m.id === downloadingId ||
+          (m.progress > 0 && m.progress < 1))
     )
-    const activeIds = new Set(active.map((m) => m.id))
-    const rest = models.filter((m) => {
-      if (activeIds.has(m.id)) return false
+    const readyIds = new Set(ready.map((m) => m.id))
+    return [...ready, ...active.filter((m) => !readyIds.has(m.id))]
+  }, [models, downloadingId])
+
+  const installedIds = useMemo(() => new Set(installed.map((m) => m.id)), [installed])
+
+  const catalog = useMemo(() => {
+    return models.filter((m) => {
+      if (installedIds.has(m.id)) return false
       if (family !== 'all' && m.family !== family) return false
       return matchesLocalQuery(m, query)
     })
-    return [...active, ...rest]
-  }, [models, query, family, downloadingId])
+  }, [models, query, family, installedIds])
 
   const catalogRepoIds = useMemo(() => {
     const set = new Set<string>()
@@ -187,6 +197,110 @@ export function LocalModelsPanel({
 
   const showHfSection = query.trim().length >= 2
 
+  const renderRow = (m: LocalModelStatus) => {
+    const isDownloading = downloadingId === m.id || Boolean(m.downloading)
+    const pct = Math.round((m.progress || 0) * 100)
+    const isDefault = defaultModel === m.ref
+    const statusLine =
+      m.ready
+        ? 'Ready on this device'
+        : isDownloading
+          ? m.downloadPhase === 'verifying'
+            ? 'Verifying…'
+            : m.downloadPhase === 'finalizing'
+              ? 'Installing…'
+              : pct > 0
+                ? `Downloading · ${pct}%`
+                : 'Downloading…'
+          : pct > 0
+            ? `Paused · ${pct}% — Resume continues from here`
+            : null
+    return (
+      <div key={m.id} className={`ollama-catalog-row${m.ready ? ' is-ready' : ''}`}>
+        <div className="ollama-catalog-main">
+          <div className="ollama-catalog-title">
+            <strong>{m.displayName}</strong>
+            <code>{m.ref}</code>
+            <span className="badge">{sizeLabel(m)}</span>
+            {m.family ? <span className="badge">{m.family}</span> : null}
+            {isDefault && <span className="models-tag is-accent">Default</span>}
+          </div>
+          <p>{m.description}</p>
+          {(isDownloading || (!m.ready && m.progress > 0 && m.progress < 1)) && (
+            <div className="models-progress">
+              <div style={{ width: `${Math.max(2, pct)}%` }} />
+            </div>
+          )}
+          {statusLine && <div className="model-conn-meta">{statusLine}</div>}
+          {m.downloadError && !isDownloading && !m.ready && (
+            <p className="models-download-error" title={m.downloadError}>
+              {m.downloadError}
+            </p>
+          )}
+        </div>
+        <div className="ollama-catalog-actions">
+          {m.ready ? (
+            <>
+              {!isDefault && (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => void apply(['models', 'defaultModel'], m.ref)}
+                >
+                  Use
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  if (window.confirm(`Delete ${m.displayName}? You can download it again later.`)) {
+                    void window.ide.deleteLocalModel(m.id).then(() => load())
+                  }
+                }}
+              >
+                Delete
+              </button>
+            </>
+          ) : isDownloading ? (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                void window.ide.cancelLocalDownload()
+                setDownloadingId(null)
+                void load()
+              }}
+            >
+              Cancel
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={Boolean(downloadingId)}
+                onClick={() => startDownload(m)}
+              >
+                {pct > 0 ? 'Resume' : m.downloadError ? 'Retry' : 'Download'}
+              </button>
+              {m.downloadUrl ? (
+                <button
+                  type="button"
+                  className="btn"
+                  title="Open download URL in browser"
+                  onClick={() => void window.ide.openExternal(m.downloadUrl)}
+                >
+                  Open URL
+                </button>
+              ) : null}
+            </>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="ollama-library">
       <div className="ollama-library-head">
@@ -210,7 +324,31 @@ export function LocalModelsPanel({
         </div>
       </div>
 
+      {installed.length > 0 && (
+        <section className="local-models-installed">
+          <div className="local-models-section-label">
+            <strong>On this device</strong>
+            <span className="model-conn-meta">
+              {(() => {
+                const readyN = installed.filter((m) => m.ready).length
+                const activeN = installed.length - readyN
+                if (activeN > 0 && readyN > 0) {
+                  return `${readyN} ready · ${activeN} downloading`
+                }
+                if (activeN > 0) return `${activeN} downloading`
+                return `${readyN} ready`
+              })()}
+            </span>
+          </div>
+          <div className="ollama-catalog">{installed.map(renderRow)}</div>
+        </section>
+      )}
+
       <div className="ollama-catalog-filters">
+        <div className="local-models-section-label">
+          <strong>Find more</strong>
+          <span className="model-conn-meta">Curated catalog and Hugging Face search</span>
+        </div>
         <input
           className="ollama-catalog-search"
           value={query}
@@ -235,114 +373,16 @@ export function LocalModelsPanel({
       </div>
 
       <div className="ollama-catalog">
-        {filtered.length === 0 ? (
+        {catalog.length === 0 ? (
           <div className="models-empty">
             {query.trim()
               ? 'No curated matches — try Hugging Face results below.'
-              : 'No models in catalog.'}
+              : installed.length > 0
+                ? 'All curated models above are already on this device — search Hugging Face for more.'
+                : 'No models in catalog.'}
           </div>
         ) : (
-          filtered.map((m) => {
-            const isDownloading = downloadingId === m.id || Boolean(m.downloading)
-            const pct = Math.round((m.progress || 0) * 100)
-            const isDefault = defaultModel === m.ref
-            const statusLine =
-              m.ready
-                ? null
-                : isDownloading
-                  ? m.downloadPhase === 'verifying'
-                    ? 'Verifying…'
-                    : m.downloadPhase === 'finalizing'
-                      ? 'Installing…'
-                      : pct > 0
-                        ? `Downloading · ${pct}%`
-                        : 'Downloading…'
-                  : null
-            return (
-              <div key={m.id} className="ollama-catalog-row">
-                <div className="ollama-catalog-main">
-                  <div className="ollama-catalog-title">
-                    <strong>{m.displayName}</strong>
-                    <code>{m.ref}</code>
-                    <span className="badge">{sizeLabel(m)}</span>
-                    {m.family ? <span className="badge">{m.family}</span> : null}
-                    {isDefault && <span className="models-tag is-accent">Default</span>}
-                  </div>
-                  <p>{m.description}</p>
-                  {(isDownloading || (!m.ready && m.progress > 0 && m.progress < 1)) && (
-                    <div className="models-progress">
-                      <div style={{ width: `${Math.max(2, pct)}%` }} />
-                    </div>
-                  )}
-                  {statusLine && <div className="model-conn-meta">{statusLine}</div>}
-                  {m.downloadError && !isDownloading && !m.ready && (
-                    <p className="models-download-error" title={m.downloadError}>
-                      {m.downloadError}
-                    </p>
-                  )}
-                </div>
-                <div className="ollama-catalog-actions">
-                  {m.ready ? (
-                    <>
-                      {!isDefault && (
-                        <button
-                          type="button"
-                          className="btn btn-primary"
-                          onClick={() => void apply(['models', 'defaultModel'], m.ref)}
-                        >
-                          Use
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={() => {
-                          if (window.confirm(`Delete ${m.displayName}? You can download it again later.`)) {
-                            void window.ide.deleteLocalModel(m.id).then(() => load())
-                          }
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </>
-                  ) : isDownloading ? (
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={() => {
-                        void window.ide.cancelLocalDownload()
-                        setDownloadingId(null)
-                        void load()
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        disabled={Boolean(downloadingId)}
-                        onClick={() => startDownload(m)}
-                      >
-                        {m.downloadError ? 'Retry' : 'Download'}
-                      </button>
-                      {m.downloadUrl ? (
-                        <button
-                          type="button"
-                          className="btn"
-                          title="Open download URL in browser"
-                          onClick={() => void window.ide.openExternal(m.downloadUrl)}
-                        >
-                          Open URL
-                        </button>
-                      ) : null}
-                    </>
-                  )}
-                </div>
-              </div>
-            )
-          })
+          catalog.map(renderRow)
         )}
       </div>
 

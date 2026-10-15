@@ -78,7 +78,14 @@ describe('classifyIntent', () => {
     ],
     ['create me an electron desktop app for photo review', 'agent', 'edit'],
     ['make a new project that classifies images', 'agent', 'edit'],
-    ['scaffold a macOS SwiftUI image viewer', 'agent', 'edit']
+    ['scaffold a macOS SwiftUI image viewer', 'agent', 'edit'],
+    [
+      'review the project folder, make improvements to the calculator',
+      'agent',
+      'edit'
+    ],
+    ['review the project folder', 'agent', 'review'],
+    ['improve the calculator UI', 'agent', 'edit']
   ] as const)('%s (%s) → %s', (text, mode, intent) => {
     expect(classifyIntent(text, mode)).toBe(intent)
   })

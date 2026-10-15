@@ -27,6 +27,7 @@ export function useContextPanelState(hasWorkspace: boolean) {
   const [contextNote, setContextNote] = useState('')
   const [showFull, setShowFull] = useState(false)
   const [noteBusy, setNoteBusy] = useState(false)
+  const [canUndoMemory, setCanUndoMemory] = useState(false)
 
   const loadWorkspaceContextDoc = async () => {
     if (!hasWorkspace) {
@@ -41,6 +42,7 @@ export function useContextPanelState(hasWorkspace: boolean) {
       applyDoc(doc, setContextBody, setSummary, setBodyDirty, setSummaryDirty, setContextError)
       // Expand full doc when there is more than an empty starter summary
       if (doc.body.trim() && !doc.empty) setShowFull(true)
+      setCanUndoMemory(await window.ide.canUndoProjectMemory())
     } catch (err) {
       setContextError(err instanceof Error ? err.message : 'Failed to load context')
     }
@@ -65,6 +67,8 @@ export function useContextPanelState(hasWorkspace: boolean) {
     setShowFull,
     noteBusy,
     setNoteBusy,
+    canUndoMemory,
+    setCanUndoMemory,
     loadWorkspaceContextDoc
   }
 }
@@ -97,6 +101,8 @@ export function ContextPanel({
     setShowFull,
     noteBusy,
     setNoteBusy,
+    canUndoMemory,
+    setCanUndoMemory,
     loadWorkspaceContextDoc
   } = state
 
@@ -204,8 +210,42 @@ export function ContextPanel({
             </div>
             <p className="models-hint">
               Tip: stack, entrypoints, run commands, and hard rules. Longer detail belongs in
-              Reference below.
+              Reference below. Agent runs can auto-append Notes (Settings → Agent → Project
+              memory).
             </p>
+            {canUndoMemory && (
+              <div className="context-actions">
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={contextSaving}
+                  onClick={() => {
+                    setContextSaving(true)
+                    void window.ide
+                      .undoProjectMemory()
+                      .then((doc) => {
+                        applyDoc(
+                          doc,
+                          setContextBody,
+                          setSummary,
+                          setBodyDirty,
+                          setSummaryDirty,
+                          setContextError
+                        )
+                        setCanUndoMemory(Boolean(doc.ok))
+                      })
+                      .catch((err: unknown) => {
+                        setContextError(
+                          err instanceof Error ? err.message : 'Failed to undo memory'
+                        )
+                      })
+                      .finally(() => setContextSaving(false))
+                  }}
+                >
+                  Undo last memory write
+                </button>
+              </div>
+            )}
           </section>
 
           <section className="models-card">

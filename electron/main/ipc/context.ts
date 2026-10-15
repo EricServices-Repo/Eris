@@ -7,6 +7,11 @@ import {
   saveWorkspaceContext,
   setContextSummary
 } from '../services/workspace-context'
+import {
+  canUndoProjectMemory,
+  confirmProjectMemory,
+  undoLastProjectMemory
+} from '../services/project-memory'
 import { appState } from '../app-state'
 
 export function registerContextIpc(): void {
@@ -28,4 +33,21 @@ export function registerContextIpc(): void {
     if (!appState.currentWorkspace) throw new Error('Open a workspace to edit context')
     return resetWorkspaceContext(appState.currentWorkspace)
   })
+  ipcMain.handle('context:canUndoMemory', () =>
+    canUndoProjectMemory(appState.currentWorkspace)
+  )
+  ipcMain.handle('context:undoMemory', () => {
+    if (!appState.currentWorkspace) throw new Error('Open a workspace to undo memory')
+    return undoLastProjectMemory(appState.currentWorkspace)
+  })
+  ipcMain.handle(
+    'context:confirmMemory',
+    (_e, proposal: { note?: string; summary?: string }) => {
+      if (!appState.currentWorkspace) throw new Error('Open a workspace to save memory')
+      return confirmProjectMemory(appState.currentWorkspace, {
+        note: proposal?.note ? String(proposal.note) : undefined,
+        summary: proposal?.summary ? String(proposal.summary) : undefined
+      })
+    }
+  )
 }

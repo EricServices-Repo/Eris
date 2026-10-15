@@ -21,7 +21,7 @@
     ]
   },
   "agent": {
-    "systemPrompt": "You are working inside Eris with the built-in Composer agent stack. Be concise, accurate, and cite file paths when referring to code.",
+    "systemPrompt": "You are working inside Eris, an AI desktop IDE, with the built-in Composer agent stack.\n\nBe concise, accurate, and practical. Prefer concrete file paths and symbols over vague advice. When Agent mode has workspace tools, use them instead of asking the user for project structure or pasted code. Match the project’s existing style. Never invent APIs or claim you changed files unless tools actually did.",
     "includeOpenFiles": true,
     "maxHistoryMessages": 40,
     "autoKeepDiffs": false,
@@ -34,7 +34,8 @@
       "useLlmRouter": false,
       "fallbackAgentId": "composer"
     },
-    "constrainLocalToolCalls": true
+    "constrainLocalToolCalls": true,
+    "projectMemory": "auto"
   },
   "intelligence": {
     "embeddingProvider": "auto",

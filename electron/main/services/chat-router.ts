@@ -45,7 +45,8 @@ const READ_TOOLS = new Set([
   'list_skills',
   'read_skill',
   'git_status',
-  'git_diff'
+  'git_diff',
+  'ask_user'
 ])
 
 const EDIT_TOOLS = new Set([
@@ -126,13 +127,6 @@ export function classifyIntent(text: string, mode: 'ask' | 'agent'): ChatIntent 
   if (!t) return 'answer'
 
   if (
-    /\b(code review|pull request|pr review|security review|risk assessment)\b/i.test(t) ||
-    (/\breview\b/i.test(t) && /\b(pr|diff|patch|commit|regression|smell)\b/i.test(t))
-  ) {
-    return 'review'
-  }
-
-  if (
     /\b(npm (test|run|start|install)|yarn |pnpm |bun |pytest|cargo test|docker )\b/i.test(t) ||
     // Makefile targets only — not "make a new app/project"
     /\bmake\s+(test|check|build|all|install|clean|run|lint)\b/i.test(t) ||
@@ -141,12 +135,21 @@ export function classifyIntent(text: string, mode: 'ask' | 'agent'): ChatIntent 
     return 'run'
   }
 
+  // Improvements / polish count as edits even when the user also says "review".
   if (
-    /\b(create|implement|refactor|scaffold|generate|delete|mkdir|rename|patch|write_file|search_replace|develop)\b/i.test(
+    /\b(improv(e|es|ed|ing|ement|ements)|polish|enhance|enhancement|refactor|optimize|clean ?up)\b/i.test(
+      t
+    )
+  ) {
+    return 'edit'
+  }
+
+  if (
+    /\b(create|implement|scaffold|generate|delete|mkdir|rename|patch|write_file|search_replace|develop)\b/i.test(
       t
     ) ||
     // "build/fix/add … file|code|app|project|…" — greenfield product asks count as edits
-    /\b(fix|build|add|update|edit|make|write)\b[\s\S]{0,48}\b(file|files|code|bug|feature|function|component|test|app|application|project|program|tool|cli|game|website|site|mac\s*os|macos|osx|ios|android|swift|electron|desktop|package|module|service)\b/i.test(
+    /\b(fix|build|add|update|edit|make|write)\b[\s\S]{0,48}\b(file|files|code|bug|feature|function|component|test|app|application|project|program|tool|cli|game|website|site|mac\s*os|macos|osx|ios|android|swift|electron|desktop|package|module|service|calculator)\b/i.test(
       t
     ) ||
     /\b(build|create|make|scaffold|generate)\s+(me\s+)?(a|an|the)\b/i.test(t) ||
@@ -155,6 +158,16 @@ export function classifyIntent(text: string, mode: 'ask' | 'agent'): ChatIntent 
     /\b(write|add)\b[\s\S]{0,20}\b(skill|skills)\b/i.test(t)
   ) {
     return 'edit'
+  }
+
+  if (
+    /\b(code review|pull request|pr review|security review|risk assessment)\b/i.test(t) ||
+    (/\breview\b/i.test(t) &&
+      /\b(pr|diff|patch|commit|regression|smell|project|folder|codebase|workspace|repo|app|code)\b/i.test(
+        t
+      ))
+  ) {
+    return 'review'
   }
 
   if (
@@ -335,10 +348,20 @@ async function llmRouteHint(options: {
     .map((a) => `- ${a.id}: ${a.description || a.name} (tools: ${a.tools ?? 'edit'})`)
     .join('\n')
   const prompt =
-    `Classify this IDE chat message. Reply with ONLY JSON: ` +
-    `{"intent":"answer|capability|explore|edit|review|run","agentId":"<id>","confidence":0-1}\n` +
-    `Intents: answer = reply from knowledge; capability = about Eris itself / its models; ` +
-    `explore = read workspace files; edit = change files; review = critique code; run = execute commands.\n` +
+    `Classify this Eris IDE chat message for routing. Reply with ONLY JSON:\n` +
+    `{"intent":"answer|capability|explore|edit|review|run","agentId":"<id>","confidence":0-1}\n\n` +
+    `Intent definitions:\n` +
+    `- answer — pure Q&A from knowledge; no workspace tools needed\n` +
+    `- capability — questions about Eris itself, its models, providers, or limits\n` +
+    `- explore — find/read/explain code in the workspace (tools: read)\n` +
+    `- edit — create, change, improve, fix, or scaffold files (tools: write)\n` +
+    `- review — critique / review project or PR code (tools: read); if they also ask to improve/fix, prefer edit\n` +
+    `- run — execute tests/builds/commands\n\n` +
+    `Rules:\n` +
+    `- "review the project… make improvements" → edit\n` +
+    `- "review the project folder" alone → review\n` +
+    `- Prefer edit over answer whenever the user wants changes in the repo\n` +
+    `- Pick the best agentId from the list\n\n` +
     `Agents:\n${agentLines}\n` +
     (options.examples ? `Past corrections from this user:\n${options.examples}\n` : '') +
     `Message:\n${options.text.slice(0, 1200)}`
@@ -351,7 +374,8 @@ async function llmRouteHint(options: {
       messages: [
         {
           role: 'system',
-          content: 'You are a router. Output compact JSON only. No markdown.'
+          content:
+            'You are Eris’s turn router. Output a single compact JSON object only — no markdown, no prose.'
         },
         { role: 'user', content: prompt }
       ],
@@ -444,7 +468,14 @@ export async function planChatTurn(options: {
       }),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), 400))
     ])
-    if (hint?.intent) intent = hint.intent
+    if (hint?.intent) {
+      // Don't let a weak/cold router strip tools from "review/improve the project…"
+      const llmStripsTools =
+        intentNeedsTools(heuristicIntent) &&
+        !intentNeedsTools(hint.intent) &&
+        hint.intent !== 'capability'
+      if (!llmStripsTools) intent = hint.intent
+    }
     if (hint?.agentId) {
       const picked = findAgent(options.workspacePath, hint.agentId)
       if (picked?.enabled) {

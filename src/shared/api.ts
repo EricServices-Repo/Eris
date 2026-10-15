@@ -307,6 +307,25 @@ export interface IdeApi {
       decision: 'allow' | 'always' | 'deny'
     }) => void
   ) => () => void
+  respondUserQuestion: (questionId: string, reply: string | null) => Promise<boolean>
+  onChatQuestionRequest: (
+    cb: (data: {
+      requestId: string
+      questionId: string
+      question: string
+      choices?: string[]
+      timeoutMs: number
+    }) => void
+  ) => () => void
+  onChatQuestionResolved: (
+    cb: (data: {
+      requestId: string
+      questionId: string
+      timedOut?: boolean
+      dismissed?: boolean
+      reply?: string
+    }) => void
+  ) => () => void
   onChatThinking: (cb: (data: { requestId: string; chunk: string }) => void) => () => void
   onChatAnswer: (cb: (data: { requestId: string; chunk: string }) => void) => () => void
   onChatDone: (cb: (data: { requestId: string; aborted?: boolean }) => void) => () => void
@@ -903,6 +922,33 @@ export interface IdeApi {
     updatedAt: number
     empty: boolean
   }>
+  canUndoProjectMemory: () => Promise<boolean>
+  undoProjectMemory: () => Promise<{
+    ok: boolean
+    body: string
+    pin: string
+    updatedAt: number
+    empty: boolean
+  }>
+  confirmProjectMemory: (proposal: {
+    note?: string
+    summary?: string
+  }) => Promise<{ wrote: boolean; kind?: string; preview: string }>
+  onChatMemoryUpdated: (
+    cb: (data: {
+      requestId: string
+      kind?: string
+      preview: string
+    }) => void
+  ) => () => void
+  onChatMemoryProposal: (
+    cb: (data: {
+      requestId: string
+      note?: string
+      summary?: string
+      preview: string
+    }) => void
+  ) => () => void
   getUsageStats: (days?: number) => Promise<UsageSnapshot>
   clearUsageStats: (payload?: { todayOnly?: boolean }) => Promise<UsageSnapshot>
   onMenu: (channel: string, cb: () => void) => () => void

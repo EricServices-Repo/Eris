@@ -1,5 +1,5 @@
 import type { AppSettings } from '../../../../src/shared/settings-schema'
-import { isBuiltinRef } from '../builtin-model'
+import { isBuiltinRef, isNativeGgufRef } from '../builtin-model'
 import { streamModelChat, type OpenAIToolDef } from '../chat-runtime'
 import { looksLikeDegenerateLoop } from './heuristics'
 import { hasExecutableToolCall, nativeToToolCalls, stripToolBlocks } from './tool-parsing'
@@ -38,6 +38,8 @@ export async function* streamThinkingText(options: {
   tools?: OpenAIToolDef[]
   /** Constrain builtin GGUF decoding to a tool-call JSON schema (retry nudges). */
   builtinJsonSchema?: Record<string, unknown>
+  /** Reuse local GGUF KV across steps (native GGUF only). */
+  sessionKey?: string
 }): AsyncGenerator<
   | { kind: 'thinking'; text: string }
   | {
@@ -87,6 +89,7 @@ export async function* streamThinkingText(options: {
       signal: localAbort.signal,
       getSecret: options.getSecret,
       builtinJsonSchema: options.builtinJsonSchema,
+      sessionKey: isNativeGgufRef(options.model) ? options.sessionKey : undefined,
       tools: useNativeTools ? options.tools : undefined,
       toolChoice: useNativeTools ? 'auto' : undefined,
       onNativeToolCalls: useNativeTools

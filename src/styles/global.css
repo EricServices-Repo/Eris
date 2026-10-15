@@ -613,6 +613,89 @@ select:focus {
   gap: 8px;
 }
 
+.question-card {
+  margin: 10px 0;
+  padding: 10px 12px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  position: relative;
+  overflow: hidden;
+}
+
+.question-timeout-track {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.question-timeout-bar {
+  height: 100%;
+  width: 100%;
+  background: var(--accent);
+  transform-origin: left center;
+  animation-name: question-timeout-shrink;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@keyframes question-timeout-shrink {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+.question-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  margin: 4px 0 6px;
+}
+
+.question-text {
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 8px;
+}
+
+.question-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.question-reply-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.question-reply-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.question-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .msg-reroute {
   display: flex;
   align-items: center;
@@ -829,6 +912,15 @@ select:focus {
   line-height: 1.4;
   color: var(--text-muted);
   opacity: 0.85;
+}
+
+.thinking-text-live {
+  max-height: 140px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  opacity: 1;
 }
 
 .answer-text {
@@ -3554,6 +3646,204 @@ select:focus {
   background: var(--bg-elevated);
 }
 
+/* Settings → Providers */
+.providers-page {
+  gap: 10px;
+}
+
+.providers-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.providers-preset-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.providers-preset-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.providers-preset-btn strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.providers-preset-btn span {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.providers-empty {
+  padding: 16px 12px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-elevated) 70%, transparent);
+}
+
+.providers-empty p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.providers-empty .models-hint {
+  margin-top: 4px;
+}
+
+.providers-conn-list {
+  margin-top: 4px;
+}
+
+.providers-conn-row {
+  align-items: flex-start;
+}
+
+.providers-models-block {
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.providers-models-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.providers-editor-focus {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.providers-editor-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+
+.providers-editor-bar strong {
+  font-size: 13px;
+}
+
+.providers-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.providers-enable-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  margin: 4px 0;
+}
+
+.providers-advanced {
+  padding: 0;
+  overflow: hidden;
+}
+
+.providers-advanced-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.providers-advanced-toggle:hover {
+  background: color-mix(in srgb, var(--bg-elevated) 55%, transparent);
+}
+
+.providers-advanced-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+
+.providers-advanced-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.providers-chevron {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.providers-advanced-body {
+  padding: 0 14px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.providers-advanced-body .models-hint {
+  margin: 10px 0 12px;
+}
+
+.providers-url-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.providers-url-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.providers-ollama-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.providers-ollama-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
 .models-inline-msg {
   margin-top: 8px;
   font-size: 12px;
@@ -3860,6 +4150,27 @@ select:focus {
 .gpu-kind-tag.kind-metal {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.local-models-installed {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.local-models-section-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.local-models-section-label strong {
+  font-size: 13px;
+}
+
+.ollama-catalog-row.is-ready {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
 }
 
 .local-models-source {
