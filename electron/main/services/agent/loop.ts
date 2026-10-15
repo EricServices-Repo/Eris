@@ -21,6 +21,7 @@ import type { OpenAIToolDef } from '../chat-runtime'
 import { COMPOSER_OPENAI_TOOLS, mcpToolsToOpenAI, toolCallJsonSchema } from '../tool-registry'
 import {
   createCheckpoint,
+  getCheckpointOpCount,
   pruneOldCheckpoints,
   recordDeleteOp,
   recordMkdirOp,
@@ -106,7 +107,14 @@ export async function* runAgentWithWorkspaceTools(options: {
    */
   askUser?: (question: string, choices?: string[]) => Promise<string | null>
   /** Continue an interrupted run instead of starting fresh. */
-  resume?: { goal: string; actionLog: string[]; filesTouched: string[] }
+  resume?: {
+    goal: string
+    actionLog: string[]
+    filesTouched: string[]
+    /** Restored mid-run transcript (session checkpoint). */
+    workerMessages?: AgentChatMessage[]
+    fromStep?: number
+  }
   /**
    * sync = (re)start MCP servers for this workspace; reuse = use already-running servers;
    * off = no MCP tools (evals, so runs stay reproducible).
@@ -303,15 +311,19 @@ export async function* runAgentWithWorkspaceTools(options: {
     ],
     plan.toolPolicy
   )
-  const workerMessages: AgentChatMessage[] = buildPreservedWorkerMessages({
-    messages,
-    workspacePath,
-    settings: options.settings,
-    plan,
-    originalUserGoal,
-    retrievalHint,
-    mcpToolCount
-  })
+  const resumedWorker = options.resume?.workerMessages
+  const workerMessages: AgentChatMessage[] =
+    resumedWorker && resumedWorker.length > 0
+      ? resumedWorker.map((m) => ({ role: m.role, content: m.content }))
+      : buildPreservedWorkerMessages({
+          messages,
+          workspacePath,
+          settings: options.settings,
+          plan,
+          originalUserGoal,
+          retrievalHint,
+          mcpToolCount
+        })
 
   let lastTreeResult: string | null = null
   let lastInspectResult: string | null = null
@@ -324,15 +336,30 @@ export async function* runAgentWithWorkspaceTools(options: {
   const filesTouched: string[] = [...(options.resume?.filesTouched ?? [])]
   const actionLog: string[] = [...(options.resume?.actionLog ?? [])]
   if (options.resume) {
-    const lastUser = [...workerMessages].reverse().find((m) => m.role === 'user')
-    const note =
-      `\n\n[Resuming an interrupted task]\nAlready done before the interruption:\n` +
-      `${formatActionLogForResume(actionLog, 30)}\n` +
-      (filesTouched.length ? `Files touched: ${[...new Set(filesTouched)].join(', ')}\n` : '') +
-      `Re-read files you need, skip completed steps, and continue from where it stopped.`
-    if (lastUser) lastUser.content += note
-    else workerMessages.push({ role: 'user', content: note.trim() })
-    yield { type: 'thinking', text: `\n\n— Resuming (${actionLog.length} prior actions)…\n` }
+    const fromStep = options.resume.fromStep
+    if (resumedWorker && resumedWorker.length > 0) {
+      workerMessages.push({
+        role: 'user',
+        content:
+          `[Eris] Resuming from session checkpoint` +
+          (fromStep != null ? ` (step ${fromStep})` : '') +
+          `. Continue with tools; do not restart from scratch.`
+      })
+      yield {
+        type: 'thinking',
+        text: `\n\n— Resuming session${fromStep != null ? ` from step ${fromStep}` : ''} (${actionLog.length} prior actions)…\n`
+      }
+    } else {
+      const lastUser = [...workerMessages].reverse().find((m) => m.role === 'user')
+      const note =
+        `\n\n[Resuming an interrupted task]\nAlready done before the interruption:\n` +
+        `${formatActionLogForResume(actionLog, 30)}\n` +
+        (filesTouched.length ? `Files touched: ${[...new Set(filesTouched)].join(', ')}\n` : '') +
+        `Re-read files you need, skip completed steps, and continue from where it stopped.`
+      if (lastUser) lastUser.content += note
+      else workerMessages.push({ role: 'user', content: note.trim() })
+      yield { type: 'thinking', text: `\n\n— Resuming (${actionLog.length} prior actions)…\n` }
+    }
   }
   /** Rolling Lite-written memory folded across comped. */
   let contextMemory: string | null = null
@@ -345,6 +372,20 @@ export async function* runAgentWithWorkspaceTools(options: {
   let inspectRounds = 0
   let step = 0
   let verifyFailures = 0
+
+  const emitSessionStep = (summary?: string): AgentRunnerEvent => {
+    const opThrough = getCheckpointOpCount(workspacePath, checkpoint.id)
+    const last = summary || actionLog[actionLog.length - 1] || `Step ${step}`
+    return {
+      type: 'session-step',
+      step,
+      opThrough,
+      summary: last.slice(0, 240),
+      actionLog: [...actionLog],
+      filesTouched: [...filesTouched],
+      workerMessages: workerMessages.map((m) => ({ role: m.role, content: m.content }))
+    }
+  }
   let mutationsSinceVerify = 0
   let consecutiveToolErrors = 0
   let escalateCount = plan.escalateToFull ? 1 : 0
@@ -571,6 +612,7 @@ export async function* runAgentWithWorkspaceTools(options: {
         text: `\n\n— Stopped at step limit (${MAX_AGENT_STEPS}).\n`
       }
       yield { type: 'progress', step, actionLog: [...actionLog], filesTouched: [...filesTouched], incomplete: true }
+      yield emitSessionStep('Stopped at step limit')
       yield { type: 'answer', text: note }
       return
     }
@@ -785,6 +827,7 @@ export async function* runAgentWithWorkspaceTools(options: {
               text: '\n\n— Verify failed too many times; stopping with a summary.\n'
             }
             yield { type: 'progress', step, actionLog: [...actionLog], filesTouched: [...filesTouched], incomplete: true }
+            yield emitSessionStep('Stopped after verify failures')
             yield { type: 'answer', text: answer }
             return
           }
@@ -1760,6 +1803,7 @@ export async function* runAgentWithWorkspaceTools(options: {
                   filesTouched: [...filesTouched],
                   incomplete: true
                 }
+                yield emitSessionStep('Stopped after verify failures')
                 yield { type: 'answer', text: answer }
                 return
               }
@@ -1797,6 +1841,7 @@ export async function* runAgentWithWorkspaceTools(options: {
               `Do not call tree again unless the user asks for another listing.`)
       })
     }
+    yield emitSessionStep()
   }
   } finally {
     releaseGgufSession()

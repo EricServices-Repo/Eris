@@ -44,11 +44,16 @@ function assertRendererPathAllowed(path: string, mode: 'read' | 'write'): void {
 }
 
 export function registerWorkspaceIpc(): void {
-  setWorkspaceFsChangeHandler(({ workspacePath, path }) => {
+  setWorkspaceFsChangeHandler(({ workspacePath, path, paths }) => {
     invalidateDiagnosticsCache()
-    notifyWorkspaceFilesChanged(workspacePath)
+    const changed = paths?.length ? paths : path ? [path] : undefined
+    notifyWorkspaceFilesChanged(workspacePath, changed)
     if (appState.mainWindow && !appState.mainWindow.isDestroyed()) {
-      appState.mainWindow.webContents.send('workspace:fs-changed', { workspacePath, path })
+      appState.mainWindow.webContents.send('workspace:fs-changed', {
+        workspacePath,
+        path: path || changed?.[0] || '',
+        paths: changed
+      })
     }
   })
 

@@ -10,17 +10,26 @@ disable-model-invocation: true
 
 # /update-github
 
-Publish Eris to the **public** release feed so clients can update.
+Publish Eris to the **public** auto-update feed:
+
+**https://github.com/EricServices-Repo/Eris-updates**
+
+That repo is the success target (electron-updater / client downloads). The private
+`EricServices-Repo/Eris` release is only the source tag + notes; installers must
+also appear on **Eris-updates**.
 
 Pipeline:
 
-1. Tag `vX.Y.Z` on `EricServices-Repo/Eris` (private source).
+1. Tag `vX.Y.Z` on `EricServices-Repo/Eris` (private source) from `main`.
 2. CI (`.github/workflows/release.yml`) builds macOS + Windows into `dist/`.
 3. CI uploads installers to:
-   - Private notes/assets: `EricServices-Repo/Eris` releases
-   - **Public auto-update feed:** `EricServices-Repo/Eris-updates` (electron-updater; no client token)
+   - Private notes: `EricServices-Repo/Eris` releases
+   - **Required public feed:** `EricServices-Repo/Eris-updates` releases
+     (`repository: EricServices-Repo/Eris-updates` + `ERIS_UPDATES_TOKEN`)
 
 Do **not** confuse this with `/rebuild` (local unsigned app only) or a plain `git push`.
+A release is **not done** until `gh release view vX.Y.Z --repo EricServices-Repo/Eris-updates`
+shows zip/exe/`latest-*.yml` assets.
 
 ## Prerequisites
 
@@ -98,14 +107,15 @@ If Eris-updates is missing assets, wait for the workflow; the publish job needs 
 One short block:
 
 ```markdown
-**vX.Y.Z** published.
+**vX.Y.Z** published to Eris-updates.
 
-- Source release: https://github.com/EricServices-Repo/Eris/releases/tag/vX.Y.Z
 - Public feed: https://github.com/EricServices-Repo/Eris-updates/releases/tag/vX.Y.Z
+- Source release: https://github.com/EricServices-Repo/Eris/releases/tag/vX.Y.Z
 - CI: https://github.com/EricServices-Repo/Eris/actions/workflows/release.yml
 ```
 
-If CI is still running, say so and link the run.
+If CI is still running, say so and link the run. Do not claim Eris-updates success
+until that release has assets.
 
 ## Rules
 

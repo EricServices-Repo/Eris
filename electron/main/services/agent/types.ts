@@ -38,6 +38,16 @@ export type AgentRunnerEvent =
       incomplete?: boolean
     }
   | {
+      /** Persisted agent-session step (after a tool batch) for resume/rewind. */
+      type: 'session-step'
+      step: number
+      opThrough: number
+      summary: string
+      actionLog: string[]
+      filesTouched: string[]
+      workerMessages: AgentChatMessage[]
+    }
+  | {
       type: 'adapt'
       kind: 'escalate' | 'reroute' | 'delegate'
       reason: string

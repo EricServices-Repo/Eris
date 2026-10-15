@@ -94,7 +94,7 @@ export function settingFields(agentIds: string[]): SettingField[] {
     {
       cat: 'agent',
       label: 'Shared system prompt',
-      hint: 'Prefixed for every agent before its own prompt',
+      hint: 'Prefixed for every agent before its own prompt — environment + universal rules',
       path: ['agent', 'systemPrompt'],
       type: 'textarea'
     },
@@ -152,6 +152,21 @@ export function settingFields(agentIds: string[]): SettingField[] {
     },
     {
       cat: 'agent',
+      label: 'Routing profile',
+      hint: 'Auto = seamless Lite + Cloud; Local = never Cloud; Max = prefer Cloud Composer for agent work',
+      path: ['agent', 'routing', 'profile'],
+      type: 'select',
+      options: ['auto', 'local', 'max']
+    },
+    {
+      cat: 'agent',
+      label: 'Prefer Cloud Composer',
+      hint: 'When signed in, Agent mode may run built-in tools on Cloud (ignored when profile is Local)',
+      path: ['agent', 'routing', 'preferCloudComposer'],
+      type: 'boolean'
+    },
+    {
+      cat: 'agent',
       label: 'Fallback agent',
       hint: 'Used when routing is off or no keywords match',
       path: ['agent', 'routing', 'fallbackAgentId'],
@@ -161,7 +176,7 @@ export function settingFields(agentIds: string[]): SettingField[] {
     {
       cat: 'agent',
       label: 'Use LLM router',
-      hint: 'Ask routerModel to classify intent + agent (falls back to heuristics)',
+      hint: 'Ask routerModel to classify intent + agent (Auto/Max profiles enable this automatically)',
       path: ['agent', 'routing', 'useLlmRouter'],
       type: 'boolean'
     },
