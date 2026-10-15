@@ -9,19 +9,8 @@ import { join, relative, sep } from 'path'
 import { resolveInWorkspace, toWorkspaceRelative } from './workspace-fs'
 import { buildWorkspaceProcessEnv } from './workspace-env'
 import { cosine, hashEmbed } from './embeddings'
-import { loadCodeIndex } from './code-index'
-
-const SKIP_DIRS = new Set([
-  'node_modules',
-  '.git',
-  'out',
-  'dist',
-  'release',
-  '.eris',
-  'coverage',
-  '.next',
-  'build'
-])
+import { ensureCodeIndexAsync, loadCodeIndex } from './code-index'
+import { shouldSkipDir, shouldSkipWorkspacePath } from './workspace-ignore'
 
 const TEXT_EXT = new Set([
   '.ts',
@@ -156,10 +145,16 @@ function walkFiles(root: string, dir: string, out: string[], maxFiles: number): 
     } catch {
       continue
     }
+    const rel = relative(root, full).split(sep).join('/')
     if (st.isDirectory()) {
-      if (SKIP_DIRS.has(name) || name.startsWith('.')) continue
+      if (shouldSkipDir(root, name, rel)) continue
       walkFiles(root, full, out, maxFiles)
-    } else if (st.isFile() && st.size < 1_500_000 && isProbablyText(full)) {
+    } else if (
+      st.isFile() &&
+      st.size < 1_500_000 &&
+      isProbablyText(full) &&
+      !shouldSkipWorkspacePath(root, rel, false)
+    ) {
       out.push(full)
     }
   }
@@ -339,8 +334,9 @@ export function retrieveContext(
 }
 
 /**
- * Cooperative retrieve — yields to the event loop every N files so the UI stays responsive.
- * Short-TTL cache avoids repeat walks for the same query.
+ * Repo-scale retrieve: rank from the code index (path + symbols + embeddings) first,
+ * then read only the top candidates for snippets. Falls back to a bounded walk when
+ * the index is cold. Short-TTL cache avoids repeat work for the same query.
  */
 export async function retrieveContextAsync(
   workspacePath: string,
@@ -355,7 +351,7 @@ export async function retrieveContextAsync(
     .toLowerCase()
     .split(/[^a-z0-9_./-]+/)
     .filter((t) => t.length > 2)
-    .slice(0, 12)
+    .slice(0, 16)
   if (terms.length === 0) {
     return { ok: true, detail: '(no retrieval terms)', paths: [] }
   }
@@ -363,38 +359,80 @@ export async function retrieveContextAsync(
     return { ok: false, detail: 'Workspace missing', paths: [] }
   }
 
-  const files: string[] = []
-  walkFiles(workspacePath, workspacePath, files, 5000)
+  const index = await ensureCodeIndexAsync(workspacePath).catch(() => loadCodeIndex(workspacePath))
   const queryVec = hashEmbed(query)
-  const scored: Array<{ path: string; score: number; snippet: string }> = []
-  for (let i = 0; i < files.length; i++) {
-    if (i > 0 && i % 80 === 0) await yieldEventLoop()
-    const abs = files[i]!
-    const rel = toWorkspaceRelative(workspacePath, abs)
-    let score = 0
-    const lowerPath = rel.toLowerCase()
-    for (const t of terms) {
-      if (lowerPath.includes(t)) score += 5
+  const scored = new Map<string, number>()
+
+  if (index && index.files.length > 0) {
+    for (let i = 0; i < index.files.length; i++) {
+      if (i > 0 && i % 200 === 0) await yieldEventLoop()
+      const rel = index.files[i]!
+      let score = 0
+      const lowerPath = rel.toLowerCase()
+      for (const t of terms) {
+        if (lowerPath.includes(t)) score += 6
+        if (lowerPath.split('/').pop()?.includes(t)) score += 3
+      }
+      const embedding = index.embeddings?.[rel]
+      if (queryVec && embedding) score += cosine(queryVec, embedding) * 18
+      if (score > 0) scored.set(rel, (scored.get(rel) ?? 0) + score)
     }
-    let content = ''
+    // Symbol name hits are strong signals for “where is X?”
+    for (let i = 0; i < index.symbols.length; i++) {
+      if (i > 0 && i % 400 === 0) await yieldEventLoop()
+      const s = index.symbols[i]!
+      const name = s.name.toLowerCase()
+      let bump = 0
+      for (const t of terms) {
+        if (name === t) bump += 14
+        else if (name.includes(t)) bump += 7
+      }
+      if (bump) scored.set(s.path, (scored.get(s.path) ?? 0) + bump)
+    }
+  }
+
+  // If the index is thin, supplement with a bounded content walk.
+  if (scored.size < maxFiles * 2) {
+    const files: string[] = []
+    walkFiles(workspacePath, workspacePath, files, 4000)
+    for (let i = 0; i < files.length; i++) {
+      if (i > 0 && i % 80 === 0) await yieldEventLoop()
+      const abs = files[i]!
+      const rel = toWorkspaceRelative(workspacePath, abs)
+      if (scored.has(rel) && (scored.get(rel) ?? 0) > 20) continue
+      let score = scored.get(rel) ?? 0
+      const lowerPath = rel.toLowerCase()
+      for (const t of terms) {
+        if (lowerPath.includes(t)) score += 5
+      }
+      let content = ''
+      try {
+        content = readFileSync(abs, 'utf8').slice(0, 6000)
+      } catch {
+        continue
+      }
+      const lower = content.toLowerCase()
+      for (const t of terms) {
+        score += Math.min(8, lower.split(t).length - 1)
+      }
+      if (score > 0) scored.set(rel, score)
+    }
+  }
+
+  const ranked = [...scored.entries()].sort((a, b) => b[1] - a[1]).slice(0, Math.max(maxFiles * 3, 24))
+  const top: Array<{ path: string; score: number; snippet: string }> = []
+  for (const [rel, score] of ranked) {
+    if (top.length >= maxFiles) break
+    const abs = join(workspacePath, ...rel.split('/'))
+    let snippet = ''
     try {
-      content = readFileSync(abs, 'utf8').slice(0, 8000)
+      snippet = readFileSync(abs, 'utf8').split('\n').slice(0, 8).join('\n').slice(0, 400)
     } catch {
       continue
     }
-    const lower = content.toLowerCase()
-    for (const t of terms) {
-      const count = lower.split(t).length - 1
-      score += Math.min(8, count)
-    }
-    const embedding = loadCodeIndex(workspacePath)?.embeddings?.[rel]
-    if (queryVec && embedding) score += cosine(queryVec, embedding) * 12
-    if (score <= 0) continue
-    const snippet = content.split('\n').slice(0, 8).join('\n').slice(0, 400)
-    scored.push({ path: rel, score, snippet })
+    top.push({ path: rel, score, snippet })
   }
-  scored.sort((a, b) => b.score - a.score)
-  const top = scored.slice(0, maxFiles)
+
   const detail = top
     .map((t) => `### ${t.path} (score ${t.score.toFixed(1)})\n${t.snippet}`)
     .join('\n\n')

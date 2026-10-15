@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.42 — 2026-10-15
+
+- Checkpointed agent sessions: after each tool batch, persist step state under `.eris/sessions/` (worker transcript + file op boundary). Resume continues from the latest step; Rewind restores files and continues from a chosen step.
+- Repo-scale indexing: `.gitignore` / `.erisignore` respect, incremental index patches on file changes (up to 8k files), and index-first ranked retrieve (path + symbols + embeddings) for large monorepos.
+- Agents Inbox panel: background + Cloud jobs with enqueue, stop, merge, apply patches, diff, PR links, and open-in-chat.
+- Model routing polish: Auto / Local / Max profiles, Prefer Cloud Composer, LLM router on by default for Auto/Max, and clearer route chips (`Auto · Cloud · …`).
+
+## 0.2.41 — 2026-10-15
+
+- Sharper shared agent system prompt defaults for tool-first, path-citing behavior.
+
 ## 0.2.40 — 2026-10-15
 
 Cross-platform desktop builds (macOS + Windows) from the same version tag.

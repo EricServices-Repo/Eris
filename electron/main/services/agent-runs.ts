@@ -12,6 +12,8 @@ export interface AgentRunRecord {
   agentId: string
   mode: 'ask' | 'agent'
   checkpointId: string | null
+  /** Linked `.eris/sessions/{id}` for step resume / rewind. */
+  sessionId?: string | null
   status: AgentRunStatus
   step: number
   actionLog: string[]

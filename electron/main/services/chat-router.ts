@@ -302,6 +302,8 @@ function formatReason(parts: {
   chat: string
   tools: string
   escalateToFull: boolean
+  profile?: 'auto' | 'local' | 'max'
+  cloudPreferred?: boolean
 }): string {
   const chatShort = parts.chat.replace(/^builtin:/, '')
   const toolsShort = parts.tools.replace(/^builtin:/, '')
@@ -309,6 +311,9 @@ function formatReason(parts: {
     parts.escalateToFull || parts.chat !== parts.tools
       ? `${chatShort} → tools:${toolsShort}`
       : chatShort
+  const profileBit =
+    parts.profile === 'max' ? 'Max' : parts.profile === 'local' ? 'Local' : 'Auto'
+  const cloudBit = parts.cloudPreferred ? ' · Cloud' : ''
   const label: Record<TurnPlan['method'], string> = {
     manual: 'Manual',
     llm: 'LLM',
@@ -319,7 +324,7 @@ function formatReason(parts: {
     eval: 'Eval',
     telemetry: 'Usage'
   }
-  return `${label[parts.method]} → ${parts.agentName} · ${parts.intent} · ${modelBit}`
+  return `${profileBit}${cloudBit} · ${label[parts.method]} → ${parts.agentName} · ${parts.intent} · ${modelBit}`
 }
 
 async function llmRouteHint(options: {
@@ -449,10 +454,18 @@ export async function planChatTurn(options: {
   let method: TurnPlan['method'] = route.method
   let intent = heuristicIntent
 
+  const routingProfile = options.settings.agent.routing.profile ?? 'auto'
+  const preferCloudSetting = options.settings.agent.routing.preferCloudComposer !== false
+  // Auto/Max profiles turn on the LLM router even if the legacy toggle is off.
+  const wantLlmRouter =
+    options.settings.agent.routing.useLlmRouter ||
+    routingProfile === 'auto' ||
+    routingProfile === 'max'
+
   if (
     mode === 'agent' &&
     options.settings.agent.routing.enabled &&
-    options.settings.agent.routing.useLlmRouter &&
+    wantLlmRouter &&
     !options.context.manualAgentId
   ) {
     const agents = allAgentsFlat(options.workspacePath).filter((a) => a.enabled)
@@ -561,6 +574,15 @@ export async function planChatTurn(options: {
   })
 
   const requiresTools = toolPolicy !== 'none' && intentNeedsTools(intent)
+  const cloudPreferred =
+    mode === 'agent' &&
+    routingProfile !== 'local' &&
+    preferCloudSetting &&
+    (routingProfile === 'max' ||
+      requiresTools ||
+      intent === 'edit' ||
+      intent === 'review' ||
+      intent === 'run')
 
   return {
     intent,
@@ -570,24 +592,26 @@ export async function planChatTurn(options: {
     models: {
       chat: roles.chat,
       tools: roles.tools,
-      router: options.settings.agent.routing.useLlmRouter
-        ? options.settings.agent.routing.routerModel
-        : undefined
+      router: wantLlmRouter ? options.settings.agent.routing.routerModel : undefined
     },
     toolPolicy,
     requiresTools,
-    escalateToFull: roles.escalateToFull,
+    escalateToFull: roles.escalateToFull || (cloudPreferred && routingProfile === 'max'),
     reason: formatReason({
       method,
       agentName: agent.name,
       intent,
       chat: roles.chat,
       tools: roles.tools,
-      escalateToFull: roles.escalateToFull
+      escalateToFull: roles.escalateToFull,
+      profile: routingProfile,
+      cloudPreferred
     }),
     method,
     classifiedIntent,
-    error: roles.error
+    error: roles.error,
+    routingProfile,
+    cloudPreferred
   }
 }
 

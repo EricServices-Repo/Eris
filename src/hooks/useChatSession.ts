@@ -113,6 +113,9 @@ export function useChatSession({
     summary?: string
   } | null>(null)
   const [resumableRun, setResumableRun] = useState<AgentRunSummary | null>(null)
+  const [liveSessionSteps, setLiveSessionSteps] = useState<
+    Array<{ step: number; summary: string; opThrough: number }>
+  >([])
   const lastTurnRef = useRef<{ text: string; intent: ChatIntent; agentId: string } | null>(null)
   const [chatMode, setChatMode] = useState<ChatMode>('agent')
   const [messageQueue, setMessageQueue] = useState<QueuedChatMessage[]>([])
@@ -185,6 +188,8 @@ export function useChatSession({
       opts?: {
         forceRoute?: 'tools' | 'answer'
         resumeRunId?: string
+        /** Rewind session files + worker state to this step before continuing. */
+        resumeSessionStep?: number
         /** Use this thread instead of activeThread (reroute trims the last turn first) */
         thread?: ChatThread
       }
@@ -201,6 +206,7 @@ export function useChatSession({
       setAnswerBuffer('')
       setToolActivity([])
       setPendingQuestion(null)
+      setLiveSessionSteps([])
       // Paint Working immediately — don't wait on status/plan probes for first UI feedback.
       setAgentStatus('Working…')
       setStreaming(true)
@@ -388,7 +394,8 @@ export function useChatSession({
                 : { path: f.path, name: f.name }
             }),
             history: history.map((m) => ({ role: m.role, content: m.content })),
-            resumeRunId: opts?.resumeRunId
+            resumeRunId: opts?.resumeRunId,
+            resumeSessionStep: opts?.resumeSessionStep
           }
         })
         if (!ok && requestIdRef.current === requestId) {
@@ -466,16 +473,22 @@ export function useChatSession({
     if (!streaming) void refreshResumable()
   }, [streaming, refreshResumable])
 
-  const resumeLastRun = useCallback(async () => {
-    const run = resumableRun
-    if (!run || streaming) return
-    setResumableRun(null)
-    setChatMode('agent')
-    await sendMessage(`Resume: ${run.goal}`, [], [], {
-      forceRoute: 'tools',
-      resumeRunId: run.id
-    })
-  }, [resumableRun, sendMessage, streaming])
+  const resumeLastRun = useCallback(
+    async (fromStep?: number) => {
+      const run = resumableRun
+      if (!run || streaming) return
+      setResumableRun(null)
+      setChatMode('agent')
+      const stepLabel =
+        typeof fromStep === 'number' ? ` from step ${fromStep}` : ''
+      await sendMessage(`Resume${stepLabel}: ${run.goal}`, [], [], {
+        forceRoute: 'tools',
+        resumeRunId: run.id,
+        resumeSessionStep: fromStep
+      })
+    },
+    [resumableRun, sendMessage, streaming]
+  )
 
   // When the active reply finishes, send the next queued message (FIFO, max 3).
   const wasStreamingRef = useRef(false)
@@ -557,6 +570,16 @@ export function useChatSession({
       if (requestId !== requestIdRef.current) return
       setActiveCheckpointId(checkpointId)
     })
+    const offSessionStep = window.ide.onChatSessionStep(
+      ({ requestId, step, summary, opThrough }) => {
+        if (requestId !== requestIdRef.current) return
+        setLiveSessionSteps((prev) => {
+          const next = prev.filter((s) => s.step !== step)
+          next.push({ step, summary, opThrough })
+          return next.sort((a, b) => a.step - b.step)
+        })
+      }
+    )
     const offTerminal = window.ide.onChatTerminal(({ requestId, text }) => {
       if (requestId !== requestIdRef.current) return
       setRightCollapsed(false)
@@ -740,6 +763,7 @@ export function useChatSession({
       offTool()
       offDiff()
       offCheckpoint()
+      offSessionStep()
       offTerminal()
       offWorkspaceChanged()
       offStatus()
@@ -796,6 +820,7 @@ export function useChatSession({
     setMemoryNotice,
     resumableRun,
     setResumableRun,
+    liveSessionSteps,
     chatMode,
     setChatMode,
     messageQueue,
