@@ -21,6 +21,7 @@ import {
 import { UpdateBanner } from '@/layout/UpdateBanner'
 import { useColumnWidths } from '@/layout/useColumnResize'
 import type { UpdateStatusSnapshot, UsageEntitlement } from '@/shared/api'
+import { meterAgainstLimit, previewPlanLabel } from '@/shared/eris-plan'
 
 /** Keep in sync with ChatPanel.MAX_QUEUED_MESSAGES (avoid eager ChatPanel import). */
 const MAX_QUEUED_MESSAGES = 3
@@ -134,7 +135,45 @@ export default function App() {
   }, [settings?.editor.chatFont])
 
   useEffect(() => {
+    if (!settings?.ericServices) return
+    setEntitlement((prev) => {
+      if (prev) return prev
+      const preview = previewPlanLabel(settings.ericServices.plan, settings.ericServices.linked)
+      const open = meterAgainstLimit(0, null)
+      return {
+        plan: preview.plan,
+        planLabel: preview.planLabel,
+        authenticated: Boolean(settings.ericServices.linked),
+        limits: preview.limits,
+        requests: open,
+        tokens: open,
+        cloudJobs: meterAgainstLimit(0, preview.limits.cloudJobsPerDay),
+        overLimit: false,
+        blockedReason: null,
+        upgradeUrl: '',
+        accountUrl: '',
+        profileSynced: false
+      }
+    })
+  }, [settings?.ericServices])
+
+  useEffect(() => {
+    if (!bootReady) return
     let cancelled = false
+    const applyAccount = async (live: boolean) => {
+      try {
+        const [acct, usage] = await Promise.all([
+          window.ide.ericServicesStatus(live ? undefined : { cached: true }),
+          window.ide.getUsageStats(1, { refresh: live })
+        ])
+        if (cancelled) return
+        setAccountNeedsReauth(Boolean(acct.needsReauth))
+        setAccountStatusError(acct.error || null)
+        if (usage.entitlement) setEntitlement(usage.entitlement)
+      } catch {
+        // non-fatal
+      }
+    }
     const tickCloud = async () => {
       try {
         const health = await window.ide.cloudAgentsHealth()
@@ -155,34 +194,18 @@ export default function App() {
         }
       }
     }
-    const tickAccountUsage = async () => {
-      try {
-        const [acct, usage] = await Promise.all([
-          window.ide.ericServicesStatus(),
-          window.ide.getUsageStats(1)
-        ])
-        if (cancelled) return
-        setAccountNeedsReauth(Boolean(acct.needsReauth))
-        setAccountStatusError(acct.error || null)
-        setEntitlement(usage.entitlement ?? null)
-      } catch {
-        // non-fatal
-      }
-    }
-    // Defer probes so they never race boot IPC / first paint.
-    const startId = window.setTimeout(() => {
-      void tickCloud()
-      void tickAccountUsage()
-    }, 2_500)
+    void applyAccount(false).finally(() => {
+      void applyAccount(true)
+    })
+    void tickCloud()
     const cloudId = window.setInterval(() => void tickCloud(), 15_000)
-    const usageId = window.setInterval(() => void tickAccountUsage(), 30_000)
+    const usageId = window.setInterval(() => void applyAccount(true), 30_000)
     return () => {
       cancelled = true
-      window.clearTimeout(startId)
       window.clearInterval(cloudId)
       window.clearInterval(usageId)
     }
-  }, [settings?.ericServices?.linked, settings?.ericServices?.plan])
+  }, [bootReady, settings?.ericServices?.linked, settings?.ericServices?.plan])
 
   // Prefetch Settings chunk after boot so first open isn't a blank wait on the JS chunk.
   useEffect(() => {

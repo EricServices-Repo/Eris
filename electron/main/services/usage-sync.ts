@@ -1,5 +1,8 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { join } from 'path'
 import { ericServicesTokenRef, normalizeApiBase } from './ericservices'
 import { getResolvedSettings } from './settings'
+import { userDataRoot } from './paths'
 import { appState } from '../app-state'
 import { getSecret } from '../ipc/shared'
 import { logWarn } from './logger'
@@ -15,6 +18,7 @@ export type RemoteUsageDay = DayUsageTotals & {
 }
 
 let remoteCache: RemoteUsageDay | null = null
+let remoteDiskLoaded = false
 let pendingDelta: DayUsageTotals = {
   requests: 0,
   inputTokens: 0,
@@ -65,12 +69,55 @@ function authContext(): { apiBase: string; token: string } | null {
   }
 }
 
+function usageCachePath(): string {
+  return join(userDataRoot(), 'usage-remote.json')
+}
+
+function loadRemoteUsageDisk(): RemoteUsageDay | null {
+  try {
+    const path = usageCachePath()
+    if (!existsSync(path)) return null
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as RemoteUsageDay
+    if (!parsed || typeof parsed.day !== 'string') return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function saveRemoteUsageDisk(day: RemoteUsageDay): void {
+  try {
+    mkdirSync(userDataRoot(), { recursive: true })
+    writeFileSync(usageCachePath(), JSON.stringify(day), 'utf8')
+  } catch {
+    /* best-effort */
+  }
+}
+
+function rememberRemoteUsage(day: RemoteUsageDay): void {
+  remoteDiskLoaded = true
+  remoteCache = day
+  saveRemoteUsageDisk(day)
+  applyRemoteDayUsage(day)
+}
+
+function ensureRemoteDisk(): void {
+  if (remoteDiskLoaded) return
+  remoteDiskLoaded = true
+  try {
+    if (!remoteCache) remoteCache = loadRemoteUsageDisk()
+  } catch {
+    /* app path not ready */
+  }
+}
+
 function usageUrl(apiBase: string, query?: string): string {
   const root = `${normalizeApiBase(apiBase)}/api/eris/v1/usage.php`
   return query ? `${root}?${query}` : root
 }
 
 export function getRemoteUsageCache(): RemoteUsageDay | null {
+  ensureRemoteDisk()
   if (!remoteCache) return null
   if (remoteCache.day !== todayKey()) return null
   return remoteCache
@@ -168,15 +215,14 @@ export async function flushUsageDelta(): Promise<void> {
       return
     }
     if (data.usage && data.day) {
-      remoteCache = {
+      rememberRemoteUsage({
         day: data.day,
         requests: Number(data.usage.requests) || 0,
         inputTokens: Number(data.usage.inputTokens) || 0,
         outputTokens: Number(data.usage.outputTokens) || 0,
         cloudJobs: Number(data.usage.cloudJobs) || 0,
         updatedAt: data.usage.updatedAt
-      }
-      applyRemoteDayUsage(remoteCache)
+      })
     }
   } catch (err) {
     pendingDelta.requests += delta.requests
@@ -229,15 +275,14 @@ export async function pullUsageFromProfile(): Promise<RemoteUsageDay | null> {
       }
       return null
     }
-    remoteCache = {
+    rememberRemoteUsage({
       day: data.day,
       requests: Number(data.usage.requests) || 0,
       inputTokens: Number(data.usage.inputTokens) || 0,
       outputTokens: Number(data.usage.outputTokens) || 0,
       cloudJobs: Number(data.usage.cloudJobs) || 0,
       updatedAt: data.usage.updatedAt
-    }
-    applyRemoteDayUsage(remoteCache)
+    })
     lastSyncedAt = new Date().toISOString()
     lastSyncError = null
     syncState = 'ok'

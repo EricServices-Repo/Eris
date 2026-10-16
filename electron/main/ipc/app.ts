@@ -75,15 +75,17 @@ export function registerAppIpc(): void {
     return getTelemetrySummaries()
   })
 
-  ipcMain.handle('usage:get', async (_e, days?: number) => {
+  ipcMain.handle('usage:get', async (_e, days?: number, opts?: { refresh?: boolean }) => {
     const settings = getResolvedSettings(appState.currentWorkspace)
     const { pullUsageFromProfile, getUsageSyncMeta, getRemoteUsageCache, getEffectiveTodayTotals } =
       await import('../services/usage-sync')
     const { getLocalDayTotals } = await import('../services/usage-stats')
-    try {
-      await pullUsageFromProfile()
-    } catch {
-      /* offline / unsigned */
+    if (opts?.refresh !== false) {
+      try {
+        await pullUsageFromProfile()
+      } catch {
+        /* offline / unsigned */
+      }
     }
     const snap = getUsageSnapshot(days ?? 7)
     const day = snap.today.date

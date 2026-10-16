@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.41 — 2026-10-16
+
+- Boot shows the saved account plan immediately, then refreshes EricServic.es and usage in the background.
+- Goal check before DONE: reject premature “Finished” when edits failed, only tiny stubs were written, or a packaged app was requested but never produced.
+
+## 0.2.40 — 2026-10-15
+
+- Agent mode keeps workspace tools for launch/make-it-work asks; Fast can read the repo (no more invented Finder/Xcode steps).
+
 ## 0.2.39 — 2026-10-14
 
 - Living project memory: agent runs and ask_user replies update `.eris/context.md` (auto/ask/off); chat chip + undo.

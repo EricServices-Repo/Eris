@@ -96,11 +96,13 @@ export function StatusBar({
   const cloudTitle = `${cloudAgentsStatusLabel(cloudHealth)}\n${CLOUD_AGENTS_BASE_URL} (plain HTTP)\nOpen Settings → Agent for metrics`
   const models = modelsLight(composerReady, modelsOk)
 
-  let cloudLabel = 'Local agents'
-  if (accountNeedsReauth) cloudLabel = 'Re-auth'
-  else if (cloudHealth?.authenticated !== true) cloudLabel = 'Sign in'
+  let cloudLabel = 'Checking…'
+  if (!cloudHealth) cloudLabel = 'Checking…'
+  else if (accountNeedsReauth) cloudLabel = 'Re-auth'
+  else if (cloudHealth.authenticated !== true) cloudLabel = 'Sign in'
   else if (cloudReady) cloudLabel = 'Cloud'
   else if (preferCloud) cloudLabel = 'Cloud…'
+  else cloudLabel = 'Local agents'
 
   return (
     <footer className="status-bar">

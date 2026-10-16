@@ -20,13 +20,13 @@ import { appState } from '../app-state'
 import { getSecret, storeSecret } from './shared'
 
 export function registerEricServicesIpc(): void {
-  ipcMain.handle('ericServices:status', async () => {
+  ipcMain.handle('ericServices:status', async (_e, opts?: { cached?: boolean }) => {
     const settings = getResolvedSettings(appState.currentWorkspace)
     const token = settings.ericServices.tokenRef
       ? getSecret(settings.ericServices.tokenRef)
       : null
     const base = buildEricServicesStatus(settings, Boolean(token))
-    if (!token || !settings.ericServices.linked) return base
+    if (opts?.cached || !token || !settings.ericServices.linked) return base
     const me = await ericServicesFetchMe(settings.ericServices.apiBase, token)
     if (!me.ok) {
       const needsReauth = isEricServicesAuthFailure(me.error, me.status)

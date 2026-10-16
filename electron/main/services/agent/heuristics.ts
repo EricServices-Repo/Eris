@@ -203,3 +203,125 @@ export function toolFingerprint(calls: ToolCall[]): string {
     })
     .join('|')
 }
+
+/** User asked for a packaged / native / installable app artifact. */
+export function goalWantsPackagedApp(goal: string): boolean {
+  const t = goal.toLowerCase()
+  return (
+    /\.app\b/.test(t) ||
+    /\b(dmg|pkg|notar|electron-builder|xcodebuild|xcode)\b/.test(t) ||
+    /\b(macos|mac\s*os|osx)\b[\s\S]{0,40}\b(app|application)\b/.test(t) ||
+    /\bbuild\b[\s\S]{0,40}\b(calculator\.app|[\w-]+\.app)\b/.test(t)
+  )
+}
+
+/** Successful build / package signal in the action log. */
+export function actionLogHasBuildSuccess(actions: string[]): boolean {
+  return actions.some((a) =>
+    /\b(verify passed|build (ok|passed|succeeded)|xcodebuild|electron-builder|npm run (dist|build|package)|dist:mac|created .*\.app)\b/i.test(
+      a
+    )
+  )
+}
+
+/**
+ * True when the latest mutating tool attempt failed (no successful write after it).
+ * Example: Failed search_replace as the last edit → do not accept DONE.
+ */
+export function trailingMutationFailed(actions: string[]): boolean {
+  const mut = actions.filter(
+    (a) =>
+      /^Failed\b/i.test(a) ||
+      /\b(Wrote |Created |Updated |Patched )\b/i.test(a) ||
+      /\b(search_replace|write_file|apply_patch|mkdir)\b/i.test(a)
+  )
+  if (mut.length === 0) return false
+  let lastFail = -1
+  for (let i = 0; i < mut.length; i++) {
+    if (/^Failed\b/i.test(mut[i]!)) lastFail = i
+  }
+  if (lastFail < 0) return false
+  return !mut.slice(lastFail + 1).some((a) => !/^Failed\b/i.test(a))
+}
+
+export type GoalAssessment = {
+  unmet: boolean
+  reason: string
+}
+
+/**
+ * Cheap pre-DONE gate: reject victory laps when tools failed, stubs were written,
+ * or a packaged .app was requested but never built.
+ */
+export function assessGoalCompletion(opts: {
+  goal: string
+  assistantText: string
+  actionLog: string[]
+  filesTouched: string[]
+  codeMutated: boolean
+  reviewOnly: boolean
+  /** True when every touched product file is tiny (caller measures on disk). */
+  onlyTinyStubs?: boolean
+  verifyPassed?: boolean
+}): GoalAssessment {
+  const {
+    goal,
+    assistantText,
+    actionLog,
+    filesTouched,
+    codeMutated,
+    reviewOnly,
+    onlyTinyStubs = false,
+    verifyPassed = false
+  } = opts
+
+  if (reviewOnly) return { unmet: false, reason: '' }
+  if (!looksLikeTaskComplete(assistantText) && !/\bfinished\b/i.test(assistantText)) {
+    // Loop only calls this when about to accept DONE; still allow check.
+  }
+
+  if (trailingMutationFailed(actionLog)) {
+    return {
+      unmet: true,
+      reason:
+        'Recent write/search_replace tools failed. Fix those edits (or use write_file) before finishing.'
+    }
+  }
+
+  if (goalWantsPackagedApp(goal)) {
+    const hasAppPath = filesTouched.some((f) => /\.app(\/|$)/i.test(f))
+    if (!hasAppPath && !actionLogHasBuildSuccess(actionLog) && !verifyPassed) {
+      return {
+        unmet: true,
+        reason:
+          'User asked for a packaged .app / macOS build. Run the real build (xcodebuild, electron-builder, npm run dist:mac, etc.) or produce the .app — do not finish after a tiny source stub.'
+      }
+    }
+  }
+
+  if (codeMutated && onlyTinyStubs && filesTouched.length > 0) {
+    const ambitious =
+      /\b(build|create|implement|scaffold|app|application|calculator|project)\b/i.test(goal)
+    if (ambitious) {
+      return {
+        unmet: true,
+        reason:
+          'Only tiny stub files were written. Implement a real working solution for the user request before DONE.'
+      }
+    }
+  }
+
+  // Claimed finished but never mutated on an edit-shaped goal
+  if (
+    !codeMutated &&
+    /\b(build|create|implement|fix|add|scaffold|make)\b/i.test(goal) &&
+    looksLikeTaskComplete(assistantText)
+  ) {
+    return {
+      unmet: true,
+      reason: 'No product files were changed. Use write_file / search_replace to implement the request.'
+    }
+  }
+
+  return { unmet: false, reason: '' }
+}

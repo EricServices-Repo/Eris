@@ -137,7 +137,7 @@ const api: IdeApi = {
   githubListPullRequests: () => ipcRenderer.invoke('github:listPullRequests'),
   githubCreatePullRequest: (payload) => ipcRenderer.invoke('github:createPullRequest', payload),
   onWorkspaceFsChanged: (cb) => subscribe('workspace:fs-changed', cb),
-  ericServicesStatus: () => ipcRenderer.invoke('ericServices:status'),
+  ericServicesStatus: (opts) => ipcRenderer.invoke('ericServices:status', opts),
   ericServicesLogin: (payload) => ipcRenderer.invoke('ericServices:login', payload),
   ericServicesLogout: () => ipcRenderer.invoke('ericServices:logout'),
   ericServicesSync: (direction) => ipcRenderer.invoke('ericServices:sync', direction),
@@ -219,7 +219,7 @@ const api: IdeApi = {
   confirmProjectMemory: (proposal) => ipcRenderer.invoke('context:confirmMemory', proposal),
   onChatMemoryUpdated: (cb) => subscribe('chat:memory-updated', cb),
   onChatMemoryProposal: (cb) => subscribe('chat:memory-proposal', cb),
-  getUsageStats: (days) => ipcRenderer.invoke('usage:get', days),
+  getUsageStats: (days, opts) => ipcRenderer.invoke('usage:get', days, opts),
   clearUsageStats: (payload) => ipcRenderer.invoke('usage:clear', payload),
   onMenu: (channel, cb) => {
     const listener = () => cb()

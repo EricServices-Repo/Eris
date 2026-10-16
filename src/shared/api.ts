@@ -515,7 +515,8 @@ export interface IdeApi {
   onWorkspaceFsChanged: (
     cb: (payload: { workspacePath: string; path: string }) => void
   ) => () => void
-  ericServicesStatus: () => Promise<{
+  ericServicesStatus: (opts?: { cached?: boolean }) =>
+    Promise<{
     ok: boolean
     error?: string
     linked: boolean
@@ -949,7 +950,7 @@ export interface IdeApi {
       preview: string
     }) => void
   ) => () => void
-  getUsageStats: (days?: number) => Promise<UsageSnapshot>
+  getUsageStats: (days?: number, opts?: { refresh?: boolean }) => Promise<UsageSnapshot>
   clearUsageStats: (payload?: { todayOnly?: boolean }) => Promise<UsageSnapshot>
   onMenu: (channel: string, cb: () => void) => () => void
   getLogsInfo: () => Promise<{

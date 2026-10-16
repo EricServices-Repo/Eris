@@ -44,6 +44,7 @@ import {
 } from './compaction'
 import { executeTool } from './execute-tool'
 import {
+  assessGoalCompletion,
   isReviewOnlyGoal,
   looksLikeAsksForWorkspaceInfo,
   looksLikeClarifyingQuestion,
@@ -77,6 +78,10 @@ const MAX_AGENT_STEPS = 48
 const MAX_VERIFY_FAILURES = 3
 /** Mid-loop verify cadence (final verify still runs once before DONE). */
 const VERIFY_EVERY_N_MUTATIONS = 8
+/** How many times we reject a premature DONE before stopping as incomplete. */
+const MAX_GOAL_REJECTS = 3
+/** Product files at or below this size count as stubs for goal checks. */
+const STUB_FILE_MAX_BYTES = 250
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
@@ -347,10 +352,29 @@ export async function* runAgentWithWorkspaceTools(options: {
   let verifyFailures = 0
   let mutationsSinceVerify = 0
   let consecutiveToolErrors = 0
+  let goalRejectCount = 0
+  let verifyPassedOnce = false
   let escalateCount = plan.escalateToFull ? 1 : 0
   let rerouteCount = 0
   const reviewOnly = plan.intent === 'review' || isReviewOnlyGoal(originalUserGoal)
   let promptBudget = contextBudgetTokens(options.settings, workerModel)
+
+  const productFilesAreTinyStubs = (): boolean => {
+    const product = [...new Set(filesTouched)].filter((p) => pathNeedsProjectVerify(p))
+    if (product.length === 0) return false
+    let seen = 0
+    for (const rel of product.slice(-12)) {
+      try {
+        const abs = resolveInWorkspace(workspacePath, rel)
+        if (!existsSync(abs) || statSync(abs).isDirectory()) continue
+        seen++
+        if (statSync(abs).size >= STUB_FILE_MAX_BYTES) return false
+      } catch {
+        /* ignore */
+      }
+    }
+    return seen > 0
+  }
   // #4 grammar-constrained local tool calls: when a retry needs a tool and the
   // worker is the built-in GGUF model, force valid tool-call JSON via a grammar.
   const localConstrainEnabled = options.settings.agent.constrainLocalToolCalls !== false
@@ -811,6 +835,60 @@ export async function* runAgentWithWorkspaceTools(options: {
           })
           continue
         }
+        if (!finalVerify.skipped && finalVerify.ok) {
+          verifyPassedOnce = true
+          actionLog.push(`Verify passed: ${finalVerify.command}`)
+        }
+      }
+
+      // Reject premature DONE (failed edits, tiny stubs, missing .app build).
+      const goalCheck = assessGoalCompletion({
+        goal: originalUserGoal,
+        assistantText,
+        actionLog,
+        filesTouched,
+        codeMutated,
+        reviewOnly,
+        onlyTinyStubs: productFilesAreTinyStubs(),
+        verifyPassed: verifyPassedOnce
+      })
+      if (goalCheck.unmet) {
+        goalRejectCount++
+        constrainNextToolCall = true
+        yield {
+          type: 'thinking',
+          text: `\n\n— Goal check failed (${goalRejectCount}/${MAX_GOAL_REJECTS}): ${goalCheck.reason}\n`
+        }
+        if (goalRejectCount >= MAX_GOAL_REJECTS) {
+          const workerNote = stripToolBlocks(assistantText).trim()
+          const answer =
+            buildWorkSummary(originalUserGoal, actionLog, workerNote) +
+            `\n\nIncomplete: ${goalCheck.reason}`
+          yield {
+            type: 'progress',
+            step,
+            actionLog: [...actionLog],
+            filesTouched: [...filesTouched],
+            incomplete: true
+          }
+          yield { type: 'status', text: 'Incomplete' }
+          yield { type: 'answer', text: answer }
+          return
+        }
+        workerMessages.push({
+          role: 'assistant',
+          content: stripToolBlocks(assistantText).slice(0, 1200)
+        })
+        workerMessages.push({
+          role: 'user',
+          content:
+            `GOAL_CHECK_FAILED:\n${goalCheck.reason}\n\n` +
+            `You are NOT finished. Continue with tools (write_file / search_replace / run / verify) ` +
+            `until the original request is truly satisfied. Do not claim DONE yet.\n` +
+            `User request:\n${originalUserGoal.slice(0, 1500)}`
+        })
+        yield { type: 'status', text: `${plan.agentName} · goal unmet — continuing…` }
+        continue
       }
 
       // Deterministic summary — never unload Full to reload Lite just for a recap.
@@ -1766,6 +1844,7 @@ export async function* runAgentWithWorkspaceTools(options: {
             }
           } else {
             verifyFailures = 0
+            verifyPassedOnce = true
             actionLog.push(`Verify passed: ${verified.command}`)
           }
         }

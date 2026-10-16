@@ -119,3 +119,19 @@ export function meterAgainstLimit(used: number, limit: number | null): UsageLimi
   const ratio = limit <= 0 ? 1 : Math.min(1, used / limit)
   return { used, limit, remaining, ratio, exhausted: used >= limit }
 }
+
+/** Instant status-bar plan from saved settings — no network. */
+export function previewPlanLabel(plan: string | undefined, linked: boolean): {
+  plan: ErisPlanId
+  planLabel: string
+  limits: ErisPlanLimits
+  linked: boolean
+} {
+  const id = linked ? normalizeErisPlanId(plan) : 'free'
+  return {
+    plan: id,
+    planLabel: id === 'pro' ? 'Pro' : 'Free',
+    limits: id === 'pro' ? { ...PRO_PLAN_LIMITS } : { ...FREE_PLAN_LIMITS },
+    linked
+  }
+}
