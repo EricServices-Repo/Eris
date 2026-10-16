@@ -72,6 +72,9 @@ const DebugPanel = lazy(() =>
 const CodemapPanel = lazy(() =>
   import('@/features/codemap/CodemapPanel').then((m) => ({ default: m.CodemapPanel }))
 )
+const AgentsInboxPanel = lazy(() =>
+  import('@/features/agents/AgentsInboxPanel').then((m) => ({ default: m.AgentsInboxPanel }))
+)
 function flattenFiles(entries: FileEntry[], out: Array<{ path: string; name: string }> = []) {
   for (const e of entries) {
     if (e.isDirectory) {
@@ -317,6 +320,7 @@ export default function App() {
     memoryNotice,
     setMemoryNotice,
     resumableRun,
+    liveSessionSteps,
     setResumableRun,
     chatMode,
     setChatMode,
@@ -611,6 +615,14 @@ export default function App() {
         }
       },
       {
+        id: 'agents-inbox',
+        label: 'Open Agents Inbox',
+        run: () => {
+          setRightCollapsed(false)
+          setRightPanel('agents')
+        }
+      },
+      {
         id: 'verify',
         label: 'Run Verify (typecheck/tests)',
         run: () => {
@@ -902,7 +914,8 @@ export default function App() {
                   }}
                   onRerouteLast={(route) => void rerouteLast(route)}
                   resumableRun={resumableRun}
-                  onResumeRun={() => void resumeLastRun()}
+                  liveSessionSteps={liveSessionSteps}
+                  onResumeRun={(fromStep) => void resumeLastRun(fromStep)}
                   onDismissResume={() => {
                     if (resumableRun) void window.ide.dismissRun(resumableRun.id)
                     setResumableRun(null)
@@ -1011,6 +1024,16 @@ export default function App() {
                 >
                   ⌖
                 </button>
+                <button
+                  type="button"
+                  className={`icon-rail-btn${rightPanel === 'agents' ? ' active' : ''}`}
+                  title="Agents Inbox"
+                  aria-label="Agents Inbox"
+                  disabled={!workspacePath}
+                  onClick={() => showRightPanel('agents')}
+                >
+                  ✦
+                </button>
                 <div className="icon-rail-spacer" />
                 <button
                   type="button"
@@ -1080,6 +1103,15 @@ export default function App() {
                       onClick={() => setRightPanel('codemap')}
                     >
                       Codemap
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={rightPanel === 'agents'}
+                      className={`right-panel-tab ${rightPanel === 'agents' ? 'active' : ''}`}
+                      onClick={() => setRightPanel('agents')}
+                    >
+                      Agents
                     </button>
                   </>
                 ) : (
@@ -1165,6 +1197,18 @@ export default function App() {
                       showRightPanel('editor')
                     }}
                     onOpenSettings={(cat) => openSettings(cat)}
+                  />
+                </Suspense>
+              ) : rightPanel === 'agents' ? (
+                <Suspense fallback={<div className="editor-empty">Loading agents…</div>}>
+                  <AgentsInboxPanel
+                    onOpenPath={(path) => {
+                      void openFile(resolveWorkspacePath(path))
+                      showRightPanel('editor')
+                    }}
+                    onOpenChat={() => {
+                      /* chat is always visible on the left */
+                    }}
                   />
                 </Suspense>
               ) : (

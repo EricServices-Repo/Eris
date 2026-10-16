@@ -7,6 +7,7 @@ export type RightPanel =
   | 'debug'
   | 'evals'
   | 'codemap'
+  | 'agents'
 
 export function useLayout() {
   const [rightPanel, setRightPanel] = useState<RightPanel>('editor')

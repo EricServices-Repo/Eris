@@ -21,7 +21,7 @@
     ]
   },
   "agent": {
-    "systemPrompt": "You are working inside Eris, an AI desktop IDE, with the built-in Composer agent stack.\n\nBe concise, accurate, and practical. Prefer concrete file paths and symbols over vague advice. When Agent mode has workspace tools, use them instead of asking the user for project structure or pasted code. Match the project’s existing style. Never invent APIs or claim you changed files unless tools actually did.",
+    "systemPrompt": "You are an agent inside Eris, a desktop AI IDE. The open folder is a real workspace on disk; Agent mode may grant tools to read, search, edit, and run commands.\n\nShared rules (every role inherits these):\n- Be concise and accurate. Cite concrete file paths and symbols.\n- Discover and change the project with tools — do not ask the user for structure or to paste files already in the workspace.\n- Match existing style and conventions; prefer small, focused diffs.\n- Never invent APIs, file contents, or tool results. Only claim edits after tools succeed.\n- If blocked by a true product choice, ask once; otherwise decide and state the assumption.\n- Keep chat narration short; put effort into tools and code.",
     "includeOpenFiles": true,
     "maxHistoryMessages": 40,
     "autoKeepDiffs": false,
@@ -31,8 +31,10 @@
       "enabled": true,
       "mode": "auto",
       "routerModel": "builtin:composer-lite",
-      "useLlmRouter": false,
-      "fallbackAgentId": "composer"
+      "useLlmRouter": true,
+      "fallbackAgentId": "composer",
+      "profile": "auto",
+      "preferCloudComposer": true
     },
     "constrainLocalToolCalls": true,
     "projectMemory": "auto"

@@ -24,6 +24,16 @@ import {
   setAgentRunStatus,
   type AgentRunRecord
 } from '../services/agent-runs'
+import {
+  appendSessionStep,
+  createAgentSession,
+  listSessionSteps,
+  loadAgentSession,
+  loadSessionStep,
+  saveAgentSession,
+  setAgentSessionStatus
+} from '../services/agent-sessions'
+import { restoreCheckpointThrough } from '../services/checkpoints'
 import { runAgentWithWorkspaceTools } from '../services/agent-runner'
 import {
   configureBackgroundAgents,
@@ -84,6 +94,60 @@ export function registerChatStreamIpc(): void {
         : null
       const resume =
         resumeRun && resumeRun.id === payload.prompt?.resumeRunId ? resumeRun : null
+      let resumeLoop:
+        | {
+            goal: string
+            actionLog: string[]
+            filesTouched: string[]
+            workerMessages?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+            fromStep?: number
+          }
+        | undefined
+      if (resume && appState.currentWorkspace) {
+        resumeLoop = {
+          goal: resume.goal,
+          actionLog: resume.actionLog,
+          filesTouched: resume.filesTouched
+        }
+        const sessionId = resume.sessionId
+        if (sessionId && loadAgentSession(appState.currentWorkspace, sessionId)) {
+          const steps = listSessionSteps(appState.currentWorkspace, sessionId)
+          const wantStep =
+            typeof payload.prompt?.resumeSessionStep === 'number'
+              ? payload.prompt.resumeSessionStep
+              : steps.length
+                ? steps[steps.length - 1]!.step
+                : null
+          const stepRec =
+            wantStep != null
+              ? loadSessionStep(appState.currentWorkspace, sessionId, wantStep)
+              : null
+          if (stepRec) {
+            if (resume.checkpointId) {
+              try {
+                restoreCheckpointThrough(
+                  appState.currentWorkspace,
+                  resume.checkpointId,
+                  stepRec.opThrough
+                )
+              } catch (err) {
+                logWarn('Session rewind failed', {
+                  sessionId,
+                  step: stepRec.step,
+                  error: err instanceof Error ? err.message : String(err)
+                })
+              }
+            }
+            resumeLoop = {
+              goal: resume.goal,
+              actionLog: stepRec.actionLog,
+              filesTouched: stepRec.filesTouched,
+              workerMessages: stepRec.workerMessages,
+              fromStep: stepRec.step
+            }
+          }
+        }
+      }
       const messages = payload.prompt
         ? buildChatMessages(appState.currentWorkspace, settings, {
             ...payload.prompt,
@@ -170,6 +234,9 @@ export function registerChatStreamIpc(): void {
         if (!run || !appState.currentWorkspace) return
         run = { ...run, ...patch }
         saveAgentRun(appState.currentWorkspace, run)
+        if (run.sessionId && patch.status) {
+          setAgentSessionStatus(appState.currentWorkspace, run.sessionId, patch.status)
+        }
       }
       try {
         logInfo('Chat stream start', {
@@ -207,11 +274,16 @@ export function registerChatStreamIpc(): void {
         // (OpenAI, Anthropic, OpenRouter, Ollama, …), run it directly in the
         // local agent loop so BYO keys are first-class in Agent mode.
         const toolsModelIsBuiltin = isBuiltinRef(turnPlan.models.tools)
+        const cloudPreferred =
+          turnPlan.cloudPreferred !== false &&
+          (settings.agent.routing.profile ?? 'auto') !== 'local' &&
+          settings.agent.routing.preferCloudComposer !== false
         const wantCloudInline =
           (mode ?? 'agent') === 'agent' &&
           turnPlan.mode === 'agent' &&
           Boolean(appState.currentWorkspace) &&
           toolsModelIsBuiltin &&
+          cloudPreferred &&
           !resume
 
         if (wantCloudInline && (await cloudInlineAvailable(settings, getSecret))) {
@@ -327,13 +399,7 @@ export function registerChatStreamIpc(): void {
           mode: mode ?? 'agent',
           turnPlan,
           jobId: `chat:${requestId}`,
-          resume: resume
-            ? {
-                goal: resume.goal,
-                actionLog: resume.actionLog,
-                filesTouched: resume.filesTouched
-              }
-            : undefined,
+          resume: resumeLoop,
           onDelegate: async (req) => {
             if (!appState.currentWorkspace) {
               return { ok: false, detail: 'Open a workspace to delegate' }
@@ -483,6 +549,26 @@ export function registerChatStreamIpc(): void {
               })
               if (appState.currentWorkspace) {
                 const now = new Date().toISOString()
+                let sessionId = resume?.sessionId ?? null
+                if (sessionId && loadAgentSession(appState.currentWorkspace, sessionId)) {
+                  const existing = loadAgentSession(appState.currentWorkspace, sessionId)!
+                  saveAgentSession(appState.currentWorkspace, {
+                    ...existing,
+                    requestId,
+                    checkpointId: evt.checkpointId,
+                    status: 'running'
+                  })
+                } else {
+                  const session = createAgentSession(appState.currentWorkspace, {
+                    requestId,
+                    threadId,
+                    goal: userText,
+                    agentId: turnPlan.agentId,
+                    mode: mode ?? 'agent',
+                    checkpointId: evt.checkpointId
+                  })
+                  sessionId = session.id
+                }
                 run = {
                   id: resume?.id ?? requestId,
                   requestId,
@@ -490,15 +576,49 @@ export function registerChatStreamIpc(): void {
                   agentId: turnPlan.agentId,
                   mode: mode ?? 'agent',
                   checkpointId: evt.checkpointId,
+                  sessionId,
                   status: 'running',
-                  step: resume?.step ?? 0,
-                  actionLog: resume?.actionLog ?? [],
-                  filesTouched: resume?.filesTouched ?? [],
+                  step: resumeLoop?.fromStep ?? resume?.step ?? 0,
+                  actionLog: resumeLoop?.actionLog ?? resume?.actionLog ?? [],
+                  filesTouched: resumeLoop?.filesTouched ?? resume?.filesTouched ?? [],
                   startedAt: resume?.startedAt ?? now,
                   updatedAt: now
                 }
                 persistRun({})
+                event.sender.send('chat:session', {
+                  requestId,
+                  sessionId,
+                  checkpointId: evt.checkpointId
+                })
               }
+            } else if (evt.type === 'session-step') {
+              memoryFiles = [...new Set(evt.filesTouched)].slice(-200)
+              memoryActions = evt.actionLog.slice(-120)
+              telemetrySteps = evt.step
+              if (evt.filesTouched.length) telemetryMutated = true
+              if (run?.sessionId && appState.currentWorkspace) {
+                appendSessionStep(appState.currentWorkspace, run.sessionId, {
+                  step: evt.step,
+                  opThrough: evt.opThrough,
+                  summary: evt.summary,
+                  actionLog: evt.actionLog,
+                  filesTouched: evt.filesTouched,
+                  workerMessages: evt.workerMessages
+                })
+                event.sender.send('chat:session-step', {
+                  requestId,
+                  sessionId: run.sessionId,
+                  step: evt.step,
+                  summary: evt.summary,
+                  opThrough: evt.opThrough,
+                  filesTouched: evt.filesTouched
+                })
+              }
+              persistRun({
+                step: evt.step,
+                actionLog: memoryActions,
+                filesTouched: memoryFiles
+              })
             } else if (evt.type === 'progress') {
               if (evt.incomplete) runIncomplete = true
               telemetrySteps = evt.step
@@ -620,11 +740,42 @@ export function registerChatStreamIpc(): void {
     resolveUserQuestion(String(questionId), reply == null ? null : String(reply))
   )
 
-  ipcMain.handle('runs:resumable', () =>
-    loadResumableRun(appState.currentWorkspace, appState.chatStreamActive ? appState.activeChatRequestId : null)
+  ipcMain.handle('runs:resumable', () => {
+    const run = loadResumableRun(
+      appState.currentWorkspace,
+      appState.chatStreamActive ? appState.activeChatRequestId : null
+    )
+    if (!run) return null
+    const steps =
+      run.sessionId && appState.currentWorkspace
+        ? listSessionSteps(appState.currentWorkspace, run.sessionId)
+        : []
+    return {
+      id: run.id,
+      goal: run.goal,
+      agentId: run.agentId,
+      status: run.status,
+      step: run.step,
+      actionLog: run.actionLog,
+      updatedAt: run.updatedAt,
+      sessionId: run.sessionId ?? null,
+      checkpointId: run.checkpointId,
+      steps
+    }
+  })
+  ipcMain.handle('runs:dismiss', (_e, id: string) => {
+    const ok = setAgentRunStatus(appState.currentWorkspace, String(id), 'dismissed')
+    const run = loadLastAgentRun(appState.currentWorkspace)
+    if (run?.sessionId) {
+      setAgentSessionStatus(appState.currentWorkspace, run.sessionId, 'dismissed')
+    }
+    return ok
+  })
+  ipcMain.handle('sessions:listSteps', (_e, sessionId: string) =>
+    listSessionSteps(appState.currentWorkspace, String(sessionId))
   )
-  ipcMain.handle('runs:dismiss', (_e, id: string) =>
-    setAgentRunStatus(appState.currentWorkspace, String(id), 'dismissed')
+  ipcMain.handle('sessions:get', (_e, sessionId: string) =>
+    loadAgentSession(appState.currentWorkspace, String(sessionId))
   )
 
   ipcMain.handle('chat:stop', () => {

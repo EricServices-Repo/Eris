@@ -223,6 +223,32 @@ export function restoreCheckpointOp(
   return { restored: 1, path }
 }
 
+export function getCheckpointOpCount(workspacePath: string, id: string): number {
+  const record = loadCheckpoint(workspacePath, id)
+  return record?.ops.length ?? 0
+}
+
+/**
+ * Rewind the workspace to the state after `keepOps` recorded ops, then truncate
+ * the checkpoint log so later resume continues cleanly from that boundary.
+ */
+export function restoreCheckpointThrough(
+  workspacePath: string,
+  id: string,
+  keepOps: number
+): { restored: number; kept: number } {
+  const record = loadCheckpoint(workspacePath, id)
+  if (!record) throw new Error('Checkpoint not found')
+  const keep = Math.max(0, Math.min(keepOps, record.ops.length))
+  let restored = 0
+  for (let i = record.ops.length - 1; i >= keep; i--) {
+    if (applyReverseOp(workspacePath, record.ops[i]!)) restored++
+  }
+  record.ops = record.ops.slice(0, keep)
+  saveRecord(record)
+  return { restored, kept: keep }
+}
+
 export function listCheckpoints(workspacePath: string): Array<{ id: string; createdAt: number; opCount: number }> {
   const root = checkpointsRoot(workspacePath)
   if (!existsSync(root)) return []

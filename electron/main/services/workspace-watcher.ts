@@ -27,6 +27,7 @@ const NATIVE_IGNORE = [
   '.eris/cache',
   '.eris/checkpoints',
   '.eris/runs',
+  '.eris/sessions',
   '.eris/code-index.json',
   '**/.DS_Store',
   '**/*.tsbuildinfo'
@@ -40,7 +41,12 @@ export function shouldIgnoreErisRel(rel: string): boolean {
   const n = `/${rel.split('\\').join('/')}`
   if (!n.includes('/.eris/')) return false
   if (n.endsWith('/code-index.json')) return true
-  if (n.includes('/.eris/cache/') || n.includes('/.eris/checkpoints/') || n.includes('/.eris/runs/')) {
+  if (
+    n.includes('/.eris/cache/') ||
+    n.includes('/.eris/checkpoints/') ||
+    n.includes('/.eris/runs/') ||
+    n.includes('/.eris/sessions/')
+  ) {
     return true
   }
   return false
@@ -70,6 +76,8 @@ export function shouldIgnoreWorkspaceRel(rel: string): boolean {
 export type WorkspaceFsChangeHandler = (payload: {
   workspacePath: string
   path: string
+  /** Batched relative paths from the debounce window (preferred for index patch). */
+  paths?: string[]
   eventType: string
 }) => void
 
@@ -87,7 +95,8 @@ let parcelSub: ParcelSubscription | null = null
 let generation = 0
 let watchedPath: string | null = null
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
-let pending: { path: string; eventType: string } | null = null
+let pendingPaths = new Set<string>()
+let pendingEventType = 'change'
 let handler: WorkspaceFsChangeHandler | null = null
 const suppressed = new Map<string, number>()
 let parcel: ParcelWatcher | null | undefined
@@ -128,7 +137,7 @@ export function stopWorkspaceWatcher(): void {
     clearTimeout(debounceTimer)
     debounceTimer = null
   }
-  pending = null
+  pendingPaths.clear()
   if (fsWatcher) {
     try {
       fsWatcher.close()
@@ -150,14 +159,20 @@ function onRawEvent(root: string, absPath: string, eventType: string): void {
   const rel = relative(root, absPath).split(sep).join('/')
   if (!rel || rel.startsWith('..')) return
   if (shouldIgnoreWorkspaceRel(rel)) return
-  pending = { path: rel, eventType }
+  pendingPaths.add(rel)
+  pendingEventType = eventType
   if (debounceTimer) clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => {
     debounceTimer = null
-    const p = pending
-    pending = null
-    if (!p || !watchedPath || !handler) return
-    handler({ workspacePath: watchedPath, path: p.path, eventType: p.eventType })
+    if (!pendingPaths.size || !watchedPath || !handler) return
+    const paths = [...pendingPaths]
+    pendingPaths.clear()
+    handler({
+      workspacePath: watchedPath,
+      path: paths[0]!,
+      paths,
+      eventType: pendingEventType
+    })
   }, DEBOUNCE_MS)
 }
 

@@ -5,18 +5,11 @@ import { logInfo } from './logger'
 import { suppressWatcherFor } from './workspace-watcher'
 import { hashEmbed } from './embeddings'
 import { parseSymbolsAndRefs, treeSitterSupported } from './symbol-parse'
-
-const SKIP_DIRS = new Set([
-  'node_modules',
-  '.git',
-  'out',
-  'dist',
-  'release',
-  '.eris',
-  'coverage',
-  '.next',
-  'build'
-])
+import {
+  invalidateWorkspaceIgnoreCache,
+  shouldSkipDir,
+  shouldSkipWorkspacePath
+} from './workspace-ignore'
 
 export type SymbolHit = {
   name: string
@@ -31,6 +24,8 @@ export type SymbolRef = {
   line: number
 }
 
+type FileMeta = { mtimeMs: number; size: number }
+
 type IndexRecord = {
   updatedAt: number
   workspacePath: string
@@ -38,10 +33,14 @@ type IndexRecord = {
   files: string[]
   refs?: SymbolRef[]
   embeddings?: Record<string, number[]>
+  /** Per-file mtimes for incremental patching. */
+  fileMeta?: Record<string, FileMeta>
 }
 
 let memoryIndex: IndexRecord | null = null
 let rebuildInFlight: Promise<IndexRecord> | null = null
+let patchInFlight: Promise<IndexRecord> | null = null
+const pendingPatchRels = new Set<string>()
 
 const SYMBOL_RES: Array<{ kind: string; re: RegExp }> = [
   { kind: 'function', re: /(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_][\w]*)/g },
@@ -78,10 +77,15 @@ function walk(root: string, dir: string, files: string[], maxFiles: number): voi
     } catch {
       continue
     }
+    const rel = relative(root, full).split(sep).join('/')
     if (st.isDirectory()) {
-      if (SKIP_DIRS.has(name) || (name.startsWith('.') && name !== '.github')) continue
+      if (shouldSkipDir(root, name, rel)) continue
       walk(root, full, files, maxFiles)
-    } else if (/\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs)$/i.test(name) && st.size < 800_000) {
+    } else if (
+      /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs)$/i.test(name) &&
+      st.size < 800_000 &&
+      !shouldSkipWorkspacePath(root, rel, false)
+    ) {
       files.push(full)
     }
   }
@@ -143,16 +147,30 @@ function persistIndex(workspacePath: string, record: IndexRecord): IndexRecord {
   return record
 }
 
+function collectFileMeta(workspacePath: string, abs: string, rel: string): FileMeta | null {
+  try {
+    const st = statSync(abs)
+    return { mtimeMs: st.mtimeMs, size: st.size }
+  } catch {
+    void workspacePath
+    void rel
+    return null
+  }
+}
+
 export function buildCodeIndex(workspacePath: string): IndexRecord {
   const filesAbs: string[] = []
-  walk(workspacePath, workspacePath, filesAbs, 3000)
+  walk(workspacePath, workspacePath, filesAbs, 8000)
   const symbols: SymbolHit[] = []
   const files: string[] = []
   const refs: SymbolRef[] = []
   const embeddings: Record<string, number[]> = {}
+  const fileMeta: Record<string, FileMeta> = {}
   for (const abs of filesAbs) {
     const rel = relative(workspacePath, abs).split(sep).join('/')
     files.push(rel)
+    const meta = collectFileMeta(workspacePath, abs, rel)
+    if (meta) fileMeta[rel] = meta
     let content = ''
     try {
       content = readFileSync(abs, 'utf8')
@@ -169,36 +187,110 @@ export function buildCodeIndex(workspacePath: string): IndexRecord {
     symbols,
     files,
     refs,
-    embeddings
+    embeddings,
+    fileMeta
   })
 }
 
 /** Cooperative rebuild — yields every N files so IPC/UI stay responsive. */
 export async function buildCodeIndexAsync(workspacePath: string): Promise<IndexRecord> {
   const filesAbs: string[] = []
-  walk(workspacePath, workspacePath, filesAbs, 3000)
+  walk(workspacePath, workspacePath, filesAbs, 8000)
   const symbols: SymbolHit[] = []
   const files: string[] = []
   const refs: SymbolRef[] = []
   const embeddings: Record<string, number[]> = {}
+  const fileMeta: Record<string, FileMeta> = {}
   for (let fi = 0; fi < filesAbs.length; fi++) {
     if (fi > 0 && fi % 20 === 0) await yieldEventLoop()
-    const parsed = await indexFile(workspacePath, filesAbs[fi]!)
+    const abs = filesAbs[fi]!
+    const parsed = await indexFile(workspacePath, abs)
     files.push(parsed.rel)
     symbols.push(...parsed.symbols)
     refs.push(...parsed.refs)
     if (parsed.embedding.length) embeddings[parsed.rel] = parsed.embedding
-    if (symbols.length > 20_000) break
+    const meta = collectFileMeta(workspacePath, abs, parsed.rel)
+    if (meta) fileMeta[parsed.rel] = meta
+    if (symbols.length > 40_000) break
   }
   const record = persistIndex(workspacePath, {
     updatedAt: Date.now(),
     workspacePath,
     symbols,
     files,
-    refs: refs.slice(0, 80_000),
-    embeddings
+    refs: refs.slice(0, 120_000),
+    embeddings,
+    fileMeta
   })
   logInfo('Code index built (async)', { files: files.length, symbols: symbols.length, refs: refs.length })
+  return record
+}
+
+const INDEXABLE_RE = /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs)$/i
+
+/**
+ * Patch only the given relative paths into the existing index (incremental).
+ * Falls back to a full async rebuild when there is no base index.
+ */
+export async function patchCodeIndexFiles(
+  workspacePath: string,
+  relPaths: string[]
+): Promise<IndexRecord> {
+  const unique = [
+    ...new Set(
+      relPaths
+        .map((p) => p.split('\\').join('/').replace(/^\.\//, ''))
+        .filter(Boolean)
+    )
+  ]
+  if (unique.some((p) => p === '.gitignore' || p === '.erisignore' || p.endsWith('/.gitignore'))) {
+    invalidateWorkspaceIgnoreCache(workspacePath)
+  }
+
+  let base = loadCodeIndex(workspacePath)
+  if (!base || base.workspacePath !== workspacePath) {
+    return buildCodeIndexAsync(workspacePath)
+  }
+
+  const symbols = base.symbols.filter((s) => !unique.includes(s.path))
+  const refs = (base.refs ?? []).filter((r) => !unique.includes(r.path))
+  const embeddings = { ...(base.embeddings ?? {}) }
+  const fileMeta = { ...(base.fileMeta ?? {}) }
+  const fileSet = new Set(base.files)
+
+  for (const rel of unique) {
+    delete embeddings[rel]
+    delete fileMeta[rel]
+    fileSet.delete(rel)
+    if (shouldSkipWorkspacePath(workspacePath, rel, false)) continue
+    if (!INDEXABLE_RE.test(rel)) continue
+    const abs = join(workspacePath, ...rel.split('/'))
+    if (!existsSync(abs)) continue
+    let st
+    try {
+      st = statSync(abs)
+    } catch {
+      continue
+    }
+    if (!st.isFile() || st.size >= 800_000) continue
+    const parsed = await indexFile(workspacePath, abs)
+    fileSet.add(parsed.rel)
+    symbols.push(...parsed.symbols)
+    refs.push(...parsed.refs)
+    if (parsed.embedding.length) embeddings[parsed.rel] = parsed.embedding
+    fileMeta[parsed.rel] = { mtimeMs: st.mtimeMs, size: st.size }
+  }
+
+  const record = persistIndex(workspacePath, {
+    updatedAt: Date.now(),
+    workspacePath,
+    symbols: symbols.slice(0, 40_000),
+    files: [...fileSet],
+    refs: refs.slice(0, 120_000),
+    embeddings,
+    fileMeta
+  })
+  logInfo('Code index patched', { patched: unique.length, files: record.files.length })
   return record
 }
 
@@ -223,9 +315,40 @@ function scheduleBackgroundRebuild(workspacePath: string): void {
     })
 }
 
-/** Call when the workspace tree may have changed (FS watcher / agent writes). */
-export function notifyWorkspaceFilesChanged(workspacePath: string): void {
-  scheduleBackgroundRebuild(workspacePath)
+/**
+ * Call when the workspace tree may have changed (FS watcher / agent writes).
+ * Pass relative paths for incremental patching; omit for a full background rebuild.
+ */
+export function notifyWorkspaceFilesChanged(
+  workspacePath: string,
+  changedRels?: string[]
+): void {
+  if (!changedRels || changedRels.length === 0) {
+    scheduleBackgroundRebuild(workspacePath)
+    return
+  }
+  for (const rel of changedRels) pendingPatchRels.add(rel.split('\\').join('/'))
+  if (patchInFlight) return
+  const run = async (): Promise<IndexRecord> => {
+    while (pendingPatchRels.size > 0) {
+      const batch = [...pendingPatchRels]
+      pendingPatchRels.clear()
+      // Large batches → full rebuild is cheaper than N sequential patches.
+      if (batch.length > 80) {
+        return buildCodeIndexAsync(workspacePath)
+      }
+      await patchCodeIndexFiles(workspacePath, batch)
+    }
+    return loadCodeIndex(workspacePath) || buildCodeIndex(workspacePath)
+  }
+  patchInFlight = run()
+    .catch(() => memoryIndex as IndexRecord)
+    .finally(() => {
+      patchInFlight = null
+      if (pendingPatchRels.size > 0) {
+        notifyWorkspaceFilesChanged(workspacePath, [...pendingPatchRels])
+      }
+    })
 }
 
 /**

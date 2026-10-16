@@ -49,6 +49,14 @@ export interface WorkspaceTrustStatus {
   risky: string[]
 }
 
+export interface AgentSessionStepSummary {
+  step: number
+  opThrough: number
+  summary: string
+  ts: string
+  filesTouched: string[]
+}
+
 export interface AgentRunSummary {
   id: string
   goal: string
@@ -57,6 +65,10 @@ export interface AgentRunSummary {
   step: number
   actionLog: string[]
   updatedAt: string
+  sessionId?: string | null
+  checkpointId?: string | null
+  /** Persisted session checkpoints for rewind / resume-from-step. */
+  steps?: AgentSessionStepSummary[]
 }
 
 export interface AppVersionInfo {
@@ -273,6 +285,14 @@ export interface IdeApi {
     agentId: string
   }) => Promise<boolean>
   getResumableRun: () => Promise<AgentRunSummary | null>
+  listSessionSteps: (sessionId: string) => Promise<AgentSessionStepSummary[]>
+  getAgentSession: (sessionId: string) => Promise<{
+    id: string
+    goal: string
+    status: string
+    step: number
+    checkpointId: string | null
+  } | null>
   getWorkspaceTrust: () => Promise<WorkspaceTrustStatus>
   setWorkspaceTrust: (trusted: boolean) => Promise<boolean>
   dismissRun: (id: string) => Promise<boolean>
@@ -373,6 +393,19 @@ export interface IdeApi {
     }) => void
   ) => () => void
   onChatCheckpoint: (cb: (data: { requestId: string; checkpointId: string }) => void) => () => void
+  onChatSession: (
+    cb: (data: { requestId: string; sessionId: string; checkpointId: string }) => void
+  ) => () => void
+  onChatSessionStep: (
+    cb: (data: {
+      requestId: string
+      sessionId: string
+      step: number
+      summary: string
+      opThrough: number
+      filesTouched: string[]
+    }) => void
+  ) => () => void
   onChatTerminal: (cb: (data: { requestId: string; text: string }) => void) => () => void
   onChatWorkspaceChanged: (cb: (data: { requestId: string }) => void) => () => void
   onChatStatus: (cb: (data: { requestId: string; text: string }) => void) => () => void

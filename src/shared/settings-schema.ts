@@ -109,7 +109,15 @@ export const SettingsSchema = z.object({
       mode: z.enum(['auto', 'manual', 'off']),
       routerModel: z.string(),
       useLlmRouter: z.boolean(),
-      fallbackAgentId: z.string().min(1)
+      fallbackAgentId: z.string().min(1),
+      /**
+       * auto = LLM router + Cloud Composer when signed in (seamless default)
+       * local = never hand off to Cloud; stay on Lite / BYO
+       * max = prefer Cloud for agent work; heavier intents escalate to cloud
+       */
+      profile: z.enum(['auto', 'local', 'max']).default('auto'),
+      /** When true (default), Agent mode may run built-in tools on Cloud Composer. */
+      preferCloudComposer: z.boolean().default(true)
     })
   }),
   intelligence: z.object({
@@ -362,6 +370,10 @@ export interface TurnPlan {
   classifiedIntent?: ChatIntent
   /** Set when the selected chat model cannot run (e.g. builtin not downloaded). */
   error?: string
+  /** Routing profile that produced this plan (auto / local / max). */
+  routingProfile?: 'auto' | 'local' | 'max'
+  /** True when this turn should prefer Cloud Composer for built-in Agent tools. */
+  cloudPreferred?: boolean
 }
 
 export interface ChatTurnContext {
@@ -388,6 +400,8 @@ export interface ChatPromptInput {
   history: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>
   /** Continue a persisted, unfinished agent run */
   resumeRunId?: string
+  /** When set with resumeRunId, rewind files + worker state to this session step first. */
+  resumeSessionStep?: number
 }
 
 export interface ResolvedAgent extends AgentDefinition {
