@@ -4,7 +4,8 @@ Usage (chat requests, tokens, Cloud Agent jobs) is stored per calendar day on th
 
 ## API
 
-Deploy: `api/eris/v1/usage.php`  
+Deployed on www.ericservic.es as `api/eris/v1/usage.php` (Bearer device token, same as `/me.php`).  
+Migration: `sql/migrations/20261016_eris_usage_devices.sql` in the EricServices site.  
 Stub: `cloud-agent/website-stubs/api/eris/v1/usage.php`
 
 | Method | Auth | Body / query | Result |

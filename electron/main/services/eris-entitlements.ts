@@ -10,7 +10,7 @@ import {
   type ErisPlanLimits,
   type UsageLimitMeter
 } from '../../../src/shared/eris-plan'
-import { getEffectiveWindowTotals } from './usage-sync'
+import { getEffectiveWindowTotals, getRemoteAllowance } from './usage-sync'
 import { isEricServicesAuthenticated } from './ericservices'
 
 export type UsageEntitlement = {
@@ -73,9 +73,24 @@ export function getUsageEntitlement(
   const usedTokens = eff.inputTokens + eff.outputTokens
   const usedCloud = eff.cloudJobs || 0
 
+  const remoteCap = getRemoteAllowance()?.cloudJobs
+  const cloudLimit =
+    remoteCap && (remoteCap.limit === null || typeof remoteCap.limit === 'number')
+      ? remoteCap.limit
+      : limits.cloudJobsPerDay
+  const cloudUsed =
+    remoteCap && typeof remoteCap.used === 'number' ? Math.max(usedCloud, remoteCap.used) : usedCloud
+
+  limits.cloudJobsPerDay = cloudLimit
+
   const requests = meterAgainstLimit(usedRequests, limits.dailyRequests)
   const tokens = meterAgainstLimit(usedTokens, limits.dailyTokens)
-  const cloudJobs = meterAgainstLimit(usedCloud, limits.cloudJobsPerDay)
+  const cloudJobs = meterAgainstLimit(cloudUsed, cloudLimit)
+  if (remoteCap?.exhausted) {
+    cloudJobs.exhausted = true
+    cloudJobs.remaining = 0
+    if (cloudJobs.limit != null) cloudJobs.ratio = 1
+  }
 
   // Local chat/tokens are free (they run on the user's machine). Only usage that
   // spends our compute — Cloud Agent jobs — can block, and that is enforced in

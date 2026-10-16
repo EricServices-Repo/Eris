@@ -1,4 +1,5 @@
 import { ipcMain, shell } from 'electron'
+import os from 'os'
 import { getResolvedSettings, setSettings } from '../services/settings'
 import {
   applyProfileBundle,
@@ -6,14 +7,20 @@ import {
   buildProfileBundle,
   buildSyncableSettings,
   ericServicesFetchMe,
+  connectionsMissingKeys,
+  ericServicesListDevices,
   ericServicesLogin,
   ericServicesLogout,
+  ericServicesPollDeviceLogin,
   ericServicesPullSettings,
   ericServicesPushSettings,
+  ericServicesRevokeDevice,
+  ericServicesStartDeviceLogin,
   ericServicesTokenRef,
   isEricServicesAuthFailure,
   mergePulledUserSettings,
-  planPatchFromProfile
+  planPatchFromProfile,
+  summarizeProfileChanges
 } from '../services/ericservices'
 import { syncMcpRuntime } from '../services/mcp-runtime'
 import { appState } from '../app-state'
@@ -137,6 +144,103 @@ export function registerEricServicesIpc(): void {
     }
   )
 
+  ipcMain.handle('ericServices:loginBrowser', async (_e, payload?: { apiBase?: string }) => {
+    const settings = getResolvedSettings(appState.currentWorkspace)
+    const apiBase = payload?.apiBase?.trim() || settings.ericServices.apiBase
+    const started = await ericServicesStartDeviceLogin(apiBase, `Eris on ${os.hostname()}`)
+    if (!started.ok || !started.deviceCode) {
+      return { ok: false, error: started.error || 'Could not start browser sign-in' }
+    }
+    const path = started.verificationUrl || '/account/eris-device.php'
+    const verify = /^https?:\/\//i.test(path)
+      ? path
+      : `${apiBase.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`
+    await shell.openExternal(verify)
+    const deadline = Date.now() + 5 * 60 * 1000
+    const waitMs = Math.max(2, started.interval || 3) * 1000
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, waitMs))
+      const polled = await ericServicesPollDeviceLogin(apiBase, started.deviceCode)
+      if (!polled.ok) return { ok: false, error: polled.error || 'Browser sign-in failed', userCode: started.userCode }
+      if (polled.status === 'expired' || polled.status === 'denied') {
+        return { ok: false, error: 'Browser sign-in was not approved.', userCode: started.userCode }
+      }
+      if (polled.status === 'approved' && polled.token) {
+        const ref = ericServicesTokenRef()
+        storeSecret(ref, polled.token)
+        const planPatch = planPatchFromProfile(polled.profile)
+        setSettings(
+          'user',
+          {
+            ericServices: {
+              apiBase,
+              tokenRef: ref,
+              linked: true,
+              username: polled.profile?.username || '',
+              email: polled.profile?.email || '',
+              ...planPatch
+            }
+          },
+          appState.currentWorkspace
+        )
+        let sync: { ok: boolean; error?: string; direction?: string; changes?: string[] } | undefined
+        if (settings.ericServices.syncEnabled !== false) {
+          sync = await syncEricServicesProfile('pull', polled.token)
+          if (!sync.ok) sync = await syncEricServicesProfile('push', polled.token)
+        }
+        try {
+          const { pullUsageFromProfile } = await import('../services/usage-sync')
+          await pullUsageFromProfile()
+        } catch {
+          /* usage optional */
+        }
+        return {
+          ok: true,
+          userCode: started.userCode,
+          profile: polled.profile,
+          sync,
+          status: buildEricServicesStatus(getResolvedSettings(appState.currentWorkspace), true, {
+            profile: polled.profile ?? null
+          })
+        }
+      }
+    }
+    return { ok: false, error: 'Timed out waiting for approval in the browser.', userCode: started.userCode }
+  })
+
+  ipcMain.handle('ericServices:devices', async () => {
+    const settings = getResolvedSettings(appState.currentWorkspace)
+    const token = settings.ericServices.tokenRef ? getSecret(settings.ericServices.tokenRef) : null
+    if (!token) return { ok: false, error: 'Sign in first', devices: [] }
+    return ericServicesListDevices(settings.ericServices.apiBase, token)
+  })
+
+  ipcMain.handle('ericServices:revokeDevice', async (_e, id: number) => {
+    const settings = getResolvedSettings(appState.currentWorkspace)
+    const token = settings.ericServices.tokenRef ? getSecret(settings.ericServices.tokenRef) : null
+    if (!token) return { ok: false, error: 'Sign in first' }
+    const result = await ericServicesRevokeDevice(settings.ericServices.apiBase, token, Number(id))
+    if (result.ok && result.revokedCurrent) {
+      storeSecret(ericServicesTokenRef(), '')
+      setSettings(
+        'user',
+        {
+          ericServices: {
+            tokenRef: '',
+            linked: false,
+            username: '',
+            email: '',
+            lastSyncedAt: '',
+            plan: 'free',
+            planLimits: {}
+          }
+        },
+        appState.currentWorkspace
+      )
+    }
+    return result
+  })
+
   ipcMain.handle('ericServices:logout', async () => {
     const settings = getResolvedSettings(appState.currentWorkspace)
     const token = settings.ericServices.tokenRef
@@ -173,7 +277,10 @@ export function registerEricServicesIpc(): void {
     direction?: string
     updatedAt?: string | null
     status?: ReturnType<typeof buildEricServicesStatus>
+    changes?: string[]
+    missingKeys?: Array<{ id: string; name: string }>
   }> {
+    const missingKeys = () => connectionsMissingKeys(getResolvedSettings(appState.currentWorkspace))
     const settings = getResolvedSettings(appState.currentWorkspace)
     const token =
       tokenOverride ||
@@ -187,8 +294,20 @@ export function registerEricServicesIpc(): void {
       if (!remote.ok) return { ok: false, error: remote.error, direction: 'pull' }
       const applied = applyProfileBundle(remote.bundle)
       const settingsPatch = applied.settings || remote.settings
-      if (settingsPatch && Object.keys(settingsPatch).length > 0) {
+      const remoteAt = remote.updatedAt ? Date.parse(remote.updatedAt) : NaN
+      const localAt = settings.ericServices.lastSyncedAt
+        ? Date.parse(settings.ericServices.lastSyncedAt)
+        : NaN
+      const remoteNewer =
+        Number.isFinite(remoteAt) && (!Number.isFinite(localAt) || remoteAt > localAt)
+      if (settingsPatch && Object.keys(settingsPatch).length > 0 && remoteNewer) {
         const localResolved = getResolvedSettings(appState.currentWorkspace)
+        const changes = summarizeProfileChanges(localResolved, settingsPatch)
+        if (applied.skillsImported > 0) {
+          changes.push(
+            `${applied.skillsImported} user skill${applied.skillsImported === 1 ? '' : 's'} imported`
+          )
+        }
         setSettings(
           'user',
           mergePulledUserSettings(settingsPatch, localResolved),
@@ -210,10 +329,24 @@ export function registerEricServicesIpc(): void {
           ok: true,
           direction: 'pull',
           updatedAt: remote.updatedAt,
+          changes,
+          missingKeys: missingKeys(),
           status: buildEricServicesStatus(getResolvedSettings(appState.currentWorkspace), true)
         }
       }
-      if (applied.skillsImported > 0) {
+      if (!remoteNewer && direction === 'pull') {
+        return {
+          ok: true,
+          direction: 'pull',
+          updatedAt: remote.updatedAt,
+          changes: remote.updatedAt
+            ? ['Kept settings on this device. The EricServic.es copy is not newer.']
+            : ['Nothing stored on EricServic.es yet.'],
+          missingKeys: missingKeys(),
+          status: buildEricServicesStatus(getResolvedSettings(appState.currentWorkspace), true)
+        }
+      }
+      if (remoteNewer && applied.skillsImported > 0) {
         setSettings(
           'user',
           {
@@ -227,6 +360,8 @@ export function registerEricServicesIpc(): void {
           ok: true,
           direction: 'pull',
           updatedAt: remote.updatedAt,
+          changes: [`${applied.skillsImported} user skill${applied.skillsImported === 1 ? '' : 's'} imported`],
+          missingKeys: missingKeys(),
           status: buildEricServicesStatus(getResolvedSettings(appState.currentWorkspace), true)
         }
       }
@@ -255,8 +390,11 @@ export function registerEricServicesIpc(): void {
       if (direction === 'bidirectional' && (pushed.bundle || pushed.settings)) {
         const applied = applyProfileBundle(pushed.bundle)
         const settingsPatch = applied.settings || pushed.settings
+        const localResolved = getResolvedSettings(appState.currentWorkspace)
+        const changes = settingsPatch
+          ? summarizeProfileChanges(localResolved, settingsPatch)
+          : ['Pulled the newer EricServic.es profile']
         if (settingsPatch) {
-          const localResolved = getResolvedSettings(appState.currentWorkspace)
           setSettings(
             'user',
             mergePulledUserSettings(settingsPatch, localResolved),
@@ -279,6 +417,8 @@ export function registerEricServicesIpc(): void {
           ok: true,
           direction: 'pull',
           updatedAt: pushed.updatedAt,
+          changes,
+          missingKeys: missingKeys(),
           status: buildEricServicesStatus(getResolvedSettings(appState.currentWorkspace), true)
         }
       }
@@ -297,6 +437,8 @@ export function registerEricServicesIpc(): void {
       ok: true,
       direction: 'push',
       updatedAt: pushed.updatedAt,
+      changes: ['Pushed this device’s settings to EricServic.es'],
+      missingKeys: missingKeys(),
       status: buildEricServicesStatus(getResolvedSettings(appState.currentWorkspace), true)
     }
   }

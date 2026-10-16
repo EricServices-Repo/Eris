@@ -38,6 +38,11 @@ export function EricServicesAccountPanel({
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [devices, setDevices] = useState<
+    Array<{ id: number; name: string; prefix: string; lastUsedAt: string | null; current: boolean }>
+  >([])
+  const [syncNotes, setSyncNotes] = useState<string[]>([])
+  const [missingKeys, setMissingKeys] = useState<Array<{ id: string; name: string }>>([])
 
   const refresh = useCallback(async () => {
     try {
@@ -45,6 +50,12 @@ export function EricServicesAccountPanel({
       setStatus(s)
       if (s.apiBase) setApiBase(s.apiBase)
       if (s.username && !username) setUsername(s.username)
+      if (s.linked && s.hasToken && !s.needsReauth) {
+        const listed = await window.ide.ericServicesDevices()
+        setDevices(listed.devices || [])
+      } else {
+        setDevices([])
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load account status')
     }
@@ -221,6 +232,35 @@ export function EricServicesAccountPanel({
             <button
               type="button"
               className="btn btn-primary"
+              disabled={busy}
+              onClick={() =>
+                void run(async () => {
+                  await onApply(['ericServices', 'apiBase'], apiBase.trim())
+                  setMessage('Waiting for approval in the browser…')
+                  const result = await window.ide.ericServicesLoginBrowser({
+                    apiBase: apiBase.trim()
+                  })
+                  if (!result.ok) {
+                    setError(result.error || 'Browser sign-in failed')
+                    return
+                  }
+                  setSyncNotes(result.sync?.changes || [])
+                  setMissingKeys(result.sync?.missingKeys || [])
+                  setMessage(
+                    result.profile?.username
+                      ? `Signed in as @${result.profile.username}`
+                      : 'Signed in'
+                  )
+                  await onChanged()
+                  await refresh()
+                })
+              }
+            >
+              Sign in with browser
+            </button>
+            <button
+              type="button"
+              className="btn"
               disabled={busy || !username.trim() || !password}
               onClick={() =>
                 void run(async () => {
@@ -236,6 +276,8 @@ export function EricServicesAccountPanel({
                     return
                   }
                   setPassword('')
+                  setSyncNotes(result.sync?.changes || [])
+                  setMissingKeys(result.sync?.missingKeys || [])
                   const syncNote =
                     result.sync?.ok === false
                       ? ` · sync: ${result.sync.error || 'deferred'}`
@@ -304,10 +346,14 @@ export function EricServicesAccountPanel({
                       setError(result.error || 'Sync failed')
                       return
                     }
+                    setSyncNotes(result.changes || [])
+                    setMissingKeys(result.missingKeys || [])
                     setMessage(
-                      result.direction === 'pull'
-                        ? 'Pulled latest profile from EricServic.es'
-                        : 'Pushed local profile to EricServic.es'
+                      result.changes?.length
+                        ? result.changes.join(' · ')
+                        : result.direction === 'pull'
+                          ? 'Pulled latest profile from EricServic.es'
+                          : 'Pushed local profile to EricServic.es'
                     )
                     await onChanged()
                     await refresh()
@@ -359,6 +405,63 @@ export function EricServicesAccountPanel({
                 Push
               </button>
             </div>
+            {syncNotes.length > 0 && (
+              <ul className="es-account-hint">
+                {syncNotes.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            )}
+            {missingKeys.length > 0 && (
+              <p className="es-account-hint">
+                These connections still need an API key on this device:{' '}
+                {missingKeys.map((item) => item.name).join(', ')}.
+              </p>
+            )}
+          </section>
+
+          <section className="es-account-section">
+            <h3>Devices</h3>
+            <p className="es-account-hint">
+              Revoke a device to sign it out. This machine is marked Current.
+            </p>
+            {devices.length === 0 ? (
+              <p className="es-account-hint">No other device list yet. Refresh after the site update is deployed.</p>
+            ) : (
+              <ul className="es-account-hint">
+                {devices.map((device) => (
+                  <li key={device.id}>
+                    {device.name}
+                    {device.prefix ? ` · eseris_${device.prefix}…` : ''}
+                    {device.current ? ' · Current' : ''}
+                    {device.lastUsedAt ? ` · last used ${formatSyncedAt(device.lastUsedAt)}` : ''}
+                    {!device.current && (
+                      <>
+                        {' '}
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          disabled={busy}
+                          onClick={() =>
+                            void run(async () => {
+                              const result = await window.ide.ericServicesRevokeDevice(device.id)
+                              if (!result.ok) {
+                                setError(result.error || 'Could not revoke that device')
+                                return
+                              }
+                              setMessage(`Revoked ${device.name}`)
+                              await refresh()
+                            })
+                          }
+                        >
+                          Revoke
+                        </button>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
 
           <section className="es-account-section es-account-section-muted">

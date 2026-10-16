@@ -90,12 +90,13 @@ export async function assertCanEnqueue(
     const usage = loadUsage()
     const keys = rollingKeys()
     const localUsed = jobsForOwner(usage, owner, keys)
-    const remoteUsed = await remoteCloudJobsWindow(auth, keys)
-    const used = Math.max(localUsed, remoteUsed ?? 0)
-    if (used >= config.freeJobsPerDay) {
+    const remote = await remoteCloudJobsWindow(auth, keys)
+    const cap = remote?.limit ?? config.freeJobsPerDay
+    const used = Math.max(localUsed, remote?.used ?? 0)
+    if (remote?.exhausted || (cap != null && used >= cap)) {
       return {
         ok: false,
-        error: `Free plan Cloud Agent limit reached for the last ${USAGE_WINDOW_DAYS} days (${config.freeJobsPerDay}). Upgrade to Pro.`
+        error: `Free plan Cloud Agent limit reached for the last ${USAGE_WINDOW_DAYS} days (${cap ?? config.freeJobsPerDay}). Upgrade to Pro.`
       }
     }
   }
@@ -151,7 +152,7 @@ async function reportCloudJobToProfile(auth: AuthContext): Promise<void> {
 export async function remoteCloudJobsWindow(
   auth: AuthContext,
   keys: string[]
-): Promise<number | null> {
+): Promise<{ used: number; limit: number | null; exhausted: boolean } | null> {
   if (!auth.token) return null
   const url = `${config.erisApiBase.replace(/\/+$/, '')}/usage.php?day=${encodeURIComponent(todayKey())}&days=${USAGE_WINDOW_DAYS}`
   try {
@@ -169,20 +170,32 @@ export async function remoteCloudJobsWindow(
       usage?: { cloudJobs?: number; day?: string }
       day?: string
       days?: Array<{ day?: string; cloudJobs?: number }>
+      limits?: { cloudJobsPerDay?: number | null }
+      allowance?: { cloudJobs?: { used?: number; limit?: number | null; exhausted?: boolean } }
     }
     if (!res.ok || data.ok === false) return null
+    const allowance = data.allowance?.cloudJobs
+    if (allowance && typeof allowance.used === 'number') {
+      const limit = allowance.limit === null || typeof allowance.limit === 'number' ? allowance.limit ?? null : null
+      return { used: allowance.used, limit, exhausted: Boolean(allowance.exhausted) }
+    }
     const wanted = new Set(keys)
+    let n = 0
     if (Array.isArray(data.days) && data.days.length > 0) {
-      let n = 0
       for (const entry of data.days) {
         if (!entry?.day || !wanted.has(entry.day)) continue
         const jobs = Number(entry.cloudJobs)
         if (Number.isFinite(jobs)) n += Math.max(0, Math.floor(jobs))
       }
-      return n
+    } else {
+      const todayJobs = Number(data.usage?.cloudJobs)
+      n = Number.isFinite(todayJobs) ? Math.max(0, Math.floor(todayJobs)) : 0
     }
-    const n = Number(data.usage?.cloudJobs)
-    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : null
+    const limit =
+      data.limits && (data.limits.cloudJobsPerDay === null || typeof data.limits.cloudJobsPerDay === 'number')
+        ? data.limits.cloudJobsPerDay ?? null
+        : config.freeJobsPerDay
+    return { used: n, limit, exhausted: limit != null && n >= limit }
   } catch {
     return null
   }

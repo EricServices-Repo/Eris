@@ -394,6 +394,90 @@ export async function ericServicesLogin(
   return { ok: true, token, profile }
 }
 
+export async function ericServicesStartDeviceLogin(
+  apiBase: string,
+  deviceName: string
+): Promise<{
+  ok: boolean
+  error?: string
+  deviceCode?: string
+  userCode?: string
+  verificationUrl?: string
+  interval?: number
+}> {
+  const result = await erisFetch(apiBase, '/auth/device.php', {
+    method: 'POST',
+    body: JSON.stringify({ deviceName })
+  })
+  if (!result.ok) return { ok: false, error: result.error }
+  const deviceCode = typeof result.data.deviceCode === 'string' ? result.data.deviceCode : ''
+  const userCode = typeof result.data.userCode === 'string' ? result.data.userCode : ''
+  if (!deviceCode || !userCode) return { ok: false, error: 'Device login did not return a code' }
+  return {
+    ok: true,
+    deviceCode,
+    userCode,
+    verificationUrl: typeof result.data.verificationUrl === 'string' ? result.data.verificationUrl : '',
+    interval: typeof result.data.interval === 'number' ? result.data.interval : 3
+  }
+}
+
+export async function ericServicesPollDeviceLogin(
+  apiBase: string,
+  deviceCode: string
+): Promise<{
+  ok: boolean
+  error?: string
+  status?: string
+  token?: string
+  profile?: EricServicesProfile
+}> {
+  const result = await erisFetch(apiBase, '/auth/device.php', {
+    method: 'POST',
+    body: JSON.stringify({ deviceCode })
+  })
+  if (!result.ok) return { ok: false, error: result.error }
+  const status = typeof result.data.status === 'string' ? result.data.status : 'pending'
+  const token = typeof result.data.token === 'string' ? result.data.token : undefined
+  const profile = result.data.profile as EricServicesProfile | undefined
+  return { ok: true, status, token, profile }
+}
+
+export async function ericServicesListDevices(
+  apiBase: string,
+  token: string
+): Promise<{
+  ok: boolean
+  error?: string
+  devices?: Array<{
+    id: number
+    name: string
+    prefix: string
+    lastUsedAt: string | null
+    createdAt: string | null
+    current: boolean
+  }>
+}> {
+  const result = await erisFetch(apiBase, '/devices.php', { method: 'GET', token })
+  if (!result.ok) return { ok: false, error: result.error }
+  const devices = Array.isArray(result.data.devices) ? result.data.devices : []
+  return { ok: true, devices: devices as never }
+}
+
+export async function ericServicesRevokeDevice(
+  apiBase: string,
+  token: string,
+  id: number
+): Promise<{ ok: boolean; error?: string; revokedCurrent?: boolean }> {
+  const result = await erisFetch(apiBase, '/devices.php', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ id })
+  })
+  if (!result.ok) return { ok: false, error: result.error }
+  return { ok: true, revokedCurrent: result.data.revokedCurrent === true }
+}
+
 export async function ericServicesLogout(
   apiBase: string,
   token: string
@@ -486,6 +570,56 @@ export async function ericServicesPushSettings(
     bundle: parseBundleFromData(result.data),
     updatedAt: (result.data.updatedAt as string | null) ?? null
   }
+}
+
+/** Short lines describing what a pulled profile would change on this device. */
+export function summarizeProfileChanges(before: AppSettings, remote: SettingsPatch | null): string[] {
+  if (!remote) return []
+  const lines: string[] = []
+  const theme = remote.editor?.theme
+  if (theme && theme !== before.editor.theme) {
+    lines.push(`Theme ${before.editor.theme} → ${theme}`)
+  }
+  const mode = remote.agent?.routing?.mode
+  if (mode && mode !== before.agent.routing.mode) {
+    lines.push(`Routing ${before.agent.routing.mode} → ${mode}`)
+  }
+  const model = remote.models?.defaultModel
+  if (model && model !== before.models.defaultModel) {
+    lines.push(`Default model ${before.models.defaultModel} → ${model}`)
+  }
+  const remoteConns = remote.models?.connections || []
+  const localIds = new Set((before.models.connections || []).map((c) => c.id))
+  const remoteIds = new Set(remoteConns.map((c) => String((c as { id?: string }).id || '')))
+  const added = remoteConns
+    .filter((c) => {
+      const id = String((c as { id?: string }).id || '')
+      return id && !localIds.has(id)
+    })
+    .map((c) => String((c as { name?: string; id?: string }).name || (c as { id?: string }).id))
+  const removed = (before.models.connections || [])
+    .filter((c) => !remoteIds.has(c.id))
+    .map((c) => c.name || c.id)
+  if (added.length) lines.push(`Connections added: ${added.join(', ')}`)
+  if (removed.length) lines.push(`Connections removed: ${removed.join(', ')}`)
+  const remoteSkills = Array.isArray((remote as { userSkills?: unknown }).userSkills)
+    ? (remote as { userSkills: unknown[] }).userSkills.length
+    : null
+  if (remoteSkills != null && remoteSkills > 0) {
+    lines.push(`${remoteSkills} user skill${remoteSkills === 1 ? '' : 's'} in the site profile`)
+  }
+  if (lines.length === 0) lines.push('Profile settings updated from EricServic.es')
+  return lines
+}
+
+/** Enabled hosted connections that arrived without a key on this device. */
+export function connectionsMissingKeys(
+  settings: AppSettings
+): Array<{ id: string; name: string }> {
+  const needsKey = new Set(['openai', 'openai-compatible', 'anthropic', 'azure', 'custom'])
+  return (settings.models.connections || [])
+    .filter((c) => c.enabled && needsKey.has(c.type) && !String(c.apiKeyRef || '').trim())
+    .map((c) => ({ id: c.id, name: c.name || c.id }))
 }
 
 export function ericServicesTokenRef(): string {

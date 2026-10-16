@@ -22,6 +22,9 @@ export type RemoteUsageDay = DayUsageTotals & {
 
 let remoteDays: Record<string, RemoteUsageDay> = {}
 let remoteDiskLoaded = false
+let remoteAllowance: {
+  cloudJobs?: { used: number; limit: number | null; remaining: number | null; exhausted: boolean }
+} | null = null
 let pendingDelta: DayUsageTotals = {
   requests: 0,
   inputTokens: 0,
@@ -99,6 +102,8 @@ function loadRemoteUsageDisk(): Record<string, RemoteUsageDay> {
       const one = normalizeRemoteDay(parsed as RemoteUsageDay)
       return one ? { [one.day]: one } : {}
     }
+    const allowance = (parsed as { allowance?: typeof remoteAllowance }).allowance
+    if (allowance && typeof allowance === 'object') remoteAllowance = allowance
     const days = (parsed as { days?: Record<string, RemoteUsageDay> }).days
     if (!days || typeof days !== 'object') return {}
     const out: Record<string, RemoteUsageDay> = {}
@@ -115,10 +120,19 @@ function loadRemoteUsageDisk(): Record<string, RemoteUsageDay> {
 function saveRemoteUsageDisk(): void {
   try {
     mkdirSync(userDataRoot(), { recursive: true })
-    writeFileSync(usageCachePath(), JSON.stringify({ days: remoteDays }), 'utf8')
+    writeFileSync(
+      usageCachePath(),
+      JSON.stringify({ days: remoteDays, allowance: remoteAllowance }),
+      'utf8'
+    )
   } catch {
     /* best-effort */
   }
+}
+
+export function getRemoteAllowance(): typeof remoteAllowance {
+  ensureRemoteDisk()
+  return remoteAllowance
 }
 
 function rememberRemoteDays(days: RemoteUsageDay[]): void {
@@ -279,11 +293,13 @@ export async function flushUsageDelta(): Promise<void> {
       day?: string
     }
     if (!res.ok || data.ok === false) {
-      // Re-queue so a blip does not drop metering
-      pendingDelta.requests += delta.requests
-      pendingDelta.inputTokens += delta.inputTokens
-      pendingDelta.outputTokens += delta.outputTokens
-      pendingDelta.cloudJobs += delta.cloudJobs
+      // Re-queue so a blip does not drop metering. 409 means the site cap was reached.
+      if (res.status !== 409) {
+        pendingDelta.requests += delta.requests
+        pendingDelta.inputTokens += delta.inputTokens
+        pendingDelta.outputTokens += delta.outputTokens
+        pendingDelta.cloudJobs += delta.cloudJobs
+      }
       logWarn('Profile usage push failed', {
         status: res.status,
         error: data.error || res.statusText
@@ -337,6 +353,9 @@ export async function pullUsageFromProfile(): Promise<RemoteUsageDay | null> {
       day?: string
       usage?: RemoteUsageDay
       days?: RemoteUsageDay[]
+      allowance?: {
+        cloudJobs?: { used: number; limit: number | null; remaining: number | null; exhausted: boolean }
+      }
       error?: string
     }
     const pulled: RemoteUsageDay[] = []
@@ -361,6 +380,9 @@ export async function pullUsageFromProfile(): Promise<RemoteUsageDay | null> {
         logWarn('Profile usage pull failed', { status: res.status, error: errMsg })
       }
       return null
+    }
+    if (data.allowance && typeof data.allowance === 'object') {
+      remoteAllowance = data.allowance
     }
     rememberRemoteDays(pulled)
     lastSyncedAt = new Date().toISOString()

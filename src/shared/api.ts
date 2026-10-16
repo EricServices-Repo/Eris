@@ -578,7 +578,49 @@ export interface IdeApi {
       erisLimits?: Record<string, unknown>
     }
     status?: Record<string, unknown>
-    sync?: { ok: boolean; error?: string; direction?: string }
+    sync?: {
+      ok: boolean
+      error?: string
+      direction?: string
+      changes?: string[]
+      missingKeys?: Array<{ id: string; name: string }>
+    }
+  }>
+  ericServicesLoginBrowser: (payload?: { apiBase?: string }) => Promise<{
+    ok: boolean
+    error?: string
+    userCode?: string
+    profile?: {
+      username: string
+      email: string
+      plan?: string
+      planLabel?: string
+      erisPlan?: string
+    }
+    sync?: {
+      ok: boolean
+      error?: string
+      direction?: string
+      changes?: string[]
+      missingKeys?: Array<{ id: string; name: string }>
+    }
+  }>
+  ericServicesDevices: () => Promise<{
+    ok: boolean
+    error?: string
+    devices?: Array<{
+      id: number
+      name: string
+      prefix: string
+      lastUsedAt: string | null
+      createdAt: string | null
+      current: boolean
+    }>
+  }>
+  ericServicesRevokeDevice: (id: number) => Promise<{
+    ok: boolean
+    error?: string
+    revokedCurrent?: boolean
   }>
   ericServicesLogout: () => Promise<{
     ok: boolean
@@ -597,6 +639,8 @@ export interface IdeApi {
     error?: string
     direction?: string
     updatedAt?: string | null
+    changes?: string[]
+    missingKeys?: Array<{ id: string; name: string }>
     status?: Record<string, unknown>
   }>
   ericServicesOpenAccount: () => Promise<{ ok: boolean; url?: string; error?: string }>

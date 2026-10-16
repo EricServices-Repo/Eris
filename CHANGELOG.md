@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- EricServic.es account: browser sign-in, device revoke, sync change list, and connections that still need a key. Free Cloud Agent caps follow the site’s 30-day allowance.
 - Usage tab meters a rolling 30-day window and can open any day in that window. Free limits use the same window.
 
 ## 0.2.41 — 2026-10-16
