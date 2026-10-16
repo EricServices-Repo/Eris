@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.2.43 — 2026-10-16
+
+Cross-platform desktop builds (macOS + Windows) from the same version tag.
+
+| Platform | Download |
+|----------|----------|
+| macOS | `Eris-0.2.43-mac-*.dmg` / `.zip` |
+| Windows | `Eris-0.2.43-win-*-setup.exe` |
+
+CI builds both platforms on tag push (`.github/workflows/release.yml`).
+
+### Changes
+- Merge pull request #27 from EricServices-Repo/nightly (dd88853)
+- Merge branch 'main' into nightly (66f2084)
+- Share large local models across 6GB+ GPUs and show their free VRAM in Settings. (8fff0ee)
+- Add browser sign-in, device revoke, and site-backed Cloud Agent caps. (1f15eb2)
+- Meter Free limits over a rolling 30-day window and let Usage open any day. (e7ac1bc)
+- Show the saved plan on boot and reject premature agent DONE. (fcf0c1e)
+- Merge pull request #24 from EricServices-Repo/cursor/sessions-index-agents-routing (fb69c6d)
+- Merge pull request #25 from EricServices-Repo/nightly (e0ddf74)
+- Keep Agent mode on workspace tools for launch/fix-it and Fast explores. (f71f750)
+- Ship 0.2.42: sessions, repo indexing, Agents Inbox, and routing polish. (e460dcd)
+
+## 0.2.43 — 2026-10-16
+
+- Local models split across every 6GB+ GPU, and Settings → GPU shows free VRAM for that shared set.
+
+## 0.2.42 — 2026-10-16
+
+- Browser sign-in, device revoke, and a 30-day usage window whose Free caps follow EricServic.es.
+
+## 0.2.41 — 2026-10-16
+
+- Boot shows the saved account plan immediately, then refreshes EricServic.es and usage in the background.
+- Goal check before DONE: reject premature “Finished” when edits failed, only tiny stubs were written, or a packaged app was requested but never produced.
+
+## 0.2.40 — 2026-10-15
+
+- Agent mode keeps workspace tools for launch/make-it-work asks; Fast can read the repo (no more invented Finder/Xcode steps).
+
 ## 0.2.39 — 2026-10-14
 
 - Living project memory: agent runs and ask_user replies update `.eris/context.md` (auto/ask/off); chat chip + undo.
