@@ -4113,6 +4113,28 @@ select:focus {
   background: var(--accent-soft);
 }
 
+.gpu-share-vram {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: var(--accent-soft);
+  font-size: 12px;
+}
+
+.gpu-share-vram strong {
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.gpu-device-list li.is-shared {
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
 .gpu-device-copy {
   display: flex;
   flex-direction: column;

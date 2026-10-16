@@ -30,8 +30,17 @@ function formatMemoryStat(name: string, bytes?: number): string | null {
   return size
 }
 
-function gpuStatLine(d: { name: string; bus?: string; vramBytes?: number }): string {
+function gpuStatLine(d: {
+  name: string
+  bus?: string
+  vramBytes?: number
+  vramFreeBytes?: number
+  shared?: boolean
+}): string {
   const parts: string[] = []
+  if (d.shared && d.vramFreeBytes) {
+    parts.push(`${formatMemoryStat(d.name, d.vramFreeBytes)} free`)
+  }
   const mem = formatMemoryStat(d.name, d.vramBytes)
   if (mem) parts.push(mem)
   if (d.bus) parts.push(d.bus)
@@ -63,6 +72,7 @@ function GpuAccelCard({
   }
 
   const devices = gpu?.devices ?? []
+  const shared = devices.filter((d) => d.shared)
   const preferredId = gpu?.preferredGpu
     ? `${gpu.preferredGpu.index}:${gpu.preferredGpu.name}`
     : null
@@ -89,6 +99,22 @@ function GpuAccelCard({
         </button>
       </header>
 
+      {shared.length >= 2 && (
+        <p className="gpu-share-vram">
+          <span>Shared VRAM</span>
+          <strong>
+            {gpu?.vramShareFreeBytes != null
+              ? `${formatMemoryStat('', gpu.vramShareFreeBytes)} free`
+              : formatMemoryStat('', gpu?.vramShareTotalBytes)}
+          </strong>
+          <span className="model-conn-meta">
+            {gpu?.vramShareFreeBytes != null && gpu.vramShareTotalBytes
+              ? `of ${formatMemoryStat('', gpu.vramShareTotalBytes)} across ${shared.length} GPUs`
+              : `across ${shared.length} GPUs`}
+          </span>
+        </p>
+      )}
+
       <div className="gpu-device-list">
         {devices.length === 0 ? (
           <p className="models-hint">No GPUs found</p>
@@ -100,7 +126,12 @@ function GpuAccelCard({
               const stats = gpuStatLine(d)
               const tag = gpuKindLabel(d.kind, d.name, gpu?.backend)
               return (
-                <li key={id} className={selected ? 'is-selected' : undefined}>
+                <li
+                  key={id}
+                  className={[selected ? 'is-selected' : '', d.shared ? 'is-shared' : '']
+                    .filter(Boolean)
+                    .join(' ') || undefined}
+                >
                   <span
                     className={`gpu-kind-tag kind-${d.kind}${
                       tag === 'Metal' ? ' kind-metal' : ''

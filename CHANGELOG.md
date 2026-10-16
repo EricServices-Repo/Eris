@@ -1,9 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.2.43 — 2026-10-16
 
-- EricServic.es account: browser sign-in, device revoke, sync change list, and connections that still need a key. Free Cloud Agent caps follow the site’s 30-day allowance.
-- Usage tab meters a rolling 30-day window and can open any day in that window. Free limits use the same window.
+- Local models split across every 6GB+ GPU, and Settings → GPU shows free VRAM for that shared set.
+
+## 0.2.42 — 2026-10-16
+
+- Browser sign-in, device revoke, and a 30-day usage window whose Free caps follow EricServic.es.
 
 ## 0.2.41 — 2026-10-16
 

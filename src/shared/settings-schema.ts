@@ -283,7 +283,12 @@ export interface GpuDeviceInfo {
   name: string
   kind: 'integrated' | 'discrete' | 'external'
   bus?: string
+  /** Total VRAM (or unified memory on Apple Silicon). */
   vramBytes?: number
+  /** Unused VRAM right now, when the driver reports it. */
+  vramFreeBytes?: number
+  /** Included in the multi-GPU layer split. */
+  shared?: boolean
   index: number
 }
 
@@ -310,6 +315,10 @@ export interface GpuAccelStatus {
   backend: 'metal' | 'cuda' | 'vulkan' | false | null
   backendDeviceName: string | null
   message: string
+  /** Sum of free VRAM on GPUs in the share set. Absent when the driver did not report free memory. */
+  vramShareFreeBytes?: number
+  /** Sum of total VRAM on GPUs in the share set. */
+  vramShareTotalBytes?: number
 }
 
 export interface ModelsStatus {
