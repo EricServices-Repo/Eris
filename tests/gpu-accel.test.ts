@@ -5,6 +5,8 @@ import {
   classifyMacBus,
   classifyWinName,
   humanMacBus,
+  gpusForVramShare,
+  HIGH_VRAM_BYTES,
   pickBestGpu,
   rankGpuKind
 } from '../electron/main/services/gpu-accel'
@@ -48,5 +50,17 @@ describe('gpu / eGPU support', () => {
     expect(pickBestGpu(devices.filter((d) => d.kind !== 'external'))?.name).toBe('RTX 4090')
     expect(pickBestGpu(devices.filter((d) => d.kind === 'integrated'))?.name).toBe('Intel UHD')
     expect(pickBestGpu([])).toBeNull()
+  })
+
+  it('shares VRAM only across two or more 6GB-class discrete or external GPUs', () => {
+    const six = HIGH_VRAM_BYTES
+    const devices: GpuDeviceInfo[] = [
+      { name: 'Intel UHD', kind: 'integrated', index: 0, vramBytes: 2e9 },
+      { name: 'GTX 1650', kind: 'discrete', index: 1, vramBytes: 4 * 1024 ** 3 },
+      { name: 'RTX 3060', kind: 'discrete', index: 2, vramBytes: six },
+      { name: 'RTX 4070', kind: 'external', index: 3, vramBytes: 12 * 1024 ** 3 }
+    ]
+    expect(gpusForVramShare(devices).map((d) => d.name)).toEqual(['RTX 4070', 'RTX 3060'])
+    expect(gpusForVramShare(devices.filter((d) => d.name !== 'RTX 4070'))).toEqual([])
   })
 })

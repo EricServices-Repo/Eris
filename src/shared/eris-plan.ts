@@ -34,7 +34,7 @@ export type ErisPlanProfileFields = {
 }
 
 /**
- * Default Free tier caps (calendar day).
+ * Default Free tier caps, applied to a rolling 30-day window.
  *
  * Local Composer Lite runs on the user's own machine and costs us nothing, so
  * chat requests and tokens are UNLIMITED on Free (null). Only Cloud Agent jobs —
@@ -118,4 +118,20 @@ export function meterAgainstLimit(used: number, limit: number | null): UsageLimi
   const remaining = Math.max(0, limit - used)
   const ratio = limit <= 0 ? 1 : Math.min(1, used / limit)
   return { used, limit, remaining, ratio, exhausted: used >= limit }
+}
+
+/** Instant status-bar plan from saved settings — no network. */
+export function previewPlanLabel(plan: string | undefined, linked: boolean): {
+  plan: ErisPlanId
+  planLabel: string
+  limits: ErisPlanLimits
+  linked: boolean
+} {
+  const id = linked ? normalizeErisPlanId(plan) : 'free'
+  return {
+    plan: id,
+    planLabel: id === 'pro' ? 'Pro' : 'Free',
+    limits: id === 'pro' ? { ...PRO_PLAN_LIMITS } : { ...FREE_PLAN_LIMITS },
+    linked
+  }
 }

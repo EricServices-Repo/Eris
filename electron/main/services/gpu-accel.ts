@@ -140,11 +140,13 @@ async function listWinGpus(): Promise<GpuDeviceInfo[]> {
   }
 }
 
-async function listNvidiaCudaDevices(): Promise<Array<{ index: number; name: string }>> {
+async function listNvidiaCudaDevices(): Promise<
+  Array<{ index: number; name: string; vramBytes?: number; vramFreeBytes?: number }>
+> {
   try {
     const { stdout } = await execFileAsync(
       'nvidia-smi',
-      ['--query-gpu=index,name', '--format=csv,noheader,nounits'],
+      ['--query-gpu=index,name,memory.total,memory.free', '--format=csv,noheader,nounits'],
       { timeout: 8_000 }
     )
     return stdout
@@ -152,13 +154,59 @@ async function listNvidiaCudaDevices(): Promise<Array<{ index: number; name: str
       .map((line) => line.trim())
       .filter(Boolean)
       .map((line) => {
-        const [idx, ...rest] = line.split(',').map((s) => s.trim())
-        return { index: Number(idx), name: rest.join(', ') }
+        const parts = line.split(',').map((s) => s.trim())
+        const idx = Number(parts[0])
+        const free = Number(parts[parts.length - 1])
+        const mem = Number(parts[parts.length - 2])
+        const name = parts.slice(1, Math.max(1, parts.length - 2)).join(', ')
+        const mib = (n: number) => (Number.isFinite(n) && n > 0 ? Math.round(n * 1024 * 1024) : undefined)
+        return {
+          index: idx,
+          name,
+          vramBytes: mib(mem),
+          vramFreeBytes: mib(free)
+        }
       })
       .filter((d) => Number.isFinite(d.index) && d.name)
   } catch {
     return []
   }
+}
+
+async function enrichNvidiaVram(devices: GpuDeviceInfo[]): Promise<GpuDeviceInfo[]> {
+  const cuda = await listNvidiaCudaDevices()
+  if (!cuda.length || !devices.length) return devices
+  return devices.map((device) => {
+    const name = device.name.toLowerCase()
+    const match =
+      cuda.find((d) => name.includes(d.name.toLowerCase()) || d.name.toLowerCase().includes(name.slice(0, 12))) ||
+      null
+    if (!match) return device
+    const next = { ...device }
+    if (match.vramBytes && match.vramBytes > (device.vramBytes ?? 0)) next.vramBytes = match.vramBytes
+    if (match.vramFreeBytes && match.vramFreeBytes > 0) next.vramFreeBytes = match.vramFreeBytes
+    return next
+  })
+}
+
+/**
+ * 6GB-class cards and up. Slightly under 6GiB so a "6GB" card that reports
+ * marketing GB or a little less still qualifies; 4GB cards do not.
+ */
+export const HIGH_VRAM_BYTES = Math.round(6 * 1024 ** 3 * 0.9)
+
+/**
+ * Discrete / external GPUs large enough to split one model across.
+ * Returns [] unless at least two qualify — a single card stays on the normal path.
+ */
+export function gpusForVramShare(devices: GpuDeviceInfo[]): GpuDeviceInfo[] {
+  const pool = devices.filter(
+    (d) =>
+      (d.kind === 'discrete' || d.kind === 'external') &&
+      (d.vramBytes ?? 0) >= HIGH_VRAM_BYTES
+  )
+  if (pool.length < 2) return []
+  return [...pool].sort((a, b) => (b.vramBytes ?? 0) - (a.vramBytes ?? 0))
 }
 
 /** Kind rank: eGPU > discrete GPU > integrated. Exported for tests. */
@@ -227,6 +275,7 @@ function statusMessage(options: {
   preferEgpu: boolean
   tier: 'egpu' | 'gpu' | 'cpu'
   deviceCount: number
+  vramShare: string[]
 }): string {
   const backendLabel = options.backend
     ? `${options.backend}${options.deviceName ? ` · ${options.deviceName}` : ''}`
@@ -235,6 +284,10 @@ function statusMessage(options: {
 
   if (!options.preferEgpu) {
     return `${priority}. Preference off — Local models use the default ${backendLabel || 'GPU/CPU'} path.`
+  }
+
+  if (options.vramShare.length >= 2) {
+    return `${priority}. Sharing one model across ${options.vramShare.length} GPUs (${options.vramShare.join(', ')}) via ${backendLabel || 'GPU'} so large models use their combined VRAM.`
   }
 
   if (options.tier === 'egpu' && options.egpu) {
@@ -268,10 +321,20 @@ export async function getGpuAccelStatus(preferEgpu = true): Promise<GpuAccelStat
   }
 
   const os = platform()
-  const devices =
+  const listed =
     os === 'darwin' ? await listMacGpus() : os === 'win32' ? await listWinGpus() : []
+  const devices = await enrichNvidiaVram(listed)
   const egpu = devices.find((d) => d.kind === 'external') ?? null
   const preferred = pickBestGpu(devices)
+  const shareDevices = preferEgpu ? gpusForVramShare(devices) : []
+  const shareIds = new Set(shareDevices.map((d) => `${d.index}:${d.name}`))
+  for (const device of devices) {
+    device.shared = shareIds.has(`${device.index}:${device.name}`)
+  }
+  const vramShare = shareDevices.map((d) => d.name)
+  const vramShareTotalBytes = shareDevices.reduce((sum, d) => sum + (d.vramBytes ?? 0), 0)
+  const shareFree = shareDevices.map((d) => d.vramFreeBytes).filter((n): n is number => typeof n === 'number')
+  const vramShareFreeBytes = shareFree.length === shareDevices.length ? shareFree.reduce((a, b) => a + b, 0) : undefined
   const probed = await probeLlamaBackend()
   const backend = probed.backend ?? lastBackend
   // Prefer a concrete device name from a real model load when available.
@@ -297,6 +360,8 @@ export async function getGpuAccelStatus(preferEgpu = true): Promise<GpuAccelStat
     accelTier,
     backend,
     backendDeviceName: deviceName,
+    vramShareTotalBytes: shareDevices.length >= 2 ? vramShareTotalBytes : undefined,
+    vramShareFreeBytes: shareDevices.length >= 2 ? vramShareFreeBytes : undefined,
     message: statusMessage({
       preferred,
       egpu,
@@ -304,7 +369,8 @@ export async function getGpuAccelStatus(preferEgpu = true): Promise<GpuAccelStat
       deviceName,
       preferEgpu,
       tier: accelTier,
-      deviceCount: devices.length
+      deviceCount: devices.length,
+      vramShare
     })
   }
   cached = { at: Date.now(), status }
@@ -329,28 +395,46 @@ export async function applyLlamaGpuPreference(preferEgpu = true): Promise<{
   // Best GPU when preference is on: eGPU → discrete → integrated.
   const preferred = preferEgpu ? status.preferredGpu : null
 
-  if (preferEgpu && preferred && status.backend === 'cuda') {
+  const sharePool = preferEgpu ? gpusForVramShare(status.devices) : []
+
+  if (preferEgpu && status.backend === 'cuda') {
     const cuda = await listNvidiaCudaDevices()
-    const match =
-      cuda.find((d) => preferred.name.toLowerCase().includes(d.name.toLowerCase())) ||
-      cuda.find((d) => d.name.toLowerCase().includes(preferred.name.toLowerCase().slice(0, 12))) ||
-      (preferred.kind === 'external' || preferred.kind === 'discrete'
-        ? cuda[cuda.length - 1]
-        : cuda[0] || null)
-    if (match) {
-      env.CUDA_VISIBLE_DEVICES = String(match.index)
+    const shareCuda = cuda.filter((d) => (d.vramBytes ?? 0) >= HIGH_VRAM_BYTES)
+    if (shareCuda.length >= 2) {
+      // Leave every 6GB+ NVIDIA GPU visible. llama.cpp layer-splits one model across them.
+      env.CUDA_VISIBLE_DEVICES = shareCuda.map((d) => d.index).join(',')
+    } else if (preferred) {
+      const match =
+        cuda.find((d) => preferred.name.toLowerCase().includes(d.name.toLowerCase())) ||
+        cuda.find((d) => d.name.toLowerCase().includes(preferred.name.toLowerCase().slice(0, 12))) ||
+        (preferred.kind === 'external' || preferred.kind === 'discrete'
+          ? cuda[cuda.length - 1]
+          : cuda[0] || null)
+      if (match) {
+        env.CUDA_VISIBLE_DEVICES = String(match.index)
+      }
     }
   }
 
-  if (preferEgpu && preferred && status.backend === 'vulkan') {
-    // Prefer the preferred device index; index 0 is often iGPU when a dGPU exists.
-    const idx = Math.max(0, preferred.index)
-    env.GGML_VK_VISIBLE_DEVICES = String(idx)
+  if (preferEgpu && status.backend === 'vulkan') {
+    if (sharePool.length >= 2) {
+      env.GGML_VK_VISIBLE_DEVICES = sharePool.map((d) => Math.max(0, d.index)).join(',')
+    } else if (preferred) {
+      // Prefer the preferred device index; index 0 is often iGPU when a dGPU exists.
+      const idx = Math.max(0, preferred.index)
+      env.GGML_VK_VISIBLE_DEVICES = String(idx)
+    }
   }
 
   // Metal uses the system default device; macOS "Prefer External GPU" / high-perf
   // policy routes MTLCreateSystemDefaultDevice to the eGPU when attached.
-  if (preferEgpu && preferred?.kind === 'external' && status.backend === 'metal') {
+  // Do not pin a single device when several 6GB+ GPUs should share the model.
+  if (
+    preferEgpu &&
+    preferred?.kind === 'external' &&
+    status.backend === 'metal' &&
+    sharePool.length < 2
+  ) {
     env.GGML_METAL_DEVICES = '1'
   }
 

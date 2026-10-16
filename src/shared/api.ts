@@ -108,8 +108,9 @@ export type UsageEntitlement = {
   blockedReason: string | null
   upgradeUrl: string
   accountUrl: string
-  /** True when today's totals include a pull from www.ericservic.es profile usage. */
+  /** True when the rolling window includes a pull from www.ericservic.es profile usage. */
   profileSynced?: boolean
+  window?: { from: string; to: string; days: number }
 }
 
 export type UsageDayTotals = {
@@ -145,12 +146,17 @@ export type UsageSnapshot = {
     totalOutputTokens: number
     cloudJobs?: number
   }
+  /** Rolling 30-day totals used for plan limits (max of device and profile per day). */
+  window?: UsageDayTotals & { from: string; to: string; days: number }
   /** Account vs device breakdown when signed in */
   profile?: {
     sync: UsageSyncMeta
     deviceToday: UsageDayTotals
     accountToday: UsageDayTotals | null
     effectiveToday: UsageDayTotals
+    deviceWindow?: UsageDayTotals
+    accountWindow?: UsageDayTotals | null
+    effectiveWindow?: UsageDayTotals
   }
   days: Array<{
     date: string
@@ -158,6 +164,17 @@ export type UsageSnapshot = {
     totalInputTokens: number
     totalOutputTokens: number
     cloudJobs?: number
+    models?: Record<
+      string,
+      {
+        model: string
+        kind: 'builtin' | 'openai-compatible' | 'other'
+        provider: string
+        requests: number
+        inputTokens: number
+        outputTokens: number
+      }
+    >
   }>
   byKind: Array<{
     kind: 'builtin' | 'openai-compatible' | 'other'
@@ -548,7 +565,8 @@ export interface IdeApi {
   onWorkspaceFsChanged: (
     cb: (payload: { workspacePath: string; path: string }) => void
   ) => () => void
-  ericServicesStatus: () => Promise<{
+  ericServicesStatus: (opts?: { cached?: boolean }) =>
+    Promise<{
     ok: boolean
     error?: string
     linked: boolean
@@ -593,7 +611,49 @@ export interface IdeApi {
       erisLimits?: Record<string, unknown>
     }
     status?: Record<string, unknown>
-    sync?: { ok: boolean; error?: string; direction?: string }
+    sync?: {
+      ok: boolean
+      error?: string
+      direction?: string
+      changes?: string[]
+      missingKeys?: Array<{ id: string; name: string }>
+    }
+  }>
+  ericServicesLoginBrowser: (payload?: { apiBase?: string }) => Promise<{
+    ok: boolean
+    error?: string
+    userCode?: string
+    profile?: {
+      username: string
+      email: string
+      plan?: string
+      planLabel?: string
+      erisPlan?: string
+    }
+    sync?: {
+      ok: boolean
+      error?: string
+      direction?: string
+      changes?: string[]
+      missingKeys?: Array<{ id: string; name: string }>
+    }
+  }>
+  ericServicesDevices: () => Promise<{
+    ok: boolean
+    error?: string
+    devices?: Array<{
+      id: number
+      name: string
+      prefix: string
+      lastUsedAt: string | null
+      createdAt: string | null
+      current: boolean
+    }>
+  }>
+  ericServicesRevokeDevice: (id: number) => Promise<{
+    ok: boolean
+    error?: string
+    revokedCurrent?: boolean
   }>
   ericServicesLogout: () => Promise<{
     ok: boolean
@@ -612,6 +672,8 @@ export interface IdeApi {
     error?: string
     direction?: string
     updatedAt?: string | null
+    changes?: string[]
+    missingKeys?: Array<{ id: string; name: string }>
     status?: Record<string, unknown>
   }>
   ericServicesOpenAccount: () => Promise<{ ok: boolean; url?: string; error?: string }>
@@ -982,7 +1044,7 @@ export interface IdeApi {
       preview: string
     }) => void
   ) => () => void
-  getUsageStats: (days?: number) => Promise<UsageSnapshot>
+  getUsageStats: (days?: number, opts?: { refresh?: boolean }) => Promise<UsageSnapshot>
   clearUsageStats: (payload?: { todayOnly?: boolean }) => Promise<UsageSnapshot>
   onMenu: (channel: string, cb: () => void) => () => void
   getLogsInfo: () => Promise<{

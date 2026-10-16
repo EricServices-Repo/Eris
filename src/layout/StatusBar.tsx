@@ -31,11 +31,11 @@ interface Props {
 
 function formatQuota(ent: UsageEntitlement): string {
   if (ent.plan === 'pro') return 'Pro · Unlimited'
-  // Local chat is unlimited on Free; the only daily cap is Cloud Agent jobs.
+  // Local chat is unlimited on Free; Cloud Agent jobs are capped over the last 30 days.
   const left = ent.cloudJobs.remaining
   const limit = ent.cloudJobs.limit
   if (left == null || limit == null) return 'Free · local unlimited'
-  return `Free · ${left}/${limit} cloud jobs`
+  return `Free · ${left}/${limit} cloud jobs · 30d`
 }
 
 /** green = ready, yellow = partial, red = none */
@@ -96,11 +96,13 @@ export function StatusBar({
   const cloudTitle = `${cloudAgentsStatusLabel(cloudHealth)}\n${CLOUD_AGENTS_BASE_URL} (plain HTTP)\nOpen Settings → Agent for metrics`
   const models = modelsLight(composerReady, modelsOk)
 
-  let cloudLabel = 'Local agents'
-  if (accountNeedsReauth) cloudLabel = 'Re-auth'
-  else if (cloudHealth?.authenticated !== true) cloudLabel = 'Sign in'
+  let cloudLabel = 'Checking…'
+  if (!cloudHealth) cloudLabel = 'Checking…'
+  else if (accountNeedsReauth) cloudLabel = 'Re-auth'
+  else if (cloudHealth.authenticated !== true) cloudLabel = 'Sign in'
   else if (cloudReady) cloudLabel = 'Cloud'
   else if (preferCloud) cloudLabel = 'Cloud…'
+  else cloudLabel = 'Local agents'
 
   return (
     <footer className="status-bar">

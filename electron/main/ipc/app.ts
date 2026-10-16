@@ -75,17 +75,27 @@ export function registerAppIpc(): void {
     return getTelemetrySummaries()
   })
 
-  ipcMain.handle('usage:get', async (_e, days?: number) => {
+  ipcMain.handle('usage:get', async (_e, days?: number, opts?: { refresh?: boolean }) => {
     const settings = getResolvedSettings(appState.currentWorkspace)
-    const { pullUsageFromProfile, getUsageSyncMeta, getRemoteUsageCache, getEffectiveTodayTotals } =
-      await import('../services/usage-sync')
-    const { getLocalDayTotals } = await import('../services/usage-stats')
-    try {
-      await pullUsageFromProfile()
-    } catch {
-      /* offline / unsigned */
+    const {
+      pullUsageFromProfile,
+      getUsageSyncMeta,
+      getRemoteUsageCache,
+      getEffectiveTodayTotals,
+      getEffectiveWindowTotals,
+      getRemoteWindowTotals
+    } = await import('../services/usage-sync')
+    const { getLocalDayTotals, getLocalWindowTotals, USAGE_WINDOW_DAYS } = await import(
+      '../services/usage-stats'
+    )
+    if (opts?.refresh !== false) {
+      try {
+        await pullUsageFromProfile()
+      } catch {
+        /* offline / unsigned */
+      }
     }
-    const snap = getUsageSnapshot(days ?? 7)
+    const snap = getUsageSnapshot(days ?? USAGE_WINDOW_DAYS)
     const day = snap.today.date
     const deviceToday = getLocalDayTotals(day)
     const remote = getRemoteUsageCache()
@@ -98,9 +108,19 @@ export function registerAppIpc(): void {
         }
       : null
     const eff = getEffectiveTodayTotals()
+    const windowTotals = getEffectiveWindowTotals()
+    const deviceWindow = getLocalWindowTotals()
+    const accountWindow = getRemoteWindowTotals()
     const sync = getUsageSyncMeta()
     return {
       ...snap,
+      window: {
+        ...deviceWindow,
+        requests: windowTotals.requests,
+        inputTokens: windowTotals.inputTokens,
+        outputTokens: windowTotals.outputTokens,
+        cloudJobs: windowTotals.cloudJobs
+      },
       entitlement: getUsageEntitlement(settings, getSecret),
       profile: {
         sync,
@@ -111,6 +131,14 @@ export function registerAppIpc(): void {
           inputTokens: eff.inputTokens,
           outputTokens: eff.outputTokens,
           cloudJobs: eff.cloudJobs
+        },
+        deviceWindow,
+        accountWindow,
+        effectiveWindow: {
+          requests: windowTotals.requests,
+          inputTokens: windowTotals.inputTokens,
+          outputTokens: windowTotals.outputTokens,
+          cloudJobs: windowTotals.cloudJobs
         }
       }
     }

@@ -1,47 +1,5 @@
 # Changelog
 
-## 0.2.42 — 2026-10-15
-
-- Checkpointed agent sessions: after each tool batch, persist step state under `.eris/sessions/` (worker transcript + file op boundary). Resume continues from the latest step; Rewind restores files and continues from a chosen step.
-- Repo-scale indexing: `.gitignore` / `.erisignore` respect, incremental index patches on file changes (up to 8k files), and index-first ranked retrieve (path + symbols + embeddings) for large monorepos.
-- Agents Inbox panel: background + Cloud jobs with enqueue, stop, merge, apply patches, diff, PR links, and open-in-chat.
-- Model routing polish: Auto / Local / Max profiles, Prefer Cloud Composer, LLM router on by default for Auto/Max, and clearer route chips (`Auto · Cloud · …`).
-
-## 0.2.41 — 2026-10-15
-
-- Sharper shared agent system prompt defaults for tool-first, path-citing behavior.
-
-## 0.2.40 — 2026-10-15
-
-Cross-platform desktop builds (macOS + Windows) from the same version tag.
-
-| Platform | Download |
-|----------|----------|
-| macOS | `Eris-0.2.40-mac-*.dmg` / `.zip` |
-| Windows | `Eris-0.2.40-win-*-setup.exe` |
-
-CI builds both platforms on tag push (`.github/workflows/release.yml`).
-
-### Changes
-- Merge nightly into main for public Eris release. (1c59f00)
-- Add /update-github skill for public Eris-updates releases. (d8749eb)
-- Merge pull request #23 from EricServices-Repo/nightly (4fb702c)
-- Ship project memory, agent prompts, and local UX through 0.2.39. (b98ebff)
-- Merge pull request #22 from EricServices-Repo/model-download (d6f1bad)
-- Ship download UX, chat speed, and stability fixes through 0.2.33. (07aa33f)
-- Merge pull request #20 from EricServices-Repo/model-download (75fd0d4)
-- Merge pull request #19 from EricServices-Repo/model-download (c56eff0)
-- Merge pull request #17 from EricServices-Repo/cursor/free-pro-usage-and-release-builds (e276075)
-- Merge pull request #16 from EricServices-Repo/cursor/free-pro-usage-and-release-builds (e352c74)
-- Merge pull request #15 from EricServices-Repo/cursor/free-pro-usage-and-release-builds (8de1d88)
-- Merge pull request #14 from EricServices-Repo/cursor/free-pro-usage-and-release-builds (1fe0080)
-- Merge pull request #13 from EricServices-Repo/cursor/free-pro-usage-and-release-builds (0e28197)
-- Merge pull request #12 from EricServices-Repo/cursor/free-pro-usage-and-release-builds (1ffb689)
-- Merge pull request #11 from EricServices-Repo/cursor/free-pro-usage-and-release-builds (7259713)
-- Merge pull request #10 from EricServices-Repo/cursor/free-pro-usage-and-release-builds (a4dc8fe)
-- Merge pull request #9 from EricServices-Repo/cursor/free-pro-usage-and-release-builds (4c15f22)
-- Merge pull request #8 from EricServices-Repo/cursor/free-pro-usage-and-release-builds (d5856a4)
-
 ## 0.2.39 — 2026-10-14
 
 - Living project memory: agent runs and ask_user replies update `.eris/context.md` (auto/ask/off); chat chip + undo.

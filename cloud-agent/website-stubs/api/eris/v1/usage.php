@@ -139,7 +139,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $days = [];
     $keys = array_keys($file['days']);
     rsort($keys);
-    foreach (array_slice($keys, 0, 14) as $k) {
+    $limit = 30;
+    if (isset($_GET['days'])) {
+        $limit = max(1, min(90, (int) $_GET['days']));
+    }
+    foreach (array_slice($keys, 0, $limit) as $k) {
         $days[] = eris_usage_normalize_day($file['days'][$k], $k);
     }
     eris_usage_json([

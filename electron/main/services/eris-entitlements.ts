@@ -10,7 +10,7 @@ import {
   type ErisPlanLimits,
   type UsageLimitMeter
 } from '../../../src/shared/eris-plan'
-import { getEffectiveTodayTotals } from './usage-sync'
+import { getEffectiveWindowTotals, getRemoteAllowance } from './usage-sync'
 import { isEricServicesAuthenticated } from './ericservices'
 
 export type UsageEntitlement = {
@@ -25,8 +25,10 @@ export type UsageEntitlement = {
   blockedReason: string | null
   upgradeUrl: string
   accountUrl: string
-  /** True when today's totals include a pull from www.ericservic.es. */
+  /** True when the rolling window includes a pull from www.ericservic.es. */
   profileSynced?: boolean
+  /** Inclusive calendar range the meters were summed over. */
+  window?: { from: string; to: string; days: number }
 }
 
 export function resolvePlanLimits(settings: AppSettings): {
@@ -65,27 +67,42 @@ export function getUsageEntitlement(
     : null
   const authenticated = isEricServicesAuthenticated(settings, token)
   const { plan, limits } = resolvePlanLimits(settings)
-  // Prefer max(local, profile) so Free caps apply across devices when signed in
-  const eff = getEffectiveTodayTotals()
+  // Prefer max(local, profile) per day, summed over the rolling month.
+  const eff = getEffectiveWindowTotals()
   const usedRequests = eff.requests
   const usedTokens = eff.inputTokens + eff.outputTokens
   const usedCloud = eff.cloudJobs || 0
 
+  const remoteCap = getRemoteAllowance()?.cloudJobs
+  const cloudLimit =
+    remoteCap && (remoteCap.limit === null || typeof remoteCap.limit === 'number')
+      ? remoteCap.limit
+      : limits.cloudJobsPerDay
+  const cloudUsed =
+    remoteCap && typeof remoteCap.used === 'number' ? Math.max(usedCloud, remoteCap.used) : usedCloud
+
+  limits.cloudJobsPerDay = cloudLimit
+
   const requests = meterAgainstLimit(usedRequests, limits.dailyRequests)
   const tokens = meterAgainstLimit(usedTokens, limits.dailyTokens)
-  const cloudJobs = meterAgainstLimit(usedCloud, limits.cloudJobsPerDay)
+  const cloudJobs = meterAgainstLimit(cloudUsed, cloudLimit)
+  if (remoteCap?.exhausted) {
+    cloudJobs.exhausted = true
+    cloudJobs.remaining = 0
+    if (cloudJobs.limit != null) cloudJobs.ratio = 1
+  }
 
   // Local chat/tokens are free (they run on the user's machine). Only usage that
   // spends our compute — Cloud Agent jobs — can block, and that is enforced in
   // assertCloudJobWithinPlan at the cloud entry point, not here. A non-null
   // request/token limit (set by an admin override) is still honored for display
-  // and as a backstop.
+  // and as a backstop. Caps apply to the last 30 days, not a single calendar day.
   let blockedReason: string | null = null
   if (plan === 'free') {
     if (limits.dailyRequests != null && requests.exhausted) {
-      blockedReason = `Free plan daily request limit reached (${limits.dailyRequests}). Upgrade to Pro for unlimited usage.`
+      blockedReason = `Free plan request limit reached for the last ${eff.days} days (${limits.dailyRequests}). Upgrade to Pro for unlimited usage.`
     } else if (limits.dailyTokens != null && tokens.exhausted) {
-      blockedReason = `Free plan daily token limit reached (${limits.dailyTokens}). Upgrade to Pro for unlimited usage.`
+      blockedReason = `Free plan token limit reached for the last ${eff.days} days (${limits.dailyTokens}). Upgrade to Pro for unlimited usage.`
     }
   }
 
@@ -101,7 +118,8 @@ export function getUsageEntitlement(
     blockedReason,
     upgradeUrl: erisUpgradeUrl(settings.ericServices.apiBase),
     accountUrl: erisAccountUrl(settings.ericServices.apiBase),
-    profileSynced: eff.synced
+    profileSynced: eff.synced,
+    window: { from: eff.from, to: eff.to, days: eff.days }
   }
 }
 
@@ -126,7 +144,7 @@ export function assertCloudJobWithinPlan(
   if (ent.plan === 'pro') return
   if (ent.cloudJobs.exhausted) {
     throw new Error(
-      `Free plan daily Cloud Agent limit reached (${ent.limits.cloudJobsPerDay}). Upgrade to Pro for unlimited Cloud Agents.`
+      `Free plan Cloud Agent limit reached for the last ${ent.window?.days ?? 30} days (${ent.limits.cloudJobsPerDay}). Upgrade to Pro for unlimited Cloud Agents.`
     )
   }
   if (ent.blockedReason) throw new Error(ent.blockedReason)

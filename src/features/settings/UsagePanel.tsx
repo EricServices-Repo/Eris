@@ -60,6 +60,59 @@ function syncLabel(sync: UsageSyncMeta | undefined, refreshing: boolean): string
     : 'Account sync idle'
 }
 
+type UsageDay = UsageSnapshot['days'][number]
+
+function dayLabel(date: string): string {
+  const [y, m, d] = date.split('-').map((part) => Number(part))
+  if (!y || !m || !d) return date
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric'
+  })
+}
+
+function chartsForDay(day: UsageDay | undefined): {
+  byKind: UsageSnapshot['byKind']
+  byModel: UsageSnapshot['byModel']
+} {
+  const models = Object.values(day?.models || {})
+  const kindMap = new Map<
+    UsageSnapshot['byKind'][number]['kind'],
+    { requests: number; inputTokens: number; outputTokens: number }
+  >()
+  for (const entry of models) {
+    const cur = kindMap.get(entry.kind) || { requests: 0, inputTokens: 0, outputTokens: 0 }
+    cur.requests += entry.requests
+    cur.inputTokens += entry.inputTokens
+    cur.outputTokens += entry.outputTokens
+    kindMap.set(entry.kind, cur)
+  }
+  const labels: Record<string, string> = {
+    builtin: 'Built-in Composer',
+    'openai-compatible': 'OpenAI-compatible',
+    other: 'Other'
+  }
+  const byKind = (['builtin', 'openai-compatible', 'other'] as const)
+    .map((kind) => {
+      const cur = kindMap.get(kind) || { requests: 0, inputTokens: 0, outputTokens: 0 }
+      return {
+        kind,
+        label: labels[kind] || kind,
+        ...cur,
+        totalTokens: cur.inputTokens + cur.outputTokens
+      }
+    })
+    .filter((row) => row.totalTokens > 0 || row.requests > 0)
+  const total = models.reduce((sum, entry) => sum + entry.inputTokens + entry.outputTokens, 0)
+  const byModel = models
+    .map((entry) => {
+      const totalTokens = entry.inputTokens + entry.outputTokens
+      return { ...entry, totalTokens, share: total > 0 ? totalTokens / total : 0 }
+    })
+    .sort((a, b) => b.totalTokens - a.totalTokens)
+  return { byKind, byModel }
+}
+
 function totalsLine(t: UsageDayTotals | null | undefined): string {
   if (!t) return '—'
   const tokens = t.inputTokens + t.outputTokens
@@ -99,6 +152,7 @@ function LimitMeter({
 
 export function UsagePanel() {
   const [stats, setStats] = useState<UsageSnapshot | null>(null)
+  const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -130,15 +184,22 @@ export function UsagePanel() {
   const sync = profile?.sync
   const isPro = ent?.plan === 'pro'
   const syncing = busy || sync?.state === 'syncing'
-  const totalToday =
-    (today?.totalInputTokens || 0) + (today?.totalOutputTokens || 0)
-  const maxModel = Math.max(1, ...(stats?.byModel.map((m) => m.totalTokens) || [1]))
-  const maxKind = Math.max(1, ...(stats?.byKind.map((k) => k.totalTokens) || [1]))
-  const weekTotal = (stats?.days || []).reduce(
-    (sum, d) => sum + d.totalInputTokens + d.totalOutputTokens,
-    0
-  )
-  const weekMax = Math.max(
+  const windowTotals = profile?.effectiveWindow || stats?.window
+  const windowTokens = (windowTotals?.inputTokens || 0) + (windowTotals?.outputTokens || 0)
+  const windowDays = stats?.window?.days || ent?.window?.days || stats?.days.length || 30
+  const windowRange =
+    stats?.window?.from && stats?.window?.to
+      ? `${dayLabel(stats.window.from)} – ${dayLabel(stats.window.to)}`
+      : `Last ${windowDays} days`
+  const focus =
+    stats?.days.find((day) => day.date === selectedDate) ||
+    stats?.days.find((day) => day.date === today?.date) ||
+    today
+  const focusCharts = chartsForDay(focus)
+  const focusTokens = (focus?.totalInputTokens || 0) + (focus?.totalOutputTokens || 0)
+  const maxModel = Math.max(1, ...focusCharts.byModel.map((m) => m.totalTokens), 1)
+  const maxKind = Math.max(1, ...focusCharts.byKind.map((k) => k.totalTokens), 1)
+  const trendMax = Math.max(
     1,
     ...(stats?.days || []).map((d) => d.totalInputTokens + d.totalOutputTokens)
   )
@@ -152,28 +213,28 @@ export function UsagePanel() {
             <span className="usage-sync-status">{syncLabel(sync, busy)}</span>
           </div>
           <p className="usage-sync-copy">
-            Free daily caps use the higher of this device and your EricServic.es profile, so
-            multi-device use stays honest.
+            Free limits use the last {windowDays} days. Each day counts the higher of this device
+            and your EricServic.es profile, so multi-device use stays honest.
           </p>
           <div className="usage-sync-grid">
             <div className="usage-sync-cell">
-              <div className="usage-sync-cell-label">This device</div>
+              <div className="usage-sync-cell-label">This device · {windowDays}d</div>
               <div className="usage-sync-cell-value">
-                {totalsLine(profile?.deviceToday)}
+                {totalsLine(profile?.deviceWindow)}
               </div>
             </div>
             <div className="usage-sync-cell">
-              <div className="usage-sync-cell-label">Account (profile)</div>
+              <div className="usage-sync-cell-label">Account · {windowDays}d</div>
               <div className="usage-sync-cell-value">
-                {syncing && !profile?.accountToday
+                {syncing && !profile?.accountWindow
                   ? 'Syncing…'
-                  : totalsLine(profile?.accountToday)}
+                  : totalsLine(profile?.accountWindow)}
               </div>
             </div>
             <div className="usage-sync-cell is-effective">
-              <div className="usage-sync-cell-label">Counted toward Free caps</div>
+              <div className="usage-sync-cell-label">Counted toward limits</div>
               <div className="usage-sync-cell-value">
-                {totalsLine(profile?.effectiveToday)}
+                {totalsLine(profile?.effectiveWindow)}
               </div>
             </div>
           </div>
@@ -185,14 +246,14 @@ export function UsagePanel() {
           <div className="usage-plan-badge">{ent?.planLabel || 'Free'}</div>
           <div>
             <div className="usage-plan-title">
-              {isPro ? 'Pro — unlimited usage' : 'Free plan — daily limits apply'}
+              {isPro ? 'Pro — unlimited usage' : `Free plan — last ${windowDays} days`}
             </div>
             <p className="usage-plan-copy">
               {ent?.authenticated
                 ? isPro
                   ? 'Your EricServic.es account is on Pro. Plan is managed in the Control Hub.'
-                  : 'Limits reset each calendar day. An admin can upgrade your account to Pro on www.ericservic.es.'
-                : 'Sign in under Settings → Account to sync your plan from EricServic.es. Until then, Free limits apply.'}
+                  : `Limits apply to a rolling ${windowDays}-day window (${windowRange}). An admin can upgrade your account to Pro on www.ericservic.es.`
+                : `Sign in under Settings → Account to sync your plan from EricServic.es. Until then, Free limits apply to the last ${windowDays} days.`}
             </p>
           </div>
         </div>
@@ -235,8 +296,8 @@ export function UsagePanel() {
       {ent && (
         <section className="usage-section">
           <div className="usage-section-head">
-            <h3>Today’s allowance</h3>
-            <span className="usage-muted">{today?.date || '—'}</span>
+            <h3>Allowance</h3>
+            <span className="usage-muted">{windowRange}</span>
           </div>
           <div className="usage-limit-grid">
             <LimitMeter label="Requests" meter={ent.requests} />
@@ -247,47 +308,53 @@ export function UsagePanel() {
       )}
 
       <p className="subtitle" style={{ marginTop: 0 }}>
-        Charts below are this device’s model breakdown (chars÷4 when providers don’t report
-        usage). Allowance meters above use account-aware Free caps when signed in.
+        Allowance meters use the last {windowDays} days. Pick a day to see that day’s model
+        breakdown on this device (chars÷4 when providers don’t report usage).
       </p>
 
       <div className="usage-hero">
         <div className="usage-hero-card">
-          <div className="usage-hero-label">Today (device)</div>
-          <div className="usage-hero-value">{formatTokens(totalToday)}</div>
-          <div className="usage-hero-sub">tokens · {today?.totalRequests || 0} requests</div>
+          <div className="usage-hero-label">Last {windowDays} days</div>
+          <div className="usage-hero-value">{formatTokens(windowTokens)}</div>
+          <div className="usage-hero-sub">
+            tokens · {windowTotals?.requests || 0} requests · {windowTotals?.cloudJobs || 0} cloud
+          </div>
+        </div>
+        <div className="usage-hero-card">
+          <div className="usage-hero-label">{focus ? dayLabel(focus.date) : 'Day'}</div>
+          <div className="usage-hero-value">{formatTokens(focusTokens)}</div>
+          <div className="usage-hero-sub">tokens · {focus?.totalRequests || 0} requests</div>
         </div>
         <div className="usage-hero-card">
           <div className="usage-hero-label">Input</div>
           <div className="usage-hero-value usage-tone-in">
-            {formatTokens(today?.totalInputTokens || 0)}
+            {formatTokens(focus?.totalInputTokens || 0)}
           </div>
-          <div className="usage-hero-sub">prompt tokens</div>
+          <div className="usage-hero-sub">prompt tokens that day</div>
         </div>
         <div className="usage-hero-card">
           <div className="usage-hero-label">Output</div>
           <div className="usage-hero-value usage-tone-out">
-            {formatTokens(today?.totalOutputTokens || 0)}
+            {formatTokens(focus?.totalOutputTokens || 0)}
           </div>
-          <div className="usage-hero-sub">completion tokens</div>
-        </div>
-        <div className="usage-hero-card">
-          <div className="usage-hero-label">Last 7 days</div>
-          <div className="usage-hero-value">{formatTokens(weekTotal)}</div>
-          <div className="usage-hero-sub">tokens across sessions</div>
+          <div className="usage-hero-sub">completion tokens that day</div>
         </div>
       </div>
 
       <section className="usage-section">
         <div className="usage-section-head">
           <h3>By model type</h3>
-          <span className="usage-muted">{today?.date || '—'}</span>
+          <span className="usage-muted">{focus ? dayLabel(focus.date) : '—'}</span>
         </div>
-        {(stats?.byKind.length || 0) === 0 ? (
-          <div className="usage-empty">No model usage recorded today yet.</div>
+        {focusCharts.byKind.length === 0 ? (
+          <div className="usage-empty">
+            {focusTokens > 0
+              ? 'No per-model breakdown for this day.'
+              : 'No model usage recorded for this day.'}
+          </div>
         ) : (
           <div className="usage-bars">
-            {stats!.byKind.map((k) => (
+            {focusCharts.byKind.map((k) => (
               <div key={k.kind} className="usage-bar-row">
                 <div className="usage-bar-meta">
                   <span className="usage-bar-title">{k.label}</span>
@@ -344,11 +411,11 @@ export function UsagePanel() {
             </span>
           </div>
         </div>
-        {(stats?.byModel.length || 0) === 0 ? (
-          <div className="usage-empty">Chat with an agent or use inline AI to start a chart.</div>
+        {focusCharts.byModel.length === 0 ? (
+          <div className="usage-empty">No model usage recorded for this day.</div>
         ) : (
           <div className="usage-bars">
-            {stats!.byModel.map((m) => (
+            {focusCharts.byModel.map((m) => (
               <div key={`${m.kind}-${m.provider}-${m.model}`} className="usage-bar-row">
                 <div className="usage-bar-meta">
                   <span className="usage-bar-title">
@@ -382,26 +449,47 @@ export function UsagePanel() {
 
       <section className="usage-section">
         <div className="usage-section-head">
-          <h3>Daily trend</h3>
-          <span className="usage-muted">Last {(stats?.days.length || 0) || 7} days</span>
+          <h3>Daily usage</h3>
+          <label className="usage-day-picker">
+            <span className="usage-muted">Day</span>
+            <select
+              value={focus?.date || ''}
+              onChange={(event) => setSelectedDate(event.target.value)}
+            >
+              {(stats?.days || []).map((day) => (
+                <option key={day.date} value={day.date}>
+                  {dayLabel(day.date)} ·{' '}
+                  {formatTokens(day.totalInputTokens + day.totalOutputTokens)} tok · {day.totalRequests}{' '}
+                  req
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         {(stats?.days.length || 0) === 0 ? (
           <div className="usage-empty">No history yet.</div>
         ) : (
-          <div className="usage-trend">
+          <div className="usage-trend" role="listbox" aria-label="Usage by day">
             {[...(stats?.days || [])].reverse().map((d) => {
               const total = d.totalInputTokens + d.totalOutputTokens
+              const selected = d.date === focus?.date
               return (
-                <div key={d.date} className="usage-trend-col" title={`${d.date}: ${total} tokens`}>
+                <button
+                  key={d.date}
+                  type="button"
+                  className={`usage-trend-col${selected ? ' is-selected' : ''}`}
+                  title={`${dayLabel(d.date)}: ${formatTokens(total)} tokens, ${d.totalRequests} requests, ${d.cloudJobs || 0} cloud jobs`}
+                  aria-pressed={selected}
+                  onClick={() => setSelectedDate(d.date)}
+                >
                   <div className="usage-trend-bar-wrap">
                     <div
                       className="usage-trend-bar"
-                      style={{ height: `${Math.max(6, (total / weekMax) * 100)}%` }}
+                      style={{ height: `${Math.max(total > 0 ? 8 : 4, (total / trendMax) * 100)}%` }}
                     />
                   </div>
-                  <div className="usage-trend-label">{d.date.slice(5)}</div>
-                  <div className="usage-trend-value">{formatTokens(total)}</div>
-                </div>
+                  <div className="usage-trend-label">{d.date.slice(8)}</div>
+                </button>
               )
             })}
           </div>
