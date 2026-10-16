@@ -49,6 +49,8 @@ export type UsageSnapshot = {
   }>
   byModel: Array<ModelUsageEntry & { totalTokens: number; share: number }>
   entitlement?: import('./eris-entitlements').UsageEntitlement
+  /** Rolling allowance window (always the last USAGE_WINDOW_DAYS, not the chart length). */
+  window?: UsageWindowTotals
 }
 
 type UsageFile = {
@@ -57,6 +59,9 @@ type UsageFile = {
 }
 
 const KEEP_DAYS = 30
+
+/** Allowance and the usage chart cover this many calendar days, ending today. */
+export const USAGE_WINDOW_DAYS = 30
 
 function usagePath(): string {
   return join(userDataRoot(), 'usage.json')
@@ -179,7 +184,7 @@ export function recordModelUsage(options: {
   })
 }
 
-/** Count a Cloud Agent enqueue toward Free-tier daily caps. */
+/** Count a Cloud Agent enqueue toward the Free-tier rolling window. */
 export function recordCloudJobEnqueue(): void {
   const file = loadFile()
   const date = todayKey()
@@ -195,6 +200,33 @@ export type DayUsageTotals = {
   inputTokens: number
   outputTokens: number
   cloudJobs: number
+}
+
+/** Oldest → newest calendar keys ending on `end` (local timezone). */
+export function rollingDayKeys(count = USAGE_WINDOW_DAYS, end = new Date()): string[] {
+  const n = Math.max(1, Math.round(count))
+  const keys: string[] = []
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(end.getFullYear(), end.getMonth(), end.getDate() - i)
+    keys.push(todayKey(d))
+  }
+  return keys
+}
+
+export function sumDayTotals(parts: DayUsageTotals[]): DayUsageTotals {
+  const totals: DayUsageTotals = {
+    requests: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cloudJobs: 0
+  }
+  for (const part of parts) {
+    totals.requests += part.requests || 0
+    totals.inputTokens += part.inputTokens || 0
+    totals.outputTokens += part.outputTokens || 0
+    totals.cloudJobs += part.cloudJobs || 0
+  }
+  return totals
 }
 
 export function getLocalDayTotals(date = todayKey()): DayUsageTotals {
@@ -242,19 +274,45 @@ export function applyRemoteDayUsage(remote: {
   saveFile(file)
 }
 
-function dayList(file: UsageFile): DayUsage[] {
-  return Object.keys(file.days)
-    .sort()
-    .reverse()
-    .map((d) => file.days[d]!)
-    .filter(Boolean)
+export function getLocalWindowTotals(windowDays = USAGE_WINDOW_DAYS): DayUsageTotals & {
+  from: string
+  to: string
+  days: number
+} {
+  const keys = rollingDayKeys(windowDays)
+  const file = loadFile()
+  const totals = sumDayTotals(
+    keys.map((key) => {
+      const day = file.days[key]
+      return {
+        requests: day?.totalRequests || 0,
+        inputTokens: day?.totalInputTokens || 0,
+        outputTokens: day?.totalOutputTokens || 0,
+        cloudJobs: day?.cloudJobs || 0
+      }
+    })
+  )
+  return {
+    ...totals,
+    from: keys[0] || todayKey(),
+    to: keys[keys.length - 1] || todayKey(),
+    days: keys.length
+  }
 }
 
-export function getUsageSnapshot(days = 7): UsageSnapshot {
+export type UsageWindowTotals = DayUsageTotals & {
+  from: string
+  to: string
+  days: number
+}
+
+export function getUsageSnapshot(days = USAGE_WINDOW_DAYS): UsageSnapshot {
   const file = loadFile()
   const date = todayKey()
   const today = file.days[date] || emptyDay(date)
-  const recent = dayList(file).slice(0, Math.max(1, days))
+  const keys = [...rollingDayKeys(days)].reverse()
+  const recent = keys.map((key) => file.days[key] || emptyDay(key))
+  const window = getLocalWindowTotals()
 
   const kindMap = new Map<
     ModelUsageKind,
@@ -302,7 +360,7 @@ export function getUsageSnapshot(days = 7): UsageSnapshot {
     })
     .sort((a, b) => b.totalTokens - a.totalTokens)
 
-  return { today, days: recent, byKind, byModel }
+  return { today, days: recent, byKind, byModel, window }
 }
 
 export function clearUsageStats(options?: { todayOnly?: boolean }): UsageSnapshot {

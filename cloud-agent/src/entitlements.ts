@@ -4,7 +4,9 @@ import { config } from './config.js'
 import type { AuthContext } from './auth.js'
 import type { JobStore } from './job-store.js'
 
-type DayUsage = { day: string; jobs: Record<string, number> }
+const USAGE_WINDOW_DAYS = 30
+
+type UsageFile = { version: 2; days: Record<string, Record<string, number>> }
 
 function usagePath(): string {
   return join(config.dataDir, 'usage-daily.json')
@@ -14,20 +16,49 @@ function todayKey(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-function loadUsage(): DayUsage {
+function rollingKeys(count = USAGE_WINDOW_DAYS): string[] {
+  const keys: string[] = []
+  const end = new Date()
+  for (let i = count - 1; i >= 0; i--) {
+    const d = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate() - i))
+    keys.push(d.toISOString().slice(0, 10))
+  }
+  return keys
+}
+
+function loadUsage(): UsageFile {
+  const empty: UsageFile = { version: 2, days: {} }
   try {
-    if (!existsSync(usagePath())) return { day: todayKey(), jobs: {} }
-    const raw = JSON.parse(readFileSync(usagePath(), 'utf8')) as DayUsage
-    if (raw.day !== todayKey()) return { day: todayKey(), jobs: {} }
-    return { day: raw.day, jobs: raw.jobs || {} }
+    if (!existsSync(usagePath())) return empty
+    const raw = JSON.parse(readFileSync(usagePath(), 'utf8')) as {
+      version?: number
+      day?: string
+      jobs?: Record<string, number>
+      days?: Record<string, Record<string, number>>
+    }
+    if (raw && raw.days && typeof raw.days === 'object') {
+      return { version: 2, days: raw.days }
+    }
+    if (raw?.day && raw.jobs) return { version: 2, days: { [raw.day]: raw.jobs } }
+    return empty
   } catch {
-    return { day: todayKey(), jobs: {} }
+    return empty
   }
 }
 
-function saveUsage(u: DayUsage): void {
+function saveUsage(u: UsageFile): void {
+  const keep = new Set(rollingKeys(90))
+  for (const key of Object.keys(u.days)) {
+    if (!keep.has(key)) delete u.days[key]
+  }
   mkdirSync(config.dataDir, { recursive: true })
   writeFileSync(usagePath(), JSON.stringify(u, null, 2), 'utf8')
+}
+
+function jobsForOwner(file: UsageFile, owner: string, keys: string[]): number {
+  let n = 0
+  for (const key of keys) n += Number(file.days[key]?.[owner]) || 0
+  return n
 }
 
 export async function assertCanEnqueue(
@@ -57,13 +88,14 @@ export async function assertCanEnqueue(
 
   if (auth.plan === 'free') {
     const usage = loadUsage()
-    const localUsed = usage.jobs[owner] || 0
-    const remoteUsed = await remoteCloudJobsToday(auth)
+    const keys = rollingKeys()
+    const localUsed = jobsForOwner(usage, owner, keys)
+    const remoteUsed = await remoteCloudJobsWindow(auth, keys)
     const used = Math.max(localUsed, remoteUsed ?? 0)
     if (used >= config.freeJobsPerDay) {
       return {
         ok: false,
-        error: `Free plan daily Cloud Agent limit reached (${config.freeJobsPerDay}). Upgrade to Pro.`
+        error: `Free plan Cloud Agent limit reached for the last ${USAGE_WINDOW_DAYS} days (${config.freeJobsPerDay}). Upgrade to Pro.`
       }
     }
   }
@@ -73,7 +105,10 @@ export async function assertCanEnqueue(
 export function recordEnqueue(auth: AuthContext): void {
   if (auth.plan === 'pro') return
   const usage = loadUsage()
-  usage.jobs[auth.owner] = (usage.jobs[auth.owner] || 0) + 1
+  const day = todayKey()
+  const jobs = usage.days[day] || {}
+  jobs[auth.owner] = (jobs[auth.owner] || 0) + 1
+  usage.days[day] = jobs
   saveUsage(usage)
   void reportCloudJobToProfile(auth)
 }
@@ -111,10 +146,14 @@ async function reportCloudJobToProfile(auth: AuthContext): Promise<void> {
 
 /**
  * Prefer profile cloudJobs when available so Free caps apply across devices/agents.
+ * Sums the rolling window when the profile returns recent days.
  */
-export async function remoteCloudJobsToday(auth: AuthContext): Promise<number | null> {
+export async function remoteCloudJobsWindow(
+  auth: AuthContext,
+  keys: string[]
+): Promise<number | null> {
   if (!auth.token) return null
-  const url = `${config.erisApiBase.replace(/\/+$/, '')}/usage.php?day=${encodeURIComponent(todayKey())}`
+  const url = `${config.erisApiBase.replace(/\/+$/, '')}/usage.php?day=${encodeURIComponent(todayKey())}&days=${USAGE_WINDOW_DAYS}`
   try {
     const res = await fetch(url, {
       method: 'GET',
@@ -127,9 +166,21 @@ export async function remoteCloudJobsToday(auth: AuthContext): Promise<number | 
     })
     const data = (await res.json().catch(() => ({}))) as {
       ok?: boolean
-      usage?: { cloudJobs?: number }
+      usage?: { cloudJobs?: number; day?: string }
+      day?: string
+      days?: Array<{ day?: string; cloudJobs?: number }>
     }
     if (!res.ok || data.ok === false) return null
+    const wanted = new Set(keys)
+    if (Array.isArray(data.days) && data.days.length > 0) {
+      let n = 0
+      for (const entry of data.days) {
+        if (!entry?.day || !wanted.has(entry.day)) continue
+        const jobs = Number(entry.cloudJobs)
+        if (Number.isFinite(jobs)) n += Math.max(0, Math.floor(jobs))
+      }
+      return n
+    }
     const n = Number(data.usage?.cloudJobs)
     return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : null
   } catch {
@@ -146,31 +197,43 @@ export function maskOwner(owner: string): string {
 }
 
 /**
- * Daily free-plan enqueue usage (UTC day). Safe for the public status page.
+ * Free-plan enqueue usage. Today is UTC; the cap is the last 30 UTC days.
+ * Safe for the public status page.
  */
 export function getUsageOverview(): {
   day: string
   freeJobsPerDay: number
   freeEnqueuesToday: number
+  freeEnqueuesWindow: number
   freeUsersToday: number
+  freeUsersWindow: number
   freeUsersAtCap: number
   topFreeUsers: Array<{ owner: string; jobs: number; atCap: boolean }>
 } {
   const usage = loadUsage()
   const freeJobsPerDay = config.freeJobsPerDay
-  const entries = Object.entries(usage.jobs || {})
-    .map(([owner, jobs]) => {
-      const n = Number(jobs) || 0
+  const today = todayKey()
+  const windowKeys = rollingKeys()
+  const owners = new Set<string>()
+  for (const key of windowKeys) {
+    for (const owner of Object.keys(usage.days[key] || {})) owners.add(owner)
+  }
+  const entries = [...owners]
+    .map((owner) => {
+      const n = jobsForOwner(usage, owner, windowKeys)
       return { owner: maskOwner(owner), jobs: n, atCap: n >= freeJobsPerDay }
     })
     .filter((e) => e.jobs > 0)
     .sort((a, b) => b.jobs - a.jobs)
-  const freeEnqueuesToday = entries.reduce((n, e) => n + e.jobs, 0)
+  const todayJobs = usage.days[today] || {}
+  const freeEnqueuesToday = Object.values(todayJobs).reduce((n, jobs) => n + (Number(jobs) || 0), 0)
   return {
-    day: usage.day,
+    day: today,
     freeJobsPerDay,
     freeEnqueuesToday,
-    freeUsersToday: entries.length,
+    freeEnqueuesWindow: entries.reduce((n, e) => n + e.jobs, 0),
+    freeUsersToday: Object.keys(todayJobs).length,
+    freeUsersWindow: entries.length,
     freeUsersAtCap: entries.filter((e) => e.atCap).length,
     topFreeUsers: entries.slice(0, 12)
   }

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Usage tab meters a rolling 30-day window and can open any day in that window. Free limits use the same window.
+
 ## 0.2.41 — 2026-10-16
 
 - Boot shows the saved account plan immediately, then refreshes EricServic.es and usage in the background.

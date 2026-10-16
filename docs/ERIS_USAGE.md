@@ -1,6 +1,6 @@
 # Eris profile usage (www.ericservic.es)
 
-Daily usage (chat requests, tokens, Cloud Agent jobs) is stored on the user’s **EricServic.es profile** so Free-tier caps apply across devices and Cloud Agents.
+Usage (chat requests, tokens, Cloud Agent jobs) is stored per calendar day on the user’s **EricServic.es profile**. Eris sums the last 30 days — the higher of this device and the profile for each day — and applies Free-tier caps to that rolling window.
 
 ## API
 
@@ -9,7 +9,7 @@ Stub: `cloud-agent/website-stubs/api/eris/v1/usage.php`
 
 | Method | Auth | Body / query | Result |
 |--------|------|--------------|--------|
-| `GET` | Bearer `eseris_…` | `?day=YYYY-MM-DD` | `{ usage, days }` for profile |
+| `GET` | Bearer `eseris_…` | `?day=YYYY-MM-DD&days=30` | `{ usage, days }` for profile (`days` is up to 30, max 90) |
 | `POST` | Bearer `eseris_…` | `{ day, delta }` or `{ day, set }` | Merged day totals |
 
 ### Delta (preferred)
@@ -39,7 +39,7 @@ Server **adds** deltas (multi-device safe).
 
 ## Clients
 
-- **Eris desktop** — after each local record, debounced POST delta; pulls on login + Usage panel refresh. Entitlements use `max(local, profile)`.
+- **Eris desktop** — after each local record, debounced POST delta; pulls on login + Usage panel refresh. Entitlements use `sum(max(local, profile))` over the last 30 days. The Usage tab can still open any day in that window.
 - **Cloud Agent** — on free-plan enqueue, POST `{ cloudJobs: 1 }`; gate uses `max(local worker, profile)`.
 
 ## Production wiring

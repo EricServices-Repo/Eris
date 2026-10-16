@@ -31,11 +31,11 @@ interface Props {
 
 function formatQuota(ent: UsageEntitlement): string {
   if (ent.plan === 'pro') return 'Pro · Unlimited'
-  // Local chat is unlimited on Free; the only daily cap is Cloud Agent jobs.
+  // Local chat is unlimited on Free; Cloud Agent jobs are capped over the last 30 days.
   const left = ent.cloudJobs.remaining
   const limit = ent.cloudJobs.limit
   if (left == null || limit == null) return 'Free · local unlimited'
-  return `Free · ${left}/${limit} cloud jobs`
+  return `Free · ${left}/${limit} cloud jobs · 30d`
 }
 
 /** green = ready, yellow = partial, red = none */

@@ -34,7 +34,7 @@ export type ErisPlanProfileFields = {
 }
 
 /**
- * Default Free tier caps (calendar day).
+ * Default Free tier caps, applied to a rolling 30-day window.
  *
  * Local Composer Lite runs on the user's own machine and costs us nothing, so
  * chat requests and tokens are UNLIMITED on Free (null). Only Cloud Agent jobs —

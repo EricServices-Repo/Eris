@@ -117,7 +117,9 @@ export function buildPublicStatus(store: JobStore): Record<string, unknown> {
       day: daily.day,
       freeJobsPerDay: daily.freeJobsPerDay,
       freeEnqueuesToday: daily.freeEnqueuesToday,
+      freeEnqueuesWindow: daily.freeEnqueuesWindow,
       freeUsersToday: daily.freeUsersToday,
+      freeUsersWindow: daily.freeUsersWindow,
       freeUsersAtCap: daily.freeUsersAtCap,
       topFreeUsers: daily.topFreeUsers,
       today: {
@@ -323,7 +325,7 @@ export function statusPageHtml(): string {
           <div id="todayBars"></div>
         </div>
         <div class="panel">
-          <div class="label muted" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Free plan · daily enqueue cap</div>
+          <div class="label muted" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Free plan · 30-day enqueue cap</div>
           <div id="freeUsage"></div>
           <div class="limits" id="limits"></div>
         </div>
@@ -455,7 +457,7 @@ export function statusPageHtml(): string {
           card('Success', t.successRate != null ? t.successRate + '%' : '—', 'terminal jobs today',
             t.successRate != null && t.successRate >= 70 ? 'ok' : t.successRate != null ? 'warn' : ''),
           card('Avg steps', t.avgSteps != null ? t.avgSteps : '—', 'tool-loop depth'),
-          card('Free enqueues', u.freeEnqueuesToday ?? 0, 'counted toward free daily cap'),
+          card('Free enqueues', u.freeEnqueuesWindow ?? u.freeEnqueuesToday ?? 0, 'last 30 days · free cap'),
           card('Free users', u.freeUsersToday ?? 0,
             (u.freeUsersAtCap || 0) + ' at cap (' + (u.freeJobsPerDay ?? 5) + '/user)')
         ].join('');
@@ -470,8 +472,8 @@ export function statusPageHtml(): string {
 
         const lim = u.limits || {};
         const freeCap = u.freeJobsPerDay || lim.freeJobsPerDay || 5;
-        const freeUsed = u.freeEnqueuesToday || 0;
-        const freeUsers = Math.max(1, u.freeUsersToday || 1);
+        const freeUsed = u.freeEnqueuesWindow ?? u.freeEnqueuesToday || 0;
+        const freeUsers = Math.max(1, u.freeUsersWindow || u.freeUsersToday || 1);
         const pool = freeCap * freeUsers;
         const freePct = Math.min(100, Math.round((freeUsed / Math.max(1, pool)) * 100));
         document.getElementById('freeUsage').innerHTML =

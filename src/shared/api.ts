@@ -96,8 +96,9 @@ export type UsageEntitlement = {
   blockedReason: string | null
   upgradeUrl: string
   accountUrl: string
-  /** True when today's totals include a pull from www.ericservic.es profile usage. */
+  /** True when the rolling window includes a pull from www.ericservic.es profile usage. */
   profileSynced?: boolean
+  window?: { from: string; to: string; days: number }
 }
 
 export type UsageDayTotals = {
@@ -133,12 +134,17 @@ export type UsageSnapshot = {
     totalOutputTokens: number
     cloudJobs?: number
   }
+  /** Rolling 30-day totals used for plan limits (max of device and profile per day). */
+  window?: UsageDayTotals & { from: string; to: string; days: number }
   /** Account vs device breakdown when signed in */
   profile?: {
     sync: UsageSyncMeta
     deviceToday: UsageDayTotals
     accountToday: UsageDayTotals | null
     effectiveToday: UsageDayTotals
+    deviceWindow?: UsageDayTotals
+    accountWindow?: UsageDayTotals | null
+    effectiveWindow?: UsageDayTotals
   }
   days: Array<{
     date: string
@@ -146,6 +152,17 @@ export type UsageSnapshot = {
     totalInputTokens: number
     totalOutputTokens: number
     cloudJobs?: number
+    models?: Record<
+      string,
+      {
+        model: string
+        kind: 'builtin' | 'openai-compatible' | 'other'
+        provider: string
+        requests: number
+        inputTokens: number
+        outputTokens: number
+      }
+    >
   }>
   byKind: Array<{
     kind: 'builtin' | 'openai-compatible' | 'other'

@@ -4969,21 +4969,54 @@ button.linkish {
   background: #7fd99a;
 }
 
+.usage-day-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.usage-day-picker select {
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.04));
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
 .usage-trend {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: 3px;
   min-height: 120px;
   padding-top: 8px;
+  overflow-x: auto;
 }
 
 .usage-trend-col {
-  flex: 1;
-  min-width: 0;
+  flex: 1 0 16px;
+  min-width: 16px;
+  max-width: 28px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.usage-trend-col.is-selected .usage-trend-bar {
+  box-shadow: 0 0 0 1px #fff, 0 0 18px rgba(61, 139, 253, 0.45);
+}
+
+.usage-trend-col.is-selected .usage-trend-label {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .usage-trend-bar-wrap {
