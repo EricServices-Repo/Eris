@@ -105,7 +105,7 @@ export function AgentPanel() {
       >
         <div
           className={`agents-cloud-status${ready ? ' is-ready' : preferCloud ? ' is-pending' : ' is-offline'}`}
-          title={`${CLOUD_AGENTS_BASE_URL} — plain HTTP, no certificate`}
+          title={`${CLOUD_AGENTS_BASE_URL} — TLS`}
           style={{ marginBottom: 12 }}
         >
           <span className={`status-dot${preferCloud ? ' ok' : ''}`} />

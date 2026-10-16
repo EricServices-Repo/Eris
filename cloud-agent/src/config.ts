@@ -16,8 +16,8 @@ function pkgVersion(): string {
   return '0.1.0'
 }
 
-/** Public hostname:port Eris clients use (plain HTTP — terminate TLS at a proxy in production). */
-export const PUBLIC_BASE_URL = 'http://agents.ericservic.es:6443'
+/** Public URL Eris clients use. TLS terminates at nginx :443; this process stays the HTTP upstream. */
+export const PUBLIC_BASE_URL = 'https://agents.ericservic.es:443'
 
 /** GPU preference for the in-container GGUF (node-llama-cpp). */
 export type GpuMode = 'auto' | 'cuda' | 'vulkan' | 'false'

@@ -99,6 +99,16 @@ function GpuAccelCard({
         </button>
       </header>
 
+      {gpu?.vramBudgetBytes && shared.length < 2 ? (
+        <p className="gpu-share-vram">
+          <span>Available for models</span>
+          <strong>{formatMemoryStat('', gpu.vramBudgetBytes)}</strong>
+          <span className="model-conn-meta">
+            used to choose the quant, context length, and GPU layers
+          </span>
+        </p>
+      ) : null}
+
       {shared.length >= 2 && (
         <p className="gpu-share-vram">
           <span>Shared VRAM</span>

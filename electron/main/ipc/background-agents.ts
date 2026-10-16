@@ -47,7 +47,7 @@ export function registerBackgroundAgentsIpc(): void {
           status: job.status,
           answer: job.answer,
           filesTouched: job.filesTouched,
-          routeReason: 'Cloud · agents.ericservic.es:6443 (http)'
+          routeReason: 'Cloud · agents.ericservic.es:443 (https)'
         })
         try {
           let thread = threadId ? getChat(appState.currentWorkspace, threadId) : null

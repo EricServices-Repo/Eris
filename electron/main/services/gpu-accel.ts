@@ -5,6 +5,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { platform, totalmem } from 'os'
 import type { GpuAccelStatus, GpuDeviceInfo } from '../../../src/shared/settings-schema'
+import { inferenceBudgetBytes } from './vram-fit'
 import { logInfo, logWarn } from './logger'
 
 const execFileAsync = promisify(execFile)
@@ -362,6 +363,12 @@ export async function getGpuAccelStatus(preferEgpu = true): Promise<GpuAccelStat
     backendDeviceName: deviceName,
     vramShareTotalBytes: shareDevices.length >= 2 ? vramShareTotalBytes : undefined,
     vramShareFreeBytes: shareDevices.length >= 2 ? vramShareFreeBytes : undefined,
+    vramBudgetBytes: inferenceBudgetBytes({
+      vramShareFreeBytes: shareDevices.length >= 2 ? vramShareFreeBytes : undefined,
+      vramShareTotalBytes: shareDevices.length >= 2 ? vramShareTotalBytes : undefined,
+      preferredFreeBytes: preferred?.vramFreeBytes,
+      preferredTotalBytes: preferred?.vramBytes
+    }),
     message: statusMessage({
       preferred,
       egpu,

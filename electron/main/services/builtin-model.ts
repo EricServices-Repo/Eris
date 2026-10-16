@@ -39,6 +39,12 @@ import {
   type LlamaGpuBackend
 } from './gpu-accel'
 import { getResolvedSettings } from './settings'
+import {
+  contextCreateOptions,
+  contextLimits,
+  isMemoryError,
+  modelLoadOptions
+} from './vram-fit'
 import { appState } from '../app-state'
 import { messagesToLlamaHistory, splitSessionPrompt } from '../../../src/shared/llama-session'
 
@@ -839,6 +845,41 @@ export async function disposeRuntime(): Promise<void> {
   return enqueueRuntime(() => disposeRuntimeUnlocked())
 }
 
+function contextPlan(entry: BuiltinModelManifestEntry): { min: number; max: number } {
+  return contextLimits({
+    tier: entry.tier,
+    role: entry.role,
+    modelContext: entry.contextWindow,
+    settingsContext: getResolvedSettings(appState.currentWorkspace).models.contextWindow
+  })
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function loadModelForVram(llama: any, modelPath: string, contextMax: number): Promise<any> {
+  try {
+    return await llama.loadModel(modelLoadOptions(modelPath, contextMax, false))
+  } catch (err) {
+    if (!isMemoryError(err)) throw err
+    logWarn('Model did not fit the target context; retrying with automatic GPU layers', {
+      path: modelPath,
+      error: err instanceof Error ? err.message : String(err)
+    })
+    return await llama.loadModel(modelLoadOptions(modelPath, contextMax, true))
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function createContextForVram(model: any, plan: { min: number; max: number }): Promise<any> {
+  try {
+    return await model.createContext(contextCreateOptions(plan.min, plan.max, true))
+  } catch (err) {
+    logWarn('Quantized KV cache failed; retrying with the default cache', {
+      error: err instanceof Error ? err.message : String(err)
+    })
+    return await model.createContext(contextCreateOptions(plan.min, plan.max, false))
+  }
+}
+
 async function ensureRuntimeInProcess(
   modelPath: string,
   entry: BuiltinModelManifestEntry
@@ -872,15 +913,18 @@ async function ensureRuntimeInProcess(
       gpuStatus.backendDeviceName
     )
 
+    const plan = contextPlan(entry)
     logInfo('Loading builtin model (in-process)', {
       path: modelPath,
       gpu: llama.gpu,
       egpu: gpuStatus.egpu?.name || null,
-      preferEgpu
+      preferEgpu,
+      contextMin: plan.min,
+      contextMax: plan.max
     })
     let model
     try {
-      model = await llama.loadModel({ modelPath })
+      model = await loadModelForVram(llama, modelPath, plan.max)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       logError('Failed to load builtin model', { path: modelPath, error: message })
@@ -910,9 +954,7 @@ async function ensureRuntimeInProcess(
         .catch(() => undefined)
     }
 
-    const contextSize = entry.tier === 'lite' ? 4096 : 16384
-    // 2 sequences: long-lived job session + oneshot/fallback.
-    const context = await model.createContext({ contextSize, sequences: 2 })
+    const context = await createContextForVram(model, plan)
     runtime = { modelPath, llama, model, context }
     return runtime
   })
@@ -933,7 +975,7 @@ async function ensureWorkerModel(
     )
   }
   const requestId = `load-${Date.now()}`
-  const contextSize = entry.tier === 'lite' ? 4096 : 16384
+  const plan = contextPlan(entry)
   const preferEgpu =
     getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
   const { status: gpuStatus } = await applyLlamaGpuPreference(preferEgpu)
@@ -941,12 +983,15 @@ async function ensureWorkerModel(
     path: modelPath,
     egpu: gpuStatus.egpu?.name || null,
     preferEgpu,
-    backend: gpuStatus.backend
+    backend: gpuStatus.backend,
+    contextMin: plan.min,
+    contextMax: plan.max
   })
   postToWorker({
     type: 'load',
     modelPath,
-    contextSize,
+    contextSize: plan.max,
+    contextMin: plan.min,
     requestId,
     preferEgpu,
     gpu: 'auto'
@@ -1313,11 +1358,7 @@ export function warmLocalInference(
       let entry: BuiltinModelManifestEntry | null = null
       let path = ''
 
-      const lite = findBuiltinEntry('composer-lite')
-      if (lite && resolveExactBuiltinRef(lite.ref)) {
-        entry = lite
-        path = localModelPath(lite)
-      } else if (preferred.startsWith('local:')) {
+      if (preferred.startsWith('local:')) {
         const { findLocalEntry, localModelFilePath, localEntryAsBuiltin, isLocalModelReady } =
           await import('./local-model')
         if (isLocalModelReady(preferred)) {

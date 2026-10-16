@@ -45,7 +45,7 @@ const SKIP_DIRS = new Set([
   'vendor'
 ])
 
-/** Always the public Eris Cloud Agents host — not user-configurable. */
+/** Always the public Eris Cloud Agents host — HTTPS :443, not user-configurable. */
 export function cloudAgentsBaseUrl(): string {
   return CLOUD_AGENTS_BASE_URL
 }

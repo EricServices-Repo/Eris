@@ -327,6 +327,11 @@ export interface GpuAccelStatus {
   vramShareFreeBytes?: number
   /** Sum of total VRAM on GPUs in the share set. */
   vramShareTotalBytes?: number
+  /**
+   * Memory local models may use: shared free VRAM when several 6GB+ GPUs
+   * are pooled, otherwise the best GPU's free memory (or its total minus a reserve).
+   */
+  vramBudgetBytes?: number
 }
 
 export interface ModelsStatus {

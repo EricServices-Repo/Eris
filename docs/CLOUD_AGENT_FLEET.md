@@ -54,7 +54,7 @@ X-Eris-Agent-Secret: …
   "maxConcurrentPro": 3,
   "maxQueue": 100,
   "maxSteps": 24,
-  "publicBaseUrl": "http://agents.ericservic.es:6443",
+  "publicBaseUrl": "https://agents.ericservic.es:443",
   "llmBase": "",
   "llmModel": "composer",
   "llmKey": "",

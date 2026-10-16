@@ -3,6 +3,12 @@
  * All load/chat work is serialized. Job sessions keep KV warm across agent steps.
  */
 
+import {
+  contextCreateOptions,
+  isMemoryError,
+  modelLoadOptions
+} from './services/vram-fit'
+
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
 
 type Incoming =
@@ -10,6 +16,7 @@ type Incoming =
       type: 'load'
       modelPath: string
       contextSize: number
+      contextMin?: number
       requestId: string
       preferEgpu?: boolean
       gpu?: 'auto' | 'metal' | 'cuda' | 'vulkan' | false
@@ -46,6 +53,8 @@ let model: any = null
 let context: any = null
 let modelPath: string | null = null
 let loadedContextSize = 4096
+let contextMin = 4096
+let contextMax = 16384
 const abortControllers = new Map<string, AbortController>()
 /** Per-chat-run sessions — keep KV cache warm across tool steps. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -120,15 +129,17 @@ async function disposeAll(): Promise<void> {
   modelPath = null
 }
 
-async function ensureContext(contextSize: number): Promise<void> {
+async function ensureContext(): Promise<void> {
   if (context) return
   if (!model) throw new Error('Model not loaded')
-  // 2 sequences: one long-lived job session + one oneshot/fallback.
-  context = await model.createContext({
-    contextSize,
-    sequences: 2
-  })
-  loadedContextSize = contextSize
+  const plan = { min: contextMin, max: contextMax }
+  try {
+    context = await model.createContext(contextCreateOptions(plan.min, plan.max, true))
+  } catch {
+    context = await model.createContext(contextCreateOptions(plan.min, plan.max, false))
+  }
+  loadedContextSize =
+    typeof context.contextSize === 'number' ? context.contextSize : contextMax
 }
 
 async function getOrCreateSession(
@@ -141,7 +152,7 @@ async function getOrCreateSession(
 
   const llamaCpp = await import('node-llama-cpp')
   const { LlamaChatSession } = llamaCpp
-  if (!context) await ensureContext(loadedContextSize)
+  if (!context) await ensureContext()
   if (typeof context.sequencesLeft === 'number' && context.sequencesLeft < 1) {
     // Drop idle sessions that may be leaking sequences, then retry once.
     if (jobSessions.size > 0) {
@@ -157,7 +168,7 @@ async function getOrCreateSession(
     }
     if (typeof context.sequencesLeft === 'number' && context.sequencesLeft < 1) {
       await disposeContextOnly()
-      await ensureContext(loadedContextSize)
+      await ensureContext()
     }
   }
   const sequence = context.getSequence()
@@ -175,11 +186,14 @@ async function handleLoad(
   path: string,
   contextSize: number,
   requestId: string,
-  gpu: 'auto' | 'metal' | 'cuda' | 'vulkan' | false = 'auto'
+  gpu: 'auto' | 'metal' | 'cuda' | 'vulkan' | false = 'auto',
+  minContext?: number
 ): Promise<void> {
   try {
+    contextMax = Math.max(512, contextSize)
+    contextMin = Math.min(contextMax, Math.max(512, minContext ?? contextSize))
     if (modelPath === path && model) {
-      if (!context) await ensureContext(contextSize)
+      if (!context) await ensureContext()
       post({ type: 'loaded', requestId, gpu: llama?.gpu ?? null })
       return
     }
@@ -191,8 +205,13 @@ async function handleLoad(
     } catch {
       llama = await getLlama({ gpu: false, progressLogs: false })
     }
-    model = await llama.loadModel({ modelPath: path })
-    await ensureContext(contextSize)
+    try {
+      model = await llama.loadModel(modelLoadOptions(path, contextMax, false))
+    } catch (err) {
+      if (!isMemoryError(err) || llama.gpu === false) throw err
+      model = await llama.loadModel(modelLoadOptions(path, contextMax, true))
+    }
+    await ensureContext()
     modelPath = path
     post({ type: 'loaded', requestId, gpu: llama?.gpu ?? null })
   } catch (err) {
@@ -227,10 +246,10 @@ async function runPromptOneshot(options: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let sequence: any = null
   try {
-    if (!context) await ensureContext(loadedContextSize)
+    if (!context) await ensureContext()
     if (typeof context.sequencesLeft === 'number' && context.sequencesLeft < 1) {
       await disposeContextOnly()
-      await ensureContext(loadedContextSize)
+      await ensureContext()
     }
     sequence = context.getSequence()
     const session = new LlamaChatSession({ contextSequence: sequence })
@@ -350,7 +369,7 @@ async function handleChat(msg: {
       const message = err instanceof Error ? err.message : String(err)
       if (/no sequences left/i.test(message) && !ac.signal.aborted) {
         await disposeContextOnly()
-        await ensureContext(loadedContextSize)
+        await ensureContext()
         await run()
       } else {
         throw err
@@ -420,7 +439,7 @@ async function handleChatTurn(msg: {
         releaseSession(msg.sessionKey)
         if (/no sequences left/i.test(message)) {
           await disposeContextOnly()
-          await ensureContext(loadedContextSize)
+          await ensureContext()
         }
         await run()
       } else {
@@ -451,7 +470,13 @@ function onMessage(raw: Incoming): void {
   switch (raw.type) {
     case 'load':
       enqueue(() =>
-        handleLoad(raw.modelPath, raw.contextSize, raw.requestId, raw.gpu ?? 'auto')
+        handleLoad(
+          raw.modelPath,
+          raw.contextSize,
+          raw.requestId,
+          raw.gpu ?? 'auto',
+          raw.contextMin
+        )
       )
       break
     case 'chat':

@@ -93,7 +93,7 @@ export function StatusBar({
 }: Props) {
   const cloudReady = isCloudAgentsReady(cloudHealth)
   const preferCloud = shouldUseCloudAgents(cloudHealth)
-  const cloudTitle = `${cloudAgentsStatusLabel(cloudHealth)}\n${CLOUD_AGENTS_BASE_URL} (plain HTTP)\nOpen Settings → Agent for metrics`
+  const cloudTitle = `${cloudAgentsStatusLabel(cloudHealth)}\n${CLOUD_AGENTS_BASE_URL} (TLS)\nOpen Settings → Agent for metrics`
   const models = modelsLight(composerReady, modelsOk)
 
   let cloudLabel = 'Checking…'

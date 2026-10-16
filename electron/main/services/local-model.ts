@@ -164,7 +164,10 @@ function slugFromRepo(repoId: string, filename: string): string {
   return base.replace(/-+$/g, '')
 }
 
-export function entryFromHfFile(file: HfGgufFile): LocalModelManifestEntry {
+export function entryFromHfFile(
+  file: HfGgufFile,
+  fit?: { budgetBytes: number; fits: boolean }
+): LocalModelManifestEntry {
   const id = slugFromRepo(file.repoId, file.filename)
   const name = (file.repoId.split('/').pop() || file.repoId)
     .replace(/-?GGUF$/i, '')
@@ -175,7 +178,7 @@ export function entryFromHfFile(file: HfGgufFile): LocalModelManifestEntry {
     ref: `local:${id}`,
     name,
     displayName: `${name} (local)`,
-    description: `Downloaded from Hugging Face (${file.repoId}) — runs inside Eris.`,
+    description: describeHfDownload(file, fit),
     family: 'Hugging Face',
     quant: file.quant,
     parameters: '?',
@@ -197,6 +200,22 @@ function emitLocalProgress(
   if (status) onProgress(status)
 }
 
+async function currentInferenceBudgetBytes(): Promise<number> {
+  const { getResolvedSettings } = await import('./settings')
+  const { appState } = await import('../app-state')
+  const { getGpuAccelStatus } = await import('./gpu-accel')
+  const { inferenceBudgetBytes } = await import('./vram-fit')
+  const prefer =
+    getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
+  const gpu = await getGpuAccelStatus(prefer)
+  return inferenceBudgetBytes({
+    vramShareFreeBytes: gpu.vramShareFreeBytes,
+    vramShareTotalBytes: gpu.vramShareTotalBytes,
+    preferredFreeBytes: gpu.preferredGpu?.vramFreeBytes,
+    preferredTotalBytes: gpu.preferredGpu?.vramBytes
+  })
+}
+
 /** Register (or reuse) a Hub GGUF in the local catalog, then download it. */
 export async function downloadLocalFromHf(
   repoIdOrUrl: string,
@@ -204,15 +223,24 @@ export async function downloadLocalFromHf(
   options?: { filename?: string }
 ): Promise<LocalModelStatus> {
   const direct = parseHfGgufFileUrl(repoIdOrUrl)
+  const budgetBytes = direct
+    ? 0
+    : await currentInferenceBudgetBytes()
   const file = await resolveHfGgufFile(repoIdOrUrl, {
-    filename: options?.filename || direct?.filename
+    filename: options?.filename || direct?.filename,
+    budgetBytes
   })
   const existing = listLocalCatalog().find(
     (m) =>
       m.downloadUrl === file.downloadUrl ||
       (m.filename === file.filename && m.downloadUrl.includes(file.repoId))
   )
-  const entry = existing ?? entryFromHfFile(file)
+  const entry =
+    existing ??
+    entryFromHfFile(file, {
+      budgetBytes,
+      fits: file.fits !== false
+    })
   if (!existing) upsertExtraEntry(entry)
   // Surface the new catalog row in Settings immediately (before the byte stream).
   if (onProgress) {
@@ -263,8 +291,24 @@ export function localEntryAsBuiltin(entry: LocalModelManifestEntry): BuiltinMode
     approxBytes: entry.approxBytes,
     sha256: entry.sha256,
     role: 'local',
-    tier: 'lite'
+    tier: 'full'
   }
+}
+
+function describeHfDownload(
+  file: HfGgufFile,
+  fit?: { budgetBytes: number; fits: boolean }
+): string {
+  const from = `Downloaded from Hugging Face (${file.repoId}).`
+  if (!fit || fit.budgetBytes <= 0 || file.sizeBytes <= 0) {
+    return `${from} Runs inside Eris.`
+  }
+  const fileSize = formatApproxSize(file.sizeBytes)
+  const free = formatApproxSize(fit.budgetBytes)
+  if (fit.fits) {
+    return `${from} ${file.quant} selected — this model needs ${fileSize} and ${free} is free.`
+  }
+  return `${from} ${file.quant} selected — this model needs ${fileSize} and ${free} is free, so extra layers stay on CPU.`
 }
 
 function isValidLocalFile(path: string, entry: LocalModelManifestEntry): boolean {

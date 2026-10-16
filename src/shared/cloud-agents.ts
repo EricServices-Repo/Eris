@@ -1,8 +1,9 @@
 /**
  * Public Cloud Agent endpoint for every Eris install.
- * Plain HTTP on :6443 — no TLS certificate required on client or server.
+ * TLS on :443. nginx on the server proxies this to the container upstream.
+ * The client verifies the certificate; it does not skip TLS checks.
  */
-export const CLOUD_AGENTS_BASE_URL = 'http://agents.ericservic.es:6443'
+export const CLOUD_AGENTS_BASE_URL = 'https://agents.ericservic.es:443'
 
 export const CLOUD_AGENTS_HEALTH_PATH = '/v1/health'
 export const CLOUD_AGENTS_JOBS_PATH = '/v1/jobs'

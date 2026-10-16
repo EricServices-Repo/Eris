@@ -28,7 +28,7 @@ PublishPort=6443:6443
 # Do not bind host :80 in Podman; nginx already owns it on agents.ericservic.es.
 PublishPort=8080:8080
 Volume=eris-cloud-data:/var/lib/eris-cloud:Z
-Environment=ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443
+Environment=ERIS_CLOUD_PUBLIC_URL=https://agents.ericservic.es:443
 Environment=ERIS_CLOUD_HOST=0.0.0.0
 Environment=ERIS_CLOUD_PORT=6443
 Environment=ERIS_CLOUD_STATUS_PORT=8080

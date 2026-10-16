@@ -3,6 +3,7 @@
  * Browse UI: https://huggingface.co/models?library=gguf
  */
 import { downloadFetch, formatDownloadNetworkError } from './http-download'
+import { pickGgufForBudget } from './vram-fit'
 
 export const HF_GGUF_BROWSE_URL =
   'https://huggingface.co/models?library=gguf&sort=downloads'
@@ -22,6 +23,8 @@ export type HfGgufFile = {
   downloadUrl: string
   sizeBytes: number
   quant: string
+  /** False when the file is larger than the VRAM budget and must spill layers to CPU. */
+  fits?: boolean
 }
 
 type HfModelListItem = {
@@ -95,21 +98,6 @@ function pickQuantLabel(filename: string): string {
   return m ? m[1].toUpperCase() : 'GGUF'
 }
 
-function scoreGgufFile(path: string): number {
-  const base = path.split('/').pop() || path
-  if (!/\.gguf$/i.test(base)) return -1
-  if (/mmproj|encoder|vision|embed/i.test(base)) return -1
-  if (/fp16/i.test(base)) return -1
-  const upper = base.toUpperCase()
-  const idx = QUANT_PREFERENCE.findIndex((q) => upper.includes(q))
-  if (idx >= 0) return 1000 - idx
-  if (/Q4|IQ4/i.test(base)) return 100
-  if (/Q5/i.test(base)) return 80
-  if (/Q3/i.test(base)) return 60
-  if (/Q6|Q8/i.test(base)) return 40
-  return 10
-}
-
 async function hfJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   let res
   try {
@@ -178,7 +166,7 @@ export async function searchHfGgufModels(
 /** Choose a desktop-friendly GGUF file (prefers Q4_K_M) from a Hub repo. */
 export async function resolveHfGgufFile(
   repoIdOrUrl: string,
-  options?: { signal?: AbortSignal; filename?: string }
+  options?: { signal?: AbortSignal; filename?: string; budgetBytes?: number }
 ): Promise<HfGgufFile> {
   const parsedFile = parseHfGgufFileUrl(repoIdOrUrl)
   if (parsedFile) {
@@ -214,24 +202,23 @@ export async function resolveHfGgufFile(
     }
   }
 
-  let best: HfTreeEntry | null = null
-  let bestScore = -1
-  for (const f of files) {
-    const score = scoreGgufFile(f.path || '')
-    if (score > bestScore) {
-      bestScore = score
-      best = f
-    }
-  }
-  if (!best?.path || bestScore < 0) {
+  const picked = pickGgufForBudget(
+    files.map((entry) => ({
+      path: entry.path || '',
+      sizeBytes: Number(entry.size) || 0
+    })),
+    options?.budgetBytes ?? 0
+  )
+  if (!picked) {
     throw new Error(`No suitable .gguf file found in ${repoId}`)
   }
-  const filename = best.path.split('/').pop() || best.path
+  const filename = picked.file.path.split('/').pop() || picked.file.path
   return {
     repoId,
     filename,
-    downloadUrl: `https://huggingface.co/${repoId}/resolve/main/${best.path}`,
-    sizeBytes: Number(best.size) || 0,
-    quant: pickQuantLabel(filename)
+    downloadUrl: `https://huggingface.co/${repoId}/resolve/main/${picked.file.path}`,
+    sizeBytes: picked.file.sizeBytes,
+    quant: pickQuantLabel(filename),
+    fits: picked.fits
   }
 }

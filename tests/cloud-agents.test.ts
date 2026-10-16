@@ -13,9 +13,9 @@ import { cloudJobToBackgroundJob } from '../electron/main/services/cloud-agents-
 import type { CloudJob } from '../src/shared/cloud-agents'
 
 describe('cloud agents defaults', () => {
-  it('uses plain HTTP agents.ericservic.es:6443 with no TLS cert', () => {
-    expect(CLOUD_AGENTS_BASE_URL).toBe('http://agents.ericservic.es:6443')
-    expect(CLOUD_AGENTS_BASE_URL.startsWith('http://')).toBe(true)
+  it('uses TLS https://agents.ericservic.es:443', () => {
+    expect(CLOUD_AGENTS_BASE_URL).toBe('https://agents.ericservic.es:443')
+    expect(CLOUD_AGENTS_BASE_URL.startsWith('https://')).toBe(true)
     expect(CLOUD_AGENTS_HEALTH_PATH).toBe('/v1/health')
     expect(CLOUD_AGENTS_JOBS_PATH).toBe('/v1/jobs')
   })

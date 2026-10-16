@@ -11,11 +11,11 @@ Inference runs **inside the container** with **Composer Full** (Qwen2.5-Coder-7B
 ## Client URL (no user configuration)
 
 ```
-API:    http://agents.ericservic.es:6443
+API:    https://agents.ericservic.es:443
 Status: http://agents.ericservic.es/          (port 80 via nginx → :8080; Force kill all)
 ```
 
-Plain HTTP — no TLS certificate required. API port **6443**; status page host **80** → container **8080**.
+Clients use **TLS on port 443**. nginx proxies that to the container upstream on **6443**. Status page host **80** → container **8080**.
 
 ## Image improvements
 
@@ -76,7 +76,7 @@ podman run -d --name eris-cloud-agent \
   --security-opt=label=disable \
   --stop-signal=SIGTERM \
   -p 6443:6443 \
-  -e ERIS_CLOUD_PUBLIC_URL=http://agents.ericservic.es:6443 \
+  -e ERIS_CLOUD_PUBLIC_URL=https://agents.ericservic.es:443 \
   -e ERIS_CLOUD_GPU=auto \
   -v eris-cloud-data:/var/lib/eris-cloud \
   eris-cloud-agent
