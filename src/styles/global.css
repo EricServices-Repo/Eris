@@ -1122,6 +1122,11 @@ select:focus {
   background: var(--accent-soft);
 }
 
+.agent-composer textarea::spelling-error,
+.question-reply-input::spelling-error {
+  text-decoration: underline wavy var(--danger);
+}
+
 .agent-composer textarea {
   min-height: 44px;
   max-height: 200px;

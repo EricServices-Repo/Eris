@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, Menu, MenuItem, shell } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { appState } from './app-state'
@@ -40,6 +40,81 @@ function isAppRendererUrl(url: string): boolean {
   }
 }
 
+function enableSystemSpellcheck(win: BrowserWindow): void {
+  try {
+    const available = win.webContents.session.availableSpellCheckerLanguages
+    const preferred = app.getLocale()
+    const match =
+      available.find((lang) => lang.toLowerCase() === preferred.toLowerCase()) ||
+      available.find((lang) => lang.toLowerCase().startsWith(preferred.slice(0, 2).toLowerCase()))
+    if (match) win.webContents.session.setSpellCheckerLanguages([match])
+  } catch {
+    // macOS still uses the system spellchecker when the language list cannot be set.
+  }
+}
+
+/** Right-click spelling corrections for the chat composer and agent replies. */
+function attachSpellContextMenu(win: BrowserWindow): void {
+  win.webContents.on('context-menu', (_event, params) => {
+    if (!isChatSpellField(params) || win.isDestroyed()) return
+    const x = Number(params.x)
+    const y = Number(params.y)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return
+    void win.webContents
+      .executeJavaScript(
+        `(() => {
+          const el = document.elementFromPoint(${x}, ${y})
+          return !!(el && el.closest && el.closest('.agent-composer textarea, .question-reply-input'))
+        })()`,
+        true
+      )
+      .then((inChat) => {
+        if (inChat !== true || win.isDestroyed()) return
+        showSpellMenu(win, params)
+      })
+      .catch(() => {})
+  })
+}
+
+function isChatSpellField(params: Electron.ContextMenuParams): boolean {
+  return (
+    params.spellcheckEnabled &&
+    params.misspelledWord.length > 0 &&
+    (params.formControlType === 'text-area' || params.formControlType === 'input-text')
+  )
+}
+
+function showSpellMenu(win: BrowserWindow, params: Electron.ContextMenuParams): void {
+  const menu = new Menu()
+  for (const suggestion of params.dictionarySuggestions) {
+    menu.append(
+      new MenuItem({
+        label: suggestion,
+        click: () => {
+          if (!win.isDestroyed()) win.webContents.replaceMisspelling(suggestion)
+        }
+      })
+    )
+  }
+  if (params.dictionarySuggestions.length) menu.append(new MenuItem({ type: 'separator' }))
+  menu.append(
+    new MenuItem({
+      label: 'Add to dictionary',
+      click: () => {
+        if (!win.isDestroyed()) {
+          win.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord)
+        }
+      }
+    })
+  )
+  menu.append(new MenuItem({ type: 'separator' }))
+  menu.append(new MenuItem({ role: 'cut', enabled: params.editFlags.canCut }))
+  menu.append(new MenuItem({ role: 'copy', enabled: params.editFlags.canCopy }))
+  menu.append(new MenuItem({ role: 'paste', enabled: params.editFlags.canPaste }))
+  menu.append(new MenuItem({ role: 'selectAll', enabled: params.editFlags.canSelectAll }))
+  menu.popup({ window: win })
+}
+
 function loadRenderer(win: BrowserWindow): void {
   if (isDev && process.env['ELECTRON_RENDERER_URL']) {
     void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -64,7 +139,8 @@ export function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      spellcheck: true
     }
   })
 
@@ -94,5 +170,7 @@ export function createWindow(): void {
     loadRenderer(appState.mainWindow)
   })
 
+  enableSystemSpellcheck(appState.mainWindow)
+  attachSpellContextMenu(appState.mainWindow)
   loadRenderer(appState.mainWindow)
 }

@@ -188,7 +188,10 @@ function InlineAgentQuestion({
           className="question-reply-input"
           value={draft}
           placeholder="Type a reply…"
-          spellCheck={false}
+          lang="en"
+          spellCheck
+          autoCorrect="on"
+          autoCapitalize="sentences"
           onChange={(e) => setDraft(e.target.value)}
         />
         <button type="submit" className="btn btn-primary" disabled={!draft.trim()}>
@@ -949,6 +952,10 @@ export function ChatPanel({
                 <textarea
                   ref={textareaRef}
                   value={draft}
+                  lang="en"
+                  spellCheck
+                  autoCorrect="on"
+                  autoCapitalize="sentences"
                   placeholder={
                     streaming
                       ? queueFull
