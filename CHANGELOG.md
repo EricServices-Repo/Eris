@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.44 — 2026-10-16
+
+Cross-platform desktop builds (macOS + Windows) from the same version tag.
+
+| Platform | Download |
+|----------|----------|
+| macOS | `Eris-0.2.44-mac-*.dmg` / `.zip` |
+| Windows | `Eris-0.2.44-win-*-setup.exe` |
+
+CI builds both platforms on tag push (`.github/workflows/release.yml`).
+
+### Changes
+- Fit local models to available VRAM and connect Cloud Agents over TLS. (8e2e36c)
+- Enable spelling corrections in the chat composer. (14c395a)
+
+## 0.2.44 — 2026-10-16
+
+- Chat spelling corrections, VRAM-sized local models, and Cloud Agents over TLS.
+
 ## 0.2.43 — 2026-10-16
 
 Cross-platform desktop builds (macOS + Windows) from the same version tag.
