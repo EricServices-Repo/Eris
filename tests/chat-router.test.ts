@@ -305,6 +305,39 @@ describe('planChatTurn', () => {
     getSecret: () => null
   }
 
+  it('runs Composer Full on this Mac when Cloud Composer is turned off and Full is downloaded', async () => {
+    const settings = structuredClone(getDefaults())
+    settings.agent.routing.useLocalComposerFull = true
+    const plan = await planChatTurn({
+      ...base,
+      settings,
+      context: {
+        text: 'implement a login form',
+        selectedModel: 'auto',
+        mode: 'agent'
+      }
+    })
+    expect(plan.models.chat).toBe('builtin:composer')
+    expect(plan.cloudPreferred).toBe(false)
+  })
+
+  it('keeps Cloud Composer when Full is not downloaded', async () => {
+    ready.delete('builtin:composer')
+    const settings = structuredClone(getDefaults())
+    settings.agent.routing.useLocalComposerFull = true
+    const plan = await planChatTurn({
+      ...base,
+      settings,
+      context: {
+        text: 'implement a login form',
+        selectedModel: 'auto',
+        mode: 'agent'
+      }
+    })
+    expect(plan.models.chat).toBe('builtin:composer')
+    expect(plan.cloudPreferred).toBe(true)
+  })
+
   it('runs agent turns on Composer even when another model is selected', async () => {
     const plan = await planChatTurn({
       ...base,

@@ -429,6 +429,44 @@ function DefaultModelCard({
 }
 
 /** Settings → Composer — built-in Lite/Full downloads + default model. */
+function LocalComposerToggle({
+  resolved,
+  builtins,
+  apply
+}: {
+  resolved: AppSettings
+  builtins: BuiltinModelStatus[]
+  apply: ApplySetting
+}) {
+  const full = builtins.find((model) => model.tier === 'full' || model.id === 'composer')
+  const fullReady = Boolean(full?.ready)
+  const saved = resolved.agent.routing.useLocalComposerFull === true
+  const checked = fullReady && saved
+
+  return (
+    <label className="gpu-accel-toggle">
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={!fullReady}
+        onChange={(event) => {
+          if (!fullReady) return
+          void apply(['agent', 'routing', 'useLocalComposerFull'], event.target.checked)
+        }}
+      />
+      <span>
+        <strong>Don’t use Cloud Composer</strong>
+        <span className="model-conn-meta">
+          {fullReady
+            ? 'Composer Full runs on this Mac.'
+            : 'Download Composer Full before you can turn Cloud Composer off.'}
+        </span>
+      </span>
+    </label>
+  )
+}
+
+/** Settings → Composer — built-in Lite/Full downloads + default model. */
 export function ComposerModelsPanel({
   state,
   resolved,
@@ -453,14 +491,15 @@ export function ComposerModelsPanel({
           <div>
             <h3>Composer</h3>
             <p>
-              Built-in GGUFs. Lite = Qwen2.5-Coder 1.5B (local chat/tools) · Full = Qwen2.5-Coder 7B
-              (Cloud Agents).
+              Built-in GGUFs. Lite runs on this Mac. Full runs on Cloud Agents unless you download
+              it and turn off Cloud Composer.
             </p>
           </div>
           <button type="button" className="btn" onClick={() => void load()}>
             Refresh
           </button>
         </header>
+        <LocalComposerToggle resolved={resolved} builtins={builtins} apply={apply} />
         <p className="models-hint" style={{ marginTop: 0 }}>
           Downloads continue if you close Settings. On flaky networks, use Retry or Open URL in a
           browser to confirm Hugging Face is reachable. For a stronger local model without Cloud,

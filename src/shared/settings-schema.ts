@@ -118,6 +118,11 @@ export const SettingsSchema = z.object({
       profile: z.enum(['auto', 'local', 'max']).default('auto'),
       /** When true (default), Agent mode may run built-in tools on Cloud Composer. */
       preferCloudComposer: z.boolean().default(true),
+      /**
+       * When true, Composer Full runs from the local GGUF and Cloud Composer is not used.
+       * Ignored until that model is downloaded.
+       */
+      useLocalComposerFull: z.boolean().default(false),
       /** Composer picker. "auto" assigns a roster role from the message. */
       pinnedAgentId: z.string().min(1).default('auto')
     })

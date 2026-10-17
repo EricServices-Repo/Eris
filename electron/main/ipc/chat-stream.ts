@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { getResolvedSettings, setSettings } from '../services/settings'
-import { planChatTurn, turnPlanToRouteResult } from '../services/chat-router'
+import { planChatTurn, turnPlanToRouteResult, localComposerFullActive } from '../services/chat-router'
 import {
   commandNeedsApproval,
   denyAllPendingApprovals,
@@ -421,7 +421,10 @@ export function registerChatStreamIpc(): void {
           }
         }
 
-        if (resolvedModel === 'builtin:composer' || resolvedModel === 'composer') {
+        if (
+          (resolvedModel === 'builtin:composer' || resolvedModel === 'composer') &&
+          !localComposerFullActive(settings)
+        ) {
           resolvedModel = 'builtin:composer-lite'
           turnPlan = {
             ...turnPlan,

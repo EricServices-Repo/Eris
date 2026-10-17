@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.51 — 2026-10-17
+
+- Chat agents keep the thread, include every other agent discussion, and show the reply while the turn runs.
+
 ## 0.2.50 — 2026-10-17
 
 - “What does this project do?” is answered from the project’s source files.

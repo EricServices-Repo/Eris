@@ -115,6 +115,13 @@ export async function readyLocalHandoffRef(settings: AppSettings): Promise<strin
   return bestFittingLocalModel(getLocalStatuses(), budget)
 }
 
+export function localComposerFullActive(settings: AppSettings): boolean {
+  return (
+    settings.agent.routing.useLocalComposerFull === true &&
+    isExactBuiltinReady('builtin:composer')
+  )
+}
+
 export function selectComposerLocalHandoff(options: {
   selectedModel: string
   intent: ChatIntent
@@ -334,9 +341,12 @@ export async function pickAutoChatModel(
   }
   const heavy = intent === 'edit' || intent === 'run'
   const profile = settings.agent.routing.profile ?? 'auto'
+  const localFull = localComposerFullActive(settings)
   const preferCloud =
-    profile !== 'local' && settings.agent.routing.preferCloudComposer !== false
-  if (heavy && preferCloud) return 'builtin:composer'
+    !localFull &&
+    profile !== 'local' &&
+    settings.agent.routing.preferCloudComposer !== false
+  if (heavy && (localFull || preferCloud)) return 'builtin:composer'
   if (isExactBuiltinReady('builtin:composer-lite')) return 'builtin:composer-lite'
   const fitted = await readyLocalHandoffRef(settings)
   if (fitted) return fitted
@@ -684,11 +694,13 @@ export async function planChatTurn(options: {
   const requiresTools = toolPolicy !== 'none' && intentNeedsTools(intent)
   const usingComposerFull =
     roles.chat === 'builtin:composer' || roles.tools === 'builtin:composer'
+  const localFull = localComposerFullActive(options.settings)
   const cloudPreferred =
     mode === 'agent' &&
     usingComposerFull &&
     routingProfile !== 'local' &&
-    preferCloudSetting
+    preferCloudSetting &&
+    !localFull
 
   return {
     intent,
