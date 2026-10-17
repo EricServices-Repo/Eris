@@ -294,10 +294,33 @@ export function filterToolsByPolicy<T extends { function: { name: string } }>(
   return tools.filter((t) => toolAllowedByPolicy(t.function.name, policy))
 }
 
-/** Agents run on Composer Lite locally, or Composer Full on Cloud Agents. */
-export function composerAgentModel(selected: string): 'builtin:composer-lite' | 'builtin:composer' {
+/** Empty or "auto" lets the turn choose among ready models. Anything else is used as picked. */
+export function isAutoModelChoice(selected: string): boolean {
   const name = selected.trim()
-  if (name === 'builtin:composer' || name === 'composer') return 'builtin:composer'
+  return !name || name === 'auto'
+}
+
+/**
+ * Auto picks a model for this turn. A heavy edit prefers Composer Full when Cloud
+ * is allowed, otherwise Composer Lite, then a ready local or connected model.
+ */
+export async function pickAutoChatModel(
+  settings: AppSettings,
+  intent: ChatIntent
+): Promise<string> {
+  const heavy = intent === 'edit' || intent === 'run'
+  const profile = settings.agent.routing.profile ?? 'auto'
+  const preferCloud =
+    profile !== 'local' && settings.agent.routing.preferCloudComposer !== false
+  if (heavy && preferCloud) return 'builtin:composer'
+  if (isExactBuiltinReady('builtin:composer-lite')) return 'builtin:composer-lite'
+  const fitted = await readyLocalHandoffRef(settings)
+  if (fitted) return fitted
+  for (const conn of settings.models.connections) {
+    if (!conn.enabled || conn.type === 'builtin') continue
+    const name = conn.models.find((model) => model.trim())
+    if (name) return name
+  }
   return 'builtin:composer-lite'
 }
 
@@ -330,6 +353,9 @@ export function resolveModelRoles(options: {
   }
 
   const exact = resolveExactBuiltinRef(selected)
+  if (selected === 'builtin:composer' || selected === 'composer') {
+    return { chat: 'builtin:composer', tools: 'builtin:composer', escalateToFull: false }
+  }
   if (!exact) {
     return {
       chat: selected,
@@ -339,26 +365,8 @@ export function resolveModelRoles(options: {
     }
   }
 
-  // Desktop always runs Composer Lite locally. Composer Full runs on Cloud Agents only.
-  const liteReady = resolveExactBuiltinRef('builtin:composer-lite')
-  const lite = liteReady || 'builtin:composer-lite'
-  const isFull =
-    exact === 'builtin:composer' || (!/lite/i.test(exact) && /composer$/i.test(exact))
-
-  if (isFull) {
-    if (!liteReady) {
-      return {
-        chat: exact,
-        tools: exact,
-        escalateToFull: false,
-        error:
-          'Composer Full runs on Cloud Agents. Download Composer Lite for local chat, or sign in and use a Cloud Agent.'
-      }
-    }
-    return { chat: lite, tools: lite, escalateToFull: false }
-  }
-
-  // Stay on Lite for local chat + tools (no local Full escalate).
+  // Desktop runs Composer Lite locally. Composer Full is the Cloud Agents model
+  // and stays selected so the chat can send the turn there.
   return { chat: exact, tools: exact, escalateToFull: false }
 }
 
@@ -629,24 +637,24 @@ export async function planChatTurn(options: {
   }
 
   const toolPolicy = effectiveToolPolicy(agent, intent, mode)
-  const modelForRoles = mode === 'agent' ? composerAgentModel(selectedModel) : selectedModel
+  const chosenModel = isAutoModelChoice(selectedModel)
+    ? await pickAutoChatModel(options.settings, intent)
+    : selectedModel
   const roles = resolveModelRoles({
-    selectedModel: modelForRoles,
+    selectedModel: chosenModel,
     intent,
     toolPolicy,
     preferEscalate: agent.preferEscalate !== false
   })
 
   const requiresTools = toolPolicy !== 'none' && intentNeedsTools(intent)
+  const usingComposerFull =
+    roles.chat === 'builtin:composer' || roles.tools === 'builtin:composer'
   const cloudPreferred =
     mode === 'agent' &&
+    usingComposerFull &&
     routingProfile !== 'local' &&
-    preferCloudSetting &&
-    (routingProfile === 'max' ||
-      requiresTools ||
-      intent === 'edit' ||
-      intent === 'review' ||
-      intent === 'run')
+    preferCloudSetting
 
   return {
     intent,

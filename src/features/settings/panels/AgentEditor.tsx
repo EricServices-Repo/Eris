@@ -55,14 +55,9 @@ export function AgentEditor({
       </div>
       <div className="setting-row" style={{ gridTemplateColumns: '120px 1fr', border: 'none' }}>
         <label>Model</label>
-        <select
-          value={agent.model === 'builtin:composer' ? 'builtin:composer' : 'builtin:composer-lite'}
-          onChange={(e) => onChange({ ...agent, model: e.target.value })}
-          title={`Agents run Composer Lite or Composer Full. Chat default is ${defaultModel || 'Composer Lite'}.`}
-        >
-          <option value="builtin:composer-lite">Composer Lite</option>
-          <option value="builtin:composer">Composer Full</option>
-        </select>
+        <span className="subtitle">
+          Uses the model selected in chat{defaultModel ? ` (${defaultModel})` : ''}.
+        </span>
       </div>
       <div className="setting-row" style={{ gridTemplateColumns: '120px 1fr', border: 'none' }}>
         <label>Temperature</label>

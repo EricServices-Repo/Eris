@@ -42,12 +42,11 @@ import {
 } from '../services/background-agents'
 import { setDiagnosticsPaused } from '../services/diagnostics'
 import { findAgent } from '../services/agents'
-import { logError, logInfo, logWarn } from '../services/logger'
 import { appState } from '../app-state'
 import { getSecret, abortAllCompletes } from './shared'
 import { addWorkspaceAllowedCommand, workspaceAllowedCommands } from '../services/workspace-trust'
 import { assertChatWithinPlan, assertCloudJobWithinPlan } from '../services/eris-entitlements'
-import { isBuiltinRef } from '../services/builtin-model'
+import { logError, logInfo, logWarn } from '../services/logger'
 import { recordAgentRun } from '../services/agent-telemetry'
 import {
   cloudInlineAvailable,
@@ -176,10 +175,6 @@ export function registerChatStreamIpc(): void {
       const agent = findAgent(appState.currentWorkspace, turnPlan.agentId) ||
         (agentId ? findAgent(appState.currentWorkspace, agentId) : null)
       let resolvedModel = turnPlan.models.chat || model || settings.models.defaultModel
-      // Local chat never loads Composer Full — that model runs on Cloud Agents.
-      if (resolvedModel === 'builtin:composer') {
-        resolvedModel = 'builtin:composer-lite'
-      }
       const temperature =
         agent?.temperature ?? settings.models.temperature
       setDiagnosticsPaused(true)
@@ -298,16 +293,19 @@ export function registerChatStreamIpc(): void {
         // built-in local model. If the user picked their own API/cloud model
         // (OpenAI, Anthropic, OpenRouter, Ollama, …), run it directly in the
         // local agent loop so BYO keys are first-class in Agent mode.
-        const toolsModelIsBuiltin = isBuiltinRef(turnPlan.models.tools)
+        const usingComposerFull =
+          turnPlan.models.tools === 'builtin:composer' ||
+          turnPlan.models.chat === 'builtin:composer'
         const cloudPreferred =
           turnPlan.cloudPreferred !== false &&
+          usingComposerFull &&
           (settings.agent.routing.profile ?? 'auto') !== 'local' &&
           settings.agent.routing.preferCloudComposer !== false
         const wantCloudInline =
           (mode ?? 'agent') === 'agent' &&
           turnPlan.mode === 'agent' &&
           Boolean(appState.currentWorkspace) &&
-          toolsModelIsBuiltin &&
+          usingComposerFull &&
           cloudPreferred &&
           !resume
 
@@ -408,7 +406,21 @@ export function registerChatStreamIpc(): void {
               error: cloudErr instanceof Error ? cloudErr.message : String(cloudErr)
             })
             pendingThinking += '\nCloud unavailable — continuing with Composer Lite.\n'
+            resolvedModel = 'builtin:composer-lite'
+            turnPlan = {
+              ...turnPlan,
+              models: { ...turnPlan.models, chat: resolvedModel, tools: resolvedModel },
+              cloudPreferred: false
+            }
             scheduleStreamFlush()
+          }
+        }
+
+        if (resolvedModel === 'builtin:composer' || resolvedModel === 'composer') {
+          resolvedModel = 'builtin:composer-lite'
+          turnPlan = {
+            ...turnPlan,
+            models: { ...turnPlan.models, chat: resolvedModel, tools: resolvedModel }
           }
         }
 
