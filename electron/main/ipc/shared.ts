@@ -1,5 +1,5 @@
 import { join } from 'path'
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs'
 import { getResolvedSettings } from '../services/settings'
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from '../services/workspace-watcher'
 import { disposeMcpRuntime, syncMcpRuntime } from '../services/mcp-runtime'
@@ -49,6 +49,11 @@ function readSecretsMap(): Record<string, string> {
     try {
       const map = parseSecretsPayload(readFileSync(jsonPath, 'utf8'))
       if (map) {
+        try {
+          chmodSync(jsonPath, 0o600)
+        } catch {
+          // Windows ACLs are inherited from the user data directory.
+        }
         secretsCache = map
         return { ...map }
       }
@@ -85,8 +90,20 @@ function writeSecretsMap(map: Record<string, string>): void {
   const payload = JSON.stringify(map)
   const target = secretsPath()
   const tmp = `${target}.${process.pid}.tmp`
-  writeFileSync(tmp, payload, 'utf8')
+  // The app deliberately avoids OS credential stores to prevent surprise
+  // Keychain prompts. Keep the local fallback private to the current account.
+  writeFileSync(tmp, payload, { encoding: 'utf8', mode: 0o600 })
+  try {
+    chmodSync(tmp, 0o600)
+  } catch {
+    // Windows ACLs are inherited from the user data directory.
+  }
   renameSync(tmp, target)
+  try {
+    chmodSync(target, 0o600)
+  } catch {
+    // Windows ACLs are inherited from the user data directory.
+  }
   discardLegacySecretsFile()
 }
 

@@ -528,6 +528,14 @@ export function ChatPanel({
     return m.name
   }
 
+  const modelDataHint = (m: ModelInfo): string => {
+    if (m.name === 'auto') return 'Eris selects a ready model for this task. When outcome routing is enabled, saved run outcomes and eval scores can influence the choice. The selected provider may receive your prompt and attached project context.'
+    if (m.ready === false) return 'This model is not currently ready. Reconnect or enable its provider in Settings → Models.'
+    if (m.source === 'builtin' || m.source === 'local') return 'Runs on this device. Prompts and attached files stay local to Eris.'
+    const connection = m.connectionId ? models.find((candidate) => candidate.connectionId === m.connectionId) : undefined
+    return `Connected provider${connection?.connectionId ? ` (${connection.connectionId})` : ''}. Prompts and attached project context are sent to that provider.`
+  }
+
   const selectValue = modelOptions.some((m) => m.name === selectedModel)
     ? selectedModel
     : modelOptions[0]?.name || 'builtin:composer-lite'
@@ -563,22 +571,22 @@ export function ChatPanel({
     <div className="agent-center">
       <div className="panel-header agent-header">
         <span>{activeThread?.title || 'Agent'}</span>
-        <div className="mode-toggle" role="group" aria-label="Chat mode">
+        <div className="mode-toggle" role="group" aria-label="Task permissions">
           <button
             type="button"
             className={`mode-btn ${chatMode === 'ask' ? 'active' : ''}`}
             onClick={() => onChatModeChange('ask')}
-            title="Answer only — no file edits"
+            title="Ask: answer questions without changing workspace files"
           >
-            Ask
+            Ask · read only
           </button>
           <button
             type="button"
             className={`mode-btn ${chatMode === 'agent' ? 'active' : ''}`}
             onClick={() => onChatModeChange('agent')}
-            title="Agent can edit the workspace"
+            title="Agent: inspect and change workspace files; command execution may require approval"
           >
-            Agent
+            Agent · can edit
           </button>
         </div>
         <button className="btn" onClick={onNewChat} title="New chat">
@@ -1131,11 +1139,11 @@ export function ChatPanel({
                     value={selectValue}
                     disabled={streaming}
                     onChange={(e) => onModelChange(e.target.value)}
-                    title="Auto chooses a model for the turn. A picked model is used as-is."
+                    title={`${modelDataHint(modelOptions.find((m) => m.name === selectValue) || modelOptions[0]!)} Auto chooses a model for the turn; a picked model is used as-is.`}
                     aria-label="Select model"
                   >
                     {modelOptions.map((m) => (
-                      <option key={m.name} value={m.name}>
+                      <option key={m.name} value={m.name} title={modelDataHint(m)}>
                         {modelLabel(m)}
                       </option>
                     ))}
