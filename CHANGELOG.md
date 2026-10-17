@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.52 — 2026-10-17
+
+- Composer Full can run on this Mac after it is downloaded, instead of Cloud Composer.
+
 ## 0.2.51 — 2026-10-17
 
 - Chat agents keep the thread, include every other agent discussion, and show the reply while the turn runs.
