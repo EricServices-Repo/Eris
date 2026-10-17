@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.53 — 2026-10-17
+
+- The full reply is posted under the thinking trace when a turn finishes.
+
 ## 0.2.52 — 2026-10-17
 
 Cross-platform desktop builds (macOS + Windows) from the same version tag.
