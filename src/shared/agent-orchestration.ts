@@ -1,3 +1,6 @@
+/** Minimum characters kept when one agent passes text to another. */
+export const AGENT_HANDOFF_CHARS = 8_000
+
 /** Structured handoff between orchestrator and specialist agents. */
 export interface AgentHandoffPacket {
   goal: string

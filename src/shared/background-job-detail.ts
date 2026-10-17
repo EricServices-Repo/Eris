@@ -1,5 +1,5 @@
 import type { BackgroundJob } from './background-agents'
-import { deriveBlackboardStatus } from './agent-orchestration'
+import { AGENT_HANDOFF_CHARS, deriveBlackboardStatus } from './agent-orchestration'
 
 export function formatBackgroundJobDetail(job: BackgroundJob, diff: string): string {
   const board = job.blackboard || deriveBlackboardStatus(job)
@@ -38,7 +38,7 @@ export function formatBackgroundJobDetail(job: BackgroundJob, diff: string): str
   if (job.handoff) {
     lines.push('Handoff')
     lines.push(`  ${job.handoff.fromAgentId} → ${job.handoff.toAgentId}`)
-    lines.push(`  ${job.handoff.summary.slice(0, 400)}`)
+    lines.push(`  ${job.handoff.summary.slice(0, AGENT_HANDOFF_CHARS)}`)
     if (job.handoff.files?.length) lines.push(`  files: ${job.handoff.files.join(', ')}`)
     lines.push('')
   }
@@ -49,20 +49,20 @@ export function formatBackgroundJobDetail(job: BackgroundJob, diff: string): str
     for (const t of tools.slice(-16)) {
       const mark = t.status === 'ok' ? '✓' : t.status === 'error' ? '✗' : '…'
       lines.push(`  ${mark} ${t.name}${t.path ? ` ${t.path}` : ''}`)
-      if (t.status === 'error' && t.detail) lines.push(`      ${t.detail.slice(0, 120)}`)
+      if (t.status === 'error' && t.detail) lines.push(`      ${t.detail.slice(0, AGENT_HANDOFF_CHARS)}`)
     }
     lines.push('')
   }
 
   if (job.thinkingTail?.trim()) {
     lines.push('Thinking (tail)')
-    lines.push(job.thinkingTail.trim().slice(-1200))
+    lines.push(job.thinkingTail.trim().slice(-AGENT_HANDOFF_CHARS))
     lines.push('')
   }
 
   if (job.answer?.trim()) {
     lines.push('Answer')
-    lines.push(job.answer.trim().slice(0, 2000))
+    lines.push(job.answer.trim().slice(0, AGENT_HANDOFF_CHARS))
     lines.push('')
   }
 

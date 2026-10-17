@@ -67,9 +67,14 @@ import {
 } from './install-guards'
 import { shouldConsiderMidRunAdapt } from './mid-run-adapt'
 import { findAgent } from '../agents'
-import { formatHandoffForPrompt } from '../../../../src/shared/agent-orchestration'
+import { AGENT_HANDOFF_CHARS, formatHandoffForPrompt } from '../../../../src/shared/agent-orchestration'
 import { isVerifyCommand } from '../command-approval'
 import { buildPreservedWorkerMessages, isReadOnlyChat, truncateForModel } from './prompts'
+import {
+  firstHttpsResult,
+  replyFromWebEvidence,
+  webSearchQuery
+} from './web-grounding'
 import { streamThinkingText } from './stream'
 import { openWebPage, searchWeb } from '../web-search'
 import {
@@ -109,7 +114,7 @@ function answerFromProjectFiles(reads: Array<{ path: string; text: string }>): s
   if (reads.length === 0) return ''
   const body = reads
     .slice(0, 3)
-    .map((file) => `**${file.path}**\n\n${file.text.trim().slice(0, 1500)}`)
+    .map((file) => `**${file.path}**\n\n${file.text.trim().slice(0, AGENT_HANDOFF_CHARS)}`)
     .join('\n\n')
   return `From the project files:\n\n${body}`
 }
@@ -435,6 +440,8 @@ export async function* runAgentWithWorkspaceTools(options: {
   const describeProject = asksWhatTheProjectDoes(originalUserGoal)
   const webLookup = webQuestion
   let webSearchNudges = 0
+  let webSearchText = ''
+  let webPageText = ''
   const chatReply = describeProject || isReadOnlyChat(plan)
   const describeProjectNext =
     `Read README, package.json, or the main source. Do not stop after .eris config. ` +
@@ -545,7 +552,7 @@ export async function* runAgentWithWorkspaceTools(options: {
       `${reason}\n\n` +
       (lastTreeResult
         ? `The workspace listing is already in context — do NOT call tree/list_dir again.\n` +
-          `Active user request:\n${originalUserGoal.slice(0, 1500)}\n\n` +
+          `Active user request:\n${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}\n\n` +
           (answerNext
             ? answerNext
             : reviewOnly
@@ -564,9 +571,9 @@ export async function* runAgentWithWorkspaceTools(options: {
   const nudgeAfterInspect = (snapshot: string): AgentChatMessage => ({
     role: 'user',
     content:
-      `TOOL_RESULT (listing already in context):\n${truncateForModel(snapshot, 4000)}\n\n` +
+      `TOOL_RESULT (listing already in context):\n${truncateForModel(snapshot, AGENT_HANDOFF_CHARS)}\n\n` +
       `Do NOT call tree or list_dir again — you already have the listing above.\n` +
-      `Active user request:\n${originalUserGoal.slice(0, 1500)}\n\n` +
+      `Active user request:\n${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}\n\n` +
       (answerNext
         ? answerNext
         : reviewOnly
@@ -580,7 +587,7 @@ export async function* runAgentWithWorkspaceTools(options: {
     role: 'user',
     content:
       `${reason}\n\n` +
-      `Active user request:\n${originalUserGoal.slice(0, 1500)}\n` +
+      `Active user request:\n${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}\n` +
       (filesTouched.length
         ? `Already touched: ${[...new Set(filesTouched)].join(', ')}\n`
         : answerNext
@@ -599,14 +606,119 @@ export async function* runAgentWithWorkspaceTools(options: {
   // Loop until done, abort, or hard budgets.
   const chatReadBudget = 4
   let latestAssistant = ''
-  const webSearched = () =>
-    actionLog.some((entry) => /Searched the web|Opened https:|web_search|web_open/i.test(entry))
   const webSearchNudge = (): AgentChatMessage => ({
     role: 'user',
     content:
-      `This question is about the public web. Call web_search with the person or topic, then web_open one https result. ` +
-      `Do not read a workspace file named after a person. Do not invent a "What I did" log.`
+      `This question is about the public web. Do not read workspace files and do not guess a biography.\n` +
+      `Call web_search now:\n{"name":"web_search","query":${JSON.stringify(webSearchQuery(originalUserGoal))}}\n` +
+      `Then stop.`
   })
+  async function* answerFromWeb(): AsyncGenerator<AgentRunnerEvent, void, unknown> {
+    const query = webSearchQuery(originalUserGoal) || originalUserGoal.slice(0, 200)
+    if (!webSearchText) {
+      yield { type: 'status', text: 'Searching the web…' }
+      yield { type: 'thinking', text: `\n\n— Searching the web for “${query}”…\n` }
+      const id = 'web_auto_search'
+      yield { type: 'tool', tool: { id, name: 'web_search', status: 'running', detail: query } }
+      try {
+        webSearchText = await searchWeb(query, options.signal)
+        actionLog.push(webSearchText.split('\n')[0]!.slice(0, 160))
+        yield {
+          type: 'tool',
+          tool: { id, name: 'web_search', status: 'ok', detail: webSearchText.slice(0, AGENT_HANDOFF_CHARS) }
+        }
+        yield { type: 'thinking', text: '\n[ok] web_search\n' }
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : 'Web search failed'
+        yield { type: 'tool', tool: { id, name: 'web_search', status: 'error', detail } }
+        yield {
+          type: 'answer',
+          text: `I could not search the web for “${query}”. ${detail}`,
+          replace: true
+        }
+        return
+      }
+    }
+    if (!webPageText) {
+      const url = firstHttpsResult(webSearchText)
+      if (url) {
+        yield { type: 'status', text: 'Opening the first result…' }
+        yield { type: 'thinking', text: `\n\n— Opening ${url}…\n` }
+        const id = 'web_auto_open'
+        yield {
+          type: 'tool',
+          tool: { id, name: 'web_open', path: url, status: 'running', detail: url }
+        }
+        try {
+          webPageText = await openWebPage(url, options.signal)
+          actionLog.push(webPageText.split('\n')[0]!.slice(0, 160))
+          yield {
+            type: 'tool',
+            tool: {
+              id,
+              name: 'web_open',
+              path: url,
+              status: 'ok',
+              detail: webPageText.slice(0, AGENT_HANDOFF_CHARS)
+            }
+          }
+          yield { type: 'thinking', text: `\n[ok] web_open ${url}\n` }
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : 'Could not open the page'
+          yield {
+            type: 'tool',
+            tool: { id, name: 'web_open', path: url, status: 'error', detail }
+          }
+          yield {
+            type: 'thinking',
+            text: '\n\n— Could not open the page; answering from the search results…\n'
+          }
+        }
+      }
+    }
+    const evidence = [webSearchText, webPageText].filter(Boolean).join('\n\n')
+    const noHits = !firstHttpsResult(webSearchText) && /No results\./.test(webSearchText)
+    let modelText = ''
+    if (!noHits) {
+      yield { type: 'status', text: 'Answering from the page…' }
+      yield { type: 'thinking', text: '\n\n— Answering from the web results…\n' }
+      yield { type: 'answer', text: '', replace: true }
+      try {
+        for await (const evt of streamThinkingText({
+          ...options,
+          model: workerModel,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'Answer only from the sources in the user message. ' +
+                'If they do not identify the subject, say you could not find a reliable public page. ' +
+                'Do not add jobs, shows, awards, schools, or employers that are not written in the sources.'
+            },
+            {
+              role: 'user',
+              content:
+                `Question:\n${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}\n\nSources:\n${truncateForModel(evidence, AGENT_HANDOFF_CHARS)}\n\n` +
+                'Write a short answer in plain sentences and cite the page URL.'
+            }
+          ],
+          stopOnToolCall: false,
+          tools: undefined,
+          builtinJsonSchema: undefined,
+          sessionKey: undefined
+        })) {
+          if (evt.kind === 'thinking') {
+            if (evt.text) yield { type: 'answer', text: evt.text }
+          } else modelText = evt.full
+        }
+      } catch {
+        modelText = ''
+      }
+    }
+    const answer = replyFromWebEvidence(modelText, query, webSearchText, webPageText)
+    yield { type: 'status', text: 'Done' }
+    yield { type: 'answer', text: answer, replace: true }
+  }
   async function* finishChatAnswer(latest: string): AsyncGenerator<AgentRunnerEvent, void, unknown> {
     const existing = proseOutsideTools(latest)
     if (existing.length >= 40 && !isToolLogReply(existing)) {
@@ -626,7 +738,7 @@ export async function* runAgentWithWorkspaceTools(options: {
           ? `Review the changes. For each file, say what changed: ${changed.join(', ')}.\n`
           : `Answer the user's question in plain sentences.\n`) +
         `Do not write "Finished:" or "What I did:".\n\n` +
-        `User asked:\n${originalUserGoal.slice(0, 1500)}`
+        `User asked:\n${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}`
     })
     yield { type: 'answer', text: '', replace: true }
     let reply = ''
@@ -673,17 +785,16 @@ export async function* runAgentWithWorkspaceTools(options: {
     }
 
     if (chatReply && (toolExecRounds >= chatReadBudget || step >= 8)) {
-      if (webLookup && !webSearched() && webSearchNudges < 2) {
-        webSearchNudges++
-        workerMessages.push(webSearchNudge())
-      } else {
-        yield {
-          type: 'thinking',
-          text: '\n\n— Enough reading; answering the message…\n'
-        }
-        yield* finishChatAnswer(latestAssistant)
+      if (webLookup) {
+        yield* answerFromWeb()
         return
       }
+      yield {
+        type: 'thinking',
+        text: '\n\n— Enough reading; answering the message…\n'
+      }
+      yield* finishChatAnswer(latestAssistant)
+      return
     }
 
     step++
@@ -768,6 +879,19 @@ export async function* runAgentWithWorkspaceTools(options: {
     }
 
     if (toolCalls.length === 0) {
+      if (webLookup) {
+        if (!webSearchText && webSearchNudges < 1) {
+          webSearchNudges++
+          yield {
+            type: 'thinking',
+            text: '\n\n— This needs a web search before an answer…\n'
+          }
+          workerMessages.push(webSearchNudge())
+          continue
+        }
+        yield* answerFromWeb()
+        return
+      }
       // Local models often ask "please provide the project structure" instead of
       // calling tree — run tree ourselves and continue (don't stop or ask the user).
       if (looksLikeAsksForWorkspaceInfo(assistantText) && !lastTreeResult) {
@@ -800,20 +924,20 @@ export async function* runAgentWithWorkspaceTools(options: {
             name: 'tree',
             path: '.',
             status: treeResult.ok ? 'ok' : 'error',
-            detail: treeResult.detail.slice(0, 2000)
+            detail: treeResult.detail.slice(0, AGENT_HANDOFF_CHARS)
           }
         }
         workerMessages.push({
           role: 'assistant',
-          content: stripToolBlocks(assistantText).slice(0, 800)
+          content: stripToolBlocks(assistantText).slice(0, AGENT_HANDOFF_CHARS)
         })
         workerMessages.push({
           role: 'user',
           content:
-            `TOOL_RESULT tree path=.\n${truncateForModel(treeResult.detail, 6000)}\n\n` +
+            `TOOL_RESULT tree path=.\n${truncateForModel(treeResult.detail, AGENT_HANDOFF_CHARS)}\n\n` +
             `Do NOT ask the user for project structure or files — you have the listing above. ` +
             `Continue the original request with read_file / search_replace / write_file / run as needed.\n` +
-            `User request:\n${originalUserGoal.slice(0, 1500)}`
+            `User request:\n${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}`
         })
         constrainNextToolCall = true
         continue
@@ -835,7 +959,7 @@ export async function* runAgentWithWorkspaceTools(options: {
         }
         const reply = await options.askUser(clarifyText)
         throwIfAborted(options.signal)
-        workerMessages.push({ role: 'assistant', content: clarifyText.slice(0, 2000) })
+        workerMessages.push({ role: 'assistant', content: clarifyText.slice(0, AGENT_HANDOFF_CHARS) })
         if (reply) {
           yield { type: 'thinking', text: `\n\n— You replied: ${reply.slice(0, 160)}\n` }
           workerMessages.push({
@@ -895,7 +1019,7 @@ export async function* runAgentWithWorkspaceTools(options: {
           }
           noProgressStreak = 0
         } else {
-          workerMessages.push({ role: 'assistant', content: assistantText.slice(0, 1200) })
+          workerMessages.push({ role: 'assistant', content: assistantText.slice(0, AGENT_HANDOFF_CHARS) })
         }
         workerMessages.push(
           lastTreeResult
@@ -939,7 +1063,7 @@ export async function* runAgentWithWorkspaceTools(options: {
             const answer =
               buildWorkSummary(originalUserGoal, actionLog, workerNote) +
               `\n\nVerify still failing after ${verifyFailures} attempts:\n` +
-              truncateForModel(finalVerify.detail, 1500)
+              truncateForModel(finalVerify.detail, AGENT_HANDOFF_CHARS)
             yield {
               type: 'thinking',
               text: '\n\n— Verify failed too many times; stopping with a summary.\n'
@@ -955,7 +1079,7 @@ export async function* runAgentWithWorkspaceTools(options: {
           }
           workerMessages.push({
             role: 'assistant',
-            content: assistantText.slice(0, 800)
+            content: assistantText.slice(0, AGENT_HANDOFF_CHARS)
           })
           const missingDeps = looksLikeMissingDeps(finalVerify.detail)
           const installHint = missingDeps
@@ -1014,7 +1138,7 @@ export async function* runAgentWithWorkspaceTools(options: {
         }
         workerMessages.push({
           role: 'assistant',
-          content: stripToolBlocks(assistantText).slice(0, 1200)
+          content: stripToolBlocks(assistantText).slice(0, AGENT_HANDOFF_CHARS)
         })
         workerMessages.push({
           role: 'user',
@@ -1022,7 +1146,7 @@ export async function* runAgentWithWorkspaceTools(options: {
             `GOAL_CHECK_FAILED:\n${goalCheck.reason}\n\n` +
             `You are NOT finished. Continue with tools (write_file / search_replace / run / verify) ` +
             `until the original request is truly satisfied. Do not claim DONE yet.\n` +
-            `User request:\n${originalUserGoal.slice(0, 1500)}`
+            `User request:\n${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}`
         })
         yield { type: 'status', text: `${plan.agentName} · goal unmet — continuing…` }
         continue
@@ -1030,15 +1154,9 @@ export async function* runAgentWithWorkspaceTools(options: {
 
       // Deterministic summary — never unload Full to reload Lite just for a recap.
       const prose = proseOutsideTools(assistantText)
-      if (webLookup && !webSearched() && webSearchNudges < 2) {
-        webSearchNudges++
-        yield {
-          type: 'thinking',
-          text: '\n\n— This needs a web search before an answer…\n'
-        }
-        workerMessages.push({ role: 'assistant', content: prose.slice(0, 800) })
-        workerMessages.push(webSearchNudge())
-        continue
+      if (webLookup) {
+        yield* answerFromWeb()
+        return
       }
       if (prose.length >= 40 && !isToolLogReply(prose)) {
         yield { type: 'status', text: 'Done' }
@@ -1072,13 +1190,13 @@ export async function* runAgentWithWorkspaceTools(options: {
           : '\n\n— Enough directory listings; read files or finish…\n'
       }
       const snapshot = lastInspectResult || lastTreeResult || '(listing already returned earlier)'
-      workerMessages.push({ role: 'assistant', content: assistantText.slice(0, 800) })
+      workerMessages.push({ role: 'assistant', content: assistantText.slice(0, AGENT_HANDOFF_CHARS) })
       // After two skip cycles on review tasks, allow DONE without more tools
       if (reviewOnly && noProgressStreak >= 2) {
         workerMessages.push({
           role: 'user',
           content:
-            `TOOL_RESULT (cached):\n${truncateForModel(snapshot, 3000)}\n\n` +
+            `TOOL_RESULT (cached):\n${truncateForModel(snapshot, AGENT_HANDOFF_CHARS)}\n\n` +
             `Stop calling tree/list_dir. Either emit ONE read_file or run tool, ` +
             `OR reply with a DONE summary of whether the calculator app looks working — no tools.`
         })
@@ -1113,7 +1231,7 @@ export async function* runAgentWithWorkspaceTools(options: {
           ? '\n\n— Same tool call repeated; answer the user from the files already read…\n'
           : '\n\n— Same tool call repeated; moving on to the next unfinished edit…\n'
       }
-      workerMessages.push({ role: 'assistant', content: assistantText.slice(0, 800) })
+      workerMessages.push({ role: 'assistant', content: assistantText.slice(0, AGENT_HANDOFF_CHARS) })
       workerMessages.push(
         nudgeContinueWork(
           'You repeated the same tool call. Move on to the next unfinished part of the request.'
@@ -1311,6 +1429,7 @@ export async function* runAgentWithWorkspaceTools(options: {
         try {
           const detail = await searchWeb(query, options.signal)
           result = { ok: true, detail, mutated: false }
+          if (!webSearchText || !firstHttpsResult(webSearchText)) webSearchText = detail
         } catch (err) {
           result = {
             ok: false,
@@ -1323,6 +1442,7 @@ export async function* runAgentWithWorkspaceTools(options: {
         try {
           const detail = await openWebPage(url, options.signal)
           result = { ok: true, detail, mutated: false, path: url }
+          if (!webPageText) webPageText = detail
         } catch (err) {
           result = {
             ok: false,
@@ -1679,7 +1799,7 @@ export async function* runAgentWithWorkspaceTools(options: {
                 ...runningDelegation,
                 status: 'done',
                 tools: specTools.slice(-6),
-                result: result.detail.slice(0, 700)
+                result: result.detail.slice(0, AGENT_HANDOFF_CHARS)
               }
             }
           } catch (err) {
@@ -1691,7 +1811,7 @@ export async function* runAgentWithWorkspaceTools(options: {
                 ...runningDelegation,
                 status: 'failed',
                 tools: specTools.slice(-6),
-                result: message.slice(0, 700)
+                result: message.slice(0, AGENT_HANDOFF_CHARS)
               }
             }
           }
@@ -2025,7 +2145,7 @@ export async function* runAgentWithWorkspaceTools(options: {
           result.path &&
           !result.path.replace(/\\/g, '/').startsWith('.eris/')
         ) {
-          sourceReads.push({ path: result.path, text: result.detail.slice(0, 2000) })
+          sourceReads.push({ path: result.path, text: result.detail.slice(0, AGENT_HANDOFF_CHARS) })
         }
         if (call.name === 'tree') {
           lastTreeResult = result.detail
@@ -2050,12 +2170,12 @@ export async function* runAgentWithWorkspaceTools(options: {
                 ? `Inspected ${result.path ?? path ?? '.'}`
                 : call.name === 'verify'
                   ? `Verify ${result.ok ? 'ok' : 'fail'}`
-                  : result.detail.slice(0, 120)
+                  : result.detail.slice(0, AGENT_HANDOFF_CHARS)
         actionLog.push(label)
         consecutiveToolErrors = 0
       } else {
         consecutiveToolErrors++
-        actionLog.push(`Failed ${call.name}${path ? ` ${path}` : ''}: ${result.detail.slice(0, 80)}`)
+        actionLog.push(`Failed ${call.name}${path ? ` ${path}` : ''}: ${result.detail.slice(0, AGENT_HANDOFF_CHARS)}`)
       }
       yield { type: 'progress', step, actionLog: [...actionLog], filesTouched: [...filesTouched] }
       yield {
@@ -2065,7 +2185,7 @@ export async function* runAgentWithWorkspaceTools(options: {
           name: call.name,
           path: result.path ?? path,
           status: result.ok ? 'ok' : 'error',
-          detail: result.detail.slice(0, 2000)
+          detail: result.detail.slice(0, AGENT_HANDOFF_CHARS)
         }
       }
       // Short breadcrumb only — detail stays on the tool row, not a wall of thinking text.
@@ -2079,6 +2199,21 @@ export async function* runAgentWithWorkspaceTools(options: {
         `TOOL_RESULT ${call.name}${result.path ? ` path=${result.path}` : ''}:\n${truncateForModel(result.detail)}`
       )
     }
+    if (webLookup) {
+      if (!webSearchText && webSearchNudges < 1) {
+        webSearchNudges++
+        yield {
+          type: 'thinking',
+          text: '\n\n— This needs a web search before an answer…\n'
+        }
+        workerMessages.push(webSearchNudge())
+        yield emitSessionStep()
+        continue
+      }
+      yield* answerFromWeb()
+      return
+    }
+
     if (onlyInspect) inspectRounds++
 
     if (mutatedThisRound) {
@@ -2114,7 +2249,7 @@ export async function* runAgentWithWorkspaceTools(options: {
               id: `verify_${toolExecRounds}`,
               name: 'verify',
               status: verified.ok ? 'ok' : 'error',
-              detail: verified.detail.slice(0, 2000)
+              detail: verified.detail.slice(0, AGENT_HANDOFF_CHARS)
             }
           }
           verifyNote = `\n\nVERIFY_RESULT (${verified.ok ? 'passed' : 'failed'}):\n${truncateForModel(verified.detail, 8000)}\n`
@@ -2144,7 +2279,7 @@ export async function* runAgentWithWorkspaceTools(options: {
                 const answer =
                   buildWorkSummary(originalUserGoal, actionLog, '') +
                   `\n\nStopped: verify failed ${verifyFailures} times.\n` +
-                  truncateForModel(verified.detail, 1500)
+                  truncateForModel(verified.detail, AGENT_HANDOFF_CHARS)
                 yield {
                   type: 'thinking',
                   text: '\n\n— Verify failure budget exhausted; stopping.\n'

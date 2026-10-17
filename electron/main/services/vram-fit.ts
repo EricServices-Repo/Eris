@@ -60,8 +60,13 @@ function clamp(n: number, min: number, max: number): number {
 
 /**
  * Context range passed to node-llama-cpp so it can grow up to what VRAM allows.
- * Built-in Lite stays small. Local and full models may use up to 64k.
+ * Composer Lite loads 16k. Larger local and full models may use up to 64k,
+ * still bounded by the model card and the settings window.
  */
+export const LITE_CONTEXT_MAX = 16_384
+/** Max tokens a built-in model may write in one reply. */
+export const REPLY_MAX_TOKENS = 16_384
+
 export function contextLimits(options: {
   tier?: string
   role?: string
@@ -71,7 +76,7 @@ export function contextLimits(options: {
   const builtinLite = options.tier === 'lite' && options.role !== 'local'
   const settings = clamp(options.settingsContext || 32768, 512, 131072)
   const model = clamp(options.modelContext || settings, 512, 131072)
-  const cap = Math.min(settings, model, builtinLite ? 8192 : 65536)
+  const cap = Math.min(settings, model, builtinLite ? LITE_CONTEXT_MAX : 65536)
   const min = Math.min(builtinLite ? 4096 : 8192, cap)
   return { min, max: Math.max(min, cap) }
 }

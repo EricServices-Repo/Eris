@@ -1,4 +1,5 @@
 import type { AppSettings, ChatIntent, TurnPlan } from '../../../../src/shared/settings-schema'
+import { AGENT_HANDOFF_CHARS } from '../../../../src/shared/agent-orchestration'
 import { formatAvailableModelsPrompt } from '../model-catalog'
 import { formatMcpServersPrompt } from '../mcp'
 import { formatLiveMcpToolsPrompt } from '../mcp-runtime'
@@ -118,7 +119,7 @@ When you need a file, emit exactly:
 
 Allowed tools: tree, list_dir, read_file, grep, glob, retrieve, semantic_search, search_symbols, web_search, web_open.
 Prefer README, package.json, and the main source. Skip .eris config unless the user asked about Eris settings.
-If the user asks about the internet, the web, or who someone is, call web_search, then web_open one https result. Do not invent a workspace path from a person's name.
+If the user asks about the internet, the web, or who someone is, call web_search, then web_open one https result. The reply may only state facts from those results. If they do not identify the person, say so. Do not invent a biography or a workspace path from a person's name.
 A Reviewer may also run npm test or the project typecheck. Nobody else runs shell commands.
 
 After a few reads, stop. Reply in plain sentences. Say what the project is, what it does, or what you found, and cite paths.
@@ -148,8 +149,9 @@ export function intentPlaybook(intent: ChatIntent | string, greenfield: boolean)
         `(2) read_file the hits, (3) answer from what you found with concrete paths and symbols. ` +
         `If asked what the project does, read README, package.json, or the main source — not only .eris config — ` +
         `then describe what it is, what it does, and the important files. ` +
-        `If the question is about the internet or who someone is, web_search then web_open one https page. ` +
-        `Do not edit. Do not invent APIs, file contents, or a path named after a person.`
+        `If the question is about the internet or who someone is, web_search then web_open one https page, ` +
+        `and answer only with facts from that page. If the page does not identify them, say so. ` +
+        `Do not edit. Do not invent APIs, file contents, a biography, or a path named after a person.`
       )
     case 'edit':
       return (
@@ -186,8 +188,8 @@ export function buildWorkspaceToolsSystem(
   } catch {
     tree = '(unable to list tree)'
   }
-  // Keep the injected tree modest so small-context models still have room for tools
-  if (tree.length > 2500) tree = `${tree.slice(0, 2500)}\n…`
+  // Keep the injected tree long enough for the next agent to use it.
+  if (tree.length > AGENT_HANDOFF_CHARS) tree = `${tree.slice(0, AGENT_HANDOFF_CHARS)}\n…`
   const parts = [
     systemPrompt,
     `WORKSPACE`,

@@ -16,6 +16,7 @@ import {
   USER_QUESTION_TIMEOUT_MS
 } from '../services/user-question'
 import type { ChatPromptInput, TurnPlan } from '../../../src/shared/settings-schema'
+import { AGENT_HANDOFF_CHARS } from '../../../src/shared/agent-orchestration'
 import { buildChatMessages } from '../services/chat-prompt'
 import {
   loadLastAgentRun,
@@ -286,7 +287,7 @@ export function registerChatStreamIpc(): void {
                   path: tool.path,
                   status: tool.status
                 })),
-                result: (job.answer || job.liveStatus || '').slice(0, 700)
+                result: (job.answer || job.liveStatus || '').slice(0, AGENT_HANDOFF_CHARS)
               }
             })
           }
@@ -502,7 +503,7 @@ export function registerChatStreamIpc(): void {
                 const detail = children
                   .map((c) =>
                     c
-                      ? `### ${c.agentName || c.agentId} · ${c.status}\n${c.answer.trim().slice(0, 800) || '(no answer)'}`
+                      ? `### ${c.agentName || c.agentId} · ${c.status}\n${c.answer.trim().slice(0, AGENT_HANDOFF_CHARS) || '(no answer)'}`
                       : ''
                   )
                   .filter(Boolean)

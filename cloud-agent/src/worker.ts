@@ -18,6 +18,9 @@ import {
 import type { AuthContext } from './auth.js'
 import type { CloudJob, CloudJobCreateRequest, CloudJobToolEvent } from './types.js'
 import { config } from './config.js'
+
+/** Minimum characters kept when a cloud job hands text to the next step. */
+const HANDOFF_CHARS = 8_000
 import { getLocalModelStatus } from './local-model.js'
 import {
   buildJobArtifacts,
@@ -390,7 +393,7 @@ export class WorkerPool {
 
           this.store.patch(id, (j) => ({
             ...j,
-            thinkingTail: (j.thinkingTail + `\n${assistant}`).slice(-4000)
+            thinkingTail: (j.thinkingTail + `\n${assistant}`).slice(-HANDOFF_CHARS)
           }))
 
           saveCheckpoint(id, { step, messages, workspaceReady: true })
@@ -499,7 +502,7 @@ export class WorkerPool {
             const done: CloudJobToolEvent = {
               ...running,
               status: ok ? 'ok' : 'error',
-              detail: detail.slice(0, 2000),
+              detail: detail.slice(0, HANDOFF_CHARS),
               at: new Date().toISOString()
             }
             this.store.patch(id, (j) => ({
@@ -511,7 +514,7 @@ export class WorkerPool {
               liveStatus: `${call.name}: ${ok ? 'ok' : 'error'}`
             }))
             // Keep model context lean — UI still has fuller detail in recentTools
-            results.push(`TOOL_RESULT ${call.name}:\n${detail.slice(0, 1600)}`)
+            results.push(`TOOL_RESULT ${call.name}:\n${detail.slice(0, HANDOFF_CHARS)}`)
           }
 
           nextUser =

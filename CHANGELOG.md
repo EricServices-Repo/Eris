@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.57 — 2026-10-17
+
+- The finished reply is a separate chat summary, and Thinking only lists tool steps.
+
 ## 0.2.56 — 2026-10-17
 
 - The finished reply is chat text, and the thinking trace only keeps tool progress.
