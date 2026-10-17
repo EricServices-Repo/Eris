@@ -28,10 +28,8 @@ function normalizeAgent(raw: unknown, fallbackBuiltin = false): AgentDefinition 
   const input = (raw ?? {}) as Record<string, unknown>
   const builtin = typeof input.builtin === 'boolean' ? input.builtin : fallbackBuiltin
   let model = String(input.model ?? '')
-  // Agents only run Composer Lite or Composer Full.
-  if (model !== 'builtin:composer' && model !== 'builtin:composer-lite') {
-    model = ''
-  }
+  // The chat model picker chooses the model. Agents only shape the turn.
+  if (model !== '') model = ''
   const toolsRaw = String(input.tools ?? '')
   const tools =
     toolsRaw === 'none' || toolsRaw === 'read' || toolsRaw === 'edit' || toolsRaw === 'full'
@@ -205,8 +203,7 @@ export function listResolvedAgents(
     ...agent,
     role,
     source: agent.builtin ? source : 'project',
-    resolvedModel:
-      agent.model === 'builtin:composer' ? 'builtin:composer' : 'builtin:composer-lite'
+    resolvedModel: settings.models.defaultModel || 'auto'
   })
 
   return [

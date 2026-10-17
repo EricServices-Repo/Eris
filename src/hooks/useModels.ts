@@ -55,19 +55,18 @@ export function useModels(settings: AppSettings | null) {
       status.models.find((m) => m.ready)?.name ||
       'builtin:composer-lite'
     setSelectedModel((prev) => {
-      // Prefer Lite locally; Composer Full is Cloud Agents only.
-      if (prev === 'builtin:composer' && liteReady) return 'builtin:composer-lite'
-      // Keep current selection only if that model is ready/downloaded.
+      if (prev === 'auto' || s?.models.defaultModel === 'auto') return 'auto'
+      if (prev === 'builtin:composer' || s?.models.defaultModel === 'builtin:composer') {
+        return 'builtin:composer'
+      }
       if (
         prev &&
-        prev !== 'builtin:composer' &&
         status.models.some((m) => m.name === prev && m.ready === true)
       ) {
         return prev
       }
       if (
         s?.models.defaultModel &&
-        s.models.defaultModel !== 'builtin:composer' &&
         status.models.some((m) => m.name === s.models.defaultModel && m.ready === true)
       ) {
         return s.models.defaultModel

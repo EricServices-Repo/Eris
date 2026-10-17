@@ -19,7 +19,7 @@ import {
   isErisCapabilityQuestion,
   planChatTurn,
   bestFittingLocalModel,
-  composerAgentModel,
+  isAutoModelChoice,
   resolveModelRoles,
   selectComposerLocalHandoff,
   toolAllowedByPolicy
@@ -145,16 +145,17 @@ describe('resolveModelRoles', () => {
     })
   })
 
-  it('remaps selected Composer Full to Lite for local runs', () => {
+  it('keeps Composer Full selected for Cloud Agents', () => {
     const r = resolveModelRoles({
       selectedModel: 'builtin:composer',
       intent: 'edit',
       toolPolicy: 'edit',
       preferEscalate: true
     })
-    expect(r.chat).toBe('builtin:composer-lite')
-    expect(r.tools).toBe('builtin:composer-lite')
+    expect(r.chat).toBe('builtin:composer')
+    expect(r.tools).toBe('builtin:composer')
     expect(r.escalateToFull).toBe(false)
+    expect(r.error).toBeUndefined()
   })
 
   it('never swaps external models', () => {
@@ -167,7 +168,7 @@ describe('resolveModelRoles', () => {
     expect(r).toMatchObject({ chat: 'qwen3:0.6b', tools: 'qwen3:0.6b', escalateToFull: false })
   })
 
-  it('errors when Full is selected but Lite is not installed', () => {
+  it('keeps Composer Full even when Lite is not installed', () => {
     ready.delete('builtin:composer-lite')
     const r = resolveModelRoles({
       selectedModel: 'builtin:composer',
@@ -175,17 +176,17 @@ describe('resolveModelRoles', () => {
       toolPolicy: 'none',
       preferEscalate: true
     })
-    expect(r.error).toMatch(/Cloud Agents|Composer Lite/)
+    expect(r.chat).toBe('builtin:composer')
+    expect(r.error).toBeUndefined()
   })
 })
 
-describe('composerAgentModel', () => {
-  it('allows only Composer Lite and Composer Full', () => {
-    expect(composerAgentModel('builtin:composer')).toBe('builtin:composer')
-    expect(composerAgentModel('composer')).toBe('builtin:composer')
-    expect(composerAgentModel('builtin:composer-lite')).toBe('builtin:composer-lite')
-    expect(composerAgentModel('local:qwen3-32b')).toBe('builtin:composer-lite')
-    expect(composerAgentModel('gpt-4o')).toBe('builtin:composer-lite')
+describe('isAutoModelChoice', () => {
+  it('treats an empty or Auto selection as routing', () => {
+    expect(isAutoModelChoice('')).toBe(true)
+    expect(isAutoModelChoice('auto')).toBe(true)
+    expect(isAutoModelChoice('local:qwen3-32b')).toBe(false)
+    expect(isAutoModelChoice('builtin:composer')).toBe(false)
   })
 })
 
@@ -313,8 +314,8 @@ describe('planChatTurn', () => {
         mode: 'agent'
       }
     })
-    expect(plan.models.chat).toBe('builtin:composer-lite')
-    expect(plan.models.tools).toBe('builtin:composer-lite')
+    expect(plan.models.chat).toBe('local:qwen3-32b')
+    expect(plan.models.tools).toBe('local:qwen3-32b')
   })
 
   it('leaves Ask mode on the selected model', async () => {
@@ -328,6 +329,21 @@ describe('planChatTurn', () => {
       }
     })
     expect(plan.models.chat).toBe('gpt-4o')
+  })
+
+  it('uses Composer Full when Auto handles an edit and Cloud is allowed', async () => {
+    const plan = await planChatTurn({
+      ...base,
+      settings: getDefaults(),
+      context: {
+        text: 'implement a login form',
+        selectedModel: 'auto',
+        mode: 'agent'
+      }
+    })
+    expect(plan.agentId).toBe('composer')
+    expect(plan.models.chat).toBe('builtin:composer')
+    expect(plan.cloudPreferred).toBe(true)
   })
 
   it('assigns Composer to edits and does not steal them for Coder', async () => {

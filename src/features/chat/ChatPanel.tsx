@@ -489,38 +489,38 @@ export function ChatPanel({
   const queueFull = queuedMessages.length >= MAX_QUEUED_MESSAGES
 
   const modelOptions = useMemo(() => {
-    if (chatMode === 'agent') {
-      return [
-        { name: 'builtin:composer-lite', ready: composerReady, source: 'builtin' as const },
-        { name: 'builtin:composer', ready: true, source: 'builtin' as const }
-      ]
-    }
-    // Chat picker: only models that are downloaded / reachable — not the full catalog.
     const ready = models.filter((m) => m.ready === true)
-    if (ready.length > 0) return ready
-    if (selectedModel) {
-      return [
-        {
-          name: selectedModel,
-          ready: false,
-          source: selectedModel.startsWith('local:')
-            ? ('local' as const)
-            : selectedModel.startsWith('builtin:')
-              ? ('builtin' as const)
-              : ('connection' as const)
-        }
-      ]
+    const byName = new Map<string, ModelInfo>()
+    byName.set('auto', { name: 'auto', ready: true, source: 'builtin' })
+    byName.set('builtin:composer-lite', {
+      name: 'builtin:composer-lite',
+      ready: composerReady,
+      source: 'builtin'
+    })
+    byName.set('builtin:composer', {
+      name: 'builtin:composer',
+      ready: true,
+      source: 'builtin'
+    })
+    for (const model of ready) byName.set(model.name, model)
+    if (selectedModel && selectedModel !== 'auto' && !byName.has(selectedModel)) {
+      byName.set(selectedModel, {
+        name: selectedModel,
+        ready: false,
+        source: selectedModel.startsWith('local:')
+          ? 'local'
+          : selectedModel.startsWith('builtin:')
+            ? 'builtin'
+            : 'connection'
+      })
     }
-    return [
-      {
-        name: 'builtin:composer-lite',
-        ready: composerReady,
-        source: 'builtin' as const
-      }
-    ]
-  }, [chatMode, models, selectedModel, composerReady])
+    const auto = byName.get('auto')!
+    byName.delete('auto')
+    return [auto, ...byName.values()]
+  }, [models, selectedModel, composerReady])
 
   const modelLabel = (m: ModelInfo): string => {
+    if (m.name === 'auto') return 'Auto'
     if (m.name === 'builtin:composer-lite') return 'Composer Lite'
     if (m.name === 'builtin:composer') return 'Composer Full'
     if (m.source === 'builtin') return m.name.replace(/^builtin:/, '')
@@ -533,9 +533,9 @@ export function ChatPanel({
     : modelOptions[0]?.name || 'builtin:composer-lite'
 
   useEffect(() => {
-    if (chatMode === 'agent') return
+    if (selectedModel === 'auto') return
     if (selectValue && selectValue !== selectedModel) onModelChange(selectValue)
-  }, [chatMode, selectValue, selectedModel, onModelChange])
+  }, [selectValue, selectedModel, onModelChange])
 
   const submit = () => {
     const text = draft.trim()
@@ -1113,7 +1113,7 @@ export function ChatPanel({
                       onChange={(e) => onAgentChange(e.target.value as string | 'auto')}
                       title={
                         selectedAgentId === 'auto'
-                          ? 'Auto assigns Composer, Explainer, Reviewer, or Fast. Coder runs when you pin it.'
+                          ? 'Auto picks the agent that processes this message. The model dropdown chooses which model runs it.'
                           : contractForAgent(selectedAgentId)?.job || 'Pinned agent'
                       }
                       aria-label="Select agent"
@@ -1131,7 +1131,7 @@ export function ChatPanel({
                     value={selectValue}
                     disabled={streaming}
                     onChange={(e) => onModelChange(e.target.value)}
-                    title="Ready models only — download more in Settings → Models"
+                    title="Auto chooses a model for the turn. A picked model is used as-is."
                     aria-label="Select model"
                   >
                     {modelOptions.map((m) => (
