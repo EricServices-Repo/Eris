@@ -228,9 +228,15 @@ export function toolFingerprint(calls: ToolCall[]): string {
     .map((c) => {
       const path = typeof c.args.path === 'string' ? c.args.path : ''
       const to = typeof c.args.to === 'string' ? c.args.to : ''
+      const query =
+        typeof c.args.query === 'string'
+          ? c.args.query
+          : typeof c.args.url === 'string'
+            ? c.args.url
+            : ''
       const contentLen =
         typeof c.args.content === 'string' ? String(c.args.content.length) : ''
-      return `${c.name}:${path}:${to}:${contentLen}`
+      return `${c.name}:${path}:${to}:${query}:${contentLen}`
     })
     .join('|')
 }

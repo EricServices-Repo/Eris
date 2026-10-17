@@ -70,7 +70,15 @@ import { formatHandoffForPrompt } from '../../../../src/shared/agent-orchestrati
 import { isVerifyCommand } from '../command-approval'
 import { buildPreservedWorkerMessages, isReadOnlyChat, truncateForModel } from './prompts'
 import { streamThinkingText } from './stream'
-import { argString, parseToolCalls, postedAnswer, proseOutsideTools, stripToolBlocks, thinkingBeforeTools } from './tool-parsing'
+import { openWebPage, searchWeb } from '../web-search'
+import {
+  argString,
+  parseToolCalls,
+  postedAnswer,
+  proseOutsideTools,
+  stripToolBlocks,
+  thinkingBeforeTools
+} from './tool-parsing'
 import { isNativeGgufRef, releaseLocalChatSession } from '../builtin-model'
 import type { AgentChatMessage, AgentMode, AgentRunnerEvent, ToolCall } from './types'
 import type { AgentHandoffPacket } from '../../../../src/shared/agent-orchestration'
@@ -1145,7 +1153,11 @@ export async function* runAgentWithWorkspaceTools(options: {
             ? call.args.to
             : typeof call.args.command === 'string'
               ? call.args.command.slice(0, 80)
-              : undefined
+              : typeof call.args.query === 'string'
+                ? call.args.query.slice(0, 80)
+                : typeof call.args.url === 'string'
+                  ? call.args.url.slice(0, 80)
+                  : undefined
       yield {
         type: 'tool',
         tool: { id, name: call.name, path, status: 'running', detail: 'Running…' }
@@ -1260,6 +1272,31 @@ export async function* runAgentWithWorkspaceTools(options: {
               ? `Timed out.\n${out}`
               : `exit ${ran.code ?? '?'}\n${out || '(no output)'}`,
             mutated: false
+          }
+        }
+      } else if (call.name === 'web_search') {
+        const query = argString(call.args, 'query')
+        try {
+          const detail = await searchWeb(query, options.signal)
+          result = { ok: true, detail, mutated: false }
+        } catch (err) {
+          result = {
+            ok: false,
+            detail: err instanceof Error ? err.message : 'Web search failed',
+            mutated: false
+          }
+        }
+      } else if (call.name === 'web_open') {
+        const url = argString(call.args, 'url')
+        try {
+          const detail = await openWebPage(url, options.signal)
+          result = { ok: true, detail, mutated: false, path: url }
+        } catch (err) {
+          result = {
+            ok: false,
+            detail: err instanceof Error ? err.message : 'Could not open the page',
+            mutated: false,
+            path: url
           }
         }
       } else if (call.name === 'grep') {
