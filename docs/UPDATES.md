@@ -1,9 +1,9 @@
 # Eris client updates (GitHub Releases)
 
-Eris uses **electron-updater** against the **public** update feed
-[`EricServices-Repo/Eris-updates`](https://github.com/EricServices-Repo/Eris-updates).
-Source stays private in `EricServices-Repo/Eris`; CI mirrors installers +
-`latest-mac.yml` / `latest.yml` to the public feed so clients need **no GitHub token**.
+Eris uses **electron-updater** against the public repository
+[`EricServices-Repo/Eris`](https://github.com/EricServices-Repo/Eris).
+Installers and `latest-mac.yml` / `latest.yml` are attached to that repo’s
+releases, so clients need **no GitHub token**.
 
 ## Client flow (implemented)
 
@@ -16,19 +16,18 @@ Source stays private in `EricServices-Repo/Eris`; CI mirrors installers +
    - **Settings → General → Updates** — auto-check, auto-download, Check / Open releases
 4. **Install**: restart now, or install on quit (`autoInstallOnAppQuit`).
 5. **Fallback**: on error (e.g. unsigned macOS build), offer **Open releases** →  
-   https://github.com/EricServices-Repo/Eris-updates/releases/latest
+   https://github.com/EricServices-Repo/Eris/releases/latest
 
 Disable all checks: `ERIS_DISABLE_UPDATES=1`.
 
 Feed config lives in `package.json` → `build.publish` and `resources/app-update.yml`
-(`EricServices-Repo/Eris-updates`). The main process also calls
+(`EricServices-Repo/Eris`). The main process also calls
 `autoUpdater.setFeedURL({ provider: 'github', … })` so local `--dir` builds work.
 
 Quit and reopen Eris after a local rebuild — macOS `open` focuses an already-running
 instance and will not reload a new `app.asar`.
 
-CI publishes to both the private `Eris` release (notes) and the public `Eris-updates`
-feed via `ERIS_UPDATES_TOKEN` (server-side only — never shipped in the client).
+CI publishes installers to the public `EricServices-Repo/Eris` release.
 
 ### Required release assets (CI already uploads these)
 

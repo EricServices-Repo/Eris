@@ -42,7 +42,7 @@ export function FeedbackPanel() {
 
       <SettingsSection
         title="Recent submissions"
-        description="Filed from this Mac. Numbers match Eris-feedback issues."
+        description="Filed from this Mac as issues on EricServices-Repo/Eris."
         actions={
           <button type="button" className="btn" onClick={() => void refreshHistory()}>
             Refresh

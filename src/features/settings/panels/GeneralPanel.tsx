@@ -17,7 +17,7 @@ export function GeneralPanel({
     <SettingsPage>
       <SettingsSection
         title="Updates"
-        description="Checks the public EricServices-Repo/Eris-updates feed. No GitHub token needed. Unsigned Mac builds can’t install in place — use Open releases."
+        description="Checks GitHub Releases on EricServices-Repo/Eris. No GitHub token needed. Unsigned Mac builds can’t install in place — use Open releases."
       >
         <label className="settings-check">
           <input

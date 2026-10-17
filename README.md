@@ -1,106 +1,155 @@
 # Eris
 
-Cross-platform AI IDE for macOS and Windows, with workspaces, a built-in Composer agent, and layered project settings.
+Eris is a desktop IDE for writing software with agents. You open a project folder, talk to an agent in the chat, and review the edits in the file they change.
 
-## Requirements
+The agent decides how the turn is handled: whether to read, edit, review, or explain. The model menu decides which model runs that turn. Those are separate choices.
 
-- macOS or Windows for the desktop app
-- Node.js 20+ for development
+**[Download the latest release](https://github.com/EricServices-Repo/Eris/releases/latest)** for macOS (Apple Silicon) and Windows (x64).
+
+| Platform | Installer |
+|----------|-----------|
+| macOS | `Eris-<version>-mac-arm64.dmg` or `.zip` |
+| Windows | `Eris-<version>-win-x64-setup.exe` |
+
+In-app updates check [this repository’s releases](https://github.com/EricServices-Repo/Eris/releases). No GitHub token is required. Unsigned builds may need a manual install from the release page.
+
+Current version: **0.2.45**.
+
+## What you can do
+
+- Open a folder and work in that project. The terminal, tests, and agent commands run inside it.
+- Ask a question about the code, or hand the agent a change to make.
+- Pick **Auto** and let Eris choose the agent and, if you want, the model. Or pin both.
+- Review each edit as hunks in the open file. Accept writes it in. Reject restores the previous text.
+- Run **Composer Lite** on your machine, **Composer Full** on Cloud Agents, a downloaded GGUF, or a connected provider such as Ollama or an OpenAI-compatible API.
+- Sign in with an [EricServic.es](https://www.ericservic.es) account to sync preferences and use Cloud Agents. Local chat stays available without an account.
+
+## Features
+
+### Chat
+
+The chat is the front door. **Ask** answers without editing. **Agent** can read the project, change files, and run checks.
+
+Type `@` to attach a file and `/` to attach a skill. Enter sends. Shift+Enter inserts a line break.
+
+### Agents
+
+An agent is the role that processes the message: instructions, tools, and when it is finished. It does not replace the model you picked.
+
+| Agent | What it does |
+|-------|----------------|
+| **Auto** | Chooses Composer, Explainer, Reviewer, or Fast from the message. |
+| **Composer** | Inspects the project, makes the change, and verifies it. Delegates only when the work splits. |
+| **Explainer** | Reads the code and explains it. Does not edit. |
+| **Reviewer** | Reports bugs, risks, and missing tests. May run the project’s test or typecheck command. Does not edit. |
+| **Fast** | Answers a short lookup in a few sentences. |
+| **Coder** | Implements one assigned change. Pin it, or let Composer delegate to it. |
+
+A delegated agent works in the same folder and shows its goal, tools, and result in the thread. Pin an agent when you want that role on every turn. The pin is remembered.
+
+### Models
+
+The model menu lists every model that is ready:
+
+- **Auto** chooses one for the turn. An edit can use Composer Full when Cloud Agents are allowed. Otherwise it uses Composer Lite, then a ready local or connected model.
+- **Composer Lite** runs locally.
+- **Composer Full** runs on Cloud Agents. If Cloud is unavailable, that turn continues on Composer Lite.
+- **Local models** you download (GGUF) and **connected providers** that are enabled.
+
+A model you pick is the model that runs. The agent still shapes the instructions and the tools.
+
+### Editor, Git, and terminal
+
+Edits stay out of the buffer until you accept them. Pending changes appear as hunks in the open file.
+
+The IDE includes a file tree, Monaco editor, search, Git, a terminal, and diagnostics. Agent commands stay in the workspace and cannot install packages globally.
+
+### Project memory, rules, and skills
+
+Each workspace can keep its own instructions:
+
+| What | Where |
+|------|--------|
+| Workspace settings | `<folder>/.eris/settings.json` |
+| Agents | `<folder>/.eris/agents.json` |
+| Rules | `<folder>/.eris/rules/` |
+| Project memory | `<folder>/.eris/context.md` |
+
+User settings live outside the project: `~/Library/Application Support/Eris/` on macOS, `%APPDATA%\Eris\` on Windows. Workspace settings override user settings. API keys stay on the machine.
+
+MCP servers and skills extend what an agent can do. Add them in Settings.
+
+### Account and Cloud Agents
+
+Sign in from Settings to link this Mac or PC to EricServic.es.
+
+- **Free** includes local chat. Cloud Agent jobs are capped over a rolling 30 days.
+- **Pro** removes that Cloud Agent cap.
+
+Usage for this device and the account is in Settings → Usage.
+
+### Feedback and updates
+
+**Help → Report a Bug** files an issue on [EricServices-Repo/Eris](https://github.com/EricServices-Repo/Eris/issues). Diagnostics and logs are redacted before they are sent.
+
+Eris checks this repository for updates. Install from a release build to update in place. A locally built unsigned app can open the release page instead.
+
+## Usage
+
+1. Install Eris from the [latest release](https://github.com/EricServices-Repo/Eris/releases/latest).
+2. Open a project folder (**File → Open**, or ⌘O / Ctrl+O).
+3. Start a chat (⌘L / Ctrl+L).
+4. Leave **Agent** on **Auto**, or pin Composer, Explainer, Reviewer, Fast, or Coder.
+5. Leave **Model** on **Auto**, or pick Composer Lite, Composer Full, a local model, or a connected provider.
+6. Describe the change or the question. Attach files with `@` when you want the agent to start from a specific path.
+7. In Agent mode, accept or reject the hunks in the editor before you keep the result.
+8. Optional: sign in under Settings → Account if you want Cloud Agents or synced preferences.
+
+### Shortcuts
+
+| Action | macOS | Windows |
+|--------|-------|---------|
+| Open folder | ⌘O | Ctrl+O |
+| New workspace | ⌘⇧N | Ctrl+Shift+N |
+| Save | ⌘S | Ctrl+S |
+| Settings | ⌘, | Ctrl+, |
+| Command palette | ⌘⇧P | Ctrl+Shift+P |
+| New chat | ⌘L | Ctrl+L |
+| Send message | Enter | Enter |
+| New line in chat | Shift+Enter | Shift+Enter |
 
 ## Develop
+
+Requirements: Node.js 20 or newer. macOS or Windows for the desktop app.
 
 ```bash
 npm install
 npm run dev
 ```
 
-## Build macOS app
+Checks:
 
 ```bash
-npm run dist:mac
+npm test
+npm run check
 ```
 
-Artifacts land in `dist/` (e.g. `dist/mac-arm64/Eris.app`). Version comes from `package.json` (`app.getVersion()` / status bar).
+### Build
 
-### Release builds (macOS + Windows)
-
-One app version in `package.json` (semver). Artifacts land in `dist/`:
-
-| Command | Output |
+| Command | Result |
 |---------|--------|
-| `npm run dist:release:mac` | `Eris-<ver>-mac-<arch>.dmg` / `.zip` |
-| `npm run dist:release:win` | `Eris-<ver>-win-x64-setup.exe` |
-| `npm run dist:mac` | Unpacked `.app` (dev) |
-| `npm run dist:win` | Windows NSIS installer |
+| `npm run dist:mac` | Unsigned macOS app in `dist/mac-arm64/Eris.app` |
+| `npm run dist:release:mac` | macOS `.dmg` and `.zip` |
+| `npm run dist:release:win` | Windows setup `.exe` |
 
-Native modules require building each OS on that OS (or CI). Cross-compiling Windows on a Mac is not supported for releases.
-
-### Publish a GitHub Release
-
-Requires [GitHub CLI](https://cli.github.com/) (`gh auth login`) with `repo` scope, and a clean git tree.
+Build each platform on that platform, or let GitHub Actions do both. A `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which uploads the macOS and Windows installers to [this repository’s releases](https://github.com/EricServices-Repo/Eris/releases).
 
 ```bash
-# Bump patch, changelog, tag vX.Y.Z, push → CI builds macOS + Windows and uploads
-npm run release
-
-# Minor / major / exact
-npm run release -- --bump minor
-npm run release -- --version 0.3.0
-
-# Current package.json version (no bump)
-npm run release:github
-
-# Also build installers for *this* machine into dist/ and upload them
-npm run release:local
-
-npm run release:dry
+npm run release          # bump, tag, push; CI builds both platforms
+npm run release:github   # tag the version already in package.json
+npm run release:dry      # print the plan only
 ```
 
-Pushing a `v*` tag always runs `.github/workflows/release.yml`:
+## License
 
-1. **macos-latest** → macOS dmg/zip into `dist/`
-2. **windows-latest** → Windows `.exe` into `dist/`
-3. Publish both to the GitHub Release for that tag
-
-```bash
-git tag v0.2.3
-git push origin v0.2.3
-```
-
-## Settings layers
-
-| Layer | Path |
-|-------|------|
-| User | macOS: `~/Library/Application Support/Eris/settings.json`; Windows: `%APPDATA%/Eris/settings.json` |
-| Workspace | `<folder>/.eris/settings.json` |
-| Agents | `<folder>/.eris/agents.json` |
-| Rules | `<folder>/.eris/rules/*.md` |
-| Secrets | Local `secrets.json` in userData (API keys; no OS credential vault) |
-
-Workspace overrides user overrides defaults. Change scope in Settings with the User / Workspace control.
-
-## Workspaces (self-contained)
-
-Each workspace is a folder. Shell, agent `run`, verify, and debug execute with `cwd` set to that folder and prefer local tools:
-
-- `node_modules/.bin` (after `npm` / `pnpm` / `yarn` / `bun` install)
-- `.venv/bin` or `venv/bin` when present
-- npm cache under `.eris/cache/npm` (not global installs)
-
-**Host prerequisites** (once per computer, not per project): Node.js 20+ with `npm` on `PATH`. Optional: Git (GitHub panel), Python 3 (venv projects).
-
-Installs stay in the workspace (`npm install`, `npm install <pkg>`). Global installs (`npm -g`) are blocked in the agent.
-
-## Keyboard
-
-| macOS | Windows | Action |
-|--------|---------|--------|
-| macOS | Windows | Action |
-|--------|---------|--------|
-| ⌘O | Ctrl+O | Link folder as workspace |
-| ⌘⇧N | Ctrl+Shift+N | New workspace |
-| ⌘S | Ctrl+S | Save |
-| ⌘, | Ctrl+, | Settings |
-| ⌘⇧P | Ctrl+Shift+P | Command palette |
-| ⌘L | Ctrl+L | New agent chat |
-| ⌘↵ | Ctrl+Enter | Send chat message |
+[MIT](LICENSE)
