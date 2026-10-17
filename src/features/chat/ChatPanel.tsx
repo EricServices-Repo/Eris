@@ -735,9 +735,11 @@ export function ChatPanel({
                     {m.role === 'assistant' && m.delegations && m.delegations.length > 0 && (
                       <DelegationCards items={m.delegations} />
                     )}
-                    {m.role === 'assistant' ? (
-                      <MarkdownMessage content={m.content} onOpenPath={onOpenPath} />
-                    ) : (
+                    {m.role === 'assistant' && m.content ? (
+                      <div className="msg-summary">
+                        <MarkdownMessage content={m.content} onOpenPath={onOpenPath} />
+                      </div>
+                    ) : m.role === 'assistant' ? null : (
                       <div className="user-text">{m.content}</div>
                     )}
                     {m.role === 'assistant' && (
@@ -823,7 +825,7 @@ export function ChatPanel({
                     />
                   )}
                   {answerBuffer ? (
-                    <div className="answer-text">
+                    <div className="msg-summary">
                       <MarkdownMessage
                         content={answerBuffer}
                         onOpenPath={onOpenPath}

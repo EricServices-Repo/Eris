@@ -44,4 +44,9 @@ export function stripAnswerFromThinking(thinking: string, answer: string): strin
     .join('\n')
     .trim()
   return trace
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^(?:—|-|\[|Route:)/.test(line))
+    .join('\n')
+    .trim()
 }

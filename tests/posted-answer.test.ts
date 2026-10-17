@@ -20,5 +20,6 @@ describe('promoteThinkingToAnswer', () => {
     const answer = 'This project is a calculator in src/main.ts and the keypad is in src/App.tsx.'
     expect(stripAnswerFromThinking(answer, answer)).toBe('')
     expect(stripAnswerFromThinking(`Route: Auto\n\n${answer}`, answer)).toBe('Route: Auto')
+    expect(stripAnswerFromThinking('This is the whole reply in a paragraph.', 'This is the whole reply in a paragraph.')).toBe('')
   })
 })

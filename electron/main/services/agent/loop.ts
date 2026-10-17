@@ -727,7 +727,7 @@ export async function* runAgentWithWorkspaceTools(options: {
       sessionKey: isNativeGgufRef(workerModel) ? ggufSessionKey : undefined
     })) {
       if (evt.kind === 'thinking') {
-        yield { type: 'thinking', text: evt.text }
+        // Model tokens are the reply, not the thinking trace.
       } else {
         assistantText = evt.full
         latestAssistant = evt.full

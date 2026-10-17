@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.56 — 2026-10-17
+
+- The finished reply is chat text, and the thinking trace only keeps tool progress.
+
 ## 0.2.55 — 2026-10-17
 
 - Each answer can be rated, and thumbs-down opens a prefilled feedback report.

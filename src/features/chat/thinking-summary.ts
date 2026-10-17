@@ -48,16 +48,7 @@ export function summarizeThinkingSteps(thinking: string): string[] {
   for (const line of lines) {
     const m = line.match(STEP_RE)
     if (m?.[1]) push(m[1])
-    else if (/^(?:read|edit|wrote|run|verify|list|search|delegat)/i.test(line)) push(line)
-  }
-
-  if (steps.length === 0) {
-    for (const line of lines) {
-      if (line.length < 8) continue
-      if (/^[#*`|{]/.test(line)) continue
-      push(line)
-      if (steps.length >= MAX_STEPS) break
-    }
+    else if (/^(?:read|edit|wrote|run|verify|list|search|delegat|web_)/i.test(line)) push(line)
   }
 
   return steps.slice(-MAX_STEPS)
@@ -82,8 +73,5 @@ export function thinkingPreviewLine(
   }
   if (statusText) return statusText.slice(0, MAX_STEP_CHARS)
   if (lastStep) return lastStep
-  // Live model tokens without breadcrumbs — show a short tail.
-  const tail = thinking.trim().replace(/\s+/g, ' ')
-  if (tail.length > 12) return tail.slice(-MAX_STEP_CHARS)
   return ''
 }
