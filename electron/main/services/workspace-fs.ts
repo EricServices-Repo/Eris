@@ -63,10 +63,29 @@ export function isPathInside(root: string, target: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !rel.startsWith(sep) && !/^[a-zA-Z]:/.test(rel))
 }
 
+/**
+ * Models copy the workspace folder name from the tree (`MyApp/src/a.ts`).
+ * That is the project root, not a child folder, unless that child already exists.
+ */
+function stripAccidentalWorkspacePrefix(root: string, userPath: string): string {
+  let raw = userPath.trim()
+  if (!raw) return '.'
+  if (raw.startsWith('/') || raw.startsWith('\\') || /^[A-Za-z]:[\\/]/.test(raw)) return raw
+  raw = raw.replace(/\\/g, '/').replace(/^\.\//, '')
+  const name = basename(root)
+  if (!name || name === '.' || name === '..') return raw || '.'
+  while (raw === name || raw.startsWith(`${name}/`)) {
+    if (existsSync(resolve(root, raw))) break
+    raw = raw === name ? '.' : raw.slice(name.length + 1)
+    if (!raw) return '.'
+  }
+  return raw || '.'
+}
+
 /** Resolve a user/model path to an absolute path inside the workspace. */
 export function resolveInWorkspace(workspacePath: string, userPath: string): string {
   const root = assertWorkspaceRoot(workspacePath)
-  const raw = (userPath || '.').trim() || '.'
+  const raw = stripAccidentalWorkspacePrefix(root, (userPath || '.').trim() || '.')
   const abs = resolve(root, raw)
   const rel = relative(root, abs)
   if (rel.startsWith('..') || resolve(root, rel) !== abs || !isPathInside(root, abs)) {
@@ -370,7 +389,7 @@ export function workspaceTree(
   }
 
   const label = toWorkspaceRelative(workspacePath, root)
-  lines.push(`${label === '.' ? basename(assertWorkspaceRoot(workspacePath)) : label}/`)
+  lines.push(`${label === '.' ? '.' : label}/`)
   if (statSync(root).isDirectory()) walk(root, 1, '  ')
   return lines.join('\n')
 }
