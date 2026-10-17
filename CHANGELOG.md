@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.47 — 2026-10-17
+
+- The chat composer keeps the model menu. The agent menu stays in the status bar.
+
 ## 0.2.46 — 2026-10-17
 
 - Updates and bug reports use the public Eris repository, and the chat model menu lists every ready model.
