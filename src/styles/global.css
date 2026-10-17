@@ -1357,7 +1357,6 @@ select:focus {
   margin-bottom: 2px;
 }
 
-.composer-agent-select,
 .composer-model-select {
   max-width: 160px;
   min-width: 96px;
@@ -1371,12 +1370,10 @@ select:focus {
   cursor: pointer;
 }
 
-.composer-agent-select:hover:not(:disabled),
 .composer-model-select:hover:not(:disabled) {
   border-color: var(--accent);
 }
 
-.composer-agent-select:disabled,
 .composer-model-select:disabled {
   opacity: 0.55;
   cursor: default;
