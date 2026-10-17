@@ -177,6 +177,7 @@ jobs:
       # Attach installers to the GitHub Release directly. Actions artifact
       # storage is a separate quota and has blocked these builds before.
       - name: Upload installers to the Eris release
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
