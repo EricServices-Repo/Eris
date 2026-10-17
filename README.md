@@ -1,11 +1,11 @@
 # Eris
 
-macOS AI IDE with workspaces, a built-in Composer agent, and layered project settings.
+Cross-platform AI IDE for macOS and Windows, with workspaces, a built-in Composer agent, and layered project settings.
 
 ## Requirements
 
-- Node.js 20+
-- macOS
+- macOS or Windows for the desktop app
+- Node.js 20+ for development
 
 ## Develop
 
@@ -71,11 +71,11 @@ git push origin v0.2.3
 
 | Layer | Path |
 |-------|------|
-| User | `~/Library/Application Support/Eris/settings.json` |
+| User | macOS: `~/Library/Application Support/Eris/settings.json`; Windows: `%APPDATA%/Eris/settings.json` |
 | Workspace | `<folder>/.eris/settings.json` |
 | Agents | `<folder>/.eris/agents.json` |
 | Rules | `<folder>/.eris/rules/*.md` |
-| Secrets | Local `secrets.json` in userData (API keys; no OS Keychain) |
+| Secrets | Local `secrets.json` in userData (API keys; no OS credential vault) |
 
 Workspace overrides user overrides defaults. Change scope in Settings with the User / Workspace control.
 
@@ -87,18 +87,20 @@ Each workspace is a folder. Shell, agent `run`, verify, and debug execute with `
 - `.venv/bin` or `venv/bin` when present
 - npm cache under `.eris/cache/npm` (not global installs)
 
-**Host prerequisites** (once on the Mac, not per project): Node.js 20+ with `npm` on `PATH`. Optional: Git (GitHub panel), Python 3 (venv projects).
+**Host prerequisites** (once per computer, not per project): Node.js 20+ with `npm` on `PATH`. Optional: Git (GitHub panel), Python 3 (venv projects).
 
 Installs stay in the workspace (`npm install`, `npm install <pkg>`). Global installs (`npm -g`) are blocked in the agent.
 
 ## Keyboard
 
-| Shortcut | Action |
-|----------|--------|
-| ⌘O | Link folder as workspace |
-| ⌘⇧N | New workspace |
-| ⌘S | Save |
-| ⌘, | Settings |
-| ⌘⇧P | Command palette |
-| ⌘L | New agent chat |
-| ⌘↵ | Send chat message |
+| macOS | Windows | Action |
+|--------|---------|--------|
+| macOS | Windows | Action |
+|--------|---------|--------|
+| ⌘O | Ctrl+O | Link folder as workspace |
+| ⌘⇧N | Ctrl+Shift+N | New workspace |
+| ⌘S | Ctrl+S | Save |
+| ⌘, | Ctrl+, | Settings |
+| ⌘⇧P | Ctrl+Shift+P | Command palette |
+| ⌘L | Ctrl+L | New agent chat |
+| ⌘↵ | Ctrl+Enter | Send chat message |

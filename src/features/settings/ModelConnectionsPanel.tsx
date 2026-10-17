@@ -286,6 +286,12 @@ export function ModelConnectionsPanel({
           onChange={(e) => setDraft({ ...draft, name: e.target.value })}
         />
       </label>
+      {(activePreset.requiresKey || Boolean(draft.apiKey || draft.hasStoredKey)) && (
+        <p className="model-conn-hint">
+          Prompts and attached files are sent to this endpoint. The API key is stored in Eris&apos;s local
+          app data on this device; anyone with access to your account files may be able to read it.
+        </p>
+      )}
       <label className="field">
         <span>Base URL</span>
         <input
@@ -392,6 +398,12 @@ export function ModelConnectionsPanel({
               onChange={(e) => setDraft({ ...draft, name: e.target.value })}
             />
           </label>
+          {(activePreset.requiresKey || Boolean(draft.apiKey || draft.hasStoredKey)) && (
+            <p className="model-conn-hint">
+              Prompts and attached files go to this provider. The API key is stored in Eris&apos;s local
+              app data on this device; anyone with access to your account files may be able to read it.
+            </p>
+          )}
           <label className="field">
             <span>Base URL</span>
             <input

@@ -308,6 +308,27 @@ export async function pickAutoChatModel(
   settings: AppSettings,
   intent: ChatIntent
 ): Promise<string> {
+  // Use user outcomes/evals only when enabled and only among models that are
+  // currently configured and ready. This keeps Auto explainable and prevents
+  // stale scores from selecting a removed provider.
+  if (settings.evals?.useScoresForRouting) {
+    const candidates = [
+      ...(isExactBuiltinReady('builtin:composer-lite') ? ['builtin:composer-lite'] : []),
+      ...(isExactBuiltinReady('builtin:composer') ? ['builtin:composer'] : []),
+      ...getLocalStatuses().filter((m) => m.ready && isLocalRef(m.ref)).map((m) => m.ref),
+      ...settings.models.connections
+        .filter((c) => c.enabled && c.type !== 'builtin')
+        .flatMap((c) => c.models.filter((name) => name.trim()))
+    ]
+    if (candidates.length) {
+      const { bestModelForIntent } = await import('./agent-telemetry')
+      const telemetryModel = bestModelForIntent(intent, candidates, settings.evals.minRuns)
+      if (telemetryModel) return telemetryModel
+      const { bestEvalModelForIntent } = await import('./eval-store')
+      const evalModel = bestEvalModelForIntent(intent, candidates, settings.evals.minRuns)
+      if (evalModel) return evalModel
+    }
+  }
   const heavy = intent === 'edit' || intent === 'run'
   const profile = settings.agent.routing.profile ?? 'auto'
   const preferCloud =

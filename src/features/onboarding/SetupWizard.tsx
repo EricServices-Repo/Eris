@@ -4,6 +4,10 @@ import logo from '@/assets/logo.png'
 
 type StepId = 'welcome' | 'models' | 'workspace' | 'firstWin' | 'ready'
 
+const isMacPlatform = /Mac|iPhone|iPad/.test(navigator.platform)
+const modKey = isMacPlatform ? '⌘' : 'Ctrl+'
+const shiftKey = isMacPlatform ? '⇧' : 'Shift+'
+
 const STEPS: Array<{ id: StepId; label: string }> = [
   { id: 'welcome', label: 'Welcome' },
   { id: 'models', label: 'Models' },
@@ -18,6 +22,8 @@ interface Props {
   onCreateWorkspace: () => void
   onLinkWorkspace: () => void
   hasWorkspace: boolean
+  hasReadyModel?: boolean
+  onOpenModelsSettings?: () => void
   /** Start a guided first agent turn after setup */
   onStartFirstWin?: () => void
 }
@@ -28,6 +34,8 @@ export function SetupWizard({
   onCreateWorkspace,
   onLinkWorkspace,
   hasWorkspace,
+  hasReadyModel = false,
+  onOpenModelsSettings,
   onStartFirstWin
 }: Props) {
   const [step, setStep] = useState<StepId>('welcome')
@@ -35,6 +43,7 @@ export function SetupWizard({
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [failedDownloadId, setFailedDownloadId] = useState<string | null>(null)
 
   const refreshBuiltins = useCallback(async () => {
     const list = await window.ide.builtinModelStatus()
@@ -68,7 +77,7 @@ export function SetupWizard({
 
   const stepIndex = STEPS.findIndex((s) => s.id === step)
 
-  const finish = async () => {
+  const finish = async (): Promise<boolean> => {
     setBusy(true)
     setError(null)
     try {
@@ -79,8 +88,10 @@ export function SetupWizard({
       }
       await window.ide.completeOnboarding()
       onFinished()
+      return true
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not finish setup')
+      return false
     } finally {
       setBusy(false)
     }
@@ -91,6 +102,7 @@ export function SetupWizard({
     setDownloadingId(id)
     try {
       await window.ide.downloadBuiltinModel(id)
+      setFailedDownloadId(null)
       await refreshBuiltins()
       if (id === 'composer-lite' || id.includes('lite')) {
         await window.ide.setSettings('user', {
@@ -98,6 +110,7 @@ export function SetupWizard({
         })
       }
     } catch (err) {
+      setFailedDownloadId(id)
       setError(err instanceof Error ? err.message : 'Download failed')
     } finally {
       setDownloadingId(null)
@@ -109,8 +122,14 @@ export function SetupWizard({
   const startDownloadAndContinue = (id: string) => {
     setError(null)
     void window.ide.downloadBuiltinModel(id).then(
-      () => void refreshBuiltins().catch(() => undefined),
-      (err) => setError(err instanceof Error ? err.message : 'Download failed')
+      () => {
+        setFailedDownloadId(null)
+        void refreshBuiltins().catch(() => undefined)
+      },
+      (err) => {
+        setFailedDownloadId(id)
+        setError(err instanceof Error ? err.message : 'Download failed')
+      }
     )
     setStep('workspace')
   }
@@ -149,9 +168,9 @@ export function SetupWizard({
             <section className="setup-panel">
               <h2>Local AI IDE, ready when you are</h2>
               <p>
-                Eris runs Composer models on your Mac, edits project files with an agent, and keeps
-                workspace settings in <code>.eris/</code>. This short setup downloads what you need
-                and opens your first folder.
+                Eris can run Composer locally on this device, edit project files with an agent, and
+                keep workspace settings in <code>.eris/</code>. This short setup downloads what you
+                need and opens your first folder.
               </p>
               <ul className="setup-checklist">
                 <li>Download Composer Lite for chat (~1 GB)</li>
@@ -165,8 +184,9 @@ export function SetupWizard({
             <section className="setup-panel">
               <h2>Install built-in models</h2>
               <p>
-                Lite is the chat face and required for a smooth start. Full is the workspace worker
-                for multi-file agent edits — download it when you have bandwidth.
+                Composer Lite is the smaller local option for everyday chat. Composer Full is a
+                larger model for stronger multi-file agent work. You can also use a connected API
+                or Ollama model; cloud providers receive the prompts and files you send them.
               </p>
               <div className="setup-model-cards">
                 {[lite, full].filter(Boolean).map((b) => {
@@ -191,7 +211,7 @@ export function SetupWizard({
                       <p>{model.description || `${model.family} · ${model.parameters}`}</p>
                       <div className="setup-model-meta">
                         {model.ready
-                          ? 'Ready on this Mac'
+                          ? 'Ready on this device'
                           : isDownloading
                             ? `Downloading… ${progress}%`
                             : `Not installed · ${sizeLabel}`}
@@ -219,7 +239,12 @@ export function SetupWizard({
                             disabled={Boolean(downloadingId)}
                             onClick={() => void downloadModel(model.id)}
                           >
-                            {model.installed ? 'Re-download' : 'Download'} ({sizeLabel})
+                            {failedDownloadId === model.id
+                              ? 'Retry download'
+                              : model.installed
+                                ? 'Re-download'
+                                : 'Download'}{' '}
+                            ({sizeLabel})
                           </button>
                         )}
                       </div>
@@ -238,8 +263,8 @@ export function SetupWizard({
                     Download in background &amp; continue
                   </button>
                   <span className="model-conn-hint" style={{ alignSelf: 'center' }}>
-                    Your first chat can run on Cloud Composer or a connected API model
-                    while Lite downloads.
+                    While Lite downloads, chat can use a Cloud Composer, API, or Ollama connection
+                    you have already set up.
                   </span>
                 </div>
               )}
@@ -269,7 +294,7 @@ export function SetupWizard({
                 </div>
               )}
               <p className="model-conn-hint" style={{ marginTop: 14 }}>
-                Tip: you can skip this step and open a folder anytime with ⌘O.
+                Tip: you can skip this step and open a folder anytime with {modKey}O.
               </p>
             </section>
           )}
@@ -283,7 +308,10 @@ export function SetupWizard({
                 you&apos;re shipping.
               </p>
               <ul className="setup-checklist">
-                <li>Runs on Composer Lite locally, or Cloud Composer / your API model while Lite downloads</li>
+                <li>
+                  Runs on Composer Lite locally, or a Cloud Composer / API / Ollama connection you
+                  already set up while Lite downloads
+                </li>
                 <li>Agent mode can propose file edits</li>
                 <li>Diff Review lets you Keep or Undo each file</li>
               </ul>
@@ -301,19 +329,19 @@ export function SetupWizard({
               <p>A few shortcuts to remember:</p>
               <div className="setup-tips">
                 <div>
-                  <kbd>⌘L</kbd>
+                  <kbd>{modKey}L</kbd>
                   <span>New agent chat</span>
                 </div>
                 <div>
-                  <kbd>⌘⇧P</kbd>
+                  <kbd>{modKey}{shiftKey}P</kbd>
                   <span>Command palette</span>
                 </div>
                 <div>
-                  <kbd>⌘,</kbd>
+                  <kbd>{modKey},</kbd>
                   <span>Settings (models, skills, sync)</span>
                 </div>
                 <div>
-                  <kbd>⌘↵</kbd>
+                  <kbd>{modKey}↵</kbd>
                   <span>Send chat message</span>
                 </div>
               </div>
@@ -379,18 +407,33 @@ export function SetupWizard({
               </button>
             ) : (
               <>
-                {onStartFirstWin && hasWorkspace && (
+                {onStartFirstWin && hasWorkspace && (hasReadyModel || lite?.ready || full?.ready) ? (
                   <button
                     type="button"
                     className="btn"
                     disabled={busy}
                     onClick={() => {
-                      void finish().then(() => onStartFirstWin())
+                      void finish().then((finished) => {
+                        if (finished) onStartFirstWin()
+                      })
                     }}
                   >
                     Start guided chat
                   </button>
-                )}
+                ) : !hasReadyModel && !lite?.ready && !full?.ready && onOpenModelsSettings ? (
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busy}
+                    onClick={() => {
+                      void finish().then((finished) => {
+                        if (finished) onOpenModelsSettings()
+                      })
+                    }}
+                  >
+                    Set up a model
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="btn btn-primary"

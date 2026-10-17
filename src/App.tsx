@@ -692,8 +692,10 @@ export default function App() {
       <SetupWizard
         open={showSetupWizard}
         hasWorkspace={Boolean(workspacePath)}
+        hasReadyModel={models.some((model) => model.ready)}
         onCreateWorkspace={() => setWorkspaceModal('create')}
         onLinkWorkspace={() => setWorkspaceModal('link')}
+        onOpenModelsSettings={() => openSettings('models')}
         onFinished={() => {
           setShowSetupWizard(false)
           void refreshSettings().then((resolved) => refreshModels(resolved))
