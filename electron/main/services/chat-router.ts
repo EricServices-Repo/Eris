@@ -49,7 +49,9 @@ const READ_TOOLS = new Set([
   'read_skill',
   'git_status',
   'git_diff',
-  'ask_user'
+  'ask_user',
+  'web_search',
+  'web_open'
 ])
 
 const EDIT_TOOLS = new Set([

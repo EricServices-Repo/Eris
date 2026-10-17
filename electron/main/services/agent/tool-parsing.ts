@@ -90,7 +90,9 @@ const KNOWN_TOOLS = new Set([
   'git_sync',
   'git_stash',
   'delegate_to_agent',
-  'await_children'
+  'await_children',
+  'web_search',
+  'web_open'
 ])
 
 // Accept ```json or broken ``json fences (Lite often emits only two backticks)
@@ -98,7 +100,7 @@ const FENCE_JSON_RE = /`{2,3}(?:json|tool)?\s*([\s\S]*?)`{2,3}/gi
 
 function toolCallKey(obj: Record<string, unknown>): string {
   const name = String(obj.name ?? '')
-  return `${name}|${String(obj.path ?? '')}|${String(obj.to ?? '')}|${String(obj.command ?? '')}|${String(obj.content ?? '').length}|${String(obj.old_string ?? '').length}|${String(obj.new_string ?? '').length}|${String(obj.patch ?? '').length}|${String(obj.message ?? '')}|${String(obj.action ?? '')}`
+  return `${name}|${String(obj.path ?? '')}|${String(obj.to ?? '')}|${String(obj.command ?? '')}|${String(obj.query ?? '')}|${String(obj.url ?? '')}|${String(obj.content ?? '').length}|${String(obj.old_string ?? '').length}|${String(obj.new_string ?? '').length}|${String(obj.patch ?? '').length}|${String(obj.message ?? '')}|${String(obj.action ?? '')}`
 }
 
 function pushToolCall(

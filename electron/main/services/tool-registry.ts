@@ -77,6 +77,18 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   }, ['query']),
   tool('related_files', 'Files that share symbols with a path', { path: pathProp }, ['path']),
   tool('retrieve', 'Rank relevant files for a query', { query: { type: 'string' } }, ['query']),
+  tool(
+    'web_search',
+    'Search the public web in a browser and return titles, links, and snippets',
+    { query: { type: 'string', description: 'Search words, not a URL' } },
+    ['query']
+  ),
+  tool(
+    'web_open',
+    'Open an https page in the browser and read its text',
+    { url: { type: 'string', description: 'https address to open' } },
+    ['url']
+  ),
   tool('read_context', 'Read workspace .eris/context.md notes', {}),
   tool(
     'update_context',

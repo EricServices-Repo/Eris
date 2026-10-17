@@ -42,6 +42,7 @@ WHEN TO USE WHICH TOOL
 2) Locate code
    By path/name → glob. By text → grep. By symbol → search_symbols / find_references.
    Related modules → related_files / retrieve / semantic_search.
+   Public facts outside the workspace → web_search, then web_open on an https result.
 3) Change code
    Small edits → search_replace (preferred) or apply_patch.
    New files / full rewrites → write_file (complete file body).
@@ -80,6 +81,8 @@ TOOL SCHEMAS (emit real calls)
 - semantic_search — { "name":"semantic_search", "query":"where is auth handled" }
 - related_files — { "name":"related_files", "path":"src/App.tsx" }
 - retrieve — { "name":"retrieve", "query":"auth middleware" }
+- web_search — { "name":"web_search", "query":"electron updater github releases" }
+- web_open — { "name":"web_open", "url":"https://example.com/docs" }
 - read_context — { "name":"read_context" }
 - update_context — { "name":"update_context", "mode":"append"|"summary", "text":"…" }
 - list_skills / read_skill / write_skill — skills (default scope "user")
@@ -113,7 +116,7 @@ When you need a file, emit exactly:
 {"name":"read_file","path":"README.md"}
 <<<END>>>
 
-Allowed tools: tree, list_dir, read_file, grep, glob, retrieve, semantic_search, search_symbols.
+Allowed tools: tree, list_dir, read_file, grep, glob, retrieve, semantic_search, search_symbols, web_search, web_open.
 Prefer README, package.json, and the main source. Skip .eris config unless the user asked about Eris settings.
 A Reviewer may also run npm test or the project typecheck. Nobody else runs shell commands.
 
