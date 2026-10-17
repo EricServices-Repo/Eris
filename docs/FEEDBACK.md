@@ -5,13 +5,16 @@ Reports land as issues on
 [`EricServices-Repo/Eris`](https://github.com/EricServices-Repo/Eris/issues).
 No GitHub App, no user PAT, no browser draft.
 
-## Preferred path: EricServic.es relay
+## How a report is filed
 
-1. Client `POST`s `{ title, body }` to  
-   `https://www.ericservic.es/api/eris/v1/feedback.php`
-2. Optional `Authorization: Bearer eseris_…` attaches the EricServic.es username
-3. Server uses `$ERIS_FEEDBACK_GITHUB_TOKEN` (config.local.php / env) to create the issue
-4. Rate limit: 8 submissions / hour / IP
+1. If this build has a feedback credential, the client creates the issue directly on
+   [`EricServices-Repo/Eris`](https://github.com/EricServices-Repo/Eris/issues).
+2. Otherwise the client `POST`s `{ title, body, owner, repo }` to
+   `https://www.ericservic.es/api/eris/v1/feedback.php`.
+   Optional `Authorization: Bearer eseris_…` attaches the EricServic.es username.
+3. The relay must create the issue on `EricServices-Repo/Eris`. A response whose
+   issue URL is not under `https://github.com/EricServices-Repo/Eris/issues` is rejected.
+4. Rate limit on the relay: 8 submissions / hour / IP.
 
 Website files (EricServices site repo):
 
@@ -19,14 +22,12 @@ Website files (EricServices site repo):
 - `config.php` + `config.local.php` → `$ERIS_FEEDBACK_GITHUB_TOKEN`
 
 Token scope: fine-grained PAT limited to **EricServices-Repo/Eris** → **Issues: Read and write**.
+Deploy the updated `feedback.php` (`$repo = 'Eris'`) before relying on the website relay.
 
-Deploy `feedback.php` (and the config token) before relying on this path in production.
-Until then the client falls through to the built-in credential below.
+## Fallback: EricServic.es relay
 
-## Fallback: built-in client credential
-
-If the relay is unreachable / not configured (404/503), the packaged app may use a
-build-time credential:
+If this build has no feedback credential, the packaged app uses the relay above.
+`feedback.php` in the EricServices site must keep `$repo = 'Eris'`.
 
 | Source | When |
 |--------|------|

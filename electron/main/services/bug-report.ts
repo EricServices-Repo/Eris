@@ -373,54 +373,68 @@ async function submitViaBuiltinToken(preview: BugReportPreview): Promise<BugRepo
   }
 }
 
+function isErisIssueUrl(url: string | undefined): boolean {
+  if (!url) return true
+  return url.startsWith('https://github.com/EricServices-Repo/Eris/issues')
+}
+
 export async function submitBugReport(input: BugReportInput): Promise<BugReportResult> {
   const preview = buildBugReportPreview(input)
   logInfo('Bug report submit started', {
     includeLogs: preview.logIncluded,
     titleLen: preview.title.length,
     bodyLen: preview.body.length,
-    hasBuiltin: Boolean(resolveBuiltinFeedbackToken())
+    hasBuiltin: Boolean(resolveBuiltinFeedbackToken()),
+    targetRepo: preview.targetRepo
   })
 
-  // 1) Prefer EricServic.es relay (token stays on the server)
+  const record = (result: BugReportResult, via: 'ericservices' | 'builtin') => {
+    recordFeedbackHistory({
+      id: `${via}-${result.number ?? Date.now()}`,
+      title: preview.title,
+      number: result.number,
+      htmlUrl: result.htmlUrl,
+      via,
+      submittedAt: new Date().toISOString()
+    })
+  }
+
+  // File on EricServices-Repo/Eris directly when this build has a credential.
+  // The website relay is only a fallback, and only if it returns an Eris issue URL.
+  const direct = await submitViaBuiltinToken(preview)
+  if (direct.ok && isErisIssueUrl(direct.htmlUrl)) {
+    logInfo('Bug report created on EricServices-Repo/Eris', {
+      number: direct.number,
+      url: direct.htmlUrl
+    })
+    record(direct, 'builtin')
+    return direct
+  }
+
   const relay = await submitViaEricServices(preview)
-  if (relay?.ok) {
+  if (relay?.ok && isErisIssueUrl(relay.htmlUrl)) {
     logInfo('Bug report created via EricServic.es', {
       number: relay.number,
       url: relay.htmlUrl
     })
-    recordFeedbackHistory({
-      id: `es-${relay.number ?? Date.now()}`,
-      title: preview.title,
-      number: relay.number,
-      htmlUrl: relay.htmlUrl,
-      via: 'ericservices',
-      submittedAt: new Date().toISOString()
-    })
+    record(relay, 'ericservices')
     return relay
   }
-  if (relay && !relay.ok && relay.error && !/not configured|404/i.test(relay.error)) {
-    // Real relay error (rate limit, GitHub down) — still try builtin before failing
+  if (relay?.ok && relay.htmlUrl && !isErisIssueUrl(relay.htmlUrl)) {
+    logWarn('Feedback relay filed on the wrong repository', { url: relay.htmlUrl })
+    return {
+      ok: false,
+      error:
+        'Feedback was sent to the wrong GitHub repository. Reports must be filed at https://github.com/EricServices-Repo/Eris/issues.',
+      htmlUrl: relay.htmlUrl,
+      via: 'ericservices'
+    }
+  }
+  if (relay && !relay.ok && relay.error) {
     logWarn('EricServic.es feedback relay error', { error: relay.error })
+    if (direct.ok) return direct
+    return relay
   }
 
-  // 2) Built-in client credential → GitHub Issues API (no user Settings token)
-  const direct = await submitViaBuiltinToken(preview)
-  if (direct.ok) {
-    logInfo('Bug report created via builtin token', {
-      number: direct.number,
-      url: direct.htmlUrl
-    })
-    recordFeedbackHistory({
-      id: `gh-${direct.number ?? Date.now()}`,
-      title: preview.title,
-      number: direct.number,
-      htmlUrl: direct.htmlUrl,
-      via: 'builtin',
-      submittedAt: new Date().toISOString()
-    })
-  } else {
-    logWarn('Bug report failed', { error: direct.error })
-  }
   return direct
 }
