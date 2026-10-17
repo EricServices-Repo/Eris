@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.55 — 2026-10-17
+
+- Each answer can be rated, and thumbs-down opens a prefilled feedback report.
+
 ## 0.2.54 — 2026-10-17
 
 - Agents can search the web in a browser and open a public page from the results.

@@ -17,7 +17,7 @@ import type {
   ModelInfo,
   SkillRecord
 } from '@/shared/settings-schema'
-import { promoteThinkingToAnswer } from '@/shared/posted-answer'
+import { promoteThinkingToAnswer, stripAnswerFromThinking } from '@/shared/posted-answer'
 import type { OpenTab } from '@/features/editor/EditorArea'
 import type {
   ActiveSkillRef,
@@ -724,9 +724,12 @@ export function useChatSession({
         cancelAnimationFrame(paintRaf.current)
         paintRaf.current = 0
       }
-      const thinking = thinkingAcc.current
-      let content = promoteThinkingToAnswer(answerAcc.current, thinking)
-      if (!content && thinking && !aborted) content = promoteThinkingToAnswer(thinking, thinking)
+      const thinkingRaw = thinkingAcc.current
+      let content = promoteThinkingToAnswer(answerAcc.current, thinkingRaw)
+      if (!content.trim() && thinkingRaw && !aborted) {
+        content = promoteThinkingToAnswer('', thinkingRaw)
+      }
+      const thinking = stripAnswerFromThinking(thinkingRaw, content)
       if (aborted) {
         if (content) {
           content = content.endsWith('\n')

@@ -34,7 +34,6 @@ export function ThinkingBlock({
   const logRef = useRef<HTMLPreElement>(null)
   const hasTools = tools.length > 0
   const hasThinking = Boolean(thinking.trim())
-  const hasBody = Boolean(hasThinking || status || hasTools)
 
   const steps = useMemo(() => summarizeThinkingSteps(thinking), [thinking])
   const preview = useMemo(
@@ -59,7 +58,7 @@ export function ThinkingBlock({
     logRef.current.scrollTop = logRef.current.scrollHeight
   }, [thinking, showLog, live])
 
-  if (!hasBody && !live) return null
+  if (!hasThinking && !hasTools) return null
 
   return (
     <div className={`thinking-block ${open ? 'open' : ''} ${live ? 'live' : ''}`}>

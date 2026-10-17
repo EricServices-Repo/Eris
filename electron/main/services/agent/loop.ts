@@ -274,7 +274,6 @@ export async function* runAgentWithWorkspaceTools(options: {
         sessionKey: askSessionKey
       })) {
         if (evt.kind === 'thinking') {
-          yield { type: 'thinking', text: evt.text }
           if (evt.text) yield { type: 'answer', text: evt.text }
         } else full = evt.full
       }
@@ -641,7 +640,6 @@ export async function* runAgentWithWorkspaceTools(options: {
       sessionKey: isNativeGgufRef(workerModel) ? ggufSessionKey : undefined
     })) {
       if (evt.kind === 'thinking') {
-        yield { type: 'thinking', text: evt.text }
         if (evt.text) yield { type: 'answer', text: evt.text }
       } else reply = evt.full
     }
@@ -730,7 +728,6 @@ export async function* runAgentWithWorkspaceTools(options: {
     })) {
       if (evt.kind === 'thinking') {
         yield { type: 'thinking', text: evt.text }
-        if (evt.text) yield { type: 'answer', text: evt.text }
       } else {
         assistantText = evt.full
         latestAssistant = evt.full

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { promoteThinkingToAnswer } from '../src/shared/posted-answer'
+import { promoteThinkingToAnswer, stripAnswerFromThinking } from '../src/shared/posted-answer'
 
 describe('promoteThinkingToAnswer', () => {
   it('posts the thinking reply when the body is only the tool log', () => {
@@ -14,5 +14,11 @@ describe('promoteThinkingToAnswer', () => {
     const thinking =
       'Finished: Review this project\n\nWhat I did:\n• Inspected .\n• Failed read_file steve-embling/.eris/rules/README.md'
     expect(promoteThinkingToAnswer(content, thinking)).toBe(content)
+  })
+
+  it('removes the reply from the thinking trace', () => {
+    const answer = 'This project is a calculator in src/main.ts and the keypad is in src/App.tsx.'
+    expect(stripAnswerFromThinking(answer, answer)).toBe('')
+    expect(stripAnswerFromThinking(`Route: Auto\n\n${answer}`, answer)).toBe('Route: Auto')
   })
 })

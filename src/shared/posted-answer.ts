@@ -25,3 +25,23 @@ export function promoteThinkingToAnswer(content: string, thinking: string): stri
   }
   return content
 }
+
+/** Keep tool progress in Thinking. The reply itself belongs in the message. */
+export function stripAnswerFromThinking(thinking: string, answer: string): string {
+  const body = answer.trim()
+  let trace = thinking.trim()
+  if (!trace) return ''
+  if (body && trace.includes(body)) trace = trace.replace(body, '')
+  trace = trace
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => {
+      if (!line) return false
+      if (body && line === body) return false
+      if (body && body.includes(line) && line.length > 80) return false
+      return true
+    })
+    .join('\n')
+    .trim()
+  return trace
+}
