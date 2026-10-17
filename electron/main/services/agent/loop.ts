@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, statSync } from 'fs'
+import { asksWhatTheProjectDoes } from '../../../../src/shared/agent-contract'
 import type { AppSettings, TurnPlan } from '../../../../src/shared/settings-schema'
 import { formatAvailableModelsPrompt } from '../model-catalog'
 import {
@@ -410,6 +411,10 @@ export async function* runAgentWithWorkspaceTools(options: {
   let escalateCount = plan.escalateToFull ? 1 : 0
   let rerouteCount = 0
   const reviewOnly = plan.intent === 'review' || isReviewOnlyGoal(originalUserGoal)
+  const describeProject = asksWhatTheProjectDoes(originalUserGoal)
+  const describeProjectNext =
+    `Read README, package.json, or the main source. Do not stop after .eris config. ` +
+    `Then reply with no tools: what this project is, what it does, and the important files, citing paths.`
   let promptBudget = contextBudgetTokens(options.settings, workerModel)
 
   const productFilesAreTinyStubs = (): boolean => {
@@ -512,15 +517,19 @@ export async function* runAgentWithWorkspaceTools(options: {
       (lastTreeResult
         ? `The workspace listing is already in context — do NOT call tree/list_dir again.\n` +
           `Active user request:\n${originalUserGoal.slice(0, 1500)}\n\n` +
-          (reviewOnly
-            ? `Next step: emit read_file on key sources and/or {"name":"run","command":"npm test"} (or typecheck). ` +
-              `Then a DONE summary with blockers → risks → suggestions. Do not ask the user for files.`
-            : `Next step: emit search_replace / write_file / mkdir / read_file tool JSON now. ` +
-              `Keep tooling until the request is fully done, then a short DONE summary.`)
+          (describeProject
+            ? describeProjectNext
+            : reviewOnly
+              ? `Next step: emit read_file on key sources and/or {"name":"run","command":"npm test"} (or typecheck). ` +
+                `Then a DONE summary with blockers → risks → suggestions. Do not ask the user for files.`
+              : `Next step: emit search_replace / write_file / mkdir / read_file tool JSON now. ` +
+                `Keep tooling until the request is fully done, then a short DONE summary.`)
         : `Emit ONLY this tool call next:\n\n{"name":"tree","path":"."}\n\n` +
           `Then continue with retrieve/read_file` +
-          (reviewOnly ? '/run' : '/search_replace/write_file/run') +
-          ` until the request is done. Never ask the user for project structure.`)
+          (describeProject
+            ? ` on README, package.json, or the main source, then describe what the project does.`
+            : `${reviewOnly ? '/run' : '/search_replace/write_file/run'} until the request is done.`) +
+          ` Never ask the user for project structure.`)
   })
 
   const nudgeAfterInspect = (snapshot: string): AgentChatMessage => ({
@@ -529,11 +538,13 @@ export async function* runAgentWithWorkspaceTools(options: {
       `TOOL_RESULT (listing already in context):\n${truncateForModel(snapshot, 4000)}\n\n` +
       `Do NOT call tree or list_dir again — you already have the listing above.\n` +
       `Active user request:\n${originalUserGoal.slice(0, 1500)}\n\n` +
-      (reviewOnly
-        ? `Next: emit read_file on the important source files, optionally run tests/typecheck, ` +
-          `then DONE summary (blockers → risks → suggestions → nits) with concrete paths.`
-        : `Next: emit search_replace or write_file (and mkdir if needed), or read_file if you still need detail. ` +
-          `Keep going until the full request is satisfied; only then a short DONE summary with no tools.`)
+      (describeProject
+        ? describeProjectNext
+        : reviewOnly
+          ? `Next: emit read_file on the important source files, optionally run tests/typecheck, ` +
+            `then DONE summary (blockers → risks → suggestions → nits) with concrete paths.`
+          : `Next: emit search_replace or write_file (and mkdir if needed), or read_file if you still need detail. ` +
+            `Keep going until the full request is satisfied; only then a short DONE summary with no tools.`)
   })
 
   const nudgeContinueWork = (reason: string): AgentChatMessage => ({
@@ -543,13 +554,17 @@ export async function* runAgentWithWorkspaceTools(options: {
       `Active user request:\n${originalUserGoal.slice(0, 1500)}\n` +
       (filesTouched.length
         ? `Already touched: ${[...new Set(filesTouched)].join(', ')}\n`
+        : describeProject
+          ? 'No project source has been read yet — read README or the main source before answering.\n'
+          : reviewOnly
+            ? 'This is a review/improve-inspection phase — gather facts with tools before concluding.\n'
+            : 'No files written yet — you still need to make progress with tools.\n') +
+      (describeProject
+        ? describeProjectNext
         : reviewOnly
-          ? 'This is a review/improve-inspection phase — gather facts with tools before concluding.\n'
-          : 'No files written yet — you still need to make progress with tools.\n') +
-      (reviewOnly
-        ? `Emit read_file or run tool JSON, OR if you already have enough evidence, reply with a DONE review summary and no tools.`
-        : `You are NOT finished. Emit the next search_replace / write_file / mkdir / read_file / run tool JSON now. ` +
-          `When — and only when — the full request is satisfied, reply with a short DONE summary and no tools.`)
+          ? `Emit read_file or run tool JSON, OR if you already have enough evidence, reply with a DONE review summary and no tools.`
+          : `You are NOT finished. Emit the next search_replace / write_file / mkdir / read_file / run tool JSON now. ` +
+            `When — and only when — the full request is satisfied, reply with a short DONE summary and no tools.`)
   })
 
   // Loop until done, abort, or hard budgets.
@@ -723,7 +738,8 @@ export async function* runAgentWithWorkspaceTools(options: {
           assistantText,
           reviewOnly,
           inspectRounds,
-          actions: actionLog
+          actions: actionLog,
+          describeProject
         }) ||
         abortedLoop ||
         looksLikeDegenerateLoop(assistantText)
@@ -884,7 +900,10 @@ export async function* runAgentWithWorkspaceTools(options: {
 
       // Deterministic summary — never unload Full to reload Lite just for a recap.
       const workerNote = stripToolBlocks(assistantText).trim()
-      const answer = buildWorkSummary(originalUserGoal, actionLog, workerNote)
+      const answer =
+        describeProject && workerNote.length >= 80
+          ? workerNote
+          : buildWorkSummary(originalUserGoal, actionLog, workerNote)
       yield { type: 'status', text: 'Done' }
       yield { type: 'answer', text: answer }
       return
@@ -950,7 +969,9 @@ export async function* runAgentWithWorkspaceTools(options: {
       noProgressStreak++
       yield {
         type: 'thinking',
-        text: '\n\n— Same tool call repeated; moving on to the next unfinished edit…\n'
+        text: describeProject
+          ? '\n\n— Same tool call repeated; read a project source file and describe what it does…\n'
+          : '\n\n— Same tool call repeated; moving on to the next unfinished edit…\n'
       }
       workerMessages.push({ role: 'assistant', content: assistantText.slice(0, 800) })
       workerMessages.push(

@@ -6,9 +6,11 @@ import {
   USER_QUESTION_TIMEOUT_MS
 } from '../electron/main/services/user-question'
 import {
+  isReviewOnlyGoal,
   looksLikeAsksForWorkspaceInfo,
   looksLikeClarifyingQuestion,
   looksLikeTaskComplete,
+  projectDescriptionReady,
   shouldKeepWorking
 } from '../electron/main/services/agent/heuristics'
 
@@ -94,5 +96,42 @@ describe('looksLikeClarifyingQuestion', () => {
         inspectRounds: 0
       })
     ).toBe(true)
+  })
+})
+
+describe('project description', () => {
+  const description =
+    'This workspace is a small calculator. src/main.ts adds and subtracts numbers from the keypad in src/App.tsx, and package.json starts it with npm start. The display lives in src/Display.tsx.'
+
+  it('is not a defect review', () => {
+    expect(isReviewOnlyGoal('Review this project, what does it do?')).toBe(false)
+    expect(isReviewOnlyGoal('code review this PR')).toBe(true)
+  })
+
+  it('finishes only after a sourced description', () => {
+    expect(projectDescriptionReady(description, ['Inspected .', 'Read .eris/agents.json'])).toBe(
+      false
+    )
+    expect(projectDescriptionReady(description, ['Read package.json', 'Read src/main.ts'])).toBe(
+      true
+    )
+    expect(
+      shouldKeepWorking({
+        needsTools: true,
+        mutated: false,
+        assistantText: 'Finished.',
+        describeProject: true,
+        actions: ['Read package.json']
+      })
+    ).toBe(true)
+    expect(
+      shouldKeepWorking({
+        needsTools: true,
+        mutated: false,
+        assistantText: description,
+        describeProject: true,
+        actions: ['Read package.json']
+      })
+    ).toBe(false)
   })
 })

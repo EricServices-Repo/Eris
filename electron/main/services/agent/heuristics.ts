@@ -1,5 +1,15 @@
+import { asksWhatTheProjectDoes } from '../../../../src/shared/agent-contract'
 import { parseToolCalls, stripToolBlocks } from './tool-parsing'
 import type { ToolCall } from './types'
+
+/** A project description has to come from source, not .eris config, and say more than “done”. */
+export function projectDescriptionReady(assistantText: string, actions: string[]): boolean {
+  if (parseToolCalls(assistantText).length > 0) return false
+  const note = stripToolBlocks(assistantText).trim()
+  if (note.length < 160) return false
+  const readSource = actions.some((action) => /^Read (?!\.eris\/)/.test(action))
+  return readSource
+}
 
 export function looksLikeRefusal(text: string): boolean {
   const t = text.trim().toLowerCase()
@@ -133,6 +143,7 @@ export function looksLikeClarifyingQuestion(text: string): boolean {
 
 /** Review/confirm goals should finish without write_file. */
 export function isReviewOnlyGoal(text: string): boolean {
+  if (asksWhatTheProjectDoes(text)) return false
   const t = text.toLowerCase()
   const review =
     /\b(review|confirm|check if|verify|inspect|look over|is it working|does it work|working calculator|status)\b/i.test(
@@ -166,10 +177,20 @@ export function shouldKeepWorking(opts: {
   reviewOnly?: boolean
   inspectRounds?: number
   actions?: string[]
+  /** User asked what the open project does. Finish only with a sourced description. */
+  describeProject?: boolean
 }): boolean {
-  const { needsTools, mutated, assistantText, reviewOnly, inspectRounds = 0, actions = [] } =
-    opts
+  const {
+    needsTools,
+    mutated,
+    assistantText,
+    reviewOnly,
+    inspectRounds = 0,
+    actions = [],
+    describeProject = false
+  } = opts
   if (!needsTools) return false
+  if (describeProject) return !projectDescriptionReady(assistantText, actions)
   if (!assistantText.trim()) return true
   if (looksLikeRefusal(assistantText)) return true
   if (looksLikeAsksForWorkspaceInfo(assistantText)) return true

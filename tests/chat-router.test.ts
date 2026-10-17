@@ -90,6 +90,7 @@ describe('classifyIntent', () => {
       'edit'
     ],
     ['review the project folder', 'agent', 'review'],
+    ['Review this project, what does it do?', 'agent', 'explore'],
     ['improve the calculator UI', 'agent', 'edit']
   ] as const)('%s (%s) → %s', (text, mode, intent) => {
     expect(classifyIntent(text, mode)).toBe(intent)

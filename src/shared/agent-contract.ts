@@ -64,6 +64,19 @@ export const CHAT_AGENT_CONTRACTS: ChatAgentContract[] = [
   }
 ]
 
+/** “What does this project do?” — a description, not a defect review. */
+export function asksWhatTheProjectDoes(text: string): boolean {
+  const t = text.trim()
+  if (!t) return false
+  return (
+    /\bwhat does (it|this) do\b/i.test(t) ||
+    /\bwhat (does|is) (this|the) (project|app|application|repo|codebase|workspace)\b/i.test(t) ||
+    /\b(describe|tell me about) (this |the )?(project|app|application|repo|codebase|workspace)\b/i.test(
+      t
+    )
+  )
+}
+
 const BY_ID = new Map(CHAT_AGENT_CONTRACTS.map((c) => [c.id, c]))
 
 export function contractForAgent(id: string | null | undefined): ChatAgentContract | null {
@@ -92,6 +105,7 @@ export function chatAgentForTurn(options: {
     return shortLookup ? 'fast' : 'explainer'
   }
 
+  if (asksWhatTheProjectDoes(text)) return 'explainer'
   if (options.intent === 'review') return 'reviewer'
   if (options.intent === 'edit' || options.intent === 'run') return 'composer'
   if (options.intent === 'explore') return shortLookup ? 'fast' : 'explainer'

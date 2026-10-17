@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.49 — 2026-10-17
+
+- Project file tools open a path that repeats the workspace folder name.
+
 ## 0.2.48 — 2026-10-17
 
 Cross-platform desktop builds (macOS + Windows) from the same version tag.

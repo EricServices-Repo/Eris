@@ -121,7 +121,8 @@ export function intentPlaybook(intent: ChatIntent | string, greenfield: boolean)
       return (
         `EXPLORE PLAYBOOK — (1) retrieve / grep / semantic_search / glob to locate, ` +
         `(2) read_file the hits, (3) answer from what you found with concrete paths and symbols. ` +
-        `Do not invent APIs or file contents.`
+        `If asked what the project does, read README, package.json, or the main source — not only .eris config — ` +
+        `then describe what it is, what it does, and the important files. Do not invent APIs or file contents.`
       )
     case 'edit':
       return (

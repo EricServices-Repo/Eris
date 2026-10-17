@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { chatAgentForTurn, CHAT_AGENT_CONTRACTS } from '../src/shared/agent-contract'
+import {
+  asksWhatTheProjectDoes,
+  chatAgentForTurn,
+  CHAT_AGENT_CONTRACTS
+} from '../src/shared/agent-contract'
 
 describe('chat agent contract', () => {
   it('lets Auto choose four roles and keeps Coder for pin or delegate', () => {
@@ -18,6 +22,15 @@ describe('chat agent contract', () => {
     expect(chatAgentForTurn({ mode: 'agent', intent: 'review', text: 'code review this PR' })).toBe(
       'reviewer'
     )
+    expect(
+      chatAgentForTurn({
+        mode: 'agent',
+        intent: 'explore',
+        text: 'Review this project, what does it do?'
+      })
+    ).toBe('explainer')
+    expect(asksWhatTheProjectDoes('Review this project, what does it do?')).toBe(true)
+    expect(asksWhatTheProjectDoes('code review this PR')).toBe(false)
     expect(
       chatAgentForTurn({ mode: 'agent', intent: 'answer', text: 'explain how the router works' })
     ).toBe('explainer')
