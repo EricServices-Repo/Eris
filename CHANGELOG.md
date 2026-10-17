@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.48 — 2026-10-17
+
+- In-app feedback files issues on EricServices-Repo/Eris.
+
 ## 0.2.47 — 2026-10-17
 
 Cross-platform desktop builds (macOS + Windows) from the same version tag.
