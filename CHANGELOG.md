@@ -2,6 +2,23 @@
 
 ## 0.2.45 — 2026-10-17
 
+Cross-platform desktop builds (macOS + Windows) from the same version tag.
+
+| Platform | Download |
+|----------|----------|
+| macOS | `Eris-0.2.45-mac-*.dmg` / `.zip` |
+| Windows | `Eris-0.2.45-win-*-setup.exe` |
+
+CI builds both platforms on tag push (`.github/workflows/release.yml`).
+
+### Changes
+- Publish release installers to the public Eris-updates feed. (f8db3bd)
+- Define chat agents on Composer Lite or Full and review their edits in the open file. (dd22c21)
+- Run the release upload in bash so the Windows job can attach its installer. (41e1b60)
+- Upload release installers directly so Actions artifact quota cannot drop them. (fc08c11)
+
+## 0.2.45 — 2026-10-17
+
 - Chat agents stay on Composer Lite or Full, and their edits are reviewed in the open file.
 
 ## 0.2.44 — 2026-10-16
