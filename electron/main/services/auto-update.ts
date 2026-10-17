@@ -5,13 +5,13 @@ import { logInfo, logWarn } from './logger'
 import { getResolvedSettings } from './settings'
 
 /**
- * Public update feed (no client token). Source stays private in EricServices-Repo/Eris;
- * installers + latest-*.yml are mirrored to EricServices-Repo/Eris-updates.
+ * Public update feed. Installers and latest-*.yml live on
+ * https://github.com/EricServices-Repo/Eris/releases
  */
-export const ERIS_RELEASES_URL = 'https://github.com/EricServices-Repo/Eris-updates/releases/latest'
-export const ERIS_RELEASES_REPO = 'EricServices-Repo/Eris-updates'
+export const ERIS_RELEASES_URL = 'https://github.com/EricServices-Repo/Eris/releases/latest'
+export const ERIS_RELEASES_REPO = 'EricServices-Repo/Eris'
 const UPDATE_OWNER = 'EricServices-Repo'
-const UPDATE_REPO = 'Eris-updates'
+const UPDATE_REPO = 'Eris'
 
 const FIRST_CHECK_DELAY_MS = 20_000
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
@@ -171,7 +171,7 @@ function friendlyUpdateError(message: string): string {
   }
   if (/404|Not Found|Unable to find latest version|CHANNEL_FILE_NOT_FOUND|LATEST_VERSION_NOT_FOUND/i.test(message)) {
     return (
-      'No update metadata found on the public Eris-updates feed yet. ' +
+      'No update metadata found on the Eris GitHub releases yet. ' +
       'Open Releases to download an installer manually.'
     )
   }

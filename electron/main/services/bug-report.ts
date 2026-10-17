@@ -13,7 +13,7 @@ import { userDataRoot } from './paths'
 
 /** Public issues inbox (created via API — never opens a browser). */
 export const ERIS_FEEDBACK_OWNER = 'EricServices-Repo'
-export const ERIS_FEEDBACK_REPO = 'Eris-feedback'
+export const ERIS_FEEDBACK_REPO = 'Eris'
 
 const MAX_LOG_CHARS = 48_000
 const MAX_ISSUE_BODY = 55_000
@@ -182,7 +182,7 @@ function trimBody(body: string): string {
 }
 
 /**
- * Built-in feedback credential (Issues on Eris-feedback only).
+ * Built-in feedback credential (Issues on EricServices-Repo/Eris).
  * Sources: env, packaged resources/eris-feedback-token, or repo resources/ for local builds.
  * End users never configure this.
  */
@@ -306,7 +306,12 @@ async function submitViaEricServices(
     const res = await fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ title: preview.title, body: preview.body })
+      body: JSON.stringify({
+        title: preview.title,
+        body: preview.body,
+        owner: ERIS_FEEDBACK_OWNER,
+        repo: ERIS_FEEDBACK_REPO
+      })
     })
     const text = await res.text()
     let data: Record<string, unknown> = {}

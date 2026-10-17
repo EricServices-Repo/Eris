@@ -184,14 +184,3 @@ jobs:
           gh release upload "${{ needs.resolve-version.outputs.tag }}" release-assets/* \
             --repo "${{ github.repository }}" \
             --clobber
-
-      - name: Upload installers to Eris-updates
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.ERIS_UPDATES_TOKEN }}
-        run: |
-          tag="${{ needs.resolve-version.outputs.tag }}"
-          repo="EricServices-Repo/Eris-updates"
-          gh release view "$tag" --repo "$repo" >/dev/null 2>&1 \
-            || gh release create "$tag" --repo "$repo" --title "Eris $tag" --notes "Eris $tag"
-          gh release upload "$tag" release-assets/* --repo "$repo" --clobber

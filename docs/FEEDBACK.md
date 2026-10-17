@@ -1,8 +1,8 @@
 # Eris in-app bug reports → GitHub Issues
 
 End users submit bugs from **Help → Report a Bug** (or Settings → General).
-Reports land on the public issues repo
-[`EricServices-Repo/Eris-feedback`](https://github.com/EricServices-Repo/Eris-feedback).
+Reports land as issues on
+[`EricServices-Repo/Eris`](https://github.com/EricServices-Repo/Eris/issues).
 No GitHub App, no user PAT, no browser draft.
 
 ## Preferred path: EricServic.es relay
@@ -18,7 +18,7 @@ Website files (EricServices site repo):
 - `api/eris/v1/feedback.php`
 - `config.php` + `config.local.php` → `$ERIS_FEEDBACK_GITHUB_TOKEN`
 
-Token scope: fine-grained PAT limited to **Eris-feedback** → **Issues: Read and write**.
+Token scope: fine-grained PAT limited to **EricServices-Repo/Eris** → **Issues: Read and write**.
 
 Deploy `feedback.php` (and the config token) before relying on this path in production.
 Until then the client falls through to the built-in credential below.
@@ -36,7 +36,7 @@ build-time credential:
 CI (`release.yml`) writes that file from secret `ERIS_FEEDBACK_GITHUB_TOKEN` before
 `electron-builder`. The file is gitignored.
 
-Same PAT scope as the server token (Issues only on `Eris-feedback`). Rotate if leaked;
+Same PAT scope as the server token (Issues on `EricServices-Repo/Eris`). Rotate if leaked;
 prefer keeping the relay live so clients do not need a shipped token long-term.
 
 ## What is not used
