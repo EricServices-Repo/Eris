@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.46 — 2026-10-17
+
+- Updates and bug reports use the public Eris repository, and the chat model menu lists every ready model.
+
 ## 0.2.45 — 2026-10-17
 
 Cross-platform desktop builds (macOS + Windows) from the same version tag.

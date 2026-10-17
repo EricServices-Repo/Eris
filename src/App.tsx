@@ -884,9 +884,6 @@ export default function App() {
                   onChatModeChange={setChatMode}
                   models={models}
                   selectedModel={selectedModel}
-                  agents={agents}
-                  selectedAgentId={selectedAgentId}
-                  onAgentChange={pinAgent}
                   onModelChange={(model) => {
                     setSelectedModel(model)
                     void window.ide

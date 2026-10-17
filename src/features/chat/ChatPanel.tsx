@@ -1,28 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type {
-  ChatDelegation,
-  ChatThread,
-  ModelInfo,
-  ResolvedAgent,
-  SkillRecord
-} from '@/shared/settings-schema'
-import { CHAT_AGENT_CONTRACTS, contractForAgent } from '@/shared/agent-contract'
+import type { ChatDelegation, ChatThread, ModelInfo, SkillRecord } from '@/shared/settings-schema'
+import { CHAT_AGENT_CONTRACTS } from '@/shared/agent-contract'
 import { pathBasename } from '@/shared/paths'
 import { ThinkingBlock, type ToolActivityItem } from './ThinkingBlock'
 import { MarkdownMessage } from './MarkdownMessage'
 
 export type { ToolActivityItem }
 export type ChatMode = 'ask' | 'agent'
-
-const AGENT_ORDER = CHAT_AGENT_CONTRACTS.map((agent) => agent.id)
-
-function orderedAgents(agents: ResolvedAgent[]): ResolvedAgent[] {
-  const rank = (id: string) => {
-    const index = AGENT_ORDER.indexOf(id as (typeof AGENT_ORDER)[number])
-    return index === -1 ? AGENT_ORDER.length : index
-  }
-  return [...agents].sort((a, b) => rank(a.id) - rank(b.id) || a.name.localeCompare(b.name))
-}
 
 export interface ChatAttachment {
   path: string
@@ -80,9 +64,6 @@ interface Props {
   models: ModelInfo[]
   selectedModel: string
   onModelChange: (model: string) => void
-  agents?: ResolvedAgent[]
-  selectedAgentId?: string | 'auto'
-  onAgentChange?: (agentId: string | 'auto') => void
   onNewChat: () => void
   onSend: (text: string, attachments: ChatAttachment[], skillIds: string[]) => void
   onStop: () => void
@@ -277,9 +258,6 @@ export function ChatPanel({
   models,
   selectedModel,
   onModelChange,
-  agents = [],
-  selectedAgentId = 'auto',
-  onAgentChange,
   onNewChat,
   onSend,
   onStop,
@@ -1113,27 +1091,6 @@ export function ChatPanel({
                   }}
                 />
                 <div className="composer-right">
-                  {onAgentChange && (
-                    <select
-                      className="composer-agent-select"
-                      value={selectedAgentId}
-                      disabled={streaming}
-                      onChange={(e) => onAgentChange(e.target.value as string | 'auto')}
-                      title={
-                        selectedAgentId === 'auto'
-                          ? 'Auto picks the agent that processes this message. The model dropdown chooses which model runs it.'
-                          : contractForAgent(selectedAgentId)?.job || 'Pinned agent'
-                      }
-                      aria-label="Select agent"
-                    >
-                      <option value="auto">Auto</option>
-                      {orderedAgents(agents).map((agent) => (
-                        <option key={agent.id} value={agent.id} title={agent.description}>
-                          {agent.name}
-                        </option>
-                      ))}
-                    </select>
-                  )}
                   <select
                     className="composer-model-select"
                     value={selectValue}
