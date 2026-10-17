@@ -9,8 +9,10 @@ describe('promoteThinkingToAnswer', () => {
     expect(promoteThinkingToAnswer(content, thinking)).toBe(thinking)
   })
 
-  it('keeps a real answer that is already outside thinking', () => {
+  it('does not promote a tool log out of thinking', () => {
     const content = 'This project is a calculator in src/main.ts and the keypad is in src/App.tsx.'
-    expect(promoteThinkingToAnswer(content, '— Read README.md')).toBe(content)
+    const thinking =
+      'Finished: Review this project\n\nWhat I did:\n• Inspected .\n• Failed read_file steve-embling/.eris/rules/README.md'
+    expect(promoteThinkingToAnswer(content, thinking)).toBe(content)
   })
 })

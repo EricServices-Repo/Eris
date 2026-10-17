@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'fs'
-import { asksWhatTheProjectDoes } from '../../../../src/shared/agent-contract'
+import { asksWhatTheProjectDoes, needsWebLookup } from '../../../../src/shared/agent-contract'
+import { isToolLogReply } from '../../../../src/shared/posted-answer'
 import type { AppSettings, TurnPlan } from '../../../../src/shared/settings-schema'
 import { formatAvailableModelsPrompt } from '../model-catalog'
 import {
@@ -216,14 +217,16 @@ export async function* runAgentWithWorkspaceTools(options: {
       ) ||
       /\bmake\b[\s\S]{0,32}\b(it\s+)?(so\s+it\s+)?works?\b/i.test(originalUserGoal) ||
       /\b(get|make)\b[\s\S]{0,24}\b(it|this|the app)\b[\s\S]{0,24}\bwork/i.test(originalUserGoal))
+  const webQuestion = needsWebLookup(originalUserGoal)
   const answerOnly =
-    !forceWorkspaceTools &&
-    (!plan.requiresTools ||
-      plan.toolPolicy === 'none' ||
-      !options.workspacePath ||
-      mode === 'ask' ||
-      plan.intent === 'answer' ||
-      plan.intent === 'capability')
+    mode === 'ask' ||
+    plan.intent === 'capability' ||
+    (!webQuestion &&
+      !forceWorkspaceTools &&
+      (!plan.requiresTools ||
+        plan.toolPolicy === 'none' ||
+        !options.workspacePath ||
+        plan.intent === 'answer'))
 
   if (answerOnly) {
     yield { type: 'model', model: chatModel }
@@ -431,6 +434,8 @@ export async function* runAgentWithWorkspaceTools(options: {
   let rerouteCount = 0
   const reviewOnly = plan.intent === 'review' || isReviewOnlyGoal(originalUserGoal)
   const describeProject = asksWhatTheProjectDoes(originalUserGoal)
+  const webLookup = webQuestion
+  let webSearchNudges = 0
   const chatReply = describeProject || isReadOnlyChat(plan)
   const describeProjectNext =
     `Read README, package.json, or the main source. Do not stop after .eris config. ` +
@@ -595,18 +600,33 @@ export async function* runAgentWithWorkspaceTools(options: {
   // Loop until done, abort, or hard budgets.
   const chatReadBudget = 4
   let latestAssistant = ''
+  const webSearched = () =>
+    actionLog.some((entry) => /Searched the web|Opened https:|web_search|web_open/i.test(entry))
+  const webSearchNudge = (): AgentChatMessage => ({
+    role: 'user',
+    content:
+      `This question is about the public web. Call web_search with the person or topic, then web_open one https result. ` +
+      `Do not read a workspace file named after a person. Do not invent a "What I did" log.`
+  })
   async function* finishChatAnswer(latest: string): AsyncGenerator<AgentRunnerEvent, void, unknown> {
     const existing = proseOutsideTools(latest)
-    if (existing.length >= 40) {
+    if (existing.length >= 40 && !isToolLogReply(existing)) {
       yield { type: 'status', text: 'Done' }
       yield { type: 'answer', text: existing, replace: true }
       return
     }
+    const changed = [...new Set(filesTouched)].filter((file) => {
+      const path = file.replace(/\\/g, '/').replace(/^\.\//, '')
+      return path && !path.startsWith('.eris/')
+    })
     workerMessages.push({
       role: 'user',
       content:
-        `Stop calling tools. Reply to the user now in plain sentences, using only files you already read. ` +
-        `Cite paths. Do not emit JSON or edit files.\n\n` +
+        `Thinking is finished. Write the reply the user will read. No tools and no JSON.\n` +
+        (changed.length
+          ? `Review the changes. For each file, say what changed: ${changed.join(', ')}.\n`
+          : `Answer the user's question in plain sentences.\n`) +
+        `Do not write "Finished:" or "What I did:".\n\n` +
         `User asked:\n${originalUserGoal.slice(0, 1500)}`
     })
     yield { type: 'answer', text: '', replace: true }
@@ -626,10 +646,11 @@ export async function* runAgentWithWorkspaceTools(options: {
       } else reply = evt.full
     }
     const clean = proseOutsideTools(reply)
-    const fallback =
-      answerFromProjectFiles(sourceReads) ||
-      buildWorkSummary(originalUserGoal, actionLog, clean || proseOutsideTools(latest))
-    const answer = postedAnswer(reply, fallback)
+    const searched = actionLog.find((entry) => entry.startsWith('Searched the web'))
+    const fallback = changed.length
+      ? `Changed ${changed.slice(0, 8).join(', ')}.`
+      : searched || answerFromProjectFiles(sourceReads)
+    const answer = postedAnswer(reply, fallback) || clean || 'Done.'
     yield { type: 'status', text: 'Done' }
     yield { type: 'answer', text: answer, replace: true }
   }
@@ -654,12 +675,17 @@ export async function* runAgentWithWorkspaceTools(options: {
     }
 
     if (chatReply && (toolExecRounds >= chatReadBudget || step >= 8)) {
-      yield {
-        type: 'thinking',
-        text: '\n\n— Enough reading; answering the message…\n'
+      if (webLookup && !webSearched() && webSearchNudges < 2) {
+        webSearchNudges++
+        workerMessages.push(webSearchNudge())
+      } else {
+        yield {
+          type: 'thinking',
+          text: '\n\n— Enough reading; answering the message…\n'
+        }
+        yield* finishChatAnswer(latestAssistant)
+        return
       }
-      yield* finishChatAnswer(latestAssistant)
-      return
     }
 
     step++
@@ -1007,13 +1033,22 @@ export async function* runAgentWithWorkspaceTools(options: {
 
       // Deterministic summary — never unload Full to reload Lite just for a recap.
       const prose = proseOutsideTools(assistantText)
-      const fallback =
-        chatReply && sourceReads.length > 0
-          ? answerFromProjectFiles(sourceReads)
-          : buildWorkSummary(originalUserGoal, actionLog, prose)
-      const answer = postedAnswer(assistantText, fallback)
-      yield { type: 'status', text: 'Done' }
-      yield { type: 'answer', text: answer, replace: true }
+      if (webLookup && !webSearched() && webSearchNudges < 2) {
+        webSearchNudges++
+        yield {
+          type: 'thinking',
+          text: '\n\n— This needs a web search before an answer…\n'
+        }
+        workerMessages.push({ role: 'assistant', content: prose.slice(0, 800) })
+        workerMessages.push(webSearchNudge())
+        continue
+      }
+      if (prose.length >= 40 && !isToolLogReply(prose)) {
+        yield { type: 'status', text: 'Done' }
+        yield { type: 'answer', text: prose, replace: true }
+        return
+      }
+      yield* finishChatAnswer(assistantText)
       return
     }
 

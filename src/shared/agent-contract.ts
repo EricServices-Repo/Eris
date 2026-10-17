@@ -77,6 +77,16 @@ export function asksWhatTheProjectDoes(text: string): boolean {
   )
 }
 
+/** A public-web question. The workspace cannot answer it. */
+export function needsWebLookup(text: string): boolean {
+  const t = text.trim()
+  if (!t) return false
+  return (
+    /\b(internet|on the web|online|search the web|look up)\b/i.test(t) ||
+    /\bwho (is|was|are)\b/i.test(t)
+  )
+}
+
 const BY_ID = new Map(CHAT_AGENT_CONTRACTS.map((c) => [c.id, c]))
 
 /** A short reply that depends on the previous turn, not a new task. */
@@ -141,6 +151,7 @@ export function chatAgentForTurn(options: {
 
   const follow = agentForFollowUp(text, options.previousAgentId)
   if (follow) return follow
+  if (needsWebLookup(text)) return 'explainer'
   if (asksWhatTheProjectDoes(text)) return 'explainer'
   if (options.intent === 'review') return 'reviewer'
   if (options.intent === 'edit' || options.intent === 'run') return 'composer'

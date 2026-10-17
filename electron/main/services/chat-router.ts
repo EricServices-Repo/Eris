@@ -17,7 +17,7 @@ import { getLocalStatuses, isLocalRef, resolveExactLocalRef } from './local-mode
 import { streamModelChat } from './chat-runtime'
 import { routeHeuristic, routeMessage } from './router'
 import { learnedRouteFor, readRoutingCorrections, routingExamples } from './routing-feedback'
-import { agentForFollowUp, asksWhatTheProjectDoes, chatAgentForTurn } from '../../../src/shared/agent-contract'
+import { agentForFollowUp, asksWhatTheProjectDoes, needsWebLookup, chatAgentForTurn } from '../../../src/shared/agent-contract'
 import { CONTEXT_HEADROOM_BYTES, inferenceBudgetBytes } from './vram-fit'
 
 /** A custom agent must be at least this sure to replace the roster role. */
@@ -250,6 +250,8 @@ export function classifyIntent(text: string, mode: 'ask' | 'agent'): ChatIntent 
     // Agent mode must read the workspace. Ask mode stays a plain answer.
     return mode === 'agent' ? 'explore' : 'answer'
   }
+
+  if (mode === 'agent' && needsWebLookup(t)) return 'explore'
 
   return 'answer'
 }

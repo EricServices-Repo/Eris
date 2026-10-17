@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ChatDelegation, ChatThread, ModelInfo, SkillRecord } from '@/shared/settings-schema'
+import type { ChatDelegation, ChatMessage, ChatThread, ModelInfo, SkillRecord } from '@/shared/settings-schema'
 import { CHAT_AGENT_CONTRACTS } from '@/shared/agent-contract'
 import { pathBasename } from '@/shared/paths'
 import { ThinkingBlock, type ToolActivityItem } from './ThinkingBlock'
+import { AnswerFeedback } from './AnswerFeedback'
 import { MarkdownMessage } from './MarkdownMessage'
 
 export type { ToolActivityItem }
@@ -31,6 +32,13 @@ export interface QueuedChatMessage {
 }
 
 export const MAX_QUEUED_MESSAGES = 3
+
+function questionBefore(messages: ChatMessage[], index: number): string {
+  for (let i = index - 1; i >= 0; i--) {
+    if (messages[i]?.role === 'user') return messages[i].content
+  }
+  return ''
+}
 
 interface SlashItem {
   id: string
@@ -731,6 +739,9 @@ export function ChatPanel({
                       <MarkdownMessage content={m.content} onOpenPath={onOpenPath} />
                     ) : (
                       <div className="user-text">{m.content}</div>
+                    )}
+                    {m.role === 'assistant' && (
+                      <AnswerFeedback message={m} question={questionBefore(visible, i)} />
                     )}
                     {m.role === 'assistant' &&
                       i === visible.length - 1 &&

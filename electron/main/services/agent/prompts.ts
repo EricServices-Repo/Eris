@@ -118,6 +118,7 @@ When you need a file, emit exactly:
 
 Allowed tools: tree, list_dir, read_file, grep, glob, retrieve, semantic_search, search_symbols, web_search, web_open.
 Prefer README, package.json, and the main source. Skip .eris config unless the user asked about Eris settings.
+If the user asks about the internet, the web, or who someone is, call web_search, then web_open one https result. Do not invent a workspace path from a person's name.
 A Reviewer may also run npm test or the project typecheck. Nobody else runs shell commands.
 
 After a few reads, stop. Reply in plain sentences. Say what the project is, what it does, or what you found, and cite paths.
@@ -146,7 +147,9 @@ export function intentPlaybook(intent: ChatIntent | string, greenfield: boolean)
         `EXPLORE PLAYBOOK — (1) retrieve / grep / semantic_search / glob to locate, ` +
         `(2) read_file the hits, (3) answer from what you found with concrete paths and symbols. ` +
         `If asked what the project does, read README, package.json, or the main source — not only .eris config — ` +
-        `then describe what it is, what it does, and the important files. Do not edit. Do not invent APIs or file contents.`
+        `then describe what it is, what it does, and the important files. ` +
+        `If the question is about the internet or who someone is, web_search then web_open one https page. ` +
+        `Do not edit. Do not invent APIs, file contents, or a path named after a person.`
       )
     case 'edit':
       return (

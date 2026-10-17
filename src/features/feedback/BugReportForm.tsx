@@ -14,14 +14,28 @@ interface Props {
   variant?: 'page' | 'modal'
   onClose?: () => void
   onSubmitted?: () => void
+  initialKind?: FeedbackKind
+  initialTitle?: string
+  initialDescription?: string
+  initialIncludeLogs?: boolean
+  initialIncludeDiagnostics?: boolean
 }
 
-export function BugReportForm({ variant = 'page', onClose, onSubmitted }: Props) {
-  const [kind, setKind] = useState<FeedbackKind>('bug')
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
-  const [includeLogs, setIncludeLogs] = useState(true)
-  const [includeDiagnostics, setIncludeDiagnostics] = useState(true)
+export function BugReportForm({
+  variant = 'page',
+  onClose,
+  onSubmitted,
+  initialKind = 'bug',
+  initialTitle = '',
+  initialDescription = '',
+  initialIncludeLogs = true,
+  initialIncludeDiagnostics = true
+}: Props) {
+  const [kind, setKind] = useState<FeedbackKind>(initialKind)
+  const [title, setTitle] = useState(initialTitle)
+  const [description, setDescription] = useState(initialDescription)
+  const [includeLogs, setIncludeLogs] = useState(initialIncludeLogs)
+  const [includeDiagnostics, setIncludeDiagnostics] = useState(initialIncludeDiagnostics)
   const [preview, setPreview] = useState<BugReportPreview | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [busy, setBusy] = useState(false)

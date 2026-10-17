@@ -44,6 +44,15 @@ describe('parseToolCalls', () => {
     ).toBe('read_file README.md')
   })
 
+  it('does not treat a tool log as the reply', () => {
+    expect(
+      postedAnswer(
+        'Finished: Review the internet\n\nWhat I did:\n• Inspected .\n• Failed read_file steve-embling/.eris/rules/README.md',
+        'Steve Embling is the person named in the public pages that were opened.'
+      )
+    ).toContain('Steve Embling')
+  })
+
   it('keeps the full reply that follows a tool call', () => {
     const text =
       '<<<TOOL>>>\n{"name":"read_file","path":"README.md"}\n<<<END>>>\n\n' +

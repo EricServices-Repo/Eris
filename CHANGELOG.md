@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.54 — 2026-10-17
+
+- Agents can search the web in a browser and open a public page from the results.
+
 ## 0.2.53 — 2026-10-17
 
 Cross-platform desktop builds (macOS + Windows) from the same version tag.
