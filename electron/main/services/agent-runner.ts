@@ -14,7 +14,9 @@ export {
   parseJsonObject,
   parseToolCalls,
   stripToolBlocks,
-  thinkingBeforeTools
+  thinkingBeforeTools,
+  proseOutsideTools,
+  postedAnswer
 } from './agent/tool-parsing'
 export { buildWorkspaceToolsSystem } from './agent/prompts'
 export { runAgentWithWorkspaceTools } from './agent/loop'

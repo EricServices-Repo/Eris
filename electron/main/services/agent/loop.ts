@@ -70,7 +70,7 @@ import { formatHandoffForPrompt } from '../../../../src/shared/agent-orchestrati
 import { isVerifyCommand } from '../command-approval'
 import { buildPreservedWorkerMessages, isReadOnlyChat, truncateForModel } from './prompts'
 import { streamThinkingText } from './stream'
-import { argString, parseToolCalls, stripToolBlocks, thinkingBeforeTools } from './tool-parsing'
+import { argString, parseToolCalls, postedAnswer, proseOutsideTools, stripToolBlocks, thinkingBeforeTools } from './tool-parsing'
 import { isNativeGgufRef, releaseLocalChatSession } from '../builtin-model'
 import type { AgentChatMessage, AgentMode, AgentRunnerEvent, ToolCall } from './types'
 import type { AgentHandoffPacket } from '../../../../src/shared/agent-orchestration'
@@ -588,8 +588,8 @@ export async function* runAgentWithWorkspaceTools(options: {
   const chatReadBudget = 4
   let latestAssistant = ''
   async function* finishChatAnswer(latest: string): AsyncGenerator<AgentRunnerEvent, void, unknown> {
-    const existing = thinkingBeforeTools(latest).trim()
-    if (existing.length >= 40 && parseToolCalls(latest).length === 0) {
+    const existing = proseOutsideTools(latest)
+    if (existing.length >= 40) {
       yield { type: 'status', text: 'Done' }
       yield { type: 'answer', text: existing, replace: true }
       return
@@ -617,12 +617,11 @@ export async function* runAgentWithWorkspaceTools(options: {
         if (evt.text) yield { type: 'answer', text: evt.text }
       } else reply = evt.full
     }
-    const clean = thinkingBeforeTools(reply).trim()
-    const answer =
-      clean.length >= 40
-        ? clean
-        : answerFromProjectFiles(sourceReads) ||
-          buildWorkSummary(originalUserGoal, actionLog, clean || existing)
+    const clean = proseOutsideTools(reply)
+    const fallback =
+      answerFromProjectFiles(sourceReads) ||
+      buildWorkSummary(originalUserGoal, actionLog, clean || proseOutsideTools(latest))
+    const answer = postedAnswer(reply, fallback)
     yield { type: 'status', text: 'Done' }
     yield { type: 'answer', text: answer, replace: true }
   }
@@ -999,13 +998,12 @@ export async function* runAgentWithWorkspaceTools(options: {
       }
 
       // Deterministic summary — never unload Full to reload Lite just for a recap.
-      const workerNote = thinkingBeforeTools(assistantText).trim()
-      const answer =
-        chatReply && workerNote.length >= 40
-          ? workerNote
-          : chatReply && sourceReads.length > 0
-            ? answerFromProjectFiles(sourceReads)
-            : buildWorkSummary(originalUserGoal, actionLog, workerNote)
+      const prose = proseOutsideTools(assistantText)
+      const fallback =
+        chatReply && sourceReads.length > 0
+          ? answerFromProjectFiles(sourceReads)
+          : buildWorkSummary(originalUserGoal, actionLog, prose)
+      const answer = postedAnswer(assistantText, fallback)
       yield { type: 'status', text: 'Done' }
       yield { type: 'answer', text: answer, replace: true }
       return

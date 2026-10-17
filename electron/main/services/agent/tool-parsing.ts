@@ -153,6 +153,27 @@ export function parseToolCalls(text: string): ToolCall[] {
   return calls
 }
 
+/** Prose the user should read. Tool JSON and status lines stay in Thinking. */
+export function proseOutsideTools(text: string): string {
+  let rest = stripToolBlocks(text)
+  for (const raw of extractBalancedJsonObjects(rest)) {
+    const parsed = parseJsonObject(raw)
+    if (parsed && typeof parsed.name === 'string') rest = rest.replace(raw, '')
+  }
+  return rest
+    .split('\n')
+    .filter((line) => !/^\s*—/.test(line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/** Prefer the model's full reply over an action-log fallback. */
+export function postedAnswer(modelText: string, fallback: string): string {
+  const prose = proseOutsideTools(modelText)
+  return prose.length >= 40 ? prose : fallback
+}
+
 /** Text the user can see. Tool JSON stays out of the thinking log. */
 export function thinkingBeforeTools(text: string): string {
   const start = text.search(/<<<TOOL>>>|<tool_call>|\{\s*"name"\s*:\s*"/)

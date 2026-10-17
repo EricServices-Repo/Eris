@@ -6,7 +6,9 @@ import {
   parseJsonObject,
   parseToolCalls,
   stripToolBlocks,
-  thinkingBeforeTools
+  thinkingBeforeTools,
+  proseOutsideTools,
+  postedAnswer
 } from '../electron/main/services/agent-runner'
 
 describe('parseToolCalls', () => {
@@ -40,6 +42,16 @@ describe('parseToolCalls', () => {
         'read_file README.md\n{"name":"write_file","path":"App.js","content":"x"}'
       )
     ).toBe('read_file README.md')
+  })
+
+  it('keeps the full reply that follows a tool call', () => {
+    const text =
+      '<<<TOOL>>>\n{"name":"read_file","path":"README.md"}\n<<<END>>>\n\n' +
+      'This project is a calculator. src/main.ts adds numbers and src/App.tsx draws the keypad.'
+    expect(proseOutsideTools(text)).toContain('This project is a calculator')
+    expect(postedAnswer(text, 'Finished: task\n\nWhat I did:\n• Inspected .')).toContain(
+      'src/App.tsx'
+    )
   })
 
   it('keeps braces inside string content', () => {
