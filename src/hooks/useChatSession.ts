@@ -10,6 +10,7 @@ import {
 import type { AgentRunSummary } from '@/shared/api'
 import type {
   AppSettings,
+  ChatDelegation,
   ChatIntent,
   ChatThread,
   FileEntry,
@@ -103,6 +104,8 @@ export function useChatSession({
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [routeLabel, setRouteLabel] = useState<string | null>(null)
   const [toolActivity, setToolActivity] = useState<ToolActivityItem[]>([])
+  const [delegations, setDelegations] = useState<ChatDelegation[]>([])
+  const delegationsRef = useRef<ChatDelegation[]>([])
   const [agentStatus, setAgentStatus] = useState<string | null>(null)
   const [pendingApproval, setPendingApproval] = useState<PendingCommandApproval | null>(null)
   const [pendingQuestion, setPendingQuestion] = useState<PendingUserQuestion | null>(null)
@@ -122,6 +125,8 @@ export function useChatSession({
   const messageQueueRef = useRef<QueuedChatMessage[]>([])
   messageQueueRef.current = messageQueue
   const [pendingDiffs, setPendingDiffs] = useState<PendingDiff[]>([])
+  const pendingDiffsRef = useRef(pendingDiffs)
+  pendingDiffsRef.current = pendingDiffs
   const [activeCheckpointId, setActiveCheckpointId] = useState<string | null>(null)
   const requestIdRef = useRef<string | null>(null)
   /** Survives Stop so late chat:done/error still match the turn we aborted. */
@@ -205,6 +210,8 @@ export function useChatSession({
       setThinkingBuffer('')
       setAnswerBuffer('')
       setToolActivity([])
+      delegationsRef.current = []
+      setDelegations([])
       setPendingQuestion(null)
       setLiveSessionSteps([])
       // Paint Working immediately — don't wait on status/plan probes for first UI feedback.
@@ -533,6 +540,14 @@ export function useChatSession({
         }
       }
     )
+    const offDelegation = window.ide.onChatDelegation(({ requestId, delegation }) => {
+      if (requestId !== requestIdRef.current) return
+      const prev = delegationsRef.current
+      const idx = prev.findIndex((item) => item.id === delegation.id)
+      const next = idx < 0 ? [...prev, delegation] : prev.map((item, i) => (i === idx ? delegation : item))
+      delegationsRef.current = next
+      setDelegations(next)
+    })
     const offTool = window.ide.onChatTool(({ requestId, tool }) => {
       if (requestId !== requestIdRef.current) return
       setToolActivity((prev) => {
@@ -607,6 +622,15 @@ export function useChatSession({
         let changed = false
         for (const tab of prev) {
           if (tab.dirty) {
+            updates.push(tab)
+            continue
+          }
+          const held = pendingDiffsRef.current.some((diff) => {
+            if (diff.status !== 'pending') return false
+            const path = diff.path.split(' → ')[0] || ''
+            return tab.path === path || tab.path.endsWith('/' + path) || tab.path.endsWith(path)
+          })
+          if (held) {
             updates.push(tab)
             continue
           }
@@ -713,6 +737,9 @@ export function useChatSession({
       if (aborted) userStoppedRef.current = true
       thinkingAcc.current = ''
       answerAcc.current = ''
+      const savedDelegations = delegationsRef.current
+      delegationsRef.current = []
+      setDelegations([])
       if (!content || !threadId) return
       const latest = (await window.ide.getChat(threadId)) ?? activeThreadRef.current
       if (!latest) return
@@ -737,7 +764,8 @@ export function useChatSession({
             createdAt: Date.now(),
             agentId: meta.agentId,
             agentName: meta.agentName,
-            model: meta.model
+            model: meta.model,
+            delegations: savedDelegations.length ? savedDelegations : undefined
           }
         ]
       }
@@ -760,6 +788,7 @@ export function useChatSession({
       offThinking()
       offAnswer()
       offRouted()
+      offDelegation()
       offTool()
       offDiff()
       offCheckpoint()
@@ -810,6 +839,7 @@ export function useChatSession({
     importFiles,
     routeLabel,
     toolActivity,
+    delegations,
     agentStatus,
     setAgentStatus,
     pendingApproval,

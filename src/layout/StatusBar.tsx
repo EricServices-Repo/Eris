@@ -193,9 +193,9 @@ export function StatusBar({
           value={selectedAgentId}
           disabled={disabled}
           onChange={(e) => onAgentChange(e.target.value as string | 'auto')}
-          title="Auto route picks a specialist from your message"
+          title="Auto assigns Composer, Explainer, Reviewer, or Fast. Pin an agent to keep that role."
         >
-          <option value="auto">Auto route</option>
+          <option value="auto">Auto</option>
           {agents.map((a) => {
             const explicitModel = a.model.trim()
             return (

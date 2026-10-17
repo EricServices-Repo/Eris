@@ -63,7 +63,10 @@ import {
   MAX_BARE_INSTALLS_PER_RUN,
   packageJsonNewerThanModules
 } from './install-guards'
-import { decideMidRunAdapt, shouldConsiderMidRunAdapt } from './mid-run-adapt'
+import { shouldConsiderMidRunAdapt } from './mid-run-adapt'
+import { findAgent } from '../agents'
+import { formatHandoffForPrompt } from '../../../../src/shared/agent-orchestration'
+import { isVerifyCommand } from '../command-approval'
 import { buildPreservedWorkerMessages, truncateForModel } from './prompts'
 import { streamThinkingText } from './stream'
 import { argString, parseToolCalls, stripToolBlocks } from './tool-parsing'
@@ -141,6 +144,11 @@ export async function* runAgentWithWorkspaceTools(options: {
   }) => Promise<{ ok: boolean; childJobId?: string; detail: string }>
   /** Wait for children of the current job. */
   onAwaitChildren?: (timeoutMs: number) => Promise<{ ok: boolean; detail: string }>
+  /**
+   * Chat turns run a specialist in this same workspace and model.
+   * Nested specialists set this false so they cannot delegate again.
+   */
+  allowDelegate?: boolean
 }): AsyncGenerator<AgentRunnerEvent, void, unknown> {
   const messages: AgentChatMessage[] = options.messages.map((m) => ({ ...m }))
   const mode: AgentMode = options.mode === 'ask' ? 'ask' : 'agent'
@@ -316,6 +324,10 @@ export async function* runAgentWithWorkspaceTools(options: {
     ],
     plan.toolPolicy
   )
+  if (plan.agentId === 'reviewer' && !openaiTools.some((t) => t.function.name === 'run')) {
+    const runTool = COMPOSER_OPENAI_TOOLS.find((t) => t.function.name === 'run')
+    if (runTool) openaiTools.push(runTool)
+  }
   const resumedWorker = options.resume?.workerMessages
   const workerMessages: AgentChatMessage[] =
     resumedWorker && resumedWorker.length > 0
@@ -434,85 +446,21 @@ export async function* runAgentWithWorkspaceTools(options: {
     ) {
       return false
     }
-    const decision = await decideMidRunAdapt({
-      workspacePath,
-      settings: options.settings,
-      plan,
-      selectedModel: options.model,
-      goal: originalUserGoal,
-      getSecret: options.getSecret,
-      signal: options.signal,
-      escalateCount,
-      rerouteCount,
-      actionLog,
-      filesTouched
+    // Stay on the agent the user was shown. A stuck step is reported, not reassigned.
+    rerouteCount = 2
+    const reason = `${plan.agentName} stays on this turn. ${trigger}.`
+    consecutiveToolErrors = 0
+    noProgressStreak = 0
+    verifyFailures = Math.max(0, verifyFailures - 1)
+    yield { type: 'status', text: reason }
+    yield { type: 'thinking', text: `\n\n— ${reason}\n` }
+    workerMessages.push({
+      role: 'user',
+      content:
+        `[Eris] ${reason}\n` +
+        `Do not switch roles. Say what failed, then take the next step as ${plan.agentName}.`
     })
-    if (!decision.kind) return false
-
-    if (decision.kind === 'escalate' && decision.nextToolsModel) {
-      escalateCount++
-      workerModel = decision.nextToolsModel
-      plan = {
-        ...plan,
-        models: { ...plan.models, tools: workerModel },
-        escalateToFull: true,
-        reason: `${plan.reason} · ${decision.reason}`
-      }
-      promptBudget = contextBudgetTokens(options.settings, workerModel)
-      consecutiveToolErrors = 0
-      noProgressStreak = 0
-      verifyFailures = Math.max(0, verifyFailures - 1)
-      // Model swap — previous GGUF session is invalid.
-      releaseGgufSession()
-      yield { type: 'model', model: workerModel }
-      yield {
-        type: 'adapt',
-        kind: 'escalate',
-        reason: `${trigger}: ${decision.reason}`,
-        model: workerModel,
-        agentId: plan.agentId,
-        agentName: plan.agentName
-      }
-      yield { type: 'status', text: decision.reason }
-      yield { type: 'thinking', text: `\n\n— ${decision.reason}\n` }
-      workerMessages.push({
-        role: 'user',
-        content:
-          `[Eris mid-run escalate]\n${decision.reason}\n` +
-          `Continue on Composer Full. Re-read files you need, then emit the next tool JSON.`
-      })
-      return true
-    }
-
-    if (decision.kind === 'reroute' && decision.nextPlan) {
-      rerouteCount++
-      const prev = plan.agentName
-      plan = decision.nextPlan
-      workerModel = plan.models.tools
-      promptBudget = contextBudgetTokens(options.settings, workerModel)
-      consecutiveToolErrors = 0
-      noProgressStreak = 0
-      verifyFailures = Math.max(0, verifyFailures - 1)
-      yield { type: 'model', model: workerModel }
-      yield {
-        type: 'adapt',
-        kind: 'reroute',
-        reason: `${trigger}: ${decision.reason}`,
-        model: workerModel,
-        agentId: plan.agentId,
-        agentName: plan.agentName
-      }
-      yield { type: 'status', text: decision.reason }
-      yield { type: 'thinking', text: `\n\n— ${decision.reason}\n` }
-      workerMessages.push({
-        role: 'user',
-        content:
-          `[Eris mid-run re-route]\nWas: ${prev}. Now: ${plan.agentName}.\n${decision.reason}\n` +
-          `Continue the user goal with your specialist role. Emit tools as needed.`
-      })
-      return true
-    }
-    return false
+    return true
   }
 
   async function* compactWorkerContext(opts: {
@@ -1038,7 +986,23 @@ export async function* runAgentWithWorkspaceTools(options: {
       throwIfAborted(options.signal)
       const call = toolCalls[i]
       const id = `t${toolExecRounds}_${i}`
-      if (!toolAllowedByPolicy(call.name, plan.toolPolicy)) {
+      const reviewerRun = call.name === 'run' && plan.agentId === 'reviewer'
+      if (reviewerRun && !isVerifyCommand(argString(call.args, 'command'))) {
+        yield {
+          type: 'tool',
+          tool: {
+            id,
+            name: call.name,
+            status: 'error',
+            detail: 'Reviewer can only run tests or typecheck'
+          }
+        }
+        resultParts.push(
+          'TOOL_RESULT run: blocked. Reviewer may only run tests or typecheck (npm test, npx tsc, pytest, cargo test).'
+        )
+        continue
+      }
+      if (!toolAllowedByPolicy(call.name, plan.toolPolicy) && !reviewerRun) {
         yield {
           type: 'tool',
           tool: {
@@ -1401,7 +1365,6 @@ export async function* runAgentWithWorkspaceTools(options: {
         const goal = argString(call.args, 'goal')
         const summary = argString(call.args, 'summary') || goal
         const claim = argString(call.args, 'claim') || undefined
-        const wait = Boolean(call.args.wait)
         const confidence =
           typeof call.args.confidence === 'number' ? call.args.confidence : undefined
         const files = Array.isArray(call.args.files)
@@ -1412,12 +1375,137 @@ export async function* runAgentWithWorkspaceTools(options: {
           : Array.isArray(call.args.openQuestions)
             ? call.args.openQuestions.map((q) => String(q)).filter(Boolean)
             : undefined
+        const handoff: AgentHandoffPacket = {
+          goal,
+          summary,
+          files,
+          openQuestions,
+          confidence,
+          fromAgentId: plan.agentId,
+          toAgentId: agentId
+        }
         if (!agentId || !goal) {
           result = {
             ok: false,
             detail: 'delegate_to_agent requires agent_id and goal',
             mutated: false
           }
+        } else if (options.allowDelegate === false) {
+          result = {
+            ok: false,
+            detail: 'A specialist does not delegate further. Finish the assigned goal yourself.',
+            mutated: false
+          }
+        } else if (options.jobId?.startsWith('chat:')) {
+          const specialist = findAgent(workspacePath, agentId)
+          const specialistPlan = await planChatTurn({
+            workspacePath,
+            settings: options.settings,
+            context: {
+              text: goal,
+              selectedModel: workerModel,
+              mode: 'agent',
+              manualAgentId: agentId,
+              forceRoute: 'tools'
+            },
+            getSecret: options.getSecret,
+            signal: options.signal
+          })
+          specialistPlan.models = {
+            ...specialistPlan.models,
+            chat: workerModel,
+            tools: workerModel
+          }
+          specialistPlan.escalateToFull = false
+          specialistPlan.cloudPreferred = false
+          const delegationId = `${options.jobId}:${agentId}:${step}`
+          const runningDelegation = {
+            id: delegationId,
+            agentId,
+            agentName: specialist?.name || specialistPlan.agentName || agentId,
+            goal,
+            status: 'running' as const,
+            tools: [] as Array<{ name: string; path?: string; status: string }>,
+            result: ''
+          }
+          yield { type: 'delegation', delegation: runningDelegation }
+          yield {
+            type: 'thinking',
+            text: `\n\n— ${runningDelegation.agentName} working in this workspace…\n`
+          }
+          releaseGgufSession()
+          let answer = ''
+          const specTools: Array<{ name: string; path?: string; status: string }> = []
+          try {
+            for await (const specEvt of runAgentWithWorkspaceTools({
+              workspacePath,
+              settings: options.settings,
+              model: workerModel,
+              messages: [
+                {
+                  role: 'user',
+                  content: `${formatHandoffForPrompt(handoff)}\n\n${goal}`
+                }
+              ],
+              temperature: specialist?.temperature ?? options.temperature,
+              signal: options.signal,
+              getSecret: options.getSecret,
+              mode: 'agent',
+              turnPlan: specialistPlan,
+              approveCommand: options.approveCommand,
+              askUser: options.askUser,
+              mcp: 'reuse',
+              jobId: `${options.jobId}:inline:${agentId}`,
+              allowDelegate: false
+            })) {
+              if (
+                specEvt.type === 'thinking' ||
+                specEvt.type === 'tool' ||
+                specEvt.type === 'diff' ||
+                specEvt.type === 'status' ||
+                specEvt.type === 'workspace-changed' ||
+                specEvt.type === 'checkpoint' ||
+                specEvt.type === 'terminal'
+              ) {
+                yield specEvt
+              }
+              if (specEvt.type === 'answer') answer += specEvt.text
+              if (specEvt.type === 'tool' && specEvt.tool.status !== 'running') {
+                specTools.push({
+                  name: specEvt.tool.name,
+                  path: specEvt.tool.path,
+                  status: specEvt.tool.status
+                })
+              }
+            }
+            result = {
+              ok: true,
+              detail: answer.trim() || `${runningDelegation.agentName} finished.`,
+              mutated: specTools.some((t) => t.status === 'ok')
+            }
+            yield {
+              type: 'delegation',
+              delegation: {
+                ...runningDelegation,
+                status: 'done',
+                tools: specTools.slice(-6),
+                result: result.detail.slice(0, 700)
+              }
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err)
+            result = { ok: false, detail: message, mutated: false }
+            yield {
+              type: 'delegation',
+              delegation: {
+                ...runningDelegation,
+                status: 'failed',
+                tools: specTools.slice(-6),
+                result: message.slice(0, 700)
+              }
+            }
+          }
+          actionLog.push(`Delegated → ${agentId}: ${goal.slice(0, 80)}`)
         } else if (!options.onDelegate) {
           result = {
             ok: false,
@@ -1425,15 +1513,6 @@ export async function* runAgentWithWorkspaceTools(options: {
             mutated: false
           }
         } else {
-          const handoff: AgentHandoffPacket = {
-            goal,
-            summary,
-            files,
-            openQuestions,
-            confidence,
-            fromAgentId: plan.agentId,
-            toAgentId: agentId
-          }
           const delegated = await options.onDelegate({
             agentId,
             goal,
@@ -1442,7 +1521,6 @@ export async function* runAgentWithWorkspaceTools(options: {
             openQuestions,
             confidence,
             claim,
-            wait,
             handoff
           })
           result = {
@@ -1450,7 +1528,7 @@ export async function* runAgentWithWorkspaceTools(options: {
             detail: delegated.detail,
             mutated: false
           }
-          if (delegated.ok) {
+            if (delegated.ok) {
             yield {
               type: 'adapt',
               kind: 'delegate',
@@ -1459,8 +1537,8 @@ export async function* runAgentWithWorkspaceTools(options: {
               childJobId: delegated.childJobId
             }
             actionLog.push(`Delegated → ${agentId}: ${goal.slice(0, 80)}`)
-            if (wait && options.onAwaitChildren) {
-              yield { type: 'status', text: 'Waiting for children…' }
+            if (options.onAwaitChildren) {
+              yield { type: 'status', text: `Waiting for ${agentId}…` }
               const awaited = await options.onAwaitChildren(
                 typeof call.args.timeout_ms === 'number' ? call.args.timeout_ms : 600_000
               )
@@ -1864,7 +1942,7 @@ export async function* runAgentWithWorkspaceTools(options: {
               const adapted = yield* tryMidRunAdapt('verify failures')
               if (adapted) {
                 verifyNote +=
-                  `\nMid-run adaptation applied — continue fixing with the new model/agent.\n`
+                  `\nStaying on ${plan.agentName}. Continue fixing this failure yourself.\n`
               } else {
                 const answer =
                   buildWorkSummary(originalUserGoal, actionLog, '') +

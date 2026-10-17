@@ -159,7 +159,7 @@ export function registerChatStreamIpc(): void {
         payload.prompt?.text ||
         [...messages].reverse().find((m) => m.role === 'user')?.content.replace(/\n\n\[Eris\][\s\S]*$/, '') ||
         ''
-      const turnPlan =
+      let turnPlan =
         payload.turnPlan ??
         (await planChatTurn({
           workspacePath: appState.currentWorkspace,
@@ -266,6 +266,31 @@ export function registerChatStreamIpc(): void {
           configureBackgroundAgents({ sender: event.sender, getSecret })
         }
         const chatChildIds: string[] = []
+        const publishDelegations = () => {
+          const terminal = new Set(['done', 'failed', 'stopped', 'merged', 'discarded'])
+          for (const id of chatChildIds) {
+            const job = getBackgroundJob(id)
+            if (!job) continue
+            const named = findAgent(appState.currentWorkspace, job.agentId)
+            const failed = job.status === 'failed' || job.status === 'stopped' || job.status === 'discarded'
+            event.sender.send('chat:delegation', {
+              requestId,
+              delegation: {
+                id: job.id,
+                agentId: job.agentId,
+                agentName: job.agentName || named?.name || job.agentId,
+                goal: job.goal,
+                status: failed ? 'failed' : terminal.has(job.status) ? 'done' : 'running',
+                tools: (job.recentTools || []).slice(-6).map((tool) => ({
+                  name: tool.name,
+                  path: tool.path,
+                  status: tool.status
+                })),
+                result: (job.answer || job.liveStatus || '').slice(0, 700)
+              }
+            })
+          }
+        }
 
         // Agent mode: prefer Cloud Composer inline in chat (thinking/tools/answer),
         // not a background Agents-panel job. Fall back to local Lite on failure.
@@ -382,8 +407,7 @@ export function registerChatStreamIpc(): void {
               requestId,
               error: cloudErr instanceof Error ? cloudErr.message : String(cloudErr)
             })
-            pendingThinking +=
-              '\nCloud unavailable — continuing with local Composer Lite.\n'
+            pendingThinking += '\nCloud unavailable — continuing with Composer Lite.\n'
             scheduleStreamFlush()
           }
         }
@@ -422,9 +446,10 @@ export function registerChatStreamIpc(): void {
               // Track children under a soft parent list on a marker job? Use childIds via patch —
               // without a parent job, await_children needs another approach: collect ids locally.
               chatChildIds.push(child.id)
+              publishDelegations()
               event.sender.send('chat:status', {
                 requestId,
-                text: `Delegated → ${req.agentId} (${child.id.slice(0, 8)})`
+                text: `Delegated → ${req.agentId}`
               })
               return {
                 ok: true,
@@ -444,11 +469,13 @@ export function registerChatStreamIpc(): void {
             }
             const deadline = Date.now() + Math.max(5_000, Math.min(timeoutMs, 30 * 60_000))
             const terminal = new Set(['done', 'failed', 'stopped', 'merged', 'discarded'])
-            event.sender.send('chat:status', { requestId, text: 'Waiting for children…' })
+            event.sender.send('chat:status', { requestId, text: 'Waiting for delegated agents…' })
             while (Date.now() < deadline) {
               if (appState.chatAbort?.signal.aborted) {
+                publishDelegations()
                 return { ok: false, detail: 'Aborted while waiting for children' }
               }
+              publishDelegations()
               const children = chatChildIds.map((id) => getBackgroundJob(id)).filter(Boolean)
               const pending = children.filter((c) => c && !terminal.has(c.status))
               if (pending.length === 0) {
@@ -636,6 +663,8 @@ export function registerChatStreamIpc(): void {
               event.sender.send('chat:workspace-changed', { requestId })
             } else if (evt.type === 'status') {
               event.sender.send('chat:status', { requestId, text: evt.text })
+            } else if (evt.type === 'delegation') {
+              event.sender.send('chat:delegation', { requestId, delegation: evt.delegation })
             } else if (evt.type === 'adapt') {
               event.sender.send('chat:status', {
                 requestId,

@@ -233,6 +233,13 @@ export default function App() {
     setSelectedAgentId,
     refreshModels
   } = useModels(settings)
+
+  const pinAgent = (agentId: string | 'auto') => {
+    setSelectedAgentId(agentId)
+    void window.ide
+      .setSettings('user', { agent: { routing: { pinnedAgentId: agentId } } })
+      .then(setSettings)
+  }
   const { skills, refreshSkills, activeSkills, setActiveSkills } = useSkills()
   const {
     rightPanel,
@@ -311,6 +318,7 @@ export default function App() {
     importFiles,
     routeLabel,
     toolActivity,
+    delegations,
     agentStatus,
     setAgentStatus,
     pendingApproval,
@@ -864,6 +872,7 @@ export default function App() {
                   chatError={chatError}
                   agentStatus={agentStatus}
                   toolActivity={toolActivity}
+                  delegations={delegations}
                   openTabs={tabs.map((t) => ({ path: t.path, name: t.name }))}
                   mentionFiles={[...flattenFiles(tree), ...indexMentions]}
                   attachments={attachments}
@@ -873,6 +882,9 @@ export default function App() {
                   onChatModeChange={setChatMode}
                   models={models}
                   selectedModel={selectedModel}
+                  agents={agents}
+                  selectedAgentId={selectedAgentId}
+                  onAgentChange={pinAgent}
                   onModelChange={(model) => {
                     setSelectedModel(model)
                     void window.ide
@@ -1229,11 +1241,20 @@ export default function App() {
                       ) || null
                     }
                     breakpoints={breakpoints.map((b) => ({ path: b.path, line: b.line }))}
-                    onAcceptPatch={(id) =>
+                    onAcceptPatch={(id) => {
+                      const target = pendingDiffs.find((d) => d.id === id)
                       setPendingDiffs((prev) =>
                         prev.map((d) => (d.id === id ? { ...d, status: 'kept' } : d))
                       )
-                    }
+                      if (!target || !activeFile) return
+                      const path = target.path.split(' → ')[0] || ''
+                      if (!(activeFile.endsWith(path) || activeFile.endsWith('/' + path))) return
+                      setTabs((prev) =>
+                        prev.map((t) =>
+                          t.path === activeFile ? { ...t, content: target.after, dirty: false } : t
+                        )
+                      )
+                    }}
                     onRejectPatch={(id) => {
                       void (async () => {
                         const target = pendingDiffs.find((d) => d.id === id)
@@ -1527,7 +1548,7 @@ export default function App() {
         onOpenUsage={() => openSettings('usage')}
         onOpenAccount={() => openSettings('account')}
         onCheckUpdates={() => void window.ide.checkForAppUpdates(false)}
-        onAgentChange={setSelectedAgentId}
+        onAgentChange={pinAgent}
       />
 
       {settingsMounted && (

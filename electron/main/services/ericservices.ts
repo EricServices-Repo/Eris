@@ -203,7 +203,8 @@ export function buildSyncableSettings(settings: AppSettings): SettingsPatch {
         mode: settings.agent.routing.mode,
         useLlmRouter: settings.agent.routing.useLlmRouter,
         fallbackAgentId: settings.agent.routing.fallbackAgentId,
-        routerModel: settings.agent.routing.routerModel
+        routerModel: settings.agent.routing.routerModel,
+        pinnedAgentId: settings.agent.routing.pinnedAgentId || 'auto'
       }
     },
     models: {

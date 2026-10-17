@@ -56,6 +56,18 @@ export type AgentRunnerEvent =
       model?: string
       childJobId?: string
     }
+  | {
+      type: 'delegation'
+      delegation: {
+        id: string
+        agentId: string
+        agentName: string
+        goal: string
+        status: 'running' | 'done' | 'failed'
+        tools: Array<{ name: string; path?: string; status: string }>
+        result: string
+      }
+    }
 
 export interface ToolCall {
   name: string

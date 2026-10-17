@@ -34,7 +34,8 @@
       "useLlmRouter": true,
       "fallbackAgentId": "composer",
       "profile": "auto",
-      "preferCloudComposer": true
+      "preferCloudComposer": true,
+      "pinnedAgentId": "auto"
     },
     "constrainLocalToolCalls": true,
     "projectMemory": "auto"

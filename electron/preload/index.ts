@@ -101,6 +101,7 @@ const api: IdeApi = {
   onChatAnswer: (cb) => subscribe('chat:answer', cb),
   onChatDone: (cb) => subscribe('chat:done', cb),
   onChatError: (cb) => subscribe('chat:error', cb),
+  onChatDelegation: (cb) => subscribe('chat:delegation', cb),
   onChatTool: (cb) => subscribe('chat:tool', cb),
   onChatDiff: (cb) => subscribe('chat:diff', cb),
   onChatCheckpoint: (cb) => subscribe('chat:checkpoint', cb),

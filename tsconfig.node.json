@@ -22,6 +22,8 @@
     "electron/**/*",
     "src/shared/**/*",
     "resources/defaults.json",
+    "resources/agents.json",
+    "src/features/chat/thinking-summary.ts",
     "tests/**/*",
     "vitest.config.ts"
   ]

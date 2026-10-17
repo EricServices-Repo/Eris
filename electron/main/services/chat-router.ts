@@ -17,8 +17,11 @@ import { getLocalStatuses, isLocalRef, resolveExactLocalRef } from './local-mode
 import { streamModelChat } from './chat-runtime'
 import { routeHeuristic, routeMessage } from './router'
 import { learnedRouteFor, readRoutingCorrections, routingExamples } from './routing-feedback'
-import { bestEvalModelForIntent } from './eval-store'
-import { bestModelForIntent as bestTelemetryModel } from './agent-telemetry'
+import { chatAgentForTurn } from '../../../src/shared/agent-contract'
+import { CONTEXT_HEADROOM_BYTES, inferenceBudgetBytes } from './vram-fit'
+
+/** A custom agent must be at least this sure to replace the roster role. */
+const CUSTOM_AGENT_MIN_CONFIDENCE = 0.75
 
 /** LLM router hints below this confidence are ignored. */
 const LLM_MIN_CONFIDENCE = 0.55
@@ -72,21 +75,66 @@ const FULL_TOOLS = new Set([
   'await_children'
 ])
 
-function readyModelCandidates(settings: AppSettings): string[] {
-  const out: string[] = []
-  for (const ref of ['builtin:composer-lite', 'builtin:composer'] as const) {
-    if (isExactBuiltinReady(ref)) out.push(ref)
+const NON_CHAT_LOCAL = /mmproj|embed|clip|vision|encoder/i
+
+/**
+ * Largest ready local chat GGUF whose weights plus context headroom fit the budget.
+ * Unknown or too-small budgets stay on Composer Lite.
+ */
+export function bestFittingLocalModel(
+  models: Array<{ ref: string; ready?: boolean; approxBytes?: number; filename?: string; name?: string }>,
+  budgetBytes: number
+): string | null {
+  if (budgetBytes <= 0) return null
+  const fitting = models
+    .filter((m) => {
+      if (m.ready === false || !isLocalRef(m.ref)) return false
+      const bytes = m.approxBytes || 0
+      if (bytes <= 0) return false
+      if (NON_CHAT_LOCAL.test(`${m.filename || ''} ${m.name || ''} ${m.ref}`)) return false
+      return bytes + CONTEXT_HEADROOM_BYTES <= budgetBytes
+    })
+    .sort((a, b) => (b.approxBytes || 0) - (a.approxBytes || 0))
+  return fitting[0]?.ref ?? null
+}
+
+export async function readyLocalHandoffRef(settings: AppSettings): Promise<string | null> {
+  let budget = 0
+  try {
+    const { getGpuAccelStatus } = await import('./gpu-accel')
+    const gpu = await getGpuAccelStatus(settings.models.preferEgpu !== false)
+    budget = inferenceBudgetBytes({
+      vramShareFreeBytes: gpu.vramShareFreeBytes,
+      vramShareTotalBytes: gpu.vramShareTotalBytes,
+      preferredFreeBytes: gpu.preferredGpu?.vramFreeBytes,
+      preferredTotalBytes: gpu.preferredGpu?.vramBytes
+    })
+  } catch {
+    budget = 0
   }
-  for (const m of getLocalStatuses()) {
-    if (m.ready) out.push(m.ref)
+  return bestFittingLocalModel(getLocalStatuses(), budget)
+}
+
+export function selectComposerLocalHandoff(options: {
+  selectedModel: string
+  intent: ChatIntent
+  profile?: 'auto' | 'local' | 'max'
+  preferCloudComposer: boolean
+  cloudJobsExhausted: boolean
+  readyLocalRef: string | null
+}): { ref: string; because: 'usage' | 'local' } | null {
+  if (!options.readyLocalRef) return null
+  if (!intentNeedsMutation(options.intent)) return null
+  const selected = options.selectedModel.trim() || 'builtin:composer-lite'
+  if (!isBuiltinRef(selected) || !/composer/i.test(selected)) return null
+  const profile = options.profile ?? 'auto'
+  if (profile === 'local' || options.preferCloudComposer === false) {
+    return { ref: options.readyLocalRef, because: 'local' }
   }
-  for (const conn of settings.models.connections) {
-    if (!conn.enabled || conn.type === 'builtin') continue
-    for (const name of conn.models) {
-      if (name && !isBuiltinRef(name) && !name.startsWith('local:')) out.push(name)
-    }
+  if (options.cloudJobsExhausted) {
+    return { ref: options.readyLocalRef, because: 'usage' }
   }
-  return [...new Set(out)]
+  return null
 }
 
 export function intentNeedsTools(intent: ChatIntent): boolean {
@@ -187,7 +235,8 @@ export function classifyIntent(text: string, mode: 'ask' | 'agent'): ChatIntent 
   }
 
   if (/\b(explain|how does|what does|overview|summarize|why)\b/i.test(t)) {
-    return 'answer'
+    // Agent mode must read the workspace. Ask mode stays a plain answer.
+    return mode === 'agent' ? 'explore' : 'answer'
   }
 
   return 'answer'
@@ -243,6 +292,13 @@ export function filterToolsByPolicy<T extends { function: { name: string } }>(
 ): T[] {
   if (policy === 'none') return []
   return tools.filter((t) => toolAllowedByPolicy(t.function.name, policy))
+}
+
+/** Agents run on Composer Lite locally, or Composer Full on Cloud Agents. */
+export function composerAgentModel(selected: string): 'builtin:composer-lite' | 'builtin:composer' {
+  const name = selected.trim()
+  if (name === 'builtin:composer' || name === 'composer') return 'builtin:composer'
+  return 'builtin:composer-lite'
 }
 
 export function resolveModelRoles(options: {
@@ -333,7 +389,8 @@ function formatReason(parts: {
     override: 'Override',
     learned: 'Learned',
     eval: 'Eval',
-    telemetry: 'Usage'
+    telemetry: 'Usage',
+    handoff: 'Handoff'
   }
   return `${profileBit}${cloudBit} · ${label[parts.method]} → ${parts.agentName} · ${parts.intent} · ${modelBit}`
 }
@@ -345,7 +402,7 @@ async function llmRouteHint(options: {
   getSecret: (key: string) => string | null
   signal?: AbortSignal
   examples?: string
-}): Promise<{ intent?: ChatIntent; agentId?: string } | null> {
+}): Promise<{ intent?: ChatIntent; agentId?: string; confidence: number } | null> {
   const routerModel =
     options.settings.agent.routing.routerModel ||
     options.settings.models.defaultModel ||
@@ -426,7 +483,8 @@ async function llmRouteHint(options: {
       parsed.agentId && options.agents.some((a) => a.id === parsed.agentId)
         ? parsed.agentId
         : undefined
-    return { intent, agentId }
+    const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0
+    return { intent, agentId, confidence }
   } catch {
     return null
   }
@@ -473,13 +531,19 @@ export async function planChatTurn(options: {
     routingProfile === 'auto' ||
     routingProfile === 'max'
 
+  const roster = allAgentsFlat(options.workspacePath)
+  const hasCustomAgent = roster.some((a) => a.enabled && a.builtin === false)
+
+  // Builtin chat roles are assigned from the message. The model router only
+  // runs when a project-defined agent might be a better match.
   if (
     mode === 'agent' &&
     options.settings.agent.routing.enabled &&
     wantLlmRouter &&
+    hasCustomAgent &&
     !options.context.manualAgentId
   ) {
-    const agents = allAgentsFlat(options.workspacePath).filter((a) => a.enabled)
+    const agents = roster.filter((a) => a.enabled)
     // Cap LLM router wait so TTFT isn't blocked on a cold local/router call.
     const hint = await Promise.race([
       llmRouteHint({
@@ -500,14 +564,12 @@ export async function planChatTurn(options: {
         hint.intent !== 'capability'
       if (!llmStripsTools) intent = hint.intent
     }
-    if (hint?.agentId) {
+    if (hint?.agentId && hint.confidence >= CUSTOM_AGENT_MIN_CONFIDENCE) {
       const picked = findAgent(options.workspacePath, hint.agentId)
-      if (picked?.enabled) {
+      if (picked?.enabled && picked.builtin === false) {
         agent = picked
         method = 'llm'
       }
-    } else if (hint) {
-      method = 'llm'
     }
   }
 
@@ -525,6 +587,24 @@ export async function planChatTurn(options: {
   if (correction && intent !== classifiedIntent) {
     method = forceRoute ? 'override' : 'learned'
   }
+
+  // Auto chat uses the roster contract. A pinned agent, a learned/forced
+  // correction, and a winning custom agent are left as chosen.
+  if (
+    !options.context.manualAgentId &&
+    (method === 'heuristic' || method === 'llm') &&
+    agent?.builtin !== false
+  ) {
+    const defined = findAgent(
+      options.workspacePath,
+      chatAgentForTurn({ mode, intent, text })
+    )
+    if (defined?.enabled) {
+      agent = defined
+      method = 'heuristic'
+    }
+  }
+
   if (correction === 'tools' && agent && CEILING_RANK[agent.tools ?? 'edit'] < CEILING_RANK.edit) {
     const fallback = findAgent(options.workspacePath, options.settings.agent.routing.fallbackAgentId)
     if (fallback?.enabled && CEILING_RANK[fallback.tools ?? 'edit'] >= CEILING_RANK.edit) {
@@ -549,34 +629,7 @@ export async function planChatTurn(options: {
   }
 
   const toolPolicy = effectiveToolPolicy(agent, intent, mode)
-  let modelForRoles = selectedModel
-  if (
-    options.settings.evals.useScoresForRouting &&
-    !options.context.manualAgentId &&
-    mode === 'agent'
-  ) {
-    const winner = bestEvalModelForIntent(
-      intent,
-      readyModelCandidates(options.settings),
-      options.settings.evals.minRuns
-    )
-    if (winner && winner !== selectedModel) {
-      modelForRoles = winner
-      method = 'eval'
-    } else if (options.settings.general.telemetry?.agentOutcomes) {
-      // No eval winner — fall back to the model with the best real-world outcome
-      // for this intent (opt-in telemetry).
-      const telemetryWinner = bestTelemetryModel(
-        intent,
-        readyModelCandidates(options.settings),
-        options.settings.evals.minRuns
-      )
-      if (telemetryWinner && telemetryWinner !== selectedModel) {
-        modelForRoles = telemetryWinner
-        method = 'telemetry'
-      }
-    }
-  }
+  const modelForRoles = mode === 'agent' ? composerAgentModel(selectedModel) : selectedModel
   const roles = resolveModelRoles({
     selectedModel: modelForRoles,
     intent,
@@ -636,7 +689,10 @@ export function turnPlanToRouteResult(plan: TurnPlan): RouteResult {
     method:
       plan.method === 'override'
         ? 'manual'
-        : plan.method === 'learned' || plan.method === 'eval' || plan.method === 'telemetry'
+        : plan.method === 'learned' ||
+            plan.method === 'eval' ||
+            plan.method === 'telemetry' ||
+            plan.method === 'handoff'
           ? 'heuristic'
           : plan.method
   }

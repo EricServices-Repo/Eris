@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.45 — 2026-10-17
+
+- Chat agents stay on Composer Lite or Full, and their edits are reviewed in the open file.
+
 ## 0.2.44 — 2026-10-16
 
 Cross-platform desktop builds (macOS + Windows) from the same version tag.

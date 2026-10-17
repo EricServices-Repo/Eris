@@ -117,7 +117,9 @@ export const SettingsSchema = z.object({
        */
       profile: z.enum(['auto', 'local', 'max']).default('auto'),
       /** When true (default), Agent mode may run built-in tools on Cloud Composer. */
-      preferCloudComposer: z.boolean().default(true)
+      preferCloudComposer: z.boolean().default(true),
+      /** Composer picker. "auto" assigns a roster role from the message. */
+      pinnedAgentId: z.string().min(1).default('auto')
     })
   }),
   intelligence: z.object({
@@ -250,6 +252,16 @@ export interface WorkspaceRecord {
   lastOpenedAt: number
 }
 
+export interface ChatDelegation {
+  id: string
+  agentId: string
+  agentName: string
+  goal: string
+  status: 'running' | 'done' | 'failed'
+  tools: Array<{ name: string; path?: string; status: string }>
+  result: string
+}
+
 export interface ChatMessage {
   id: string
   role: 'system' | 'user' | 'assistant'
@@ -260,6 +272,8 @@ export interface ChatMessage {
   agentId?: string
   agentName?: string
   model?: string
+  /** Specialists Composer handed this turn to. */
+  delegations?: ChatDelegation[]
 }
 
 export interface ChatThread {
@@ -370,7 +384,7 @@ export interface TurnPlan {
   requiresTools: boolean
   escalateToFull: boolean
   reason: string
-  method: 'manual' | 'heuristic' | 'llm' | 'default' | 'override' | 'learned' | 'eval' | 'telemetry'
+  method: 'manual' | 'heuristic' | 'llm' | 'default' | 'override' | 'learned' | 'eval' | 'telemetry' | 'handoff'
   /** Intent the classifier picked before any override / learned correction */
   classifiedIntent?: ChatIntent
   /** Set when the selected chat model cannot run (e.g. builtin not downloaded). */

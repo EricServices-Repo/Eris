@@ -109,7 +109,7 @@ describe('buildSyncableSettings', () => {
     expect(sync.agent?.constrainLocalToolCalls).toBe(false)
 
     expect(sync.models?.preferEgpu).toBe(false)
-    const openai = sync.models?.connections?.find((c) => c.id === 'openai')
+    const openai = sync.models?.connections?.find((c) => c?.id === 'openai')
     expect(openai?.apiKeyRef).toBe('')
     expect(openai?.baseUrl).toBe('https://api.openai.com/v1')
 

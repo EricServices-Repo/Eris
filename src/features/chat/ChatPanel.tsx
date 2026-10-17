@@ -1,11 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ChatThread, ModelInfo, SkillRecord } from '@/shared/settings-schema'
+import type {
+  ChatDelegation,
+  ChatThread,
+  ModelInfo,
+  ResolvedAgent,
+  SkillRecord
+} from '@/shared/settings-schema'
+import { CHAT_AGENT_CONTRACTS, contractForAgent } from '@/shared/agent-contract'
 import { pathBasename } from '@/shared/paths'
 import { ThinkingBlock, type ToolActivityItem } from './ThinkingBlock'
 import { MarkdownMessage } from './MarkdownMessage'
 
 export type { ToolActivityItem }
 export type ChatMode = 'ask' | 'agent'
+
+const AGENT_ORDER = CHAT_AGENT_CONTRACTS.map((agent) => agent.id)
+
+function orderedAgents(agents: ResolvedAgent[]): ResolvedAgent[] {
+  const rank = (id: string) => {
+    const index = AGENT_ORDER.indexOf(id as (typeof AGENT_ORDER)[number])
+    return index === -1 ? AGENT_ORDER.length : index
+  }
+  return [...agents].sort((a, b) => rank(a.id) - rank(b.id) || a.name.localeCompare(b.name))
+}
 
 export interface ChatAttachment {
   path: string
@@ -52,6 +69,7 @@ interface Props {
   chatError: string | null
   agentStatus: string | null
   toolActivity: ToolActivityItem[]
+  delegations?: ChatDelegation[]
   openTabs: Array<{ path: string; name: string }>
   mentionFiles: MentionCandidate[]
   attachments: ChatAttachment[]
@@ -62,6 +80,9 @@ interface Props {
   models: ModelInfo[]
   selectedModel: string
   onModelChange: (model: string) => void
+  agents?: ResolvedAgent[]
+  selectedAgentId?: string | 'auto'
+  onAgentChange?: (agentId: string | 'auto') => void
   onNewChat: () => void
   onSend: (text: string, attachments: ChatAttachment[], skillIds: string[]) => void
   onStop: () => void
@@ -206,6 +227,34 @@ function InlineAgentQuestion({
   )
 }
 
+function DelegationCards({ items }: { items: ChatDelegation[] }) {
+  if (items.length === 0) return null
+  return (
+    <div className="delegation-list">
+      {items.map((item) => (
+        <section key={item.id} className={`delegation-card is-${item.status}`}>
+          <header>
+            <strong>{item.agentName}</strong>
+            <span>{item.status === 'running' ? 'working' : item.status}</span>
+          </header>
+          <p>{item.goal}</p>
+          {item.tools.length > 0 && (
+            <ul>
+              {item.tools.map((tool, index) => (
+                <li key={`${tool.name}-${index}`}>
+                  {tool.name}
+                  {tool.path ? ` ${tool.path}` : ''} · {tool.status}
+                </li>
+              ))}
+            </ul>
+          )}
+          {item.result && <p className="delegation-result">{item.result}</p>}
+        </section>
+      ))}
+    </div>
+  )
+}
+
 export function ChatPanel({
   activeThread,
   routeLabel,
@@ -217,6 +266,7 @@ export function ChatPanel({
   chatError,
   agentStatus,
   toolActivity,
+  delegations = [],
   openTabs,
   mentionFiles,
   attachments,
@@ -227,6 +277,9 @@ export function ChatPanel({
   models,
   selectedModel,
   onModelChange,
+  agents = [],
+  selectedAgentId = 'auto',
+  onAgentChange,
   onNewChat,
   onSend,
   onStop,
@@ -436,6 +489,12 @@ export function ChatPanel({
   const queueFull = queuedMessages.length >= MAX_QUEUED_MESSAGES
 
   const modelOptions = useMemo(() => {
+    if (chatMode === 'agent') {
+      return [
+        { name: 'builtin:composer-lite', ready: composerReady, source: 'builtin' as const },
+        { name: 'builtin:composer', ready: true, source: 'builtin' as const }
+      ]
+    }
     // Chat picker: only models that are downloaded / reachable — not the full catalog.
     const ready = models.filter((m) => m.ready === true)
     if (ready.length > 0) return ready
@@ -459,9 +518,11 @@ export function ChatPanel({
         source: 'builtin' as const
       }
     ]
-  }, [models, selectedModel, composerReady])
+  }, [chatMode, models, selectedModel, composerReady])
 
   const modelLabel = (m: ModelInfo): string => {
+    if (m.name === 'builtin:composer-lite') return 'Composer Lite'
+    if (m.name === 'builtin:composer') return 'Composer Full'
     if (m.source === 'builtin') return m.name.replace(/^builtin:/, '')
     if (m.source === 'local') return m.name.replace(/^local:/, '')
     return m.name
@@ -472,8 +533,9 @@ export function ChatPanel({
     : modelOptions[0]?.name || 'builtin:composer-lite'
 
   useEffect(() => {
+    if (chatMode === 'agent') return
     if (selectValue && selectValue !== selectedModel) onModelChange(selectValue)
-  }, [selectValue, selectedModel, onModelChange])
+  }, [chatMode, selectValue, selectedModel, onModelChange])
 
   const submit = () => {
     const text = draft.trim()
@@ -645,11 +707,22 @@ export function ChatPanel({
         <div className="agent-messages">
           {!activeThread && !streaming && !chatError ? (
             <div className="chat-empty agent-welcome">
-              <h2>Talk to your agent</h2>
+              <h2>Chat runs one agent</h2>
               <p>
-                Open <strong>Chats</strong> under your project in the Explorer, or start a new one.
-                Type <code>/</code> for skills, <code>@</code> for files. Switch Ask / Agent above.
+                Auto picks the role from your message. Ask never edits. Pin an agent when you want
+                that role every time.
               </p>
+              <ul className="agent-roster">
+                {CHAT_AGENT_CONTRACTS.map((agent) => (
+                  <li key={agent.id}>
+                    <strong>
+                      {agent.name}
+                      {agent.auto ? '' : ' · pin'}
+                    </strong>
+                    <span>{agent.job}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           ) : (
             <div className="chat-messages">
@@ -664,6 +737,9 @@ export function ChatPanel({
                     </span>
                     {m.role === 'assistant' && m.thinking && (
                       <ThinkingBlock thinking={m.thinking} defaultOpen={false} />
+                    )}
+                    {m.role === 'assistant' && m.delegations && m.delegations.length > 0 && (
+                      <DelegationCards items={m.delegations} />
                     )}
                     {m.role === 'assistant' ? (
                       <MarkdownMessage content={m.content} onOpenPath={onOpenPath} />
@@ -710,6 +786,7 @@ export function ChatPanel({
                     defaultOpen={false}
                     live={!answerBuffer}
                   />
+                  <DelegationCards items={delegations} />
                   {pendingApproval && onApprovalDecision && (
                     <div className="approval-card" role="alertdialog">
                       <div className="approval-title">
@@ -1028,6 +1105,27 @@ export function ChatPanel({
                   }}
                 />
                 <div className="composer-right">
+                  {onAgentChange && (
+                    <select
+                      className="composer-agent-select"
+                      value={selectedAgentId}
+                      disabled={streaming}
+                      onChange={(e) => onAgentChange(e.target.value as string | 'auto')}
+                      title={
+                        selectedAgentId === 'auto'
+                          ? 'Auto assigns Composer, Explainer, Reviewer, or Fast. Coder runs when you pin it.'
+                          : contractForAgent(selectedAgentId)?.job || 'Pinned agent'
+                      }
+                      aria-label="Select agent"
+                    >
+                      <option value="auto">Auto</option>
+                      {orderedAgents(agents).map((agent) => (
+                        <option key={agent.id} value={agent.id} title={agent.description}>
+                          {agent.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                   <select
                     className="composer-model-select"
                     value={selectValue}

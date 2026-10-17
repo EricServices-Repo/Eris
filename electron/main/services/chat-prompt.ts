@@ -1,4 +1,5 @@
 import type { AppSettings, ChatPromptInput } from '../../../src/shared/settings-schema'
+import { contractForAgent } from '../../../src/shared/agent-contract'
 import { findAgent, getProjectAgents } from './agents'
 import { loadWorkspaceRules } from './chats'
 import { languageFromPath, readTextFile } from './files'
@@ -33,7 +34,11 @@ export function buildChatMessages(
 
   const agent = findAgent(workspacePath, input.agentId)
   const isOrchestrator = getProjectAgents(workspacePath).orchestrator.id === input.agentId
+  const contract = contractForAgent(input.agentId)
   const parts: string[] = [
+    contract
+      ? `AGENT CONTRACT — ${contract.name}\nJob: ${contract.job}\nTools: ${contract.tools}. ${contract.doesNot}\nDone when: ${contract.done}`
+      : '',
     settings.agent.systemPrompt.slice(0, lean ? 2000 : 5000),
     agent
       ? `You are the “${agent.name}” ${isOrchestrator ? 'orchestrator' : 'subagent'}.\n${agent.systemPrompt.slice(0, lean ? 2800 : 8000)}`

@@ -1,5 +1,6 @@
 import type {
   AppSettings,
+  ChatDelegation,
   ChatThread,
   FileEntry,
   BuiltinModelStatus,
@@ -367,6 +368,9 @@ export interface IdeApi {
   onChatAnswer: (cb: (data: { requestId: string; chunk: string }) => void) => () => void
   onChatDone: (cb: (data: { requestId: string; aborted?: boolean }) => void) => () => void
   onChatError: (cb: (data: { requestId: string; error: string }) => void) => () => void
+  onChatDelegation: (
+    cb: (data: { requestId: string; delegation: ChatDelegation }) => void
+  ) => () => void
   onChatTool: (
     cb: (data: {
       requestId: string

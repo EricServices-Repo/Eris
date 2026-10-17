@@ -18,7 +18,10 @@ import {
   filterToolsByPolicy,
   isErisCapabilityQuestion,
   planChatTurn,
+  bestFittingLocalModel,
+  composerAgentModel,
   resolveModelRoles,
+  selectComposerLocalHandoff,
   toolAllowedByPolicy
 } from '../electron/main/services/chat-router'
 import { recordRoutingCorrection } from '../electron/main/services/routing-feedback'
@@ -69,7 +72,7 @@ describe('classifyIntent', () => {
     ['where is AuthService defined?', 'agent', 'explore'],
     ['code review this PR', 'agent', 'review'],
     ['run npm test', 'agent', 'run'],
-    ['how does the app work?', 'agent', 'answer'],
+    ['how does the app work?', 'agent', 'explore'],
     ['how do I launch this app?', 'agent', 'run'],
     ['Make it so it works', 'agent', 'edit'],
     ['fix the bug in the parser code', 'agent', 'edit'],
@@ -176,11 +179,224 @@ describe('resolveModelRoles', () => {
   })
 })
 
+describe('composerAgentModel', () => {
+  it('allows only Composer Lite and Composer Full', () => {
+    expect(composerAgentModel('builtin:composer')).toBe('builtin:composer')
+    expect(composerAgentModel('composer')).toBe('builtin:composer')
+    expect(composerAgentModel('builtin:composer-lite')).toBe('builtin:composer-lite')
+    expect(composerAgentModel('local:qwen3-32b')).toBe('builtin:composer-lite')
+    expect(composerAgentModel('gpt-4o')).toBe('builtin:composer-lite')
+  })
+})
+
+describe('selectComposerLocalHandoff', () => {
+  const local = 'local:qwen3-32b'
+
+  it('stays on Composer while Cloud usage remains', () => {
+    expect(
+      selectComposerLocalHandoff({
+        selectedModel: 'builtin:composer-lite',
+        intent: 'edit',
+        profile: 'auto',
+        preferCloudComposer: true,
+        cloudJobsExhausted: false,
+        readyLocalRef: local
+      })
+    ).toBeNull()
+  })
+
+  it('hands tool turns to a local model when Cloud usage is spent', () => {
+    expect(
+      selectComposerLocalHandoff({
+        selectedModel: 'builtin:composer',
+        intent: 'edit',
+        profile: 'max',
+        preferCloudComposer: true,
+        cloudJobsExhausted: true,
+        readyLocalRef: local
+      })
+    ).toEqual({ ref: local, because: 'usage' })
+  })
+
+  it('hands tool turns to a local model on the local profile', () => {
+    expect(
+      selectComposerLocalHandoff({
+        selectedModel: 'builtin:composer-lite',
+        intent: 'run',
+        profile: 'local',
+        preferCloudComposer: true,
+        cloudJobsExhausted: false,
+        readyLocalRef: local
+      })
+    ).toEqual({ ref: local, because: 'local' })
+  })
+
+  it('leaves explore and review on Composer Lite', () => {
+    expect(
+      selectComposerLocalHandoff({
+        selectedModel: 'builtin:composer-lite',
+        intent: 'explore',
+        profile: 'local',
+        preferCloudComposer: false,
+        cloudJobsExhausted: true,
+        readyLocalRef: local
+      })
+    ).toBeNull()
+    expect(
+      selectComposerLocalHandoff({
+        selectedModel: 'builtin:composer-lite',
+        intent: 'review',
+        profile: 'local',
+        preferCloudComposer: false,
+        cloudJobsExhausted: true,
+        readyLocalRef: local
+      })
+    ).toBeNull()
+  })
+
+  it('leaves questions and explicit API models on their own model', () => {
+    expect(
+      selectComposerLocalHandoff({
+        selectedModel: 'builtin:composer-lite',
+        intent: 'answer',
+        profile: 'local',
+        preferCloudComposer: false,
+        cloudJobsExhausted: true,
+        readyLocalRef: local
+      })
+    ).toBeNull()
+    expect(
+      selectComposerLocalHandoff({
+        selectedModel: 'qwen3:0.6b',
+        intent: 'edit',
+        profile: 'local',
+        preferCloudComposer: false,
+        cloudJobsExhausted: true,
+        readyLocalRef: local
+      })
+    ).toBeNull()
+  })
+})
+
+describe('bestFittingLocalModel', () => {
+  const gb = (n: number) => n * 1024 ** 3
+  const models = [
+    { ref: 'local:small', ready: true, approxBytes: gb(4), filename: 'small-Q4.gguf' },
+    { ref: 'local:large', ready: true, approxBytes: gb(20), filename: 'large-Q4.gguf' },
+    { ref: 'local:vision', ready: true, approxBytes: gb(3), filename: 'mmproj.gguf' }
+  ]
+
+  it('picks the largest model that fits and skips non-chat files', () => {
+    expect(bestFittingLocalModel(models, gb(8))).toBe('local:small')
+    expect(bestFittingLocalModel(models, gb(24))).toBe('local:large')
+  })
+
+  it('stays on Composer Lite when the budget is unknown or too small', () => {
+    expect(bestFittingLocalModel(models, 0)).toBeNull()
+    expect(bestFittingLocalModel(models, gb(2))).toBeNull()
+  })
+})
+
 describe('planChatTurn', () => {
   const base = {
     workspacePath: null,
     getSecret: () => null
   }
+
+  it('runs agent turns on Composer even when another model is selected', async () => {
+    const plan = await planChatTurn({
+      ...base,
+      settings: getDefaults(),
+      context: {
+        text: 'implement a login form',
+        selectedModel: 'local:qwen3-32b',
+        mode: 'agent'
+      }
+    })
+    expect(plan.models.chat).toBe('builtin:composer-lite')
+    expect(plan.models.tools).toBe('builtin:composer-lite')
+  })
+
+  it('leaves Ask mode on the selected model', async () => {
+    const plan = await planChatTurn({
+      ...base,
+      settings: getDefaults(),
+      context: {
+        text: 'explain how routing works',
+        selectedModel: 'gpt-4o',
+        mode: 'ask'
+      }
+    })
+    expect(plan.models.chat).toBe('gpt-4o')
+  })
+
+  it('assigns Composer to edits and does not steal them for Coder', async () => {
+    const plan = await planChatTurn({
+      ...base,
+      settings: getDefaults(),
+      context: {
+        text: 'implement a login form',
+        selectedModel: 'builtin:composer-lite',
+        mode: 'agent'
+      }
+    })
+    expect(plan.agentId).toBe('composer')
+    expect(plan.intent).toBe('edit')
+    expect(plan.toolPolicy).toBe('edit')
+  })
+
+  it('assigns Reviewer, Explainer, and Fast from the message', async () => {
+    const review = await planChatTurn({
+      ...base,
+      settings: getDefaults(),
+      context: {
+        text: 'code review this PR',
+        selectedModel: 'builtin:composer-lite',
+        mode: 'agent'
+      }
+    })
+    expect(review.agentId).toBe('reviewer')
+    expect(review.toolPolicy).toBe('read')
+
+    const explain = await planChatTurn({
+      ...base,
+      settings: getDefaults(),
+      context: {
+        text: 'explain how routing works in this app',
+        selectedModel: 'builtin:composer-lite',
+        mode: 'agent'
+      }
+    })
+    expect(explain.agentId).toBe('explainer')
+    expect(explain.toolPolicy).toBe('read')
+
+    const lookup = await planChatTurn({
+      ...base,
+      settings: getDefaults(),
+      context: {
+        text: 'where is AuthService defined?',
+        selectedModel: 'builtin:composer-lite',
+        mode: 'agent'
+      }
+    })
+    expect(lookup.agentId).toBe('fast')
+    expect(lookup.toolPolicy).toBe('read')
+  })
+
+  it('keeps a pinned agent even when Auto would choose another', async () => {
+    const plan = await planChatTurn({
+      ...base,
+      settings: getDefaults(),
+      context: {
+        text: 'implement a login form',
+        selectedModel: 'builtin:composer-lite',
+        mode: 'agent',
+        manualAgentId: 'reviewer'
+      }
+    })
+    expect(plan.agentId).toBe('reviewer')
+    expect(plan.toolPolicy).toBe('read')
+  })
 
   it('answers capability questions without tools', async () => {
     const plan = await planChatTurn({
@@ -198,7 +414,7 @@ describe('planChatTurn', () => {
       ...base,
       settings: getDefaults(),
       context: {
-        text: 'how does the app work?',
+        text: 'what is 2 plus 2?',
         selectedModel: 'builtin:composer-lite',
         mode: 'ask',
         forceRoute: 'tools'

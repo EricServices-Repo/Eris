@@ -28,8 +28,8 @@ function normalizeAgent(raw: unknown, fallbackBuiltin = false): AgentDefinition 
   const input = (raw ?? {}) as Record<string, unknown>
   const builtin = typeof input.builtin === 'boolean' ? input.builtin : fallbackBuiltin
   let model = String(input.model ?? '')
-  // Built-in agents inherit the app default (Lite/Full) instead of pinning Full.
-  if (builtin && (model === 'builtin:composer' || model === 'builtin:composer-lite')) {
+  // Agents only run Composer Lite or Composer Full.
+  if (model !== 'builtin:composer' && model !== 'builtin:composer-lite') {
     model = ''
   }
   const toolsRaw = String(input.tools ?? '')
@@ -205,7 +205,8 @@ export function listResolvedAgents(
     ...agent,
     role,
     source: agent.builtin ? source : 'project',
-    resolvedModel: agent.model.trim() || settings.models.defaultModel
+    resolvedModel:
+      agent.model === 'builtin:composer' ? 'builtin:composer' : 'builtin:composer-lite'
   })
 
   return [

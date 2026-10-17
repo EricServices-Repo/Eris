@@ -2,9 +2,22 @@ import { describe, expect, it } from 'vitest'
 import {
   commandNeedsApproval,
   isSafeCommand,
+  isVerifyCommand,
   normalizeCommand
 } from '../electron/main/services/command-approval'
 import { getDefaults } from '../electron/main/services/settings'
+
+describe('isVerifyCommand', () => {
+  it('allows tests and typecheck only', () => {
+    expect(isVerifyCommand('npm test')).toBe(true)
+    expect(isVerifyCommand('npm run typecheck')).toBe(true)
+    expect(isVerifyCommand('npx tsc --noEmit')).toBe(true)
+    expect(isVerifyCommand('pytest -q')).toBe(true)
+    expect(isVerifyCommand('git status')).toBe(false)
+    expect(isVerifyCommand('npm install')).toBe(false)
+    expect(isVerifyCommand('npm test && rm -rf ~')).toBe(false)
+  })
+})
 
 describe('isSafeCommand', () => {
   it.each([

@@ -26,6 +26,21 @@ const SAFE_PATTERNS: RegExp[] = [
   /^(?:pytest|python3?\s+-m\s+pytest|go\s+test|go\s+vet|go\s+build|cargo\s+(?:test|check|build|clippy))(?:\s|$)/
 ]
 
+const VERIFY_PATTERNS: RegExp[] = [
+  /^(?:npm|pnpm|yarn)\s+(?:test|t)(?:\s|$)/,
+  /^(?:npm|pnpm)\s+run\s+(?:test|lint|typecheck|type-check|check)(?::[\w.-]+)?(?:\s|$)/,
+  /^yarn\s+(?:test|lint|typecheck|type-check)(?:\s|$)/,
+  /^npx\s+(?:tsc|vitest\s+run|jest|eslint)(?:\s|$)/,
+  /^(?:pytest|python3?\s+-m\s+pytest|go\s+test|go\s+vet|cargo\s+(?:test|check|clippy)|tsc)(?:\s|$)/
+]
+
+/** Tests and typecheck only. Reviewer may run these and nothing else. */
+export function isVerifyCommand(command: string): boolean {
+  const cmd = command.trim()
+  if (!cmd || SHELL_META.test(cmd)) return false
+  return VERIFY_PATTERNS.some((re) => re.test(cmd))
+}
+
 /** Read-only / test / build commands without shell metacharacters run without a prompt. */
 export function isSafeCommand(command: string): boolean {
   const cmd = command.trim()

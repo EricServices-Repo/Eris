@@ -8,7 +8,8 @@ import {
 import {
   downloadStatusLabel,
   mergeDownloadProgressRow,
-  upsertDownloadRow
+  upsertDownloadRow,
+  type DownloadProgressRow
 } from '../src/shared/model-download-ui'
 
 function headers(init: Record<string, string>): Headers {
@@ -89,13 +90,13 @@ describe('mergeDownloadProgressRow', () => {
   })
 
   it('accepts ready completion even if progress was lower', () => {
-    const prev = {
+    const prev: DownloadProgressRow = {
       id: 'm',
       progress: 0.99,
       downloadedBytes: 990,
       downloading: true
     }
-    const next = {
+    const next: DownloadProgressRow = {
       id: 'm',
       progress: 1,
       downloadedBytes: 1000,
@@ -125,7 +126,7 @@ describe('downloadStatusLabel', () => {
 
 describe('upsertDownloadRow', () => {
   it('inserts a new downloading model at the front', () => {
-    const rows = [
+    const rows: DownloadProgressRow[] = [
       { id: 'a', progress: 1, downloadedBytes: 10, ready: true, downloading: false }
     ]
     const next = upsertDownloadRow(rows, {

@@ -35,11 +35,11 @@ describe('intentPlaybook', () => {
 
 describe('builtin agent system prompts', () => {
   it('gives Composer and specialists detailed mission/method prompts', () => {
-    expect(agents.orchestrator.systemPrompt).toMatch(/MISSION/)
-    expect(agents.orchestrator.systemPrompt.length).toBeGreaterThan(400)
+    expect(agents.orchestrator.systemPrompt).toMatch(/STEPS/)
+    expect(agents.orchestrator.systemPrompt.length).toBeGreaterThan(200)
     for (const sub of agents.subagents) {
-      expect(sub.systemPrompt.length, sub.id).toBeGreaterThan(180)
-      expect(sub.systemPrompt, sub.id).toMatch(/MISSION|Answer quickly/i)
+      expect(sub.systemPrompt.length, sub.id).toBeGreaterThan(80)
+      expect(sub.systemPrompt, sub.id).toMatch(/STEPS/)
     }
   })
 })

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { AppSettings, ModelInfo, ResolvedAgent } from '@/shared/settings-schema'
 
 export function useModels(settings: AppSettings | null) {
@@ -8,6 +8,12 @@ export function useModels(settings: AppSettings | null) {
   const [composerReady, setComposerReady] = useState(false)
   const [agents, setAgents] = useState<ResolvedAgent[]>([])
   const [selectedAgentId, setSelectedAgentId] = useState<string | 'auto'>('auto')
+
+  useEffect(() => {
+    const pin = settings?.agent.routing.pinnedAgentId
+    if (!pin) return
+    setSelectedAgentId(pin === 'auto' ? 'auto' : pin)
+  }, [settings?.agent.routing.pinnedAgentId])
 
   const refreshModels = useCallback(async (resolved?: AppSettings) => {
     const [status, agentList] = await Promise.all([

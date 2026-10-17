@@ -3,6 +3,7 @@ import MonacoEditor, { monaco } from 'react-monaco-editor'
 import type { editor as MonacoEditorNS } from 'monaco-editor'
 import type { AppSettings } from '@/shared/settings-schema'
 import type { PendingDiff } from '@/features/chat/DiffReview'
+import { lineChanges } from '@/shared/line-diff'
 
 export interface OpenTab {
   path: string
@@ -55,6 +56,7 @@ export function EditorArea({
   const decorationRef = useRef<string[]>([])
   const bpDecorationRef = useRef<string[]>([])
   const patchDecorationRef = useRef<string[]>([])
+  const hunkZoneRef = useRef<string[]>([])
   const disposablesRef = useRef<monaco.IDisposable[]>([])
   const completeReqRef = useRef(0)
   const suggestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -153,6 +155,12 @@ export function EditorArea({
     if (!ed || !active || !pendingPatch || pendingPatch.status !== 'pending') {
       if (ed) {
         patchDecorationRef.current = ed.deltaDecorations(patchDecorationRef.current, [])
+        if (hunkZoneRef.current.length) {
+          ed.changeViewZones((accessor) => {
+            for (const id of hunkZoneRef.current) accessor.removeZone(id)
+          })
+          hunkZoneRef.current = []
+        }
       }
       return
     }
@@ -162,17 +170,39 @@ export function EditorArea({
       return
     }
     // Highlight changed lines roughly by comparing before/after line counts
-    const afterLines = (pendingPatch.after || '').split('\n').length
-    patchDecorationRef.current = ed.deltaDecorations(patchDecorationRef.current, [
-      {
-        range: new monaco.Range(1, 1, Math.max(1, afterLines), 1),
-        options: {
-          isWholeLine: true,
-          className: 'eris-patch-line',
-          linesDecorationsClassName: 'eris-patch-gutter'
+    const changes = lineChanges(pendingPatch.before ?? '', pendingPatch.after || '')
+    const decorations: MonacoEditorNS.IModelDeltaDecoration[] = []
+    ed.changeViewZones((accessor) => {
+      for (const id of hunkZoneRef.current) accessor.removeZone(id)
+      hunkZoneRef.current = []
+      for (const change of changes) {
+        if (change.kind === 'delete') {
+          const start = Math.max(1, change.oldLine)
+          const end = start + change.lines.length - 1
+          decorations.push({
+            range: new monaco.Range(start, 1, end, 1),
+            options: {
+              isWholeLine: true,
+              className: 'eris-hunk-del',
+              linesDecorationsClassName: 'eris-hunk-gutter-del'
+            }
+          })
+        } else {
+          const node = document.createElement('div')
+          node.className = 'eris-hunk-add'
+          node.textContent = change.lines.join('\n')
+          hunkZoneRef.current.push(
+            accessor.addZone({
+              afterLineNumber: Math.max(0, change.oldLine),
+              heightInLines: Math.max(1, change.lines.length),
+              domNode: node,
+              suppressMouseDown: true
+            })
+          )
         }
       }
-    ])
+    })
+    patchDecorationRef.current = ed.deltaDecorations(patchDecorationRef.current, decorations)
   }, [active, pendingPatch])
 
   useEffect(() => {
@@ -460,8 +490,9 @@ export function EditorArea({
             key={active.path}
             language={active.language}
             theme={settings.editor.theme}
-            value={active.content}
+            value={showPatchBar && pendingPatch?.before != null ? pendingPatch.before : active.content}
             onChange={(value) => {
+              if (showPatchBar) return
               clearGhost()
               onChange(active.path, value ?? '')
               const text = value ?? ''
@@ -666,7 +697,8 @@ export function EditorArea({
               scrollBeyondLastLine: false,
               wordWrap: 'on',
               padding: { top: 12 },
-              glyphMargin: true
+              glyphMargin: true,
+              readOnly: Boolean(showPatchBar)
             }}
           />
         )}
