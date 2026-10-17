@@ -2,6 +2,21 @@
 
 ## 0.2.53 — 2026-10-17
 
+Cross-platform desktop builds (macOS + Windows) from the same version tag.
+
+| Platform | Download |
+|----------|----------|
+| macOS | `Eris-0.2.53-mac-*.dmg` / `.zip` |
+| Windows | `Eris-0.2.53-win-*-setup.exe` |
+
+CI builds both platforms on tag push (`.github/workflows/release.yml`).
+
+### Changes
+- Bump the desktop build to 0.2.53 so the full reply is posted in chat. (b9422ae)
+- Post the full reply under the thinking trace when a turn finishes. (8b00003)
+
+## 0.2.53 — 2026-10-17
+
 - The full reply is posted under the thinking trace when a turn finishes.
 
 ## 0.2.52 — 2026-10-17
