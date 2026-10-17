@@ -2,6 +2,28 @@
 
 ## 0.2.47 — 2026-10-17
 
+Cross-platform desktop builds (macOS + Windows) from the same version tag.
+
+| Platform | Download |
+|----------|----------|
+| macOS | `Eris-0.2.47-mac-*.dmg` / `.zip` |
+| Windows | `Eris-0.2.47-win-*-setup.exe` |
+
+CI builds both platforms on tag push (`.github/workflows/release.yml`).
+
+### Changes
+- Merge branch codex/improvements into main for the v0.2.47 release. (cbb8e2b)
+- Release prep for v0.2.47. (3de98e1)
+- Keep the agent menu in the status bar and bump the desktop build to 0.2.46. (361f5e4)
+- Merge pull request #30 from EricServices-Repo/codex/improvements (e03f04d)
+- Point updates, feedback, and the product README at the public Eris repository. (b92c077)
+- Merge pull request #29 from EricServices-Repo/codex/improvements (e2c2f08)
+- Expand cross-platform support and improve model setup and routing (fcb0807)
+- Merge pull request #28 from EricServices-Repo/cursor/chat-model-and-agent (498538b)
+- Let the chat model picker choose any ready model while agents only shape the turn. (6d446d7)
+
+## 0.2.47 — 2026-10-17
+
 - The chat composer keeps the model menu. The agent menu stays in the status bar.
 
 ## 0.2.46 — 2026-10-17
