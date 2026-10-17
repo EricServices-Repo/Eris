@@ -2,6 +2,24 @@
 
 ## 0.2.52 — 2026-10-17
 
+Cross-platform desktop builds (macOS + Windows) from the same version tag.
+
+| Platform | Download |
+|----------|----------|
+| macOS | `Eris-0.2.52-mac-*.dmg` / `.zip` |
+| Windows | `Eris-0.2.52-win-*-setup.exe` |
+
+CI builds both platforms on tag push (`.github/workflows/release.yml`).
+
+### Changes
+- Bump the desktop build to 0.2.52 so Composer Full can run locally. (fad8619)
+- Let Composer Full run locally after it is downloaded. (ed084dc)
+- Keep chat agents on the thread and answer from every discussion. (eba9b64)
+- Describe the open project instead of listing tool calls. (f0a1878)
+- Read project files when a path repeats the workspace folder name. (779d501)
+
+## 0.2.52 — 2026-10-17
+
 - Composer Full can run on this Mac after it is downloaded, instead of Cloud Composer.
 
 ## 0.2.51 — 2026-10-17
