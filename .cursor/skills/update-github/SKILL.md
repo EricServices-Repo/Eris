@@ -1,40 +1,54 @@
 ---
 name: update-github
 description: >-
-  Publish a public Eris desktop release: bump/tag, push, and let CI upload
-  installers to GitHub Releases on the public EricServices-Repo/Eris repo. Use when
-  the user says /update-github, publish Eris release, or ship an Eris update.
-  public GitHub release, or asks to push a release to the public update feed.
+  Publish the current package.json version of Eris. CI builds the macOS and
+  Windows installers and uploads them to GitHub Releases on
+  EricServices-Repo/Eris. Use when the user says /update-github, publish the
+  Eris release, or ship the latest desktop build to GitHub.
 disable-model-invocation: true
 ---
 
 # /update-github
 
-Publish Eris to the **public** GitHub repository:
+Publish the **version already in `package.json`** to:
 
-**https://github.com/EricServices-Repo/Eris**
+**https://github.com/EricServices-Repo/Eris/releases**
 
-That repo is the client auto-update feed and the feedback issues inbox.
-electron-updater reads `latest-mac.yml` / `latest.yml` from its releases.
-A release is **not done** until `gh release view vX.Y.Z --repo EricServices-Repo/Eris`
-shows zip/exe/`latest-*.yml` assets.
+That repository is the only release target. electron-updater reads
+`latest-mac.yml` and `latest.yml` from those releases. Do not publish to
+another repo.
 
-Pipeline:
+A release is **not done** until this command shows the macOS zip, the Windows
+setup exe, and both feed files:
 
-1. Tag `vX.Y.Z` on `EricServices-Repo/Eris` (private source) from `main`.
-2. CI (`.github/workflows/release.yml`) builds macOS + Windows into `dist/`.
-3. CI uploads installers to `EricServices-Repo/Eris` releases.
+```bash
+gh release view "vX.Y.Z" --repo EricServices-Repo/Eris
+```
+
+Required assets:
+
+| Platform | Files |
+|----------|--------|
+| macOS | `Eris-X.Y.Z-mac-arm64.dmg`, `Eris-X.Y.Z-mac-arm64.zip`, `latest-mac.yml` |
+| Windows | `Eris-X.Y.Z-win-x64-setup.exe`, `latest.yml` |
+
+Blockmaps may be attached with those files.
 
 Do **not** confuse this with `/rebuild` (local unsigned app only) or a plain `git push`.
-A release is **not done** until `gh release view vX.Y.Z --repo EricServices-Repo/Eris`
-shows zip/exe/`latest-*.yml` assets.
+
+## Pipeline
+
+1. Read `package.json` `version`. That is `X.Y.Z`. Do **not** bump it.
+2. Commit that version if `package.json`, `package-lock.json`, or `CHANGELOG.md` are still uncommitted. Leave unrelated files unstaged.
+3. Release from `main`. If the version lives on another branch, merge that branch into `main` and push `main` first. If the branch is `nightly`, confirm with the user before merging.
+4. Run `npm run release:github` (`scripts/release.mjs --no-bump`). It tags `vX.Y.Z`, pushes the tag, and creates the GitHub Release on `EricServices-Repo/Eris`.
+5. CI (`.github/workflows/release.yml`) builds macOS and Windows and uploads both installers onto that release.
 
 ## Prerequisites
 
-- Working tree **clean** (commit or stash first). `scripts/release.mjs` refuses a dirty tree when bumping.
 - `gh` authenticated with `repo` scope: `gh auth status`
-- Repo remote is `EricServices-Repo/Eris`
-- Prefer releasing from `main` (or the branch you intend the tag to point at). If on `nightly`, confirm with the user before tagging, or merge to `main` first.
+- Remote is `EricServices-Repo/Eris`
+- Tag `vX.Y.Z` does not already exist. If it does, do not delete it unless the user explicitly asks. Report that the version is already tagged.
 
 ## Steps (do all, in order)
 
@@ -47,41 +61,32 @@ gh auth status
 node -p "require('./package.json').version"
 ```
 
-If the tree is dirty, stop and ask the user to commit/stash (or commit only if they already asked).
+If unrelated edits are dirty, stop and ask the user to commit or stash them. A version bump left by `/rebuild` is not unrelated: commit `package.json`, `package-lock.json`, and `CHANGELOG.md` before tagging.
 
-### 2. Choose release mode
+### 2. Command
 
 | User said | Command |
 |-----------|---------|
-| `/update-github` (default) | `npm run release` (patch bump) |
-| minor / major | `npm run release -- --bump minor` or `--bump major` |
+| `/update-github` | `npm run release:github` (no version bump) |
+| also bump patch / minor / major first | `npm run release`, or `npm run release -- --bump minor` / `--bump major` |
 | exact version | `npm run release -- --version X.Y.Z` |
-| version already bumped in package.json | `npm run release:github` (`--no-bump`) |
-| also build installers on this Mac | `npm run release -- --local-build` (mac only; CI still builds both) |
 | dry run | `npm run release:dry` |
 
-Default when unclear: **patch** via `npm run release`.
+Default is **no bump**. `/rebuild` already advanced `package.json`.
 
 ### 3. Run the release
 
-From the repo root (needs network + git write):
+From the repo root, on `main`, with network and git write:
 
 ```bash
-npm run release
+npm run release:github
 ```
 
-This will:
+This commits `Release vX.Y.Z` if the changelog or version files changed, creates annotated tag `vX.Y.Z`, pushes `HEAD` and the tag, and creates the release:
 
-- Bump `package.json` / `package-lock.json` (unless `--no-bump`)
-- Prepend `CHANGELOG.md`
-- Commit `Release vX.Y.Z`
-- Create annotated tag `vX.Y.Z`
-- `git push origin HEAD` and `git push origin vX.Y.Z`
-- Create the GitHub Release shell (`gh release create`)
+https://github.com/EricServices-Repo/Eris/releases/tag/vX.Y.Z
 
-CI then builds and publishes assets to **EricServices-Repo/Eris**.
-
-Allow several minutes for CI (macOS + Windows runners).
+CI then builds both installers and runs `gh release upload` to `EricServices-Repo/Eris`. Allow several minutes. macOS often finishes first. Windows usually takes longer.
 
 ### 4. Verify
 
@@ -91,40 +96,41 @@ gh release view "v${VERSION}" --repo EricServices-Repo/Eris
 gh run list --repo EricServices-Repo/Eris --workflow=release.yml --limit 3
 ```
 
-Confirm:
+Wait until the release workflow is green, then confirm the asset names include:
 
-- Release `vX.Y.Z` on `EricServices-Repo/Eris` has zip / exe / `latest-*.yml` once CI finishes
-- Release workflow is green (or still in progress — report status)
+- `Eris-${VERSION}-mac-arm64.dmg`
+- `Eris-${VERSION}-mac-arm64.zip`
+- `Eris-${VERSION}-win-x64-setup.exe`
+- `latest-mac.yml`
+- `latest.yml`
 
-If the Eris release is missing assets, wait for the workflow.
+If assets are missing, wait for the workflow. Do not claim the release is downloadable before both platforms are listed.
 
 ### 5. Reply
 
-One short block:
-
 ```markdown
-**vX.Y.Z** published to EricServices-Repo/Eris.
+**vX.Y.Z** is on EricServices-Repo/Eris with macOS and Windows installers.
 
-- Releases: https://github.com/EricServices-Repo/Eris/releases/tag/vX.Y.Z
-- CI: https://github.com/EricServices-Repo/Eris/actions/workflows/release.yml
+- Release: https://github.com/EricServices-Repo/Eris/releases/tag/vX.Y.Z
+- CI: https://github.com/EricServices-Repo/Eris/actions/runs/RUN_ID
 ```
 
-If CI is still running, say so and link the run. Do not claim the release is downloadable
-until that release has assets.
+If CI is still running, say so and link the run.
 
 ## Rules
 
-- **Only** run when the user explicitly asks for a GitHub/Eris release (`/update-github` or equivalent).
+- **Only** run when the user explicitly asks for `/update-github` or a GitHub release.
+- Publish the version in `package.json`. Do not bump unless the user asks for a new version.
 - Do **not** force-push tags or delete remote tags unless the user explicitly requests it.
-- Do **not** skip `gh auth` / clean-tree checks.
-- Do **not** commit unrelated files (e.g. `.eris-push-src.tgz`, `.eris-push.patch`).
-- Prefer CI for both platforms; use `--local-build` only if the user asks to attach local macOS artifacts too.
-- Never print GitHub tokens. Release uploads use the workflow `GITHUB_TOKEN` on `EricServices-Repo/Eris`.
-- `/rebuild` alone is **not** a public release.
+- Do **not** commit unrelated files (`.agents/` skills, `.eris-push-src.tgz`, `.eris-push.patch`).
+- Do **not** upload to any repository other than `EricServices-Repo/Eris`.
+- Prefer CI for both platforms. Do not attach a local Mac-only build unless the user asks.
+- Never print GitHub tokens. The workflow uses `GITHUB_TOKEN` for `EricServices-Repo/Eris`.
+- `/rebuild` alone is **not** a GitHub release.
 
 ## Reference
 
-- Script: `scripts/release.mjs`
+- Script: `scripts/release.mjs` (`npm run release:github` is `--no-bump`)
 - Workflow: `.github/workflows/release.yml`
-- Client feed docs: `docs/UPDATES.md`
-- Feed config: `resources/app-update.yml` → `EricServices-Repo/Eris`
+- Client feed: `resources/app-update.yml` and `package.json` `build.publish` → `EricServices-Repo/Eris`
+- Docs: `docs/UPDATES.md`
