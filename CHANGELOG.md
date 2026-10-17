@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.50 — 2026-10-17
+
+- “What does this project do?” is answered from the project’s source files.
+
 ## 0.2.49 — 2026-10-17
 
 - Project file tools open a path that repeats the workspace folder name.

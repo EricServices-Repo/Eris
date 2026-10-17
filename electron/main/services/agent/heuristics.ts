@@ -179,6 +179,8 @@ export function shouldKeepWorking(opts: {
   actions?: string[]
   /** User asked what the open project does. Finish only with a sourced description. */
   describeProject?: boolean
+  /** Read-only chat turn. Stop once the reply explains what was read. */
+  chatReply?: boolean
 }): boolean {
   const {
     needsTools,
@@ -187,10 +189,18 @@ export function shouldKeepWorking(opts: {
     reviewOnly,
     inspectRounds = 0,
     actions = [],
-    describeProject = false
+    describeProject = false,
+    chatReply = false
   } = opts
   if (!needsTools) return false
   if (describeProject) return !projectDescriptionReady(assistantText, actions)
+  if (chatReply) {
+    if (parseToolCalls(assistantText).length > 0) return true
+    const note = stripToolBlocks(assistantText).trim()
+    const readSource = actions.some((action) => /^Read (?!\.eris\/)/.test(action))
+    if (note.length >= 40 && (readSource || inspectRounds >= 1)) return false
+    return true
+  }
   if (!assistantText.trim()) return true
   if (looksLikeRefusal(assistantText)) return true
   if (looksLikeAsksForWorkspaceInfo(assistantText)) return true

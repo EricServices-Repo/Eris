@@ -13,7 +13,8 @@ export {
   nativeToToolCalls,
   parseJsonObject,
   parseToolCalls,
-  stripToolBlocks
+  stripToolBlocks,
+  thinkingBeforeTools
 } from './agent/tool-parsing'
 export { buildWorkspaceToolsSystem } from './agent/prompts'
 export { runAgentWithWorkspaceTools } from './agent/loop'

@@ -43,6 +43,7 @@ export function registerAgentsIpc(): void {
         selectedModel: string
         mode?: 'ask' | 'agent'
         forceRoute?: 'tools' | 'answer'
+        previousAgentId?: string | null
       }
     ) => {
       const settings = getResolvedSettings(appState.currentWorkspace)
@@ -55,6 +56,7 @@ export function registerAgentsIpc(): void {
           manualAgentId: payload.manualAgentId,
           selectedModel: payload.selectedModel,
           mode: payload.mode === 'ask' ? 'ask' : 'agent',
+          previousAgentId: payload.previousAgentId,
           forceRoute:
             payload.forceRoute === 'tools' || payload.forceRoute === 'answer'
               ? payload.forceRoute

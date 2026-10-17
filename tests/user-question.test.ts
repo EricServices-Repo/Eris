@@ -134,4 +134,28 @@ describe('project description', () => {
       })
     ).toBe(false)
   })
+
+  it('stops a read-only chat once the reply explains a file it read', () => {
+    const note =
+      'The calculator adds numbers in src/main.ts and shows them from src/App.tsx. package.json starts it with npm start.'
+    expect(
+      shouldKeepWorking({
+        needsTools: true,
+        mutated: false,
+        assistantText: note,
+        chatReply: true,
+        actions: ['Read src/main.ts'],
+        inspectRounds: 1
+      })
+    ).toBe(false)
+    expect(
+      shouldKeepWorking({
+        needsTools: true,
+        mutated: false,
+        assistantText: '{"name":"write_file","path":"App.js","content":"x"}',
+        chatReply: true,
+        actions: ['Read README.md']
+      })
+    ).toBe(true)
+  })
 })

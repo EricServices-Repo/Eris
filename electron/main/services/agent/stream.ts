@@ -2,7 +2,7 @@ import type { AppSettings } from '../../../../src/shared/settings-schema'
 import { isBuiltinRef, isNativeGgufRef } from '../builtin-model'
 import { streamModelChat, type OpenAIToolDef } from '../chat-runtime'
 import { looksLikeDegenerateLoop } from './heuristics'
-import { hasExecutableToolCall, nativeToToolCalls, stripToolBlocks } from './tool-parsing'
+import { hasExecutableToolCall, nativeToToolCalls, stripToolBlocks, thinkingBeforeTools } from './tool-parsing'
 import type { AgentChatMessage, ToolCall } from './types'
 
 /** Collect a one-shot model reply without streaming to the UI. */
@@ -19,7 +19,7 @@ export async function collectModelText(options: {
     ...options,
     stopOnToolCall: false
   })) {
-    if (evt.kind === 'done') full = evt.full
+    if (evt.kind === 'done') full = stripToolBlocks(evt.full)
   }
   return stripToolBlocks(full).trim()
 }
@@ -53,6 +53,7 @@ export async function* streamThinkingText(options: {
   unknown
 > {
   let full = ''
+  let shown = 0
   let nativeToolCalls: ToolCall[] | undefined
   const localAbort = new AbortController()
   const onParentAbort = () => localAbort.abort()
@@ -100,8 +101,11 @@ export async function* streamThinkingText(options: {
     })) {
       rethrowIfUserStop()
       full += chunk
-      // Emit whole provider chunks — IPC coalescing happens in main (index.ts).
-      yield { kind: 'thinking', text: chunk }
+      const visible = thinkingBeforeTools(full)
+      if (visible.length > shown) {
+        yield { kind: 'thinking', text: visible.slice(shown) }
+        shown = visible.length
+      }
 
       if (looksLikeDegenerateLoop(full)) {
         localAbort.abort()

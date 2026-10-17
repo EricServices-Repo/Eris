@@ -251,13 +251,17 @@ export function useChatSession({
 
         const selected =
           selectedModel || settings.models.defaultModel || 'builtin:composer-lite'
+        const previousAgentId =
+          [...thread.messages].reverse().find((message) => message.role === 'assistant')?.agentId ??
+          null
         const turnPlan = await window.ide.planChatTurn({
           text,
           fileNames: files.map((f) => f.name),
           manualAgentId: selectedAgentId === 'auto' ? null : selectedAgentId,
           selectedModel: selected,
           mode: chatMode,
-          forceRoute: opts?.forceRoute
+          forceRoute: opts?.forceRoute,
+          previousAgentId
         })
         lastTurnRef.current = { text, intent: turnPlan.intent, agentId: turnPlan.agentId }
         const runModel = turnPlan.models.chat
@@ -400,7 +404,13 @@ export function useChatSession({
                 ? { path: f.path, name: f.name, language: open.language, content: open.content }
                 : { path: f.path, name: f.name }
             }),
-            history: history.map((m) => ({ role: m.role, content: m.content })),
+            history: history.map((m) => ({
+              role: m.role,
+              content: m.content,
+              agentId: m.agentId,
+              agentName: m.agentName
+            })),
+            threadId: thread.id,
             resumeRunId: opts?.resumeRunId,
             resumeSessionStep: opts?.resumeSessionStep
           }
@@ -521,9 +531,9 @@ export function useChatSession({
       thinkingAcc.current += chunk
       schedulePaint()
     })
-    const offAnswer = window.ide.onChatAnswer(({ requestId, chunk }) => {
+    const offAnswer = window.ide.onChatAnswer(({ requestId, chunk, replace }) => {
       if (requestId !== requestIdRef.current) return
-      answerAcc.current += chunk
+      answerAcc.current = replace ? chunk : answerAcc.current + chunk
       schedulePaint()
     })
     const offRouted = window.ide.onChatRouted(

@@ -17,7 +17,7 @@ import { getLocalStatuses, isLocalRef, resolveExactLocalRef } from './local-mode
 import { streamModelChat } from './chat-runtime'
 import { routeHeuristic, routeMessage } from './router'
 import { learnedRouteFor, readRoutingCorrections, routingExamples } from './routing-feedback'
-import { asksWhatTheProjectDoes, chatAgentForTurn } from '../../../src/shared/agent-contract'
+import { agentForFollowUp, asksWhatTheProjectDoes, chatAgentForTurn } from '../../../src/shared/agent-contract'
 import { CONTEXT_HEADROOM_BYTES, inferenceBudgetBytes } from './vram-fit'
 
 /** A custom agent must be at least this sure to replace the roster role. */
@@ -620,6 +620,11 @@ export async function planChatTurn(options: {
     method = forceRoute ? 'override' : 'learned'
   }
 
+  const followId = agentForFollowUp(text, options.context.previousAgentId)
+  if (followId === 'composer') intent = 'edit'
+  else if (followId === 'reviewer') intent = 'review'
+  else if (followId && intent === 'edit') intent = 'explore'
+
   // Auto chat uses the roster contract. A pinned agent, a learned/forced
   // correction, and a winning custom agent are left as chosen.
   if (
@@ -629,7 +634,12 @@ export async function planChatTurn(options: {
   ) {
     const defined = findAgent(
       options.workspacePath,
-      chatAgentForTurn({ mode, intent, text })
+      chatAgentForTurn({
+        mode,
+        intent,
+        text,
+        previousAgentId: options.context.previousAgentId
+      })
     )
     if (defined?.enabled) {
       agent = defined

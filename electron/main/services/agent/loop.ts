@@ -68,9 +68,9 @@ import { shouldConsiderMidRunAdapt } from './mid-run-adapt'
 import { findAgent } from '../agents'
 import { formatHandoffForPrompt } from '../../../../src/shared/agent-orchestration'
 import { isVerifyCommand } from '../command-approval'
-import { buildPreservedWorkerMessages, truncateForModel } from './prompts'
+import { buildPreservedWorkerMessages, isReadOnlyChat, truncateForModel } from './prompts'
 import { streamThinkingText } from './stream'
-import { argString, parseToolCalls, stripToolBlocks } from './tool-parsing'
+import { argString, parseToolCalls, stripToolBlocks, thinkingBeforeTools } from './tool-parsing'
 import { isNativeGgufRef, releaseLocalChatSession } from '../builtin-model'
 import type { AgentChatMessage, AgentMode, AgentRunnerEvent, ToolCall } from './types'
 import type { AgentHandoffPacket } from '../../../../src/shared/agent-orchestration'
@@ -94,6 +94,15 @@ function throwIfAborted(signal?: AbortSignal): void {
     err.name = 'AbortError'
     throw err
   }
+}
+
+function answerFromProjectFiles(reads: Array<{ path: string; text: string }>): string {
+  if (reads.length === 0) return ''
+  const body = reads
+    .slice(0, 3)
+    .map((file) => `**${file.path}**\n\n${file.text.trim().slice(0, 1500)}`)
+    .join('\n\n')
+  return `From the project files:\n\n${body}`
 }
 
 export async function* runAgentWithWorkspaceTools(options: {
@@ -175,7 +184,7 @@ export async function* runAgentWithWorkspaceTools(options: {
 
   yield { type: 'status', text: plan.reason }
   if (plan.error) {
-    yield { type: 'answer', text: plan.error }
+    yield { type: 'answer', text: plan.error, replace: true }
     return
   }
 
@@ -253,14 +262,16 @@ export async function* runAgentWithWorkspaceTools(options: {
         messages: askMessages,
         sessionKey: askSessionKey
       })) {
-        if (evt.kind === 'thinking') yield { type: 'thinking', text: evt.text }
-        else full = evt.full
+        if (evt.kind === 'thinking') {
+          yield { type: 'thinking', text: evt.text }
+          if (evt.text) yield { type: 'answer', text: evt.text }
+        } else full = evt.full
       }
     } finally {
       if (askSessionKey) releaseLocalChatSession(askSessionKey)
     }
     const answer = stripToolBlocks(full) || full
-    if (answer) yield { type: 'answer', text: answer }
+    if (answer) yield { type: 'answer', text: answer, replace: true }
     return
   }
 
@@ -412,9 +423,15 @@ export async function* runAgentWithWorkspaceTools(options: {
   let rerouteCount = 0
   const reviewOnly = plan.intent === 'review' || isReviewOnlyGoal(originalUserGoal)
   const describeProject = asksWhatTheProjectDoes(originalUserGoal)
+  const chatReply = describeProject || isReadOnlyChat(plan)
   const describeProjectNext =
     `Read README, package.json, or the main source. Do not stop after .eris config. ` +
+    `Do not write or edit files. ` +
     `Then reply with no tools: what this project is, what it does, and the important files, citing paths.`
+  const chatReplyNext =
+    `Do not edit files. Read the sources that answer the user, then reply in plain sentences and cite paths.`
+  const answerNext = describeProject ? describeProjectNext : chatReply ? chatReplyNext : ''
+  const sourceReads: Array<{ path: string; text: string }> = []
   let promptBudget = contextBudgetTokens(options.settings, workerModel)
 
   const productFilesAreTinyStubs = (): boolean => {
@@ -517,8 +534,8 @@ export async function* runAgentWithWorkspaceTools(options: {
       (lastTreeResult
         ? `The workspace listing is already in context — do NOT call tree/list_dir again.\n` +
           `Active user request:\n${originalUserGoal.slice(0, 1500)}\n\n` +
-          (describeProject
-            ? describeProjectNext
+          (answerNext
+            ? answerNext
             : reviewOnly
               ? `Next step: emit read_file on key sources and/or {"name":"run","command":"npm test"} (or typecheck). ` +
                 `Then a DONE summary with blockers → risks → suggestions. Do not ask the user for files.`
@@ -526,8 +543,8 @@ export async function* runAgentWithWorkspaceTools(options: {
                 `Keep tooling until the request is fully done, then a short DONE summary.`)
         : `Emit ONLY this tool call next:\n\n{"name":"tree","path":"."}\n\n` +
           `Then continue with retrieve/read_file` +
-          (describeProject
-            ? ` on README, package.json, or the main source, then describe what the project does.`
+          (answerNext
+            ? ` on the files that answer the user, then reply in plain sentences.`
             : `${reviewOnly ? '/run' : '/search_replace/write_file/run'} until the request is done.`) +
           ` Never ask the user for project structure.`)
   })
@@ -538,8 +555,8 @@ export async function* runAgentWithWorkspaceTools(options: {
       `TOOL_RESULT (listing already in context):\n${truncateForModel(snapshot, 4000)}\n\n` +
       `Do NOT call tree or list_dir again — you already have the listing above.\n` +
       `Active user request:\n${originalUserGoal.slice(0, 1500)}\n\n` +
-      (describeProject
-        ? describeProjectNext
+      (answerNext
+        ? answerNext
         : reviewOnly
           ? `Next: emit read_file on the important source files, optionally run tests/typecheck, ` +
             `then DONE summary (blockers → risks → suggestions → nits) with concrete paths.`
@@ -554,13 +571,13 @@ export async function* runAgentWithWorkspaceTools(options: {
       `Active user request:\n${originalUserGoal.slice(0, 1500)}\n` +
       (filesTouched.length
         ? `Already touched: ${[...new Set(filesTouched)].join(', ')}\n`
-        : describeProject
-          ? 'No project source has been read yet — read README or the main source before answering.\n'
+        : answerNext
+          ? 'No project source has been read yet — read the files that answer the user before replying.\n'
           : reviewOnly
             ? 'This is a review/improve-inspection phase — gather facts with tools before concluding.\n'
             : 'No files written yet — you still need to make progress with tools.\n') +
-      (describeProject
-        ? describeProjectNext
+      (answerNext
+        ? answerNext
         : reviewOnly
           ? `Emit read_file or run tool JSON, OR if you already have enough evidence, reply with a DONE review summary and no tools.`
           : `You are NOT finished. Emit the next search_replace / write_file / mkdir / read_file / run tool JSON now. ` +
@@ -568,6 +585,48 @@ export async function* runAgentWithWorkspaceTools(options: {
   })
 
   // Loop until done, abort, or hard budgets.
+  const chatReadBudget = 4
+  let latestAssistant = ''
+  async function* finishChatAnswer(latest: string): AsyncGenerator<AgentRunnerEvent, void, unknown> {
+    const existing = thinkingBeforeTools(latest).trim()
+    if (existing.length >= 40 && parseToolCalls(latest).length === 0) {
+      yield { type: 'status', text: 'Done' }
+      yield { type: 'answer', text: existing, replace: true }
+      return
+    }
+    workerMessages.push({
+      role: 'user',
+      content:
+        `Stop calling tools. Reply to the user now in plain sentences, using only files you already read. ` +
+        `Cite paths. Do not emit JSON or edit files.\n\n` +
+        `User asked:\n${originalUserGoal.slice(0, 1500)}`
+    })
+    yield { type: 'answer', text: '', replace: true }
+    let reply = ''
+    for await (const evt of streamThinkingText({
+      ...options,
+      model: workerModel,
+      messages: workerMessages,
+      stopOnToolCall: false,
+      tools: undefined,
+      builtinJsonSchema: undefined,
+      sessionKey: isNativeGgufRef(workerModel) ? ggufSessionKey : undefined
+    })) {
+      if (evt.kind === 'thinking') {
+        yield { type: 'thinking', text: evt.text }
+        if (evt.text) yield { type: 'answer', text: evt.text }
+      } else reply = evt.full
+    }
+    const clean = thinkingBeforeTools(reply).trim()
+    const answer =
+      clean.length >= 40
+        ? clean
+        : answerFromProjectFiles(sourceReads) ||
+          buildWorkSummary(originalUserGoal, actionLog, clean || existing)
+    yield { type: 'status', text: 'Done' }
+    yield { type: 'answer', text: answer, replace: true }
+  }
+
   try {
   for (;;) {
     throwIfAborted(options.signal)
@@ -587,6 +646,15 @@ export async function* runAgentWithWorkspaceTools(options: {
       if (adapted) continue
     }
 
+    if (chatReply && (toolExecRounds >= chatReadBudget || step >= 8)) {
+      yield {
+        type: 'thinking',
+        text: '\n\n— Enough reading; answering the message…\n'
+      }
+      yield* finishChatAnswer(latestAssistant)
+      return
+    }
+
     step++
     if (step > MAX_AGENT_STEPS) {
       const note = buildWorkSummary(
@@ -600,7 +668,7 @@ export async function* runAgentWithWorkspaceTools(options: {
       }
       yield { type: 'progress', step, actionLog: [...actionLog], filesTouched: [...filesTouched], incomplete: true }
       yield emitSessionStep('Stopped at step limit')
-      yield { type: 'answer', text: note }
+      yield { type: 'answer', text: note, replace: true }
       return
     }
     yield {
@@ -612,7 +680,11 @@ export async function* runAgentWithWorkspaceTools(options: {
     let abortedLoop = false
     let nativeFromStream: ToolCall[] | undefined
     const constrainThisTurn =
-      constrainNextToolCall && localConstrainEnabled && !reviewOnly && isNativeGgufRef(workerModel)
+      constrainNextToolCall &&
+      localConstrainEnabled &&
+      !reviewOnly &&
+      !chatReply &&
+      isNativeGgufRef(workerModel)
     constrainNextToolCall = false
     for await (const evt of streamThinkingText({
       ...options,
@@ -623,9 +695,12 @@ export async function* runAgentWithWorkspaceTools(options: {
       builtinJsonSchema: constrainThisTurn ? toolCallSchema : undefined,
       sessionKey: isNativeGgufRef(workerModel) ? ggufSessionKey : undefined
     })) {
-      if (evt.kind === 'thinking') yield { type: 'thinking', text: evt.text }
-      else {
+      if (evt.kind === 'thinking') {
+        yield { type: 'thinking', text: evt.text }
+        if (evt.text) yield { type: 'answer', text: evt.text }
+      } else {
         assistantText = evt.full
+        latestAssistant = evt.full
         abortedLoop = evt.aborted === 'loop'
         nativeFromStream = evt.nativeToolCalls
       }
@@ -637,6 +712,30 @@ export async function* runAgentWithWorkspaceTools(options: {
       nativeFromStream && nativeFromStream.length > 0
         ? nativeFromStream
         : parseToolCalls(assistantText)
+
+    if (
+      chatReply &&
+      toolCalls.length > 0 &&
+      toolCalls.every(
+        (call) => !toolAllowedByPolicy(call.name, 'read') && call.name !== 'run'
+      )
+    ) {
+      const note = thinkingBeforeTools(assistantText).trim()
+      if (note.length >= 40 || sourceReads.length > 0) {
+        yield {
+          type: 'thinking',
+          text: '\n\n— This agent answers in chat and does not edit the project…\n'
+        }
+        yield* finishChatAnswer(assistantText)
+        return
+      }
+      yield {
+        type: 'thinking',
+        text: '\n\n— This agent does not edit files. Read the project, then answer…\n'
+      }
+      workerMessages.push({ role: 'user', content: answerNext || chatReplyNext })
+      continue
+    }
 
     if (toolCalls.length === 0) {
       // Local models often ask "please provide the project structure" instead of
@@ -739,7 +838,8 @@ export async function* runAgentWithWorkspaceTools(options: {
           reviewOnly,
           inspectRounds,
           actions: actionLog,
-          describeProject
+          describeProject,
+          chatReply
         }) ||
         abortedLoop ||
         looksLikeDegenerateLoop(assistantText)
@@ -816,7 +916,7 @@ export async function* runAgentWithWorkspaceTools(options: {
             }
             yield { type: 'progress', step, actionLog: [...actionLog], filesTouched: [...filesTouched], incomplete: true }
             yield emitSessionStep('Stopped after verify failures')
-            yield { type: 'answer', text: answer }
+            yield { type: 'answer', text: answer, replace: true }
             return
           }
           yield {
@@ -879,7 +979,7 @@ export async function* runAgentWithWorkspaceTools(options: {
             incomplete: true
           }
           yield { type: 'status', text: 'Incomplete' }
-          yield { type: 'answer', text: answer }
+          yield { type: 'answer', text: answer, replace: true }
           return
         }
         workerMessages.push({
@@ -899,13 +999,15 @@ export async function* runAgentWithWorkspaceTools(options: {
       }
 
       // Deterministic summary — never unload Full to reload Lite just for a recap.
-      const workerNote = stripToolBlocks(assistantText).trim()
+      const workerNote = thinkingBeforeTools(assistantText).trim()
       const answer =
-        describeProject && workerNote.length >= 80
+        chatReply && workerNote.length >= 40
           ? workerNote
-          : buildWorkSummary(originalUserGoal, actionLog, workerNote)
+          : chatReply && sourceReads.length > 0
+            ? answerFromProjectFiles(sourceReads)
+            : buildWorkSummary(originalUserGoal, actionLog, workerNote)
       yield { type: 'status', text: 'Done' }
-      yield { type: 'answer', text: answer }
+      yield { type: 'answer', text: answer, replace: true }
       return
     }
 
@@ -969,8 +1071,8 @@ export async function* runAgentWithWorkspaceTools(options: {
       noProgressStreak++
       yield {
         type: 'thinking',
-        text: describeProject
-          ? '\n\n— Same tool call repeated; read a project source file and describe what it does…\n'
+        text: chatReply
+          ? '\n\n— Same tool call repeated; answer the user from the files already read…\n'
           : '\n\n— Same tool call repeated; moving on to the next unfinished edit…\n'
       }
       workerMessages.push({ role: 'assistant', content: assistantText.slice(0, 800) })
@@ -1851,6 +1953,13 @@ export async function* runAgentWithWorkspaceTools(options: {
         }
       }
       if (result.ok) {
+        if (
+          call.name === 'read_file' &&
+          result.path &&
+          !result.path.replace(/\\/g, '/').startsWith('.eris/')
+        ) {
+          sourceReads.push({ path: result.path, text: result.detail.slice(0, 2000) })
+        }
         if (call.name === 'tree') {
           lastTreeResult = result.detail
           lastInspectResult = result.detail
@@ -1981,7 +2090,7 @@ export async function* runAgentWithWorkspaceTools(options: {
                   incomplete: true
                 }
                 yield emitSessionStep('Stopped after verify failures')
-                yield { type: 'answer', text: answer }
+                yield { type: 'answer', text: answer, replace: true }
                 return
               }
             }

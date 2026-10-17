@@ -31,6 +31,24 @@ describe('chat agent contract', () => {
     ).toBe('explainer')
     expect(asksWhatTheProjectDoes('Review this project, what does it do?')).toBe(true)
     expect(asksWhatTheProjectDoes('code review this PR')).toBe(false)
+    expect(chatAgentForTurn({
+      mode: 'agent',
+      intent: 'explore',
+      text: 'and the tests?',
+      previousAgentId: 'explainer'
+    })).toBe('explainer')
+    expect(chatAgentForTurn({
+      mode: 'agent',
+      intent: 'explore',
+      text: 'fix that',
+      previousAgentId: 'explainer'
+    })).toBe('composer')
+    expect(chatAgentForTurn({
+      mode: 'agent',
+      intent: 'edit',
+      text: 'what did you change?',
+      previousAgentId: 'composer'
+    })).toBe('explainer')
     expect(
       chatAgentForTurn({ mode: 'agent', intent: 'answer', text: 'explain how the router works' })
     ).toBe('explainer')

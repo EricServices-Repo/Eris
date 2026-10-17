@@ -278,6 +278,7 @@ export interface IdeApi {
     selectedModel: string
     mode?: 'ask' | 'agent'
     forceRoute?: 'tools' | 'answer'
+    previousAgentId?: string | null
   }) => Promise<TurnPlan>
   recordRoutingFeedback: (payload: {
     text: string
@@ -365,7 +366,7 @@ export interface IdeApi {
     }) => void
   ) => () => void
   onChatThinking: (cb: (data: { requestId: string; chunk: string }) => void) => () => void
-  onChatAnswer: (cb: (data: { requestId: string; chunk: string }) => void) => () => void
+  onChatAnswer: (cb: (data: { requestId: string; chunk: string; replace?: boolean }) => void) => () => void
   onChatDone: (cb: (data: { requestId: string; aborted?: boolean }) => void) => () => void
   onChatError: (cb: (data: { requestId: string; error: string }) => void) => () => void
   onChatDelegation: (

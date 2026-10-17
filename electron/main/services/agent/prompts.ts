@@ -5,6 +5,7 @@ import { formatLiveMcpToolsPrompt } from '../mcp-runtime'
 import { formatIndexSummary } from '../code-index'
 import { formatWorkspaceContextPrompt } from '../workspace-context'
 import { workspaceTree } from '../workspace-fs'
+import { handoffFromMessages } from '../agent-discussions'
 import type { AgentChatMessage } from './types'
 
 /**
@@ -101,7 +102,27 @@ QUALITY BAR
 - Bare npm install is OK when node_modules is missing, package.json changed, or deps are missing — do not loop install for ordinary test failures.
 - Create React App: "test":"react-scripts test"; put JSX in .tsx; add Testing Library + src/setupTests.ts; run CI=true npm test -- --watchAll=false --passWithNoTests.`
 
-/** Per-intent first-turn guidance injected into the worker user message. */
+export const READ_AGENT_PROMPT = `You are answering in Eris chat. The user's next message is the question. Your reply is the answer they read.
+
+Read the open project when the answer depends on it. Paths are relative to the workspace root.
+Do not create, edit, or delete files. Never emit write_file, search_replace, apply_patch, mkdir, or delete_path.
+
+When you need a file, emit exactly:
+
+<<<TOOL>>>
+{"name":"read_file","path":"README.md"}
+<<<END>>>
+
+Allowed tools: tree, list_dir, read_file, grep, glob, retrieve, semantic_search, search_symbols.
+Prefer README, package.json, and the main source. Skip .eris config unless the user asked about Eris settings.
+A Reviewer may also run npm test or the project typecheck. Nobody else runs shell commands.
+
+After a few reads, stop. Reply in plain sentences. Say what the project is, what it does, or what you found, and cite paths.
+Do not paste a file you intend to write. Do not describe a tool call without the JSON. Do not ask the user to paste the project.`
+
+export function isReadOnlyChat(plan: { toolPolicy: string; intent: string }): boolean {
+  return plan.toolPolicy === 'read' || plan.intent === 'explore' || plan.intent === 'review'
+}
 export function intentPlaybook(intent: ChatIntent | string, greenfield: boolean): string {
   if (greenfield) {
     return (
@@ -114,15 +135,15 @@ export function intentPlaybook(intent: ChatIntent | string, greenfield: boolean)
     case 'review':
       return (
         `REVIEW PLAYBOOK — (1) tree or retrieve to orient, (2) read_file on the important sources, ` +
-        `(3) optionally run tests/typecheck, (4) DONE summary: blockers → risks → suggestions → nits. ` +
-        `Cite paths. Never ask the user for the folder structure or to paste files.`
+        `(3) optionally run tests/typecheck, (4) answer in chat: blockers, risks, suggestions, nits. ` +
+        `Cite paths. Do not edit. Never ask the user for the folder structure or to paste files.`
       )
     case 'explore':
       return (
         `EXPLORE PLAYBOOK — (1) retrieve / grep / semantic_search / glob to locate, ` +
         `(2) read_file the hits, (3) answer from what you found with concrete paths and symbols. ` +
         `If asked what the project does, read README, package.json, or the main source — not only .eris config — ` +
-        `then describe what it is, what it does, and the important files. Do not invent APIs or file contents.`
+        `then describe what it is, what it does, and the important files. Do not edit. Do not invent APIs or file contents.`
       )
     case 'edit':
       return (
@@ -150,7 +171,8 @@ export function truncateForModel(text: string, max = 12_000): string {
 export function buildWorkspaceToolsSystem(
   workspacePath: string,
   settings?: AppSettings,
-  selectedModel?: string
+  selectedModel?: string,
+  systemPrompt = TOOLS_PROMPT
 ): string {
   let tree = ''
   try {
@@ -161,7 +183,7 @@ export function buildWorkspaceToolsSystem(
   // Keep the injected tree modest so small-context models still have room for tools
   if (tree.length > 2500) tree = `${tree.slice(0, 2500)}\n…`
   const parts = [
-    TOOLS_PROMPT,
+    systemPrompt,
     `WORKSPACE`,
     `Root: ${workspacePath}`,
     `You already have access to this folder via tools. Always use relative paths from the workspace root.`,
@@ -193,18 +215,20 @@ export function buildPreservedWorkerMessages(options: {
   mcpToolCount: number
 }): AgentChatMessage[] {
   const priorSystem = options.messages.find((m) => m.role === 'system')?.content || ''
+  const readOnly = isReadOnlyChat(options.plan)
   const toolsSystem = buildWorkspaceToolsSystem(
     options.workspacePath,
     options.settings,
-    options.plan.models.chat
+    options.plan.models.chat,
+    readOnly ? READ_AGENT_PROMPT : TOOLS_PROMPT
   )
   const historyTail = options.messages
     .filter((m) => m.role === 'user' || m.role === 'assistant')
-    .slice(-6)
     .map((m) => ({
       role: m.role as 'user' | 'assistant',
-      content: m.content.length > 4000 ? `${m.content.slice(0, 4000)}\n…` : m.content
+      content: m.content
     }))
+  const handoff = handoffFromMessages(historyTail)
 
   const greenfield =
     options.plan.intent === 'edit' &&
@@ -238,8 +262,11 @@ export function buildPreservedWorkerMessages(options: {
     role: 'user',
     content:
       `${options.originalUserGoal}${options.retrievalHint}\n\n` +
+      (handoff ? `${handoff}\n\n` : '') +
       `[Eris worker] You are ${options.plan.agentName} on ${options.plan.models.tools.replace(/^builtin:/, '')}. ` +
-      `Use tools until this request is fully done. ` +
+      (readOnly
+        ? `Read what you need, then answer in the chat. Do not edit files. `
+        : `Use tools until this request is fully done. `) +
       (options.mcpToolCount > 0
         ? `${options.mcpToolCount} MCP tool(s) are available — use them when relevant. `
         : '') +

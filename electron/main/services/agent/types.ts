@@ -21,7 +21,7 @@ export type AgentDiffEvent = {
 
 export type AgentRunnerEvent =
   | { type: 'thinking'; text: string }
-  | { type: 'answer'; text: string }
+  | { type: 'answer'; text: string; replace?: boolean }
   | { type: 'tool'; tool: AgentToolEvent }
   | { type: 'diff'; diff: AgentDiffEvent }
   | { type: 'checkpoint'; checkpointId: string }

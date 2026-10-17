@@ -153,6 +153,12 @@ export function parseToolCalls(text: string): ToolCall[] {
   return calls
 }
 
+/** Text the user can see. Tool JSON stays out of the thinking log. */
+export function thinkingBeforeTools(text: string): string {
+  const start = text.search(/<<<TOOL>>>|<tool_call>|\{\s*"name"\s*:\s*"/)
+  return (start === -1 ? text : text.slice(0, start)).replace(/\s+$/, '')
+}
+
 /** True when at least one complete tool call is available to execute now. */
 export function hasExecutableToolCall(text: string): boolean {
   return parseToolCalls(text).length > 0

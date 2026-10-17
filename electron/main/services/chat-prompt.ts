@@ -1,7 +1,9 @@
 import type { AppSettings, ChatPromptInput } from '../../../src/shared/settings-schema'
 import { contractForAgent } from '../../../src/shared/agent-contract'
 import { findAgent, getProjectAgents } from './agents'
-import { loadWorkspaceRules } from './chats'
+import { formatAgentDiscussions } from './agent-discussions'
+import { listBackgroundJobs } from './background-agents'
+import { listChats, loadWorkspaceRules } from './chats'
 import { languageFromPath, readTextFile } from './files'
 import { loadSkillsPrompt } from './skills'
 import { formatWorkspaceContextPrompt } from './workspace-context'
@@ -10,6 +12,29 @@ export type BuiltChatMessage = { role: 'system' | 'user' | 'assistant'; content:
 
 function cap(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}\n…` : text
+}
+
+function workspaceDiscussions(workspacePath: string | null, currentThreadId?: string | null): string {
+  let threads: ReturnType<typeof listChats> = []
+  try {
+    threads = listChats(workspacePath)
+  } catch {
+    threads = []
+  }
+  let jobs: Parameters<typeof formatAgentDiscussions>[0]['jobs'] = []
+  try {
+    jobs = listBackgroundJobs(workspacePath).map((job) => ({
+      id: job.id,
+      agentName: job.agentName,
+      goal: job.goal,
+      answer: job.answer,
+      status: job.status,
+      sourceThreadId: job.sourceThreadId
+    }))
+  } catch {
+    jobs = []
+  }
+  return formatAgentDiscussions({ threads, currentThreadId, jobs })
 }
 
 function fence(label: string, path: string, language: string, content: string, max: number) {
@@ -28,9 +53,6 @@ export function buildChatMessages(
   const openCap = lean ? 2500 : 10000
   const importCap = lean ? 3000 : 16000
   const importMaxFiles = lean ? 2 : 8
-  const historyCap = lean
-    ? Math.min(12, settings.agent.maxHistoryMessages)
-    : settings.agent.maxHistoryMessages
 
   const agent = findAgent(workspacePath, input.agentId)
   const isOrchestrator = getProjectAgents(workspacePath).orchestrator.id === input.agentId
@@ -99,17 +121,28 @@ export function buildChatMessages(
     parts.push(`User-imported files for this message:\n\n${imported.join('\n\n')}`)
   }
 
-  const history = input.history
-    .filter((m) => m.role === 'user' || m.role === 'assistant')
-    .slice(-historyCap)
+  const history = input.history.filter((m) => m.role === 'user' || m.role === 'assistant')
   const userContent =
     input.attachments.length > 0
       ? `${input.text}\n\n(See system context for ${input.attachments.length} imported file(s).)`
       : input.text
+  const discussions = workspaceDiscussions(workspacePath, input.threadId)
+  const discussionMessage = discussions
+    ? {
+        role: 'user' as const,
+        content:
+          `Other agent discussions in this workspace. Use all of them. Do not ignore another agent's findings.\n\n${discussions}`
+      }
+    : null
 
   return [
-    { role: 'system', content: parts.join('\n\n') },
-    ...history.map((m) => ({ role: m.role, content: m.content })),
-    { role: 'user', content: userContent }
+    { role: 'system' as const, content: parts.join('\n\n') },
+    ...(discussionMessage ? [discussionMessage] : []),
+    ...history.map((m) => ({
+      role: m.role,
+      content:
+        m.role === 'assistant' && m.agentName ? `[${m.agentName}]\n${m.content}` : m.content
+    })),
+    { role: 'user' as const, content: userContent }
   ]
 }

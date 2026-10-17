@@ -5,7 +5,8 @@ import {
   hasExecutableToolCall,
   parseJsonObject,
   parseToolCalls,
-  stripToolBlocks
+  stripToolBlocks,
+  thinkingBeforeTools
 } from '../electron/main/services/agent-runner'
 
 describe('parseToolCalls', () => {
@@ -31,6 +32,14 @@ describe('parseToolCalls', () => {
   it('ignores prose without tool calls', () => {
     expect(parseToolCalls('I would call tree next.')).toEqual([])
     expect(hasExecutableToolCall('Done. All tests pass.')).toBe(false)
+  })
+
+  it('hides a tool payload from the thinking text', () => {
+    expect(
+      thinkingBeforeTools(
+        'read_file README.md\n{"name":"write_file","path":"App.js","content":"x"}'
+      )
+    ).toBe('read_file README.md')
   })
 
   it('keeps braces inside string content', () => {

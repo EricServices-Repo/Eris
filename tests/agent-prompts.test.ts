@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { intentPlaybook, TOOLS_PROMPT } from '../electron/main/services/agent/prompts'
+import { intentPlaybook, isReadOnlyChat, READ_AGENT_PROMPT, TOOLS_PROMPT } from '../electron/main/services/agent/prompts'
 import agents from '../resources/agents.json'
 
 describe('TOOLS_PROMPT', () => {
@@ -30,6 +30,16 @@ describe('intentPlaybook', () => {
     expect(intentPlaybook('edit', false)).toMatch(/EDIT PLAYBOOK/i)
     expect(intentPlaybook('edit', true)).toMatch(/GREENFIELD/i)
     expect(intentPlaybook('explore', false)).toMatch(/EXPLORE PLAYBOOK/i)
+    expect(intentPlaybook('explore', false)).toMatch(/Do not edit/i)
+  })
+})
+
+describe('read-only chat prompt', () => {
+  it('answers instead of scaffolding files', () => {
+    expect(isReadOnlyChat({ toolPolicy: 'read', intent: 'explore' })).toBe(true)
+    expect(isReadOnlyChat({ toolPolicy: 'edit', intent: 'edit' })).toBe(false)
+    expect(READ_AGENT_PROMPT).toMatch(/Do not create, edit, or delete/)
+    expect(READ_AGENT_PROMPT).not.toMatch(/scaffold a real runnable/)
   })
 })
 

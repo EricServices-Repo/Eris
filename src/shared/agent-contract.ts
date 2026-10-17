@@ -79,6 +79,39 @@ export function asksWhatTheProjectDoes(text: string): boolean {
 
 const BY_ID = new Map(CHAT_AGENT_CONTRACTS.map((c) => [c.id, c]))
 
+/** A short reply that depends on the previous turn, not a new task. */
+export function isConversationFollowUp(text: string): boolean {
+  const t = text.trim()
+  if (!t || t.length > 240 || asksWhatTheProjectDoes(t)) return false
+  if (
+    /^(and|also|then|continue|go on|keep going|do that|fix that|change that|update that|what about|how about)\b/i.test(
+      t
+    )
+  ) {
+    return true
+  }
+  if (/\bwhat did you (change|do|edit)\b/i.test(t)) return true
+  return t.length < 100 && /\b(that|those|them)\b/i.test(t)
+}
+
+/**
+ * Who should take a follow-up. "Fix that" moves to Composer.
+ * "What did you change?" moves to Explainer. Otherwise stay with the previous agent.
+ */
+export function agentForFollowUp(
+  text: string,
+  previousAgentId: string | null | undefined
+): ChatAgentContract['id'] | null {
+  if (!isConversationFollowUp(text)) return null
+  if (/\bwhat did you (change|do|edit)\b/i.test(text)) return 'explainer'
+  if (/\b(fix|change|edit|implement|update|apply)\b/i.test(text)) return 'composer'
+  if (previousAgentId && BY_ID.has(previousAgentId as ChatAgentContract['id'])) {
+    const id = previousAgentId as ChatAgentContract['id']
+    return id === 'coder' ? 'composer' : id
+  }
+  return null
+}
+
 export function contractForAgent(id: string | null | undefined): ChatAgentContract | null {
   if (!id) return null
   return BY_ID.get(id as ChatAgentContract['id']) ?? null
@@ -92,6 +125,7 @@ export function chatAgentForTurn(options: {
   mode: 'ask' | 'agent'
   intent: ChatIntent
   text: string
+  previousAgentId?: string | null
 }): ChatAgentContract['id'] {
   const text = options.text.trim()
   const explains = /\b(explain|how|why|overview|summarize|architecture)\b/i.test(text)
@@ -105,6 +139,8 @@ export function chatAgentForTurn(options: {
     return shortLookup ? 'fast' : 'explainer'
   }
 
+  const follow = agentForFollowUp(text, options.previousAgentId)
+  if (follow) return follow
   if (asksWhatTheProjectDoes(text)) return 'explainer'
   if (options.intent === 'review') return 'reviewer'
   if (options.intent === 'edit' || options.intent === 'run') return 'composer'

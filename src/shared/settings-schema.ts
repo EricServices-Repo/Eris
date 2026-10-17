@@ -403,6 +403,8 @@ export interface ChatTurnContext {
   mode: 'ask' | 'agent'
   /** User override from "Needed tools" / "Just a question" */
   forceRoute?: 'tools' | 'answer'
+  /** Agent that spoke last in this thread, so a follow-up can stay with them. */
+  previousAgentId?: string | null
 }
 
 /** Structured chat turn; the main process assembles the final prompt from this. */
@@ -416,11 +418,18 @@ export interface ChatPromptInput {
   openFile?: { path: string; language?: string; content: string } | null
   /** content set when the file is open in a tab; otherwise main reads from disk */
   attachments: Array<{ path: string; name: string; language?: string; content?: string }>
-  history: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>
+  history: Array<{
+    role: 'user' | 'assistant' | 'system'
+    content: string
+    agentId?: string
+    agentName?: string
+  }>
   /** Continue a persisted, unfinished agent run */
   resumeRunId?: string
   /** When set with resumeRunId, rewind files + worker state to this session step first. */
   resumeSessionStep?: number
+  /** Thread these messages belong to, so other chats can be included beside it. */
+  threadId?: string | null
 }
 
 export interface ResolvedAgent extends AgentDefinition {

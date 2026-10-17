@@ -150,6 +150,7 @@ export function registerChatStreamIpc(): void {
       const messages = payload.prompt
         ? buildChatMessages(appState.currentWorkspace, settings, {
             ...payload.prompt,
+            threadId: payload.threadId ?? payload.prompt.threadId,
             text: resume ? resume.goal : payload.prompt.text
           })
         : payload.messages ?? []
@@ -158,6 +159,9 @@ export function registerChatStreamIpc(): void {
         payload.prompt?.text ||
         [...messages].reverse().find((m) => m.role === 'user')?.content.replace(/\n\n\[Eris\][\s\S]*$/, '') ||
         ''
+      const previousAgentId =
+        [...(payload.prompt?.history ?? [])].reverse().find((message) => message.role === 'assistant')
+          ?.agentId ?? null
       let turnPlan =
         payload.turnPlan ??
         (await planChatTurn({
@@ -167,7 +171,8 @@ export function registerChatStreamIpc(): void {
             text: userText,
             selectedModel: model || settings.models.defaultModel,
             mode: mode === 'ask' ? 'ask' : 'agent',
-            manualAgentId: agentId ?? null
+            manualAgentId: agentId ?? null,
+            previousAgentId
           },
           getSecret,
           signal: appState.chatAbort.signal
@@ -572,8 +577,14 @@ export function registerChatStreamIpc(): void {
             pendingThinking += evt.text
             scheduleStreamFlush()
           } else if (evt.type === 'answer') {
-            pendingAnswer += evt.text
-            scheduleStreamFlush()
+            if (evt.replace) {
+              pendingAnswer = ''
+              flushStreamChunks()
+              event.sender.send('chat:answer', { requestId, chunk: evt.text, replace: true })
+            } else {
+              pendingAnswer += evt.text
+              scheduleStreamFlush()
+            }
           } else {
             flushStreamChunks()
             if (evt.type === 'tool') {
