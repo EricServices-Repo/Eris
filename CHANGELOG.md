@@ -2,6 +2,24 @@
 
 ## 0.2.48 — 2026-10-17
 
+Cross-platform desktop builds (macOS + Windows) from the same version tag.
+
+| Platform | Download |
+|----------|----------|
+| macOS | `Eris-0.2.48-mac-*.dmg` / `.zip` |
+| Windows | `Eris-0.2.48-win-*-setup.exe` |
+
+CI builds both platforms on tag push (`.github/workflows/release.yml`).
+
+### Changes
+- Merge branch cursor/eris-feedback-issues into main for the v0.2.48 release. (9bad364)
+- Bump the desktop build to 0.2.48 so feedback lands on Eris issues. (31f2c7d)
+- Merge pull request #31 from EricServices-Repo/cursor/eris-feedback-issues (d81d510)
+- Publish the current package version from /update-github. (bacaa4c)
+- File in-app feedback on EricServices-Repo/Eris issues. (1fd786a)
+
+## 0.2.48 — 2026-10-17
+
 - In-app feedback files issues on EricServices-Repo/Eris.
 
 ## 0.2.47 — 2026-10-17
