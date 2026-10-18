@@ -2,6 +2,36 @@
 
 ## 0.2.66 — 2026-10-18
 
+Cross-platform desktop builds (macOS + Windows) from the same version tag.
+
+| Platform | Download |
+|----------|----------|
+| macOS | `Eris-0.2.66-mac-*.dmg` / `.zip` |
+| Windows | `Eris-0.2.66-win-*-setup.exe` |
+
+CI builds both platforms on tag push (`.github/workflows/release.yml`).
+
+### Changes
+- Merge branch 'cursor/agent-web-search' (84b9f50)
+- Bump version to 0.2.66 (5fcb580)
+- Improve server connection handling and UI responsiveness (aa89c80)
+- Improve desktop UI and service management workflows (33c3284)
+- Route implementation follow-ups to an editing agent (746f235)
+- Improve built-in tool discovery and local tool-call handling (d04a8be)
+- Merge pull request #35 from EricServices-Repo/cursor/agent-web-search (b5c4308)
+- Improve application workflows and interface (3795e55)
+- Merge pull request #34 from EricServices-Repo/cursor/agent-web-search (ff49e08)
+- Treat improvement questions as reviews and stop cutting runs off at a step limit. (de3f973)
+- Give Composer Lite a 32k context and compact only when the token budget is full. (d069dda)
+- Answer web questions from the opened page, and keep a 16k context when agents hand off. (92a5126)
+- Show the finished reply as its own chat summary, not inside Thinking. (00ada2e)
+- Show the finished reply as chat text instead of thinking. (694e5d4)
+- Rate answers and require a real reply after web questions. (0a8a540)
+- Merge pull request #33 from EricServices-Repo/cursor/agent-web-search (4e02f62)
+- Let agents search the web in a browser. (520e72e)
+
+## 0.2.66 — 2026-10-18
+
 - Fixed workspace-safe chat persistence, long-history pagination, agent checks, and client linting.
 
 ## 0.2.65 — 2026-10-18
