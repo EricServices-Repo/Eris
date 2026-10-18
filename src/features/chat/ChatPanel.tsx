@@ -118,8 +118,11 @@ interface Props {
 
 export interface PendingCommandApproval {
   approvalId: string
-  kind: 'run' | 'push'
+  kind: 'run' | 'push' | 'mcp'
   command: string
+  toolName?: string
+  canAlwaysAllow?: boolean
+  queuedCount?: number
 }
 
 export interface PendingUserQuestion {
@@ -157,7 +160,7 @@ function InlineAgentQuestion({
 }) {
   const [draft, setDraft] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
-  const timeoutMs = Math.max(1000, question.timeoutMs || 15_000)
+  const timeoutMs = Math.max(1000, question.timeoutMs || 5 * 60_000)
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -580,6 +583,45 @@ export function ChatPanel({
         </button>
       </div>
 
+      {pendingApproval && onApprovalDecision && (
+        <div className="approval-card" role="alertdialog">
+          <div className="approval-title">
+            {pendingApproval.kind === 'mcp'
+              ? `Agent wants to call MCP tool ${pendingApproval.toolName || ''}`
+              : pendingApproval.kind === 'push'
+                ? 'Agent wants to push to the remote'
+                : 'Agent wants to run a command'}
+            {pendingApproval.queuedCount && pendingApproval.queuedCount > 1
+              ? ` · ${pendingApproval.queuedCount} approvals waiting`
+              : ''}
+          </div>
+          <pre className="approval-command">{pendingApproval.command}</pre>
+          <div className="approval-actions">
+            <button
+              className="btn btn-primary"
+              onClick={() => onApprovalDecision(pendingApproval.approvalId, 'allow')}
+            >
+              Allow once
+            </button>
+            {pendingApproval.canAlwaysAllow !== false && (
+              <button
+                className="btn"
+                title="Never ask again for this exact command in this workspace"
+                onClick={() => onApprovalDecision(pendingApproval.approvalId, 'always')}
+              >
+                Always allow
+              </button>
+            )}
+            <button
+              className="btn"
+              onClick={() => onApprovalDecision(pendingApproval.approvalId, 'deny')}
+            >
+              Deny
+            </button>
+          </div>
+        </div>
+      )}
+
       {!composerReady && !modelsOk && (
         <div className="composer-banner">
           <span>
@@ -786,37 +828,6 @@ export function ChatPanel({
                     live={!answerBuffer}
                   />
                   <DelegationCards items={delegations} />
-                  {pendingApproval && onApprovalDecision && (
-                    <div className="approval-card" role="alertdialog">
-                      <div className="approval-title">
-                        {pendingApproval.kind === 'push'
-                          ? 'Agent wants to push to the remote'
-                          : 'Agent wants to run a command'}
-                      </div>
-                      <pre className="approval-command">{pendingApproval.command}</pre>
-                      <div className="approval-actions">
-                        <button
-                          className="btn btn-primary"
-                          onClick={() => onApprovalDecision(pendingApproval.approvalId, 'allow')}
-                        >
-                          Allow
-                        </button>
-                        <button
-                          className="btn"
-                          title="Never ask again for this exact command in this workspace"
-                          onClick={() => onApprovalDecision(pendingApproval.approvalId, 'always')}
-                        >
-                          Always allow
-                        </button>
-                        <button
-                          className="btn"
-                          onClick={() => onApprovalDecision(pendingApproval.approvalId, 'deny')}
-                        >
-                          Deny
-                        </button>
-                      </div>
-                    </div>
-                  )}
                   {pendingQuestion && onQuestionReply && (
                     <InlineAgentQuestion
                       key={pendingQuestion.questionId}

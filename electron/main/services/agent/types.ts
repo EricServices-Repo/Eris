@@ -6,6 +6,10 @@ export type AgentToolEvent = {
   name: string
   path?: string
   status: 'running' | 'ok' | 'error'
+  effect?: 'read' | 'workspace' | 'external' | 'command' | 'orchestration'
+  changedResources?: string[]
+  durationMs?: number
+  failure?: { code: string; retryable: boolean }
   detail: string
 }
 

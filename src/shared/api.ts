@@ -279,6 +279,7 @@ export interface IdeApi {
     mode?: 'ask' | 'agent'
     forceRoute?: 'tools' | 'answer'
     previousAgentId?: string | null
+    previousMessages?: Array<{ role: 'user' | 'assistant'; content: string; agentId?: string }>
   }) => Promise<TurnPlan>
   recordRoutingFeedback: (payload: {
     text: string
@@ -335,8 +336,10 @@ export interface IdeApi {
     cb: (data: {
       requestId: string
       approvalId: string
-      kind: 'run' | 'push'
+      kind: 'run' | 'push' | 'mcp'
       command: string
+      toolName?: string
+      canAlwaysAllow?: boolean
     }) => void
   ) => () => void
   onChatApprovalResolved: (
@@ -380,6 +383,10 @@ export interface IdeApi {
         name: string
         path?: string
         status: 'running' | 'ok' | 'error'
+        effect?: 'read' | 'workspace' | 'external' | 'command' | 'orchestration'
+        changedResources?: string[]
+        durationMs?: number
+        failure?: { code: string; retryable: boolean }
         detail: string
       }
     }) => void

@@ -39,15 +39,22 @@ export function webSearchQuery(goal: string): string {
   return raw.replace(/[?.!]+$/g, '').replace(/\s+/g, ' ').trim().slice(0, 200)
 }
 
-/** First public result URL. Skips the search engine's own links. */
-export function firstHttpsResult(searchText: string): string | null {
+/** Public result URLs, in search-result order. Skips the search engine's own links. */
+export function httpsResults(searchText: string, maxResults = 3): string[] {
   const matches = searchText.match(/https:\/\/[^\s)]+/g) ?? []
+  const urls: string[] = []
   for (const raw of matches) {
     const url = raw.replace(/[.,]+$/, '')
     if (/duckduckgo\.com/i.test(url)) continue
-    return url
+    if (!urls.includes(url)) urls.push(url)
+    if (urls.length >= maxResults) break
   }
-  return null
+  return urls
+}
+
+/** First public result URL. */
+export function firstHttpsResult(searchText: string): string | null {
+  return httpsResults(searchText, 1)[0] ?? null
 }
 
 function contentWords(text: string): string[] {
@@ -116,9 +123,13 @@ export function replyFromWebEvidence(
   if (!searchText.trim()) return `I could not search the web for “${q}”.`
   const evidence = `${searchText}\n${pageText}`.trim()
   const prose = proseOutsideTools(modelText)
+  const sourceUrls = [...new Set([...httpsResults(searchText), ...httpsResults(pageText)])]
+  const citedSources = sourceUrls.filter((url) => prose.includes(url)).length
+  const hasEnoughCitations = citedSources >= Math.min(2, sourceUrls.length)
   if (
     prose &&
     !isToolLogReply(prose) &&
+    hasEnoughCitations &&
     unsupportedProperNames(prose, evidence, q).length === 0 &&
     answerGroundedIn(prose, evidence, q)
   ) {

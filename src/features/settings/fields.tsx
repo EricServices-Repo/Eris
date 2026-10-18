@@ -182,6 +182,13 @@ export function settingFields(agentIds: string[]): SettingField[] {
     },
     {
       cat: 'agent',
+      label: 'Max steps per run',
+      hint: 'Stop an unproductive or oversized run with a resumable checkpoint; 10–200 tool/model rounds',
+      path: ['agent', 'maxStepsPerRun'],
+      type: 'number'
+    },
+    {
+      cat: 'agent',
       label: 'Router model',
       hint: 'Empty = default model. Prefer a small/fast Ollama model.',
       path: ['agent', 'routing', 'routerModel'],

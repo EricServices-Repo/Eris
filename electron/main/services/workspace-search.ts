@@ -279,6 +279,23 @@ type RetrieveResult = { ok: boolean; detail: string; paths: string[] }
 const retrieveCache = new Map<string, { at: number; result: RetrieveResult }>()
 const RETRIEVE_CACHE_MS = 30_000
 
+function retrievalSnippet(content: string, terms: string[]): string {
+  const lines = content.slice(0, 100_000).split('\n')
+  let bestIndex = -1
+  let bestScore = 0
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!.toLowerCase()
+    const score = terms.reduce((sum, term) => sum + (line.includes(term) ? 1 : 0), 0)
+    if (score > bestScore) {
+      bestScore = score
+      bestIndex = i
+    }
+  }
+  const start = bestIndex < 0 ? 0 : Math.max(0, bestIndex - 2)
+  const selected = lines.slice(start, start + 7)
+  return selected.map((line, index) => `${start + index + 1}: ${line}`).join('\n').slice(0, 500)
+}
+
 /** Rank workspace files for a natural-language / keyword query (sync). */
 export function retrieveContext(
   workspacePath: string,
@@ -426,7 +443,7 @@ export async function retrieveContextAsync(
     const abs = join(workspacePath, ...rel.split('/'))
     let snippet = ''
     try {
-      snippet = readFileSync(abs, 'utf8').split('\n').slice(0, 8).join('\n').slice(0, 400)
+      snippet = retrievalSnippet(readFileSync(abs, 'utf8'), terms)
     } catch {
       continue
     }

@@ -20,7 +20,13 @@ import {
 } from '../workspace-context'
 import { runVerify } from '../verify'
 import type { OpenAIToolDef } from '../chat-runtime'
-import { COMPOSER_OPENAI_TOOLS, mcpToolsToOpenAI, toolCallJsonSchema } from '../tool-registry'
+import {
+  COMPOSER_OPENAI_TOOLS,
+  getToolContract,
+  MAX_INLINE_MCP_TOOLS,
+  mcpToolsToOpenAI,
+  toolCallJsonSchema
+} from '../tool-registry'
 import {
   createCheckpoint,
   getCheckpointOpCount,
@@ -32,7 +38,14 @@ import {
   snapshotBeforeWrite
 } from '../checkpoints'
 import { runWorkspaceCommand } from '../shell-run'
-import { applyUnifiedPatch, resolveInWorkspace, searchReplaceInFile } from '../workspace-fs'
+import {
+  applyUnifiedPatch,
+  isPathInside,
+  readWorkspaceFile,
+  resolveInWorkspace,
+  searchReplaceInFile,
+  toWorkspaceRelative
+} from '../workspace-fs'
 import { gitCommit, gitDiff, gitStage, gitStatus, gitStash } from '../git-service'
 import { pushPullFetch, parseGithubRepo } from '../github'
 import { invalidateDiagnosticsCache } from '../diagnostics'
@@ -43,9 +56,11 @@ import {
   compactAgentMessages,
   contextBudgetTokens,
   formatActionLogForResume,
+  microCompactAgentMessages,
   needsContextCompaction
 } from './compaction'
 import { executeTool } from './execute-tool'
+import { validateToolArguments } from './tool-validation'
 import {
   assessGoalCompletion,
   isReviewOnlyGoal,
@@ -65,18 +80,28 @@ import {
   MAX_BARE_INSTALLS_PER_RUN,
   packageJsonNewerThanModules
 } from './install-guards'
-import { shouldConsiderMidRunAdapt } from './mid-run-adapt'
+import { decideMidRunAdapt, shouldConsiderMidRunAdapt } from './mid-run-adapt'
+import { toolFailureRecovery } from './recovery'
 import { findAgent } from '../agents'
 import { AGENT_HANDOFF_CHARS, formatHandoffForPrompt } from '../../../../src/shared/agent-orchestration'
 import { isVerifyCommand } from '../command-approval'
 import { buildPreservedWorkerMessages, isReadOnlyChat, truncateForModel } from './prompts'
 import {
   firstHttpsResult,
+  httpsResults,
   replyFromWebEvidence,
   webSearchQuery
 } from './web-grounding'
 import { streamThinkingText } from './stream'
 import { openWebPage, searchWeb } from '../web-search'
+import {
+  lspCompletion,
+  lspDefinition,
+  lspEnsureOpen,
+  lspHover,
+  lspReferences
+} from '../language-servers'
+import { editNotebookCell, readNotebook } from '../workspace-notebook'
 import {
   argString,
   parseToolCalls,
@@ -117,6 +142,124 @@ function answerFromProjectFiles(reads: Array<{ path: string; text: string }>): s
   return `From the project files:\n\n${body}`
 }
 
+type ToolExecutionResult = { ok: boolean; detail: string; mutated: boolean; path?: string }
+
+function toolFailureMetadata(
+  detail: string,
+  effect: 'read' | 'workspace' | 'external' | 'command' | 'orchestration'
+): { code: string; retryable: boolean } {
+  const code =
+    /\bdenied\b|\bblocked\b|no approval handler|reviewer can only/i.test(detail)
+      ? 'permission_denied'
+      : /invalid arguments|is required|must be /i.test(detail)
+        ? 'invalid_arguments'
+        : /timed out/i.test(detail)
+          ? 'timeout'
+          : /not found|not connected|no .* available/i.test(detail)
+            ? 'unavailable'
+            : 'execution_failed'
+  return {
+    code,
+    retryable:
+      effect === 'read' &&
+      !['permission_denied', 'invalid_arguments'].includes(code)
+  }
+}
+
+const PARALLEL_READ_TOOLS = new Set([
+  'web_search',
+  'web_open',
+  'grep',
+  'semantic_search',
+  'retrieve',
+  'git_status',
+  'git_diff'
+])
+
+async function executeParallelReadTool(
+  workspacePath: string | null,
+  originalGoal: string,
+  call: ToolCall,
+  signal?: AbortSignal
+): Promise<ToolExecutionResult> {
+  try {
+    switch (call.name) {
+      case 'web_search':
+        return { ok: true, detail: await searchWeb(argString(call.args, 'query'), signal), mutated: false }
+      case 'web_open': {
+        const url = argString(call.args, 'url')
+        return { ok: true, detail: await openWebPage(url, signal), mutated: false, path: url }
+      }
+      case 'grep': {
+        if (!workspacePath) return { ok: false, detail: 'No workspace is open', mutated: false }
+        const query = argString(call.args, 'pattern') || argString(call.args, 'query')
+        const result = await workspaceGrep(workspacePath, query, {
+          glob: argString(call.args, 'glob') || undefined
+        })
+        return { ok: result.ok, detail: result.detail, mutated: false }
+      }
+      case 'semantic_search':
+      case 'retrieve': {
+        if (!workspacePath) return { ok: false, detail: 'No workspace is open', mutated: false }
+        const query =
+          argString(call.args, 'query') || argString(call.args, 'pattern') || originalGoal
+        const result = await retrieveContextAsync(workspacePath, query, 8)
+        return { ok: result.ok, detail: result.detail, mutated: false }
+      }
+      case 'git_status': {
+        if (!workspacePath) return { ok: false, detail: 'No workspace is open', mutated: false }
+        const status = await gitStatus(workspacePath)
+        if (!status.ok) return { ok: false, detail: status.error || 'git status failed', mutated: false }
+        const lines = [
+          `branch ${status.branch || '?'} ↑${status.ahead} ↓${status.behind}`,
+          ...status.entries.map((entry) => `${entry.status} ${entry.path}`)
+        ]
+        return { ok: true, detail: lines.join('\n') || 'clean', mutated: false }
+      }
+      case 'git_diff': {
+        if (!workspacePath) return { ok: false, detail: 'No workspace is open', mutated: false }
+        const path = argString(call.args, 'path') || undefined
+        const diff = await gitDiff(workspacePath, path)
+        return {
+          ok: diff.ok,
+          detail: diff.ok ? diff.diff : diff.error || 'git diff failed',
+          mutated: false,
+          path
+        }
+      }
+      default:
+        return { ok: false, detail: `Tool is not eligible for parallel reads: ${call.name}`, mutated: false }
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error
+    return {
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+      mutated: false,
+      path: argString(call.args, 'path') || undefined
+    }
+  }
+}
+
+async function mapWithLimit<T, R>(
+  items: T[],
+  limit: number,
+  run: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const out = new Array<R>(items.length)
+  let next = 0
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      for (;;) {
+        const index = next++
+        if (index >= items.length) return
+        out[index] = await run(items[index]!, index)
+      }
+    })
+  )
+  return out
+}
+
 export async function* runAgentWithWorkspaceTools(options: {
   workspacePath: string | null
   settings: AppSettings
@@ -131,8 +274,10 @@ export async function* runAgentWithWorkspaceTools(options: {
   turnPlan?: TurnPlan
   /** Resolves false when the user denies a shell command / push. Absent = always allow. */
   approveCommand?: (kind: 'run' | 'push', command: string) => Promise<boolean>
+  /** Every MCP call requires approval for its exact tool name and arguments. */
+  approveMcpTool?: (toolName: string, args: Record<string, unknown>) => Promise<boolean>
   /**
-   * Ask the user a clarifying question inline (~15s). Absent = auto-timeout / proceed.
+   * Ask the user a clarifying question inline (up to five minutes). Absent = proceed with best judgment.
    * Returns reply text, or null when timed out / skipped.
    */
   askUser?: (question: string, choices?: string[]) => Promise<string | null>
@@ -222,7 +367,6 @@ export async function* runAgentWithWorkspaceTools(options: {
       /\b(get|make)\b[\s\S]{0,24}\b(it|this|the app)\b[\s\S]{0,24}\bwork/i.test(originalUserGoal))
   const webQuestion = needsWebLookup(originalUserGoal)
   const answerOnly =
-    mode === 'ask' ||
     plan.intent === 'capability' ||
     (!webQuestion &&
       !forceWorkspaceTools &&
@@ -244,6 +388,11 @@ export async function* runAgentWithWorkspaceTools(options: {
     }
     const askMessages = messages.map((m) => ({ ...m }))
     const tips: string[] = [modelsCatalog, `Routing: ${plan.reason}`]
+    if (plan.executionPlan) {
+      tips.push(
+        `Task plan:\n${plan.executionPlan.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}\nDone when: ${plan.executionPlan.doneWhen}`
+      )
+    }
     if (mode === 'ask') {
       tips.push(
         'You are in Ask mode. Answer clearly in markdown with concrete paths/symbols when relevant. ' +
@@ -333,23 +482,33 @@ export async function* runAgentWithWorkspaceTools(options: {
 
   let retrievalHint = ''
   if (retrieved && retrieved.paths.length > 0) {
-    retrievalHint =
-      `\n\n[Eris retrieval — likely relevant files]\n${retrieved.paths.map((p) => `- ${p}`).join('\n')}`
+    retrievalHint = `\n\n[Eris retrieval — ranked relevant files and snippets]\n${retrieved.detail.slice(0, AGENT_HANDOFF_CHARS)}`
   }
   const mcpToolCount = mcpTools.length
-  const openaiTools: OpenAIToolDef[] = filterToolsByPolicy(
-    [
-      ...COMPOSER_OPENAI_TOOLS,
-      ...mcpToolsToOpenAI(
-        mcpTools.map((t) => ({
-          fqName: t.fqName,
-          description: t.description
-        }))
-      )
-    ],
-    plan.toolPolicy
+  const mcpToolDefinitions = mcpToolsToOpenAI(mcpTools)
+  const mcpReadOnlyTools = new Set(
+    mcpTools.filter((tool) => tool.annotations?.readOnlyHint === true).map((tool) => tool.fqName)
   )
-  if (plan.agentId === 'reviewer' && !openaiTools.some((t) => t.function.name === 'run')) {
+  const discoveredBuiltinToolNames = new Set<string>()
+  const discoveredMcpToolNames = new Set<string>()
+  const visibleComposerToolDefinitions = (): OpenAIToolDef[] =>
+    COMPOSER_OPENAI_TOOLS.filter(
+      (definition) =>
+        getToolContract(definition.function.name)?.discovery === 'core' ||
+        discoveredBuiltinToolNames.has(definition.function.name)
+    )
+  const visibleMcpToolDefinitions = (): OpenAIToolDef[] =>
+    mcpToolCount <= MAX_INLINE_MCP_TOOLS
+      ? mcpToolDefinitions
+      : mcpToolDefinitions.filter((definition) =>
+          discoveredMcpToolNames.has(definition.function.name)
+        )
+  const openaiTools: OpenAIToolDef[] = filterToolsByPolicy(
+    [...visibleComposerToolDefinitions(), ...visibleMcpToolDefinitions()],
+    plan.toolPolicy,
+    mcpReadOnlyTools
+  )
+  if (mode !== 'ask' && plan.agentId === 'reviewer' && !openaiTools.some((t) => t.function.name === 'run')) {
     const runTool = COMPOSER_OPENAI_TOOLS.find((t) => t.function.name === 'run')
     if (runTool) openaiTools.push(runTool)
   }
@@ -364,7 +523,8 @@ export async function* runAgentWithWorkspaceTools(options: {
           plan,
           originalUserGoal,
           retrievalHint,
-          mcpToolCount
+          mcpToolCount:
+            plan.toolPolicy === 'read' || plan.toolPolicy === 'none' ? 0 : mcpToolCount
         })
 
   let lastTreeResult: string | null = null
@@ -413,6 +573,7 @@ export async function* runAgentWithWorkspaceTools(options: {
   let toolExecRounds = 0
   let inspectRounds = 0
   let step = 0
+  const maxStepsPerRun = options.settings.agent.maxStepsPerRun ?? 60
   let verifyFailures = 0
 
   const emitSessionStep = (summary?: string): AgentRunnerEvent => {
@@ -448,7 +609,9 @@ export async function* runAgentWithWorkspaceTools(options: {
     `Then reply with no tools: what this project is, what it does, and the important files, citing paths.`
   const chatReplyNext = listImprovements
     ? `Do not edit files. Read the project sources, then list the improvements as a numbered list and cite paths. Do not implement them.`
-    : `Do not edit files. Read the sources that answer the user, then reply in plain sentences and cite paths.`
+    : mode === 'ask'
+      ? `Read the workspace sources needed to answer. Do not edit or run commands. Reply with concrete paths and evidence; if the request asks for changes, describe the change without applying it.`
+      : `Do not edit files. Read the sources that answer the user, then reply in plain sentences and cite paths.`
   const answerNext = describeProject ? describeProjectNext : chatReply ? chatReplyNext : ''
   const sourceReads: Array<{ path: string; text: string }> = []
   let promptBudget = contextBudgetTokens(options.settings, workerModel)
@@ -472,8 +635,127 @@ export async function* runAgentWithWorkspaceTools(options: {
   // #4 grammar-constrained local tool calls: when a retry needs a tool and the
   // worker is the built-in GGUF model, force valid tool-call JSON via a grammar.
   const localConstrainEnabled = options.settings.agent.constrainLocalToolCalls !== false
-  const toolCallSchema = toolCallJsonSchema(mcpTools.map((t) => t.fqName))
   let constrainNextToolCall = false
+
+  function discoverMcpTools(query: string): string {
+    const terms = [...new Set(query.toLowerCase().match(/[a-z0-9_-]{2,}/g) || [])]
+    if (terms.length === 0) return 'Describe an MCP integration or capability to search for.'
+    const ranked = mcpTools
+      .map((tool) => {
+        const name = `${tool.name} ${tool.fqName}`.toLowerCase()
+        const description = tool.description.toLowerCase()
+        const combined = `${name} ${description}`
+        const score =
+          (combined.includes(query.toLowerCase()) ? 6 : 0) +
+          terms.reduce(
+            (total, term) =>
+              total + (name.includes(term) ? 3 : 0) + (description.includes(term) ? 1 : 0),
+            0
+          )
+        return { tool, score }
+      })
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8)
+    if (ranked.length === 0) return `No connected MCP tools matched “${query}”.`
+
+    const eligibleDefinitions = new Map(
+      filterToolsByPolicy(mcpToolDefinitions, plan.toolPolicy, mcpReadOnlyTools).map((definition) => [
+        definition.function.name,
+        definition
+      ])
+    )
+    for (const { tool } of ranked) {
+      discoveredMcpToolNames.add(tool.fqName)
+      const definition = eligibleDefinitions.get(tool.fqName)
+      if (definition && !openaiTools.some((item) => item.function.name === tool.fqName)) {
+        openaiTools.push(definition)
+      }
+    }
+    return [
+      `Found ${ranked.length} MCP tool(s). They are now available for the next step:`,
+      ...ranked.map(({ tool }) => `- ${tool.fqName} — ${tool.description || tool.name}`)
+    ].join('\n')
+  }
+
+  function discoverTools(query: string): string {
+    const normalizedQuery = query.trim().toLowerCase()
+    const terms = [...new Set(normalizedQuery.match(/[a-z0-9_-]{2,}/g) || [])]
+    if (terms.length === 0) return 'Describe the tool capability or workflow you need.'
+    const scoreTool = (name: string, description: string): number => {
+      const normalizedName = name.toLowerCase()
+      const normalizedDescription = description.toLowerCase()
+      const combined = `${normalizedName} ${normalizedDescription}`
+      return (
+        (combined.includes(normalizedQuery) ? 6 : 0) +
+        terms.reduce(
+          (score, term) =>
+            score +
+            (normalizedName.includes(term) ? 3 : 0) +
+            (normalizedDescription.includes(term) ? 1 : 0),
+          0
+        )
+      )
+    }
+
+    const builtinDefinitions = filterToolsByPolicy(
+      COMPOSER_OPENAI_TOOLS,
+      plan.toolPolicy,
+      mcpReadOnlyTools
+    )
+    const builtinByName = new Map(
+      builtinDefinitions.map((definition) => [definition.function.name, definition])
+    )
+    const mcpDefinitions = filterToolsByPolicy(
+      mcpToolDefinitions,
+      plan.toolPolicy,
+      mcpReadOnlyTools
+    )
+    const mcpByName = new Map(
+      mcpDefinitions.map((definition) => [definition.function.name, definition])
+    )
+    const ranked = [
+      ...COMPOSER_OPENAI_TOOLS.filter(
+        (definition) =>
+          getToolContract(definition.function.name)?.discovery === 'deferred' &&
+          definition.function.name !== 'search_tools' &&
+          builtinByName.has(definition.function.name)
+      ).map((definition) => ({
+        name: definition.function.name,
+        description: definition.function.description,
+        definition: builtinByName.get(definition.function.name)!,
+        kind: 'built-in' as const,
+        score: scoreTool(definition.function.name, definition.function.description)
+      })),
+      ...mcpTools
+        .filter((tool) => mcpByName.has(tool.fqName))
+        .map((tool) => ({
+          name: tool.fqName,
+          description: tool.description || tool.name,
+          definition: mcpByName.get(tool.fqName)!,
+          kind: 'MCP' as const,
+          score: scoreTool(`${tool.name} ${tool.fqName}`, tool.description)
+        }))
+    ]
+      .filter((candidate) => candidate.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8)
+
+    if (ranked.length === 0) return `No available tools matched “${query}”.`
+    for (const candidate of ranked) {
+      if (candidate.kind === 'built-in') discoveredBuiltinToolNames.add(candidate.name)
+      else discoveredMcpToolNames.add(candidate.name)
+      if (!openaiTools.some((item) => item.function.name === candidate.name)) {
+        openaiTools.push(candidate.definition)
+      }
+    }
+    return [
+      `Found ${ranked.length} tool(s). They are available on the next step:`,
+      ...ranked.map(
+        ({ kind, name, description }) => `- ${kind} ${name} — ${description.slice(0, 240)}`
+      )
+    ].join('\n')
+  }
 
   async function* tryMidRunAdapt(trigger: string): AsyncGenerator<AgentRunnerEvent, boolean, unknown> {
     if (
@@ -487,9 +769,64 @@ export async function* runAgentWithWorkspaceTools(options: {
     ) {
       return false
     }
-    // Stay on the agent the user was shown. A stuck step is reported, not reassigned.
-    rerouteCount = 2
-    const reason = `${plan.agentName} stays on this turn. ${trigger}.`
+    // A recovery route is a new turn plan and may widen tool access. Keep Ask
+    // mode on the current read-only plan even when the worker is stuck.
+    const decision =
+      mode === 'ask'
+        ? { kind: null, reason: '' as const }
+        : await decideMidRunAdapt({
+          workspacePath,
+          settings: options.settings,
+          plan,
+          selectedModel: workerModel,
+          goal: originalUserGoal,
+          getSecret: options.getSecret,
+          signal: options.signal,
+          escalateCount,
+          rerouteCount,
+          actionLog,
+          filesTouched
+        })
+    if (decision.kind === 'reroute' && decision.nextPlan) {
+      plan = decision.nextPlan
+      workerModel = plan.models.tools
+      rerouteCount++
+      openaiTools.splice(
+        0,
+        openaiTools.length,
+        ...filterToolsByPolicy(
+          [...visibleComposerToolDefinitions(), ...visibleMcpToolDefinitions()],
+          plan.toolPolicy,
+          mcpReadOnlyTools
+        )
+      )
+      if (mode !== 'ask' && plan.agentId === 'reviewer' && !openaiTools.some((tool) => tool.function.name === 'run')) {
+        const runTool = COMPOSER_OPENAI_TOOLS.find((tool) => tool.function.name === 'run')
+        if (runTool) openaiTools.push(runTool)
+      }
+      const reason = `${decision.reason} after ${trigger}`
+      consecutiveToolErrors = 0
+      noProgressStreak = 0
+      verifyFailures = Math.max(0, verifyFailures - 1)
+      if (workerMessages[0]?.role === 'system') {
+        workerMessages[0].content += `\n\nRECOVERY ROUTE: ${reason}. Resume from the existing action log and file changes; do not repeat completed work.`
+      }
+      workerMessages.push({
+        role: 'user',
+        content: `[Eris recovery] ${reason}. Continue the original goal. Existing work and failures: ${actionLog.slice(-8).join(' · ')}`
+      })
+      yield { type: 'adapt', kind: 'reroute', reason, agentId: plan.agentId, agentName: plan.agentName, model: workerModel }
+      yield { type: 'status', text: `${reason} · continuing` }
+      yield { type: 'thinking', text: `\n\n— ${reason}; continuing with the saved progress…\n` }
+      return true
+    }
+
+    // Keep the current role when no safe fallback is configured, but give it a concrete recovery instruction.
+    rerouteCount = Math.max(1, rerouteCount)
+    const reason =
+      mode === 'ask'
+        ? `Ask mode stays read-only while ${plan.agentName} recovers. ${trigger}.`
+        : `${plan.agentName} has no configured recovery agent. ${trigger}.`
     consecutiveToolErrors = 0
     noProgressStreak = 0
     verifyFailures = Math.max(0, verifyFailures - 1)
@@ -499,7 +836,7 @@ export async function* runAgentWithWorkspaceTools(options: {
       role: 'user',
       content:
         `[Eris] ${reason}\n` +
-        `Do not switch roles. Say what failed, then take the next step as ${plan.agentName}.`
+        `Diagnose the failure category. Use a different tool or smaller step, preserve completed changes, and verify the next result before continuing.`
     })
     return true
   }
@@ -508,10 +845,16 @@ export async function* runAgentWithWorkspaceTools(options: {
     force?: boolean
     skipLiteSummary?: boolean
   } = {}): AsyncGenerator<AgentRunnerEvent, void, unknown> {
-    if (
-      !needsContextCompaction(workerMessages, promptBudget, Boolean(opts.force))
-    ) {
-      return
+    const force = Boolean(opts.force)
+    if (!needsContextCompaction(workerMessages, promptBudget, force)) return
+
+    const micro = microCompactAgentMessages(workerMessages, promptBudget)
+    if (micro.changed) {
+      workerMessages.splice(0, workerMessages.length, ...micro.messages)
+      yield { type: 'thinking', text: '\n\n— Shortened older tool output locally to free context…\n' }
+      // The transcript changed even when no model summary was needed.
+      releaseGgufSession()
+      if (micro.withinBudget && !force) return
     }
     // Never swap Lite↔Full mid-run — node-llama-cpp holds one runtime; unloading
     // Full to summarize with Lite freezes the app for minutes and looks "broken".
@@ -639,19 +982,24 @@ export async function* runAgentWithWorkspaceTools(options: {
         return
       }
     }
-    if (!webPageText) {
-      const url = firstHttpsResult(webSearchText)
-      if (url) {
-        yield { type: 'status', text: 'Opening the first result…' }
+    if (httpsResults(webSearchText).length > 0) {
+      const opened = new Set(
+        [...webPageText.matchAll(/^Opened (\S+)/gm)].map((match) => match[1])
+      )
+      for (const [index, url] of httpsResults(webSearchText).entries()) {
+        if (opened.has(url)) continue
+        yield { type: 'status', text: 'Opening search results…' }
         yield { type: 'thinking', text: `\n\n— Opening ${url}…\n` }
-        const id = 'web_auto_open'
+        const id = `web_auto_open_${index + 1}`
         yield {
           type: 'tool',
           tool: { id, name: 'web_open', path: url, status: 'running', detail: url }
         }
         try {
-          webPageText = await openWebPage(url, options.signal)
-          actionLog.push(webPageText.split('\n')[0]!.slice(0, 160))
+          const page = await openWebPage(url, options.signal)
+          webPageText = [webPageText, page].filter(Boolean).join('\n\n')
+          opened.add(url)
+          actionLog.push(page.split('\n')[0]!.slice(0, 160))
           yield {
             type: 'tool',
             tool: {
@@ -659,7 +1007,7 @@ export async function* runAgentWithWorkspaceTools(options: {
               name: 'web_open',
               path: url,
               status: 'ok',
-              detail: webPageText.slice(0, AGENT_HANDOFF_CHARS)
+              detail: page.slice(0, AGENT_HANDOFF_CHARS)
             }
           }
           yield { type: 'thinking', text: `\n[ok] web_open ${url}\n` }
@@ -771,6 +1119,26 @@ export async function* runAgentWithWorkspaceTools(options: {
   for (;;) {
     throwIfAborted(options.signal)
 
+    if (step >= maxStepsPerRun) {
+      const stopNote = `Paused after ${maxStepsPerRun} steps. This run is incomplete; resume it to continue from the saved checkpoint.`
+      actionLog.push(stopNote)
+      yield {
+        type: 'progress',
+        step,
+        actionLog: [...actionLog],
+        filesTouched: [...filesTouched],
+        incomplete: true
+      }
+      yield emitSessionStep(stopNote)
+      yield { type: 'status', text: 'Paused · run step budget reached' }
+      yield {
+        type: 'answer',
+        text: `${buildWorkSummary(originalUserGoal, actionLog, latestAssistant)}\n\n${stopNote}`,
+        replace: true
+      }
+      return
+    }
+
     for await (const evt of compactWorkerContext()) yield evt
 
     if (
@@ -815,13 +1183,20 @@ export async function* runAgentWithWorkspaceTools(options: {
       !chatReply &&
       isNativeGgufRef(workerModel)
     constrainNextToolCall = false
+    const visibleToolNamesThisStep = new Set(openaiTools.map((tool) => tool.function.name))
     for await (const evt of streamThinkingText({
       ...options,
       model: workerModel,
       messages: workerMessages,
       stopOnToolCall: true,
       tools: openaiTools,
-      builtinJsonSchema: constrainThisTurn ? toolCallSchema : undefined,
+      builtinJsonSchema: constrainThisTurn
+        ? toolCallJsonSchema(
+            mcpTools.map((tool) => tool.fqName),
+            openaiTools.map((tool) => tool.function.name),
+            true
+          )
+        : undefined,
       sessionKey: isNativeGgufRef(workerModel) ? ggufSessionKey : undefined
     })) {
       if (evt.kind === 'thinking') {
@@ -845,7 +1220,9 @@ export async function* runAgentWithWorkspaceTools(options: {
       chatReply &&
       toolCalls.length > 0 &&
       toolCalls.every(
-        (call) => !toolAllowedByPolicy(call.name, 'read') && call.name !== 'run'
+        (call) =>
+          !toolAllowedByPolicy(call.name, 'read', mcpReadOnlyTools.has(call.name)) &&
+          call.name !== 'run'
       )
     ) {
       const note = thinkingBeforeTools(assistantText).trim()
@@ -958,12 +1335,12 @@ export async function* runAgentWithWorkspaceTools(options: {
         } else {
           yield {
             type: 'thinking',
-            text: '\n\n— No reply (15s) — continuing with best judgment…\n'
+            text: '\n\n— No reply after five minutes — continuing with best judgment…\n'
           }
           workerMessages.push({
             role: 'user',
             content:
-              `The user did not reply within 15 seconds. Proceed with the original request ` +
+              `The user did not reply within five minutes. Proceed with the original request ` +
               `using your best judgment. Do not ask another clarifying question unless you are blocked.`
           })
         }
@@ -1248,11 +1625,105 @@ export async function* runAgentWithWorkspaceTools(options: {
     const resultParts: string[] = []
     let mutatedThisRound = false
     let codeMutatedThisRound = false
+    const parallelReadResults = new Map<number, ToolExecutionResult>()
+    const parallelReadStartTimes = new Map<number, number>()
+    const canRunReadBatch =
+      toolCalls.length > 1 &&
+      toolCalls.every((call) => {
+        const contract = getToolContract(call.name)
+        return (
+          PARALLEL_READ_TOOLS.has(call.name) &&
+          contract?.effect === 'read' &&
+          toolAllowedByPolicy(call.name, plan.toolPolicy) &&
+          validateToolArguments(call.args, contract.schema).ok
+        )
+      })
+    if (canRunReadBatch) {
+      for (let index = 0; index < toolCalls.length; index++) {
+        const call = toolCalls[index]!
+        const id = `t${toolExecRounds}_${index}`
+        parallelReadStartTimes.set(index, Date.now())
+        yield {
+          type: 'tool',
+          tool: {
+            id,
+            name: call.name,
+            path: argString(call.args, 'path') || undefined,
+            status: 'running',
+            effect: 'read',
+            detail: 'Running in parallel…'
+          }
+        }
+      }
+      const readResults = await mapWithLimit(toolCalls, 4, (call) =>
+        executeParallelReadTool(workspacePath, originalUserGoal, call, options.signal)
+      )
+      for (let index = 0; index < toolCalls.length; index++) {
+        const call = toolCalls[index]!
+        const result = readResults[index]!
+        parallelReadResults.set(index, result)
+        if (result.ok && call.name === 'web_search' && (!webSearchText || !firstHttpsResult(webSearchText))) {
+          webSearchText = result.detail
+        }
+        if (result.ok && call.name === 'web_open') {
+          webPageText = [webPageText, result.detail].filter(Boolean).join('\n\n')
+        }
+      }
+    }
     for (let i = 0; i < toolCalls.length; i++) {
       throwIfAborted(options.signal)
       const call = toolCalls[i]
       const id = `t${toolExecRounds}_${i}`
-      const reviewerRun = call.name === 'run' && plan.agentId === 'reviewer'
+      const toolStartedAt = parallelReadStartTimes.get(i) ?? Date.now()
+      const precomputedResult = parallelReadResults.get(i)
+      const mcpTool = call.name.startsWith('mcp__')
+        ? mcpTools.find((tool) => tool.fqName === call.name)
+        : undefined
+      const toolContract = getToolContract(call.name)
+      const toolEffect = mcpTool ? 'external' : (toolContract?.effect ?? 'external')
+      if (!visibleToolNamesThisStep.has(call.name)) {
+        const detail = `Tool ${call.name} was not available for this step. Use search_tools to discover built-in tools or search_mcp_tools for MCP tools, then call it on the next step.`
+        yield {
+          type: 'tool',
+          tool: {
+            id,
+            name: call.name,
+            status: 'error',
+            effect: toolEffect,
+            changedResources: [],
+            durationMs: Date.now() - toolStartedAt,
+            failure: { code: 'unavailable', retryable: false },
+            detail
+          }
+        }
+        resultParts.push(`TOOL_RESULT ${call.name}: ${detail}`)
+        continue
+      }
+      const validation = validateToolArguments(
+        call.args,
+        mcpTool ? mcpTool.inputSchema : toolContract?.schema
+      )
+      if (!validation.ok) {
+        const detail = `Invalid arguments: ${validation.errors.join('; ')}`
+        yield {
+          type: 'tool',
+          tool: {
+            id,
+            name: call.name,
+            status: 'error',
+            effect: toolEffect,
+            changedResources: [],
+            durationMs: Date.now() - toolStartedAt,
+            failure: toolFailureMetadata(detail, toolEffect),
+            detail
+          }
+        }
+        resultParts.push(
+          `TOOL_RESULT ${call.name}: ${detail}\nRECOVERY: ${toolFailureRecovery(call.name, detail)}`
+        )
+        continue
+      }
+      const reviewerRun = mode !== 'ask' && call.name === 'run' && plan.agentId === 'reviewer'
       if (reviewerRun && !isVerifyCommand(argString(call.args, 'command'))) {
         yield {
           type: 'tool',
@@ -1260,26 +1731,42 @@ export async function* runAgentWithWorkspaceTools(options: {
             id,
             name: call.name,
             status: 'error',
+            effect: toolEffect,
+            changedResources: [],
+            durationMs: Date.now() - toolStartedAt,
+            failure: toolFailureMetadata('Reviewer can only run tests or typecheck', toolEffect),
             detail: 'Reviewer can only run tests or typecheck'
           }
         }
         resultParts.push(
-          'TOOL_RESULT run: blocked. Reviewer may only run tests or typecheck (npm test, npx tsc, pytest, cargo test).'
+          'TOOL_RESULT run: blocked. Reviewer may only run tests or typecheck (npm test, npx tsc, pytest, cargo test).\n' +
+            `RECOVERY: ${toolFailureRecovery('run', 'Reviewer can only run tests or typecheck')}`
         )
         continue
       }
-      if (!toolAllowedByPolicy(call.name, plan.toolPolicy) && !reviewerRun) {
+      if (
+        !toolAllowedByPolicy(call.name, plan.toolPolicy, mcpReadOnlyTools.has(call.name)) &&
+        !reviewerRun
+      ) {
         yield {
           type: 'tool',
           tool: {
             id,
             name: call.name,
             status: 'error',
+            effect: toolEffect,
+            changedResources: [],
+            durationMs: Date.now() - toolStartedAt,
+            failure: toolFailureMetadata(
+              `Blocked by tool policy (${plan.toolPolicy}) for agent ${plan.agentName}`,
+              toolEffect
+            ),
             detail: `Blocked by tool policy (${plan.toolPolicy}) for agent ${plan.agentName}`
           }
         }
         resultParts.push(
-          `TOOL_RESULT ${call.name}: blocked by policy ${plan.toolPolicy}`
+          `TOOL_RESULT ${call.name}: blocked by policy ${plan.toolPolicy}\n` +
+            `RECOVERY: ${toolFailureRecovery(call.name, `Blocked by tool policy (${plan.toolPolicy})`)}`
         )
         continue
       }
@@ -1295,19 +1782,48 @@ export async function* runAgentWithWorkspaceTools(options: {
                 : typeof call.args.url === 'string'
                   ? call.args.url.slice(0, 80)
                   : undefined
-      yield {
-        type: 'tool',
-        tool: { id, name: call.name, path, status: 'running', detail: 'Running…' }
+      if (!precomputedResult) {
+        yield {
+          type: 'tool',
+          tool: {
+            id,
+            name: call.name,
+            path,
+            status: 'running',
+            effect: toolEffect,
+            detail: 'Running…'
+          }
+        }
       }
 
       let result: { ok: boolean; detail: string; mutated: boolean; path?: string }
 
+      const approvalKind =
+        toolContract?.approval === 'command'
+          ? 'run'
+          : toolContract?.approval === 'push' && argString(call.args, 'action') === 'push'
+            ? 'push'
+            : null
       const approvalCommand =
-        call.name === 'run'
+        approvalKind === 'run'
           ? argString(call.args, 'command')
-          : call.name === 'git_sync' && argString(call.args, 'action', 'pull') === 'push'
+          : approvalKind === 'push'
             ? 'git push'
             : ''
+      let mcpApprovalDenied = false
+      let mcpApprovalDetail = ''
+      if (mcpTool) {
+        if (options.approveMcpTool) {
+          yield { type: 'status', text: `Waiting for approval: ${call.name}` }
+          mcpApprovalDenied = !(await options.approveMcpTool(call.name, call.args))
+          if (mcpApprovalDenied) {
+            mcpApprovalDetail = 'The user denied this MCP tool call. Continue without retrying it.'
+          }
+        } else {
+          mcpApprovalDenied = true
+          mcpApprovalDetail = 'MCP tool was blocked because no approval handler is available.'
+        }
+      }
       let approvalDenied = false
       if (approvalCommand && options.approveCommand && !isGlobalInstallCommand(approvalCommand)) {
         yield {
@@ -1315,12 +1831,21 @@ export async function* runAgentWithWorkspaceTools(options: {
           text: `Waiting for approval: ${approvalCommand.slice(0, 80)}`
         }
         approvalDenied = !(await options.approveCommand(
-          call.name === 'run' ? 'run' : 'push',
+          approvalKind === 'run' ? 'run' : 'push',
           approvalCommand
         ))
       }
 
-      if (approvalDenied) {
+      if (precomputedResult) {
+        result = precomputedResult
+      } else if (mcpApprovalDenied) {
+        result = {
+          ok: false,
+          detail: mcpApprovalDetail,
+          mutated: false
+        }
+        yield { type: 'thinking', text: `\n\n— MCP call denied: ${call.name}\n` }
+      } else if (approvalDenied) {
         result = {
           ok: false,
           detail:
@@ -1429,13 +1954,119 @@ export async function* runAgentWithWorkspaceTools(options: {
         try {
           const detail = await openWebPage(url, options.signal)
           result = { ok: true, detail, mutated: false, path: url }
-          if (!webPageText) webPageText = detail
+          webPageText = [webPageText, detail].filter(Boolean).join('\n\n')
         } catch (err) {
           result = {
             ok: false,
             detail: err instanceof Error ? err.message : 'Could not open the page',
             mutated: false,
             path: url
+          }
+        }
+      } else if (call.name === 'notebook_read') {
+        try {
+          const notebook = readNotebook(
+            workspacePath,
+            argString(call.args, 'path'),
+            typeof call.args.cell_index === 'number' ? call.args.cell_index : undefined
+          )
+          result = { ok: true, detail: notebook.detail, mutated: false, path: notebook.path }
+        } catch (err) {
+          result = {
+            ok: false,
+            detail: err instanceof Error ? err.message : String(err),
+            mutated: false
+          }
+        }
+      } else if (call.name === 'lsp') {
+        const path = argString(call.args, 'path')
+        const action = argString(call.args, 'action')
+        const line = typeof call.args.line === 'number' ? call.args.line : 0
+        const character = typeof call.args.character === 'number' ? call.args.character : 0
+        try {
+          if (!path) throw new Error('lsp requires path')
+          if (
+            !Number.isInteger(line) ||
+            line < 1 ||
+            !Number.isInteger(character) ||
+            character < 1
+          ) {
+            throw new Error('lsp line and character must be positive one-based integers')
+          }
+          const file = readWorkspaceFile(workspacePath, path, 1_000_000)
+          if (file.truncated) throw new Error('LSP queries are limited to files under 1 MB')
+          const absPath = resolveInWorkspace(workspacePath, path)
+          if (!(await lspEnsureOpen(workspacePath, absPath, '', file.content))) {
+            throw new Error('No language server is configured for this file.')
+          }
+          const displayPath = (target: string): string =>
+            isPathInside(workspacePath, target)
+              ? toWorkspaceRelative(workspacePath, target)
+              : target
+          if (action === 'hover') {
+            const hover = await lspHover(workspacePath, absPath, line, character)
+            result = {
+              ok: hover.ok,
+              detail:
+                hover.contents ||
+                (hover.ok
+                  ? '(no hover information at this position)'
+                  : 'No language server is available for this file.'),
+              mutated: false,
+              path: file.path
+            }
+          } else if (action === 'definition') {
+            const definitions = await lspDefinition(workspacePath, absPath, line, character)
+            result = {
+              ok: definitions.ok,
+              detail: definitions.ok
+                ? definitions.locations.length
+                  ? definitions.locations
+                      .map((item) => `${displayPath(item.path)}:${item.line}`)
+                      .join('\n')
+                  : '(no definition found)'
+                : 'No language server is available for this file.',
+              mutated: false,
+              path: file.path
+            }
+          } else if (action === 'references') {
+            const references = await lspReferences(workspacePath, absPath, line, character)
+            result = {
+              ok: references.ok,
+              detail: references.ok
+                ? references.locations.length
+                  ? references.locations
+                      .map((item) => `${displayPath(item.path)}:${item.line}`)
+                      .join('\n')
+                  : '(no references found)'
+                : 'No language server is available for this file.',
+              mutated: false,
+              path: file.path
+            }
+          } else if (action === 'completion') {
+            const completion = await lspCompletion(workspacePath, absPath, line, character)
+            result = {
+              ok: completion.ok,
+              detail: completion.ok
+                ? completion.items.length
+                  ? completion.items
+                      .slice(0, 25)
+                      .map((item) => `${item.label}${item.detail ? ` — ${item.detail}` : ''}`)
+                      .join('\n')
+                  : '(no completion items)'
+                : 'No language server is available for this file.',
+              mutated: false,
+              path: file.path
+            }
+          } else {
+            result = { ok: false, detail: `Unknown LSP action: ${action}`, mutated: false, path }
+          }
+        } catch (err) {
+          result = {
+            ok: false,
+            detail: err instanceof Error ? err.message : String(err),
+            mutated: false,
+            path: path || undefined
           }
         }
       } else if (call.name === 'grep') {
@@ -1647,12 +2278,12 @@ export async function* runAgentWithWorkspaceTools(options: {
             result = {
               ok: true,
               detail:
-                'User did not reply within 15 seconds. Proceed with the original request using your best judgment. Do not ask another clarifying question unless you are blocked.',
+                'User did not reply within five minutes. Proceed with the original request using your best judgment. Do not ask another clarifying question unless you are blocked.',
               mutated: false
             }
             yield {
               type: 'thinking',
-              text: '\n\n— No reply (15s) — continuing with best judgment…\n'
+              text: '\n\n— No reply after five minutes — continuing with best judgment…\n'
             }
           }
           yield { type: 'status', text: `${plan.agentName} continuing…` }
@@ -1693,7 +2324,7 @@ export async function* runAgentWithWorkspaceTools(options: {
             detail: 'A specialist does not delegate further. Finish the assigned goal yourself.',
             mutated: false
           }
-        } else if (options.jobId?.startsWith('chat:')) {
+        } else if (options.jobId?.startsWith('chat:') && !options.onDelegate) {
           const specialist = findAgent(workspacePath, agentId)
           const specialistPlan = await planChatTurn({
             workspacePath,
@@ -1750,6 +2381,7 @@ export async function* runAgentWithWorkspaceTools(options: {
               mode: 'agent',
               turnPlan: specialistPlan,
               approveCommand: options.approveCommand,
+              approveMcpTool: options.approveMcpTool,
               askUser: options.askUser,
               mcp: 'reuse',
               jobId: `${options.jobId}:inline:${agentId}`,
@@ -1825,7 +2457,7 @@ export async function* runAgentWithWorkspaceTools(options: {
             detail: delegated.detail,
             mutated: false
           }
-            if (delegated.ok) {
+          if (delegated.ok) {
             yield {
               type: 'adapt',
               kind: 'delegate',
@@ -1834,17 +2466,6 @@ export async function* runAgentWithWorkspaceTools(options: {
               childJobId: delegated.childJobId
             }
             actionLog.push(`Delegated → ${agentId}: ${goal.slice(0, 80)}`)
-            if (options.onAwaitChildren) {
-              yield { type: 'status', text: `Waiting for ${agentId}…` }
-              const awaited = await options.onAwaitChildren(
-                typeof call.args.timeout_ms === 'number' ? call.args.timeout_ms : 600_000
-              )
-              result = {
-                ok: awaited.ok,
-                detail: `${delegated.detail}\n\n${awaited.detail}`,
-                mutated: false
-              }
-            }
           }
         }
       } else if (call.name === 'await_children') {
@@ -1861,13 +2482,26 @@ export async function* runAgentWithWorkspaceTools(options: {
           const awaited = await options.onAwaitChildren(timeoutMs)
           result = { ok: awaited.ok, detail: awaited.detail, mutated: false }
         }
+      } else if (call.name === 'search_tools') {
+        result = {
+          ok: true,
+          detail: discoverTools(argString(call.args, 'query')),
+          mutated: false
+        }
       } else if (mcpMode !== 'off' && isMcpToolName(call.name)) {
         const mcpResult = await callMcpTool(call.name, call.args)
         result = { ok: mcpResult.ok, detail: mcpResult.detail, mutated: false }
+      } else if (call.name === 'search_mcp_tools') {
+        result = {
+          ok: true,
+          detail: discoverMcpTools(argString(call.args, 'query')),
+          mutated: false
+        }
       } else if (
         call.name === 'write_file' ||
         call.name === 'search_replace' ||
-        call.name === 'apply_patch'
+        call.name === 'apply_patch' ||
+        call.name === 'notebook_edit'
       ) {
         const writePath =
           call.name === 'apply_patch'
@@ -1905,6 +2539,34 @@ export async function* runAgentWithWorkspaceTools(options: {
               mutated: true,
               path: edited.path
             }
+          } catch (err) {
+            result = {
+              ok: false,
+              detail: err instanceof Error ? err.message : String(err),
+              mutated: false,
+              path: writePath || undefined
+            }
+          }
+        } else if (call.name === 'notebook_edit') {
+          try {
+            const edited = editNotebookCell(workspacePath, {
+              path: writePath,
+              operation: argString(call.args, 'operation') as
+                | 'replace_source'
+                | 'insert_before'
+                | 'insert_after'
+                | 'delete',
+              cellIndex:
+                typeof call.args.cell_index === 'number' ? call.args.cell_index : Number.NaN,
+              source: typeof call.args.source === 'string' ? call.args.source : undefined,
+              cellType:
+                call.args.cell_type === 'markdown' || call.args.cell_type === 'raw'
+                  ? call.args.cell_type
+                  : 'code'
+            })
+            before = edited.before
+            afterContent = edited.after
+            result = { ok: true, detail: edited.detail, mutated: true, path: edited.path }
           } catch (err) {
             result = {
               ok: false,
@@ -2172,6 +2834,10 @@ export async function* runAgentWithWorkspaceTools(options: {
           name: call.name,
           path: result.path ?? path,
           status: result.ok ? 'ok' : 'error',
+          effect: toolEffect,
+          changedResources: toolEffect === 'read' || !result.path ? [] : [result.path],
+          durationMs: Date.now() - toolStartedAt,
+          failure: result.ok ? undefined : toolFailureMetadata(result.detail, toolEffect),
           detail: result.detail.slice(0, AGENT_HANDOFF_CHARS)
         }
       }
@@ -2183,7 +2849,8 @@ export async function* runAgentWithWorkspaceTools(options: {
         }\n`
       }
       resultParts.push(
-        `TOOL_RESULT ${call.name}${result.path ? ` path=${result.path}` : ''}:\n${truncateForModel(result.detail)}`
+        `TOOL_RESULT ${call.name}${result.path ? ` path=${result.path}` : ''}:\n${truncateForModel(result.detail)}` +
+          (result.ok ? '' : `\nRECOVERY: ${toolFailureRecovery(call.name, result.detail)}`)
       )
     }
     if (webLookup) {

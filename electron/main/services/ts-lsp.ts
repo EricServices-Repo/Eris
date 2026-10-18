@@ -148,6 +148,7 @@ async function ensureServer(root: string): Promise<boolean> {
             synchronization: { didSave: true },
             hover: { contentFormat: ['markdown', 'plaintext'] },
             definition: { linkSupport: true },
+            references: {},
             completion: { completionItem: { snippetSupport: false } },
             publishDiagnostics: {}
           },
@@ -263,6 +264,24 @@ export async function lspDidOpen(
   })
 }
 
+/** Open a disk-backed document for agent queries without replacing an editor buffer. */
+export async function lspEnsureOpen(
+  root: string,
+  filePath: string,
+  language: string,
+  text: string
+): Promise<boolean> {
+  if (!isTsLike(language, filePath)) return false
+  if (!(await ensureServer(root)) || !connection) return false
+  if (openDocs.has(filePath)) return true
+  const languageId = languageIdFor(language, filePath)
+  openDocs.set(filePath, { version: 1, languageId })
+  connection.sendNotification('textDocument/didOpen', {
+    textDocument: { uri: uriFor(filePath), languageId, version: 1, text }
+  })
+  return true
+}
+
 export async function lspDidChange(
   root: string,
   filePath: string,
@@ -343,6 +362,31 @@ export async function lspDefinition(
         line: (loc.range?.start?.line ?? 0) + 1,
         name: '',
         kind: 'definition'
+      }))
+    }
+  } catch {
+    return { ok: false, locations: [] }
+  }
+}
+
+export async function lspReferences(
+  root: string,
+  filePath: string,
+  line: number,
+  character: number
+): Promise<{ ok: boolean; locations: Array<{ path: string; line: number }> }> {
+  if (!(await ensureServer(root)) || !connection) return { ok: false, locations: [] }
+  try {
+    const result = (await connection.sendRequest('textDocument/references', {
+      textDocument: { uri: uriFor(filePath) },
+      position: { line: Math.max(0, line - 1), character: Math.max(0, character - 1) },
+      context: { includeDeclaration: true }
+    })) as Array<{ uri: string; range: { start: { line: number } } }> | null
+    return {
+      ok: true,
+      locations: (result || []).slice(0, 100).map((loc) => ({
+        path: pathFromUri(loc.uri),
+        line: (loc.range?.start?.line ?? 0) + 1
       }))
     }
   } catch {

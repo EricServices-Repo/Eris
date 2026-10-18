@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 import type { WebContents } from 'electron'
 import type { AppSettings } from '../../../src/shared/settings-schema'
 
-export type CommandApprovalKind = 'run' | 'push'
+export type CommandApprovalKind = 'run' | 'push' | 'mcp'
 export type CommandApprovalDecision = 'allow' | 'always' | 'deny'
 
 export interface CommandApprovalRequest {
@@ -10,6 +10,8 @@ export interface CommandApprovalRequest {
   approvalId: string
   kind: CommandApprovalKind
   command: string
+  toolName?: string
+  canAlwaysAllow?: boolean
 }
 
 /** Any of these means the shell may chain, redirect, or substitute — never auto-allow. */
@@ -52,6 +54,23 @@ export function normalizeCommand(command: string): string {
   return command.trim().replace(/\s+/g, ' ')
 }
 
+/** Compact approval preview with values under common credential keys redacted. */
+export function formatMcpApprovalPreview(args: Record<string, unknown>): string {
+  const sensitiveKey = /token|secret|password|api[-_]?key|authorization|credential/i
+  const redact = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(redact)
+    if (!value || typeof value !== 'object') return value
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, sensitiveKey.test(key) ? '[redacted]' : redact(child)])
+    )
+  }
+  try {
+    return JSON.stringify(redact(args), null, 2).slice(0, 6_000)
+  } catch {
+    return '(arguments could not be rendered)'
+  }
+}
+
 export function commandNeedsApproval(
   settings: AppSettings | undefined,
   kind: CommandApprovalKind,
@@ -77,7 +96,8 @@ export function requestCommandApproval(
   requestId: string,
   kind: CommandApprovalKind,
   command: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  metadata: { toolName?: string; canAlwaysAllow?: boolean } = {}
 ): Promise<CommandApprovalDecision> {
   const approvalId = randomUUID()
   return new Promise((resolve) => {
@@ -101,7 +121,13 @@ export function requestCommandApproval(
       done('deny')
       return
     }
-    const req: CommandApprovalRequest = { requestId, approvalId, kind, command }
+    const req: CommandApprovalRequest = {
+      requestId,
+      approvalId,
+      kind,
+      command,
+      ...metadata
+    }
     sender.send('chat:approval-request', req)
   })
 }

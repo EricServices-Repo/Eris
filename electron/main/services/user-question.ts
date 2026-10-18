@@ -2,7 +2,8 @@ import { randomUUID } from 'crypto'
 import type { WebContents } from 'electron'
 import { AGENT_HANDOFF_CHARS } from '../../../src/shared/agent-orchestration'
 
-export const USER_QUESTION_TIMEOUT_MS = 15_000
+// Keep an agent paused long enough for the user to finish a thought; Stop remains available.
+export const USER_QUESTION_TIMEOUT_MS = 5 * 60_000
 
 export type UserQuestionOutcome =
   | { kind: 'reply'; text: string }

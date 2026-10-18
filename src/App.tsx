@@ -322,7 +322,6 @@ export default function App() {
     agentStatus,
     setAgentStatus,
     pendingApproval,
-    setPendingApproval,
     pendingQuestion,
     setPendingQuestion,
     memoryNotice,
@@ -899,7 +898,6 @@ export default function App() {
                   onStop={stopChat}
                   pendingApproval={pendingApproval}
                   onApprovalDecision={(approvalId, decision) => {
-                    setPendingApproval(null)
                     void window.ide.respondCommandApproval(approvalId, decision)
                   }}
                   pendingQuestion={pendingQuestion}

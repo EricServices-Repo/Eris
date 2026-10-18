@@ -37,6 +37,10 @@ export type ToolActivityItem = {
   name: string
   path?: string
   status: 'running' | 'ok' | 'error'
+  effect?: 'read' | 'workspace' | 'external' | 'command' | 'orchestration'
+  changedResources?: string[]
+  durationMs?: number
+  failure?: { code: string; retryable: boolean }
   detail: string
 }
 
@@ -108,7 +112,10 @@ export function useChatSession({
   const [delegations, setDelegations] = useState<ChatDelegation[]>([])
   const delegationsRef = useRef<ChatDelegation[]>([])
   const [agentStatus, setAgentStatus] = useState<string | null>(null)
-  const [pendingApproval, setPendingApproval] = useState<PendingCommandApproval | null>(null)
+  const [pendingApprovals, setPendingApprovals] = useState<PendingCommandApproval[]>([])
+  const pendingApproval = pendingApprovals[0]
+    ? { ...pendingApprovals[0], queuedCount: pendingApprovals.length }
+    : null
   const [pendingQuestion, setPendingQuestion] = useState<PendingUserQuestion | null>(null)
   const [memoryNotice, setMemoryNotice] = useState<{
     kind: 'updated' | 'proposal'
@@ -262,7 +269,15 @@ export function useChatSession({
           selectedModel: selected,
           mode: chatMode,
           forceRoute: opts?.forceRoute,
-          previousAgentId
+          previousAgentId,
+          previousMessages: thread.messages
+            .filter((message) => message.role === 'user' || message.role === 'assistant')
+            .slice(-6)
+            .map((message) => ({
+              role: message.role as 'user' | 'assistant',
+              content: message.content.slice(0, 1200),
+              agentId: message.agentId
+            }))
         })
         lastTurnRef.current = { text, intent: turnPlan.intent, agentId: turnPlan.agentId }
         const runModel = turnPlan.models.chat
@@ -670,16 +685,20 @@ export function useChatSession({
       setAgentStatus(text)
     })
     const offApproval = window.ide.onChatApprovalRequest(
-      ({ requestId, approvalId, kind, command }) => {
-        if (requestId !== requestIdRef.current) {
+      ({ requestId, approvalId, kind, command, toolName, canAlwaysAllow }) => {
+        if (requestId !== requestIdRef.current && kind !== 'mcp') {
           void window.ide.respondCommandApproval(approvalId, 'deny')
           return
         }
-        setPendingApproval({ approvalId, kind, command })
+        setPendingApprovals((current) =>
+          current.some((approval) => approval.approvalId === approvalId)
+            ? current
+            : [...current, { approvalId, kind, command, toolName, canAlwaysAllow }]
+        )
       }
     )
     const offApprovalResolved = window.ide.onChatApprovalResolved(({ approvalId }) => {
-      setPendingApproval((cur) => (cur?.approvalId === approvalId ? null : cur))
+      setPendingApprovals((current) => current.filter((approval) => approval.approvalId !== approvalId))
     })
     const offQuestion = window.ide.onChatQuestionRequest(
       ({ requestId, questionId, question, choices, timeoutMs }) => {
@@ -745,7 +764,7 @@ export function useChatSession({
       setThinkingBuffer('')
       setAnswerBuffer('')
       setAgentStatus(null)
-      setPendingApproval(null)
+      setPendingApprovals((current) => current.filter((approval) => approval.kind === 'mcp'))
       setPendingQuestion(null)
       requestIdRef.current = null
       if (aborted) userStoppedRef.current = true
@@ -857,7 +876,6 @@ export function useChatSession({
     agentStatus,
     setAgentStatus,
     pendingApproval,
-    setPendingApproval,
     pendingQuestion,
     setPendingQuestion,
     memoryNotice,

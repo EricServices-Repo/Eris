@@ -4,6 +4,7 @@ import { planChatTurn, turnPlanToRouteResult, localComposerFullActive } from '..
 import {
   commandNeedsApproval,
   denyAllPendingApprovals,
+  formatMcpApprovalPreview,
   normalizeCommand,
   requestCommandApproval,
   resolveCommandApproval,
@@ -45,7 +46,10 @@ import { setDiagnosticsPaused } from '../services/diagnostics'
 import { findAgent } from '../services/agents'
 import { appState } from '../app-state'
 import { getSecret, abortAllCompletes } from './shared'
-import { addWorkspaceAllowedCommand, workspaceAllowedCommands } from '../services/workspace-trust'
+import {
+  addWorkspaceAllowedCommand,
+  workspaceAllowedCommands
+} from '../services/workspace-trust'
 import { assertChatWithinPlan, assertCloudJobWithinPlan } from '../services/eris-entitlements'
 import { logError, logInfo, logWarn } from '../services/logger'
 import { recordAgentRun } from '../services/agent-telemetry'
@@ -260,6 +264,9 @@ export function registerChatStreamIpc(): void {
           toolsModel: turnPlan.models.tools
         })
         pendingThinking += `Route: ${turnPlan.reason}${turnPlan.classifiedIntent && turnPlan.classifiedIntent !== turnPlan.intent ? ` (classified ${turnPlan.classifiedIntent})` : ''} · tools ${turnPlan.toolPolicy}\n`
+        if (turnPlan.executionPlan) {
+          pendingThinking += `Plan: ${turnPlan.executionPlan.steps.join(' → ')}. Done when: ${turnPlan.executionPlan.doneWhen}\n`
+        }
         scheduleStreamFlush()
 
         const threadId = payload.threadId ?? null
@@ -537,6 +544,20 @@ export function registerChatStreamIpc(): void {
                 setSettings('user', { agent: { allowedCommands: allowed } }, null)
               }
             }
+            return decision !== 'deny'
+          },
+          approveMcpTool: async (toolName, args) => {
+            flushStreamChunks()
+            const preview = formatMcpApprovalPreview(args)
+            const decision = await requestCommandApproval(
+              event.sender,
+              requestId,
+              'mcp',
+              preview,
+              appState.chatAbort?.signal,
+              { toolName, canAlwaysAllow: false }
+            )
+            logInfo('MCP tool approval', { requestId, toolName, decision })
             return decision !== 'deny'
           },
           askUser: async (question, choices) => {

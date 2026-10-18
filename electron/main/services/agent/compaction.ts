@@ -10,6 +10,8 @@ import { contextLimits } from '../vram-fit'
 const COMPACT_TAIL_MESSAGES = 5
 /** Fraction of model context reserved for prompt before compacting. */
 const COMPACT_BUDGET_RATIO = 0.65
+/** Keep older tool-result messages small before paying for model summarization. */
+const MICRO_COMPACT_MAX_CHARS = 1_800
 
 /** Deterministic fallback summary from tools that actually ran. */
 export function buildWorkSummary(goal: string, actions: string[], workerNote: string): string {
@@ -35,6 +37,54 @@ function estimateTokens(messages: AgentChatMessage[]): number {
   let chars = 0
   for (const m of messages) chars += m.content.length + 8
   return Math.ceil(chars / 4)
+}
+
+/**
+ * Zero-model-cost compaction for old tool dumps. The system prompt is pinned
+ * and recent turns are preserved unless older trims do not restore the budget.
+ * Returns early once the prompt is back under budget.
+ */
+export function microCompactAgentMessages(
+  messages: AgentChatMessage[],
+  budgetTokens: number
+): { messages: AgentChatMessage[]; changed: boolean; withinBudget: boolean } {
+  if (estimateTokens(messages) <= budgetTokens) {
+    return { messages, changed: false, withinBudget: true }
+  }
+
+  const nonSystemIndexes = messages
+    .map((message, index) => ({ message, index }))
+    .filter(({ message }) => message.role !== 'system')
+    .map(({ index }) => index)
+  const protectedFrom =
+    nonSystemIndexes[Math.max(0, nonSystemIndexes.length - COMPACT_TAIL_MESSAGES)] ?? 0
+  const compacted = messages.map((message) => ({ ...message }))
+  let changed = false
+
+  for (const index of nonSystemIndexes) {
+    if (estimateTokens(compacted) <= budgetTokens) break
+    const message = compacted[index]!
+    const targetChars =
+      index >= protectedFrom ? MICRO_COMPACT_MAX_CHARS * 2 : MICRO_COMPACT_MAX_CHARS
+    if (!message.content.includes('TOOL_RESULT') || message.content.length <= targetChars) continue
+    const marker =
+      `[Earlier tool output shortened by local context cleanup. Treat omitted details as unknown; ` +
+      `inspect again if needed, and do not repeat mutations just to recover this output.]`
+    const retainedChars = Math.max(600, targetChars - marker.length - 4)
+    const headChars = Math.floor(retainedChars * 0.68)
+    const tailChars = retainedChars - headChars
+    message.content =
+      `${message.content.slice(0, headChars)}\n\n` +
+      `${marker}\n\n` +
+      message.content.slice(-tailChars)
+    changed = true
+  }
+
+  return {
+    messages: compacted,
+    changed,
+    withinBudget: estimateTokens(compacted) <= budgetTokens
+  }
 }
 
 /** Prompt budget before compaction — same window the model was loaded with. */

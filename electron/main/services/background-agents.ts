@@ -33,6 +33,7 @@ import {
 import { logError, logInfo } from './logger'
 import {
   commandNeedsApproval,
+  formatMcpApprovalPreview,
   normalizeCommand,
   requestCommandApproval
 } from './command-approval'
@@ -659,6 +660,27 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
           actionLog: [...j.actionLog, `${decision}: ${command.slice(0, 100)}`].slice(-80)
         }))
         return decision !== 'deny'
+      },
+      approveMcpTool: async (toolName, args) => {
+        if (!sender || sender.isDestroyed()) return false
+        patch(job.id, (j) => ({
+          ...j,
+          liveStatus: `Waiting for MCP approval: ${toolName}`
+        }))
+        const decision = await requestCommandApproval(
+          sender,
+          job.id,
+          'mcp',
+          formatMcpApprovalPreview(args),
+          ac.signal,
+          { toolName, canAlwaysAllow: false }
+        )
+        patch(job.id, (j) => ({
+          ...j,
+          liveStatus: decision === 'deny' ? 'MCP call denied' : 'Running…',
+          actionLog: [...j.actionLog, `${decision}: MCP ${toolName}`].slice(-80)
+        }))
+        return decision !== 'deny'
       }
     })) {
       const cur = getBackgroundJob(job.id)
@@ -712,6 +734,10 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
           name: evt.tool.name,
           path: evt.tool.path,
           status: evt.tool.status,
+          effect: evt.tool.effect,
+          changedResources: evt.tool.changedResources,
+          durationMs: evt.tool.durationMs,
+          failure: evt.tool.failure,
           detail: evt.tool.detail.slice(0, 500),
           at: new Date().toISOString()
         }

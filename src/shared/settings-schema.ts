@@ -97,6 +97,8 @@ export const SettingsSchema = z.object({
     allowedCommands: z.array(z.string()),
     /** Constrain local (GGUF) tool-call retries to valid JSON via a grammar. */
     constrainLocalToolCalls: z.boolean().default(true),
+    /** Maximum model/tool rounds for a single run before saving an incomplete checkpoint. */
+    maxStepsPerRun: z.number().int().min(10).max(200).default(60),
     /**
      * Living project memory (.eris/context.md):
      * auto = write after agent runs / ask_user replies;
@@ -398,6 +400,8 @@ export interface TurnPlan {
   routingProfile?: 'auto' | 'local' | 'max'
   /** True when this turn should prefer Cloud Composer for built-in Agent tools. */
   cloudPreferred?: boolean
+  /** Small, explicit work plan and completion condition shown to the user and worker. */
+  executionPlan?: { steps: string[]; doneWhen: string }
 }
 
 export interface ChatTurnContext {
@@ -410,6 +414,8 @@ export interface ChatTurnContext {
   forceRoute?: 'tools' | 'answer'
   /** Agent that spoke last in this thread, so a follow-up can stay with them. */
   previousAgentId?: string | null
+  /** Recent turns provided to resolve references such as “that” or “the second option”. */
+  previousMessages?: Array<{ role: 'user' | 'assistant'; content: string; agentId?: string }>
 }
 
 /** Structured chat turn; the main process assembles the final prompt from this. */
