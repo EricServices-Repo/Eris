@@ -41,7 +41,7 @@ export const CHAT_AGENT_CONTRACTS: ChatAgentContract[] = [
     job: 'Reads the workspace and explains how it actually behaves.',
     tools: 'read',
     auto: true,
-    doesNot: 'Does not edit files. In Ask mode it does not call tools.',
+    doesNot: 'Does not edit files. In Ask mode it may read relevant workspace sources but cannot mutate or run commands.',
     done: 'A short explanation with the real file paths and symbols it read.'
   },
   {
@@ -99,9 +99,24 @@ export function needsWebLookup(text: string): boolean {
   const t = text.trim()
   if (!t) return false
   return (
-    /\b(internet|on the web|online|search the web|look up)\b/i.test(t) ||
+    /\b(internet|on the web|online|search (?:the )?web|look up online|look up on the web)\b/i.test(t) ||
+    /\b(latest|current|recent|today|yesterday|this week|this month|as of now)\b[\s\S]{0,60}\b(news|price|prices|release|version|weather|schedule|policy|law|regulation|market|score|availability|status)\b/i.test(t) ||
     /\bwho (is|was|are)\b/i.test(t)
   )
+}
+
+/** Questions whose answer should be grounded in the open workspace. */
+export function asksWorkspaceQuestion(text: string, fileNames: string[] = []): boolean {
+  const t = text.trim()
+  if (!t) return false
+  if (
+    /\b(this|that|the|my|our)\s+(project|repo|repository|workspace|codebase|app|application|folder|file|code|component|function|service|api)\b/i.test(t) ||
+    /\b(where is|which file|what file|find (?:the )?(?:file|function|class|component)|in the (?:repo|project|workspace))\b/i.test(t) ||
+    /\b(function|class|method|component|hook|module|service|route|endpoint|config|stack trace|test failure|build error|source code|bug|exception|crash(?:es|ed|ing)?|fail(?:s|ed|ing)?|broken|not working|doesn't work|typescript|javascript|python|compile|compiler|import error)\b/i.test(t)
+  ) {
+    return true
+  }
+  return fileNames.some((name) => name.trim() && t.toLowerCase().includes(name.toLowerCase()))
 }
 
 const BY_ID = new Map(CHAT_AGENT_CONTRACTS.map((c) => [c.id, c]))

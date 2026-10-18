@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.60 — 2026-10-17
+
+- A request for improvements stays a review and lists them, and a run no longer stops at a step limit.
+- Agents can query language servers, inspect and edit notebook cells, and discover MCP tools with their input schemas.
+- Specialized built-in tools are discovered on demand, and constrained local tool calls can emit array and object arguments.
+
 ## 0.2.59 — 2026-10-17
 
 - A request for improvements stays a review and lists them, and a run no longer stops at a step limit.

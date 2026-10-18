@@ -9,27 +9,63 @@ export type OpenAIToolDef = {
   }
 }
 
+export type ToolAccess = 'read' | 'edit' | 'full'
+export type ToolEffect = 'read' | 'workspace' | 'external' | 'command' | 'orchestration'
+export type ToolApproval = 'none' | 'command' | 'push' | 'mcp'
+export type ToolDiscovery = 'core' | 'deferred'
+
+export type ToolContract = {
+  access: ToolAccess
+  effect: ToolEffect
+  approval: ToolApproval
+  discovery: ToolDiscovery
+  schema?: Record<string, unknown>
+}
+type ToolBuildOptions = Partial<Omit<ToolContract, 'schema'>> & {
+  requiredAnyOf?: string[][]
+}
+
+/** Keep the prompt focused when an MCP connection exposes a large catalog. */
+export const MAX_INLINE_MCP_TOOLS = 18
+
 const pathProp = { type: 'string', description: 'Path relative to workspace root' }
+const toolContracts = new Map<string, ToolContract>()
 
 function tool(
   name: string,
   description: string,
   properties: Record<string, unknown>,
-  required: string[] = []
+  required: string[] = [],
+  contract: ToolBuildOptions = {}
 ): OpenAIToolDef {
+  const schema = {
+    type: 'object',
+    properties,
+    required,
+    ...(contract.requiredAnyOf?.length
+      ? { anyOf: contract.requiredAnyOf.map((fields) => ({ required: fields })) }
+      : {}),
+    additionalProperties: false
+  }
+  toolContracts.set(name, {
+    access: contract.access ?? 'read',
+    effect: contract.effect ?? 'read',
+    approval: contract.approval ?? 'none',
+    discovery: contract.discovery ?? 'core',
+    schema
+  })
   return {
     type: 'function',
     function: {
       name,
       description,
-      parameters: {
-        type: 'object',
-        properties,
-        required,
-        additionalProperties: true
-      }
+      parameters: schema
     }
   }
+}
+
+export function getToolContract(name: string): ToolContract | undefined {
+  return toolContracts.get(name)
 }
 
 /** Built-in workspace tools exposed via native tool calling. */
@@ -40,43 +76,122 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   tool('list_dir', 'List directory entries', { path: pathProp }, ['path']),
   tool('read_file', 'Read a text file', { path: pathProp }, ['path']),
   tool(
+    'notebook_read',
+    'Read a Jupyter notebook as indexed cells with compact text outputs',
+    {
+      path: pathProp,
+      cell_index: { type: 'integer', description: 'Optional zero-based cell to read by itself' }
+    },
+    ['path'],
+    { discovery: 'deferred' }
+  ),
+  tool(
+    'notebook_edit',
+    'Edit one Jupyter notebook cell. Replacing code clears stale execution outputs.',
+    {
+      path: pathProp,
+      operation: {
+        type: 'string',
+        enum: ['replace_source', 'insert_before', 'insert_after', 'delete']
+      },
+      cell_index: { type: 'integer', description: 'Zero-based cell index' },
+      source: { type: 'string', description: 'Cell source for replace or insert operations' },
+      cell_type: { type: 'string', enum: ['code', 'markdown', 'raw'] }
+    },
+    ['path', 'operation', 'cell_index'],
+    { access: 'edit', effect: 'workspace', discovery: 'deferred' }
+  ),
+  tool(
     'search_replace',
     'Surgical edit: replace exact text in a file',
     {
       path: pathProp,
       old_string: { type: 'string' },
       new_string: { type: 'string' },
-      replace_all: { type: 'boolean' }
+      newString: { type: 'string' },
+      oldString: { type: 'string' },
+      replace_all: { type: 'boolean' },
+      replaceAll: { type: 'boolean' }
     },
-    ['path', 'old_string', 'new_string']
+    ['path'],
+    {
+      access: 'edit',
+      effect: 'workspace',
+      requiredAnyOf: [
+        ['old_string', 'new_string'],
+        ['old_string', 'newString'],
+        ['oldString', 'new_string'],
+        ['oldString', 'newString']
+      ]
+    }
   ),
-  tool('apply_patch', 'Apply a unified/V4A patch', { patch: { type: 'string' } }, ['patch']),
+  tool(
+    'apply_patch',
+    'Apply a unified/V4A patch',
+    { patch: { type: 'string' }, diff: { type: 'string' } },
+    [],
+    { access: 'edit', effect: 'workspace', requiredAnyOf: [['patch'], ['diff']] }
+  ),
   tool('write_file', 'Create or overwrite a file', { path: pathProp, content: { type: 'string' } }, [
     'path',
     'content'
-  ]),
-  tool('mkdir', 'Create a directory', { path: pathProp }, ['path']),
-  tool('delete_path', 'Delete a file or directory', { path: pathProp }, ['path']),
-  tool('rename_path', 'Rename or move a path', { path: pathProp, to: pathProp }, ['path', 'to']),
+  ], { access: 'edit', effect: 'workspace' }),
+  tool('mkdir', 'Create a directory', { path: pathProp }, ['path'], { access: 'edit', effect: 'workspace' }),
+  tool('delete_path', 'Delete a file or directory', { path: pathProp }, ['path'], { access: 'edit', effect: 'workspace' }),
+  tool('rename_path', 'Rename or move a path', { path: pathProp, to: pathProp }, ['path', 'to'], { access: 'edit', effect: 'workspace' }),
   tool('run', 'Run a shell command in the workspace', { command: { type: 'string' } }, [
     'command'
-  ]),
+  ], { access: 'full', effect: 'command', approval: 'command' }),
   tool('grep', 'Search file contents', {
     pattern: { type: 'string' },
+    query: { type: 'string' },
     glob: { type: 'string' }
-  }, ['pattern']),
+  }, [], { requiredAnyOf: [['pattern'], ['query']] }),
   tool('glob', 'Find files by path pattern', { pattern: { type: 'string' } }, ['pattern']),
-  tool('search_symbols', 'Search the code symbol index', { query: { type: 'string' } }, [
-    'query'
-  ]),
-  tool('find_references', 'Find definitions and references of a symbol', { name: { type: 'string' } }, [
-    'name'
-  ]),
+  tool(
+    'search_symbols',
+    'Search the code symbol index',
+    { query: { type: 'string' }, pattern: { type: 'string' } },
+    [],
+    { requiredAnyOf: [['query'], ['pattern']], discovery: 'deferred' }
+  ),
+  tool(
+    'find_references',
+    'Find definitions and references of a symbol',
+    { symbol: { type: 'string' }, name: { type: 'string' }, query: { type: 'string' } },
+    [],
+    { requiredAnyOf: [['symbol'], ['name'], ['query']], discovery: 'deferred' }
+  ),
+  tool(
+    'lsp',
+    'Query the configured Language Server for precise symbol information at a file position',
+    {
+      action: { type: 'string', enum: ['hover', 'definition', 'references', 'completion'] },
+      path: pathProp,
+      line: { type: 'integer', description: 'One-based line number' },
+      character: { type: 'integer', description: 'One-based character column' }
+    },
+    ['action', 'path', 'line', 'character'],
+    { discovery: 'deferred' }
+  ),
   tool('semantic_search', 'Find files related to a natural-language query (embeddings + keywords)', {
-    query: { type: 'string' }
-  }, ['query']),
-  tool('related_files', 'Files that share symbols with a path', { path: pathProp }, ['path']),
-  tool('retrieve', 'Rank relevant files for a query', { query: { type: 'string' } }, ['query']),
+    query: { type: 'string' },
+    pattern: { type: 'string' }
+  }, [], { requiredAnyOf: [['query'], ['pattern']], discovery: 'deferred' }),
+  tool(
+    'related_files',
+    'Files that share symbols with a path',
+    { path: pathProp, file: pathProp },
+    [],
+    { requiredAnyOf: [['path'], ['file']], discovery: 'deferred' }
+  ),
+  tool(
+    'retrieve',
+    'Rank relevant files for a query',
+    { query: { type: 'string' }, pattern: { type: 'string' } },
+    [],
+    { requiredAnyOf: [['query'], ['pattern']] }
+  ),
   tool(
     'web_search',
     'Search the public web in a browser and return titles, links, and snippets',
@@ -89,30 +204,54 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
     { url: { type: 'string', description: 'https address to open' } },
     ['url']
   ),
+  tool(
+    'search_tools',
+    'Search Eris built-in and connected MCP tools; matching tools become available on the next step',
+    { query: { type: 'string', description: 'Tool capability, file type, or workflow to find' } },
+    ['query'],
+    { access: 'read', effect: 'read' }
+  ),
+  tool(
+    'search_mcp_tools',
+    'Search a large connected MCP tool catalog; matching tools become available on the next step',
+    { query: { type: 'string', description: 'Integration or capability to find' } },
+    ['query'],
+    { access: 'read', effect: 'read' }
+  ),
   tool('read_context', 'Read workspace .eris/context.md notes', {}),
   tool(
     'update_context',
     'Append or set workspace context notes',
     {
-      mode: { type: 'string', enum: ['append', 'summary'] },
-      text: { type: 'string' }
+      mode: { type: 'string', enum: ['append', 'summary', 'set_summary'] },
+      text: { type: 'string' },
+      content: { type: 'string' },
+      note: { type: 'string' }
     },
-    ['mode', 'text']
+    [],
+    {
+      access: 'edit',
+      effect: 'workspace',
+      discovery: 'deferred',
+      requiredAnyOf: [['text'], ['content'], ['note']]
+    }
   ),
   tool('git_status', 'Git status', {}),
   tool('git_diff', 'Git diff', { path: pathProp }),
   tool(
     'git_stage',
     'Stage paths',
-    { paths: { type: 'array', items: { type: 'string' } } },
-    ['paths']
+    { paths: { type: 'array', items: { type: 'string' } }, path: { type: 'string' } },
+    [],
+    { access: 'edit', effect: 'workspace', discovery: 'deferred', requiredAnyOf: [['paths'], ['path']] }
   ),
-  tool('git_commit', 'Create a commit', { message: { type: 'string' } }, ['message']),
+  tool('git_commit', 'Create a commit', { message: { type: 'string' } }, ['message'], { access: 'edit', effect: 'workspace', discovery: 'deferred' }),
   tool(
     'git_sync',
     'Fetch, pull, or push',
     { action: { type: 'string', enum: ['fetch', 'pull', 'push'] } },
-    ['action']
+    ['action'],
+    { access: 'full', effect: 'external', approval: 'push', discovery: 'deferred' }
   ),
   tool(
     'git_stash',
@@ -121,17 +260,21 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
       action: { type: 'string', enum: ['push', 'pop', 'list'] },
       message: { type: 'string' }
     },
-    ['action']
+    ['action'],
+    { access: 'edit', effect: 'workspace', discovery: 'deferred' }
   ),
-  tool('list_skills', 'List user and project skills with paths', {}),
+  tool('list_skills', 'List user and project skills with paths', {}, [], { discovery: 'deferred' }),
   tool(
     'read_skill',
     'Read a skill by id',
     {
       id: { type: 'string' },
+      skill_id: { type: 'string' },
+      name: { type: 'string' },
       scope: { type: 'string', enum: ['user', 'workspace'] }
     },
-    ['id']
+    [],
+    { requiredAnyOf: [['id'], ['skill_id'], ['name']], discovery: 'deferred' }
   ),
   tool(
     'write_skill',
@@ -139,12 +282,33 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
     {
       skill_name: { type: 'string' },
       name: { type: 'string' },
+      title: { type: 'string' },
       description: { type: 'string' },
+      desc: { type: 'string' },
       body: { type: 'string' },
+      content: { type: 'string' },
+      instructions: { type: 'string' },
       id: { type: 'string' },
+      skill_id: { type: 'string' },
       scope: { type: 'string', enum: ['user', 'workspace'] }
     },
-    ['body']
+    [],
+    {
+      access: 'edit',
+      effect: 'external',
+      discovery: 'deferred',
+      requiredAnyOf: [
+        ['skill_name', 'body'],
+        ['skill_name', 'content'],
+        ['skill_name', 'instructions'],
+        ['name', 'body'],
+        ['name', 'content'],
+        ['name', 'instructions'],
+        ['title', 'body'],
+        ['title', 'content'],
+        ['title', 'instructions']
+      ]
+    }
   ),
   tool(
     'delegate_to_agent',
@@ -154,10 +318,12 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
         type: 'string',
         description: 'Specialist id: coder | explainer | reviewer | fast (or project agent id)'
       },
+      agentId: { type: 'string' },
       goal: { type: 'string', description: 'Concrete goal for the specialist' },
       summary: { type: 'string', description: 'Context the specialist needs' },
       files: { type: 'array', items: { type: 'string' } },
       open_questions: { type: 'array', items: { type: 'string' } },
+      openQuestions: { type: 'array', items: { type: 'string' } },
       confidence: { type: 'number' },
       claim: { type: 'string', description: 'Short blackboard claim line' },
       wait: {
@@ -165,7 +331,13 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
         description: 'If true, wait for this child (and siblings) before continuing'
       }
     },
-    ['agent_id', 'goal', 'summary']
+    ['goal'],
+    {
+      access: 'full',
+      effect: 'orchestration',
+      discovery: 'deferred',
+      requiredAnyOf: [['agent_id'], ['agentId']]
+    }
   ),
   tool(
     'await_children',
@@ -176,52 +348,87 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
         description: 'Max wait in ms (default 600000)'
       }
     },
-    []
+    [],
+    { access: 'full', effect: 'orchestration', discovery: 'deferred' }
   ),
   tool(
     'ask_user',
-    'Ask the user a short clarifying question before continuing. They have ~15s to reply inline; if they do not, proceed with best judgment.',
+    'Ask the user a short clarifying question before continuing. Wait up to five minutes for an inline reply; if there is no reply, proceed with best judgment.',
     {
       question: { type: 'string', description: 'One clear question for the user' },
+      prompt: { type: 'string' },
+      text: { type: 'string' },
       choices: {
         type: 'array',
         items: { type: 'string' },
         description: 'Optional short reply chips (max 6)'
       }
     },
-    ['question']
+    [],
+    { requiredAnyOf: [['question'], ['prompt'], ['text']] }
   )
 ]
 
 /**
- * A permissive JSON schema describing a single tool call, for grammar-constrained
- * decoding on the local GGUF model. Forces valid JSON with a known tool name and
- * scalar arguments, so Composer Lite can't emit malformed/partial tool calls.
+ * A permissive JSON schema describing one visible tool call, for grammar-constrained
+ * decoding on the local GGUF model. It keeps tool names in the current policy scope
+ * and permits scalar arguments plus the shallow arrays/objects used by our tools.
  * Used only on retries where a tool is required (never when a prose answer is OK).
  */
-export function toolCallJsonSchema(extraNames: string[] = []): Record<string, unknown> {
-  const names = [
-    ...COMPOSER_OPENAI_TOOLS.map((t) => t.function.name),
-    ...extraNames
-  ].filter(Boolean)
+export function toolCallJsonSchema(
+  extraNames: string[] = [],
+  availableNames?: string[],
+  allowStructuredArguments = false
+): Record<string, unknown> {
+  const names = (
+    availableNames ?? [...COMPOSER_OPENAI_TOOLS.map((t) => t.function.name), ...extraNames]
+  ).filter(Boolean)
   return {
     type: 'object',
     properties: {
-      name: { enum: Array.from(new Set(names)) }
+      name: { type: 'string', enum: Array.from(new Set(names)) }
     },
-    additionalProperties: { type: ['string', 'number', 'boolean'] }
+    required: ['name'],
+    additionalProperties: allowStructuredArguments
+      ? {
+          type: ['string', 'number', 'boolean', 'null', 'array', 'object'],
+          items: { type: ['string', 'number', 'boolean', 'null'] },
+          additionalProperties: { type: ['string', 'number', 'boolean', 'null'] }
+        }
+      : { type: ['string', 'number', 'boolean'] }
   }
 }
 
 export function mcpToolsToOpenAI(
-  tools: Array<{ fqName: string; description?: string }>
+  tools: Array<{ fqName: string; description?: string; inputSchema?: Record<string, unknown> }>
 ): OpenAIToolDef[] {
-  return tools.map((t) =>
-    tool(
+  return tools.map((t) => {
+    const definition = tool(
       t.fqName,
       t.description || `MCP tool ${t.fqName}`,
       {},
       []
     )
-  )
+    const schema = t.inputSchema
+    const inputSchema =
+      schema &&
+      typeof schema === 'object' &&
+      (schema.type === 'object' || (schema.properties && typeof schema.properties === 'object'))
+        ? {
+            type: 'object',
+            properties: {},
+            additionalProperties: true,
+            ...schema
+          }
+        : undefined
+    if (inputSchema) definition.function.parameters = inputSchema
+    toolContracts.set(t.fqName, {
+      access: 'full',
+      effect: 'external',
+      approval: 'mcp',
+      discovery: 'deferred',
+      schema: inputSchema
+    })
+    return definition
+  })
 }

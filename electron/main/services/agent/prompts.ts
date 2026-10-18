@@ -7,6 +7,7 @@ import { formatIndexSummary } from '../code-index'
 import { formatWorkspaceContextPrompt } from '../workspace-context'
 import { workspaceTree } from '../workspace-fs'
 import { handoffFromMessages } from '../agent-discussions'
+import { MAX_INLINE_MCP_TOOLS } from '../tool-registry'
 import type { AgentChatMessage } from './types'
 
 /**
@@ -31,6 +32,7 @@ Otherwise emit exactly:
 <<<END>>>
 
 Also accepted: a markdown JSON fence containing the same object.
+`name` identifies the tool. Never repeat the `name` key for an argument; use a distinct argument name or nest conflicting fields under `arguments`.
 Examples:
 - Surgical edit: {"name":"search_replace","path":"src/App.tsx","old_string":"return null","new_string":"return <main />"}
 - Create file: {"name":"write_file","path":"src/App.tsx","content":"export default function App() { return null }\\n"}
@@ -43,6 +45,8 @@ WHEN TO USE WHICH TOOL
 2) Locate code
    By path/name → glob. By text → grep. By symbol → search_symbols / find_references.
    Related modules → related_files / retrieve / semantic_search.
+   For compiler-accurate symbol details use lsp with the file path and one-based line/character. For .ipynb files use notebook_read / notebook_edit instead of rewriting raw JSON; pass cell_index to inspect one cell when the notebook summary is shortened.
+   Specialized tools may be deferred from the active definitions. Call search_tools before using a tool that is not currently available.
    Public facts outside the workspace → web_search, then web_open on an https result.
 3) Change code
    Small edits → search_replace (preferred) or apply_patch.
@@ -60,14 +64,18 @@ WHEN TO USE WHICH TOOL
 8) Clarify with the user
    ask_user ONLY for a real product/design choice that tools cannot resolve.
    Never use ask_user for structure, files, or “can you paste the code”.
-   User has ~15s; on timeout, proceed with best judgment and do not ask again.
+   Wait up to five minutes; on timeout, proceed with best judgment and do not ask again.
 9) External systems
    When MCP tools are listed as mcp__server__tool, call those for that system.
+Tool discovery
+    Specialized tools may be deferred to keep each request focused. Use search_tools for built-in tools such as LSP, notebooks, skills, or agents; use search_mcp_tools for a large connected server catalog. Discovered tools are available on the next step. Search only when the task needs a capability outside the visible tool list.
 
-TOOL SCHEMAS (emit real calls)
+TOOL SCHEMAS (emit real calls; some specialized tools may require search_tools first)
 - tree — { "name":"tree", "path":".", "maxDepth":3 }
 - list_dir — { "name":"list_dir", "path":"." }
 - read_file — { "name":"read_file", "path":"file.ts" }
+- notebook_read — { "name":"notebook_read", "path":"analysis.ipynb", "cell_index":0 }
+- notebook_edit — { "name":"notebook_edit", "path":"analysis.ipynb", "operation":"replace_source", "cell_index":0, "source":"print('ready')" }
 - search_replace — { "name":"search_replace", "path":"file.ts", "old_string":"…", "new_string":"…", "replace_all":false }
 - apply_patch — { "name":"apply_patch", "patch":"*** Begin Patch\\n…" }
 - write_file — { "name":"write_file", "path":"file.ts", "content":"full file contents" }
@@ -78,20 +86,23 @@ TOOL SCHEMAS (emit real calls)
 - grep — { "name":"grep", "pattern":"TODO|foo", "glob":"*.ts" }
 - glob — { "name":"glob", "pattern":"**/*.tsx" }
 - search_symbols — { "name":"search_symbols", "query":"MyComponent" }
-- find_references — { "name":"find_references", "name":"MyComponent" }
+- find_references — { "name":"find_references", "symbol":"MyComponent" }
+- lsp — { "name":"lsp", "action":"definition", "path":"src/App.tsx", "line":10, "character":8 }
 - semantic_search — { "name":"semantic_search", "query":"where is auth handled" }
 - related_files — { "name":"related_files", "path":"src/App.tsx" }
 - retrieve — { "name":"retrieve", "query":"auth middleware" }
 - web_search — { "name":"web_search", "query":"electron updater github releases" }
 - web_open — { "name":"web_open", "url":"https://example.com/docs" }
 - read_context — { "name":"read_context" }
+- search_tools — { "name":"search_tools", "query":"notebook cell editing" }
 - update_context — { "name":"update_context", "mode":"append"|"summary", "text":"…" }
 - list_skills / read_skill / write_skill — skills (default scope "user")
 - git_status / git_diff / git_stage / git_commit / git_sync / git_stash
 - delegate_to_agent — { "name":"delegate_to_agent", "agent_id":"coder"|"reviewer"|"explainer"|"fast", "goal":"…", "summary":"…", "files":["…"], "wait":false }
 - await_children — { "name":"await_children", "timeout_ms":600000 }
 - ask_user — { "name":"ask_user", "question":"…", "choices":["A","B"] }
-- MCP — {"name":"mcp__server__tool", ...args} when listed below
+- MCP — {"name":"mcp__server__tool", ...args} when listed below. If an MCP argument itself is named `name`, nest args: {"name":"mcp__server__tool","arguments":{"name":"value"}}.
+- Large MCP catalog — {"name":"search_mcp_tools", "query":"calendar events"}; selected tools appear on the next step
 
 QUALITY BAR
 - Prefer minimal, correct diffs over large rewrites.
@@ -109,7 +120,7 @@ QUALITY BAR
 export const READ_AGENT_PROMPT = `You are answering in Eris chat. The user's next message is the question. Your reply is the answer they read.
 
 Read the open project when the answer depends on it. Paths are relative to the workspace root.
-Do not create, edit, or delete files. Never emit write_file, search_replace, apply_patch, mkdir, or delete_path.
+You may read workspace sources and public web pages. Do not create, edit, delete files, run shell commands, or commit changes. Never emit write_file, search_replace, apply_patch, mkdir, delete_path, or run.
 
 When you need a file, emit exactly:
 
@@ -117,10 +128,10 @@ When you need a file, emit exactly:
 {"name":"read_file","path":"README.md"}
 <<<END>>>
 
-Allowed tools: tree, list_dir, read_file, grep, glob, retrieve, semantic_search, search_symbols, web_search, web_open.
+Allowed tools: tree, list_dir, read_file, grep, glob, retrieve, semantic_search, web_search, web_open, search_tools.
 Prefer README, package.json, and the main source. Skip .eris config unless the user asked about Eris settings.
 If the user asks about the internet, the web, or who someone is, call web_search, then web_open one https result. The reply may only state facts from those results. If they do not identify the person, say so. Do not invent a biography or a workspace path from a person's name.
-A Reviewer may also run npm test or the project typecheck. Nobody else runs shell commands.
+In Agent mode, a Reviewer may run npm test or the project typecheck. Ask mode cannot run shell commands.
 
 After a few reads, stop. Reply in plain sentences. Say what the project is, what it does, or what you found, and cite paths.
 Do not paste a file you intend to write. Do not describe a tool call without the JSON. Do not ask the user to paste the project.`
@@ -181,7 +192,8 @@ export function buildWorkspaceToolsSystem(
   workspacePath: string,
   settings?: AppSettings,
   selectedModel?: string,
-  systemPrompt = TOOLS_PROMPT
+  systemPrompt = TOOLS_PROMPT,
+  includeMcp = true
 ): string {
   let tree = ''
   try {
@@ -205,9 +217,10 @@ export function buildWorkspaceToolsSystem(
   if (indexSummary) parts.push(indexSummary)
   const workspaceCtx = formatWorkspaceContextPrompt(workspacePath)
   if (workspaceCtx) parts.push(workspaceCtx)
-  const liveMcp = formatLiveMcpToolsPrompt()
+  const canUseMcp = systemPrompt !== READ_AGENT_PROMPT && includeMcp
+  const liveMcp = canUseMcp ? formatLiveMcpToolsPrompt() : ''
   if (liveMcp) parts.push(liveMcp)
-  else if (settings) {
+  else if (settings && canUseMcp) {
     const mcp = formatMcpServersPrompt(settings)
     if (mcp) parts.push(mcp)
   }
@@ -229,7 +242,8 @@ export function buildPreservedWorkerMessages(options: {
     options.workspacePath,
     options.settings,
     options.plan.models.chat,
-    readOnly ? READ_AGENT_PROMPT : TOOLS_PROMPT
+    readOnly ? READ_AGENT_PROMPT : TOOLS_PROMPT,
+    options.mcpToolCount > 0
   )
   const historyTail = options.messages
     .filter((m) => m.role === 'user' || m.role === 'assistant')
@@ -256,7 +270,10 @@ export function buildPreservedWorkerMessages(options: {
         `TURN CONTEXT`,
         `Plan: ${options.plan.reason}`,
         `Agent: ${options.plan.agentName} · intent: ${options.plan.intent} · tool policy: ${options.plan.toolPolicy}`,
-        `Model for tools: ${options.plan.models.tools.replace(/^builtin:/, '')}`
+        `Model for tools: ${options.plan.models.tools.replace(/^builtin:/, '')}`,
+        options.plan.executionPlan
+          ? `Execution plan:\n${options.plan.executionPlan.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}\nDone when: ${options.plan.executionPlan.doneWhen}`
+          : ''
       ]
         .filter(Boolean)
         .join('\n\n')
@@ -276,9 +293,11 @@ export function buildPreservedWorkerMessages(options: {
       (readOnly
         ? `Read what you need, then answer in the chat. Do not edit files. `
         : `Use tools until this request is fully done. `) +
-      (options.mcpToolCount > 0
-        ? `${options.mcpToolCount} MCP tool(s) are available — use them when relevant. `
-        : '') +
+      (options.mcpToolCount > MAX_INLINE_MCP_TOOLS
+        ? `${options.mcpToolCount} MCP tools are connected. Use search_mcp_tools to discover the relevant integration; matching tools become available on the next step. `
+        : options.mcpToolCount > 0
+          ? `${options.mcpToolCount} MCP tool(s) are available — use them when relevant. `
+          : '') +
       `${playbook}`
   })
   return out

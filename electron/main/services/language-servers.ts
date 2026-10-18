@@ -15,6 +15,8 @@ import {
   lspDidClose as tsDidClose,
   lspDidOpen as tsDidOpen,
   lspHover as tsHover,
+  lspEnsureOpen as tsEnsureOpen,
+  lspReferences as tsReferences,
   onLspDiagnostics,
   type LspDiagnostic
 } from './ts-lsp'
@@ -138,6 +140,7 @@ async function ensureExtra(root: string, spec: LanguageServerConfig): Promise<bo
           textDocument: {
             hover: { contentFormat: ['markdown', 'plaintext'] },
             definition: { linkSupport: true },
+            references: {},
             completion: { completionItem: { snippetSupport: false } },
             publishDiagnostics: {}
           },
@@ -234,6 +237,33 @@ export async function lspDidOpen(
   })
 }
 
+/** Ensure agent queries can address a document without overwriting an open editor buffer. */
+export async function lspEnsureOpen(
+  root: string,
+  filePath: string,
+  language: string,
+  text: string
+): Promise<boolean> {
+  workspaceRoot = root
+  if (isTsLike(language, filePath)) return tsEnsureOpen(root, filePath, language, text)
+  const existing = openDocs.get(filePath)
+  if (existing && extras.has(existing.serverId)) return true
+  const spec = matchServer(language, filePath)
+  if (!spec || !(await ensureExtra(root, spec))) return false
+  const session = extras.get(spec.id)
+  if (!session) return false
+  openDocs.set(filePath, { version: 1, languageId: spec.languageId, serverId: spec.id })
+  session.connection.sendNotification('textDocument/didOpen', {
+    textDocument: {
+      uri: uriFor(filePath),
+      languageId: spec.languageId,
+      version: 1,
+      text
+    }
+  })
+  return true
+}
+
 export async function lspDidChange(
   root: string,
   filePath: string,
@@ -322,6 +352,35 @@ export async function lspDefinition(
         line: (loc.range?.start?.line ?? 0) + 1,
         name: '',
         kind: 'definition'
+      }))
+    }
+  } catch {
+    return { ok: false, locations: [] }
+  }
+}
+
+export async function lspReferences(
+  root: string,
+  filePath: string,
+  line: number,
+  character: number
+): Promise<{ ok: boolean; locations: Array<{ path: string; line: number }> }> {
+  if (isTsLike('', filePath)) return tsReferences(root, filePath, line, character)
+  const spec = matchServer('', filePath)
+  if (!spec || !(await ensureExtra(root, spec))) return { ok: false, locations: [] }
+  const session = extras.get(spec.id)
+  if (!session) return { ok: false, locations: [] }
+  try {
+    const result = (await session.connection.sendRequest('textDocument/references', {
+      textDocument: { uri: uriFor(filePath) },
+      position: { line: Math.max(0, line - 1), character: Math.max(0, character - 1) },
+      context: { includeDeclaration: true }
+    })) as Array<{ uri: string; range: { start: { line: number } } }> | null
+    return {
+      ok: true,
+      locations: (result || []).slice(0, 100).map((loc) => ({
+        path: pathFromUri(loc.uri),
+        line: (loc.range?.start?.line ?? 0) + 1
       }))
     }
   } catch {

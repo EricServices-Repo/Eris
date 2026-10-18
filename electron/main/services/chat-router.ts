@@ -15,9 +15,18 @@ import {
 } from './builtin-model'
 import { getLocalStatuses, isLocalRef, resolveExactLocalRef } from './local-model'
 import { streamModelChat } from './chat-runtime'
+import { getToolContract, type ToolAccess } from './tool-registry'
 import { routeHeuristic, routeMessage } from './router'
 import { learnedRouteFor, readRoutingCorrections, routingExamples } from './routing-feedback'
-import { agentForFollowUp, asksForRecommendations, asksWhatTheProjectDoes, needsWebLookup, chatAgentForTurn } from '../../../src/shared/agent-contract'
+import {
+  agentForFollowUp,
+  asksForRecommendations,
+  asksWhatTheProjectDoes,
+  asksWorkspaceQuestion,
+  isConversationFollowUp,
+  needsWebLookup,
+  chatAgentForTurn
+} from '../../../src/shared/agent-contract'
 import { CONTEXT_HEADROOM_BYTES, inferenceBudgetBytes } from './vram-fit'
 
 /** A custom agent must be at least this sure to replace the roster role. */
@@ -33,49 +42,13 @@ const CEILING_RANK: Record<AgentToolsCeiling, number> = {
   full: 3
 }
 
-const READ_TOOLS = new Set([
-  'tree',
-  'list_dir',
-  'read_file',
-  'grep',
-  'glob',
-  'search_symbols',
-  'find_references',
-  'semantic_search',
-  'related_files',
-  'retrieve',
-  'read_context',
-  'list_skills',
-  'read_skill',
-  'git_status',
-  'git_diff',
-  'ask_user',
-  'web_search',
-  'web_open'
-])
-
-const EDIT_TOOLS = new Set([
-  ...READ_TOOLS,
-  'search_replace',
-  'apply_patch',
-  'write_file',
-  'mkdir',
-  'delete_path',
-  'rename_path',
-  'update_context',
-  'write_skill',
-  'git_stage',
-  'git_commit',
-  'git_stash'
-])
-
-const FULL_TOOLS = new Set([
-  ...EDIT_TOOLS,
-  'run',
-  'git_sync',
-  'delegate_to_agent',
-  'await_children'
-])
+const TOOL_ACCESS_RANK: Record<ToolAccess, number> = { read: 1, edit: 2, full: 3 }
+const POLICY_ACCESS_RANK: Record<AgentToolsCeiling, number> = {
+  none: 0,
+  read: 1,
+  edit: 2,
+  full: 3
+}
 
 const NON_CHAT_LOCAL = /mmproj|embed|clip|vision|encoder/i
 
@@ -176,9 +149,11 @@ export function isErisCapabilityQuestion(text: string): boolean {
   return false
 }
 
-export function classifyIntent(text: string, mode: 'ask' | 'agent'): ChatIntent {
+export function classifyIntent(text: string, mode: 'ask' | 'agent', fileNames: string[] = []): ChatIntent {
   if (isErisCapabilityQuestion(text)) return 'capability'
-  if (mode === 'ask') return 'answer'
+  if (needsWebLookup(text)) return 'explore'
+  if (mode === 'ask' && !asksWorkspaceQuestion(text, fileNames)) return 'answer'
+  if (mode === 'ask') return classifyIntent(text, 'agent', fileNames)
 
   const t = text.trim()
   if (!t) return 'answer'
@@ -286,7 +261,9 @@ export function effectiveToolPolicy(
   intent: ChatIntent,
   mode: 'ask' | 'agent'
 ): AgentToolsCeiling {
-  if (mode === 'ask' || intent === 'answer' || intent === 'capability') return 'none'
+  if (intent === 'answer' || intent === 'capability') return 'none'
+  // Ask can inspect the workspace, but its ceiling never includes mutations.
+  if (mode === 'ask') return intentNeedsTools(intent) ? 'read' : 'none'
   const floor = intentToolFloor(intent)
   let ceiling = agent.tools ?? 'edit'
   // Never let a "tools: none" specialist (e.g. Fast) strip workspace tools from
@@ -295,20 +272,37 @@ export function effectiveToolPolicy(
   return minCeiling(ceiling, floor)
 }
 
-export function toolAllowedByPolicy(toolName: string, policy: AgentToolsCeiling): boolean {
+export function toolAllowedByPolicy(
+  toolName: string,
+  policy: AgentToolsCeiling,
+  mcpReadOnly = false
+): boolean {
   if (policy === 'none') return false
-  if (toolName.startsWith('mcp__')) return policy === 'full' || policy === 'edit'
-  if (policy === 'read') return READ_TOOLS.has(toolName)
-  if (policy === 'edit') return EDIT_TOOLS.has(toolName)
-  return FULL_TOOLS.has(toolName) || toolName.startsWith('mcp__')
+  // An MCP read-only annotation is a visibility hint, not approval. Its runtime
+  // effect still goes through the per-tool consent callback in the dispatcher.
+  const requiredAccess: ToolAccess | undefined = toolName.startsWith('mcp__')
+    ? mcpReadOnly
+      ? 'read'
+      : 'full'
+    : getToolContract(toolName)?.access
+  return Boolean(
+    requiredAccess && POLICY_ACCESS_RANK[policy] >= TOOL_ACCESS_RANK[requiredAccess]
+  )
 }
 
 export function filterToolsByPolicy<T extends { function: { name: string } }>(
   tools: T[],
-  policy: AgentToolsCeiling
+  policy: AgentToolsCeiling,
+  mcpReadOnlyTools?: ReadonlySet<string>
 ): T[] {
   if (policy === 'none') return []
-  return tools.filter((t) => toolAllowedByPolicy(t.function.name, policy))
+  return tools.filter((t) =>
+    toolAllowedByPolicy(
+      t.function.name,
+      policy,
+      mcpReadOnlyTools?.has(t.function.name) ?? false
+    )
+  )
 }
 
 /** Empty or "auto" lets the turn choose among ready models. Anything else is used as picked. */
@@ -325,6 +319,13 @@ export async function pickAutoChatModel(
   settings: AppSettings,
   intent: ChatIntent
 ): Promise<string> {
+  return (await chooseAutoChatModel(settings, intent)).model
+}
+
+async function chooseAutoChatModel(
+  settings: AppSettings,
+  intent: ChatIntent
+): Promise<{ model: string; basis: 'telemetry' | 'eval' | 'profile' }> {
   // Use user outcomes/evals only when enabled and only among models that are
   // currently configured and ready. This keeps Auto explainable and prevents
   // stale scores from selecting a removed provider.
@@ -340,10 +341,10 @@ export async function pickAutoChatModel(
     if (candidates.length) {
       const { bestModelForIntent } = await import('./agent-telemetry')
       const telemetryModel = bestModelForIntent(intent, candidates, settings.evals.minRuns)
-      if (telemetryModel) return telemetryModel
+      if (telemetryModel) return { model: telemetryModel, basis: 'telemetry' }
       const { bestEvalModelForIntent } = await import('./eval-store')
       const evalModel = bestEvalModelForIntent(intent, candidates, settings.evals.minRuns)
-      if (evalModel) return evalModel
+      if (evalModel) return { model: evalModel, basis: 'eval' }
     }
   }
   const heavy = intent === 'edit' || intent === 'run'
@@ -353,16 +354,18 @@ export async function pickAutoChatModel(
     !localFull &&
     profile !== 'local' &&
     settings.agent.routing.preferCloudComposer !== false
-  if (heavy && (localFull || preferCloud)) return 'builtin:composer'
-  if (isExactBuiltinReady('builtin:composer-lite')) return 'builtin:composer-lite'
+  if (heavy && (localFull || preferCloud)) return { model: 'builtin:composer', basis: 'profile' }
+  if (isExactBuiltinReady('builtin:composer-lite')) {
+    return { model: 'builtin:composer-lite', basis: 'profile' }
+  }
   const fitted = await readyLocalHandoffRef(settings)
-  if (fitted) return fitted
+  if (fitted) return { model: fitted, basis: 'profile' }
   for (const conn of settings.models.connections) {
     if (!conn.enabled || conn.type === 'builtin') continue
     const name = conn.models.find((model) => model.trim())
-    if (name) return name
+    if (name) return { model: name, basis: 'profile' }
   }
-  return 'builtin:composer-lite'
+  return { model: 'builtin:composer-lite', basis: 'profile' }
 }
 
 export function resolveModelRoles(options: {
@@ -447,6 +450,7 @@ function formatReason(parts: {
 async function llmRouteHint(options: {
   settings: AppSettings
   text: string
+  previousMessages?: Array<{ role: 'user' | 'assistant'; content: string; agentId?: string }>
   agents: AgentDefinition[]
   getSecret: (key: string) => string | null
   signal?: AbortSignal
@@ -469,6 +473,13 @@ async function llmRouteHint(options: {
   const agentLines = options.agents
     .map((a) => `- ${a.id}: ${a.description || a.name} (tools: ${a.tools ?? 'edit'})`)
     .join('\n')
+  const history = (options.previousMessages ?? [])
+    .slice(-6)
+    .map(
+      (message) =>
+        `${message.role}${message.agentId ? ` (${message.agentId})` : ''}: ${message.content.slice(0, 600)}`
+    )
+    .join('\n')
   const prompt =
     `Classify this Eris IDE chat message for routing. Reply with ONLY JSON:\n` +
     `{"intent":"answer|capability|explore|edit|review|run","agentId":"<id>","confidence":0-1}\n\n` +
@@ -486,7 +497,8 @@ async function llmRouteHint(options: {
     `- Pick the best agentId from the list\n\n` +
     `Agents:\n${agentLines}\n` +
     (options.examples ? `Past corrections from this user:\n${options.examples}\n` : '') +
-    `Message:\n${options.text.slice(0, 1200)}`
+    (history ? `Recent conversation (for references only):\n${history}\n\n` : '') +
+    `Current message:\n${options.text.slice(0, 1200)}`
 
   try {
     let out = ''
@@ -550,12 +562,13 @@ export async function planChatTurn(options: {
   const mode = forceRoute === 'tools' ? 'agent' : options.context.mode === 'ask' ? 'ask' : 'agent'
   const text = options.context.text || ''
   const corrections = readRoutingCorrections()
+  const pickedModel = options.context.selectedModel.trim()
   const selectedModel =
-    options.context.selectedModel.trim() ||
+    pickedModel ||
     options.settings.models.defaultModel ||
     'builtin:composer-lite'
 
-  const heuristicIntent = classifyIntent(text, mode)
+  const heuristicIntent = classifyIntent(text, mode, options.context.fileNames || [])
 
   const route: RouteResult = await routeMessage({
     workspacePath: options.workspacePath,
@@ -581,50 +594,73 @@ export async function planChatTurn(options: {
     routingProfile === 'max'
 
   const roster = allAgentsFlat(options.workspacePath)
-  const hasCustomAgent = roster.some((a) => a.enabled && a.builtin === false)
+  let llmAgentSelected = false
 
-  // Builtin chat roles are assigned from the message. The model router only
-  // runs when a project-defined agent might be a better match.
+  // The model router may refine intent and select any available role. If it
+  // times out or declines to choose, the deterministic role mapping below wins.
   if (
     mode === 'agent' &&
     options.settings.agent.routing.enabled &&
     wantLlmRouter &&
-    hasCustomAgent &&
     !options.context.manualAgentId
   ) {
     const agents = roster.filter((a) => a.enabled)
-    // Cap LLM router wait so TTFT isn't blocked on a cold local/router call.
-    const hint = await Promise.race([
-      llmRouteHint({
-        settings: options.settings,
-        text,
-        agents,
-        getSecret: options.getSecret,
-        signal: options.signal,
-        examples: routingExamples(corrections)
-      }),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 400))
-    ])
+    // Bound router latency and cancel its provider stream when the user turn has
+    // enough information to proceed without the hint.
+    const routeController = new AbortController()
+    const abortRoute = () => routeController.abort(options.signal?.reason)
+    if (options.signal?.aborted) abortRoute()
+    else options.signal?.addEventListener('abort', abortRoute, { once: true })
+    let routeTimer: ReturnType<typeof setTimeout> | undefined
+    let hint: Awaited<ReturnType<typeof llmRouteHint>>
+    try {
+      hint = await Promise.race([
+        llmRouteHint({
+          settings: options.settings,
+          text,
+          previousMessages: options.context.previousMessages,
+          agents,
+          getSecret: options.getSecret,
+          signal: routeController.signal,
+          examples: routingExamples(corrections)
+        }),
+        new Promise<null>((resolve) => {
+          routeTimer = setTimeout(() => {
+            routeController.abort()
+            resolve(null)
+          }, 1200)
+        })
+      ])
+    } finally {
+      if (routeTimer) clearTimeout(routeTimer)
+      options.signal?.removeEventListener('abort', abortRoute)
+      if (!routeController.signal.aborted) routeController.abort()
+    }
     if (hint?.intent) {
       // Don't let a weak/cold router strip tools from "review/improve the project…"
       const llmStripsTools =
         intentNeedsTools(heuristicIntent) &&
         !intentNeedsTools(hint.intent) &&
         hint.intent !== 'capability'
-      if (!llmStripsTools) intent = hint.intent
+      if (!llmStripsTools) {
+        intent = hint.intent
+        method = 'llm'
+      }
     }
-    if (hint?.agentId && hint.confidence >= CUSTOM_AGENT_MIN_CONFIDENCE) {
+    if (hint?.agentId) {
       const picked = findAgent(options.workspacePath, hint.agentId)
-      if (picked?.enabled && picked.builtin === false) {
+      const minConfidence =
+        picked?.builtin === false ? CUSTOM_AGENT_MIN_CONFIDENCE : LLM_MIN_CONFIDENCE
+      if (picked?.enabled && hint.confidence >= minConfidence) {
         agent = picked
         method = 'llm'
+        llmAgentSelected = true
       }
     }
   }
 
   // Capability always wins over LLM misclassifies
   if (isErisCapabilityQuestion(text)) intent = 'capability'
-  if (mode === 'ask' && intent !== 'capability') intent = 'answer'
 
   const classifiedIntent = intent
   const correction = forceRoute ?? (mode === 'agent' ? learnedRouteFor(text, corrections) : null)
@@ -638,14 +674,33 @@ export async function planChatTurn(options: {
   }
 
   const followId = agentForFollowUp(text, options.context.previousAgentId)
-  if (followId === 'composer') intent = 'edit'
-  else if (followId === 'reviewer') intent = 'review'
-  else if (followId && intent === 'edit') intent = 'explore'
+  if (mode === 'agent' && followId) {
+    const previousUserText = [...(options.context.previousMessages ?? [])]
+      .reverse()
+      .find((message) => message.role === 'user')?.content || ''
+    const previousIntent = previousUserText ? classifyIntent(previousUserText, 'agent') : null
+    const isContinuation =
+      isConversationFollowUp(text) &&
+      !intentNeedsTools(intent) &&
+      !needsWebLookup(text) &&
+      !/\b(fix|change|edit|implement|update|apply)\b/i.test(text)
+    if (
+      isContinuation &&
+      previousIntent &&
+      previousIntent !== 'answer' &&
+      previousIntent !== 'capability'
+    ) {
+      intent = previousIntent
+    } else if (followId === 'composer') intent = 'edit'
+    else if (followId === 'reviewer') intent = 'review'
+    else if (followId === 'explainer' || followId === 'fast') intent = 'explore'
+  }
 
   // Auto chat uses the roster contract. A pinned agent, a learned/forced
   // correction, and a winning custom agent are left as chosen.
   if (
     !options.context.manualAgentId &&
+    !llmAgentSelected &&
     (method === 'heuristic' || method === 'llm') &&
     agent?.builtin !== false
   ) {
@@ -688,9 +743,19 @@ export async function planChatTurn(options: {
   }
 
   const toolPolicy = effectiveToolPolicy(agent, intent, mode)
-  const chosenModel = isAutoModelChoice(selectedModel)
-    ? await pickAutoChatModel(options.settings, intent)
-    : selectedModel
+  const agentModelOverride =
+    (!pickedModel || isAutoModelChoice(pickedModel)) && agent.model.trim() && agent.model !== 'auto'
+      ? agent.model.trim()
+      : ''
+  let modelBasis: 'user' | 'agent' | 'telemetry' | 'eval' | 'profile' = agentModelOverride
+    ? 'agent'
+    : 'user'
+  let chosenModel = agentModelOverride || selectedModel
+  if (isAutoModelChoice(chosenModel)) {
+    const choice = await chooseAutoChatModel(options.settings, intent)
+    chosenModel = choice.model
+    modelBasis = choice.basis
+  }
   const roles = resolveModelRoles({
     selectedModel: chosenModel,
     intent,
@@ -722,7 +787,7 @@ export async function planChatTurn(options: {
     toolPolicy,
     requiresTools,
     escalateToFull: roles.escalateToFull || (cloudPreferred && routingProfile === 'max'),
-    reason: formatReason({
+    reason: `${formatReason({
       method,
       agentName: agent.name,
       intent,
@@ -731,13 +796,33 @@ export async function planChatTurn(options: {
       escalateToFull: roles.escalateToFull,
       profile: routingProfile,
       cloudPreferred
-    }),
+    })} · model ${modelBasis}`,
     method,
     classifiedIntent,
     error: roles.error,
     routingProfile,
-    cloudPreferred
+    cloudPreferred,
+    executionPlan: executionPlanFor(mode, intent)
   }
+}
+
+function executionPlanFor(
+  mode: 'ask' | 'agent',
+  intent: ChatIntent
+): { steps: string[]; doneWhen: string } {
+  if (intent === 'capability') {
+    return { steps: ['Check Eris model and provider catalog'], doneWhen: 'Answer from the current catalog.' }
+  }
+  if (mode === 'ask' || intent === 'explore') {
+    return { steps: ['Find relevant workspace sources', 'Read the matching files', 'Answer with paths and evidence'], doneWhen: 'The answer is grounded in the files that were read.' }
+  }
+  if (intent === 'review') {
+    return { steps: ['Map the requested scope', 'Inspect relevant implementation and tests', 'Rank findings with evidence'], doneWhen: 'Each finding has a path, impact, and actionable fix.' }
+  }
+  if (intent === 'run') {
+    return { steps: ['Inspect the requested run target if needed', 'Run it with required approval', 'Report the result'], doneWhen: 'The command result and any remaining failure are stated accurately.' }
+  }
+  return { steps: ['Inspect affected code and project rules', 'Make the requested changes', 'Run relevant verification', 'Summarize the diff'], doneWhen: 'The requested behavior is implemented and verification results are reported.' }
 }
 
 /** Legacy RouteResult from a TurnPlan (status bar / older callers). */

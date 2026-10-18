@@ -3,6 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import type { AppSettings, McpServerConfig } from '../../../src/shared/settings-schema'
 import { listEnabledMcpServers } from './mcp'
 import { logError, logInfo, logWarn } from './logger'
+import { MAX_INLINE_MCP_TOOLS } from './tool-registry'
 
 function appVersion(): string {
   try {
@@ -17,6 +18,8 @@ export type McpToolInfo = {
   serverName: string
   name: string
   description: string
+  inputSchema?: Record<string, unknown>
+  annotations?: { readOnlyHint?: boolean }
   /** Fully-qualified tool name for the agent: mcp__serverId__toolName */
   fqName: string
 }
@@ -191,13 +194,20 @@ async function connectStdio(config: McpServerConfig, cwd: string | null): Promis
     method: 'notifications/initialized'
   })
   const listed = (await stdioRequest(session, 'tools/list', {})) as {
-    tools?: Array<{ name: string; description?: string }>
+    tools?: Array<{
+      name: string
+      description?: string
+      inputSchema?: Record<string, unknown>
+      annotations?: { readOnlyHint?: boolean }
+    }>
   }
   session.tools = (listed.tools || []).map((t) => ({
     serverId: config.id,
     serverName: config.name,
     name: t.name,
     description: t.description || '',
+    inputSchema: t.inputSchema,
+    annotations: t.annotations,
     fqName: fqName(config.id, t.name)
   }))
   session.connected = true
@@ -252,13 +262,20 @@ async function connectHttpLike(config: McpServerConfig): Promise<Session> {
     // notification may not return a body
   }
   const listed = (await httpRpc(config.url, 'tools/list', {}, 2)) as {
-    tools?: Array<{ name: string; description?: string }>
+    tools?: Array<{
+      name: string
+      description?: string
+      inputSchema?: Record<string, unknown>
+      annotations?: { readOnlyHint?: boolean }
+    }>
   }
   session.tools = (listed.tools || []).map((t) => ({
     serverId: config.id,
     serverName: config.name,
     name: t.name,
     description: t.description || '',
+    inputSchema: t.inputSchema,
+    annotations: t.annotations,
     fqName: fqName(config.id, t.name)
   }))
   session.connected = true
@@ -364,12 +381,19 @@ export function formatLiveMcpToolsPrompt(): string {
       errs || 'Check Settings → MCP connection status.'
     ].join('\n')
   }
+  if (tools.length > MAX_INLINE_MCP_TOOLS) {
+    return [
+      `Connected MCP servers expose ${tools.length} tools.`,
+      'Use search_mcp_tools with the service or capability you need; matching tools will be added to the next model step.',
+      'Prefer native Eris file tools for workspace edits.'
+    ].join('\n')
+  }
   const lines = tools.map(
     (t) =>
       `- ${t.fqName} — ${t.description || t.name} (server: ${t.serverName})`
   )
   return [
-    'Live MCP tools (call with {"name":"<fqName>", ...args}):',
+    'Live MCP tools (call with {"name":"<fqName>", ...args}; nest arguments when a parameter is also named name):',
     ...lines,
     'Prefer native Eris file tools for edits; use MCP for integrations.'
   ].join('\n')
@@ -382,37 +406,41 @@ export async function callMcpTool(
   const parsed = parseFqName(fq)
   if (!parsed) return { ok: false, detail: `Invalid MCP tool name: ${fq}` }
 
-  // Resolve server by id, or by sanitized id match
-  let session: Session | undefined
-  for (const [id, s] of sessions) {
-    if (id === parsed.serverId || id.replace(/[^a-zA-Z0-9_-]/g, '_') === parsed.serverId) {
-      session = s
-      break
-    }
+  // Resolve the server by id, or its model-facing sanitized id. Fail closed if
+  // two configured ids sanitize to the same value.
+  const matches = [...sessions.entries()].filter(
+    ([id]) => id === parsed.serverId || id.replace(/[^a-zA-Z0-9_-]/g, '_') === parsed.serverId
+  )
+  if (matches.length > 1) {
+    return { ok: false, detail: `Ambiguous MCP server id: ${parsed.serverId}` }
   }
+  const session = matches[0]?.[1]
   if (!session || !session.connected) {
     return { ok: false, detail: `MCP server not connected: ${parsed.serverId}` }
   }
 
-  const tool = session.tools.find(
-    (t) => t.name === parsed.toolName || t.fqName === fq
-  )
-  const toolName = tool?.name || parsed.toolName
-  // Strip bookkeeping keys from args
-  const { name: _n, ...rest } = args
-  void _n
-
+  // Only invoke tools the connected server actually advertised. A model can
+  // emit any mcp__... name, so the parser's namespace check is not sufficient.
+  const matchingTools = session.tools.filter((t) => t.fqName === fq)
+  if (matchingTools.length === 0) {
+    return { ok: false, detail: `MCP tool is not in the live catalog: ${fq}` }
+  }
+  if (matchingTools.length > 1) {
+    return { ok: false, detail: `Ambiguous MCP tool id: ${fq}` }
+  }
+  const tool = matchingTools[0]!
+  const toolName = tool.name
   try {
     let result: unknown
     if (session.config.transport === 'stdio') {
       result = await stdioRequest(session, 'tools/call', {
         name: toolName,
-        arguments: rest
+        arguments: args
       })
     } else {
       result = await httpRpc(session.sessionUrl || session.config.url, 'tools/call', {
         name: toolName,
-        arguments: rest
+        arguments: args
       })
     }
     const detail =

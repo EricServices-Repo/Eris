@@ -6,6 +6,10 @@ export interface ToolActivityItem {
   name: string
   path?: string
   status: 'running' | 'ok' | 'error'
+  effect?: 'read' | 'workspace' | 'external' | 'command' | 'orchestration'
+  changedResources?: string[]
+  durationMs?: number
+  failure?: { code: string; retryable: boolean }
   detail: string
 }
 
@@ -92,14 +96,30 @@ export function ThinkingBlock({
                 <div className="tool-status">+{hiddenToolCount} earlier</div>
               )}
               {recentTools.map((t) => (
-                <div key={t.id} className={`tool-row tool-${t.status}`}>
+                <div
+                  key={t.id}
+                  className={`tool-row tool-${t.status}`}
+                  title={[
+                    t.detail,
+                    t.effect ? `Effect: ${t.effect}` : '',
+                    t.failure
+                      ? `Failure: ${t.failure.code}${t.failure.retryable ? ' (retryable)' : ''}`
+                      : '',
+                    t.durationMs != null ? `${t.durationMs} ms` : ''
+                  ]
+                    .filter(Boolean)
+                    .join('\n')}
+                >
                   <span className="tool-name">{t.name}</span>
                   {t.path && (
                     <span className="tool-path" title={t.path}>
                       {t.path}
                     </span>
                   )}
-                  <span className="tool-state">{t.status === 'ok' ? 'done' : t.status}</span>
+                  <span className="tool-state">
+                    {t.status === 'ok' ? 'done' : t.status}
+                    {t.effect && t.effect !== 'read' ? ` · ${t.effect}` : ''}
+                  </span>
                 </div>
               ))}
             </div>

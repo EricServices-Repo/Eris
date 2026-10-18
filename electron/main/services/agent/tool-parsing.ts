@@ -1,6 +1,7 @@
 import type { NativeToolCall } from '../chat-runtime'
 import { isToolLogReply } from '../../../../src/shared/posted-answer'
 import { isMcpToolName } from '../mcp-runtime'
+import { COMPOSER_OPENAI_TOOLS } from '../tool-registry'
 import type { ToolCall } from './types'
 
 const TOOL_BLOCK_RE = /<<<TOOL>>>\s*([\s\S]*?)\s*<<<END>>>/gi
@@ -64,59 +65,48 @@ export function extractBalancedJsonObjects(text: string): string[] {
   return out
 }
 
-const KNOWN_TOOLS = new Set([
-  'tree',
-  'list_dir',
-  'read_file',
-  'search_replace',
-  'apply_patch',
-  'write_file',
-  'mkdir',
-  'delete_path',
-  'rename_path',
-  'run',
-  'grep',
-  'glob',
-  'search_symbols',
-  'retrieve',
-  'read_context',
-  'update_context',
-  'list_skills',
-  'read_skill',
-  'write_skill',
-  'git_status',
-  'git_diff',
-  'git_stage',
-  'git_commit',
-  'git_sync',
-  'git_stash',
-  'delegate_to_agent',
-  'await_children',
-  'web_search',
-  'web_open'
-])
+const KNOWN_TOOLS = new Set(COMPOSER_OPENAI_TOOLS.map((tool) => tool.function.name))
 
 // Accept ```json or broken ``json fences (Lite often emits only two backticks)
 const FENCE_JSON_RE = /`{2,3}(?:json|tool)?\s*([\s\S]*?)`{2,3}/gi
 
-function toolCallKey(obj: Record<string, unknown>): string {
-  const name = String(obj.name ?? '')
-  return `${name}|${String(obj.path ?? '')}|${String(obj.to ?? '')}|${String(obj.command ?? '')}|${String(obj.query ?? '')}|${String(obj.url ?? '')}|${String(obj.content ?? '').length}|${String(obj.old_string ?? '').length}|${String(obj.new_string ?? '').length}|${String(obj.patch ?? '').length}|${String(obj.message ?? '')}|${String(obj.action ?? '')}`
+function toolCallKey(name: string, args: Record<string, unknown>): string {
+  return `${name}|${Object.entries(args)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}:${JSON.stringify(value)}`)
+    .join('|')}`
 }
 
 function pushToolCall(
   calls: ToolCall[],
   seen: Set<string>,
-  obj: Record<string, unknown> | null,
+  toolName: string,
+  args: Record<string, unknown>,
   raw: string
 ): void {
-  if (!obj || typeof obj.name !== 'string') return
-  const name = String(obj.name).trim()
+  const name = toolName.trim()
   if (!KNOWN_TOOLS.has(name) && !isMcpToolName(name)) return
-  const key = toolCallKey(obj)
+  const key = toolCallKey(name, args)
   if (seen.has(key)) return
   seen.add(key)
-  calls.push({ name, args: obj, raw })
+  calls.push({ name, args, raw })
+}
+
+function pushToolEnvelope(
+  calls: ToolCall[],
+  seen: Set<string>,
+  envelope: Record<string, unknown> | null,
+  raw: string
+): void {
+  if (!envelope || typeof envelope.name !== 'string') return
+  const nested = envelope.arguments
+  const args =
+    nested && typeof nested === 'object' && !Array.isArray(nested)
+      ? (nested as Record<string, unknown>)
+      : Object.fromEntries(
+          Object.entries(envelope).filter(([key]) => key !== 'name')
+        )
+  pushToolCall(calls, seen, envelope.name, args, raw)
 }
 
 export function parseToolCalls(text: string): ToolCall[] {
@@ -126,31 +116,31 @@ export function parseToolCalls(text: string): ToolCall[] {
 
   TOOL_BLOCK_RE.lastIndex = 0
   while ((m = TOOL_BLOCK_RE.exec(text)) !== null) {
-    pushToolCall(calls, seen, parseJsonObject(m[1]), m[0])
+    pushToolEnvelope(calls, seen, parseJsonObject(m[1]), m[0])
   }
 
   FENCE_JSON_RE.lastIndex = 0
   while ((m = FENCE_JSON_RE.exec(text)) !== null) {
-    pushToolCall(calls, seen, parseJsonObject(m[1]), m[0])
+    pushToolEnvelope(calls, seen, parseJsonObject(m[1]), m[0])
   }
 
   TOOL_XML_RE.lastIndex = 0
   while ((m = TOOL_XML_RE.exec(text)) !== null) {
     const name = m[1].trim()
     const body = m[2]
-    const args: Record<string, unknown> = { name }
+    const args: Record<string, unknown> = {}
     const pathMatch = body.match(/<path>\s*([\s\S]*?)\s*<\/path>/i)
     const contentMatch = body.match(/<content>\s*([\s\S]*?)\s*<\/content>/i)
     const toMatch = body.match(/<to>\s*([\s\S]*?)\s*<\/to>/i)
     if (pathMatch) args.path = pathMatch[1]
     if (contentMatch) args.content = contentMatch[1]
     if (toMatch) args.to = toMatch[1]
-    pushToolCall(calls, seen, args, m[0])
+    pushToolCall(calls, seen, name, args, m[0])
   }
 
   // Bare / unfenced JSON objects (including incomplete fences that still have a full object)
   for (const raw of extractBalancedJsonObjects(text)) {
-    pushToolCall(calls, seen, parseJsonObject(raw), raw)
+    pushToolEnvelope(calls, seen, parseJsonObject(raw), raw)
   }
 
   return calls
@@ -217,7 +207,7 @@ export function nativeToToolCalls(calls: NativeToolCall[]): ToolCall[] {
     } catch {
       args = {}
     }
-    pushToolCall(out, seen, { name: c.name, ...args }, c.arguments || c.name)
+    pushToolCall(out, seen, c.name, args, c.arguments || c.name)
   }
   return out
 }

@@ -55,9 +55,22 @@ export function AgentEditor({
       </div>
       <div className="setting-row" style={{ gridTemplateColumns: '120px 1fr', border: 'none' }}>
         <label>Model</label>
-        <span className="subtitle">
-          Uses the model selected in chat{defaultModel ? ` (${defaultModel})` : ''}.
-        </span>
+        <div>
+          <select
+            value={agent.model || ''}
+            onChange={(e) => onChange({ ...agent, model: e.target.value })}
+            title="A model override applies when chat is set to Auto. A specific chat model selection wins."
+          >
+            <option value="">Use chat selection{defaultModel ? ` (${defaultModel})` : ''}</option>
+            <option value="auto">Auto route for this agent</option>
+            {[...new Set(models)].map((model) => (
+              <option key={model} value={model}>
+                {model}
+              </option>
+            ))}
+          </select>
+          <div className="subtitle">A specific model is used when chat is set to Auto.</div>
+        </div>
       </div>
       <div className="setting-row" style={{ gridTemplateColumns: '120px 1fr', border: 'none' }}>
         <label>Temperature</label>
