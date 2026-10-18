@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import { ImageGenerationSettingsSchema } from './image-generation-schema'
+import type { GeneratedImageAsset } from './image-generation'
 
 export const AgentToolsCeilingSchema = z.enum(['none', 'read', 'edit', 'full'])
 export type AgentToolsCeiling = z.infer<typeof AgentToolsCeilingSchema>
@@ -79,6 +81,7 @@ export const LanguageServerSchema = z.object({
 })
 
 export const SettingsSchema = z.object({
+  images: ImageGenerationSettingsSchema.default({}),
   models: z.object({
     defaultModel: z.string(),
     temperature: z.number().min(0).max(2),
@@ -272,6 +275,7 @@ export interface ChatDelegation {
 }
 
 export interface ChatMessage {
+  assets?: GeneratedImageAsset[]
   id: string
   role: 'system' | 'user' | 'assistant'
   content: string

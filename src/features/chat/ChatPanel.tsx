@@ -1,3 +1,4 @@
+import { ImageMessage } from './ImageMessage'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   ChatDelegation,
@@ -93,6 +94,7 @@ const HistoricalMessages = memo(function HistoricalMessages({
             ) : (
               <div className="user-text">{message.content}</div>
             )}
+            {message.assets?.map((asset) => <ImageMessage key={asset.id} asset={asset} />)}
             {message.role === 'assistant' && (
               <AnswerFeedback message={message} question={questions.get(message.id) || ''} />
             )}
@@ -487,6 +489,7 @@ export function ChatPanel({
   const slashItems = useMemo((): SlashItem[] => {
     if (slashQuery === null) return []
     const actions: SlashItem[] = [
+      { id: 'image', command: '/image', label: 'Generate image', hint: 'Create an image with your configured image provider', kind: 'action' },
       {
         id: 'create-skill',
         command: '/create-skill',
@@ -526,6 +529,7 @@ export function ChatPanel({
 
   const applySlashItem = (item: SlashItem) => {
     if (item.kind === 'action') {
+      if (item.id === 'image') { setDraft('/image '); textareaRef.current?.focus(); return }
       if (item.id === 'create-skill') {
         setDraft(
           [

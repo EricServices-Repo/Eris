@@ -10,7 +10,7 @@ export interface PendingDiff {
   path: string
   before: string | null
   after: string
-  op: 'write' | 'delete' | 'rename' | 'mkdir'
+  op: 'write' | 'delete' | 'rename' | 'mkdir' | 'binary'
   status: 'pending' | 'kept' | 'undone'
 }
 
@@ -143,7 +143,7 @@ export function DiffReview({
   const selectFile = (id: string) => {
     const d = diffs.find((x) => x.id === id)
     setOpenId(id)
-    if (d) onOpenPath(openablePath(d.path))
+    if (d && d.op !== 'binary') onOpenPath(openablePath(d.path))
   }
 
   const goHunk = (target: 'next' | 'previous') => {
@@ -330,6 +330,7 @@ export function DiffReview({
               <button
                 type="button"
                 className="md-path"
+                disabled={active.op === 'binary'}
                 onClick={() => onOpenPath(openablePath(active.path))}
               >
                 {active.path}
@@ -427,6 +428,7 @@ export function DiffReview({
                 {active.op === 'rename' && (
                   <p className="hint">File was renamed. Keep to accept; Undo restores the previous path.</p>
                 )}
+                {active.op === 'binary' && <p>{active.after}. Keep or undo this generated image.</p>}
                 {active.op === 'mkdir' && (
                   <p className="hint">Directory was created. Undo removes it if still empty.</p>
                 )}

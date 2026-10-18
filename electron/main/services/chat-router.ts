@@ -1,3 +1,4 @@
+import { asksForImageGeneration } from '../../../src/shared/image-generation'
 import type {
   AgentDefinition,
   AgentToolsCeiling,
@@ -189,6 +190,7 @@ export function classifyIntent(text: string, mode: 'ask' | 'agent', fileNames: s
     return 'run'
   }
 
+  if (asksForImageGeneration(t)) return 'edit'
   if (asksToImplementChanges(t)) return 'edit'
   // In Agent mode, natural implementation requests such as “show me how to add”
   // and “I need to implement … how would you approach it?” must reach Composer.

@@ -1,3 +1,4 @@
+import { ImageGenerationSettings } from '../ImageGenerationSettings'
 import { useEffect, useMemo, useState } from 'react'
 import type {
   AppSettings,
@@ -600,6 +601,7 @@ export function ProvidersModelsPanel({
 
   return (
     <div className="models-page providers-page">
+      <ImageGenerationSettings resolved={resolved} apply={apply} />
       <section className="models-card">
         <header className="models-card-head">
           <div>

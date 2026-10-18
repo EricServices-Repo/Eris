@@ -1,3 +1,10 @@
+import type { LocalImageStatus, LocalImageProgress } from './image-generation'
+import type {
+  GeneratedImageAsset,
+  ImageGenerationRequest,
+  ImageGenerationResult,
+  ImageGenerationProgress
+} from './image-generation'
 import type {
   AppSettings,
   ChatDelegation,
@@ -195,6 +202,21 @@ export type UsageSnapshot = {
 }
 
 export interface IdeApi {
+  localImageStatus: () => Promise<LocalImageStatus>
+  setupLocalImageRuntime: () => Promise<{ ok: boolean; status?: LocalImageStatus; error?: string }>
+  downloadLocalImageModel: (
+    repoId: string
+  ) => Promise<{ ok: boolean; status?: LocalImageStatus; error?: string }>
+  deleteLocalImageModel: (
+    id: string
+  ) => Promise<{ ok: boolean; status?: LocalImageStatus; error?: string }>
+  cancelLocalImageOperation: () => Promise<boolean>
+  onLocalImageProgress: (cb: (progress: LocalImageProgress) => void) => () => void
+  generateImage: (request: ImageGenerationRequest) => Promise<ImageGenerationResult>
+  cancelImageGeneration: (requestId: string) => Promise<boolean>
+  saveImageToWorkspace: (id: string, path: string) => Promise<{ ok: boolean; error?: string }>
+  onImageProgress: (cb: (progress: ImageGenerationProgress) => void) => () => void
+  onChatAsset: (cb: (data: { requestId: string; asset: GeneratedImageAsset }) => void) => () => void
   getAppState: () => Promise<AppState>
   getAppVersion: () => Promise<AppVersionInfo>
   openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>
@@ -407,7 +429,7 @@ export interface IdeApi {
         path: string
         before: string | null
         after: string
-        op: 'write' | 'delete' | 'rename' | 'mkdir'
+        op: 'write' | 'delete' | 'rename' | 'mkdir' | 'binary'
       }
     }) => void
   ) => () => void
@@ -742,9 +764,7 @@ export interface IdeApi {
     skills: number
   }>
   getCloudJob: (id: string) => Promise<BackgroundJob | null>
-  searchReferences: (
-    name: string
-  ) => Promise<{
+  searchReferences: (name: string) => Promise<{
     ok: boolean
     detail: string
     hits: Array<{ name: string; path: string; line: number }>

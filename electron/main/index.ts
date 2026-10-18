@@ -1,5 +1,9 @@
+import { stopLocalImageProcesses } from './services/local-image-model'
 import { setDefaultResultOrder } from 'dns'
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, protocol } from 'electron'
+import { registerImageProtocol } from './ipc/images'
+
+protocol.registerSchemesAsPrivileged([{ scheme: 'eris-media', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 
 // Windows/Node undici: prefer IPv4 so HTTPS downloads do not die with opaque "fetch failed".
 try {
@@ -68,6 +72,7 @@ app.whenReady().then(() => {
     })
   }
 
+  registerImageProtocol()
   registerIpc()
   buildMenu()
   createWindow()
@@ -106,6 +111,7 @@ app.on('before-quit', (event) => {
   appState.chatAbort?.abort()
   appState.chatAbort = null
   cancelEvalRun()
+  stopLocalImageProcesses()
   void stopAllBackgroundJobs()
   setDiagnosticsPaused(false)
   stopWorkspaceWatcher()

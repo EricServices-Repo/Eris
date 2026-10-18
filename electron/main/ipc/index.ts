@@ -1,3 +1,4 @@
+import { registerImageIpc } from './images'
 import { registerWorkspaceIpc } from './workspace'
 import { registerAppIpc } from './app'
 import { registerSettingsIpc } from './settings'
@@ -24,6 +25,7 @@ import { registerUpdatesIpc } from './updates'
 import { registerBugReportIpc } from './bug-report'
 
 export function registerIpc(): void {
+  registerImageIpc()
   registerWorkspaceIpc()
   registerAppIpc()
   registerSettingsIpc()

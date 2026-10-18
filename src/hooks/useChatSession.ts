@@ -1,3 +1,4 @@
+import { imagePromptFromCommand, type GeneratedImageAsset } from '@/shared/image-generation'
 import {
   useCallback,
   useEffect,
@@ -144,6 +145,8 @@ export function useChatSession({
   const requestWorkspacePathRef = useRef<string | null>(null)
   const thinkingAcc = useRef('')
   const answerAcc = useRef('')
+  const imageAssetsRef = useRef<GeneratedImageAsset[]>([])
+  const directImageRequestRef = useRef<string | null>(null)
   const routeMetaRef = useRef<{ agentId?: string; agentName?: string; model?: string }>({})
   const paintRaf = useRef(0)
   /** Set when user clicks Stop — unlock UI immediately and skip queue drain. */
@@ -170,6 +173,7 @@ export function useChatSession({
     lastRequestIdRef.current = requestIdRef.current
     requestIdRef.current = null
     // Keep thinking/answer buffers visible until done flushes the partial reply.
+    if (directImageRequestRef.current) void window.ide.cancelImageGeneration(directImageRequestRef.current)
     void window.ide.stopChat()
   }, [])
 
@@ -235,6 +239,7 @@ export function useChatSession({
       changedFiles.current.clear()
       thinkingAcc.current = ''
       answerAcc.current = ''
+      imageAssetsRef.current = []
       setThinkingBuffer('')
       setAnswerBuffer('')
       setToolActivity([])
@@ -258,6 +263,52 @@ export function useChatSession({
       userStoppedRef.current = false
 
       try {
+        const imagePrompt = imagePromptFromCommand(text)
+        if (imagePrompt !== null) {
+          if (!imagePrompt) throw new Error('Use /image followed by a description of the image.')
+          if (files.length || skillIds.length) throw new Error('/image currently accepts a text prompt. Remove attachments and skills to generate an image.')
+          let thread = opts?.thread ?? activeThread
+          if (!thread) thread = await window.ide.createChat(selectedModel || settings.models.defaultModel)
+          requestThreadIdRef.current = thread.id
+          const userSaved = await window.ide.appendChatMessage(thread.id, {
+            id: uid(), role: 'user', content: text, createdAt: Date.now()
+          }, undefined, workspacePath)
+          setActiveThread(userSaved)
+          activeThreadRef.current = userSaved
+          setThreads((previous) => [userSaved, ...previous.filter((item) => item.id !== userSaved.id)])
+          setAttachments([])
+          setActiveSkills([])
+          setRouteLabel('Image generation')
+          setAgentStatus('Generating image…')
+          directImageRequestRef.current = requestId
+          try {
+            // Stop may have been clicked while the user message was being saved.
+            if (userStoppedRef.current) return
+            const result = await window.ide.generateImage({ requestId, prompt: imagePrompt })
+            if (!result.ok) {
+              if (!result.aborted) throw new Error(result.error)
+              return
+            }
+            const saved = await window.ide.appendChatMessage(thread.id, {
+              id: `${requestId}:assistant`, role: 'assistant', content: 'Generated image.',
+              assets: [result.asset], model: result.asset.model, agentName: 'Image generation', createdAt: Date.now()
+            }, undefined, workspacePath)
+            if (activeThreadRef.current?.id === saved.id) {
+              const merged = mergeChatTail(activeThreadRef.current, saved)
+              setActiveThread(merged)
+              activeThreadRef.current = merged
+            }
+            setThreads((previous) => [saved, ...previous.filter((item) => item.id !== saved.id)])
+          } finally {
+            if (directImageRequestRef.current === requestId) directImageRequestRef.current = null
+            if (requestIdRef.current === requestId || lastRequestIdRef.current === requestId) {
+              requestIdRef.current = null
+              setStreaming(false)
+              setAgentStatus(null)
+            }
+          }
+          return
+        }
         // Prefer in-memory catalog from boot/refresh — no modelsStatus IPC on the hot path.
         let catalog = models
         if (catalog.length === 0) {
@@ -470,6 +521,7 @@ export function useChatSession({
           )
         }
       } catch (err) {
+        if (lastRequestIdRef.current !== requestId) return
         setStreaming(false)
         setAgentStatus(null)
         requestIdRef.current = null
@@ -570,6 +622,14 @@ export function useChatSession({
   }, [streaming, sendMessage])
 
   useEffect(() => {
+    const offAsset = window.ide.onChatAsset(({ requestId, asset }) => {
+      if (requestId !== requestIdRef.current) return
+      if (!imageAssetsRef.current.some((item) => item.id === asset.id)) imageAssetsRef.current.push(asset)
+    })
+    const offImageProgress = window.ide.onImageProgress(({ requestId, stage, detail }) => {
+      if (requestId !== requestIdRef.current) return
+      setAgentStatus(detail ?? (stage === 'saving' ? 'Saving image…' : stage === 'complete' ? 'Image ready' : 'Generating image…'))
+    })
     const offThinking = window.ide.onChatThinking(({ requestId, chunk }) => {
       if (requestId !== requestIdRef.current) return
       thinkingAcc.current += chunk
@@ -639,7 +699,7 @@ export function useChatSession({
           status: 'pending'
         }
       ])
-      if (workspacePath) {
+      if (workspacePath && diff.op !== 'binary') {
         void openFile(joinWorkspacePath(workspacePath, diff.path)).catch(() => undefined)
       }
     })
@@ -819,10 +879,11 @@ export function useChatSession({
         agentId: meta.agentId,
         agentName: meta.agentName,
         model: meta.model,
+        assets: imageAssetsRef.current.length ? [...imageAssetsRef.current] : undefined,
         delegations: savedDelegations.length ? savedDelegations : undefined
       }
       try {
-        if (!content || !threadId) return
+        if ((!content && !message.assets?.length) || !threadId) return
         const saved = await window.ide.appendChatMessage(
           threadId,
           message,
@@ -857,9 +918,29 @@ export function useChatSession({
       setPendingQuestion(null)
       setChatError(error)
       requestIdRef.current = null
+      // A later model failure must not lose an image already generated for this turn.
+      const assets = [...imageAssetsRef.current]
+      const threadId = requestThreadIdRef.current
+      if (assets.length && threadId) {
+        const meta = routeMetaRef.current
+        void window.ide.appendChatMessage(threadId, {
+          id: `${requestId}:assistant`, role: 'assistant',
+          content: 'Image assets were generated before the agent stopped with an error.',
+          assets, createdAt: Date.now(), agentId: meta.agentId, agentName: meta.agentName, model: meta.model
+        }, meta.model, requestWorkspacePathRef.current).then((saved) => {
+          if (activeThreadRef.current?.id === saved.id) {
+            const merged = mergeChatTail(activeThreadRef.current, saved)
+            activeThreadRef.current = merged
+            setActiveThread(merged)
+          }
+          setThreads((previous) => [saved, ...previous.filter((thread) => thread.id !== saved.id)])
+        }).catch((saveError) => setChatError(`Image reply could not be saved: ${String(saveError)}`))
+      }
     })
     return () => {
       if (workspaceRefreshTimer) clearTimeout(workspaceRefreshTimer)
+      offAsset()
+      offImageProgress()
       offThinking()
       offAnswer()
       offRouted()

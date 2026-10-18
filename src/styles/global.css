@@ -5994,3 +5994,13 @@ button.linkish {
   padding: 8px;
   border-radius: var(--radius);
 }
+
+.generated-image-card { margin: 12px 0; padding: 12px; border: 1px solid var(--border, #444); border-radius: 10px; overflow: hidden; }
+.generated-image-preview { display: block; width: 100%; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
+.generated-image-preview img { display: block; width: 100%; height: auto; max-height: 480px; object-fit: contain; }
+.generated-image-card figcaption { margin: 8px 0; font-size: 12px; overflow-wrap: anywhere; }
+.generated-image-card details { margin: 8px 0; }
+.generated-image-card input { width: 100%; min-width: 0; }
+.generated-image-dialog { max-width: 95vw; max-height: 95vh; background: #1a1b1e; color: #eee; border: 1px solid #555; }
+.generated-image-dialog::backdrop { background: #000b; }
+.generated-image-dialog img { display: block; max-width: 88vw; max-height: 82vh; object-fit: contain; }
