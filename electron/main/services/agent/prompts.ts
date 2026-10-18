@@ -32,7 +32,7 @@ Otherwise emit exactly:
 <<<END>>>
 
 Also accepted: a markdown JSON fence containing the same object.
-`name` identifies the tool. Never repeat the `name` key for an argument; use a distinct argument name or nest conflicting fields under `arguments`.
+The name field identifies the tool. Never repeat that key for an argument; use a distinct argument name or nest conflicting fields under arguments.
 Examples:
 - Surgical edit: {"name":"search_replace","path":"src/App.tsx","old_string":"return null","new_string":"return <main />"}
 - Create file: {"name":"write_file","path":"src/App.tsx","content":"export default function App() { return null }\\n"}
@@ -101,7 +101,7 @@ TOOL SCHEMAS (emit real calls; some specialized tools may require search_tools f
 - delegate_to_agent — { "name":"delegate_to_agent", "agent_id":"coder"|"reviewer"|"explainer"|"fast", "goal":"…", "summary":"…", "files":["…"], "wait":false }
 - await_children — { "name":"await_children", "timeout_ms":600000 }
 - ask_user — { "name":"ask_user", "question":"…", "choices":["A","B"] }
-- MCP — {"name":"mcp__server__tool", ...args} when listed below. If an MCP argument itself is named `name`, nest args: {"name":"mcp__server__tool","arguments":{"name":"value"}}.
+- MCP — {"name":"mcp__server__tool", ...args} when listed below. If an MCP argument itself is named name, nest args: {"name":"mcp__server__tool","arguments":{"name":"value"}}.
 - Large MCP catalog — {"name":"search_mcp_tools", "query":"calendar events"}; selected tools appear on the next step
 
 QUALITY BAR

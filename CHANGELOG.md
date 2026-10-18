@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.61 — 2026-10-17
+
+- Improved built-in tool discovery and local tool-call handling.
+
 ## 0.2.60 — 2026-10-17
 
 - A request for improvements stays a review and lists them, and a run no longer stops at a step limit.
