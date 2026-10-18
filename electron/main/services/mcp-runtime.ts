@@ -65,6 +65,7 @@ type Session = {
 }
 
 const sessions = new Map<string, Session>()
+const connectionsInFlight = new Map<string, Promise<void>>()
 
 function fqName(serverId: string, toolName: string): string {
   const safeServer = serverId.replace(/[^a-zA-Z0-9_-]/g, '_')
@@ -308,7 +309,11 @@ export async function syncMcpRuntime(
     }
   }
 
-  for (const config of enabled) {
+  let next = 0
+  const connectOne = async (config: (typeof enabled)[number]): Promise<void> => {
+    const pending = connectionsInFlight.get(config.id)
+    if (pending) await pending
+
     const existing = sessions.get(config.id)
     const same =
       existing &&
@@ -317,33 +322,55 @@ export async function syncMcpRuntime(
       JSON.stringify(existing.config.args) === JSON.stringify(config.args) &&
       existing.config.url === config.url &&
       JSON.stringify(existing.config.env) === JSON.stringify(config.env)
-    if (same && existing?.connected) continue
-    if (existing) {
-      await disconnectSession(existing)
-      sessions.delete(config.id)
-    }
+    if (same && existing?.connected) return
+    const connection = (async () => {
+      if (existing) {
+        await disconnectSession(existing)
+        sessions.delete(config.id)
+      }
+      try {
+        const session =
+          config.transport === 'stdio'
+            ? await connectStdio(config, workspacePath)
+            : await connectHttpLike(config)
+        sessions.set(config.id, session)
+        logInfo('MCP server connected', {
+          id: config.id,
+          tools: session.tools.length,
+          transport: config.transport
+        })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        logError('MCP connect failed', { id: config.id, error: message })
+        sessions.set(config.id, {
+          config,
+          tools: [],
+          connected: false,
+          error: message
+        })
+      }
+    })()
+    connectionsInFlight.set(config.id, connection)
     try {
-      const session =
-        config.transport === 'stdio'
-          ? await connectStdio(config, workspacePath)
-          : await connectHttpLike(config)
-      sessions.set(config.id, session)
-      logInfo('MCP server connected', {
-        id: config.id,
-        tools: session.tools.length,
-        transport: config.transport
-      })
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      logError('MCP connect failed', { id: config.id, error: message })
-      sessions.set(config.id, {
-        config,
-        tools: [],
-        connected: false,
-        error: message
-      })
+      await connection
+    } finally {
+      if (connectionsInFlight.get(config.id) === connection) {
+        connectionsInFlight.delete(config.id)
+      }
     }
   }
+
+  // MCP servers are independent. Bound parallel startup so several slow
+  // handshakes do not serialize the first agent turn or overwhelm the host.
+  await Promise.all(
+    Array.from({ length: Math.min(4, enabled.length) }, async () => {
+      for (;;) {
+        const index = next++
+        if (index >= enabled.length) return
+        await connectOne(enabled[index]!)
+      }
+    })
+  )
 
   return getMcpStatuses()
 }

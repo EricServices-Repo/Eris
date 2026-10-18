@@ -13,11 +13,17 @@ import {
   removeWorkspace
 } from '../services/workspace'
 import { listTree, readTextFile, writeTextFile, languageFromPath } from '../services/files'
+import { invalidateWorkspaceRulesCache } from '../services/chats'
 import { setWorkspaceFsChangeHandler, stopWorkspaceWatcher } from '../services/workspace-watcher'
 import { notifyWorkspaceFilesChanged } from '../services/code-index'
+import { invalidateWorkspaceSearchCache } from '../services/workspace-search'
 import { invalidateDiagnosticsCache } from '../services/diagnostics'
 import { logInfo, logWarn } from '../services/logger'
-import { isPathInside, realpathAllowMissing } from '../services/workspace-fs'
+import {
+  invalidateWorkspaceTreeCache,
+  isPathInside,
+  realpathAllowMissing
+} from '../services/workspace-fs'
 import { userDataRoot } from '../services/paths'
 import type { WorkspaceMeta } from '../../../src/shared/settings-schema'
 import { appState } from '../app-state'
@@ -46,6 +52,9 @@ function assertRendererPathAllowed(path: string, mode: 'read' | 'write'): void {
 export function registerWorkspaceIpc(): void {
   setWorkspaceFsChangeHandler(({ workspacePath, path, paths }) => {
     invalidateDiagnosticsCache()
+    invalidateWorkspaceTreeCache(workspacePath)
+    invalidateWorkspaceSearchCache(workspacePath)
+    invalidateWorkspaceRulesCache(workspacePath)
     const changed = paths?.length ? paths : path ? [path] : undefined
     notifyWorkspaceFilesChanged(workspacePath, changed)
     if (appState.mainWindow && !appState.mainWindow.isDestroyed()) {

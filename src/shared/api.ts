@@ -228,8 +228,8 @@ export interface IdeApi {
   pickFiles: () => Promise<string[]>
   /** Light by default (no connection probes). Pass `{ probe: true }` from Settings → Providers. */
   modelsStatus: (opts?: { probe?: boolean; includeGpu?: boolean }) => Promise<ModelsStatus>
-  /** Background-load default ready GGUF into the llama worker. */
-  warmLocalModel: () => Promise<{ ok: boolean; model?: string; error?: string }>
+  /** Background-load a selected or default ready GGUF into the llama worker. */
+  warmLocalModel: (modelRef?: string) => Promise<{ ok: boolean; model?: string; error?: string }>
   builtinModelStatus: () => Promise<BuiltinModelStatus[]>
   downloadBuiltinModel: (id?: string) => Promise<BuiltinModelStatus>
   deleteBuiltinModel: (id?: string) => Promise<boolean>
@@ -324,6 +324,7 @@ export interface IdeApi {
     mode?: 'ask' | 'agent'
     turnPlan?: TurnPlan
     threadId?: string | null
+    planningDurationMs?: number
   }) => Promise<boolean>
   stopChat: () => Promise<boolean>
   /** Absolute path of a dropped File ('' when it has none) */

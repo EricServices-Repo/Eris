@@ -73,10 +73,15 @@ export function registerChatStreamIpc(): void {
         agentId?: string
         mode?: 'ask' | 'agent'
         turnPlan?: TurnPlan
+        planningDurationMs?: number
         /** Active chat thread — used when orchestrator delegates specialists. */
         threadId?: string | null
       }
     ) => {
+      const requestReceivedAt = Date.now()
+      // Renderer planning happens before this IPC request; fallback planning below
+      // is already included in the elapsed IPC time.
+      const externalPlanningDurationMs = payload.planningDurationMs || 0
       const settings = getResolvedSettings(appState.currentWorkspace)
       const { requestId } = payload
       try {
@@ -152,6 +157,7 @@ export function registerChatStreamIpc(): void {
           }
         }
       }
+      const promptBuildStartedAt = Date.now()
       const messages = payload.prompt
         ? buildChatMessages(appState.currentWorkspace, settings, {
             ...payload.prompt,
@@ -159,6 +165,7 @@ export function registerChatStreamIpc(): void {
             text: resume ? resume.goal : payload.prompt.text
           })
         : payload.messages ?? []
+      const promptBuildMs = Date.now() - promptBuildStartedAt
       const userText =
         resume?.goal ||
         payload.prompt?.text ||
@@ -167,9 +174,13 @@ export function registerChatStreamIpc(): void {
       const previousAgentId =
         [...(payload.prompt?.history ?? [])].reverse().find((message) => message.role === 'assistant')
           ?.agentId ?? null
-      let turnPlan =
-        payload.turnPlan ??
-        (await planChatTurn({
+      let planningDurationMs = payload.planningDurationMs
+      let turnPlan: TurnPlan
+      if (payload.turnPlan) {
+        turnPlan = payload.turnPlan
+      } else {
+        const planningStartedAt = Date.now()
+        turnPlan = await planChatTurn({
           workspacePath: appState.currentWorkspace,
           settings,
           context: {
@@ -181,7 +192,9 @@ export function registerChatStreamIpc(): void {
           },
           getSecret,
           signal: appState.chatAbort.signal
-        }))
+        })
+        planningDurationMs ??= Date.now() - planningStartedAt
+      }
       const agent = findAgent(appState.currentWorkspace, turnPlan.agentId) ||
         (agentId ? findAgent(appState.currentWorkspace, agentId) : null)
       let resolvedModel = turnPlan.models.chat || model || settings.models.defaultModel
@@ -220,6 +233,24 @@ export function registerChatStreamIpc(): void {
       let telemetrySteps = 0
       let telemetryMutated = false
       let usedCloud = false
+      let firstModelOutputMs: number | null = null
+      const noteFirstModelOutput = (evt: { type: string; text?: string }) => {
+        const hasOutput =
+          (evt.type === 'thinking' || evt.type === 'answer') && Boolean(evt.text)
+        if (
+          firstModelOutputMs !== null ||
+          (!hasOutput && evt.type !== 'tool')
+        ) {
+          return
+        }
+        firstModelOutputMs =
+          externalPlanningDurationMs + Date.now() - requestReceivedAt
+        logInfo('Chat first model output', {
+          requestId,
+          firstOutputMs: firstModelOutputMs,
+          outputType: evt.type
+        })
+      }
       const recordTelemetry = (outcome: 'done' | 'incomplete' | 'aborted') => {
         if (!telemetryOn) return
         try {
@@ -251,7 +282,11 @@ export function registerChatStreamIpc(): void {
           agentId: turnPlan.agentId,
           intent: turnPlan.intent,
           mode: mode ?? 'agent',
-          messages: messages.length
+          messages: messages.length,
+          planningMs: planningDurationMs ?? null,
+          promptBuildMs,
+          promptChars: messages.reduce((sum, message) => sum + message.content.length, 0),
+          setupMs: Date.now() - requestReceivedAt
         })
         const route = turnPlanToRouteResult(turnPlan)
         event.sender.send('chat:routed', {
@@ -341,6 +376,7 @@ export function registerChatStreamIpc(): void {
               getSecret,
               signal: appState.chatAbort.signal
             })) {
+              noteFirstModelOutput(evt)
               if (evt.type === 'thinking') {
                 pendingThinking += evt.text
                 scheduleStreamFlush()
@@ -405,7 +441,12 @@ export function registerChatStreamIpc(): void {
               /* memory is best-effort */
             }
             event.sender.send('chat:done', { requestId })
-            logInfo('Chat stream done (cloud inline)', { requestId })
+            logInfo('Chat stream done (cloud inline)', {
+              requestId,
+              totalMs: externalPlanningDurationMs + Date.now() - requestReceivedAt,
+              firstOutputMs: firstModelOutputMs,
+              promptBuildMs
+            })
             return true
           } catch (cloudErr) {
             if ((cloudErr as Error).name === 'AbortError') {
@@ -598,6 +639,7 @@ export function registerChatStreamIpc(): void {
             return null
           }
         })) {
+          noteFirstModelOutput(evt)
           if (evt.type === 'thinking') {
             pendingThinking += evt.text
             scheduleStreamFlush()
@@ -776,20 +818,38 @@ export function registerChatStreamIpc(): void {
           })
         }
         event.sender.send('chat:done', { requestId })
-        logInfo('Chat stream done', { requestId, model: resolvedModel })
+        logInfo('Chat stream done', {
+          requestId,
+          model: resolvedModel,
+          totalMs: externalPlanningDurationMs + Date.now() - requestReceivedAt,
+          firstOutputMs: firstModelOutputMs,
+          promptBuildMs
+        })
         return true
       } catch (err) {
         flushStreamChunks()
         if ((err as Error).name === 'AbortError') {
           persistRun({ status: 'stopped' })
           recordTelemetry('aborted')
-          logWarn('Chat stream aborted', { requestId })
+          logWarn('Chat stream aborted', {
+            requestId,
+            totalMs: externalPlanningDurationMs + Date.now() - requestReceivedAt,
+            firstOutputMs: firstModelOutputMs,
+            promptBuildMs
+          })
           event.sender.send('chat:done', { requestId, aborted: true })
           return false
         }
         const message = err instanceof Error ? err.message : 'Chat failed'
         persistRun({ status: 'failed', error: message })
-        logError('Chat stream failed', { requestId, model: resolvedModel, error: message })
+        logError('Chat stream failed', {
+          requestId,
+          model: resolvedModel,
+          error: message,
+          totalMs: externalPlanningDurationMs + Date.now() - requestReceivedAt,
+          firstOutputMs: firstModelOutputMs,
+          promptBuildMs
+        })
         event.sender.send('chat:error', {
           requestId,
           error: message

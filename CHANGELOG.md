@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.64 — 2026-10-17
+
+- Improved follow-up routing for coding requests.
+
+## 0.2.63 — 2026-10-17
+
+- Explicit follow-ups to add review findings now route to an editor.
+
+## 0.2.62 — 2026-10-17
+
+- Coding follow-ups now route to agents with write access.
+
 ## 0.2.61 — 2026-10-17
 
 - Improved built-in tool discovery and local tool-call handling.

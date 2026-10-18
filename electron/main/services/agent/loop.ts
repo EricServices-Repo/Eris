@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from 'fs'
+import { existsSync, readFileSync, realpathSync, statSync } from 'fs'
 import { asksForRecommendations, asksWhatTheProjectDoes, needsWebLookup } from '../../../../src/shared/agent-contract'
 import { isToolLogReply } from '../../../../src/shared/posted-answer'
 import type { AppSettings, TurnPlan } from '../../../../src/shared/settings-schema'
@@ -44,7 +44,8 @@ import {
   readWorkspaceFile,
   resolveInWorkspace,
   searchReplaceInFile,
-  toWorkspaceRelative
+  toWorkspaceRelative,
+  unifiedPatchTargetPath
 } from '../workspace-fs'
 import { gitCommit, gitDiff, gitStage, gitStatus, gitStash } from '../git-service'
 import { pushPullFetch, parseGithubRepo } from '../github'
@@ -111,6 +112,7 @@ import {
   thinkingBeforeTools
 } from './tool-parsing'
 import { isNativeGgufRef, releaseLocalChatSession } from '../builtin-model'
+import { logInfo } from '../logger'
 import type { AgentChatMessage, AgentMode, AgentRunnerEvent, ToolCall } from './types'
 import type { AgentHandoffPacket } from '../../../../src/shared/agent-orchestration'
 
@@ -151,18 +153,20 @@ function toolFailureMetadata(
   const code =
     /\bdenied\b|\bblocked\b|no approval handler|reviewer can only/i.test(detail)
       ? 'permission_denied'
-      : /invalid arguments|is required|must be /i.test(detail)
-        ? 'invalid_arguments'
-        : /timed out/i.test(detail)
-          ? 'timeout'
-          : /not found|not connected|no .* available/i.test(detail)
-            ? 'unavailable'
-            : 'execution_failed'
+      : /read required before editing/i.test(detail)
+        ? 'precondition_failed'
+        : /invalid arguments|is required|must be /i.test(detail)
+          ? 'invalid_arguments'
+          : /timed out/i.test(detail)
+            ? 'timeout'
+            : /not found|not connected|no .* available/i.test(detail)
+              ? 'unavailable'
+              : 'execution_failed'
   return {
     code,
     retryable:
-      effect === 'read' &&
-      !['permission_denied', 'invalid_arguments'].includes(code)
+      code === 'precondition_failed' ||
+      (effect === 'read' && !['permission_denied', 'invalid_arguments'].includes(code))
   }
 }
 
@@ -347,7 +351,8 @@ export async function* runAgentWithWorkspaceTools(options: {
 
   const chatModel = plan.models.chat
   let workerModel = plan.models.tools
-  const modelsCatalog = formatAvailableModelsPrompt(options.settings, chatModel)
+  const modelsCatalog =
+    plan.intent === 'capability' ? formatAvailableModelsPrompt(options.settings, chatModel) : ''
   // Safety net: "review/improve the project folder" must never go answer-only just
   // because a weak router labeled the turn as answer.
   const forceWorkspaceTools =
@@ -387,7 +392,10 @@ export async function* runAgentWithWorkspaceTools(options: {
             : `${plan.agentName}…`
     }
     const askMessages = messages.map((m) => ({ ...m }))
-    const tips: string[] = [modelsCatalog, `Routing: ${plan.reason}`]
+    const tips: string[] = [
+      ...(modelsCatalog ? [modelsCatalog] : []),
+      `Routing: ${plan.reason}`
+    ]
     if (plan.executionPlan) {
       tips.push(
         `Task plan:\n${plan.executionPlan.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}\nDone when: ${plan.executionPlan.doneWhen}`
@@ -467,17 +475,41 @@ export async function* runAgentWithWorkspaceTools(options: {
     }
   }
 
+  const preflightStartedAt = Date.now()
+  let mcpSyncMs = 0
+  let retrievalMs = 0
+  const mcpSyncStartedAt = Date.now()
   const mcpSyncP =
     mcpMode === 'sync'
-      ? syncMcpRuntime(options.settings, workspacePath).catch(() => undefined)
+      ? syncMcpRuntime(options.settings, workspacePath)
+          .catch(() => undefined)
+          .finally(() => {
+            mcpSyncMs = Date.now() - mcpSyncStartedAt
+          })
       : Promise.resolve()
-  const retrieveP = retrieveContextAsync(workspacePath, originalUserGoal, 6).catch(() => null)
+  const retrievalStartedAt = Date.now()
+  const retrieveP =
+    plan.intent === 'run'
+      ? Promise.resolve(null)
+      : retrieveContextAsync(workspacePath, originalUserGoal, 6)
+          .catch(() => null)
+          .finally(() => {
+            retrievalMs = Date.now() - retrievalStartedAt
+          })
 
   const checkpoint = createCheckpoint(workspacePath)
   pruneOldCheckpoints(workspacePath, 20)
   yield { type: 'checkpoint', checkpointId: checkpoint.id }
 
   const [, retrieved] = await Promise.all([mcpSyncP, retrieveP])
+  logInfo('Agent preflight timings', {
+    intent: plan.intent,
+    mcpMode,
+    mcpSyncMs,
+    retrievalMs,
+    totalMs: Date.now() - preflightStartedAt,
+    retrievedFiles: retrieved?.paths.length ?? 0
+  })
   const mcpTools = mcpMode === 'off' ? [] : listMcpTools()
 
   let retrievalHint = ''
@@ -508,7 +540,11 @@ export async function* runAgentWithWorkspaceTools(options: {
     plan.toolPolicy,
     mcpReadOnlyTools
   )
-  if (mode !== 'ask' && plan.agentId === 'reviewer' && !openaiTools.some((t) => t.function.name === 'run')) {
+  if (
+    mode !== 'ask' &&
+    (plan.agentId === 'reviewer' || plan.agentId === 'verifier') &&
+    !openaiTools.some((t) => t.function.name === 'run')
+  ) {
     const runTool = COMPOSER_OPENAI_TOOLS.find((t) => t.function.name === 'run')
     if (runTool) openaiTools.push(runTool)
   }
@@ -595,25 +631,85 @@ export async function* runAgentWithWorkspaceTools(options: {
   let verifyPassedOnce = false
   let escalateCount = plan.escalateToFull ? 1 : 0
   let rerouteCount = 0
-  const reviewOnly = plan.intent === 'review' || isReviewOnlyGoal(originalUserGoal)
+  const reviewOnly =
+    plan.intent === 'review' ||
+    plan.intent === 'plan' ||
+    plan.intent === 'verify' ||
+    isReviewOnlyGoal(originalUserGoal)
   const listImprovements = asksForRecommendations(originalUserGoal)
   const describeProject = asksWhatTheProjectDoes(originalUserGoal)
   const webLookup = webQuestion
   let webSearchNudges = 0
   let webSearchText = ''
   let webPageText = ''
-  const chatReply = describeProject || isReadOnlyChat(plan)
+  const chatReply = describeProject || isReadOnlyChat(plan, mode)
   const describeProjectNext =
     `Read README, package.json, or the main source. Do not stop after .eris config. ` +
     `Do not write or edit files. ` +
     `Then reply with no tools: what this project is, what it does, and the important files, citing paths.`
-  const chatReplyNext = listImprovements
-    ? `Do not edit files. Read the project sources, then list the improvements as a numbered list and cite paths. Do not implement them.`
-    : mode === 'ask'
-      ? `Read the workspace sources needed to answer. Do not edit or run commands. Reply with concrete paths and evidence; if the request asks for changes, describe the change without applying it.`
-      : `Do not edit files. Read the sources that answer the user, then reply in plain sentences and cite paths.`
+  const chatReplyNext =
+    plan.intent === 'plan'
+      ? `Return an ordered implementation plan grounded in the files you read. Name relevant files or symbols, dependencies, risks, and a completion check for each step. State assumptions clearly. Do not edit files.`
+      : listImprovements
+        ? `Do not edit files. Read the project sources, then list the improvements as a numbered list and cite paths. Do not implement them.`
+        : mode === 'ask'
+          ? `Read the workspace sources needed to answer. Do not edit or run commands. Reply with concrete paths and evidence; if the request asks for changes, describe the change without applying it.`
+          : `Do not edit files. Read the sources that answer the user, then reply in plain sentences and cite paths.`
   const answerNext = describeProject ? describeProjectNext : chatReply ? chatReplyNext : ''
   const sourceReads: Array<{ path: string; text: string }> = []
+  const observedWorkspaceReads = new Map<string, Set<'file' | 'notebook'>>()
+  const workspaceReadKey = (path: string): string | null => {
+    try {
+      const abs = resolveInWorkspace(workspacePath, path)
+      try {
+        return realpathSync(abs)
+      } catch {
+        return abs
+      }
+    } catch {
+      return null
+    }
+  }
+  const recordWorkspaceRead = (path: string, kind: 'file' | 'notebook'): void => {
+    const key = workspaceReadKey(path)
+    if (!key) return
+    const kinds = observedWorkspaceReads.get(key) ?? new Set<'file' | 'notebook'>()
+    kinds.add(kind)
+    observedWorkspaceReads.set(key, kinds)
+  }
+  const forgetWorkspaceRead = (path: string | undefined): void => {
+    if (!path) return
+    const key = workspaceReadKey(path)
+    if (key) observedWorkspaceReads.delete(key)
+  }
+  const missingReadPrecondition = (
+    call: ToolCall,
+    requirement: 'file' | 'notebook'
+  ): { path: string; detail: string } | null => {
+    let targetPath = argString(call.args, 'path')
+    if (call.name === 'apply_patch') {
+      try {
+        targetPath = unifiedPatchTargetPath(argString(call.args, 'patch') || argString(call.args, 'diff'))
+      } catch {
+        return null // Let the patch tool report malformed patch input.
+      }
+    }
+    if (!targetPath) return null
+    try {
+      const abs = resolveInWorkspace(workspacePath, targetPath)
+      if (!existsSync(abs) || statSync(abs).isDirectory()) return null
+      const key = workspaceReadKey(targetPath)
+      if (key && observedWorkspaceReads.get(key)?.has(requirement)) return null
+      const relativePath = toWorkspaceRelative(workspacePath, abs)
+      const readTool = requirement === 'notebook' ? 'notebook_read' : 'read_file'
+      return {
+        path: relativePath,
+        detail: `Read required before editing: ${relativePath} is an existing file. Call ${readTool} on this path, inspect its contents, then retry the edit.`
+      }
+    } catch {
+      return null // Preserve the workspace tool's own path and permission errors.
+    }
+  }
   let promptBudget = contextBudgetTokens(options.settings, workerModel)
 
   const productFilesAreTinyStubs = (): boolean => {
@@ -800,7 +896,11 @@ export async function* runAgentWithWorkspaceTools(options: {
           mcpReadOnlyTools
         )
       )
-      if (mode !== 'ask' && plan.agentId === 'reviewer' && !openaiTools.some((tool) => tool.function.name === 'run')) {
+      if (
+        mode !== 'ask' &&
+        (plan.agentId === 'reviewer' || plan.agentId === 'verifier') &&
+        !openaiTools.some((tool) => tool.function.name === 'run')
+      ) {
         const runTool = COMPOSER_OPENAI_TOOLS.find((tool) => tool.function.name === 'run')
         if (runTool) openaiTools.push(runTool)
       }
@@ -1723,8 +1823,11 @@ export async function* runAgentWithWorkspaceTools(options: {
         )
         continue
       }
-      const reviewerRun = mode !== 'ask' && call.name === 'run' && plan.agentId === 'reviewer'
-      if (reviewerRun && !isVerifyCommand(argString(call.args, 'command'))) {
+      const verificationRun =
+        mode !== 'ask' &&
+        call.name === 'run' &&
+        (plan.agentId === 'reviewer' || plan.agentId === 'verifier')
+      if (verificationRun && !isVerifyCommand(argString(call.args, 'command'))) {
         yield {
           type: 'tool',
           tool: {
@@ -1734,19 +1837,19 @@ export async function* runAgentWithWorkspaceTools(options: {
             effect: toolEffect,
             changedResources: [],
             durationMs: Date.now() - toolStartedAt,
-            failure: toolFailureMetadata('Reviewer can only run tests or typecheck', toolEffect),
-            detail: 'Reviewer can only run tests or typecheck'
+            failure: toolFailureMetadata('Read-only verification agents can only run tests, typecheck, or lint', toolEffect),
+            detail: 'Read-only verification agents can only run tests, typecheck, or lint'
           }
         }
         resultParts.push(
-          'TOOL_RESULT run: blocked. Reviewer may only run tests or typecheck (npm test, npx tsc, pytest, cargo test).\n' +
-            `RECOVERY: ${toolFailureRecovery('run', 'Reviewer can only run tests or typecheck')}`
+          'TOOL_RESULT run: blocked. Reviewer and Verification may only run test, typecheck, or lint commands (npm test, npm run typecheck, npx tsc, pytest, cargo test).\n' +
+            `RECOVERY: ${toolFailureRecovery('run', 'Read-only verification agents can only run tests, typecheck, or lint')}`
         )
         continue
       }
       if (
         !toolAllowedByPolicy(call.name, plan.toolPolicy, mcpReadOnlyTools.has(call.name)) &&
-        !reviewerRun
+        !verificationRun
       ) {
         yield {
           type: 'tool',
@@ -1782,6 +1885,31 @@ export async function* runAgentWithWorkspaceTools(options: {
                 : typeof call.args.url === 'string'
                   ? call.args.url.slice(0, 80)
                   : undefined
+      const readRequirement = toolContract?.readBeforeWrite
+      const readFailure = readRequirement
+        ? missingReadPrecondition(call, readRequirement)
+        : null
+      if (readFailure) {
+        const detail = readFailure.detail
+        yield {
+          type: 'tool',
+          tool: {
+            id,
+            name: call.name,
+            path: readFailure.path,
+            status: 'error',
+            effect: toolEffect,
+            changedResources: [],
+            durationMs: Date.now() - toolStartedAt,
+            failure: toolFailureMetadata(detail, toolEffect),
+            detail
+          }
+        }
+        resultParts.push(
+          `TOOL_RESULT ${call.name}: ${detail}\nRECOVERY: ${toolFailureRecovery(call.name, detail)}`
+        )
+        continue
+      }
       if (!precomputedResult) {
         yield {
           type: 'tool',
@@ -2782,13 +2910,24 @@ export async function* runAgentWithWorkspaceTools(options: {
       if (result.mutated) {
         mutatedThisRound = true
         workspaceMutated = true
+        forgetWorkspaceRead(result.path)
+        if (call.name === 'rename_path') forgetWorkspaceRead(argString(call.args, 'path'))
         if (result.path) filesTouched.push(result.path)
         if (pathNeedsProjectVerify(result.path)) {
           codeMutated = true
           codeMutatedThisRound = true
         }
       }
+      if (call.name === 'run' || call.name === 'git_sync' || mcpTool) {
+        // Commands and external tools may alter files without reporting their paths.
+        observedWorkspaceReads.clear()
+      }
       if (result.ok) {
+        if (call.name === 'read_file' && result.path) {
+          recordWorkspaceRead(result.path, 'file')
+        } else if (call.name === 'notebook_read' && result.path) {
+          recordWorkspaceRead(result.path, 'notebook')
+        }
         if (
           call.name === 'read_file' &&
           result.path &&

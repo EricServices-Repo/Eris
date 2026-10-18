@@ -91,6 +91,45 @@ function walk(root: string, dir: string, files: string[], maxFiles: number): voi
   }
 }
 
+async function walkAsync(
+  root: string,
+  dir: string,
+  files: string[],
+  maxFiles: number,
+  progress: { entries: number }
+): Promise<void> {
+  if (files.length >= maxFiles) return
+  let entries: string[]
+  try {
+    entries = readdirSync(dir)
+  } catch {
+    return
+  }
+  for (const name of entries) {
+    if (files.length >= maxFiles) return
+    progress.entries++
+    if (progress.entries % 100 === 0) await yieldEventLoop()
+    const full = join(dir, name)
+    let st
+    try {
+      st = statSync(full)
+    } catch {
+      continue
+    }
+    const rel = relative(root, full).split(sep).join('/')
+    if (st.isDirectory()) {
+      if (shouldSkipDir(root, name, rel)) continue
+      await walkAsync(root, full, files, maxFiles, progress)
+    } else if (
+      /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs)$/i.test(name) &&
+      st.size < 800_000 &&
+      !shouldSkipWorkspacePath(root, rel, false)
+    ) {
+      files.push(full)
+    }
+  }
+}
+
 function extractRegexSymbols(rel: string, content: string): SymbolHit[] {
   const symbols: SymbolHit[] = []
   const lines = content.split('\n')
@@ -195,7 +234,7 @@ export function buildCodeIndex(workspacePath: string): IndexRecord {
 /** Cooperative rebuild — yields every N files so IPC/UI stay responsive. */
 export async function buildCodeIndexAsync(workspacePath: string): Promise<IndexRecord> {
   const filesAbs: string[] = []
-  walk(workspacePath, workspacePath, filesAbs, 8000)
+  await walkAsync(workspacePath, workspacePath, filesAbs, 8000, { entries: 0 })
   const symbols: SymbolHit[] = []
   const files: string[] = []
   const refs: SymbolRef[] = []
@@ -308,7 +347,10 @@ export function loadCodeIndex(workspacePath: string): IndexRecord | null {
 
 function scheduleBackgroundRebuild(workspacePath: string): void {
   if (rebuildInFlight) return
-  rebuildInFlight = buildCodeIndexAsync(workspacePath)
+  // Start after the current IPC turn; buildCodeIndexAsync walks the workspace
+  // synchronously before its first cooperative yield.
+  rebuildInFlight = new Promise<void>((resolve) => setImmediate(resolve))
+    .then(() => buildCodeIndexAsync(workspacePath))
     .catch(() => memoryIndex as IndexRecord)
     .finally(() => {
       rebuildInFlight = null
@@ -369,11 +411,16 @@ export function ensureCodeIndex(workspacePath: string): IndexRecord {
   return buildCodeIndex(workspacePath)
 }
 
-export async function ensureCodeIndexAsync(workspacePath: string): Promise<IndexRecord> {
+export async function ensureCodeIndexAsync(workspacePath: string): Promise<IndexRecord | null> {
   const existing = loadCodeIndex(workspacePath)
-  if (existing && Date.now() - existing.updatedAt < FRESH_MS) return existing
-  if (rebuildInFlight) return rebuildInFlight
-  return buildCodeIndexAsync(workspacePath)
+  if (existing) {
+    if (Date.now() - existing.updatedAt >= FRESH_MS) scheduleBackgroundRebuild(workspacePath)
+    return existing
+  }
+  // A cold index is built off the interactive path. Retrieval can use ripgrep
+  // candidates for this request and the next request will see the new index.
+  scheduleBackgroundRebuild(workspacePath)
+  return null
 }
 
 export function findSymbols(

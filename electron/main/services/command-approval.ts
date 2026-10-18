@@ -36,7 +36,7 @@ const VERIFY_PATTERNS: RegExp[] = [
   /^(?:pytest|python3?\s+-m\s+pytest|go\s+test|go\s+vet|cargo\s+(?:test|check|clippy)|tsc)(?:\s|$)/
 ]
 
-/** Tests and typecheck only. Reviewer may run these and nothing else. */
+/** Read-only agents may run tests, typecheck, or lint, and nothing else. */
 export function isVerifyCommand(command: string): boolean {
   const cmd = command.trim()
   if (!cmd || SHELL_META.test(cmd)) return false

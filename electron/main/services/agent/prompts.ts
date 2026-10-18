@@ -1,6 +1,5 @@
 import type { AppSettings, ChatIntent, TurnPlan } from '../../../../src/shared/settings-schema'
 import { AGENT_HANDOFF_CHARS } from '../../../../src/shared/agent-orchestration'
-import { formatAvailableModelsPrompt } from '../model-catalog'
 import { formatMcpServersPrompt } from '../mcp'
 import { formatLiveMcpToolsPrompt } from '../mcp-runtime'
 import { formatIndexSummary } from '../code-index'
@@ -51,6 +50,7 @@ WHEN TO USE WHICH TOOL
 3) Change code
    Small edits → search_replace (preferred) or apply_patch.
    New files / full rewrites → write_file (complete file body).
+   Before changing any existing file, read it with read_file; notebooks require notebook_read. The edit tools enforce this.
    Folders → mkdir. Moves → rename_path. Deletes → delete_path.
 4) Verify
    run with npm test / typecheck / build / start as appropriate. Fix failures with more tools.
@@ -131,16 +131,36 @@ When you need a file, emit exactly:
 Allowed tools: tree, list_dir, read_file, grep, glob, retrieve, semantic_search, web_search, web_open, search_tools.
 Prefer README, package.json, and the main source. Skip .eris config unless the user asked about Eris settings.
 If the user asks about the internet, the web, or who someone is, call web_search, then web_open one https result. The reply may only state facts from those results. If they do not identify the person, say so. Do not invent a biography or a workspace path from a person's name.
-In Agent mode, a Reviewer may run npm test or the project typecheck. Ask mode cannot run shell commands.
+In Agent mode, Reviewer may run tests/typecheck for a review; Verification may run tests, typecheck, or lint only. Ask mode cannot run shell commands.
 
 After a few reads, stop. Reply in plain sentences. Say what the project is, what it does, or what you found, and cite paths.
 Do not paste a file you intend to write. Do not describe a tool call without the JSON. Do not ask the user to paste the project.`
 
-export function isReadOnlyChat(plan: { toolPolicy: string; intent: string }): boolean {
+export function isReadOnlyChat(
+  plan: { toolPolicy: string; intent: string },
+  mode?: 'ask' | 'agent'
+): boolean {
+  if (plan.intent === 'verify') return mode === 'ask'
   if (plan.intent === 'edit' || plan.intent === 'run') return false
   return plan.toolPolicy === 'read' || plan.intent === 'explore' || plan.intent === 'review'
 }
 export function intentPlaybook(intent: ChatIntent | string, greenfield: boolean): string {
+  if (intent === 'plan') {
+    return (
+      `PLAN PLAYBOOK — Inspect the relevant files, tests, conventions, and dependencies before planning. ` +
+      `Trace the existing flow and name the files or symbols each step affects. Return a concise ordered plan ` +
+      `with dependencies, material risks, and a completion check per step. Separate observed facts from assumptions. ` +
+      `Do not edit files or claim the plan was implemented.`
+    )
+  }
+  if (intent === 'verify') {
+    return (
+      `VERIFICATION PLAYBOOK — Inspect the implementation, callers, and relevant tests, then look for boundary, ` +
+      `error, and regression cases that happy-path checks can miss. Run only relevant tests, typecheck, or lint ` +
+      `commands through the run tool; report each command and its actual output. Do not edit files, run unrelated ` +
+      `commands, or claim success without observed evidence. Distinguish verified behavior from remaining risks.`
+    )
+  }
   if (greenfield) {
     return (
       `GREENFIELD BUILD — Start now with mkdir + write_file in this workspace. ` +
@@ -158,8 +178,10 @@ export function intentPlaybook(intent: ChatIntent | string, greenfield: boolean)
       )
     case 'explore':
       return (
-        `EXPLORE PLAYBOOK — (1) retrieve / grep / semantic_search / glob to locate, ` +
-        `(2) read_file the hits, (3) answer from what you found with concrete paths and symbols. ` +
+        `EXPLORE PLAYBOOK — Set the scope, then search broadly with retrieve or a distinctive symbol/query. ` +
+        `Narrow through grep, glob, or symbol search, then read the relevant implementation, callers, and tests. ` +
+        `If results are thin, switch search strategies; never stop at a tree or search snippet. ` +
+        `Answer from inspected evidence with concrete paths and symbols, matching the depth to the question. ` +
         `If asked what the project does, read README, package.json, or the main source — not only .eris config — ` +
         `then describe what it is, what it does, and the important files. ` +
         `If the question is about the internet or who someone is, web_search then web_open one https page, ` +
@@ -192,7 +214,6 @@ export function truncateForModel(text: string, max = 12_000): string {
 export function buildWorkspaceToolsSystem(
   workspacePath: string,
   settings?: AppSettings,
-  selectedModel?: string,
   systemPrompt = TOOLS_PROMPT,
   includeMcp = true
 ): string {
@@ -211,9 +232,6 @@ export function buildWorkspaceToolsSystem(
     `You already have access to this folder via tools. Always use relative paths from the workspace root.`,
     `Current tree (depth 2 — refresh with the tree tool if you need more):\n${tree}`
   ]
-  if (settings) {
-    parts.push(formatAvailableModelsPrompt(settings, selectedModel))
-  }
   const indexSummary = formatIndexSummary(workspacePath)
   if (indexSummary) parts.push(indexSummary)
   const workspaceCtx = formatWorkspaceContextPrompt(workspacePath)
@@ -225,6 +243,10 @@ export function buildWorkspaceToolsSystem(
     const mcp = formatMcpServersPrompt(settings)
     if (mcp) parts.push(mcp)
   }
+  const readBatching =
+    `For independent read-only checks, request up to four tools in the same turn so they can run in parallel. ` +
+    `Do not batch writes or operations that depend on earlier results.`
+  parts.push(readBatching)
   return parts.join('\n\n')
 }
 
@@ -238,11 +260,10 @@ export function buildPreservedWorkerMessages(options: {
   mcpToolCount: number
 }): AgentChatMessage[] {
   const priorSystem = options.messages.find((m) => m.role === 'system')?.content || ''
-  const readOnly = isReadOnlyChat(options.plan)
+  const readOnly = isReadOnlyChat(options.plan, options.plan.mode)
   const toolsSystem = buildWorkspaceToolsSystem(
     options.workspacePath,
     options.settings,
-    options.plan.models.chat,
     readOnly ? READ_AGENT_PROMPT : TOOLS_PROMPT,
     options.mcpToolCount > 0
   )

@@ -71,9 +71,9 @@ export function registerModelsIpc(): void {
     }
   )
 
-  ipcMain.handle('models:warmLocal', async () => {
+  ipcMain.handle('models:warmLocal', async (_event, modelRef?: string) => {
     const settings = getResolvedSettings(appState.currentWorkspace)
-    return warmLocalInference(settings)
+    return warmLocalInference(settings, modelRef)
   })
 
   ipcMain.handle('models:builtinStatus', () => getBuiltinStatuses())

@@ -146,6 +146,18 @@ export function useChatSession({
   /** Set when user clicks Stop — unlock UI immediately and skip queue drain. */
   const userStoppedRef = useRef(false)
 
+  const selectedLocalModelReady =
+    (selectedModel.startsWith('local:') || selectedModel.startsWith('builtin:')) &&
+    models.some((model) => model.name === selectedModel && model.ready === true)
+
+  useEffect(() => {
+    if (streaming || !selectedLocalModelReady) return
+    const timer = window.setTimeout(() => {
+      void window.ide.warmLocalModel(selectedModel)
+    }, 1200)
+    return () => window.clearTimeout(timer)
+  }, [selectedModel, selectedLocalModelReady, streaming])
+
   const stopChat = useCallback(() => {
     userStoppedRef.current = true
     setStreaming(false)
@@ -262,6 +274,7 @@ export function useChatSession({
         const previousAgentId =
           [...thread.messages].reverse().find((message) => message.role === 'assistant')?.agentId ??
           null
+        const planningStartedAt = performance.now()
         const turnPlan = await window.ide.planChatTurn({
           text,
           fileNames: files.map((f) => f.name),
@@ -279,6 +292,7 @@ export function useChatSession({
               agentId: message.agentId
             }))
         })
+        const planningDurationMs = Math.max(0, Math.round(performance.now() - planningStartedAt))
         lastTurnRef.current = { text, intent: turnPlan.intent, agentId: turnPlan.agentId }
         const runModel = turnPlan.models.chat
         setRouteLabel(turnPlan.reason)
@@ -405,6 +419,7 @@ export function useChatSession({
           mode: turnPlan.mode,
           turnPlan,
           threadId: thread.id,
+          planningDurationMs,
           prompt: {
             text,
             mode: turnPlan.mode,

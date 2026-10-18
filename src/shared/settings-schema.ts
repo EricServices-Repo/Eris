@@ -7,8 +7,10 @@ export const ChatIntentSchema = z.enum([
   'answer',
   'capability',
   'explore',
+  'plan',
   'edit',
   'review',
+  'verify',
   'run'
 ])
 export type ChatIntent = z.infer<typeof ChatIntentSchema>
@@ -439,7 +441,7 @@ export interface ChatPromptInput {
   resumeRunId?: string
   /** When set with resumeRunId, rewind files + worker state to this session step first. */
   resumeSessionStep?: number
-  /** Thread these messages belong to, so other chats can be included beside it. */
+  /** Thread these messages belong to, for conversation continuation metadata. */
   threadId?: string | null
 }
 

@@ -20,6 +20,16 @@ const SKIP_DIR_NAMES = new Set([
   '.DS_Store'
 ])
 
+const workspaceTreeCache = new Map<string, { at: number; tree: string }>()
+const WORKSPACE_TREE_CACHE_MS = 30_000
+
+export function invalidateWorkspaceTreeCache(workspacePath: string): void {
+  const prefix = `${resolve(workspacePath)}\0`
+  for (const key of workspaceTreeCache.keys()) {
+    if (key.startsWith(prefix)) workspaceTreeCache.delete(key)
+  }
+}
+
 export class WorkspaceFsError extends Error {
   constructor(message: string) {
     super(message)
@@ -162,6 +172,7 @@ export function writeWorkspaceFile(
   const created = !existsSync(abs)
   mkdirSync(dirname(abs), { recursive: true })
   writeFileSync(abs, content, 'utf8')
+  invalidateWorkspaceTreeCache(workspacePath)
   return {
     path: toWorkspaceRelative(workspacePath, abs),
     bytes: Buffer.byteLength(content, 'utf8'),
@@ -195,6 +206,7 @@ export function searchReplaceInFile(
     ? before.split(oldString).join(newString)
     : before.replace(oldString, newString)
   writeFileSync(abs, after, 'utf8')
+  invalidateWorkspaceTreeCache(workspacePath)
   return {
     path: toWorkspaceRelative(workspacePath, abs),
     replacements: replaceAll ? count : 1,
@@ -211,6 +223,26 @@ export function applyUnifiedPatch(
   workspacePath: string,
   patchText: string
 ): { path: string; before: string; after: string } {
+  const { relPath, hunkBody } = parseUnifiedPatch(patchText)
+  const abs = resolveInWorkspace(workspacePath, relPath)
+  const before = existsSync(abs) && !statSync(abs).isDirectory() ? readFileSync(abs, 'utf8') : ''
+  const after = applyHunkLines(before, hunkBody)
+  mkdirSync(dirname(abs), { recursive: true })
+  writeFileSync(abs, after, 'utf8')
+  invalidateWorkspaceTreeCache(workspacePath)
+  return {
+    path: toWorkspaceRelative(workspacePath, abs),
+    before,
+    after
+  }
+}
+
+/** Return the target path using the same parser as applyUnifiedPatch. */
+export function unifiedPatchTargetPath(patchText: string): string {
+  return parseUnifiedPatch(patchText).relPath
+}
+
+function parseUnifiedPatch(patchText: string): { relPath: string; hunkBody: string } {
   const text = patchText.trim()
   if (!text) throw new WorkspaceFsError('patch is required')
 
@@ -235,17 +267,7 @@ export function applyUnifiedPatch(
     throw new WorkspaceFsError('Could not determine target path from patch')
   }
   relPath = relPath.replace(/^b\//, '').replace(/^a\//, '')
-
-  const abs = resolveInWorkspace(workspacePath, relPath)
-  const before = existsSync(abs) && !statSync(abs).isDirectory() ? readFileSync(abs, 'utf8') : ''
-  const after = applyHunkLines(before, hunkBody)
-  mkdirSync(dirname(abs), { recursive: true })
-  writeFileSync(abs, after, 'utf8')
-  return {
-    path: toWorkspaceRelative(workspacePath, abs),
-    before,
-    after
-  }
+  return { relPath, hunkBody }
 }
 
 function applyHunkLines(original: string, hunkBody: string): string {
@@ -323,6 +345,7 @@ function applyHunkLines(original: string, hunkBody: string): string {
 export function mkdirWorkspace(workspacePath: string, userPath: string): { path: string } {
   const abs = resolveInWorkspace(workspacePath, userPath)
   mkdirSync(abs, { recursive: true })
+  invalidateWorkspaceTreeCache(workspacePath)
   return { path: toWorkspaceRelative(workspacePath, abs) }
 }
 
@@ -336,6 +359,7 @@ export function deleteWorkspacePath(
   if (!existsSync(abs)) throw new WorkspaceFsError(`Not found: ${userPath}`)
   const wasDirectory = statSync(abs).isDirectory()
   rmSync(abs, { recursive: true, force: true })
+  invalidateWorkspaceTreeCache(workspacePath)
   return { path: toWorkspaceRelative(workspacePath, abs), wasDirectory }
 }
 
@@ -350,6 +374,7 @@ export function renameWorkspacePath(
   if (existsSync(toAbs)) throw new WorkspaceFsError(`Destination already exists: ${toPath}`)
   mkdirSync(dirname(toAbs), { recursive: true })
   renameSync(fromAbs, toAbs)
+  invalidateWorkspaceTreeCache(workspacePath)
   return {
     from: toWorkspaceRelative(workspacePath, fromAbs),
     to: toWorkspaceRelative(workspacePath, toAbs)
@@ -363,6 +388,9 @@ export function workspaceTree(
 ): string {
   const root = resolveInWorkspace(workspacePath, userPath)
   if (!existsSync(root)) throw new WorkspaceFsError(`Not found: ${userPath}`)
+  const cacheKey = `${resolve(workspacePath)}\0${root}\0${maxDepth}`
+  const cached = workspaceTreeCache.get(cacheKey)
+  if (cached && Date.now() - cached.at < WORKSPACE_TREE_CACHE_MS) return cached.tree
 
   const lines: string[] = []
   const walk = (dir: string, depth: number, prefix: string) => {
@@ -391,5 +419,11 @@ export function workspaceTree(
   const label = toWorkspaceRelative(workspacePath, root)
   lines.push(`${label === '.' ? '.' : label}/`)
   if (statSync(root).isDirectory()) walk(root, 1, '  ')
-  return lines.join('\n')
+  const tree = lines.join('\n')
+  workspaceTreeCache.set(cacheKey, { at: Date.now(), tree })
+  if (workspaceTreeCache.size > 80) {
+    const oldestKey = workspaceTreeCache.keys().next().value
+    if (oldestKey) workspaceTreeCache.delete(oldestKey)
+  }
+  return tree
 }

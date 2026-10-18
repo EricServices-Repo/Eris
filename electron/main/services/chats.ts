@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync } from 'fs'
-import { join } from 'path'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, unlinkSync } from 'fs'
+import { join, resolve } from 'path'
 import { randomUUID } from 'crypto'
 import type { ChatThread, ChatMessage } from '../../../src/shared/settings-schema'
 import { userChatsDir, workspaceChatsDir, workspaceRulesDir } from './paths'
@@ -94,18 +94,52 @@ export function appendMessage(
   return saveChat(workspacePath, thread)
 }
 
+const workspaceRulesCache = new Map<string, { fingerprint: string; value: string }>()
+
+export function invalidateWorkspaceRulesCache(workspacePath: string | null): void {
+  if (!workspacePath) {
+    workspaceRulesCache.clear()
+    return
+  }
+  workspaceRulesCache.delete(resolve(workspacePath))
+}
+
 export function loadWorkspaceRules(workspacePath: string | null): string {
   if (!workspacePath) return ''
   const dir = workspaceRulesDir(workspacePath)
-  if (!existsSync(dir)) return ''
+  if (!existsSync(dir)) {
+    invalidateWorkspaceRulesCache(workspacePath)
+    return ''
+  }
+  const key = resolve(workspacePath)
+  const files = readdirSync(dir)
+    .filter((name) => name.endsWith('.md'))
+    .sort()
+    .flatMap((name) => {
+      try {
+        const path = join(dir, name)
+        const st = statSync(path)
+        return [{ name, path, mtimeMs: st.mtimeMs, size: st.size }]
+      } catch {
+        return []
+      }
+    })
+  const fingerprint = files.map((file) => `${file.name}:${file.mtimeMs}:${file.size}`).join('\0')
+  const cached = workspaceRulesCache.get(key)
+  if (cached?.fingerprint === fingerprint) return cached.value
   const parts: string[] = []
-  for (const name of readdirSync(dir).sort()) {
-    if (!name.endsWith('.md')) continue
+  for (const file of files) {
     try {
-      parts.push(`# Rule: ${name}\n${readFileSync(join(dir, name), 'utf8')}`)
+      parts.push(`# Rule: ${file.name}\n${readFileSync(file.path, 'utf8')}`)
     } catch {
       // skip
     }
   }
-  return parts.join('\n\n')
+  const value = parts.join('\n\n')
+  workspaceRulesCache.set(key, { fingerprint, value })
+  if (workspaceRulesCache.size > 80) {
+    const oldestKey = workspaceRulesCache.keys().next().value
+    if (oldestKey) workspaceRulesCache.delete(oldestKey)
+  }
+  return value
 }

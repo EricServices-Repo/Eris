@@ -58,14 +58,13 @@ function runRg(
   workspacePath: string,
   pattern: string,
   glob?: string,
-  maxResults = 40
+  maxResults = 40,
+  timeoutMs = 15_000
 ): Promise<SearchHit[] | null> {
   return new Promise((resolve) => {
     const args = [
       '--json',
       '--max-count',
-      '5',
-      '-m',
       String(maxResults),
       '--hidden',
       '--glob',
@@ -78,16 +77,24 @@ function runRg(
       '!dist'
     ]
     if (glob) args.push('--glob', glob)
-    args.push(pattern, '.')
+    args.push('--', pattern, '.')
     const child = spawn('rg', args, {
       cwd: workspacePath,
       env: buildWorkspaceProcessEnv(workspacePath)
     })
     let stdout = ''
-    const timer = setTimeout(() => child.kill('SIGTERM'), 15_000)
+    let stoppedAtLimit = false
+    const timer = setTimeout(() => {
+      stoppedAtLimit = true
+      child.kill('SIGTERM')
+    }, timeoutMs)
     child.stdout.on('data', (d) => {
+      if (stoppedAtLimit) return
       stdout += String(d)
-      if (stdout.length > 2_000_000) child.kill('SIGTERM')
+      if (stdout.length > 2_000_000) {
+        stoppedAtLimit = true
+        child.kill('SIGTERM')
+      }
     })
     child.on('error', () => {
       clearTimeout(timer)
@@ -95,7 +102,7 @@ function runRg(
     })
     child.on('close', (code) => {
       clearTimeout(timer)
-      if (code !== 0 && code !== 1) {
+      if (code !== 0 && code !== 1 && !stoppedAtLimit) {
         resolve(null)
         return
       }
@@ -277,7 +284,18 @@ function yieldEventLoop(): Promise<void> {
 type RetrieveResult = { ok: boolean; detail: string; paths: string[] }
 
 const retrieveCache = new Map<string, { at: number; result: RetrieveResult }>()
-const RETRIEVE_CACHE_MS = 30_000
+const RETRIEVE_CACHE_MS = 60_000
+
+export function invalidateWorkspaceSearchCache(workspacePath: string): void {
+  const prefix = `${workspacePath}\0`
+  for (const key of retrieveCache.keys()) {
+    if (key.startsWith(prefix)) retrieveCache.delete(key)
+  }
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
 
 function retrievalSnippet(content: string, terms: string[]): string {
   const lines = content.slice(0, 100_000).split('\n')
@@ -352,23 +370,27 @@ export function retrieveContext(
 
 /**
  * Repo-scale retrieve: rank from the code index (path + symbols + embeddings) first,
- * then read only the top candidates for snippets. Falls back to a bounded walk when
- * the index is cold. Short-TTL cache avoids repeat work for the same query.
+ * then use ripgrep to find content candidates when the index is cold or sparse.
+ * This avoids scanning and reading thousands of files for each new query.
  */
 export async function retrieveContextAsync(
   workspacePath: string,
   query: string,
   maxFiles = 8
 ): Promise<RetrieveResult> {
-  const cacheKey = `${workspacePath}\0${query}\0${maxFiles}`
+  const terms = [
+    ...new Set(
+      query
+        .toLowerCase()
+        .split(/[^a-z0-9_./-]+/)
+        .filter((t) => t.length > 2)
+        .slice(0, 16)
+    )
+  ]
+  const normalizedQuery = [...terms].sort().join(' ')
+  const cacheKey = `${workspacePath}\0${normalizedQuery}\0${maxFiles}`
   const hit = retrieveCache.get(cacheKey)
   if (hit && Date.now() - hit.at < RETRIEVE_CACHE_MS) return hit.result
-
-  const terms = query
-    .toLowerCase()
-    .split(/[^a-z0-9_./-]+/)
-    .filter((t) => t.length > 2)
-    .slice(0, 16)
   if (terms.length === 0) {
     return { ok: true, detail: '(no retrieval terms)', paths: [] }
   }
@@ -377,7 +399,7 @@ export async function retrieveContextAsync(
   }
 
   const index = await ensureCodeIndexAsync(workspacePath).catch(() => loadCodeIndex(workspacePath))
-  const queryVec = hashEmbed(query)
+  const queryVec = hashEmbed(normalizedQuery)
   const scored = new Map<string, number>()
 
   if (index && index.files.length > 0) {
@@ -408,31 +430,48 @@ export async function retrieveContextAsync(
     }
   }
 
-  // If the index is thin, supplement with a bounded content walk.
+  // If the index is thin, let ripgrep locate matching lines and score only
+  // files it found. The index is rebuilt in the background on a cold workspace.
   if (scored.size < maxFiles * 2) {
-    const files: string[] = []
-    walkFiles(workspacePath, workspacePath, files, 4000)
-    for (let i = 0; i < files.length; i++) {
-      if (i > 0 && i % 80 === 0) await yieldEventLoop()
-      const abs = files[i]!
-      const rel = toWorkspaceRelative(workspacePath, abs)
-      if (scored.has(rel) && (scored.get(rel) ?? 0) > 20) continue
-      let score = scored.get(rel) ?? 0
-      const lowerPath = rel.toLowerCase()
-      for (const t of terms) {
-        if (lowerPath.includes(t)) score += 5
+    const pattern = `(?:${terms.map(escapeRegExp).join('|')})`
+    const hits = await runRg(workspacePath, pattern, undefined, 240, 4_000)
+    if (hits) {
+      for (const hit of hits) {
+        const rel = hit.path.replace(/^\.\//, '')
+        const lowerPath = rel.toLowerCase()
+        const lowerLine = hit.text.toLowerCase()
+        let score = scored.get(rel) ?? 0
+        for (const term of terms) {
+          if (lowerPath.includes(term)) score += 5
+          if (lowerLine.includes(term)) score += 2
+        }
+        if (score > 0) scored.set(rel, score)
       }
-      let content = ''
-      try {
-        content = readFileSync(abs, 'utf8').slice(0, 6000)
-      } catch {
-        continue
+    } else {
+      // Slow fallback only applies when ripgrep is unavailable. Keep its work
+      // bounded; a background index will provide broader recall on later turns.
+      const files: string[] = []
+      walkFiles(workspacePath, workspacePath, files, 1000)
+      for (let i = 0; i < files.length; i++) {
+        if (i > 0 && i % 80 === 0) await yieldEventLoop()
+        const abs = files[i]!
+        const rel = toWorkspaceRelative(workspacePath, abs)
+        if (scored.has(rel) && (scored.get(rel) ?? 0) > 20) continue
+        let score = scored.get(rel) ?? 0
+        const lowerPath = rel.toLowerCase()
+        for (const term of terms) {
+          if (lowerPath.includes(term)) score += 5
+        }
+        let content = ''
+        try {
+          content = readFileSync(abs, 'utf8').slice(0, 3000)
+        } catch {
+          continue
+        }
+        const lower = content.toLowerCase()
+        for (const term of terms) score += Math.min(8, lower.split(term).length - 1)
+        if (score > 0) scored.set(rel, score)
       }
-      const lower = content.toLowerCase()
-      for (const t of terms) {
-        score += Math.min(8, lower.split(t).length - 1)
-      }
-      if (score > 0) scored.set(rel, score)
     }
   }
 
@@ -458,8 +497,10 @@ export async function retrieveContextAsync(
     detail: top.length ? detail : 'No relevant files found',
     paths: top.map((t) => t.path)
   }
-  retrieveCache.set(cacheKey, { at: Date.now(), result })
-  if (retrieveCache.size > 40) {
+  if (index && Date.now() - index.updatedAt < 5 * 60_000) {
+    retrieveCache.set(cacheKey, { at: Date.now(), result })
+  }
+  if (retrieveCache.size > 120) {
     const oldest = [...retrieveCache.entries()].sort((a, b) => a[1].at - b[1].at)[0]
     if (oldest) retrieveCache.delete(oldest[0])
   }

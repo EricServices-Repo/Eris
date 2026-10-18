@@ -19,6 +19,8 @@ export type ToolContract = {
   effect: ToolEffect
   approval: ToolApproval
   discovery: ToolDiscovery
+  /** Existing workspace targets must be read through the matching tool this turn before mutation. */
+  readBeforeWrite?: 'file' | 'notebook'
   schema?: Record<string, unknown>
 }
 type ToolBuildOptions = Partial<Omit<ToolContract, 'schema'>> & {
@@ -52,6 +54,7 @@ function tool(
     effect: contract.effect ?? 'read',
     approval: contract.approval ?? 'none',
     discovery: contract.discovery ?? 'core',
+    ...(contract.readBeforeWrite ? { readBeforeWrite: contract.readBeforeWrite } : {}),
     schema
   })
   return {
@@ -87,7 +90,7 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   ),
   tool(
     'notebook_edit',
-    'Edit one Jupyter notebook cell. Replacing code clears stale execution outputs.',
+    'Edit one Jupyter notebook cell. Read the existing notebook with notebook_read first. Replacing code clears stale execution outputs.',
     {
       path: pathProp,
       operation: {
@@ -99,11 +102,11 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
       cell_type: { type: 'string', enum: ['code', 'markdown', 'raw'] }
     },
     ['path', 'operation', 'cell_index'],
-    { access: 'edit', effect: 'workspace', discovery: 'deferred' }
+    { access: 'edit', effect: 'workspace', discovery: 'deferred', readBeforeWrite: 'notebook' }
   ),
   tool(
     'search_replace',
-    'Surgical edit: replace exact text in a file',
+    'Surgical edit: read the existing file with read_file first, then replace exact text',
     {
       path: pathProp,
       old_string: { type: 'string' },
@@ -117,6 +120,7 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
     {
       access: 'edit',
       effect: 'workspace',
+      readBeforeWrite: 'file',
       requiredAnyOf: [
         ['old_string', 'new_string'],
         ['old_string', 'newString'],
@@ -127,15 +131,23 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   ),
   tool(
     'apply_patch',
-    'Apply a unified/V4A patch',
+    'Apply a unified/V4A patch. Read an existing target file with read_file first.',
     { patch: { type: 'string' }, diff: { type: 'string' } },
     [],
-    { access: 'edit', effect: 'workspace', requiredAnyOf: [['patch'], ['diff']] }
+    {
+      access: 'edit',
+      effect: 'workspace',
+      readBeforeWrite: 'file',
+      requiredAnyOf: [['patch'], ['diff']]
+    }
   ),
-  tool('write_file', 'Create or overwrite a file', { path: pathProp, content: { type: 'string' } }, [
-    'path',
-    'content'
-  ], { access: 'edit', effect: 'workspace' }),
+  tool(
+    'write_file',
+    'Create a file, or overwrite an existing file after reading it with read_file',
+    { path: pathProp, content: { type: 'string' } },
+    ['path', 'content'],
+    { access: 'edit', effect: 'workspace', readBeforeWrite: 'file' }
+  ),
   tool('mkdir', 'Create a directory', { path: pathProp }, ['path'], { access: 'edit', effect: 'workspace' }),
   tool('delete_path', 'Delete a file or directory', { path: pathProp }, ['path'], { access: 'edit', effect: 'workspace' }),
   tool('rename_path', 'Rename or move a path', { path: pathProp, to: pathProp }, ['path', 'to'], { access: 'edit', effect: 'workspace' }),

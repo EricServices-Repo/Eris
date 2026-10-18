@@ -1339,23 +1339,28 @@ async function* streamBuiltinChatViaWorker(options: {
   }
 }
 
-let warmInFlight: Promise<{ ok: boolean; model?: string; error?: string }> | null = null
+type WarmResult = { ok: boolean; model?: string; error?: string }
+let warmInFlight: { modelRef: string; promise: Promise<WarmResult> } | null = null
 
 /**
- * Background-load the default ready GGUF into the llama worker so the first
- * local chat turn is not a cold fork + model load.
+ * Background-load a selected or default ready GGUF so the next local chat turn
+ * does not pay the cold fork + model-load cost.
  */
 export function warmLocalInference(
-  settings?: AppSettings
-): Promise<{ ok: boolean; model?: string; error?: string }> {
+  settings?: AppSettings,
+  requestedModel?: string
+): Promise<WarmResult> {
   if (process.env.VITEST || process.env.ERIS_SKIP_LLAMA_WARM === '1') {
     return Promise.resolve({ ok: false, error: 'skipped' })
   }
-  if (warmInFlight) return warmInFlight
-  warmInFlight = (async () => {
+  const s = settings ?? getResolvedSettings(appState.currentWorkspace)
+  const preferred = requestedModel || s.models.defaultModel || 'builtin:composer-lite'
+  if (warmInFlight?.modelRef === preferred) return warmInFlight.promise
+
+  const previousWarm = warmInFlight?.promise.catch(() => undefined)
+  const promise = (async () => {
     try {
-      const s = settings ?? getResolvedSettings(appState.currentWorkspace)
-      const preferred = s.models.defaultModel || 'builtin:composer-lite'
+      await previousWarm
       let entry: BuiltinModelManifestEntry | null = null
       let path = ''
 
@@ -1374,7 +1379,7 @@ export function warmLocalInference(
         if (entry) path = localModelPath(entry)
       }
 
-      if (!entry || !path) {
+      if ((!entry || !path) && !requestedModel) {
         const ready = getBuiltinStatuses().find((b) => b.ready)
         if (ready) {
           entry = findBuiltinEntry(ready.id)
@@ -1383,7 +1388,10 @@ export function warmLocalInference(
       }
 
       if (!entry || !path) {
-        return { ok: false, error: 'no ready local model' }
+        return {
+          ok: false,
+          error: requestedModel ? `Local model ${requestedModel} is not ready` : 'no ready local model'
+        }
       }
 
       await ensureWorkerModel(path, entry)
@@ -1394,10 +1402,18 @@ export function warmLocalInference(
       logWarn('Local inference warm failed', { error: message })
       return { ok: false, error: message }
     }
-  })().finally(() => {
-    warmInFlight = null
-  })
-  return warmInFlight
+  })()
+  const active = { modelRef: preferred, promise }
+  warmInFlight = active
+  void promise.then(
+    () => {
+      if (warmInFlight === active) warmInFlight = null
+    },
+    () => {
+      if (warmInFlight === active) warmInFlight = null
+    }
+  )
+  return promise
 }
 
 export async function* streamBuiltinChat(options: {
