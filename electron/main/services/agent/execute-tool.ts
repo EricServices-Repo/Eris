@@ -94,7 +94,14 @@ export function executeTool(
         const path = argString(call.args, 'path')
         if (!path) throw new WorkspaceFsError('path is required')
         const result = mkdirWorkspace(workspacePath, path)
-        return { ok: true, detail: `Created directory ${result.path}`, mutated: true, path: result.path }
+        return {
+          ok: true,
+          detail: result.created
+            ? `Created directory ${result.path}`
+            : `Directory already exists ${result.path}`,
+          mutated: result.created,
+          path: result.path
+        }
       }
       case 'delete_path': {
         const path = argString(call.args, 'path')

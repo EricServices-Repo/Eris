@@ -67,6 +67,46 @@ export const LITE_CONTEXT_MAX = 32_768
 /** Max tokens a built-in model may write in one reply. */
 export const REPLY_MAX_TOKENS = 16_384
 
+const LOCAL_CONTEXT_8K = 8_192
+const LOCAL_CONTEXT_16K = 16_384
+const LOCAL_CONTEXT_16K_HEADROOM_BYTES = Math.round(3.5 * 1024 ** 3)
+const LOCAL_CONTEXT_32K_HEADROOM_BYTES = 7 * 1024 ** 3
+
+/**
+ * Keep large local models on the GPU by avoiding a context allocation that
+ * consumes the VRAM needed for their remaining layers. A 14B Q4 model is
+ * roughly 9 GB, so 32K context is usually counterproductive on 8 GB-class
+ * multi-GPU systems even when the combined capacity can hold the weights.
+ */
+export function localPerformanceContextMax(options: {
+  requested: number
+  modelBytes?: number
+  vramBudgetBytes?: number
+}): number {
+  const requested = clamp(options.requested, 512, 65_536)
+  const modelBytes = Math.max(0, options.modelBytes ?? 0)
+  const budgetBytes = Math.max(0, options.vramBudgetBytes ?? 0)
+
+  if (modelBytes <= 0) return requested
+
+  if (budgetBytes > 0) {
+    const headroom = budgetBytes - modelBytes
+    if (headroom < LOCAL_CONTEXT_16K_HEADROOM_BYTES) {
+      return Math.min(requested, LOCAL_CONTEXT_8K)
+    }
+    if (headroom < LOCAL_CONTEXT_32K_HEADROOM_BYTES) {
+      return Math.min(requested, LOCAL_CONTEXT_16K)
+    }
+    return requested
+  }
+
+  // GPU memory reporting can be unavailable on some drivers. Use the model
+  // size as a safe fallback instead of reserving 32K for every Hub download.
+  if (modelBytes >= 8 * 1024 ** 3) return Math.min(requested, LOCAL_CONTEXT_8K)
+  if (modelBytes >= 5 * 1024 ** 3) return Math.min(requested, LOCAL_CONTEXT_16K)
+  return requested
+}
+
 export function contextLimits(options: {
   tier?: string
   role?: string

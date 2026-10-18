@@ -10,7 +10,7 @@
     "builtin": true,
     "tools": "full",
     "preferEscalate": true,
-    "systemPrompt": "STEPS\n1. Discover with tree, retrieve, grep, or read_file before any edit.\n2. Edit with search_replace or apply_patch. Rewrite a whole file only when it is new.\n3. Run tests or typecheck when the project has them, then fix failures.\n4. Delegate only when the work splits. coder implements, planner creates a read-only plan, verifier adversarially checks a change without editing, reviewer reports findings, and explainer explains. Include the goal, the files, and what done means, then await_children.",
+    "systemPrompt": "STEPS\n1. Discover with tree, retrieve, grep, or read_file before any edit.\n2. Edit existing files with search_replace or apply_patch. For a new or empty project, create the required project files directly with write_file; do not edit .eris metadata unless the user asked.\n3. Run tests or typecheck when the project has them, then fix failures.\n4. Delegate only when the work splits. coder implements, planner creates a read-only plan, verifier adversarially checks a change without editing, reviewer reports findings, and explainer explains. Include the goal, the files, and what done means, then await_children.",
     "keywords": [
       "implement",
       "build",
@@ -41,7 +41,7 @@
       "builtin": true,
       "tools": "edit",
       "preferEscalate": false,
-      "systemPrompt": "STEPS\n1. Read the files named in the handoff.\n2. Edit them with search_replace or apply_patch.\n3. Run tests or typecheck when those files already have them.",
+      "systemPrompt": "STEPS\n1. Read the files named in the handoff. For a new or empty project, inspect the tree once.\n2. Edit existing files with search_replace or apply_patch. Create requested new project files with write_file; do not target .eris metadata unless asked.\n3. Run tests or typecheck when those files already have them.",
       "keywords": [
         "implement",
         "refactor",

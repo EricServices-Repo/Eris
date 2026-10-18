@@ -124,6 +124,8 @@ const MAX_VERIFY_FAILURES = 3
 const VERIFY_EVERY_N_MUTATIONS = 8
 /** How many times we reject a premature DONE before stopping as incomplete. */
 const MAX_GOAL_REJECTS = 3
+/** Stop a broken worker before it can spend dozens of rounds on one action. */
+const MAX_DUPLICATE_TOOL_BLOCKS = 4
 /** Product files at or below this size count as stubs for goal checks. */
 const STUB_FILE_MAX_BYTES = 250
 
@@ -606,6 +608,7 @@ export async function* runAgentWithWorkspaceTools(options: {
   let noProgressStreak = 0
   let lastFingerprint = ''
   let repeatFingerprint = 0
+  let duplicateToolBlocks = 0
   let toolExecRounds = 0
   let inspectRounds = 0
   let step = 0
@@ -922,7 +925,7 @@ export async function* runAgentWithWorkspaceTools(options: {
     }
 
     // Keep the current role when no safe fallback is configured, but give it a concrete recovery instruction.
-    rerouteCount = Math.max(1, rerouteCount)
+    rerouteCount++
     const reason =
       mode === 'ask'
         ? `Ask mode stays read-only while ${plan.agentName} recovers. ${trigger}.`
@@ -1687,8 +1690,9 @@ export async function* runAgentWithWorkspaceTools(options: {
       continue
     }
 
-    if (repeatFingerprint >= 4 && !onlyInspect) {
+    if (repeatFingerprint >= 1 && !onlyInspect) {
       noProgressStreak++
+      duplicateToolBlocks++
       yield {
         type: 'thinking',
         text: chatReply
@@ -1702,6 +1706,27 @@ export async function* runAgentWithWorkspaceTools(options: {
         )
       )
       repeatFingerprint = 0
+      if (duplicateToolBlocks >= MAX_DUPLICATE_TOOL_BLOCKS) {
+        const stopNote =
+          `Stopped after ${duplicateToolBlocks} repeated identical tool calls. ` +
+          `This run is incomplete and needs a different model or a resumed run from the saved checkpoint.`
+        actionLog.push(stopNote)
+        yield {
+          type: 'progress',
+          step,
+          actionLog: [...actionLog],
+          filesTouched: [...filesTouched],
+          incomplete: true
+        }
+        yield emitSessionStep(stopNote)
+        yield { type: 'status', text: 'Incomplete · repeated tool loop stopped' }
+        yield {
+          type: 'answer',
+          text: `${buildWorkSummary(originalUserGoal, actionLog, latestAssistant)}\n\n${stopNote}`,
+          replace: true
+        }
+        return
+      }
       if (noProgressStreak >= MAX_NO_PROGRESS) {
         for await (const evt of compactWorkerContext({
           force: true,
@@ -1713,6 +1738,8 @@ export async function* runAgentWithWorkspaceTools(options: {
       }
       continue
     }
+
+    duplicateToolBlocks = 0
 
     toolExecRounds++
     yield {
@@ -2888,7 +2915,7 @@ export async function* runAgentWithWorkspaceTools(options: {
       } else if (call.name === 'mkdir') {
         const mkdirPath = argString(call.args, 'path')
         result = executeTool(workspacePath, call)
-        if (result.ok && mkdirPath) {
+        if (result.ok && result.mutated && mkdirPath) {
           const rec = recordMkdirOp(workspacePath, checkpoint.id, mkdirPath)
           const opIndex = rec ? rec.ops.length - 1 : 0
           yield {

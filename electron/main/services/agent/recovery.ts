@@ -12,7 +12,7 @@ export function toolFailureRecovery(toolName: string, detail: string): string {
     return 'Do not repeat the same access. Check whether the target is inside the workspace and use an allowed read-only alternative; report the boundary if access is still blocked.'
   }
   if (/enoent|no such file|file not found|does not exist|cannot find (?:the )?(?:file|path)/.test(error)) {
-    return 'Verify the path with tree, glob, or grep before retrying. Use a workspace-relative path and do not create a missing file unless the user requested it.'
+    return 'Verify the path with tree, glob, or grep before retrying. Use a workspace-relative path. If the user asked to build or create something new, switch to write_file for the intended project file instead of retrying search_replace on the missing path.'
   }
   if (/invalid (?:tool )?(?:input|argument)|missing required|required field|schema validation|expected .* (?:string|number|array)|malformed/.test(error)) {
     return 'Correct the argument shape from the tool description and make one call with valid fields; do not resend the same malformed arguments.'
