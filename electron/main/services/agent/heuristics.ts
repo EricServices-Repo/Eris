@@ -1,4 +1,4 @@
-import { asksWhatTheProjectDoes } from '../../../../src/shared/agent-contract'
+import { asksForRecommendations, asksWhatTheProjectDoes } from '../../../../src/shared/agent-contract'
 import { parseToolCalls, stripToolBlocks } from './tool-parsing'
 import type { ToolCall } from './types'
 
@@ -144,6 +144,7 @@ export function looksLikeClarifyingQuestion(text: string): boolean {
 /** Review/confirm goals should finish without write_file. */
 export function isReviewOnlyGoal(text: string): boolean {
   if (asksWhatTheProjectDoes(text)) return false
+  if (asksForRecommendations(text)) return true
   const t = text.toLowerCase()
   const review =
     /\b(review|confirm|check if|verify|inspect|look over|is it working|does it work|working calculator|status)\b/i.test(

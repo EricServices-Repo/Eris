@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, statSync } from 'fs'
-import { asksWhatTheProjectDoes, needsWebLookup } from '../../../../src/shared/agent-contract'
+import { asksForRecommendations, asksWhatTheProjectDoes, needsWebLookup } from '../../../../src/shared/agent-contract'
 import { isToolLogReply } from '../../../../src/shared/posted-answer'
 import type { AppSettings, TurnPlan } from '../../../../src/shared/settings-schema'
 import { formatAvailableModelsPrompt } from '../model-catalog'
@@ -89,10 +89,8 @@ import { isNativeGgufRef, releaseLocalChatSession } from '../builtin-model'
 import type { AgentChatMessage, AgentMode, AgentRunnerEvent, ToolCall } from './types'
 import type { AgentHandoffPacket } from '../../../../src/shared/agent-orchestration'
 
-/** Consecutive rounds with zero mutation → stronger finish nudge (never stops Full). */
+/** Consecutive rounds with zero mutation → stronger finish nudge (never stops the run). */
 const MAX_NO_PROGRESS = 8
-/** Hard stop so a stuck agent cannot run forever. */
-const MAX_AGENT_STEPS = 48
 /** Stop after this many failed verify rounds (mid-loop + final). */
 const MAX_VERIFY_FAILURES = 3
 /** Mid-loop verify cadence (final verify still runs once before DONE). */
@@ -437,6 +435,7 @@ export async function* runAgentWithWorkspaceTools(options: {
   let escalateCount = plan.escalateToFull ? 1 : 0
   let rerouteCount = 0
   const reviewOnly = plan.intent === 'review' || isReviewOnlyGoal(originalUserGoal)
+  const listImprovements = asksForRecommendations(originalUserGoal)
   const describeProject = asksWhatTheProjectDoes(originalUserGoal)
   const webLookup = webQuestion
   let webSearchNudges = 0
@@ -447,8 +446,9 @@ export async function* runAgentWithWorkspaceTools(options: {
     `Read README, package.json, or the main source. Do not stop after .eris config. ` +
     `Do not write or edit files. ` +
     `Then reply with no tools: what this project is, what it does, and the important files, citing paths.`
-  const chatReplyNext =
-    `Do not edit files. Read the sources that answer the user, then reply in plain sentences and cite paths.`
+  const chatReplyNext = listImprovements
+    ? `Do not edit files. Read the project sources, then list the improvements as a numbered list and cite paths. Do not implement them.`
+    : `Do not edit files. Read the sources that answer the user, then reply in plain sentences and cite paths.`
   const answerNext = describeProject ? describeProjectNext : chatReply ? chatReplyNext : ''
   const sourceReads: Array<{ path: string; text: string }> = []
   let promptBudget = contextBudgetTokens(options.settings, workerModel)
@@ -734,9 +734,11 @@ export async function* runAgentWithWorkspaceTools(options: {
       role: 'user',
       content:
         `Thinking is finished. Write the reply the user will read. No tools and no JSON.\n` +
-        (changed.length
+        (changed.length && !listImprovements
           ? `Review the changes. For each file, say what changed: ${changed.join(', ')}.\n`
-          : `Answer the user's question in plain sentences.\n`) +
+          : listImprovements
+            ? `List the improvements the user asked for. Number them. Cite file paths. Do not describe edits you made.\n`
+            : `Answer the user's question in plain sentences.\n`) +
         `Do not write "Finished:" or "What I did:".\n\n` +
         `User asked:\n${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}`
     })
@@ -784,7 +786,7 @@ export async function* runAgentWithWorkspaceTools(options: {
       if (adapted) continue
     }
 
-    if (chatReply && (toolExecRounds >= chatReadBudget || step >= 8)) {
+    if (chatReply && toolExecRounds >= chatReadBudget) {
       if (webLookup) {
         yield* answerFromWeb()
         return
@@ -798,21 +800,6 @@ export async function* runAgentWithWorkspaceTools(options: {
     }
 
     step++
-    if (step > MAX_AGENT_STEPS) {
-      const note = buildWorkSummary(
-        originalUserGoal,
-        actionLog,
-        `Stopped after ${MAX_AGENT_STEPS} steps (safety limit).`
-      )
-      yield {
-        type: 'thinking',
-        text: `\n\n— Stopped at step limit (${MAX_AGENT_STEPS}).\n`
-      }
-      yield { type: 'progress', step, actionLog: [...actionLog], filesTouched: [...filesTouched], incomplete: true }
-      yield emitSessionStep('Stopped at step limit')
-      yield { type: 'answer', text: note, replace: true }
-      return
-    }
     yield {
       type: 'status',
       text: `${plan.agentName} · ${plan.intent} (step ${step})…`

@@ -17,7 +17,7 @@ import { getLocalStatuses, isLocalRef, resolveExactLocalRef } from './local-mode
 import { streamModelChat } from './chat-runtime'
 import { routeHeuristic, routeMessage } from './router'
 import { learnedRouteFor, readRoutingCorrections, routingExamples } from './routing-feedback'
-import { agentForFollowUp, asksWhatTheProjectDoes, needsWebLookup, chatAgentForTurn } from '../../../src/shared/agent-contract'
+import { agentForFollowUp, asksForRecommendations, asksWhatTheProjectDoes, needsWebLookup, chatAgentForTurn } from '../../../src/shared/agent-contract'
 import { CONTEXT_HEADROOM_BYTES, inferenceBudgetBytes } from './vram-fit'
 
 /** A custom agent must be at least this sure to replace the roster role. */
@@ -199,6 +199,9 @@ export function classifyIntent(text: string, mode: 'ask' | 'agent'): ChatIntent 
 
   // “What does this project do?” is a description, even when the message says “review”.
   if (asksWhatTheProjectDoes(t)) return 'explore'
+
+  // “What improvements should we make?” is a review list, not an edit.
+  if (asksForRecommendations(t)) return 'review'
 
   // Improvements / polish count as edits even when the user also says "review".
   if (

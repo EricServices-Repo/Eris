@@ -77,6 +77,23 @@ export function asksWhatTheProjectDoes(text: string): boolean {
   )
 }
 
+/** The user wants a list of improvements, not for the agent to apply them. */
+export function asksForRecommendations(text: string): boolean {
+  const t = text.trim()
+  if (!t) return false
+  if (
+    /\b(make|apply|implement)\s+(the\s+|some\s+|these\s+)?improvements?\b/i.test(t) &&
+    !/\bwhat\b/i.test(t)
+  ) {
+    return false
+  }
+  return (
+    /\bwhat\b[\s\S]{0,48}\bimprov/i.test(t) ||
+    /\b(list|suggest|recommend)\b[\s\S]{0,40}\b(improv|changes?|ideas)\b/i.test(t) ||
+    (/\breview\b/i.test(t) && /\bwhat\b[\s\S]{0,48}\b(improv|should we)\b/i.test(t))
+  )
+}
+
 /** A public-web question. The workspace cannot answer it. */
 export function needsWebLookup(text: string): boolean {
   const t = text.trim()

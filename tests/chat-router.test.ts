@@ -93,7 +93,9 @@ describe('classifyIntent', () => {
     ['Review this project, what does it do?', 'agent', 'explore'],
     ['Review the internet, who is Steve Embling', 'agent', 'explore'],
     ['Review the internet, who is Steve Embling', 'ask', 'answer'],
-    ['improve the calculator UI', 'agent', 'edit']
+    ['improve the calculator UI', 'agent', 'edit'],
+    ['review the airbnb website, what 3 improvements should we make?', 'agent', 'review'],
+    ['what 3 improvements should we make?', 'agent', 'review']
   ] as const)('%s (%s) → %s', (text, mode, intent) => {
     expect(classifyIntent(text, mode)).toBe(intent)
   })

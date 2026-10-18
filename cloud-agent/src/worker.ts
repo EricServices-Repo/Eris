@@ -356,11 +356,10 @@ export class WorkerPool {
         nextUser = `Agent: ${job.agentName} (${job.agentId})\nGoal:\n${job.goal}`
       }
 
-      const maxSteps = config.maxSteps
       const toolMaxTokens = Math.min(512, Math.max(256, Math.floor(config.contextSize / 8)))
 
       try {
-        for (let step = startStep; step <= maxSteps; step++) {
+        for (let step = startStep; ; step++) {
           if (ac.signal.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
           this.store.patch(id, (j) => ({
             ...j,
@@ -529,23 +528,6 @@ export class WorkerPool {
         }
       } finally {
         releaseChatSession(id)
-      }
-
-      {
-        const current = this.store.get(id)
-        const pack = buildJobArtifacts(id, current?.filesTouched || [])
-        this.store.setStatus(id, 'failed', {
-          error: 'Step limit reached',
-          liveStatus: 'Failed',
-          answer: current?.answer || 'Stopped at step limit',
-          hasArtifacts: pack.files.length > 0,
-          artifactCount: pack.files.length,
-          artifactsTruncated: pack.truncated,
-          truncatedReasons: pack.truncatedReasons,
-          resumable: true
-        })
-        bumpMetric('jobsFailed')
-        audit('job_failed', { jobId: id, error: 'step_limit' })
       }
     } catch (err) {
       const aborted = err instanceof Error && err.name === 'AbortError'

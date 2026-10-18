@@ -34,7 +34,7 @@ export type AgentRunnerEvent =
       step: number
       actionLog: string[]
       filesTouched: string[]
-      /** Set when the loop stopped before finishing (step limit, verify budget). */
+      /** Set when the loop stopped before finishing (verify budget or an abort). */
       incomplete?: boolean
     }
   | {

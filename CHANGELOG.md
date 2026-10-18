@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.59 — 2026-10-17
+
+- A request for improvements stays a review and lists them, and a run no longer stops at a step limit.
+
 ## 0.2.58 — 2026-10-17
 
 - Composer Lite loads a 32k context, and compaction follows the token budget.

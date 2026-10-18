@@ -141,7 +141,8 @@ export function intentPlaybook(intent: ChatIntent | string, greenfield: boolean)
       return (
         `REVIEW PLAYBOOK — (1) tree or retrieve to orient, (2) read_file on the important sources, ` +
         `(3) optionally run tests/typecheck, (4) answer in chat: blockers, risks, suggestions, nits. ` +
-        `Cite paths. Do not edit. Never ask the user for the folder structure or to paste files.`
+        `Cite paths. Do not edit. If the user asked what improvements to make, list them and do not implement them. ` +
+        `Never ask the user for the folder structure or to paste files.`
       )
     case 'explore':
       return (
