@@ -7,7 +7,8 @@ vi.mock('child_process', async (original) => {
   return {
     ...actual,
     spawn: (command: string, args: string[], options: object) =>
-      command.endsWith('bin/python') || command.endsWith('Scripts/python.exe')
+      command.replaceAll('\\', '/').endsWith('bin/python') ||
+      command.replaceAll('\\', '/').endsWith('Scripts/python.exe')
         ? actual.spawn(
             process.execPath,
             [join(process.cwd(), 'tests/fixtures/local-image-worker.cjs')],
