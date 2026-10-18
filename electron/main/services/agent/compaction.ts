@@ -8,8 +8,6 @@ import { contextLimits } from '../vram-fit'
 
 /** Keep this many non-system messages verbatim after compaction. */
 const COMPACT_TAIL_MESSAGES = 5
-/** Soft message-count trigger (also used with token budget). */
-const COMPACT_MESSAGE_SOFT_LIMIT = 14
 /** Fraction of model context reserved for prompt before compacting. */
 const COMPACT_BUDGET_RATIO = 0.65
 
@@ -61,7 +59,6 @@ export function needsContextCompaction(
   force: boolean
 ): boolean {
   if (force) return messages.length > 4
-  if (messages.length > COMPACT_MESSAGE_SOFT_LIMIT) return true
   return estimateTokens(messages) > budgetTokens
 }
 

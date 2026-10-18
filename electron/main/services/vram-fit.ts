@@ -60,10 +60,10 @@ function clamp(n: number, min: number, max: number): number {
 
 /**
  * Context range passed to node-llama-cpp so it can grow up to what VRAM allows.
- * Composer Lite loads 16k. Larger local and full models may use up to 64k,
+ * Composer Lite loads 32k. Larger local and full models may use up to 64k,
  * still bounded by the model card and the settings window.
  */
-export const LITE_CONTEXT_MAX = 16_384
+export const LITE_CONTEXT_MAX = 32_768
 /** Max tokens a built-in model may write in one reply. */
 export const REPLY_MAX_TOKENS = 16_384
 

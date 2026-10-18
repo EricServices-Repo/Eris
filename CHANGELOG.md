@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.58 — 2026-10-17
+
+- Composer Lite loads a 32k context, and compaction follows the token budget.
+
 ## 0.2.57 — 2026-10-17
 
 - The finished reply is a separate chat summary, and Thinking only lists tool steps.
