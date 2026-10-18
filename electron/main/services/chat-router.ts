@@ -21,6 +21,9 @@ import { learnedRouteFor, readRoutingCorrections, routingExamples } from './rout
 import {
   agentForFollowUp,
   asksForRecommendations,
+  asksForPlan,
+  asksForVerification,
+  asksToImplementChanges,
   asksWhatTheProjectDoes,
   asksWorkspaceQuestion,
   isConversationFollowUp,
@@ -120,7 +123,14 @@ export function selectComposerLocalHandoff(options: {
 }
 
 export function intentNeedsTools(intent: ChatIntent): boolean {
-  return intent === 'explore' || intent === 'edit' || intent === 'review' || intent === 'run'
+  return (
+    intent === 'explore' ||
+    intent === 'plan' ||
+    intent === 'edit' ||
+    intent === 'review' ||
+    intent === 'verify' ||
+    intent === 'run'
+  )
 }
 
 export function intentNeedsMutation(intent: ChatIntent): boolean {
@@ -152,7 +162,14 @@ export function isErisCapabilityQuestion(text: string): boolean {
 export function classifyIntent(text: string, mode: 'ask' | 'agent', fileNames: string[] = []): ChatIntent {
   if (isErisCapabilityQuestion(text)) return 'capability'
   if (needsWebLookup(text)) return 'explore'
-  if (mode === 'ask' && !asksWorkspaceQuestion(text, fileNames)) return 'answer'
+  if (
+    mode === 'ask' &&
+    !asksWorkspaceQuestion(text, fileNames) &&
+    !asksForPlan(text) &&
+    !asksForVerification(text)
+  ) {
+    return 'answer'
+  }
   if (mode === 'ask') return classifyIntent(text, 'agent', fileNames)
 
   const t = text.trim()
@@ -171,6 +188,10 @@ export function classifyIntent(text: string, mode: 'ask' | 'agent', fileNames: s
   ) {
     return 'run'
   }
+
+  if (asksToImplementChanges(t)) return 'edit'
+  if (asksForPlan(t)) return 'plan'
+  if (asksForVerification(t)) return 'verify'
 
   // “What does this project do?” is a description, even when the message says “review”.
   if (asksWhatTheProjectDoes(t)) return 'explore'
@@ -192,7 +213,7 @@ export function classifyIntent(text: string, mode: 'ask' | 'agent', fileNames: s
       t
     ) ||
     // "build/fix/add … file|code|app|project|…" — greenfield product asks count as edits
-    /\b(fix|build|add|update|edit|make|write)\b[\s\S]{0,48}\b(file|files|code|bug|feature|function|component|test|app|application|project|program|tool|cli|game|website|site|mac\s*os|macos|osx|ios|android|swift|electron|desktop|package|module|service|calculator)\b/i.test(
+    /\b(fix|build|add|update|edit|make|write)\b[\s\S]{0,48}\b(file|files|code|bug|feature|function|component|test|failure|failures|error|errors|app|application|project|program|tool|cli|game|website|site|mac\s*os|macos|osx|ios|android|swift|electron|desktop|package|module|service|calculator)\b/i.test(
       t
     ) ||
     /\b(build|create|make|scaffold|generate)\s+(me\s+)?(a|an|the)\b/i.test(t) ||
@@ -240,7 +261,9 @@ function intentToolFloor(intent: ChatIntent): AgentToolsCeiling {
     case 'capability':
       return 'none'
     case 'explore':
+    case 'plan':
     case 'review':
+    case 'verify':
       return 'read'
     case 'edit':
       return 'edit'
@@ -347,7 +370,7 @@ async function chooseAutoChatModel(
       if (evalModel) return { model: evalModel, basis: 'eval' }
     }
   }
-  const heavy = intent === 'edit' || intent === 'run'
+  const heavy = intent === 'edit' || intent === 'verify' || intent === 'run'
   const profile = settings.agent.routing.profile ?? 'auto'
   const localFull = localComposerFullActive(settings)
   const preferCloud =
@@ -482,13 +505,15 @@ async function llmRouteHint(options: {
     .join('\n')
   const prompt =
     `Classify this Eris IDE chat message for routing. Reply with ONLY JSON:\n` +
-    `{"intent":"answer|capability|explore|edit|review|run","agentId":"<id>","confidence":0-1}\n\n` +
+    `{"intent":"answer|capability|explore|plan|edit|review|verify|run","agentId":"<id>","confidence":0-1}\n\n` +
     `Intent definitions:\n` +
     `- answer — pure Q&A from knowledge; no workspace tools needed\n` +
     `- capability — questions about Eris itself, its models, providers, or limits\n` +
     `- explore — find/read/explain code in the workspace (tools: read)\n` +
+    `- plan — inspect the workspace and return a sequenced implementation plan (tools: read; no edits)\n` +
     `- edit — create, change, improve, fix, or scaffold files (tools: write)\n` +
     `- review — critique / review project or PR code (tools: read); if they also ask to improve/fix, prefer edit\n` +
+    `- verify — adversarially validate an implementation with relevant tests/typecheck (read + verification commands only; no edits)\n` +
     `- run — execute tests/builds/commands\n\n` +
     `Rules:\n` +
     `- "review the project… make improvements" → edit\n` +
@@ -533,8 +558,10 @@ async function llmRouteHint(options: {
       'answer',
       'capability',
       'explore',
+      'plan',
       'edit',
       'review',
+      'verify',
       'run'
     ]
     const intent = intents.includes(parsed.intent as ChatIntent)
@@ -596,13 +623,24 @@ export async function planChatTurn(options: {
   const roster = allAgentsFlat(options.workspacePath)
   let llmAgentSelected = false
 
+  const routeScore = Number(route.reason.match(/Matched keywords \(score (\d+)\)/)?.[1] || 0)
+  const explicitIntent =
+    asksToImplementChanges(text) ||
+    asksForPlan(text) ||
+    asksForVerification(text) ||
+    asksForRecommendations(text) ||
+    needsWebLookup(text) ||
+    isErisCapabilityQuestion(text)
+  const deterministicRouteIsClear = explicitIntent || routeScore >= 3
+
   // The model router may refine intent and select any available role. If it
   // times out or declines to choose, the deterministic role mapping below wins.
   if (
     mode === 'agent' &&
     options.settings.agent.routing.enabled &&
     wantLlmRouter &&
-    !options.context.manualAgentId
+    !options.context.manualAgentId &&
+    !deterministicRouteIsClear
   ) {
     const agents = roster.filter((a) => a.enabled)
     // Bound router latency and cancel its provider stream when the user turn has
@@ -628,7 +666,7 @@ export async function planChatTurn(options: {
           routeTimer = setTimeout(() => {
             routeController.abort()
             resolve(null)
-          }, 1200)
+          }, 500)
         })
       ])
     } finally {
@@ -642,7 +680,11 @@ export async function planChatTurn(options: {
         intentNeedsTools(heuristicIntent) &&
         !intentNeedsTools(hint.intent) &&
         hint.intent !== 'capability'
-      if (!llmStripsTools) {
+      // Explicit requests to apply changes outrank a router that labels the
+      // same follow-up as another review. Preserve the deterministic edit route.
+      const llmDowngradesExplicitEdit =
+        asksToImplementChanges(text) && heuristicIntent === 'edit' && hint.intent !== 'edit'
+      if (!llmStripsTools && !llmDowngradesExplicitEdit) {
         intent = hint.intent
         method = 'llm'
       }
@@ -662,8 +704,28 @@ export async function planChatTurn(options: {
   // Capability always wins over LLM misclassifies
   if (isErisCapabilityQuestion(text)) intent = 'capability'
 
+  // Explicit specialist asks outrank router hints and learned corrections.
+  // A pinned agent still remains the user's selected role.
+  const explicitSpecialistIntent =
+    !isErisCapabilityQuestion(text) && asksForPlan(text)
+      ? 'plan'
+      : !isErisCapabilityQuestion(text) && asksForVerification(text)
+        ? 'verify'
+        : null
+  if (explicitSpecialistIntent && !options.context.manualAgentId) {
+    intent = explicitSpecialistIntent
+    method = 'heuristic'
+    llmAgentSelected = false
+    const specialistId = explicitSpecialistIntent === 'plan' ? 'planner' : 'verifier'
+    agent = roster.find((candidate) => candidate.enabled && candidate.id === specialistId) || agent
+  }
+
   const classifiedIntent = intent
-  const correction = forceRoute ?? (mode === 'agent' ? learnedRouteFor(text, corrections) : null)
+  const correction =
+    forceRoute ??
+    (mode === 'agent' && !asksToImplementChanges(text) && !explicitSpecialistIntent
+      ? learnedRouteFor(text, corrections)
+      : null)
   if (correction === 'answer') {
     intent = 'answer'
   } else if (correction === 'tools' && !intentNeedsTools(intent)) {
@@ -674,7 +736,7 @@ export async function planChatTurn(options: {
   }
 
   const followId = agentForFollowUp(text, options.context.previousAgentId)
-  if (mode === 'agent' && followId) {
+  if (mode === 'agent' && followId && !explicitSpecialistIntent) {
     const previousUserText = [...(options.context.previousMessages ?? [])]
       .reverse()
       .find((message) => message.role === 'user')?.content || ''
@@ -683,6 +745,7 @@ export async function planChatTurn(options: {
       isConversationFollowUp(text) &&
       !intentNeedsTools(intent) &&
       !needsWebLookup(text) &&
+      !asksToImplementChanges(text) &&
       !/\b(fix|change|edit|implement|update|apply)\b/i.test(text)
     if (
       isContinuation &&
@@ -739,6 +802,30 @@ export async function planChatTurn(options: {
       reason: 'No agents configured',
       method: 'default',
       error: 'No agents configured'
+    }
+  }
+
+  // A mutating intent needs an agent that can actually mutate. A weak model
+  // router may choose Reviewer for a coding follow-up even after intent has
+  // been corrected to edit; never let that become an edit plan with read-only
+  // tools and a prompt that tells the worker not to edit.
+  const requiredMutationCeiling = intent === 'run' ? 'full' : 'edit'
+  if (
+    mode === 'agent' &&
+    intentNeedsMutation(intent) &&
+    CEILING_RANK[agent.tools ?? 'edit'] < CEILING_RANK[requiredMutationCeiling]
+  ) {
+    const editor =
+      roster.find((candidate) => candidate.enabled && candidate.id === 'composer') ||
+      roster.find(
+        (candidate) =>
+          candidate.enabled &&
+          CEILING_RANK[candidate.tools ?? 'edit'] >= CEILING_RANK[requiredMutationCeiling]
+      )
+    if (editor) {
+      agent = editor
+      llmAgentSelected = false
+      method = 'heuristic'
     }
   }
 
@@ -812,6 +899,27 @@ function executionPlanFor(
 ): { steps: string[]; doneWhen: string } {
   if (intent === 'capability') {
     return { steps: ['Check Eris model and provider catalog'], doneWhen: 'Answer from the current catalog.' }
+  }
+  if (intent === 'plan') {
+    return {
+      steps: [
+        'Inspect the relevant sources and project conventions',
+        'Trace dependencies and integration points',
+        'Return ordered steps with files, risks, and completion checks'
+      ],
+      doneWhen: 'The plan is grounded in inspected files and clearly distinguishes decisions from assumptions.'
+    }
+  }
+  if (intent === 'verify') {
+    return {
+      steps: [
+        'Inspect the implementation and relevant tests',
+        'Probe likely edge cases and failure paths',
+        'Run relevant approved verification commands',
+        'Report observed results and remaining risks'
+      ],
+      doneWhen: 'Every claimed result is supported by inspection or command output, with no files edited.'
+    }
   }
   if (mode === 'ask' || intent === 'explore') {
     return { steps: ['Find relevant workspace sources', 'Read the matching files', 'Answer with paths and evidence'], doneWhen: 'The answer is grounded in the files that were read.' }

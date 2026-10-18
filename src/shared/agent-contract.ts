@@ -5,7 +5,7 @@ import type { ChatIntent } from './settings-schema'
  * Coder is not chosen by Auto — pin it, or let Composer delegate to it.
  */
 export interface ChatAgentContract {
-  id: 'composer' | 'coder' | 'explainer' | 'reviewer' | 'fast'
+  id: 'composer' | 'coder' | 'explainer' | 'planner' | 'reviewer' | 'verifier' | 'fast'
   name: string
   /** One sentence the picker and the model both follow. */
   job: string
@@ -50,8 +50,26 @@ export const CHAT_AGENT_CONTRACTS: ChatAgentContract[] = [
     job: 'Reads the change or the project and reports bugs, risks, and missing tests.',
     tools: 'read',
     auto: true,
-    doesNot: 'Does not edit. May run the project test or typecheck command. If the user wants fixes, it says to run Composer.',
+    doesNot: 'Does not edit. May run project tests, typecheck, or lint. If the user wants fixes, it says to run Composer.',
     done: 'Findings with a path, what is wrong, why it matters, and a suggested fix. Ordered blockers, risks, suggestions, nits.'
+  },
+  {
+    id: 'planner',
+    name: 'Plan',
+    job: 'Reads the workspace and produces an implementation plan with dependencies, risks, and files to change.',
+    tools: 'read',
+    auto: true,
+    doesNot: 'Does not edit files or claim the plan has been implemented.',
+    done: 'A sequenced plan with the relevant files, key decisions, dependencies, and completion checks.'
+  },
+  {
+    id: 'verifier',
+    name: 'Verification',
+    job: 'Adversarially checks a change by inspecting its code and running relevant tests or typechecks.',
+    tools: 'read',
+    auto: true,
+    doesNot: 'Does not edit files or report a check as passing without observing its result.',
+    done: 'A concise verdict backed by the checks run, their actual results, and any uncovered edge cases.'
   },
   {
     id: 'fast',
@@ -77,10 +95,75 @@ export function asksWhatTheProjectDoes(text: string): boolean {
   )
 }
 
+/** The user is asking to apply previously discussed changes, not list them. */
+export function asksToImplementChanges(text: string): boolean {
+  const t = text.trim()
+  if (!t) return false
+  return (
+    /\b(?:code|implement|apply|write|build|make|add)\b[\s\S]{0,48}\b(?:these|those|the|above|recommended|suggested)?\s*(?:changes?|improvements?|fixes?)\b/i.test(
+      t
+    ) ||
+    /\b(?:code|implement|apply|write|build|make|add)\s+(?:it|that|those|them|these)\b/i.test(t)
+  )
+}
+
+/** An explicit request for a plan, rather than a request to execute the plan. */
+export function asksForPlan(text: string): boolean {
+  const t = text.trim()
+  if (!t || asksToImplementChanges(t)) return false
+  if (/\b(?:and|then)\s+(?:implement|code|build|create|write|add|change|update|fix|apply)\b/i.test(t)) {
+    return false
+  }
+  return (
+    /\b(?:give|write|create|draft|outline|propose|make|show)\s+(?:me\s+)?(?:an?\s+)?(?:(?:implementation|technical|architecture|migration)\s+)?plan\b/i.test(
+      t
+    ) ||
+    /\bplan\s+(?:out\s+)?(?:how|to|for)\b/i.test(t) ||
+    /\bplan\b[\s\S]{0,32}\b(?:changes?|improvements?|features?|work|implementation|architecture|migration)\b/i.test(
+      t
+    ) ||
+    /\bwhat(?:'s| is)\s+(?:the|your|a)\s+plan\b/i.test(t)
+  )
+}
+
+/** The user wants the implementation tested or validated, not merely reviewed. */
+export function asksForVerification(text: string): boolean {
+  const t = text.trim()
+  if (!t || asksToImplementChanges(t)) return false
+  if (
+    /\b(?:fix|change|edit|implement|update|apply|repair)\b[\s\S]{0,32}\b(?:code|file|bug|feature|issue|failure|error|changes?|it|this|that)\b/i.test(
+      t
+    )
+  ) {
+    return false
+  }
+  // Keep direct command requests on the ordinary Run route.
+  if (
+    /\b(?:run|execute)\b[\s\S]{0,32}\b(?:tests?|typechecks?|lint|build)\b/i.test(t) ||
+    /\b(?:npm|pnpm|yarn)\s+(?:test|run\s+(?:test|typecheck|lint|check))\b/i.test(t)
+  ) {
+    return false
+  }
+  return (
+    /\b(?:verify|validate|test)\b[\s\S]{0,56}\b(?:changes?|implementation|code|fix|feature|project|behavior|edge cases?|regressions?|this|that|these|those|it)\b/i.test(
+      t
+    ) ||
+    /\b(?:check|confirm|test|verify|validate)\b[\s\S]{0,40}\b(?:the\s+|these\s+|those\s+|my\s+|our\s+)?(?:code|changes?|implementation|tests?|fix|feature|behavior)\b/i.test(
+      t
+    ) ||
+    /\b(?:check|confirm)\b[\s\S]{0,32}\b(?:that|whether|if)\b[\s\S]{0,48}\b(?:works?|passes?|correct|safe|behaves?|regresses?)\b/i.test(
+      t
+    ) ||
+    /\b(?:try to break|look for edge cases|test the behavior)\b/i.test(t) ||
+    /^(?:verify|validate|test)(?:\s+(?:it|that))?[.!?]?$/i.test(t)
+  )
+}
+
 /** The user wants a list of improvements, not for the agent to apply them. */
 export function asksForRecommendations(text: string): boolean {
   const t = text.trim()
   if (!t) return false
+  if (asksToImplementChanges(t)) return false
   if (
     /\b(make|apply|implement)\s+(the\s+|some\s+|these\s+)?improvements?\b/i.test(t) &&
     !/\bwhat\b/i.test(t)
@@ -125,6 +208,7 @@ const BY_ID = new Map(CHAT_AGENT_CONTRACTS.map((c) => [c.id, c]))
 export function isConversationFollowUp(text: string): boolean {
   const t = text.trim()
   if (!t || t.length > 240 || asksWhatTheProjectDoes(t)) return false
+  if (asksToImplementChanges(t)) return true
   if (
     /^(and|also|then|continue|go on|keep going|do that|fix that|change that|update that|what about|how about)\b/i.test(
       t
@@ -146,7 +230,12 @@ export function agentForFollowUp(
 ): ChatAgentContract['id'] | null {
   if (!isConversationFollowUp(text)) return null
   if (/\bwhat did you (change|do|edit)\b/i.test(text)) return 'explainer'
-  if (/\b(fix|change|edit|implement|update|apply)\b/i.test(text)) return 'composer'
+  if (
+    asksToImplementChanges(text) ||
+    /\b(fix|change|edit|implement|update|apply)\b/i.test(text)
+  ) {
+    return 'composer'
+  }
   if (previousAgentId && BY_ID.has(previousAgentId as ChatAgentContract['id'])) {
     const id = previousAgentId as ChatAgentContract['id']
     return id === 'coder' ? 'composer' : id
@@ -178,9 +267,13 @@ export function chatAgentForTurn(options: {
     !explains
 
   if (options.mode === 'ask') {
+    if (options.intent === 'plan') return 'planner'
+    if (options.intent === 'verify') return 'verifier'
     return shortLookup ? 'fast' : 'explainer'
   }
 
+  if (options.intent === 'plan') return 'planner'
+  if (options.intent === 'verify') return 'verifier'
   const follow = agentForFollowUp(text, options.previousAgentId)
   if (follow) return follow
   if (needsWebLookup(text)) return 'explainer'

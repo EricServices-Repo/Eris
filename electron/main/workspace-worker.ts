@@ -1,0 +1,49 @@
+import { parentPort } from 'worker_threads'
+import { readFileSync } from 'fs'
+import { listTree, readTextFile } from './services/files'
+import { scanWorkspaceIndex, patchWorkspaceIndex } from './services/workspace-index-job'
+import { chatDatabase, closeChatDatabases } from './services/chat-database'
+import type { WorkspaceRequest } from './services/workspace-worker-protocol'
+
+async function handle(request: WorkspaceRequest): Promise<unknown> {
+  switch (request.type) {
+    case 'tree':
+      return listTree(request.root, 0, request.maxDepth)
+    case 'read':
+      return readTextFile(request.path)
+    case 'index':
+      return scanWorkspaceIndex(request.root, request.indexPath)
+    case 'patch-index':
+      return patchWorkspaceIndex(request.root, request.indexPath, request.paths)
+    case 'load-index': {
+      try {
+        return JSON.parse(readFileSync(request.indexPath, 'utf8'))
+      } catch {
+        return null
+      }
+    }
+    case 'chat-list':
+      return chatDatabase(request.dir).list()
+    case 'chat-get':
+      return chatDatabase(request.dir).get(request.id, request.page)
+    case 'chat-save':
+      return chatDatabase(request.dir).save(request.thread)
+    case 'chat-delete':
+      return chatDatabase(request.dir).remove(request.id)
+    case 'chat-append':
+      return chatDatabase(request.dir).append(request.id, request.message, request.model)
+    case 'shutdown':
+      closeChatDatabases()
+      return true
+  }
+}
+let queue = Promise.resolve()
+parentPort?.on('message', ({ id, request }: { id: number; request: WorkspaceRequest }) => {
+  queue = queue.then(async () => {
+    try {
+      parentPort?.postMessage({ id, result: await handle(request) })
+    } catch (error) {
+      parentPort?.postMessage({ id, error: error instanceof Error ? error.message : String(error) })
+    }
+  })
+})

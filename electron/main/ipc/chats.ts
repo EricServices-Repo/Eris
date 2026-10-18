@@ -6,7 +6,8 @@ import {
   createChat,
   saveChat,
   deleteChat,
-  loadWorkspaceRules
+  loadWorkspaceRules,
+  appendChatMessage
 } from '../services/chats'
 import {
   createSkill,
@@ -18,20 +19,43 @@ import {
   updateSkill
 } from '../services/skills'
 import { logInfo } from '../services/logger'
-import type { ChatThread, SkillInput, SkillScope } from '../../../src/shared/settings-schema'
+import type {
+  ChatThread,
+  ChatMessage,
+  SkillInput,
+  SkillScope
+} from '../../../src/shared/settings-schema'
 import { appState } from '../app-state'
+import { getWorkspaceByPath } from '../services/workspace'
+
+function chatWorkspace(requested: string | null | undefined): string | null {
+  if (requested === undefined) return appState.currentWorkspace
+  if (requested === null) return null
+  const workspace = getWorkspaceByPath(requested)
+  if (!workspace) throw new Error('Chat workspace is no longer available')
+  return workspace.path
+}
 
 export function registerChatsIpc(): void {
   ipcMain.handle('chats:list', () => listChats(appState.currentWorkspace))
-  ipcMain.handle('chats:get', (_e, id: string) => getChat(appState.currentWorkspace, id))
-  ipcMain.handle('chats:create', (_e, model: string) => {
-    const thread = createChat(appState.currentWorkspace, model)
+  ipcMain.handle('chats:get', (_e, id: string, page?: { before?: number; limit?: number }) =>
+    getChat(appState.currentWorkspace, id, { limit: 60, ...page })
+  )
+  ipcMain.handle('chats:create', async (_e, model: string) => {
+    const thread = await createChat(appState.currentWorkspace, model)
     logInfo('Chat created', { id: thread.id, model })
     return thread
   })
-  ipcMain.handle('chats:save', (_e, thread: ChatThread) => saveChat(appState.currentWorkspace, thread))
-  ipcMain.handle('chats:delete', (_e, id: string) => {
-    deleteChat(appState.currentWorkspace, id)
+  ipcMain.handle('chats:save', (_e, thread: ChatThread) =>
+    saveChat(appState.currentWorkspace, thread)
+  )
+  ipcMain.handle(
+    'chats:append',
+    (_e, id: string, message: ChatMessage, model?: string, workspacePath?: string | null) =>
+      appendChatMessage(chatWorkspace(workspacePath), id, message, model)
+  )
+  ipcMain.handle('chats:delete', async (_e, id: string) => {
+    await deleteChat(appState.currentWorkspace, id)
     logInfo('Chat deleted', { id })
     return true
   })
@@ -73,13 +97,10 @@ export function registerChatsIpc(): void {
   )
 
   ipcMain.handle('rules:list', () => listRules(appState.currentWorkspace))
-  ipcMain.handle(
-    'rules:save',
-    (_e, name: string, body: string, previousId?: string) => {
-      if (!appState.currentWorkspace) throw new Error('Open a workspace to edit rules')
-      return saveRule(appState.currentWorkspace, name, body, previousId)
-    }
-  )
+  ipcMain.handle('rules:save', (_e, name: string, body: string, previousId?: string) => {
+    if (!appState.currentWorkspace) throw new Error('Open a workspace to edit rules')
+    return saveRule(appState.currentWorkspace, name, body, previousId)
+  })
   ipcMain.handle('rules:delete', (_e, id: string) => {
     if (!appState.currentWorkspace) throw new Error('Open a workspace to edit rules')
     return deleteRule(appState.currentWorkspace, id)

@@ -35,7 +35,10 @@ function normalizeAgent(raw: unknown, fallbackBuiltin = false): AgentDefinition 
       : builtin
         ? input.id === 'fast'
           ? 'none'
-          : input.id === 'explainer' || input.id === 'reviewer'
+          : input.id === 'explainer' ||
+              input.id === 'planner' ||
+              input.id === 'reviewer' ||
+              input.id === 'verifier'
             ? 'read'
             : input.id === 'composer'
               ? 'full'

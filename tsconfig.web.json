@@ -17,5 +17,5 @@
     },
     "types": ["vite/client"]
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*", "checks/client-renderer.tsx"]
 }

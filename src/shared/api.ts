@@ -2,6 +2,7 @@ import type {
   AppSettings,
   ChatDelegation,
   ChatThread,
+  ChatMessage,
   FileEntry,
   BuiltinModelStatus,
   GpuAccelStatus,
@@ -22,12 +23,7 @@ import type {
   WorkspaceMeta,
   WorkspaceRecord
 } from './settings-schema'
-import type {
-  EvalProgressEvent,
-  EvalResult,
-  EvalScoreboard,
-  EvalTaskInfo
-} from './evals'
+import type { EvalProgressEvent, EvalResult, EvalScoreboard, EvalTaskInfo } from './evals'
 import type {
   BackgroundJob,
   BackgroundJobEvent,
@@ -222,14 +218,16 @@ export interface IdeApi {
   resetSettingKey: (scope: SettingsScope, pathKeys: string[]) => Promise<AppSettings>
   setSecret: (key: string, value: string) => Promise<boolean>
   getSecret: (key: string) => Promise<string | null>
-  listTree: (root: string) => Promise<FileEntry[]>
-  readFile: (path: string) => Promise<{ path: string; content: string; name: string; language: string }>
+  listTree: (root: string, maxDepth?: number) => Promise<FileEntry[]>
+  readFile: (
+    path: string
+  ) => Promise<{ path: string; content: string; name: string; language: string }>
   writeFile: (path: string, content: string) => Promise<boolean>
   pickFiles: () => Promise<string[]>
   /** Light by default (no connection probes). Pass `{ probe: true }` from Settings → Providers. */
   modelsStatus: (opts?: { probe?: boolean; includeGpu?: boolean }) => Promise<ModelsStatus>
-  /** Background-load default ready GGUF into the llama worker. */
-  warmLocalModel: () => Promise<{ ok: boolean; model?: string; error?: string }>
+  /** Background-load a selected or default ready GGUF into the llama worker. */
+  warmLocalModel: (modelRef?: string) => Promise<{ ok: boolean; model?: string; error?: string }>
   builtinModelStatus: () => Promise<BuiltinModelStatus[]>
   downloadBuiltinModel: (id?: string) => Promise<BuiltinModelStatus>
   deleteBuiltinModel: (id?: string) => Promise<boolean>
@@ -300,7 +298,13 @@ export interface IdeApi {
   setWorkspaceTrust: (trusted: boolean) => Promise<boolean>
   dismissRun: (id: string) => Promise<boolean>
   listChats: () => Promise<ChatThread[]>
-  getChat: (id: string) => Promise<ChatThread | null>
+  getChat: (id: string, page?: { before?: number; limit?: number }) => Promise<ChatThread | null>
+  appendChatMessage: (
+    id: string,
+    message: ChatMessage,
+    model?: string,
+    workspacePath?: string | null
+  ) => Promise<ChatThread>
   createChat: (model: string) => Promise<ChatThread>
   saveChat: (thread: ChatThread) => Promise<ChatThread>
   deleteChat: (id: string) => Promise<boolean>
@@ -324,6 +328,7 @@ export interface IdeApi {
     mode?: 'ask' | 'agent'
     turnPlan?: TurnPlan
     threadId?: string | null
+    planningDurationMs?: number
   }) => Promise<boolean>
   stopChat: () => Promise<boolean>
   /** Absolute path of a dropped File ('' when it has none) */
@@ -369,7 +374,9 @@ export interface IdeApi {
     }) => void
   ) => () => void
   onChatThinking: (cb: (data: { requestId: string; chunk: string }) => void) => () => void
-  onChatAnswer: (cb: (data: { requestId: string; chunk: string; replace?: boolean }) => void) => () => void
+  onChatAnswer: (
+    cb: (data: { requestId: string; chunk: string; replace?: boolean }) => void
+  ) => () => void
   onChatDone: (cb: (data: { requestId: string; aborted?: boolean }) => void) => () => void
   onChatError: (cb: (data: { requestId: string; error: string }) => void) => () => void
   onChatDelegation: (
@@ -422,12 +429,7 @@ export interface IdeApi {
   onChatWorkspaceChanged: (cb: (data: { requestId: string }) => void) => () => void
   onChatStatus: (cb: (data: { requestId: string; text: string }) => void) => () => void
   onChatModel: (
-    cb: (data: {
-      requestId: string
-      model: string
-      agentId?: string
-      agentName?: string
-    }) => void
+    cb: (data: { requestId: string; model: string; agentId?: string; agentName?: string }) => void
   ) => () => void
   onChatRouted: (
     cb: (data: {
@@ -456,20 +458,12 @@ export interface IdeApi {
   onTerminalData: (
     cb: (payload: { chunk: string; stream: 'stdout' | 'stderr' }) => void
   ) => () => void
-  ptyEnsure: (size?: {
-    cols?: number
-    rows?: number
-  }) => Promise<{ ok: boolean; error?: string }>
+  ptyEnsure: (size?: { cols?: number; rows?: number }) => Promise<{ ok: boolean; error?: string }>
   ptyWrite: (data: string) => Promise<{ ok: boolean; error?: string }>
-  ptyResize: (size: {
-    cols: number
-    rows: number
-  }) => Promise<{ ok: boolean; error?: string }>
+  ptyResize: (size: { cols: number; rows: number }) => Promise<{ ok: boolean; error?: string }>
   ptyKill: () => Promise<{ ok: boolean }>
   onPtyData: (cb: (data: string) => void) => () => void
-  onPtyExit: (
-    cb: (payload: { exitCode: number; signal?: number }) => void
-  ) => () => void
+  onPtyExit: (cb: (payload: { exitCode: number; signal?: number }) => void) => () => void
   gitStatus: () => Promise<{
     ok: boolean
     error?: string
@@ -575,10 +569,9 @@ export interface IdeApi {
     draft?: boolean
   }) => Promise<{ ok: boolean; error?: string; number?: number; htmlUrl?: string }>
   onWorkspaceFsChanged: (
-    cb: (payload: { workspacePath: string; path: string }) => void
+    cb: (payload: { workspacePath: string; path: string; paths?: string[] }) => void
   ) => () => void
-  ericServicesStatus: (opts?: { cached?: boolean }) =>
-    Promise<{
+  ericServicesStatus: (opts?: { cached?: boolean }) => Promise<{
     ok: boolean
     error?: string
     linked: boolean
@@ -677,9 +670,7 @@ export interface IdeApi {
     lastSyncedAt: string
     syncEnabled: boolean
   }>
-  ericServicesSync: (
-    direction?: 'pull' | 'push' | 'bidirectional'
-  ) => Promise<{
+  ericServicesSync: (direction?: 'pull' | 'push' | 'bidirectional') => Promise<{
     ok: boolean
     error?: string
     direction?: string
@@ -727,20 +718,18 @@ export interface IdeApi {
   searchGrep: (
     pattern: string,
     glob?: string
-  ) => Promise<{ ok: boolean; detail: string; hits: Array<{ path: string; line: number; text: string }> }>
-  searchGlob: (
-    pattern: string
-  ) => Promise<{ ok: boolean; detail: string; paths: string[] }>
-  searchSymbols: (
-    query: string
   ) => Promise<{
+    ok: boolean
+    detail: string
+    hits: Array<{ path: string; line: number; text: string }>
+  }>
+  searchGlob: (pattern: string) => Promise<{ ok: boolean; detail: string; paths: string[] }>
+  searchSymbols: (query: string) => Promise<{
     ok: boolean
     detail: string
     hits: Array<{ name: string; kind: string; path: string; line: number }>
   }>
-  searchRetrieve: (
-    query: string
-  ) => Promise<{ ok: boolean; detail: string; paths: string[] }>
+  searchRetrieve: (query: string) => Promise<{ ok: boolean; detail: string; paths: string[] }>
   rebuildCodeIndex: () => Promise<{ ok: boolean; files: number; symbols: number }>
   codeIndexStats: () => Promise<{
     ok: boolean
@@ -755,7 +744,11 @@ export interface IdeApi {
   getCloudJob: (id: string) => Promise<BackgroundJob | null>
   searchReferences: (
     name: string
-  ) => Promise<{ ok: boolean; detail: string; hits: Array<{ name: string; path: string; line: number }> }>
+  ) => Promise<{
+    ok: boolean
+    detail: string
+    hits: Array<{ name: string; path: string; line: number }>
+  }>
   searchRelated: (path: string) => Promise<{ ok: boolean; detail: string; paths: string[] }>
   listEvalTasks: () => Promise<EvalTaskInfo[]>
   getEvalScoreboard: () => Promise<EvalScoreboard>
@@ -840,10 +833,7 @@ export interface IdeApi {
     }>
     detail: string
   }>
-  languageHover: (
-    filePath: string,
-    word: string
-  ) => Promise<{ ok: boolean; contents: string }>
+  languageHover: (filePath: string, word: string) => Promise<{ ok: boolean; contents: string }>
   goToDefinition: (word: string) => Promise<{
     ok: boolean
     locations: Array<{ path: string; line: number; name: string; kind: string }>
@@ -864,19 +854,11 @@ export interface IdeApi {
     line: number
     character: number
   }) => Promise<{ ok: boolean; contents: string }>
-  lspDefinition: (payload: {
-    path: string
-    line: number
-    character: number
-  }) => Promise<{
+  lspDefinition: (payload: { path: string; line: number; character: number }) => Promise<{
     ok: boolean
     locations: Array<{ path: string; line: number; name: string; kind: string }>
   }>
-  lspCompletion: (payload: {
-    path: string
-    line: number
-    character: number
-  }) => Promise<{
+  lspCompletion: (payload: { path: string; line: number; character: number }) => Promise<{
     ok: boolean
     items: Array<{ label: string; detail?: string; insertText?: string }>
   }>
@@ -1042,19 +1024,10 @@ export interface IdeApi {
     summary?: string
   }) => Promise<{ wrote: boolean; kind?: string; preview: string }>
   onChatMemoryUpdated: (
-    cb: (data: {
-      requestId: string
-      kind?: string
-      preview: string
-    }) => void
+    cb: (data: { requestId: string; kind?: string; preview: string }) => void
   ) => () => void
   onChatMemoryProposal: (
-    cb: (data: {
-      requestId: string
-      note?: string
-      summary?: string
-      preview: string
-    }) => void
+    cb: (data: { requestId: string; note?: string; summary?: string; preview: string }) => void
   ) => () => void
   getUsageStats: (days?: number, opts?: { refresh?: boolean }) => Promise<UsageSnapshot>
   clearUsageStats: (payload?: { todayOnly?: boolean }) => Promise<UsageSnapshot>

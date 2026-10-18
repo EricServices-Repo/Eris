@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync,
 import { getResolvedSettings } from '../services/settings'
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from '../services/workspace-watcher'
 import { disposeMcpRuntime, syncMcpRuntime } from '../services/mcp-runtime'
-import { ensureCodeIndex } from '../services/code-index'
+import { ensureCodeIndexAsync } from '../services/code-index'
 import { disposePtySession } from '../services/pty-session'
 import { disposeLanguageServers, configureLanguageServers } from '../services/language-servers'
 import { userDataRoot } from '../services/paths'
@@ -138,7 +138,7 @@ export const refreshIntelligence = () => {
   // Index off the interactive path — open workspace should not wait on it.
   setImmediate(() => {
     try {
-      if (appState.currentWorkspace) ensureCodeIndex(appState.currentWorkspace)
+      if (appState.currentWorkspace) void ensureCodeIndexAsync(appState.currentWorkspace).catch(() => undefined)
     } catch {
       // optional
     }

@@ -1,10 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ChatDelegation, ChatMessage, ChatThread, ModelInfo, SkillRecord } from '@/shared/settings-schema'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import type {
+  ChatDelegation,
+  ChatMessage,
+  ChatThread,
+  ModelInfo,
+  SkillRecord
+} from '@/shared/settings-schema'
 import { CHAT_AGENT_CONTRACTS } from '@/shared/agent-contract'
 import { pathBasename } from '@/shared/paths'
 import { ThinkingBlock, type ToolActivityItem } from './ThinkingBlock'
 import { AnswerFeedback } from './AnswerFeedback'
 import { MarkdownMessage } from './MarkdownMessage'
+import { chatStream } from '@/state/chat-stream'
+import { useStore } from '@/state/store'
+import { VirtualList } from '@/components/VirtualList'
 
 export type { ToolActivityItem }
 export type ChatMode = 'ask' | 'agent'
@@ -33,12 +42,88 @@ export interface QueuedChatMessage {
 
 export const MAX_QUEUED_MESSAGES = 3
 
-function questionBefore(messages: ChatMessage[], index: number): string {
-  for (let i = index - 1; i >= 0; i--) {
-    if (messages[i]?.role === 'user') return messages[i].content
-  }
-  return ''
-}
+const messageKey = (message: ChatMessage) => message.id
+const EMPTY_MESSAGES: ChatMessage[] = []
+
+const HistoricalMessages = memo(function HistoricalMessages({
+  messages,
+  onOpenPath,
+  onRerouteLast,
+  streaming
+}: {
+  messages: ChatMessage[]
+  onOpenPath: (path: string) => void
+  onRerouteLast?: (route: 'tools' | 'answer') => void
+  streaming: boolean
+}) {
+  const visible = useMemo(() => messages.filter((message) => message.role !== 'system'), [messages])
+  const questions = useMemo(() => {
+    let question = ''
+    return new Map(
+      visible.map((message) => {
+        if (message.role === 'user') question = message.content
+        return [message.id, question]
+      })
+    )
+  }, [visible])
+  return (
+    <VirtualList
+      items={visible}
+      itemKey={messageKey}
+      renderItem={(message, index) => (
+        <div style={{ paddingBottom: 12 }}>
+          <div className={`msg ${message.role}`}>
+            <span className="role">
+              {message.role}
+              {message.agentName ? ` · ${message.agentName}` : ''}
+              {message.model ? ` · ${message.model}` : ''}
+            </span>
+            {message.role === 'assistant' && message.thinking && (
+              <ThinkingBlock thinking={message.thinking} defaultOpen={false} />
+            )}
+            {message.role === 'assistant' && message.delegations?.length ? (
+              <DelegationCards items={message.delegations} />
+            ) : null}
+            {message.role === 'assistant' ? (
+              message.content && (
+                <div className="msg-summary">
+                  <MarkdownMessage content={message.content} onOpenPath={onOpenPath} />
+                </div>
+              )
+            ) : (
+              <div className="user-text">{message.content}</div>
+            )}
+            {message.role === 'assistant' && (
+              <AnswerFeedback message={message} question={questions.get(message.id) || ''} />
+            )}
+            {message.role === 'assistant' &&
+              index === visible.length - 1 &&
+              !streaming &&
+              onRerouteLast && (
+                <div className="msg-reroute">
+                  <span>Wrong route?</span>
+                  <button
+                    type="button"
+                    className="btn btn-link"
+                    onClick={() => onRerouteLast('tools')}
+                  >
+                    Needed tools
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-link"
+                    onClick={() => onRerouteLast('answer')}
+                  >
+                    Just a question
+                  </button>
+                </div>
+              )}
+          </div>
+        </div>
+      )}
+    />
+  )
+})
 
 interface SlashItem {
   id: string
@@ -51,16 +136,13 @@ interface SlashItem {
 
 interface Props {
   activeThread: ChatThread | null
+  onLoadEarlier?: () => Promise<void>
   routeLabel: string | null
   composerReady: boolean
   /** True when any chat backend is ready (builtin or Ollama/API connection). */
   modelsOk?: boolean
   streaming: boolean
-  thinkingBuffer: string
-  answerBuffer: string
   chatError: string | null
-  agentStatus: string | null
-  toolActivity: ToolActivityItem[]
   delegations?: ChatDelegation[]
   openTabs: Array<{ path: string; name: string }>
   mentionFiles: MentionCandidate[]
@@ -173,10 +255,7 @@ function InlineAgentQuestion({
   return (
     <div className="question-card" role="form" aria-label="Agent question">
       <div className="question-timeout-track" aria-hidden>
-        <div
-          className="question-timeout-bar"
-          style={{ animationDuration: `${timeoutMs}ms` }}
-        />
+        <div className="question-timeout-bar" style={{ animationDuration: `${timeoutMs}ms` }} />
       </div>
       <div className="question-title">Composer needs a quick answer</div>
       <div className="question-text">{question.question}</div>
@@ -210,7 +289,12 @@ function InlineAgentQuestion({
         <button type="submit" className="btn btn-primary" disabled={!draft.trim()}>
           Reply
         </button>
-        <button type="button" className="btn" onClick={() => submit(null)} title="Continue without answering">
+        <button
+          type="button"
+          className="btn"
+          onClick={() => submit(null)}
+          title="Continue without answering"
+        >
           Skip
         </button>
       </form>
@@ -249,15 +333,12 @@ function DelegationCards({ items }: { items: ChatDelegation[] }) {
 
 export function ChatPanel({
   activeThread,
+  onLoadEarlier,
   routeLabel,
   composerReady,
   modelsOk = false,
   streaming,
-  thinkingBuffer,
-  answerBuffer,
   chatError,
-  agentStatus,
-  toolActivity,
   delegations = [],
   openTabs,
   mentionFiles,
@@ -298,6 +379,9 @@ export function ChatPanel({
   onDismissResume,
   liveSessionSteps = []
 }: Props) {
+  const { thinkingBuffer, answerBuffer, agentStatus, toolActivity } = useStore(chatStream)
+  const [loadingHistory, setLoadingHistory] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [dragging, setDragging] = useState(false)
   const [slashIndex, setSlashIndex] = useState(0)
@@ -321,8 +405,9 @@ export function ChatPanel({
   }, [attachMenuOpen])
 
   useEffect(() => {
-    const el = bottomRef.current?.parentElement
+    const el = bottomRef.current?.closest<HTMLElement>('.agent-messages')
     if (!el) return
+    stickToBottomRef.current = true
     scrollRootRef.current = el
     const onScroll = () => {
       const dist = el.scrollHeight - el.scrollTop - el.clientHeight
@@ -358,10 +443,7 @@ export function ChatPanel({
 
   const atItems = useMemo(() => {
     if (!atQuery) return []
-    const pool = [
-      ...openTabs.map((t) => ({ path: t.path, name: t.name })),
-      ...mentionFiles
-    ]
+    const pool = [...openTabs.map((t) => ({ path: t.path, name: t.name })), ...mentionFiles]
     const seen = new Set<string>()
     const uniq = pool.filter((p) => {
       if (seen.has(p.path)) return false
@@ -473,8 +555,7 @@ export function ChatPanel({
     setDraft('')
   }
 
-  const canCompose =
-    Boolean(draft.trim()) || attachments.length > 0 || activeSkills.length > 0
+  const canCompose = Boolean(draft.trim()) || attachments.length > 0 || activeSkills.length > 0
   const queueFull = queuedMessages.length >= MAX_QUEUED_MESSAGES
 
   const modelOptions = useMemo(() => {
@@ -518,10 +599,15 @@ export function ChatPanel({
   }
 
   const modelDataHint = (m: ModelInfo): string => {
-    if (m.name === 'auto') return 'Eris selects a ready model for this task. When outcome routing is enabled, saved run outcomes and eval scores can influence the choice. The selected provider may receive your prompt and attached project context.'
-    if (m.ready === false) return 'This model is not currently ready. Reconnect or enable its provider in Settings → Models.'
-    if (m.source === 'builtin' || m.source === 'local') return 'Runs on this device. Prompts and attached files stay local to Eris.'
-    const connection = m.connectionId ? models.find((candidate) => candidate.connectionId === m.connectionId) : undefined
+    if (m.name === 'auto')
+      return 'Eris selects a ready model for this task. When outcome routing is enabled, saved run outcomes and eval scores can influence the choice. The selected provider may receive your prompt and attached project context.'
+    if (m.ready === false)
+      return 'This model is not currently ready. Reconnect or enable its provider in Settings → Models.'
+    if (m.source === 'builtin' || m.source === 'local')
+      return 'Runs on this device. Prompts and attached files stay local to Eris.'
+    const connection = m.connectionId
+      ? models.find((candidate) => candidate.connectionId === m.connectionId)
+      : undefined
     return `Connected provider${connection?.connectionId ? ` (${connection.connectionId})` : ''}. Prompts and attached project context are sent to that provider.`
   }
 
@@ -740,7 +826,7 @@ export function ChatPanel({
       )}
 
       <div className="agent-main">
-        <div className="agent-messages">
+        <div className="agent-messages" data-virtual-scroll>
           {!activeThread && !streaming && !chatError ? (
             <div className="chat-empty agent-welcome">
               <h2>Chat runs one agent</h2>
@@ -762,57 +848,28 @@ export function ChatPanel({
             </div>
           ) : (
             <div className="chat-messages">
-              {activeThread?.messages
-                .filter((m) => m.role !== 'system')
-                .map((m, i, visible) => (
-                  <div key={m.id} className={`msg ${m.role}`}>
-                    <span className="role">
-                      {m.role}
-                      {m.agentName ? ` · ${m.agentName}` : ''}
-                      {m.model ? ` · ${m.model}` : ''}
-                    </span>
-                    {m.role === 'assistant' && m.thinking && (
-                      <ThinkingBlock thinking={m.thinking} defaultOpen={false} />
-                    )}
-                    {m.role === 'assistant' && m.delegations && m.delegations.length > 0 && (
-                      <DelegationCards items={m.delegations} />
-                    )}
-                    {m.role === 'assistant' && m.content ? (
-                      <div className="msg-summary">
-                        <MarkdownMessage content={m.content} onOpenPath={onOpenPath} />
-                      </div>
-                    ) : m.role === 'assistant' ? null : (
-                      <div className="user-text">{m.content}</div>
-                    )}
-                    {m.role === 'assistant' && (
-                      <AnswerFeedback message={m} question={questionBefore(visible, i)} />
-                    )}
-                    {m.role === 'assistant' &&
-                      i === visible.length - 1 &&
-                      !streaming &&
-                      onRerouteLast && (
-                        <div className="msg-reroute">
-                          <span>Wrong route?</span>
-                          <button
-                            type="button"
-                            className="btn btn-link"
-                            title="Re-run this message with workspace tools"
-                            onClick={() => onRerouteLast('tools')}
-                          >
-                            Needed tools
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-link"
-                            title="Re-run this message as a plain answer"
-                            onClick={() => onRerouteLast('answer')}
-                          >
-                            Just a question
-                          </button>
-                        </div>
-                      )}
-                  </div>
-                ))}
+              {!!activeThread?.messageOffset && onLoadEarlier && (
+                <button
+                  className="btn"
+                  disabled={loadingHistory}
+                  onClick={() => {
+                    setLoadingHistory(true)
+                    setHistoryError(null)
+                    void onLoadEarlier()
+                      .catch((error) => setHistoryError(String(error)))
+                      .finally(() => setLoadingHistory(false))
+                  }}
+                >
+                  {loadingHistory ? 'Loading…' : 'Load earlier messages'}
+                </button>
+              )}
+              {historyError && <div role="alert">{historyError}</div>}
+              <HistoricalMessages
+                messages={activeThread?.messages ?? EMPTY_MESSAGES}
+                onOpenPath={onOpenPath}
+                onRerouteLast={onRerouteLast}
+                streaming={streaming}
+              />
               {streaming && (
                 <div className="msg assistant">
                   <span className="role">
@@ -837,11 +894,7 @@ export function ChatPanel({
                   )}
                   {answerBuffer ? (
                     <div className="msg-summary">
-                      <MarkdownMessage
-                        content={answerBuffer}
-                        onOpenPath={onOpenPath}
-                        plain
-                      />
+                      <MarkdownMessage content={answerBuffer} onOpenPath={onOpenPath} plain />
                     </div>
                   ) : (
                     !thinkingBuffer && (
@@ -895,270 +948,268 @@ export function ChatPanel({
             onAttachmentsChange(next)
           }}
         >
-            {(attachments.length > 0 || activeSkills.length > 0) && (
-              <div className="attachment-chips">
-                {activeSkills.map((s) => (
-                  <span key={s.id} className="attachment-chip skill-chip" title={`Skill: ${s.name}`}>
-                    <span className="attachment-name">/{s.id}</span>
+          {(attachments.length > 0 || activeSkills.length > 0) && (
+            <div className="attachment-chips">
+              {activeSkills.map((s) => (
+                <span key={s.id} className="attachment-chip skill-chip" title={`Skill: ${s.name}`}>
+                  <span className="attachment-name">/{s.id}</span>
+                  <button
+                    className="btn-ghost"
+                    onClick={() => onActiveSkillsChange(activeSkills.filter((x) => x.id !== s.id))}
+                    title="Remove skill"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              {attachments.map((a) => (
+                <span key={a.path} className="attachment-chip" title={a.path}>
+                  <span className="attachment-name">{a.name}</span>
+                  <button
+                    className="btn-ghost"
+                    onClick={() => removeAttachment(a.path)}
+                    title="Remove"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div className="composer-wrap">
+            {queuedMessages.length > 0 && (
+              <div className="message-queue" aria-label="Queued messages">
+                <div className="message-queue-head">
+                  <strong>Queued</strong>
+                  <span className="subtitle" style={{ margin: 0 }}>
+                    {queuedMessages.length}/{MAX_QUEUED_MESSAGES}
+                    {streaming ? ' · sends when current reply finishes' : ''}
+                  </span>
+                </div>
+                {queuedMessages.map((q, i) => (
+                  <div key={q.id} className="message-queue-item">
+                    <span className="message-queue-index">{i + 1}</span>
+                    <span className="message-queue-text" title={q.text}>
+                      {q.text}
+                      {q.attachments.length > 0
+                        ? ` · ${q.attachments.length} file${q.attachments.length === 1 ? '' : 's'}`
+                        : ''}
+                    </span>
                     <button
+                      type="button"
                       className="btn-ghost"
-                      onClick={() =>
-                        onActiveSkillsChange(activeSkills.filter((x) => x.id !== s.id))
-                      }
-                      title="Remove skill"
+                      title="Remove from queue"
+                      onClick={() => onRemoveQueued(q.id)}
                     >
                       ×
                     </button>
-                  </span>
-                ))}
-                {attachments.map((a) => (
-                  <span key={a.path} className="attachment-chip" title={a.path}>
-                    <span className="attachment-name">{a.name}</span>
-                    <button
-                      className="btn-ghost"
-                      onClick={() => removeAttachment(a.path)}
-                      title="Remove"
-                    >
-                      ×
-                    </button>
-                  </span>
+                  </div>
                 ))}
               </div>
             )}
-
-            <div className="composer-wrap">
-              {queuedMessages.length > 0 && (
-                <div className="message-queue" aria-label="Queued messages">
-                  <div className="message-queue-head">
-                    <strong>Queued</strong>
-                    <span className="subtitle" style={{ margin: 0 }}>
-                      {queuedMessages.length}/{MAX_QUEUED_MESSAGES}
-                      {streaming ? ' · sends when current reply finishes' : ''}
-                    </span>
-                  </div>
-                  {queuedMessages.map((q, i) => (
-                    <div key={q.id} className="message-queue-item">
-                      <span className="message-queue-index">{i + 1}</span>
-                      <span className="message-queue-text" title={q.text}>
-                        {q.text}
-                        {q.attachments.length > 0
-                          ? ` · ${q.attachments.length} file${q.attachments.length === 1 ? '' : 's'}`
-                          : ''}
-                      </span>
-                      <button
-                        type="button"
-                        className="btn-ghost"
-                        title="Remove from queue"
-                        onClick={() => onRemoveQueued(q.id)}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {slashItems.length > 0 && (
-                <div className="slash-menu" role="listbox">
-                  {slashItems.map((item, i) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={`slash-item ${i === slashIndex ? 'active' : ''}`}
-                      onMouseEnter={() => setSlashIndex(i)}
-                      onClick={() => applySlashItem(item)}
-                    >
-                      <span className="slash-item-cmd">{item.command}</span>
-                      <span className="slash-item-meta">
-                        <strong>{item.label}</strong>
-                        <span>{item.hint}</span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              {atItems.length > 0 && (
-                <div className="slash-menu at-menu" role="listbox">
-                  {atItems.map((item, i) => (
-                    <button
-                      key={item.path}
-                      type="button"
-                      className={`slash-item ${i === atIndex ? 'active' : ''}`}
-                      onMouseEnter={() => setAtIndex(i)}
-                      onClick={() => applyAtItem(item)}
-                    >
-                      <span className="slash-item-cmd">@{item.name}</span>
-                      <span className="slash-item-meta">
-                        <strong>{item.path}</strong>
-                        <span>Add as context</span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className="composer-bar">
-                <div className="composer-attach" ref={attachMenuRef}>
+            {slashItems.length > 0 && (
+              <div className="slash-menu" role="listbox">
+                {slashItems.map((item, i) => (
                   <button
+                    key={item.id}
                     type="button"
-                    className="composer-attach-btn"
-                    title="Add attachment"
-                    aria-label="Add attachment"
-                    onClick={() => {
-                      if (openTabs.length > 0) setAttachMenuOpen((v) => !v)
-                      else onImportFiles()
-                    }}
+                    className={`slash-item ${i === slashIndex ? 'active' : ''}`}
+                    onMouseEnter={() => setSlashIndex(i)}
+                    onClick={() => applySlashItem(item)}
                   >
-                    +
+                    <span className="slash-item-cmd">{item.command}</span>
+                    <span className="slash-item-meta">
+                      <strong>{item.label}</strong>
+                      <span>{item.hint}</span>
+                    </span>
                   </button>
-                  {attachMenuOpen && (
-                    <div className="composer-attach-menu">
+                ))}
+              </div>
+            )}
+            {atItems.length > 0 && (
+              <div className="slash-menu at-menu" role="listbox">
+                {atItems.map((item, i) => (
+                  <button
+                    key={item.path}
+                    type="button"
+                    className={`slash-item ${i === atIndex ? 'active' : ''}`}
+                    onMouseEnter={() => setAtIndex(i)}
+                    onClick={() => applyAtItem(item)}
+                  >
+                    <span className="slash-item-cmd">@{item.name}</span>
+                    <span className="slash-item-meta">
+                      <strong>{item.path}</strong>
+                      <span>Add as context</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="composer-bar">
+              <div className="composer-attach" ref={attachMenuRef}>
+                <button
+                  type="button"
+                  className="composer-attach-btn"
+                  title="Add attachment"
+                  aria-label="Add attachment"
+                  onClick={() => {
+                    if (openTabs.length > 0) setAttachMenuOpen((v) => !v)
+                    else onImportFiles()
+                  }}
+                >
+                  +
+                </button>
+                {attachMenuOpen && (
+                  <div className="composer-attach-menu">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAttachMenuOpen(false)
+                        onImportFiles()
+                      }}
+                    >
+                      Browse files…
+                    </button>
+                    {openTabs.map((t) => (
                       <button
+                        key={t.path}
                         type="button"
+                        disabled={attachments.some((a) => a.path === t.path)}
                         onClick={() => {
                           setAttachMenuOpen(false)
-                          onImportFiles()
+                          onAttachOpenTab(t.path)
                         }}
                       >
-                        Browse files…
+                        {t.name}
                       </button>
-                      {openTabs.map((t) => (
-                        <button
-                          key={t.path}
-                          type="button"
-                          disabled={attachments.some((a) => a.path === t.path)}
-                          onClick={() => {
-                            setAttachMenuOpen(false)
-                            onAttachOpenTab(t.path)
-                          }}
-                        >
-                          {t.name}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <textarea
-                  ref={textareaRef}
-                  value={draft}
-                  lang="en"
-                  spellCheck
-                  autoCorrect="on"
-                  autoCapitalize="sentences"
-                  placeholder={
-                    streaming
-                      ? queueFull
-                        ? 'Queue full (3) — wait for a reply to finish…'
-                        : 'Queue next message (up to 3)…'
-                      : chatMode === 'ask'
-                        ? 'Ask a question… @ for files, / for skills'
-                        : 'Message the agent… @ for files, / for skills'
-                  }
-                  onChange={(e) => {
-                    setDraft(e.target.value)
-                    setCaret(e.target.selectionStart)
-                  }}
-                  onClick={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart)}
-                  onKeyUp={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart)}
-                  onKeyDown={(e) => {
-                    if (atItems.length > 0) {
-                      if (e.key === 'ArrowDown') {
-                        e.preventDefault()
-                        setAtIndex((i) => Math.min(i + 1, atItems.length - 1))
-                        return
-                      }
-                      if (e.key === 'ArrowUp') {
-                        e.preventDefault()
-                        setAtIndex((i) => Math.max(i - 1, 0))
-                        return
-                      }
-                      if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
-                        e.preventDefault()
-                        applyAtItem(atItems[atIndex] ?? atItems[0]!)
-                        return
-                      }
-                      if (e.key === 'Escape') {
-                        e.preventDefault()
-                        setCaret(0)
-                        return
-                      }
+                    ))}
+                  </div>
+                )}
+              </div>
+              <textarea
+                ref={textareaRef}
+                value={draft}
+                lang="en"
+                spellCheck
+                autoCorrect="on"
+                autoCapitalize="sentences"
+                placeholder={
+                  streaming
+                    ? queueFull
+                      ? 'Queue full (3) — wait for a reply to finish…'
+                      : 'Queue next message (up to 3)…'
+                    : chatMode === 'ask'
+                      ? 'Ask a question… @ for files, / for skills'
+                      : 'Message the agent… @ for files, / for skills'
+                }
+                onChange={(e) => {
+                  setDraft(e.target.value)
+                  setCaret(e.target.selectionStart)
+                }}
+                onClick={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart)}
+                onKeyUp={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart)}
+                onKeyDown={(e) => {
+                  if (atItems.length > 0) {
+                    if (e.key === 'ArrowDown') {
+                      e.preventDefault()
+                      setAtIndex((i) => Math.min(i + 1, atItems.length - 1))
+                      return
                     }
-                    if (slashItems.length > 0) {
-                      if (e.key === 'ArrowDown') {
-                        e.preventDefault()
-                        setSlashIndex((i) => Math.min(i + 1, slashItems.length - 1))
-                        return
-                      }
-                      if (e.key === 'ArrowUp') {
-                        e.preventDefault()
-                        setSlashIndex((i) => Math.max(i - 1, 0))
-                        return
-                      }
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault()
-                        applySlashItem(slashItems[slashIndex] ?? slashItems[0])
-                        return
-                      }
-                      if (e.key === 'Tab') {
-                        e.preventDefault()
-                        applySlashItem(slashItems[slashIndex] ?? slashItems[0])
-                        return
-                      }
-                      if (e.key === 'Escape') {
-                        e.preventDefault()
-                        setDraft('')
-                        return
-                      }
+                    if (e.key === 'ArrowUp') {
+                      e.preventDefault()
+                      setAtIndex((i) => Math.max(i - 1, 0))
+                      return
+                    }
+                    if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+                      e.preventDefault()
+                      applyAtItem(atItems[atIndex] ?? atItems[0]!)
+                      return
+                    }
+                    if (e.key === 'Escape') {
+                      e.preventDefault()
+                      setCaret(0)
+                      return
+                    }
+                  }
+                  if (slashItems.length > 0) {
+                    if (e.key === 'ArrowDown') {
+                      e.preventDefault()
+                      setSlashIndex((i) => Math.min(i + 1, slashItems.length - 1))
+                      return
+                    }
+                    if (e.key === 'ArrowUp') {
+                      e.preventDefault()
+                      setSlashIndex((i) => Math.max(i - 1, 0))
+                      return
                     }
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()
-                      submit()
+                      applySlashItem(slashItems[slashIndex] ?? slashItems[0])
+                      return
                     }
-                  }}
-                />
-                <div className="composer-right">
-                  <select
-                    className="composer-model-select"
-                    value={selectValue}
-                    disabled={streaming}
-                    onChange={(e) => onModelChange(e.target.value)}
-                    title={`${modelDataHint(modelOptions.find((m) => m.name === selectValue) || modelOptions[0]!)} Auto chooses a model for the turn; a picked model is used as-is.`}
-                    aria-label="Select model"
-                  >
-                    {modelOptions.map((m) => (
-                      <option key={m.name} value={m.name} title={modelDataHint(m)}>
-                        {modelLabel(m)}
-                      </option>
-                    ))}
-                  </select>
-                  {streaming ? (
-                    <>
-                      <button
-                        className="btn btn-primary composer-send-btn"
-                        onClick={submit}
-                        disabled={!canCompose || queueFull}
-                        title={
-                          queueFull
-                            ? 'Queue is full (max 3)'
-                            : 'Queue this message for after the current reply'
-                        }
-                      >
-                        Queue
-                      </button>
-                      <button className="btn composer-send-btn" onClick={onStop}>
-                        Stop
-                      </button>
-                    </>
-                  ) : (
+                    if (e.key === 'Tab') {
+                      e.preventDefault()
+                      applySlashItem(slashItems[slashIndex] ?? slashItems[0])
+                      return
+                    }
+                    if (e.key === 'Escape') {
+                      e.preventDefault()
+                      setDraft('')
+                      return
+                    }
+                  }
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    submit()
+                  }
+                }}
+              />
+              <div className="composer-right">
+                <select
+                  className="composer-model-select"
+                  value={selectValue}
+                  disabled={streaming}
+                  onChange={(e) => onModelChange(e.target.value)}
+                  title={`${modelDataHint(modelOptions.find((m) => m.name === selectValue) || modelOptions[0]!)} Auto chooses a model for the turn; a picked model is used as-is.`}
+                  aria-label="Select model"
+                >
+                  {modelOptions.map((m) => (
+                    <option key={m.name} value={m.name} title={modelDataHint(m)}>
+                      {modelLabel(m)}
+                    </option>
+                  ))}
+                </select>
+                {streaming ? (
+                  <>
                     <button
                       className="btn btn-primary composer-send-btn"
                       onClick={submit}
-                      disabled={!canCompose}
+                      disabled={!canCompose || queueFull}
+                      title={
+                        queueFull
+                          ? 'Queue is full (max 3)'
+                          : 'Queue this message for after the current reply'
+                      }
                     >
-                      Send
+                      Queue
                     </button>
-                  )}
-                </div>
+                    <button className="btn composer-send-btn" onClick={onStop}>
+                      Stop
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="btn btn-primary composer-send-btn"
+                    onClick={submit}
+                    disabled={!canCompose}
+                  >
+                    Send
+                  </button>
+                )}
               </div>
             </div>
+          </div>
         </div>
       </div>
     </div>

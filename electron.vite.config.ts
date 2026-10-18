@@ -9,7 +9,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('electron/main/index.ts'),
-          'llama-worker': resolve('electron/main/llama-worker.ts')
+          'llama-worker': resolve('electron/main/llama-worker.ts'),
+          'workspace-worker': resolve('electron/main/workspace-worker.ts')
         }
       }
     }

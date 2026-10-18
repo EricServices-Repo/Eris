@@ -13,6 +13,7 @@ const IGNORE_NAMES = new Set([
   'tsconfig.web.tsbuildinfo',
   // Internal cache / index — writing these must not re-trigger the watcher
   'code-index.json',
+  'code-index.json.tmp',
   'cache'
 ])
 
@@ -28,7 +29,10 @@ const NATIVE_IGNORE = [
   '.eris/checkpoints',
   '.eris/runs',
   '.eris/sessions',
+  '.eris/chats',
+  '.ericservices-ide/chats',
   '.eris/code-index.json',
+  '.eris/code-index.json.tmp',
   '**/.DS_Store',
   '**/*.tsbuildinfo'
 ]
@@ -38,14 +42,15 @@ const DEFAULT_SUPPRESS_MS = 1500
 
 /** Paths under .eris that are safe to ignore (agent/index feedback). */
 export function shouldIgnoreErisRel(rel: string): boolean {
-  const n = `/${rel.split('\\').join('/')}`
+  const n = `/${rel.split('\\').join('/')}`.replace('/.ericservices-ide/', '/.eris/')
   if (!n.includes('/.eris/')) return false
-  if (n.endsWith('/code-index.json')) return true
+  if (n.endsWith('/code-index.json') || n.endsWith('/code-index.json.tmp')) return true
   if (
     n.includes('/.eris/cache/') ||
     n.includes('/.eris/checkpoints/') ||
     n.includes('/.eris/runs/') ||
     n.includes('/.eris/sessions/')
+    || n.includes('/.eris/chats/')
   ) {
     return true
   }

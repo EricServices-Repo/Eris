@@ -5,6 +5,9 @@ export function toolFailureRecovery(toolName: string, detail: string): string {
   if (/user denied|blocked by tool policy|reviewer can only|global installs are not allowed/.test(error)) {
     return 'Do not retry this blocked action. Continue within the allowed tools, or explain what approval or mode change is needed.'
   }
+  if (/read required before editing/.test(error)) {
+    return 'Call the required read tool on the named existing file, inspect the returned contents, then make the edit in a new tool call. Do not overwrite the file from memory.'
+  }
   if (/eacces|eperm|permission denied|not authorized|access denied|outside (?:the )?workspace/.test(error)) {
     return 'Do not repeat the same access. Check whether the target is inside the workspace and use an allowed read-only alternative; report the boundary if access is still blocked.'
   }

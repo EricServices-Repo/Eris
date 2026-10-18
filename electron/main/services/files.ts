@@ -37,7 +37,7 @@ export function listTree(root: string, depth = 0, maxDepth = 8): FileEntry[] {
       path: full,
       isDirectory
     }
-    if (isDirectory) {
+    if (isDirectory && depth < maxDepth) {
       entry.children = listTree(full, depth + 1, maxDepth)
     }
     entries.push(entry)

@@ -67,7 +67,7 @@ describe('classifyIntent', () => {
   it.each([
     ['What models do you have access to?', 'agent', 'capability'],
     ['What models do you have access to?', 'ask', 'capability'],
-    ['explain this function', 'ask', 'answer'],
+    ['explain this function', 'ask', 'explore'],
     ['implement a login form', 'agent', 'edit'],
     ['where is AuthService defined?', 'agent', 'explore'],
     ['code review this PR', 'agent', 'review'],
@@ -84,15 +84,11 @@ describe('classifyIntent', () => {
     ['create me an electron desktop app for photo review', 'agent', 'edit'],
     ['make a new project that classifies images', 'agent', 'edit'],
     ['scaffold a macOS SwiftUI image viewer', 'agent', 'edit'],
-    [
-      'review the project folder, make improvements to the calculator',
-      'agent',
-      'edit'
-    ],
+    ['review the project folder, make improvements to the calculator', 'agent', 'edit'],
     ['review the project folder', 'agent', 'review'],
     ['Review this project, what does it do?', 'agent', 'explore'],
     ['Review the internet, who is Steve Embling', 'agent', 'explore'],
-    ['Review the internet, who is Steve Embling', 'ask', 'answer'],
+    ['Review the internet, who is Steve Embling', 'ask', 'explore'],
     ['improve the calculator UI', 'agent', 'edit'],
     ['review the airbnb website, what 3 improvements should we make?', 'agent', 'review'],
     ['what 3 improvements should we make?', 'agent', 'review']
@@ -112,8 +108,8 @@ describe('effectiveToolPolicy', () => {
     expect(effectiveToolPolicy(agent('full'), 'run', 'agent')).toBe('full')
   })
 
-  it('Ask mode never gets tools', () => {
-    expect(effectiveToolPolicy(agent('full'), 'explore', 'ask')).toBe('none')
+  it('limits Ask mode to read tools', () => {
+    expect(effectiveToolPolicy(agent('full'), 'explore', 'ask')).toBe('read')
   })
 })
 
@@ -453,7 +449,7 @@ describe('planChatTurn', () => {
     expect(lookup.toolPolicy).toBe('read')
   })
 
-  it('keeps a pinned agent even when Auto would choose another', async () => {
+  it('routes mutating requests to an editing agent even when a read-only agent is pinned', async () => {
     const plan = await planChatTurn({
       ...base,
       settings: getDefaults(),
@@ -464,15 +460,19 @@ describe('planChatTurn', () => {
         manualAgentId: 'reviewer'
       }
     })
-    expect(plan.agentId).toBe('reviewer')
-    expect(plan.toolPolicy).toBe('read')
+    expect(plan.agentId).toBe('composer')
+    expect(plan.toolPolicy).toBe('edit')
   })
 
   it('answers capability questions without tools', async () => {
     const plan = await planChatTurn({
       ...base,
       settings: getDefaults(),
-      context: { text: 'What models do you have access to?', selectedModel: 'builtin:composer-lite', mode: 'agent' }
+      context: {
+        text: 'What models do you have access to?',
+        selectedModel: 'builtin:composer-lite',
+        mode: 'agent'
+      }
     })
     expect(plan.intent).toBe('capability')
     expect(plan.toolPolicy).toBe('none')
@@ -524,7 +524,11 @@ describe('planChatTurn', () => {
     const plan = await planChatTurn({
       ...base,
       settings: getDefaults(),
-      context: { text: 'Tell me about   the parser', selectedModel: 'builtin:composer-lite', mode: 'agent' }
+      context: {
+        text: 'Tell me about   the parser',
+        selectedModel: 'builtin:composer-lite',
+        mode: 'agent'
+      }
     })
     expect(plan.method).toBe('learned')
     expect(plan.requiresTools).toBe(true)

@@ -1,13 +1,13 @@
 import { existsSync } from 'fs'
 import { dirname, join } from 'path'
-import { app } from 'electron'
 import type { SymbolHit } from './code-index'
 
 type ParserCtor = {
   init(opts?: { locateFile?: (name: string) => string }): Promise<void>
   new (): {
     setLanguage(lang: unknown): void
-    parse(src: string): { rootNode: TsNode }
+    parse(src: string): { rootNode: TsNode; delete?(): void }
+    delete?(): void
   }
   Language: { load(path: string): Promise<unknown> }
 }
@@ -55,12 +55,13 @@ const languages = new Map<string, unknown>()
 
 function grammarCandidates(fileName: string): string[] {
   const out: string[] = []
-  if (typeof process.resourcesPath === 'string') {
-    out.push(join(process.resourcesPath, 'resources', 'grammars', fileName))
-    out.push(join(process.resourcesPath, 'grammars', fileName))
+  const resources = process.resourcesPath || process.env.ERIS_RESOURCES_PATH
+  if (resources) {
+    out.push(join(resources, 'resources', 'grammars', fileName))
+    out.push(join(resources, 'grammars', fileName))
   }
   try {
-    out.push(join(app.getAppPath(), 'resources', 'grammars', fileName))
+    if (process.env.ERIS_APP_PATH) out.push(join(process.env.ERIS_APP_PATH, 'resources', 'grammars', fileName))
   } catch {
     // ignore
   }
@@ -77,8 +78,9 @@ function wasmRuntimeCandidates(): string[] {
   } catch {
     // ignore
   }
-  if (typeof process.resourcesPath === 'string') {
-    out.push(join(process.resourcesPath, 'resources', 'grammars', name))
+  const resources = process.resourcesPath || process.env.ERIS_RESOURCES_PATH
+  if (resources) {
+    out.push(join(resources, 'resources', 'grammars', name))
   }
   out.push(join(process.cwd(), 'node_modules', 'web-tree-sitter', name))
   return out
@@ -157,9 +159,12 @@ export async function parseSymbolsAndRefs(
   const parser = new Parser()
   parser.setLanguage(lang)
   let root: TsNode
+  let tree: ReturnType<InstanceType<ParserCtor>['parse']>
   try {
-    root = parser.parse(content).rootNode
+    tree = parser.parse(content)
+    root = tree.rootNode
   } catch {
+    parser.delete?.()
     return empty
   }
   const symbols: SymbolHit[] = []
@@ -176,6 +181,6 @@ export async function parseSymbolsAndRefs(
     }
     for (const child of node.namedChildren) walk(child)
   }
-  walk(root)
+  try { walk(root) } catch { return empty } finally { tree.delete?.(); parser.delete?.() }
   return { symbols, refs }
 }

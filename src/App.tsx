@@ -39,6 +39,7 @@ import { useChatSession } from '@/hooks/useChatSession'
 import { uid } from '@/hooks/uid'
 import type { TerminalNote } from '@/features/terminal/TerminalPanel'
 import logo from '@/assets/logo.png'
+import { updateDocument } from '@/state/documents'
 
 const MAX_TERMINAL_NOTES = 500
 
@@ -261,7 +262,7 @@ export default function App() {
     resetLeftWidth,
     resetRightWidth
   } = useColumnWidths()
-  const { threads, setThreads, activeThread, setActiveThread, activeThreadRef, refreshChats } =
+  const { threads, setThreads, activeThread, setActiveThread, activeThreadRef, refreshChats, selectThread, loadEarlier } =
     useChatThreads()
 
   const {
@@ -306,9 +307,7 @@ export default function App() {
 
   const {
     streaming,
-    thinkingBuffer,
     setThinkingBuffer,
-    answerBuffer,
     setAnswerBuffer,
     chatError,
     setChatError,
@@ -317,9 +316,7 @@ export default function App() {
     addAttachments,
     importFiles,
     routeLabel,
-    toolActivity,
     delegations,
-    agentStatus,
     setAgentStatus,
     pendingApproval,
     pendingQuestion,
@@ -358,12 +355,10 @@ export default function App() {
     setThreads,
     refreshChats,
     workspacePath,
-    tabs,
     tabsRef,
     setTabs,
     activeFile,
     setActiveFile,
-    setTree,
     openFile,
     setRightPanel,
     setRightCollapsed,
@@ -819,8 +814,7 @@ export default function App() {
             onOpenFile={(p) => void openFile(p)}
             onAttachFile={(path) => addAttachments([{ path, name: pathBasename(path) }])}
             onSelectThread={(id) => {
-              const t = threads.find((x) => x.id === id) ?? null
-              setActiveThread(t)
+              void selectThread(id).catch((error) => setChatError(String(error)))
               setChatError(null)
             }}
             onNewChat={() => {
@@ -833,14 +827,12 @@ export default function App() {
                 const list = await window.ide.listChats()
                 setThreads(list)
                 if (wasActive) {
-                  setActiveThread(list[0] ?? null)
+                  await selectThread(list[0]?.id ?? null)
                   setChatError(null)
                   setThinkingBuffer('')
                   setAnswerBuffer('')
                 } else {
-                  setActiveThread((prev) =>
-                    prev && list.some((t) => t.id === prev.id) ? prev : (list[0] ?? null)
-                  )
+                  if (!activeThread || !list.some((thread) => thread.id === activeThread.id)) await selectThread(list[0]?.id ?? null)
                 }
               })
             }}
@@ -864,15 +856,12 @@ export default function App() {
               <Suspense fallback={<div className="welcome">Loading chat…</div>}>
                 <ChatPanel
                   activeThread={activeThread}
+                  onLoadEarlier={loadEarlier}
                   routeLabel={routeLabel}
                   composerReady={composerReady}
                   modelsOk={ollamaOk}
                   streaming={streaming}
-                  thinkingBuffer={thinkingBuffer}
-                  answerBuffer={answerBuffer}
                   chatError={chatError}
-                  agentStatus={agentStatus}
-                  toolActivity={toolActivity}
                   delegations={delegations}
                   openTabs={tabs.map((t) => ({ path: t.path, name: t.name }))}
                   mentionFiles={[...flattenFiles(tree), ...indexMentions]}
@@ -1298,7 +1287,7 @@ export default function App() {
                         setBreakpoints(await window.ide.debugSaveBreakpoints(next))
                       })()
                     }}
-                    onSelect={setActiveFile}
+                    onSelect={(path) => void openFile(path)}
                     onClose={(path) => {
                       setTabs((prev) => {
                         const next = prev.filter((t) => t.path !== path)
@@ -1307,9 +1296,12 @@ export default function App() {
                       })
                     }}
                     onChange={(path, content) => {
-                      setTabs((prev) =>
-                        prev.map((t) => (t.path === path ? { ...t, content, dirty: true } : t))
-                      )
+                      const tab = tabsRef.current.find((tab) => tab.path === path)
+                      if (!tab) return
+                      updateDocument(path, content)
+                      if (!tab.dirty) {
+                        setTabs((prev) => prev.map((tab) => tab.path === path ? { ...tab, dirty: true } : tab))
+                      }
                     }}
                   />
                 </Suspense>

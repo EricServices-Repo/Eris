@@ -373,11 +373,11 @@ export async function backgroundJobDiff(
   return diffWorktree(job.workspacePath, job.branch)
 }
 
-export function bringJobIntoChat(
+export async function bringJobIntoChat(
   workspacePath: string | null,
   jobId: string,
   threadId?: string | null
-): { ok: boolean; threadId: string; content: string; error?: string } {
+): Promise<{ ok: boolean; threadId: string; content: string; error?: string }> {
   loadPersisted()
   const job = jobs.get(jobId)
   if (!job) return { ok: false, threadId: '', content: '', error: 'Job not found' }
@@ -391,11 +391,11 @@ export function bringJobIntoChat(
     handoff: job.handoff
   })
   try {
-    let thread = threadId ? getChat(workspacePath, threadId) : null
+    let thread = threadId ? await getChat(workspacePath, threadId) : null
     if (!thread) {
-      thread = createChat(workspacePath, job.model || 'builtin:composer-lite')
+      thread = await createChat(workspacePath, job.model || 'builtin:composer-lite')
     }
-    const saved = appendMessage(workspacePath, thread.id, 'assistant', content)
+    const saved = await appendMessage(workspacePath, thread.id, 'assistant', content)
     if (job.sourceThreadId !== saved.id) {
       patch(jobId, (j) => ({ ...j, sourceThreadId: saved.id }))
     }

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.66 — 2026-10-18
+
+- Fixed workspace-safe chat persistence, long-history pagination, agent checks, and client linting.
+
+## 0.2.65 — 2026-10-18
+
+- Improved chat and agent performance across routing, retrieval, indexing, MCP startup, prompt context, and local model warmup.
+
+## 0.2.64 — 2026-10-17
+
+- Improved follow-up routing for coding requests.
+
+## 0.2.63 — 2026-10-17
+
+- Explicit follow-ups to add review findings now route to an editor.
+
+## 0.2.62 — 2026-10-17
+
+- Coding follow-ups now route to agents with write access.
+
+## 0.2.61 — 2026-10-17
+
+- Improved built-in tool discovery and local tool-call handling.
+
 ## 0.2.60 — 2026-10-17
 
 - A request for improvements stays a review and lists them, and a run no longer stops at a step limit.

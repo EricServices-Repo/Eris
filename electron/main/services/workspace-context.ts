@@ -75,30 +75,31 @@ export function extractContextPin(body: string, max = PIN_MAX): string {
   return blob.length <= max ? blob : `${blob.slice(0, max - 1)}…`
 }
 
-function readRaw(workspacePath: string): { body: string; mtimeMs: number; size: number } {
-  const path = workspaceContextPath(workspacePath)
-  if (!existsSync(path)) {
-    return { body: '', mtimeMs: 0, size: 0 }
-  }
-  const st = statSync(path)
-  return {
-    body: readFileSync(path, 'utf8'),
-    mtimeMs: st.mtimeMs,
-    size: st.size
-  }
-}
-
 function fromCacheOrDisk(workspacePath: string): CacheEntry {
-  const raw = readRaw(workspacePath)
+  const path = workspaceContextPath(workspacePath)
+  let mtimeMs = 0
+  let size = 0
+  try {
+    const st = statSync(path)
+    mtimeMs = st.mtimeMs
+    size = st.size
+  } catch {
+    const hit = cache.get(workspacePath)
+    if (hit?.mtimeMs === 0 && hit.size === 0) return hit
+    const empty = { mtimeMs: 0, size: 0, body: '', pin: '' }
+    cache.set(workspacePath, empty)
+    return empty
+  }
   const hit = cache.get(workspacePath)
-  if (hit && hit.mtimeMs === raw.mtimeMs && hit.size === raw.size) {
+  if (hit && hit.mtimeMs === mtimeMs && hit.size === size) {
     return hit
   }
+  const body = readFileSync(path, 'utf8')
   const entry: CacheEntry = {
-    mtimeMs: raw.mtimeMs,
-    size: raw.size,
-    body: raw.body,
-    pin: extractContextPin(raw.body)
+    mtimeMs,
+    size,
+    body,
+    pin: extractContextPin(body)
   }
   cache.set(workspacePath, entry)
   return entry

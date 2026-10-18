@@ -1,15 +1,11 @@
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSync } from 'fs'
+import { readdirSync, readFileSync, statSync, writeFileSync, mkdirSync } from 'fs'
 import { join, relative, sep } from 'path'
 import { workspaceConfigDir } from './paths'
 import { logInfo } from './logger'
 import { suppressWatcherFor } from './workspace-watcher'
 import { hashEmbed } from './embeddings'
-import { parseSymbolsAndRefs, treeSitterSupported } from './symbol-parse'
-import {
-  invalidateWorkspaceIgnoreCache,
-  shouldSkipDir,
-  shouldSkipWorkspacePath
-} from './workspace-ignore'
+import { workspaceRequest } from './workspace-worker-client'
+import { shouldSkipDir, shouldSkipWorkspacePath } from './workspace-ignore'
 
 export type SymbolHit = {
   name: string
@@ -26,7 +22,7 @@ export type SymbolRef = {
 
 type FileMeta = { mtimeMs: number; size: number }
 
-type IndexRecord = {
+export type IndexRecord = {
   updatedAt: number
   workspacePath: string
   symbols: SymbolHit[]
@@ -38,9 +34,10 @@ type IndexRecord = {
 }
 
 let memoryIndex: IndexRecord | null = null
-let rebuildInFlight: Promise<IndexRecord> | null = null
-let patchInFlight: Promise<IndexRecord> | null = null
-const pendingPatchRels = new Set<string>()
+const workerBuilds = new Map<string, Promise<IndexRecord>>()
+const indexLoads = new Map<string, Promise<IndexRecord | null>>()
+const patches = new Map<string, Promise<void>>()
+const pendingPatches = new Map<string, Set<string>>()
 
 const SYMBOL_RES: Array<{ kind: string; re: RegExp }> = [
   { kind: 'function', re: /(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_][\w]*)/g },
@@ -50,14 +47,9 @@ const SYMBOL_RES: Array<{ kind: string; re: RegExp }> = [
 ]
 
 const FRESH_MS = 5 * 60_000
-const STALE_OK_MS = 30 * 60_000
 
 function indexPath(workspacePath: string): string {
   return join(workspaceConfigDir(workspacePath), 'code-index.json')
-}
-
-function yieldEventLoop(): Promise<void> {
-  return new Promise((r) => setImmediate(r))
 }
 
 function walk(root: string, dir: string, files: string[], maxFiles: number): void {
@@ -106,32 +98,6 @@ function extractRegexSymbols(rel: string, content: string): SymbolHit[] {
     }
   }
   return symbols
-}
-
-async function indexFile(
-  workspacePath: string,
-  abs: string
-): Promise<{ rel: string; symbols: SymbolHit[]; refs: SymbolRef[]; embedding: number[] }> {
-  const rel = relative(workspacePath, abs).split(sep).join('/')
-  let content = ''
-  try {
-    content = readFileSync(abs, 'utf8')
-  } catch {
-    return { rel, symbols: [], refs: [], embedding: [] }
-  }
-  let symbols: SymbolHit[] = []
-  let refs: SymbolRef[] = []
-  if (treeSitterSupported(abs)) {
-    try {
-      const parsed = await parseSymbolsAndRefs(abs, rel, content)
-      symbols = parsed.symbols
-      refs = parsed.refs.slice(0, 800)
-    } catch {
-      symbols = []
-    }
-  }
-  if (symbols.length === 0) symbols = extractRegexSymbols(rel, content)
-  return { rel, symbols, refs, embedding: hashEmbed(`${rel}\n${content.slice(0, 6000)}`) }
 }
 
 function persistIndex(workspacePath: string, record: IndexRecord): IndexRecord {
@@ -194,39 +160,22 @@ export function buildCodeIndex(workspacePath: string): IndexRecord {
 
 /** Cooperative rebuild — yields every N files so IPC/UI stay responsive. */
 export async function buildCodeIndexAsync(workspacePath: string): Promise<IndexRecord> {
-  const filesAbs: string[] = []
-  walk(workspacePath, workspacePath, filesAbs, 8000)
-  const symbols: SymbolHit[] = []
-  const files: string[] = []
-  const refs: SymbolRef[] = []
-  const embeddings: Record<string, number[]> = {}
-  const fileMeta: Record<string, FileMeta> = {}
-  for (let fi = 0; fi < filesAbs.length; fi++) {
-    if (fi > 0 && fi % 20 === 0) await yieldEventLoop()
-    const abs = filesAbs[fi]!
-    const parsed = await indexFile(workspacePath, abs)
-    files.push(parsed.rel)
-    symbols.push(...parsed.symbols)
-    refs.push(...parsed.refs)
-    if (parsed.embedding.length) embeddings[parsed.rel] = parsed.embedding
-    const meta = collectFileMeta(workspacePath, abs, parsed.rel)
-    if (meta) fileMeta[parsed.rel] = meta
-    if (symbols.length > 40_000) break
-  }
-  const record = persistIndex(workspacePath, {
-    updatedAt: Date.now(),
-    workspacePath,
-    symbols,
-    files,
-    refs: refs.slice(0, 120_000),
-    embeddings,
-    fileMeta
+  const pending = workerBuilds.get(workspacePath)
+  if (pending) return pending
+  suppressWatcherFor(indexPath(workspacePath), 180_000)
+  const job = workspaceRequest({
+    type: 'index',
+    root: workspacePath,
+    indexPath: indexPath(workspacePath)
   })
-  logInfo('Code index built (async)', { files: files.length, symbols: symbols.length, refs: refs.length })
-  return record
+    .then((record) => {
+      memoryIndex = record
+      return record
+    })
+    .finally(() => workerBuilds.delete(workspacePath))
+  workerBuilds.set(workspacePath, job)
+  return job
 }
-
-const INDEXABLE_RE = /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs)$/i
 
 /**
  * Patch only the given relative paths into the existing index (incremental).
@@ -236,152 +185,121 @@ export async function patchCodeIndexFiles(
   workspacePath: string,
   relPaths: string[]
 ): Promise<IndexRecord> {
-  const unique = [
-    ...new Set(
-      relPaths
-        .map((p) => p.split('\\').join('/').replace(/^\.\//, ''))
-        .filter(Boolean)
-    )
-  ]
-  if (unique.some((p) => p === '.gitignore' || p === '.erisignore' || p.endsWith('/.gitignore'))) {
-    invalidateWorkspaceIgnoreCache(workspacePath)
-  }
-
-  let base = loadCodeIndex(workspacePath)
-  if (!base || base.workspacePath !== workspacePath) {
-    return buildCodeIndexAsync(workspacePath)
-  }
-
-  const symbols = base.symbols.filter((s) => !unique.includes(s.path))
-  const refs = (base.refs ?? []).filter((r) => !unique.includes(r.path))
-  const embeddings = { ...(base.embeddings ?? {}) }
-  const fileMeta = { ...(base.fileMeta ?? {}) }
-  const fileSet = new Set(base.files)
-
-  for (const rel of unique) {
-    delete embeddings[rel]
-    delete fileMeta[rel]
-    fileSet.delete(rel)
-    if (shouldSkipWorkspacePath(workspacePath, rel, false)) continue
-    if (!INDEXABLE_RE.test(rel)) continue
-    const abs = join(workspacePath, ...rel.split('/'))
-    if (!existsSync(abs)) continue
-    let st
-    try {
-      st = statSync(abs)
-    } catch {
-      continue
-    }
-    if (!st.isFile() || st.size >= 800_000) continue
-    const parsed = await indexFile(workspacePath, abs)
-    fileSet.add(parsed.rel)
-    symbols.push(...parsed.symbols)
-    refs.push(...parsed.refs)
-    if (parsed.embedding.length) embeddings[parsed.rel] = parsed.embedding
-    fileMeta[parsed.rel] = { mtimeMs: st.mtimeMs, size: st.size }
-  }
-
-  const record = persistIndex(workspacePath, {
-    updatedAt: Date.now(),
-    workspacePath,
-    symbols: symbols.slice(0, 40_000),
-    files: [...fileSet],
-    refs: refs.slice(0, 120_000),
-    embeddings,
-    fileMeta
+  // Apply changes after any older full snapshot has finished, so it cannot
+  // overwrite newer incremental edits when the worker replies.
+  if (workerBuilds.has(workspacePath)) await workerBuilds.get(workspacePath)
+  const record = await workspaceRequest({
+    type: 'patch-index',
+    root: workspacePath,
+    indexPath: indexPath(workspacePath),
+    paths: relPaths
   })
-  logInfo('Code index patched', { patched: unique.length, files: record.files.length })
+  memoryIndex = record
   return record
 }
 
 export function loadCodeIndex(workspacePath: string): IndexRecord | null {
   if (memoryIndex?.workspacePath === workspacePath) return memoryIndex
-  const path = indexPath(workspacePath)
-  if (!existsSync(path)) return null
-  try {
-    memoryIndex = JSON.parse(readFileSync(path, 'utf8')) as IndexRecord
-    return memoryIndex
-  } catch {
-    return null
-  }
+  void ensureCodeIndexAsync(workspacePath).catch(() => undefined)
+  return null
 }
 
 function scheduleBackgroundRebuild(workspacePath: string): void {
-  if (rebuildInFlight) return
-  rebuildInFlight = buildCodeIndexAsync(workspacePath)
-    .catch(() => memoryIndex as IndexRecord)
-    .finally(() => {
-      rebuildInFlight = null
-    })
+  void buildCodeIndexAsync(workspacePath).catch(() => undefined)
 }
 
 /**
  * Call when the workspace tree may have changed (FS watcher / agent writes).
  * Pass relative paths for incremental patching; omit for a full background rebuild.
  */
-export function notifyWorkspaceFilesChanged(
-  workspacePath: string,
-  changedRels?: string[]
-): void {
+export function notifyWorkspaceFilesChanged(workspacePath: string, changedRels?: string[]): void {
   if (!changedRels || changedRels.length === 0) {
     scheduleBackgroundRebuild(workspacePath)
     return
   }
-  for (const rel of changedRels) pendingPatchRels.add(rel.split('\\').join('/'))
-  if (patchInFlight) return
-  const run = async (): Promise<IndexRecord> => {
-    while (pendingPatchRels.size > 0) {
-      const batch = [...pendingPatchRels]
-      pendingPatchRels.clear()
+  const pending = pendingPatches.get(workspacePath) ?? new Set<string>()
+  pendingPatches.set(workspacePath, pending)
+  for (const rel of changedRels) pending.add(rel.split('\\').join('/'))
+  if (patches.has(workspacePath)) return
+  const run = async (): Promise<void> => {
+    while (pending.size > 0) {
+      const batch = [...pending]
+      pending.clear()
       // Large batches → full rebuild is cheaper than N sequential patches.
       if (batch.length > 80) {
-        return buildCodeIndexAsync(workspacePath)
+        await buildCodeIndexAsync(workspacePath)
+      } else {
+        await patchCodeIndexFiles(workspacePath, batch)
       }
-      await patchCodeIndexFiles(workspacePath, batch)
     }
-    return loadCodeIndex(workspacePath) || buildCodeIndex(workspacePath)
   }
-  patchInFlight = run()
-    .catch(() => memoryIndex as IndexRecord)
+  const job = run()
+    .catch(() => undefined)
     .finally(() => {
-      patchInFlight = null
-      if (pendingPatchRels.size > 0) {
-        notifyWorkspaceFilesChanged(workspacePath, [...pendingPatchRels])
-      }
+      patches.delete(workspacePath)
+      if (pending.size) notifyWorkspaceFilesChanged(workspacePath, [...pending])
+      else pendingPatches.delete(workspacePath)
     })
+  patches.set(workspacePath, job)
 }
 
 /**
- * Prefer disk/memory cache; only block on a cold index.
- * Stale indexes return immediately and refresh in the background.
+ * Synchronous consumers use memory and schedule background loading/building.
+ * Interactive requests never build or parse a disk index on the main thread.
  */
 export function ensureCodeIndex(workspacePath: string): IndexRecord {
   const existing = loadCodeIndex(workspacePath)
   if (existing) {
     const age = Date.now() - existing.updatedAt
-    if (age >= FRESH_MS && age < STALE_OK_MS) {
-      scheduleBackgroundRebuild(workspacePath)
-    } else if (age >= STALE_OK_MS) {
+    if (age >= FRESH_MS) {
       scheduleBackgroundRebuild(workspacePath)
     }
     return existing
   }
-  return buildCodeIndex(workspacePath)
+  return { workspacePath, updatedAt: 0, files: [], symbols: [] }
 }
 
-export async function ensureCodeIndexAsync(workspacePath: string): Promise<IndexRecord> {
-  const existing = loadCodeIndex(workspacePath)
-  if (existing && Date.now() - existing.updatedAt < FRESH_MS) return existing
-  if (rebuildInFlight) return rebuildInFlight
-  return buildCodeIndexAsync(workspacePath)
+export async function ensureCodeIndexAsync(workspacePath: string): Promise<IndexRecord | null> {
+  let existing = memoryIndex?.workspacePath === workspacePath ? memoryIndex : null
+  if (!existing) {
+    let loading = indexLoads.get(workspacePath)
+    if (!loading) {
+      loading = workspaceRequest({
+        type: 'load-index',
+        indexPath: indexPath(workspacePath)
+      }).finally(() => indexLoads.delete(workspacePath))
+      indexLoads.set(workspacePath, loading)
+    }
+    existing = await loading
+    if (existing?.workspacePath === workspacePath) {
+      if (
+        memoryIndex?.workspacePath === workspacePath &&
+        memoryIndex.updatedAt > existing.updatedAt
+      )
+        existing = memoryIndex
+      else memoryIndex = existing
+    } else existing = null
+  }
+  if (existing) {
+    if (Date.now() - existing.updatedAt >= FRESH_MS) scheduleBackgroundRebuild(workspacePath)
+    return existing
+  }
+  // A cold index is built off the interactive path. Retrieval can use ripgrep
+  // candidates for this request and the next request will see the new index.
+  scheduleBackgroundRebuild(workspacePath)
+  return null
 }
 
-export function findSymbols(
+async function readyIndex(workspacePath: string): Promise<IndexRecord> {
+  return (await ensureCodeIndexAsync(workspacePath)) ?? buildCodeIndexAsync(workspacePath)
+}
+
+export async function findSymbols(
   workspacePath: string,
   query: string,
   max = 30
-): { ok: boolean; detail: string; hits: SymbolHit[] } {
-  const index = ensureCodeIndex(workspacePath)
+): Promise<{ ok: boolean; detail: string; hits: SymbolHit[] }> {
+  const index = await readyIndex(workspacePath)
   const q = query.trim().toLowerCase()
   if (!q) {
     return {
@@ -400,20 +318,20 @@ export function findSymbols(
   return { ok: true, detail, hits }
 }
 
-export function findReferences(
+export async function findReferences(
   workspacePath: string,
   name: string,
   max = 40
-): { ok: boolean; detail: string; hits: SymbolRef[] } {
-  const index = ensureCodeIndex(workspacePath)
+): Promise<{ ok: boolean; detail: string; hits: SymbolRef[] }> {
+  const index = await readyIndex(workspacePath)
   const q = name.trim()
   if (!q) return { ok: false, detail: 'name is required', hits: [] }
   const defs = index.symbols.filter((s) => s.name === q)
   const refs = (index.refs ?? []).filter((r) => r.name === q)
-  const hits = [
-    ...defs.map((d) => ({ name: d.name, path: d.path, line: d.line })),
-    ...refs
-  ].slice(0, max)
+  const hits = [...defs.map((d) => ({ name: d.name, path: d.path, line: d.line })), ...refs].slice(
+    0,
+    max
+  )
   const detail =
     hits.length === 0
       ? `No references to ${q}`
@@ -421,14 +339,16 @@ export function findReferences(
   return { ok: true, detail, hits }
 }
 
-export function relatedFiles(
+export async function relatedFiles(
   workspacePath: string,
   path: string,
   max = 8
-): { ok: boolean; detail: string; paths: string[] } {
-  const index = ensureCodeIndex(workspacePath)
+): Promise<{ ok: boolean; detail: string; paths: string[] }> {
+  const index = await readyIndex(workspacePath)
   const rel = path.replace(/\\/g, '/').replace(/^\.\//, '')
-  const names = new Set(index.symbols.filter((s) => s.path === rel || s.path.endsWith('/' + rel)).map((s) => s.name))
+  const names = new Set(
+    index.symbols.filter((s) => s.path === rel || s.path.endsWith('/' + rel)).map((s) => s.name)
+  )
   if (names.size === 0) {
     return { ok: true, detail: `No symbols in ${path}`, paths: [] }
   }
@@ -464,7 +384,7 @@ export function formatIndexSummary(workspacePath: string): string {
       return `Code index: ${cached.files.length} source files, ${cached.symbols.length} symbols (cached).`
     }
     // Cold start: light note + background build (avoid blocking agent prompt assembly)
-    scheduleBackgroundRebuild(workspacePath)
+    void ensureCodeIndexAsync(workspacePath).catch(() => undefined)
     return 'Code index: building in background…'
   } catch {
     return ''
