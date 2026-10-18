@@ -69,6 +69,22 @@ describe('classifyIntent', () => {
     ['What models do you have access to?', 'ask', 'capability'],
     ['explain this function', 'ask', 'explore'],
     ['implement a login form', 'agent', 'edit'],
+    [
+      'Can you show me how to add optimistic updates for a list of items with Redis for caching?',
+      'agent',
+      'edit'
+    ],
+    [
+      'I need to implement transactional emails using templates with good test coverage. How would you approach it?',
+      'agent',
+      'edit'
+    ],
+    [
+      "What's a pragmatic way to add search that supports filters, sorting, and highlighting in an existing codebase?",
+      'agent',
+      'answer'
+    ],
+    ['search for the authentication middleware', 'agent', 'explore'],
     ['where is AuthService defined?', 'agent', 'explore'],
     ['code review this PR', 'agent', 'review'],
     ['run npm test', 'agent', 'run'],
