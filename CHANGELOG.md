@@ -2,6 +2,23 @@
 
 ## 0.2.67 — 2026-10-18
 
+Cross-platform desktop builds (macOS + Windows) from the same version tag.
+
+| Platform | Download |
+|----------|----------|
+| macOS | `Eris-0.2.67-mac-*.dmg` / `.zip` |
+| Windows | `Eris-0.2.67-win-*-setup.exe` |
+
+CI builds both platforms on tag push (`.github/workflows/release.yml`).
+
+### Changes
+- Merge version 0.2.67 release files (ea33f8e)
+- Bump version to 0.2.67 (21a07b3)
+- Merge pull request #37 from EricServices-Repo/codex/fix-agent-loop-36 (d97f7d3)
+- Fix local agent tool loops and model context (9ffd57a)
+
+## 0.2.67 — 2026-10-18
+
 - Fixed local-model context sizing, repeated agent tool loops, and empty-project scaffolding recovery.
 
 ## 0.2.66 — 2026-10-18
