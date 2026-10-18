@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.66 — 2026-10-18
+
+- Fixed workspace-safe chat persistence, long-history pagination, agent checks, and client linting.
+
 ## 0.2.65 — 2026-10-18
 
 - Improved chat and agent performance across routing, retrieval, indexing, MCP startup, prompt context, and local model warmup.
