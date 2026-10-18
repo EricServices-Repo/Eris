@@ -2,6 +2,22 @@
 
 ## 0.3.1 — 2026-10-18
 
+Cross-platform desktop builds (macOS + Windows) from the same version tag.
+
+| Platform | Download |
+|----------|----------|
+| macOS | `Eris-0.3.1-mac-*.dmg` / `.zip` |
+| Windows | `Eris-0.3.1-win-*-setup.exe` |
+
+CI builds both platforms on tag push (`.github/workflows/release.yml`).
+
+### Changes
+- Merge pull request #38 from EricServices-Repo/codex/chat-agent-smoke-test (6f0b4b7)
+- Add local Hugging Face image generation and agent integration (b720bb0)
+- Improve agent intent routing and mutation detection (0a00caa)
+
+## 0.3.1 — 2026-10-18
+
 - Added local Hugging Face image generation with automatic model selection, runtime setup, model downloads, and agent tool integration.
 
 ## 0.2.67 — 2026-10-18
