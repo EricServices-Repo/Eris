@@ -6,9 +6,9 @@ import {
 } from '../src/shared/agent-contract'
 
 describe('chat agent contract', () => {
-  it('lets Auto choose four roles and keeps Coder for pin or delegate', () => {
+  it('lets Auto choose specialist roles and keeps Coder for pin or delegate', () => {
     const auto = CHAT_AGENT_CONTRACTS.filter((agent) => agent.auto).map((agent) => agent.id)
-    expect(auto).toEqual(['composer', 'explainer', 'reviewer', 'fast'])
+    expect(auto).toEqual(['composer', 'explainer', 'reviewer', 'planner', 'verifier', 'fast'])
     expect(CHAT_AGENT_CONTRACTS.find((agent) => agent.id === 'coder')?.auto).toBe(false)
   })
 
@@ -38,32 +38,38 @@ describe('chat agent contract', () => {
         text: 'Review the internet, who is Steve Embling'
       })
     ).toBe('explainer')
-    expect(chatAgentForTurn({
-      mode: 'agent',
-      intent: 'explore',
-      text: 'and the tests?',
-      previousAgentId: 'explainer'
-    })).toBe('explainer')
-    expect(chatAgentForTurn({
-      mode: 'agent',
-      intent: 'explore',
-      text: 'fix that',
-      previousAgentId: 'explainer'
-    })).toBe('composer')
-    expect(chatAgentForTurn({
-      mode: 'agent',
-      intent: 'edit',
-      text: 'what did you change?',
-      previousAgentId: 'composer'
-    })).toBe('explainer')
+    expect(
+      chatAgentForTurn({
+        mode: 'agent',
+        intent: 'explore',
+        text: 'and the tests?',
+        previousAgentId: 'explainer'
+      })
+    ).toBe('explainer')
+    expect(
+      chatAgentForTurn({
+        mode: 'agent',
+        intent: 'explore',
+        text: 'fix that',
+        previousAgentId: 'explainer'
+      })
+    ).toBe('composer')
+    expect(
+      chatAgentForTurn({
+        mode: 'agent',
+        intent: 'edit',
+        text: 'what did you change?',
+        previousAgentId: 'composer'
+      })
+    ).toBe('explainer')
     expect(
       chatAgentForTurn({ mode: 'agent', intent: 'answer', text: 'explain how the router works' })
     ).toBe('explainer')
     expect(
       chatAgentForTurn({ mode: 'agent', intent: 'explore', text: 'where is AuthService defined?' })
     ).toBe('fast')
-    expect(chatAgentForTurn({ mode: 'ask', intent: 'answer', text: 'how does this app work?' })).toBe(
-      'explainer'
-    )
+    expect(
+      chatAgentForTurn({ mode: 'ask', intent: 'answer', text: 'how does this app work?' })
+    ).toBe('explainer')
   })
 })

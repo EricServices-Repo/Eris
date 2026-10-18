@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from 'react'
+import { Fragment, memo, type ReactNode } from 'react'
 
 interface Props {
   content: string
@@ -66,7 +66,7 @@ function renderInline(text: string, onOpenPath?: (path: string) => void): ReactN
   return nodes
 }
 
-export function MarkdownMessage({ content, onOpenPath, plain }: Props) {
+export const MarkdownMessage = memo(function MarkdownMessage({ content, onOpenPath, plain }: Props) {
   if (plain) {
     return (
       <div className="md-body md-plain">
@@ -148,4 +148,4 @@ export function MarkdownMessage({ content, onOpenPath, plain }: Props) {
       })}
     </div>
   )
-}
+})

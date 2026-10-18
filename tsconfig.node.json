@@ -21,6 +21,7 @@
     "electron.vite.config.ts",
     "electron/**/*",
     "src/shared/**/*",
+    "src/state/documents.ts",
     "resources/defaults.json",
     "resources/agents.json",
     "src/features/chat/thinking-summary.ts",

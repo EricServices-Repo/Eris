@@ -252,6 +252,10 @@ export async function lspEnsureOpen(
   if (!spec || !(await ensureExtra(root, spec))) return false
   const session = extras.get(spec.id)
   if (!session) return false
+  if (openDocs.has(filePath)) {
+    await lspDidChange(root, filePath, language, text)
+    return true
+  }
   openDocs.set(filePath, { version: 1, languageId: spec.languageId, serverId: spec.id })
   session.connection.sendNotification('textDocument/didOpen', {
     textDocument: {

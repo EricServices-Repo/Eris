@@ -1,6 +1,6 @@
 {
   "name": "eris",
-  "version": "0.2.64",
+  "version": "0.2.65",
   "description": "Eris — AI-first desktop IDE for macOS and Windows",
   "main": "./out/main/index.js",
   "author": "Eris",
@@ -31,6 +31,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "npm run typecheck && npm run lint && npm test",
+    "check:client": "npm run typecheck && vitest run tests/chat-database.test.ts tests/document-store.test.ts tests/code-index-patch.test.ts tests/workspace-watcher.test.ts && npm run build && node scripts/check-client-workers.mjs && vite build --config checks/vite.config.ts && electron scripts/check-client-renderer.cjs",
     "cloud-agent:build": "npm run build --prefix cloud-agent",
     "cloud-agent:docker": "docker build -t eris-cloud-agent:latest ./cloud-agent",
     "cloud-agent:compose": "docker compose -f cloud-agent/docker-compose.yml up -d --build"

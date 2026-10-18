@@ -251,6 +251,10 @@ export async function lspDidOpen(
   if (!isTsLike(language, filePath)) return
   if (!(await ensureServer(root))) return
   if (!connection) return
+  if (openDocs.has(filePath)) {
+    await lspDidChange(root, filePath, language, text)
+    return
+  }
   const languageId = languageIdFor(language, filePath)
   const version = 1
   openDocs.set(filePath, { version, languageId })

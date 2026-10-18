@@ -201,13 +201,13 @@ function snippetAround(
   }
 }
 
-export function languageHover(
+export async function languageHover(
   workspacePath: string,
   filePath: string,
   word: string
-): { ok: boolean; contents: string } {
+): Promise<{ ok: boolean; contents: string }> {
   if (!word.trim()) return { ok: true, contents: '' }
-  const found = findSymbols(workspacePath, word, 8)
+  const found = await findSymbols(workspacePath, word, 8)
   const same = found.hits.filter(
     (h) => h.name === word || h.name.toLowerCase() === word.toLowerCase()
   )
@@ -238,11 +238,11 @@ export function languageHover(
   }
 }
 
-export function goToDefinition(
+export async function goToDefinition(
   workspacePath: string,
   word: string
-): { ok: boolean; locations: Array<{ path: string; line: number; name: string; kind: string }> } {
-  const found = findSymbols(workspacePath, word, 20)
+): Promise<{ ok: boolean; locations: Array<{ path: string; line: number; name: string; kind: string }> }> {
+  const found = await findSymbols(workspacePath, word, 20)
   const exact = found.hits.filter((h) => h.name === word)
   const list = (exact.length ? exact : found.hits).slice(0, 12)
   return {

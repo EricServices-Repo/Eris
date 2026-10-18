@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.65 — 2026-10-18
+
+- Improved chat and agent performance across routing, retrieval, indexing, MCP startup, prompt context, and local model warmup.
+
 ## 0.2.64 — 2026-10-17
 
 - Improved follow-up routing for coding requests.

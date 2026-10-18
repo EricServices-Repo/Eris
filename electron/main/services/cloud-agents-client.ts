@@ -12,11 +12,7 @@ import {
   type CloudJobArtifacts,
   type EnqueueCloudJobRequest
 } from '../../../src/shared/cloud-agents'
-import {
-  createCheckpoint,
-  recordWriteOp,
-  snapshotBeforeWrite
-} from './checkpoints'
+import { createCheckpoint, recordWriteOp, snapshotBeforeWrite } from './checkpoints'
 import { writeWorkspaceFile } from './workspace-fs'
 
 export interface CloudAppliedDiff {
@@ -128,8 +124,7 @@ async function cloudFetch(
       return { ok: false, status: res.status, data: {}, error }
     }
     if (!res.ok || data.ok === false) {
-      const error =
-        typeof data.error === 'string' ? data.error : `Request failed (${res.status})`
+      const error = typeof data.error === 'string' ? data.error : `Request failed (${res.status})`
       logWarn('Cloud Agents request failed', {
         label,
         url,
@@ -249,7 +244,10 @@ export async function cloudAgentsHealth(authenticated = false): Promise<CloudHea
         inference: health.inference,
         error: health.error
       })
-    } else if (!isCloudAgentsReady(health) && shouldLogHealthFailure(health.localModel?.status || 'warming')) {
+    } else if (
+      !isCloudAgentsReady(health) &&
+      shouldLogHealthFailure(health.localModel?.status || 'warming')
+    ) {
       logInfo('Cloud Agents reachable — warming model (still prefer cloud)', {
         baseUrl: cloudAgentsBaseUrl(),
         localModel: health.localModel?.status,
@@ -292,10 +290,7 @@ export async function getCloudJob(id: string): Promise<CloudJob | null> {
 /**
  * Stream job updates over SSE (auth once). Falls back to throwing so callers can poll.
  */
-export async function* watchCloudJob(
-  id: string,
-  signal?: AbortSignal
-): AsyncGenerator<CloudJob> {
+export async function* watchCloudJob(id: string, signal?: AbortSignal): AsyncGenerator<CloudJob> {
   const rawId = id.replace(/^cloud:/, '')
   const url = `${cloudAgentsBaseUrl()}${CLOUD_AGENTS_JOBS_PATH}/${encodeURIComponent(rawId)}/events`
   const headers: Record<string, string> = {
@@ -405,23 +400,20 @@ export async function continueCloudJob(
   extra: Partial<EnqueueCloudJobRequest> = {}
 ): Promise<CloudJob> {
   const rawId = id.replace(/^cloud:/, '')
-  const r = await cloudFetch(
-    `${CLOUD_AGENTS_JOBS_PATH}/${encodeURIComponent(rawId)}/continue`,
-    {
-      method: 'POST',
-      logLabel: `continue job ${rawId.slice(0, 8)}`,
-      timeoutMs: ENQUEUE_TIMEOUT_MS,
-      body: JSON.stringify({
-        goal: extra.goal,
-        agentId: extra.agentId,
-        model: extra.model,
-        githubToken: extra.githubToken || undefined,
-        openPr: extra.openPr,
-        files: extra.files,
-        claim: extra.claim
-      })
-    }
-  )
+  const r = await cloudFetch(`${CLOUD_AGENTS_JOBS_PATH}/${encodeURIComponent(rawId)}/continue`, {
+    method: 'POST',
+    logLabel: `continue job ${rawId.slice(0, 8)}`,
+    timeoutMs: ENQUEUE_TIMEOUT_MS,
+    body: JSON.stringify({
+      goal: extra.goal,
+      agentId: extra.agentId,
+      model: extra.model,
+      githubToken: extra.githubToken || undefined,
+      openPr: extra.openPr,
+      files: extra.files,
+      claim: extra.claim
+    })
+  })
   if (!r.ok || !r.data.job) {
     throw new Error(r.error || 'Failed to continue cloud job')
   }
@@ -554,7 +546,7 @@ export function cloudJobToBackgroundJob(job: CloudJob, workspacePath: string): B
     error: job.error,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
-    routeReason: 'Background agent'
+    routeReason: 'Cloud · agents.ericservic.es:443 (https)'
   }
   mapped.blackboard = deriveBlackboardStatus(mapped)
   return mapped
@@ -597,7 +589,13 @@ export async function applyCloudJobArtifacts(
   error?: string
 }> {
   if (!workspacePath) {
-    return { ok: false, checkpointId: '', diffs: [], truncated: false, error: 'Open a workspace first' }
+    return {
+      ok: false,
+      checkpointId: '',
+      diffs: [],
+      truncated: false,
+      error: 'Open a workspace first'
+    }
   }
   try {
     const pack = await fetchCloudJobArtifacts(jobId)

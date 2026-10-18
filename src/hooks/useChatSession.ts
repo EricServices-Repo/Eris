@@ -13,7 +13,7 @@ import type {
   ChatDelegation,
   ChatIntent,
   ChatThread,
-  FileEntry,
+  ChatMessage,
   ModelInfo,
   SkillRecord
 } from '@/shared/settings-schema'
@@ -31,6 +31,15 @@ import type { PendingDiff } from '@/features/chat/DiffReview'
 import { joinWorkspacePath, pathBasename } from '@/shared/paths'
 import type { RightPanel } from './useLayout'
 import { uid } from './uid'
+import {
+  chatStream,
+  setThinkingBuffer,
+  setAnswerBuffer,
+  setToolActivity,
+  setAgentStatus
+} from '@/state/chat-stream'
+import { snapshotTab } from '@/state/documents'
+import { mergeChatTail } from '@/shared/chat-pages'
 
 export type ToolActivityItem = {
   id: string
@@ -62,12 +71,10 @@ export type UseChatSessionDeps = {
   setThreads: Dispatch<SetStateAction<ChatThread[]>>
   refreshChats: (preferredId?: string | null) => Promise<void>
   workspacePath: string | null
-  tabs: OpenTab[]
   tabsRef: MutableRefObject<OpenTab[]>
   setTabs: Dispatch<SetStateAction<OpenTab[]>>
   activeFile: string | null
   setActiveFile: Dispatch<SetStateAction<string | null>>
-  setTree: Dispatch<SetStateAction<FileEntry[]>>
   openFile: (path: string, line?: number) => Promise<void>
   setRightPanel: Dispatch<SetStateAction<RightPanel>>
   setRightCollapsed: Dispatch<SetStateAction<boolean>>
@@ -91,27 +98,21 @@ export function useChatSession({
   setThreads,
   refreshChats,
   workspacePath,
-  tabs,
   tabsRef,
   setTabs,
   activeFile,
   setActiveFile,
-  setTree,
   openFile,
   setRightPanel,
   setRightCollapsed,
   appendTerminal
 }: UseChatSessionDeps) {
   const [streaming, setStreaming] = useState(false)
-  const [thinkingBuffer, setThinkingBuffer] = useState('')
-  const [answerBuffer, setAnswerBuffer] = useState('')
   const [chatError, setChatError] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [routeLabel, setRouteLabel] = useState<string | null>(null)
-  const [toolActivity, setToolActivity] = useState<ToolActivityItem[]>([])
   const [delegations, setDelegations] = useState<ChatDelegation[]>([])
   const delegationsRef = useRef<ChatDelegation[]>([])
-  const [agentStatus, setAgentStatus] = useState<string | null>(null)
   const [pendingApprovals, setPendingApprovals] = useState<PendingCommandApproval[]>([])
   const pendingApproval = pendingApprovals[0]
     ? { ...pendingApprovals[0], queuedCount: pendingApprovals.length }
@@ -139,12 +140,15 @@ export function useChatSession({
   const requestIdRef = useRef<string | null>(null)
   /** Survives Stop so late chat:done/error still match the turn we aborted. */
   const lastRequestIdRef = useRef<string | null>(null)
+  const requestThreadIdRef = useRef<string | null>(null)
+  const requestWorkspacePathRef = useRef<string | null>(null)
   const thinkingAcc = useRef('')
   const answerAcc = useRef('')
   const routeMetaRef = useRef<{ agentId?: string; agentName?: string; model?: string }>({})
   const paintRaf = useRef(0)
   /** Set when user clicks Stop — unlock UI immediately and skip queue drain. */
   const userStoppedRef = useRef(false)
+  const changedFiles = useRef(new Set<string>())
 
   const selectedLocalModelReady =
     (selectedModel.startsWith('local:') || selectedModel.startsWith('builtin:')) &&
@@ -173,8 +177,11 @@ export function useChatSession({
     if (paintRaf.current) return
     paintRaf.current = requestAnimationFrame(() => {
       paintRaf.current = 0
-      setThinkingBuffer(thinkingAcc.current)
-      setAnswerBuffer(answerAcc.current)
+      chatStream.set((previous) => ({
+        ...previous,
+        thinkingBuffer: thinkingAcc.current,
+        answerBuffer: answerAcc.current
+      }))
     })
   }, [])
 
@@ -225,6 +232,7 @@ export function useChatSession({
         return
       }
       setChatError(null)
+      changedFiles.current.clear()
       thinkingAcc.current = ''
       answerAcc.current = ''
       setThinkingBuffer('')
@@ -244,6 +252,8 @@ export function useChatSession({
 
       const requestId = uid()
       requestIdRef.current = requestId
+      requestThreadIdRef.current = null
+      requestWorkspacePathRef.current = workspacePath
       lastRequestIdRef.current = requestId
       userStoppedRef.current = false
 
@@ -268,9 +278,9 @@ export function useChatSession({
           setActiveThread(thread)
           setThreads((prev) => [thread!, ...prev.filter((t) => t.id !== thread!.id)])
         }
+        requestThreadIdRef.current = thread.id
 
-        const selected =
-          selectedModel || settings.models.defaultModel || 'builtin:composer-lite'
+        const selected = selectedModel || settings.models.defaultModel || 'builtin:composer-lite'
         const previousAgentId =
           [...thread.messages].reverse().find((message) => message.role === 'assistant')?.agentId ??
           null
@@ -314,18 +324,16 @@ export function useChatSession({
           abortUi()
           setChatError(turnPlan.error)
           const displayContent =
-            files.length > 0
-              ? `${text}\n\nAttached: ${files.map((f) => f.name).join(', ')}`
-              : text
-          const saved = await window.ide.saveChat({
-            ...thread,
-            model: runModel,
-            messages: [
-              ...thread.messages,
-              { id: uid(), role: 'user', content: displayContent, createdAt: Date.now() }
-            ]
-          })
-          setActiveThread(saved)
+            files.length > 0 ? `${text}\n\nAttached: ${files.map((f) => f.name).join(', ')}` : text
+          const saved = await window.ide.appendChatMessage(
+            thread.id,
+            { id: uid(), role: 'user', content: displayContent, createdAt: Date.now() },
+            runModel,
+            workspacePath
+          )
+          const merged = mergeChatTail(thread, saved)
+          setActiveThread(merged)
+          activeThreadRef.current = merged
           setThreads((prev) => [saved, ...prev.filter((t) => t.id !== saved.id)])
           setAttachments([])
           setActiveSkills([])
@@ -353,25 +361,25 @@ export function useChatSession({
                   : 'No model ready. Download a Local model or Composer Lite in Settings → Models.'
           )
           const displayContent =
-            files.length > 0
-              ? `${text}\n\nAttached: ${files.map((f) => f.name).join(', ')}`
-              : text
-          const saved = await window.ide.saveChat({
-            ...thread,
-            model: runModel,
-            messages: [
-              ...thread.messages,
-              { id: uid(), role: 'user', content: displayContent, createdAt: Date.now() }
-            ]
-          })
-          setActiveThread(saved)
+            files.length > 0 ? `${text}\n\nAttached: ${files.map((f) => f.name).join(', ')}` : text
+          const saved = await window.ide.appendChatMessage(
+            thread.id,
+            { id: uid(), role: 'user', content: displayContent, createdAt: Date.now() },
+            runModel,
+            workspacePath
+          )
+          const merged = mergeChatTail(thread, saved)
+          setActiveThread(merged)
+          activeThreadRef.current = merged
           setThreads((prev) => [saved, ...prev.filter((t) => t.id !== saved.id)])
           setAttachments([])
           setActiveSkills([])
           return
         }
 
-        const openTab = tabs.find((t) => t.path === activeFile)
+        const selectedTab = tabsRef.current.find((t) => t.path === activeFile)
+        const openTab =
+          selectedTab && selectedTab.loaded !== false ? snapshotTab(selectedTab) : undefined
         const history = thread.messages.filter((m) => m.role !== 'system')
 
         const skillNames = skillIds
@@ -400,12 +408,18 @@ export function useChatSession({
         setThreads((prev) => [withUser, ...prev.filter((t) => t.id !== withUser.id)])
         setAttachments([])
         setActiveSkills([])
-        void window.ide.saveChat(withUser).then((saved) => {
-          if (requestIdRef.current !== requestId && lastRequestIdRef.current !== requestId) return
-          setActiveThread(saved)
-          activeThreadRef.current = saved
-          setThreads((prev) => [saved, ...prev.filter((t) => t.id !== saved.id)])
-        })
+        void window.ide
+          .appendChatMessage(thread.id, userMsg, runModel, workspacePath)
+          .then((saved) => {
+            if (requestIdRef.current !== requestId && lastRequestIdRef.current !== requestId) return
+            if (activeThreadRef.current?.id === saved.id) {
+              const merged = mergeChatTail(activeThreadRef.current, saved)
+              setActiveThread(merged)
+              activeThreadRef.current = merged
+            }
+            setThreads((prev) => [saved, ...prev.filter((t) => t.id !== saved.id)])
+          })
+          .catch((error) => setChatError(`Could not save your message: ${String(error)}`))
 
         thinkingAcc.current = ''
         answerAcc.current = ''
@@ -430,7 +444,8 @@ export function useChatSession({
               ? { path: openTab.path, language: openTab.language, content: openTab.content }
               : null,
             attachments: files.map((f) => {
-              const open = tabs.find((t) => t.path === f.path)
+              const tab = tabsRef.current.find((t) => t.path === f.path)
+              const open = tab && tab.loaded !== false ? snapshotTab(tab) : undefined
               return open
                 ? { path: f.path, name: f.name, language: open.language, content: open.content }
                 : { path: f.path, name: f.name }
@@ -451,9 +466,7 @@ export function useChatSession({
           setAgentStatus(null)
           requestIdRef.current = null
           setChatError(
-            (prev) =>
-              prev ||
-              'Chat failed — check Settings → Models (see logs for details)'
+            (prev) => prev || 'Chat failed — check Settings → Models (see logs for details)'
           )
         }
       } catch (err) {
@@ -469,7 +482,7 @@ export function useChatSession({
       selectedModel,
       selectedAgentId,
       models,
-      tabs,
+      tabsRef,
       activeFile,
       streaming,
       skills,
@@ -479,7 +492,8 @@ export function useChatSession({
       setActiveThread,
       activeThreadRef,
       setThreads,
-      setActiveSkills
+      setActiveSkills,
+      workspacePath
     ]
   )
 
@@ -527,8 +541,7 @@ export function useChatSession({
       if (!run || streaming) return
       setResumableRun(null)
       setChatMode('agent')
-      const stepLabel =
-        typeof fromStep === 'number' ? ` from step ${fromStep}` : ''
+      const stepLabel = typeof fromStep === 'number' ? ` from step ${fromStep}` : ''
       await sendMessage(`Resume${stepLabel}: ${run.goal}`, [], [], {
         forceRoute: 'tools',
         resumeRunId: run.id,
@@ -574,9 +587,7 @@ export function useChatSession({
         if (reason) setRouteLabel(reason)
         else if (agentName) {
           const tools =
-            toolsModel && toolsModel !== model
-              ? ` → ${toolsModel.replace(/^builtin:/, '')}`
-              : ''
+            toolsModel && toolsModel !== model ? ` → ${toolsModel.replace(/^builtin:/, '')}` : ''
           setRouteLabel(`${agentName} · ${model.replace(/^builtin:/, '')}${tools}`)
         }
       }
@@ -585,12 +596,21 @@ export function useChatSession({
       if (requestId !== requestIdRef.current) return
       const prev = delegationsRef.current
       const idx = prev.findIndex((item) => item.id === delegation.id)
-      const next = idx < 0 ? [...prev, delegation] : prev.map((item, i) => (i === idx ? delegation : item))
+      const next =
+        idx < 0 ? [...prev, delegation] : prev.map((item, i) => (i === idx ? delegation : item))
       delegationsRef.current = next
       setDelegations(next)
     })
     const offTool = window.ide.onChatTool(({ requestId, tool }) => {
       if (requestId !== requestIdRef.current) return
+      if (tool.status === 'ok' && tool.effect === 'workspace') {
+        for (const path of tool.changedResources?.length
+          ? tool.changedResources
+          : tool.path
+            ? [tool.path]
+            : [])
+          changedFiles.current.add(path.replace(/\\/g, '/'))
+      }
       setToolActivity((prev) => {
         const idx = prev.findIndex((t) => t.id === tool.id)
         if (idx < 0) return [...prev, tool]
@@ -601,6 +621,7 @@ export function useChatSession({
     })
     const offDiff = window.ide.onChatDiff(({ requestId, diff }) => {
       if (requestId !== requestIdRef.current) return
+      for (const path of diff.path.split(' → ')) changedFiles.current.add(path.replace(/\\/g, '/'))
       setActiveCheckpointId(diff.checkpointId)
       const autoKeep = Boolean(settingsRef.current?.agent.autoKeepDiffs)
       // Auto-keep: skip review UI entirely (edits are already on disk).
@@ -645,7 +666,8 @@ export function useChatSession({
     let workspaceRefreshTimer: ReturnType<typeof setTimeout> | null = null
     const offWorkspaceChanged = window.ide.onChatWorkspaceChanged(({ requestId }) => {
       if (requestId !== requestIdRef.current) return
-      void refreshSkills()
+      if ([...changedFiles.current].some((path) => path.includes('.eris/skills/')))
+        void refreshSkills()
       if (!workspacePath) return
       // Debounce tree/tab reloads across rapid agent write rounds
       if (workspaceRefreshTimer) clearTimeout(workspaceRefreshTimer)
@@ -653,16 +675,20 @@ export function useChatSession({
         workspaceRefreshTimer = null
         const root = workspacePath
         if (!root || requestIdRef.current !== requestId) return
-        try {
-          setTree(await window.ide.listTree(root))
-        } catch {
-          // ignore refresh errors
-        }
+        // The workspace watcher owns tree reconciliation. Only touched open
+        // documents reload here, preserving pending previews and dirty text.
+        const touched = [...changedFiles.current]
+        changedFiles.current.clear()
         const prev = tabsRef.current
         const updates: OpenTab[] = []
         let changed = false
         for (const tab of prev) {
-          if (tab.dirty) {
+          const normalized = tab.path.replace(/\\/g, '/')
+          if (
+            tab.dirty ||
+            tab.loaded === false ||
+            !touched.some((path) => normalized === path || normalized.endsWith('/' + path))
+          ) {
             updates.push(tab)
             continue
           }
@@ -690,7 +716,7 @@ export function useChatSession({
         if (changed) {
           setTabs(updates)
           setActiveFile((cur) =>
-            cur && updates.some((t) => t.path === cur) ? cur : updates[0]?.path ?? null
+            cur && updates.some((t) => t.path === cur) ? cur : (updates[0]?.path ?? null)
           )
         }
       }, 400)
@@ -713,7 +739,9 @@ export function useChatSession({
       }
     )
     const offApprovalResolved = window.ide.onChatApprovalResolved(({ approvalId }) => {
-      setPendingApprovals((current) => current.filter((approval) => approval.approvalId !== approvalId))
+      setPendingApprovals((current) =>
+        current.filter((approval) => approval.approvalId !== approvalId)
+      )
     })
     const offQuestion = window.ide.onChatQuestionRequest(
       ({ requestId, questionId, question, choices, timeoutMs }) => {
@@ -751,8 +779,7 @@ export function useChatSession({
       setRouteLabel(`${name} · ${modelLabel}`)
     })
     const offDone = window.ide.onChatDone(async ({ requestId, aborted }) => {
-      const matches =
-        requestId === requestIdRef.current || requestId === lastRequestIdRef.current
+      const matches = requestId === requestIdRef.current || requestId === lastRequestIdRef.current
       if (!matches) return
       if (paintRaf.current) {
         cancelAnimationFrame(paintRaf.current)
@@ -766,18 +793,13 @@ export function useChatSession({
       const thinking = stripAnswerFromThinking(thinkingRaw, content)
       if (aborted) {
         if (content) {
-          content = content.endsWith('\n')
-            ? `${content}_(stopped)_`
-            : `${content}\n\n_(stopped)_`
+          content = content.endsWith('\n') ? `${content}_(stopped)_` : `${content}\n\n_(stopped)_`
         } else if (thinking) {
           content = '_(stopped)_'
         }
       }
-      const threadId = activeThreadRef.current?.id
+      const threadId = requestThreadIdRef.current
       const meta = routeMetaRef.current
-      setStreaming(false)
-      setThinkingBuffer('')
-      setAnswerBuffer('')
       setAgentStatus(null)
       setPendingApprovals((current) => current.filter((approval) => approval.kind === 'mcp'))
       setPendingQuestion(null)
@@ -788,38 +810,43 @@ export function useChatSession({
       const savedDelegations = delegationsRef.current
       delegationsRef.current = []
       setDelegations([])
-      if (!content || !threadId) return
-      const latest = (await window.ide.getChat(threadId)) ?? activeThreadRef.current
-      if (!latest) return
-      const already =
-        latest.messages.length > 0 &&
-        latest.messages[latest.messages.length - 1]?.role === 'assistant' &&
-        latest.messages[latest.messages.length - 1]?.content === content
-      if (already) {
-        setActiveThread(latest)
-        return
+      const message: ChatMessage = {
+        id: `${requestId}:assistant`,
+        role: 'assistant',
+        content,
+        thinking: thinking || undefined,
+        createdAt: Date.now(),
+        agentId: meta.agentId,
+        agentName: meta.agentName,
+        model: meta.model,
+        delegations: savedDelegations.length ? savedDelegations : undefined
       }
-      const merged: ChatThread = {
-        ...latest,
-        model: meta.model || latest.model,
-        messages: [
-          ...latest.messages,
-          {
-            id: uid(),
-            role: 'assistant',
-            content,
-            thinking: thinking || undefined,
-            createdAt: Date.now(),
-            agentId: meta.agentId,
-            agentName: meta.agentName,
-            model: meta.model,
-            delegations: savedDelegations.length ? savedDelegations : undefined
-          }
-        ]
+      try {
+        if (!content || !threadId) return
+        const saved = await window.ide.appendChatMessage(
+          threadId,
+          message,
+          meta.model,
+          requestWorkspacePathRef.current
+        )
+        if (activeThreadRef.current?.id === saved.id) {
+          const merged = mergeChatTail(activeThreadRef.current, saved)
+          activeThreadRef.current = merged
+          setActiveThread(merged)
+        }
+        setThreads((previous) => [saved, ...previous.filter((thread) => thread.id !== saved.id)])
+      } catch (error) {
+        setChatError(`Reply could not be saved: ${String(error)}`)
+        setActiveThread((current) =>
+          current?.id === threadId
+            ? { ...current, messages: [...current.messages, message] }
+            : current
+        )
+      } finally {
+        setThinkingBuffer('')
+        setAnswerBuffer('')
+        setStreaming(false)
       }
-      const saved = await window.ide.saveChat(merged)
-      setActiveThread(saved)
-      void refreshChats(saved.id)
     })
     const offError = window.ide.onChatError(({ requestId, error }) => {
       if (requestId !== requestIdRef.current && requestId !== lastRequestIdRef.current) return
@@ -865,7 +892,7 @@ export function useChatSession({
     activeThreadRef,
     tabsRef,
     setActiveThread,
-    setTree,
+    setThreads,
     setTabs,
     setActiveFile,
     setRightPanel,
@@ -875,9 +902,7 @@ export function useChatSession({
 
   return {
     streaming,
-    thinkingBuffer,
     setThinkingBuffer,
-    answerBuffer,
     setAnswerBuffer,
     chatError,
     setChatError,
@@ -886,9 +911,7 @@ export function useChatSession({
     addAttachments,
     importFiles,
     routeLabel,
-    toolActivity,
     delegations,
-    agentStatus,
     setAgentStatus,
     pendingApproval,
     pendingQuestion,

@@ -12,7 +12,8 @@ import {
   renameWorkspace,
   removeWorkspace
 } from '../services/workspace'
-import { listTree, readTextFile, writeTextFile, languageFromPath } from '../services/files'
+import { writeTextFile, languageFromPath } from '../services/files'
+import { workspaceRequest } from '../services/workspace-worker-client'
 import { invalidateWorkspaceRulesCache } from '../services/chats'
 import { setWorkspaceFsChangeHandler, stopWorkspaceWatcher } from '../services/workspace-watcher'
 import { notifyWorkspaceFilesChanged } from '../services/code-index'
@@ -163,13 +164,13 @@ export function registerWorkspaceIpc(): void {
     setWorkspaceMeta(path, meta)
   )
 
-  ipcMain.handle('fs:listTree', (_e, root: string) => {
+  ipcMain.handle('fs:listTree', (_e, root: string, maxDepth = 0) => {
     assertRendererPathAllowed(root, 'read')
-    return listTree(root)
+    return workspaceRequest({ type: 'tree', root, maxDepth: Number.isFinite(maxDepth) ? Math.max(0, Math.min(8, Math.floor(maxDepth))) : 0 })
   })
-  ipcMain.handle('fs:read', (_e, path: string) => {
+  ipcMain.handle('fs:read', async (_e, path: string) => {
     assertRendererPathAllowed(path, 'read')
-    const file = readTextFile(path)
+    const file = await workspaceRequest({ type: 'read', path })
     return { ...file, language: languageFromPath(path) }
   })
   ipcMain.handle('fs:write', (_e, path: string, content: string) => {

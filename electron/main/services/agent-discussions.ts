@@ -80,14 +80,12 @@ export function formatAgentDiscussions(input: {
 }
 
 /** What the previous agent already told the user, so the next turn can continue it. */
-export function handoffFromMessages(
-  messages: Array<{ role: string; content: string }>
-): string {
-  const last = [...messages].reverse().find((message) => message.role === 'assistant' && message.content.trim())
+export function handoffFromMessages(messages: Array<{ role: string; content: string }>): string {
+  const last = [...messages]
+    .reverse()
+    .find((message) => message.role === 'assistant' && message.content.trim())
   if (!last) return ''
-  const paths = [
-    ...last.content.matchAll(/(?:^|[\s`'"(])([\w./-]+\.[A-Za-z0-9]{1,8})\b/g)
-  ]
+  const paths = [...last.content.matchAll(/(?:^|[\s`'"(])([\w./-]+\.[A-Za-z0-9]{1,8})\b/g)]
     .map((match) => match[1] || '')
     .filter((path) => path && !path.includes('://'))
   const files = [...new Set(paths)].slice(0, 20)
@@ -95,7 +93,7 @@ export function handoffFromMessages(
     'Previous agent turn in this chat:',
     last.content,
     files.length ? `Files cited: ${files.join(', ')}` : '',
-    'Continue from that turn. If the user asks to add, code, implement, apply, fix, or change any of those suggestions, edit the cited files. If they ask what changed, answer from that turn. Do not ask them to repeat it.'
+    'Continue from that turn. If the user asks to add, code, implement, apply, fix, or change any of those suggestions, edit those files. If they ask what changed, answer from that turn. Do not ask them to repeat it.'
   ]
     .filter(Boolean)
     .join('\n')

@@ -22,6 +22,7 @@ import { disposeLanguageServers } from './services/language-servers'
 import { stopAllBackgroundJobs } from './services/background-agents'
 import { cancelEvalRun } from './services/eval-runner'
 import { disposeRuntime } from './services/builtin-model'
+import { disposeWorkspaceWorkers } from './services/workspace-worker-client'
 import { configureLogger, logInfo, logWarn } from './services/logger'
 import { appState } from './app-state'
 import { createWindow, resolveAppIcon } from './window'
@@ -111,7 +112,7 @@ app.on('before-quit', (event) => {
   disposePtySession()
   void disposeLanguageServers().catch(() => undefined)
   void disposeMcpRuntime().catch(() => undefined)
-  void disposeRuntime()
+  void Promise.all([disposeRuntime(), disposeWorkspaceWorkers()])
     .catch(() => undefined)
     .finally(() => {
       app.exit(0)

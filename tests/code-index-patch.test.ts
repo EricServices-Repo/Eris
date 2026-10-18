@@ -2,11 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import {
-  buildCodeIndex,
-  loadCodeIndex,
-  patchCodeIndexFiles
-} from '../electron/main/services/code-index'
+import { scanWorkspaceIndex, patchWorkspaceIndex } from '../electron/main/services/workspace-index-job'
 
 let ws: string
 
@@ -27,7 +23,8 @@ afterEach(() => {
 
 describe('incremental code index', () => {
   it('patches a single changed file without dropping others', async () => {
-    const full = buildCodeIndex(ws)
+    const indexPath = join(ws, '.eris', 'code-index.json')
+    const full = await scanWorkspaceIndex(ws, indexPath)
     expect(full.files.sort()).toEqual(['src/a.ts', 'src/b.ts'].sort())
     expect(full.symbols.some((s) => s.name === 'alpha')).toBe(true)
 
@@ -36,7 +33,7 @@ describe('incremental code index', () => {
       'export function alphaRenamed() { return 1 }\n',
       'utf8'
     )
-    const patched = await patchCodeIndexFiles(ws, ['src/a.ts'])
+    const patched = await patchWorkspaceIndex(ws, indexPath, ['src/a.ts'])
     expect(patched.files.sort()).toEqual(['src/a.ts', 'src/b.ts'].sort())
     expect(patched.symbols.some((s) => s.name === 'alphaRenamed')).toBe(true)
     expect(patched.symbols.some((s) => s.name === 'beta')).toBe(true)
@@ -44,6 +41,6 @@ describe('incremental code index', () => {
 
     const disk = JSON.parse(readFileSync(join(ws, '.eris', 'code-index.json'), 'utf8'))
     expect(disk.files).toContain('src/b.ts')
-    expect(loadCodeIndex(ws)?.symbols.some((s) => s.name === 'alphaRenamed')).toBe(true)
+    expect(disk.symbols.some((s: { name: string }) => s.name === 'alphaRenamed')).toBe(true)
   })
 })

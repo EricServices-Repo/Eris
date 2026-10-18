@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import MonacoEditor, { monaco } from 'react-monaco-editor'
+import { monaco } from 'react-monaco-editor'
 import type { editor as MonacoEditorNS } from 'monaco-editor'
 import type { AppSettings } from '@/shared/settings-schema'
 import type { PendingDiff } from '@/features/chat/DiffReview'
-import { lineChanges } from '@/shared/line-diff'
+import { computeLineChanges } from './diff-client'
+import { DocumentEditor, disposeClosedModels } from './DocumentEditor'
 
 export interface OpenTab {
   path: string
@@ -11,6 +12,7 @@ export interface OpenTab {
   content: string
   language: string
   dirty: boolean
+  loaded?: boolean
 }
 
 interface Props {
@@ -46,6 +48,18 @@ export function EditorArea({
   breakpoints = []
 }: Props) {
   const active = tabs.find((t) => t.path === activePath) ?? null
+  const activeRef = useRef(active)
+  activeRef.current = active
+  const runtimeRef = useRef({
+    onToggleBreakpoint,
+    settings,
+    requestTabComplete: () => {},
+    acceptGhost: () => {}
+  })
+  const diffGeneration = useRef(0)
+  useEffect(() => {
+    disposeClosedModels(tabs.map((tab) => tab.path))
+  }, [tabs])
   const editorRef = useRef<MonacoEditorNS.IStandaloneCodeEditor | null>(null)
   const [editOpen, setEditOpen] = useState(false)
   const [editInstruction, setEditInstruction] = useState('')
@@ -108,22 +122,25 @@ export function EditorArea({
     [activePath]
   )
 
-  const applyDiagnostics = useCallback(async (path: string) => {
-    try {
-      const result = await window.ide.getDiagnostics()
-      const rel = path.includes('/') ? path.split('/').slice(-3).join('/') : path
-      const forFile = result.diagnostics.filter(
-        (d) =>
-          path.endsWith(d.path) ||
-          d.path === path ||
-          path.endsWith('/' + d.path) ||
-          rel.endsWith(d.path)
-      )
-      applyMarkerList(path, forFile, 'eris-tsc')
-    } catch {
-      // optional
-    }
-  }, [applyMarkerList])
+  const applyDiagnostics = useCallback(
+    async (path: string) => {
+      try {
+        const result = await window.ide.getDiagnostics()
+        const rel = path.includes('/') ? path.split('/').slice(-3).join('/') : path
+        const forFile = result.diagnostics.filter(
+          (d) =>
+            path.endsWith(d.path) ||
+            d.path === path ||
+            path.endsWith('/' + d.path) ||
+            rel.endsWith(d.path)
+        )
+        applyMarkerList(path, forFile, 'eris-tsc')
+      } catch {
+        // optional
+      }
+    },
+    [applyMarkerList]
+  )
 
   useEffect(() => {
     return window.ide.onLspDiagnostics(({ path, diagnostics }) => {
@@ -135,7 +152,8 @@ export function EditorArea({
     const ed = editorRef.current
     if (!ed || !active) return
     const forFile = breakpoints.filter(
-      (b) => active.path.endsWith(b.path) || b.path === active.path || active.path.endsWith('/' + b.path)
+      (b) =>
+        active.path.endsWith(b.path) || b.path === active.path || active.path.endsWith('/' + b.path)
     )
     bpDecorationRef.current = ed.deltaDecorations(
       bpDecorationRef.current,
@@ -150,7 +168,8 @@ export function EditorArea({
     )
   }, [active, breakpoints])
 
-  const syncPatchDecorations = useCallback(() => {
+  const syncPatchDecorations = useCallback(async () => {
+    const generation = ++diffGeneration.current
     const ed = editorRef.current
     if (!ed || !active || !pendingPatch || pendingPatch.status !== 'pending') {
       if (ed) {
@@ -170,7 +189,19 @@ export function EditorArea({
       return
     }
     // Highlight changed lines roughly by comparing before/after line counts
-    const changes = lineChanges(pendingPatch.before ?? '', pendingPatch.after || '')
+    let changes
+    try {
+      changes = await computeLineChanges(pendingPatch.before ?? '', pendingPatch.after || '')
+    } catch {
+      setCompleteHint('Patch preview unavailable')
+      return
+    }
+    if (
+      generation !== diffGeneration.current ||
+      editorRef.current !== ed ||
+      activeRef.current?.path !== active.path
+    )
+      return
     const decorations: MonacoEditorNS.IModelDeltaDecoration[] = []
     ed.changeViewZones((accessor) => {
       for (const id of hunkZoneRef.current) accessor.removeZone(id)
@@ -247,9 +278,7 @@ export function EditorArea({
       startLineNumber: sel.endLineNumber,
       startColumn: sel.endColumn,
       endLineNumber: Math.min(model.getLineCount(), sel.endLineNumber + 12),
-      endColumn: model.getLineMaxColumn(
-        Math.min(model.getLineCount(), sel.endLineNumber + 12)
-      )
+      endColumn: model.getLineMaxColumn(Math.min(model.getLineCount(), sel.endLineNumber + 12))
     })
     setEditBusy(true)
     setEditError(null)
@@ -277,55 +306,63 @@ export function EditorArea({
     }
   }, [active, editInstruction, onChange])
 
-  const requestTabComplete = useCallback(async (opts?: { quiet?: boolean }) => {
-    const ed = editorRef.current
-    if (!ed || !active) return
-    const model = ed.getModel()
-    const pos = ed.getPosition()
-    if (!model || !pos) return
-    // Skip when there is a selection (user is not mid-type)
-    const sel = ed.getSelection()
-    if (sel && !sel.isEmpty()) return
-    const offset = model.getOffsetAt(pos)
-    const value = model.getValue()
-    if (value.trim().length < 2) return
-    clearGhost()
-    const requestId = `c-${++completeReqRef.current}`
-    if (!opts?.quiet) setCompleteHint('Completing…')
-    void window.ide.aiCompleteCancel()
-    const result = await window.ide.aiComplete({
-      path: active.path,
-      language: active.language,
-      prefix: value.slice(0, offset),
-      suffix: value.slice(offset),
-      requestId
-    })
-    if (requestId !== `c-${completeReqRef.current}`) return
-    if (!result.ok || !result.text) {
-      if (!opts?.quiet) {
-        setCompleteHint(result.error || 'No suggestion')
-        setTimeout(() => setCompleteHint(null), 2500)
+  const requestTabComplete = useCallback(
+    async (opts?: { quiet?: boolean }) => {
+      const ed = editorRef.current
+      if (!ed || !active) return
+      const model = ed.getModel()
+      const pos = ed.getPosition()
+      if (!model || !pos) return
+      // Skip when there is a selection (user is not mid-type)
+      const sel = ed.getSelection()
+      if (sel && !sel.isEmpty()) return
+      const offset = model.getOffsetAt(pos)
+      const value = model.getValue()
+      if (value.trim().length < 2) return
+      clearGhost()
+      const requestId = `c-${++completeReqRef.current}`
+      if (!opts?.quiet) setCompleteHint('Completing…')
+      void window.ide.aiCompleteCancel()
+      const result = await window.ide.aiComplete({
+        path: active.path,
+        language: active.language,
+        prefix: value.slice(0, offset),
+        suffix: value.slice(offset),
+        requestId
+      })
+      if (requestId !== `c-${completeReqRef.current}`) return
+      if (!result.ok || !result.text) {
+        if (!opts?.quiet) {
+          setCompleteHint(result.error || 'No suggestion')
+          setTimeout(() => setCompleteHint(null), 2500)
+        }
+        return
       }
-      return
-    }
-    // Cursor may have moved — re-check
-    const posNow = ed.getPosition()
-    if (!posNow) return
-    ghostRef.current = result.text
-    const preview = result.text.split('\n')[0] || result.text
-    decorationRef.current = ed.deltaDecorations(decorationRef.current, [
-      {
-        range: new monaco.Range(posNow.lineNumber, posNow.column, posNow.lineNumber, posNow.column),
-        options: {
-          after: {
-            content: preview.slice(0, 80) + (result.text.includes('\n') ? '…' : ''),
-            inlineClassName: 'eris-ghost-text'
+      // Cursor may have moved — re-check
+      const posNow = ed.getPosition()
+      if (!posNow) return
+      ghostRef.current = result.text
+      const preview = result.text.split('\n')[0] || result.text
+      decorationRef.current = ed.deltaDecorations(decorationRef.current, [
+        {
+          range: new monaco.Range(
+            posNow.lineNumber,
+            posNow.column,
+            posNow.lineNumber,
+            posNow.column
+          ),
+          options: {
+            after: {
+              content: preview.slice(0, 80) + (result.text.includes('\n') ? '…' : ''),
+              inlineClassName: 'eris-ghost-text'
+            }
           }
         }
-      }
-    ])
-    setCompleteHint('Tab to accept · Esc to dismiss')
-  }, [active, clearGhost])
+      ])
+      setCompleteHint('Tab to accept · Esc to dismiss')
+    },
+    [active, clearGhost]
+  )
 
   const scheduleInlineSuggest = useCallback(() => {
     if (!settings.editor.inlineSuggest) return
@@ -358,6 +395,22 @@ export function EditorArea({
     setTimeout(() => setCompleteHint(null), 1200)
     return true
   }, [active, clearGhost, onChange])
+
+  runtimeRef.current = {
+    onToggleBreakpoint,
+    settings,
+    requestTabComplete: () => {
+      void requestTabComplete()
+    },
+    acceptGhost: () => {
+      acceptGhost()
+    }
+  }
+  useEffect(() => {
+    completeReqRef.current++
+    clearGhost()
+    if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current)
+  }, [activeTabPath, clearGhost])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -474,23 +527,26 @@ export function EditorArea({
             >
               Accept
             </button>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => onRejectPatch?.(pendingPatch.id)}
-            >
+            <button type="button" className="btn" onClick={() => onRejectPatch?.(pendingPatch.id)}>
               Reject
             </button>
           </div>
         </div>
       )}
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-        {active && (
-          <MonacoEditor
-            key={active.path}
+        {active?.loaded === false && <div className="editor-empty">Loading file…</div>}
+        {active && active.loaded !== false && (
+          <DocumentEditor
+            path={active.path}
+            dirty={active.dirty}
+            editorWillUnmount={() => {
+              editorRef.current = null
+            }}
             language={active.language}
             theme={settings.editor.theme}
-            value={showPatchBar && pendingPatch?.before != null ? pendingPatch.before : active.content}
+            value={
+              showPatchBar && pendingPatch?.before != null ? pendingPatch.before : active.content
+            }
             onChange={(value) => {
               if (showPatchBar) return
               clearGhost()
@@ -511,29 +567,39 @@ export function EditorArea({
               for (const d of disposablesRef.current) d.dispose()
               disposablesRef.current = []
 
-              void window.ide.lspDidOpen({
-                path: active.path,
-                language: active.language,
-                text: editor.getValue()
-              })
-
               editor.onMouseDown((e) => {
                 if (
                   e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN &&
                   e.target.position &&
-                  onToggleBreakpoint
+                  runtimeRef.current.onToggleBreakpoint
                 ) {
-                  onToggleBreakpoint(active.path, e.target.position.lineNumber)
+                  runtimeRef.current.onToggleBreakpoint(
+                    activeRef.current!.path,
+                    e.target.position.lineNumber
+                  )
                 }
               })
 
-              const lang = active.language || 'typescript'
+              const lang = [
+                'typescript',
+                'javascript',
+                'python',
+                'go',
+                'rust',
+                'json',
+                'html',
+                'css',
+                'plaintext',
+                'shell',
+                'markdown',
+                'yaml'
+              ]
 
               disposablesRef.current.push(
                 monaco.languages.registerHoverProvider(lang, {
                   provideHover: async (model, position) => {
                     const lsp = await window.ide.lspHover({
-                      path: active.path,
+                      path: model.uri.fsPath,
                       line: position.lineNumber,
                       character: position.column
                     })
@@ -550,7 +616,7 @@ export function EditorArea({
                     }
                     const word = model.getWordAtPosition(position)
                     if (!word) return null
-                    const hover = await window.ide.languageHover(active.path, word.word)
+                    const hover = await window.ide.languageHover(model.uri.fsPath, word.word)
                     if (!hover.contents) return null
                     return {
                       range: new monaco.Range(
@@ -569,7 +635,7 @@ export function EditorArea({
                 monaco.languages.registerDefinitionProvider(lang, {
                   provideDefinition: async (model, position) => {
                     const lsp = await window.ide.lspDefinition({
-                      path: active.path,
+                      path: model.uri.fsPath,
                       line: position.lineNumber,
                       character: position.column
                     })
@@ -582,9 +648,9 @@ export function EditorArea({
                     }
                     if (!loc) return null
                     const sameFile =
-                      active.path.endsWith(loc.path) ||
-                      active.path.endsWith('/' + loc.path) ||
-                      loc.path === active.path
+                      model.uri.fsPath.endsWith(loc.path) ||
+                      model.uri.fsPath.endsWith('/' + loc.path) ||
+                      loc.path === model.uri.fsPath
                     if (!sameFile) {
                       window.dispatchEvent(
                         new CustomEvent('eris:goto', {
@@ -606,7 +672,7 @@ export function EditorArea({
                   triggerCharacters: ['.', '"', "'", '/', '@'],
                   provideCompletionItems: async (model, position) => {
                     const lsp = await window.ide.lspCompletion({
-                      path: active.path,
+                      path: model.uri.fsPath,
                       line: position.lineNumber,
                       character: position.column
                     })
@@ -640,7 +706,7 @@ export function EditorArea({
                   const pos = editor.getPosition()
                   if (!model || !pos) return
                   const lsp = await window.ide.lspDefinition({
-                    path: active.path,
+                    path: model.uri.fsPath,
                     line: pos.lineNumber,
                     character: pos.column
                   })
@@ -666,15 +732,15 @@ export function EditorArea({
 
               editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.Backslash, () => {
                 if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current)
-                void requestTabComplete()
+                void runtimeRef.current.requestTabComplete()
               })
               editor.addCommand(monaco.KeyCode.Tab, () => {
                 if (ghostRef.current) {
-                  acceptGhost()
+                  runtimeRef.current.acceptGhost()
                   return
                 }
                 editor.trigger('keyboard', 'type', {
-                  text: ' '.repeat(settings.editor.tabSize || 2)
+                  text: ' '.repeat(runtimeRef.current.settings.editor.tabSize || 2)
                 })
               })
               editor.addCommand(monaco.KeyCode.Escape, () => {

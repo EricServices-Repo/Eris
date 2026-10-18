@@ -290,6 +290,9 @@ export interface ChatThread {
   title: string
   model: string
   messages: ChatMessage[]
+  /** Position of the first loaded message; omitted means a complete transcript. */
+  messageOffset?: number
+  messageCount?: number
   updatedAt: number
   createdAt: number
 }

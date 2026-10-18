@@ -50,11 +50,11 @@ export function registerBackgroundAgentsIpc(): void {
           routeReason: 'Cloud · agents.ericservic.es:443 (https)'
         })
         try {
-          let thread = threadId ? getChat(appState.currentWorkspace, threadId) : null
+          let thread = threadId ? await getChat(appState.currentWorkspace, threadId) : null
           if (!thread) {
-            thread = createChat(appState.currentWorkspace, job.model || 'builtin:composer-lite')
+            thread = await createChat(appState.currentWorkspace, job.model || 'builtin:composer-lite')
           }
-          const saved = appendMessage(
+          const saved = await appendMessage(
             appState.currentWorkspace,
             thread.id,
             'assistant',

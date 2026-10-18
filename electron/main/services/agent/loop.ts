@@ -2208,12 +2208,12 @@ export async function* runAgentWithWorkspaceTools(options: {
         result = { ok: globbed.ok, detail: globbed.detail, mutated: false }
       } else if (call.name === 'search_symbols') {
         const query = argString(call.args, 'query') || argString(call.args, 'pattern')
-        const found = findSymbols(workspacePath, query)
+        const found = await findSymbols(workspacePath, query)
         result = { ok: found.ok, detail: found.detail, mutated: false }
       } else if (call.name === 'find_references') {
         const name =
           argString(call.args, 'name') || argString(call.args, 'query') || argString(call.args, 'symbol')
-        const found = findReferences(workspacePath, name)
+        const found = await findReferences(workspacePath, name)
         result = { ok: found.ok, detail: found.detail, mutated: false }
       } else if (call.name === 'semantic_search') {
         const query =
@@ -2222,7 +2222,7 @@ export async function* runAgentWithWorkspaceTools(options: {
         result = { ok: retrieved.ok, detail: retrieved.detail, mutated: false }
       } else if (call.name === 'related_files') {
         const path = argString(call.args, 'path') || argString(call.args, 'file')
-        const related = relatedFiles(workspacePath, path)
+        const related = await relatedFiles(workspacePath, path)
         result = { ok: related.ok, detail: related.detail, mutated: false }
       } else if (call.name === 'retrieve') {
         const query =

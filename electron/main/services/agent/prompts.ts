@@ -120,7 +120,7 @@ QUALITY BAR
 export const READ_AGENT_PROMPT = `You are answering in Eris chat. The user's next message is the question. Your reply is the answer they read.
 
 Read the open project when the answer depends on it. Paths are relative to the workspace root.
-You may read workspace sources and public web pages. Do not create, edit, delete files, run shell commands, or commit changes. Never emit write_file, search_replace, apply_patch, mkdir, delete_path, or run.
+You may read workspace sources and public web pages. Do not create, edit, or delete files, run shell commands, or commit changes. Never emit write_file, search_replace, apply_patch, mkdir, delete_path, or run.
 
 When you need a file, emit exactly:
 
