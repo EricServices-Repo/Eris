@@ -1,3 +1,5 @@
+import { generateImage, saveImageToWorkspace } from '../image-generation'
+import { ImageSizeSchema } from '../../../../src/shared/image-generation-schema'
 import { existsSync, readFileSync, realpathSync, statSync } from 'fs'
 import { asksForRecommendations, asksWhatTheProjectDoes, needsWebLookup } from '../../../../src/shared/agent-contract'
 import { isToolLogReply } from '../../../../src/shared/posted-answer'
@@ -29,6 +31,7 @@ import {
 } from '../tool-registry'
 import {
   createCheckpoint,
+  recordBinaryCreateOp,
   getCheckpointOpCount,
   pruneOldCheckpoints,
   recordDeleteOp,
@@ -2009,6 +2012,35 @@ export async function* runAgentWithWorkspaceTools(options: {
           mutated: false
         }
         yield { type: 'thinking', text: `\n\n— Command denied by user: ${approvalCommand}\n` }
+      } else if (call.name === 'generate_image') {
+        try {
+          const destination = argString(call.args, 'path')
+          const target = resolveInWorkspace(workspacePath, destination)
+          if (!destination.toLowerCase().endsWith('.png') || existsSync(target)) {
+            throw new Error('Image destination must be a new .png file')
+          }
+          yield { type: 'status', text: 'Generating image…' }
+          const asset = await generateImage({
+            request: {
+              requestId: `image:${checkpoint.id}:${id}`,
+              prompt: argString(call.args, 'prompt'),
+              size: call.args.size == null ? undefined : ImageSizeSchema.parse(call.args.size)
+            },
+            settings: options.settings, getSecret: options.getSecret, signal: options.signal
+          })
+          await saveImageToWorkspace(workspacePath, asset.id, destination)
+          const relativePath = toWorkspaceRelative(workspacePath, target)
+          const record = recordBinaryCreateOp(workspacePath, checkpoint.id, relativePath)
+          yield { type: 'asset', asset: { ...asset, path: relativePath } }
+          yield { type: 'diff', diff: {
+            checkpointId: checkpoint.id, opIndex: record.ops.length - 1,
+            path: relativePath, before: null, after: `Generated PNG: ${asset.width} × ${asset.height}`, op: 'binary'
+          } }
+          result = { ok: true, detail: `Created ${relativePath} (${asset.width} × ${asset.height} PNG, ${asset.bytes} bytes). Use this path in the application.`, mutated: true, path: relativePath }
+        } catch (error) {
+          if (options.signal?.aborted) throw error
+          result = { ok: false, detail: error instanceof Error ? error.message : 'Image generation failed', mutated: false }
+        }
       } else if (call.name === 'run') {
         const command = argString(call.args, 'command')
         if (!command) {

@@ -4,6 +4,7 @@ import { userDataRoot } from './paths'
 
 /** Workspace-layer settings a cloned repo must not apply until the user trusts the folder. */
 export const RISKY_WORKSPACE_SETTINGS: Array<{ path: string[]; label: string }> = [
+  { path: ['images'], label: 'Configure image generation and its provider' },
   { path: ['mcp', 'servers'], label: 'Start MCP servers (runs local commands)' },
   {
     path: ['models', 'connections'],

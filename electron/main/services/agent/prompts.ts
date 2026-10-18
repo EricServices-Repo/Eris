@@ -52,6 +52,8 @@ WHEN TO USE WHICH TOOL
    New files / full rewrites → write_file (complete file body).
    Before changing any existing file, read it with read_file; notebooks require notebook_read. The edit tools enforce this.
    Folders → mkdir. Moves → rename_path. Deletes → delete_path.
+4) Image assets
+   Use generate_image for raster artwork. Supply a detailed prompt and a new .png path. Use the returned path in the application. Never fabricate a generated image or write binary data with write_file. If generation is disabled or fails, explain that clearly.
 4) Verify
    run with npm test / typecheck / build / start as appropriate. Fix failures with more tools.
 5) Git

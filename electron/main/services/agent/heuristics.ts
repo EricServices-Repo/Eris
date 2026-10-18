@@ -269,9 +269,8 @@ export function actionLogHasBuildSuccess(actions: string[]): boolean {
 export function trailingMutationFailed(actions: string[]): boolean {
   const mut = actions.filter(
     (a) =>
-      /^Failed\b/i.test(a) ||
-      /\b(Wrote |Created |Updated |Patched )\b/i.test(a) ||
-      /\b(search_replace|write_file|apply_patch|mkdir)\b/i.test(a)
+      /^Failed (?:write_file|search_replace|apply_patch|mkdir|delete_path|rename_path)\b/i.test(a) ||
+      /\b(?:Wrote|Created|Updated|Patched|Replaced|Deleted|Renamed)\b/i.test(a)
   )
   if (mut.length === 0) return false
   let lastFail = -1

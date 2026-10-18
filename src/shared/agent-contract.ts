@@ -99,6 +99,12 @@ export function asksWhatTheProjectDoes(text: string): boolean {
 export function asksToImplementChanges(text: string): boolean {
   const t = text.trim()
   if (!t) return false
+  if (
+    /^(?:verify|validate|test|check|confirm)\b/i.test(t) &&
+    !/\b(?:and|then)\s+(?:implement|apply|fix|update|change|edit|code|write)\b/i.test(t)
+  ) {
+    return false
+  }
   return (
     /\b(?:code|implement|apply|write|build|make|add)\b[\s\S]{0,48}\b(?:these|those|the|above|recommended|suggested)?\s*(?:changes?|improvements?|fixes?)\b/i.test(
       t
@@ -195,7 +201,7 @@ export function asksWorkspaceQuestion(text: string, fileNames: string[] = []): b
   if (
     /\b(this|that|the|my|our)\s+(project|repo|repository|workspace|codebase|app|application|folder|file|code|component|function|service|api)\b/i.test(t) ||
     /\b(where is|which file|what file|find (?:the )?(?:file|function|class|component)|in the (?:repo|project|workspace))\b/i.test(t) ||
-    /\b(function|class|method|component|hook|module|service|route|endpoint|config|stack trace|test failure|build error|source code|bug|exception|crash(?:es|ed|ing)?|fail(?:s|ed|ing)?|broken|not working|doesn't work|typescript|javascript|python|compile|compiler|import error)\b/i.test(t)
+    /\b(stack trace|test failure|build error|source code|bug|exception|crash(?:es|ed|ing)?|fail(?:s|ed|ing)?|broken|not working|doesn't work|compile error|compiler error|import error)\b/i.test(t)
   ) {
     return true
   }

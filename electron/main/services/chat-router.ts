@@ -1,3 +1,4 @@
+import { asksForImageGeneration } from '../../../src/shared/image-generation'
 import type {
   AgentDefinition,
   AgentToolsCeiling,
@@ -189,7 +190,19 @@ export function classifyIntent(text: string, mode: 'ask' | 'agent', fileNames: s
     return 'run'
   }
 
+  if (asksForImageGeneration(t)) return 'edit'
   if (asksToImplementChanges(t)) return 'edit'
+  // In Agent mode, natural implementation requests such as “show me how to add”
+  // and “I need to implement … how would you approach it?” must reach Composer.
+  // Routing them as explore/verify creates an impossible read-only loop because
+  // the completion gate correctly expects the requested code mutation.
+  if (
+    /\b(?:show me how to|help me(?:\s+to)?|i need to|i(?:'m| am) trying to|how (?:do|can|would) (?:i|you))\b[\s\S]{0,64}\b(?:add|build|create|develop|generate|implement|introduce|write)\b/i.test(
+      t
+    )
+  ) {
+    return 'edit'
+  }
   if (asksForPlan(t)) return 'plan'
   if (asksForVerification(t)) return 'verify'
 
@@ -238,7 +251,8 @@ export function classifyIntent(text: string, mode: 'ask' | 'agent', fileNames: s
   }
 
   if (
-    /\b(where is|find|locate|search|grep|look (at|for)|show me|open)\b/i.test(t) ||
+    /\b(where is|which file|what file|find|locate|grep|look (at|for)|show me|open)\b/i.test(t) ||
+    /\bsearch\s+(?:for|in|the|this|my|our)\b/i.test(t) ||
     /\b(explore|inspect|list files|tree)\b/i.test(t) ||
     /\bwhat (files?|does|is in)\b/i.test(t)
   ) {

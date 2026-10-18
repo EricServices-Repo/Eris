@@ -1,3 +1,4 @@
+import { asksForImageGeneration } from '../../../src/shared/image-generation'
 import { ipcMain } from 'electron'
 import { getResolvedSettings, setSettings } from '../services/settings'
 import { planChatTurn, turnPlanToRouteResult, localComposerFullActive } from '../services/chat-router'
@@ -350,6 +351,7 @@ export function registerChatStreamIpc(): void {
           (settings.agent.routing.profile ?? 'auto') !== 'local' &&
           settings.agent.routing.preferCloudComposer !== false
         const wantCloudInline =
+          !asksForImageGeneration(userText) &&
           (mode ?? 'agent') === 'agent' &&
           turnPlan.mode === 'agent' &&
           Boolean(appState.currentWorkspace) &&
@@ -654,7 +656,9 @@ export function registerChatStreamIpc(): void {
             }
           } else {
             flushStreamChunks()
-            if (evt.type === 'tool') {
+            if (evt.type === 'asset') {
+              event.sender.send('chat:asset', { requestId, asset: evt.asset })
+            } else if (evt.type === 'tool') {
               event.sender.send('chat:tool', { requestId, tool: evt.tool })
             } else if (evt.type === 'diff') {
               telemetryMutated = true

@@ -73,6 +73,11 @@ export function getToolContract(name: string): ToolContract | undefined {
 
 /** Built-in workspace tools exposed via native tool calling. */
 export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
+  tool('generate_image', 'Generate a PNG image using the configured local Hugging Face model or image API automatically and save it to a NEW workspace path. Never use write_file for binary images. The provider must be enabled in Settings. Existing files are never overwritten.', {
+    prompt: { type: 'string', minLength: 1, maxLength: 16000 },
+    path: pathProp,
+    size: { type: 'string', enum: ['512x512', '768x512', '512x768', '1024x1024', '1536x1024', '1024x1536'] }
+  }, ['prompt', 'path'], { access: 'edit', effect: 'workspace' }),
   tool('tree', 'List a directory tree', { path: pathProp, maxDepth: { type: 'number' } }, [
     'path'
   ]),

@@ -15,6 +15,7 @@ import { workspaceConfigDir } from './paths'
 import { resolveInWorkspace, toWorkspaceRelative } from './workspace-fs'
 
 export type CheckpointFileOp =
+  | { kind: 'binary-create'; path: string }
   | { kind: 'write'; path: string; before: string | null; after: string }
   | { kind: 'delete'; path: string; before: string; wasDirectory: boolean }
   | { kind: 'rename'; from: string; to: string; before: string | null }
@@ -147,8 +148,22 @@ export function recordMkdirOp(
   return record
 }
 
+/** Generated images are new files; undo removes the binary without interpreting it as text. */
+export function recordBinaryCreateOp(workspacePath: string, checkpointId: string, path: string): CheckpointRecord {
+  const record = loadCheckpoint(workspacePath, checkpointId)
+  if (!record) throw new Error('Checkpoint not found')
+  record.ops.push({ kind: 'binary-create', path: toWorkspaceRelative(workspacePath, resolveInWorkspace(workspacePath, path)) })
+  saveRecord(record)
+  return record
+}
+
 function applyReverseOp(workspacePath: string, op: CheckpointFileOp): boolean {
   try {
+    if (op.kind === 'binary-create') {
+      const abs = resolveInWorkspace(workspacePath, op.path)
+      if (existsSync(abs)) unlinkSync(abs)
+      return true
+    }
     if (op.kind === 'write') {
       const abs = resolveInWorkspace(workspacePath, op.path)
       if (op.before == null) {

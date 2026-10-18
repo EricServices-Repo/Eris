@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1 — 2026-10-18
+
+- Added local Hugging Face image generation with automatic model selection, runtime setup, model downloads, and agent tool integration.
+
 ## 0.2.67 — 2026-10-18
 
 Cross-platform desktop builds (macOS + Windows) from the same version tag.

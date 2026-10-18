@@ -1,3 +1,4 @@
+import type { GeneratedImageAsset } from '../../../../src/shared/image-generation'
 export type AgentChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
 export type AgentMode = 'ask' | 'agent'
 
@@ -20,10 +21,11 @@ export type AgentDiffEvent = {
   path: string
   before: string | null
   after: string
-  op: 'write' | 'delete' | 'rename' | 'mkdir'
+  op: 'write' | 'delete' | 'rename' | 'mkdir' | 'binary'
 }
 
 export type AgentRunnerEvent =
+  | { type: 'asset'; asset: GeneratedImageAsset }
   | { type: 'thinking'; text: string }
   | { type: 'answer'; text: string; replace?: boolean }
   | { type: 'tool'; tool: AgentToolEvent }
