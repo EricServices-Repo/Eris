@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.67 — 2026-10-18
+
+- Fixed local-model context sizing, repeated agent tool loops, and empty-project scaffolding recovery.
+
 ## 0.2.66 — 2026-10-18
 
 Cross-platform desktop builds (macOS + Windows) from the same version tag.
