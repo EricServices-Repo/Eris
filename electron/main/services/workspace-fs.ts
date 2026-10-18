@@ -342,11 +342,15 @@ function applyHunkLines(original: string, hunkBody: string): string {
   return original.replace(search, replace)
 }
 
-export function mkdirWorkspace(workspacePath: string, userPath: string): { path: string } {
+export function mkdirWorkspace(
+  workspacePath: string,
+  userPath: string
+): { path: string; created: boolean } {
   const abs = resolveInWorkspace(workspacePath, userPath)
+  const created = !existsSync(abs)
   mkdirSync(abs, { recursive: true })
-  invalidateWorkspaceTreeCache(workspacePath)
-  return { path: toWorkspaceRelative(workspacePath, abs) }
+  if (created) invalidateWorkspaceTreeCache(workspacePath)
+  return { path: toWorkspaceRelative(workspacePath, abs), created }
 }
 
 export function deleteWorkspacePath(

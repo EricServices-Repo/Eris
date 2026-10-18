@@ -44,6 +44,7 @@ import {
   contextLimits,
   REPLY_MAX_TOKENS,
   isMemoryError,
+  localPerformanceContextMax,
   modelLoadOptions
 } from './vram-fit'
 import { appState } from '../app-state'
@@ -846,13 +847,23 @@ export async function disposeRuntime(): Promise<void> {
   return enqueueRuntime(() => disposeRuntimeUnlocked())
 }
 
-function contextPlan(entry: BuiltinModelManifestEntry): { min: number; max: number } {
-  return contextLimits({
+function contextPlan(
+  entry: BuiltinModelManifestEntry,
+  vramBudgetBytes?: number
+): { min: number; max: number } {
+  const limits = contextLimits({
     tier: entry.tier,
     role: entry.role,
     modelContext: entry.contextWindow,
     settingsContext: getResolvedSettings(appState.currentWorkspace).models.contextWindow
   })
+  if (entry.role !== 'local') return limits
+  const max = localPerformanceContextMax({
+    requested: limits.max,
+    modelBytes: entry.approxBytes,
+    vramBudgetBytes
+  })
+  return { min: Math.min(limits.min, max), max }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -914,7 +925,7 @@ async function ensureRuntimeInProcess(
       gpuStatus.backendDeviceName
     )
 
-    const plan = contextPlan(entry)
+    const plan = contextPlan(entry, gpuStatus.vramBudgetBytes)
     logInfo('Loading builtin model (in-process)', {
       path: modelPath,
       gpu: llama.gpu,
@@ -976,10 +987,10 @@ async function ensureWorkerModel(
     )
   }
   const requestId = `load-${Date.now()}`
-  const plan = contextPlan(entry)
   const preferEgpu =
     getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
   const { status: gpuStatus } = await applyLlamaGpuPreference(preferEgpu)
+  const plan = contextPlan(entry, gpuStatus.vramBudgetBytes)
   logInfo('Loading builtin model (utilityProcess)', {
     path: modelPath,
     egpu: gpuStatus.egpu?.name || null,
