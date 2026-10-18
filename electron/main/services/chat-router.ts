@@ -21,6 +21,7 @@ import { learnedRouteFor, readRoutingCorrections, routingExamples } from './rout
 import {
   agentForFollowUp,
   asksForRecommendations,
+  asksToImplementChanges,
   asksWhatTheProjectDoes,
   asksWorkspaceQuestion,
   isConversationFollowUp,
@@ -176,6 +177,7 @@ export function classifyIntent(text: string, mode: 'ask' | 'agent', fileNames: s
   if (asksWhatTheProjectDoes(t)) return 'explore'
 
   // “What improvements should we make?” is a review list, not an edit.
+  if (asksToImplementChanges(t)) return 'edit'
   if (asksForRecommendations(t)) return 'review'
 
   // Improvements / polish count as edits even when the user also says "review".
@@ -683,6 +685,7 @@ export async function planChatTurn(options: {
       isConversationFollowUp(text) &&
       !intentNeedsTools(intent) &&
       !needsWebLookup(text) &&
+      !asksToImplementChanges(text) &&
       !/\b(fix|change|edit|implement|update|apply)\b/i.test(text)
     if (
       isContinuation &&
@@ -739,6 +742,30 @@ export async function planChatTurn(options: {
       reason: 'No agents configured',
       method: 'default',
       error: 'No agents configured'
+    }
+  }
+
+  // A mutating intent needs an agent that can actually mutate. A weak model
+  // router may choose Reviewer for a coding follow-up even after intent has
+  // been corrected to edit; never let that become an edit plan with read-only
+  // tools and a prompt that tells the worker not to edit.
+  const requiredMutationCeiling = intent === 'run' ? 'full' : 'edit'
+  if (
+    mode === 'agent' &&
+    intentNeedsMutation(intent) &&
+    CEILING_RANK[agent.tools ?? 'edit'] < CEILING_RANK[requiredMutationCeiling]
+  ) {
+    const editor =
+      roster.find((candidate) => candidate.enabled && candidate.id === 'composer') ||
+      roster.find(
+        (candidate) =>
+          candidate.enabled &&
+          CEILING_RANK[candidate.tools ?? 'edit'] >= CEILING_RANK[requiredMutationCeiling]
+      )
+    if (editor) {
+      agent = editor
+      llmAgentSelected = false
+      method = 'heuristic'
     }
   }
 

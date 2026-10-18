@@ -60,7 +60,7 @@ export function handoffFromMessages(
     'Previous agent turn in this chat:',
     last.content,
     files.length ? `Files cited: ${files.join(', ')}` : '',
-    'Continue from that turn. If the user says to fix or change it, edit those files. If they ask what changed, answer from that turn. Do not ask them to repeat it.'
+    'Continue from that turn. If the user asks to code, implement, apply, fix, or change any of those suggestions, edit the cited files. If they ask what changed, answer from that turn. Do not ask them to repeat it.'
   ]
     .filter(Boolean)
     .join('\n')

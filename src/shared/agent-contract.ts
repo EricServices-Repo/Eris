@@ -77,10 +77,23 @@ export function asksWhatTheProjectDoes(text: string): boolean {
   )
 }
 
+/** The user is asking to apply previously discussed changes, not list them. */
+export function asksToImplementChanges(text: string): boolean {
+  const t = text.trim()
+  if (!t) return false
+  return (
+    /\b(?:code|implement|apply|write|build|make)\b[\s\S]{0,48}\b(?:these|those|the|above|recommended|suggested)?\s*(?:changes?|improvements?|fixes?)\b/i.test(
+      t
+    ) ||
+    /\b(?:code|implement|apply|write|build|make)\s+(?:it|that|those|them|these)\b/i.test(t)
+  )
+}
+
 /** The user wants a list of improvements, not for the agent to apply them. */
 export function asksForRecommendations(text: string): boolean {
   const t = text.trim()
   if (!t) return false
+  if (asksToImplementChanges(t)) return false
   if (
     /\b(make|apply|implement)\s+(the\s+|some\s+|these\s+)?improvements?\b/i.test(t) &&
     !/\bwhat\b/i.test(t)
@@ -125,6 +138,7 @@ const BY_ID = new Map(CHAT_AGENT_CONTRACTS.map((c) => [c.id, c]))
 export function isConversationFollowUp(text: string): boolean {
   const t = text.trim()
   if (!t || t.length > 240 || asksWhatTheProjectDoes(t)) return false
+  if (asksToImplementChanges(t)) return true
   if (
     /^(and|also|then|continue|go on|keep going|do that|fix that|change that|update that|what about|how about)\b/i.test(
       t
@@ -146,7 +160,12 @@ export function agentForFollowUp(
 ): ChatAgentContract['id'] | null {
   if (!isConversationFollowUp(text)) return null
   if (/\bwhat did you (change|do|edit)\b/i.test(text)) return 'explainer'
-  if (/\b(fix|change|edit|implement|update|apply)\b/i.test(text)) return 'composer'
+  if (
+    asksToImplementChanges(text) ||
+    /\b(fix|change|edit|implement|update|apply)\b/i.test(text)
+  ) {
+    return 'composer'
+  }
   if (previousAgentId && BY_ID.has(previousAgentId as ChatAgentContract['id'])) {
     const id = previousAgentId as ChatAgentContract['id']
     return id === 'coder' ? 'composer' : id

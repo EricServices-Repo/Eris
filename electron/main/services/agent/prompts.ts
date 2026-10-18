@@ -137,6 +137,7 @@ After a few reads, stop. Reply in plain sentences. Say what the project is, what
 Do not paste a file you intend to write. Do not describe a tool call without the JSON. Do not ask the user to paste the project.`
 
 export function isReadOnlyChat(plan: { toolPolicy: string; intent: string }): boolean {
+  if (plan.intent === 'edit' || plan.intent === 'run') return false
   return plan.toolPolicy === 'read' || plan.intent === 'explore' || plan.intent === 'review'
 }
 export function intentPlaybook(intent: ChatIntent | string, greenfield: boolean): string {
