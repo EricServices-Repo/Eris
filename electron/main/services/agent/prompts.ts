@@ -1,4 +1,5 @@
 import type { AppSettings, ChatIntent, TurnPlan } from '../../../../src/shared/settings-schema'
+import { AGENT_HANDOFF_CHARS } from '../../../../src/shared/agent-orchestration'
 import { formatAvailableModelsPrompt } from '../model-catalog'
 import { formatMcpServersPrompt } from '../mcp'
 import { formatLiveMcpToolsPrompt } from '../mcp-runtime'
@@ -118,6 +119,7 @@ When you need a file, emit exactly:
 
 Allowed tools: tree, list_dir, read_file, grep, glob, retrieve, semantic_search, search_symbols, web_search, web_open.
 Prefer README, package.json, and the main source. Skip .eris config unless the user asked about Eris settings.
+If the user asks about the internet, the web, or who someone is, call web_search, then web_open one https result. The reply may only state facts from those results. If they do not identify the person, say so. Do not invent a biography or a workspace path from a person's name.
 A Reviewer may also run npm test or the project typecheck. Nobody else runs shell commands.
 
 After a few reads, stop. Reply in plain sentences. Say what the project is, what it does, or what you found, and cite paths.
@@ -139,14 +141,18 @@ export function intentPlaybook(intent: ChatIntent | string, greenfield: boolean)
       return (
         `REVIEW PLAYBOOK — (1) tree or retrieve to orient, (2) read_file on the important sources, ` +
         `(3) optionally run tests/typecheck, (4) answer in chat: blockers, risks, suggestions, nits. ` +
-        `Cite paths. Do not edit. Never ask the user for the folder structure or to paste files.`
+        `Cite paths. Do not edit. If the user asked what improvements to make, list them and do not implement them. ` +
+        `Never ask the user for the folder structure or to paste files.`
       )
     case 'explore':
       return (
         `EXPLORE PLAYBOOK — (1) retrieve / grep / semantic_search / glob to locate, ` +
         `(2) read_file the hits, (3) answer from what you found with concrete paths and symbols. ` +
         `If asked what the project does, read README, package.json, or the main source — not only .eris config — ` +
-        `then describe what it is, what it does, and the important files. Do not edit. Do not invent APIs or file contents.`
+        `then describe what it is, what it does, and the important files. ` +
+        `If the question is about the internet or who someone is, web_search then web_open one https page, ` +
+        `and answer only with facts from that page. If the page does not identify them, say so. ` +
+        `Do not edit. Do not invent APIs, file contents, a biography, or a path named after a person.`
       )
     case 'edit':
       return (
@@ -183,8 +189,8 @@ export function buildWorkspaceToolsSystem(
   } catch {
     tree = '(unable to list tree)'
   }
-  // Keep the injected tree modest so small-context models still have room for tools
-  if (tree.length > 2500) tree = `${tree.slice(0, 2500)}\n…`
+  // Keep the injected tree long enough for the next agent to use it.
+  if (tree.length > AGENT_HANDOFF_CHARS) tree = `${tree.slice(0, AGENT_HANDOFF_CHARS)}\n…`
   const parts = [
     systemPrompt,
     `WORKSPACE`,

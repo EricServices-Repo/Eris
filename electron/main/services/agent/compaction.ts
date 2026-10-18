@@ -1,13 +1,13 @@
 import type { AppSettings } from '../../../../src/shared/settings-schema'
+import { AGENT_HANDOFF_CHARS } from '../../../../src/shared/agent-orchestration'
 import { findBuiltinEntry, isBuiltinRef } from '../builtin-model'
 import { truncateForModel } from './prompts'
 import { collectModelText } from './stream'
 import type { AgentChatMessage } from './types'
+import { contextLimits } from '../vram-fit'
 
 /** Keep this many non-system messages verbatim after compaction. */
 const COMPACT_TAIL_MESSAGES = 5
-/** Soft message-count trigger (also used with token budget). */
-const COMPACT_MESSAGE_SOFT_LIMIT = 14
 /** Fraction of model context reserved for prompt before compacting. */
 const COMPACT_BUDGET_RATIO = 0.65
 
@@ -23,7 +23,7 @@ export function buildWorkSummary(goal: string, actions: string[], workerNote: st
     for (const a of uniqueActions) lines.push(`• ${a}`)
   } else if (workerNote.trim()) {
     lines.push('')
-    lines.push(workerNote.trim().slice(0, 600))
+    lines.push(workerNote.trim().slice(0, AGENT_HANDOFF_CHARS))
   } else {
     lines.push('Done.')
   }
@@ -37,12 +37,17 @@ function estimateTokens(messages: AgentChatMessage[]): number {
   return Math.ceil(chars / 4)
 }
 
-/** Prompt budget before compaction — mirrors builtin 4k/8k; uses settings for cloud. */
+/** Prompt budget before compaction — same window the model was loaded with. */
 export function contextBudgetTokens(settings: AppSettings, workerModel: string): number {
   if (isBuiltinRef(workerModel)) {
     const entry = findBuiltinEntry(workerModel)
-    const ctx = entry?.tier === 'lite' ? 4096 : 16384
-    return Math.floor(ctx * COMPACT_BUDGET_RATIO)
+    const limits = contextLimits({
+      tier: entry?.tier,
+      role: entry?.role,
+      modelContext: entry?.contextWindow,
+      settingsContext: settings.models.contextWindow
+    })
+    return Math.floor(limits.max * COMPACT_BUDGET_RATIO)
   }
   const window = settings.models.contextWindow || 32768
   return Math.floor(Math.min(Math.max(window, 2048), 128000) * COMPACT_BUDGET_RATIO)
@@ -54,7 +59,6 @@ export function needsContextCompaction(
   force: boolean
 ): boolean {
   if (force) return messages.length > 4
-  if (messages.length > COMPACT_MESSAGE_SOFT_LIMIT) return true
   return estimateTokens(messages) > budgetTokens
 }
 
@@ -75,14 +79,14 @@ function buildFallbackProgressSummary(
   priorMemory: string | null
 ): string {
   const parts: string[] = []
-  if (priorMemory?.trim()) parts.push(priorMemory.trim().slice(0, 1200))
-  parts.push(`Goal: ${goal.slice(0, 400)}`)
+  if (priorMemory?.trim()) parts.push(priorMemory.trim().slice(0, AGENT_HANDOFF_CHARS))
+  parts.push(`Goal: ${goal.slice(0, AGENT_HANDOFF_CHARS)}`)
   if (filesTouched.length) {
     parts.push(`Files touched: ${[...new Set(filesTouched)].slice(-20).join(', ')}`)
   }
   const actions = [...new Set(actionLog)].slice(-24)
   if (actions.length) parts.push(`Recent actions:\n${actions.map((a) => `• ${a}`).join('\n')}`)
-  return parts.join('\n\n').slice(0, 2500)
+  return parts.join('\n\n').slice(0, AGENT_HANDOFF_CHARS * 3)
 }
 
 function buildResumeMessage(options: {
@@ -97,14 +101,14 @@ function buildResumeMessage(options: {
       ? `Files already written/updated: ${[...new Set(options.filesTouched)].slice(-20).join(', ')}`
       : 'No files written yet.'
   const treeBit = options.treeSnapshot
-    ? `\nWorkspace tree:\n${truncateForModel(options.treeSnapshot, 2000)}\n`
+    ? `\nWorkspace tree:\n${truncateForModel(options.treeSnapshot, AGENT_HANDOFF_CHARS)}\n`
     : ''
   return {
     role: 'user',
     content:
-      `Original request:\n${options.goal.slice(0, 1500)}\n\n` +
+      `Original request:\n${options.goal.slice(0, AGENT_HANDOFF_CHARS)}\n\n` +
       `Progress summary (compacted context — trust this over forgotten earlier turns):\n` +
-      `${options.progressSummary.slice(0, 2500)}\n\n` +
+      `${options.progressSummary.slice(0, AGENT_HANDOFF_CHARS * 3)}\n\n` +
       `Action log:\n${formatActionLogForResume(options.actionLog)}\n\n` +
       `${files}${treeBit}\n` +
       `Continue until the request is fully satisfied. ` +
@@ -126,9 +130,9 @@ async function summarizeMiddleWithLite(options: {
   temperature: number
 }): Promise<string> {
   const transcript = options.middle
-    .map((m) => `${m.role.toUpperCase()}:\n${m.content.slice(0, 900)}`)
+    .map((m) => `${m.role.toUpperCase()}:\n${m.content.slice(0, AGENT_HANDOFF_CHARS)}`)
     .join('\n\n')
-    .slice(0, 12_000)
+    .slice(0, AGENT_HANDOFF_CHARS * 3)
 
   if (!transcript.trim()) {
     return buildFallbackProgressSummary(
@@ -153,9 +157,9 @@ async function summarizeMiddleWithLite(options: {
     {
       role: 'user',
       content:
-        `Original request:\n${options.goal.slice(0, 1200)}\n\n` +
+        `Original request:\n${options.goal.slice(0, AGENT_HANDOFF_CHARS)}\n\n` +
         (options.priorMemory
-          ? `Previous memory (fold into the new brief; do not discard open work):\n${options.priorMemory.slice(0, 1500)}\n\n`
+          ? `Previous memory (fold into the new brief; do not discard open work):\n${options.priorMemory.slice(0, AGENT_HANDOFF_CHARS)}\n\n`
           : '') +
         `Files touched: ${
           options.filesTouched.length
@@ -177,7 +181,7 @@ async function summarizeMiddleWithLite(options: {
       signal: options.signal,
       getSecret: options.getSecret
     })
-    if (summary.length >= 40) return summary.slice(0, 2500)
+    if (summary.length >= 40) return summary.slice(0, AGENT_HANDOFF_CHARS)
   } catch {
     // fall through
   }

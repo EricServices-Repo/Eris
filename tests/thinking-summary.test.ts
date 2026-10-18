@@ -22,10 +22,8 @@ thinking…
     expect(steps.length).toBeLessThanOrEqual(8)
   })
 
-  it('falls back to short prose when no breadcrumbs exist', () => {
-    const steps = summarizeThinkingSteps('Looking at the router next.\nThen patching the panel.')
-    expect(steps.length).toBeGreaterThan(0)
-    expect(steps.join(' ')).toMatch(/router|panel/i)
+  it('does not turn the reply into thinking steps', () => {
+    expect(summarizeThinkingSteps('Looking at the router next.\nThen patching the panel.')).toEqual([])
   })
 })
 
@@ -44,13 +42,13 @@ describe('thinkingPreviewLine', () => {
     expect(thinkingPreviewLine('— Reading App.tsx\n', 'Working…', [])).toMatch(/Reading/)
   })
 
-  it('falls back to a thinking tail when there are no breadcrumbs', () => {
-    const preview = thinkingPreviewLine(
-      'Inspecting the router and preparing a patch for LocalModelsPanel.',
-      null,
-      []
-    )
-    expect(preview.length).toBeGreaterThan(8)
-    expect(preview).toMatch(/router|LocalModels/i)
+  it('does not show the reply as the thinking preview', () => {
+    expect(
+      thinkingPreviewLine(
+        'Inspecting the router and preparing a patch for LocalModelsPanel.',
+        null,
+        []
+      )
+    ).toBe('')
   })
 })

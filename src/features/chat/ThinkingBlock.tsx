@@ -30,11 +30,9 @@ export function ThinkingBlock({
   // Live: keep the compact panel open. Historical: collapsed by default.
   const [open, setOpen] = useState(defaultOpen || live)
   const [showLog, setShowLog] = useState(false)
-  const liveRef = useRef<HTMLPreElement>(null)
   const logRef = useRef<HTMLPreElement>(null)
   const hasTools = tools.length > 0
   const hasThinking = Boolean(thinking.trim())
-  const hasBody = Boolean(hasThinking || status || hasTools)
 
   const steps = useMemo(() => summarizeThinkingSteps(thinking), [thinking])
   const preview = useMemo(
@@ -50,16 +48,11 @@ export function ThinkingBlock({
   }, [live, defaultOpen])
 
   useEffect(() => {
-    if (!live || !open || !liveRef.current) return
-    liveRef.current.scrollTop = liveRef.current.scrollHeight
-  }, [thinking, status, tools, open, live])
-
-  useEffect(() => {
     if (!showLog || !live || !logRef.current) return
     logRef.current.scrollTop = logRef.current.scrollHeight
   }, [thinking, showLog, live])
 
-  if (!hasBody && !live) return null
+  if (!hasThinking && !hasTools) return null
 
   return (
     <div className={`thinking-block ${open ? 'open' : ''} ${live ? 'live' : ''}`}>
@@ -118,13 +111,6 @@ export function ThinkingBlock({
                 <li key={`${i}-${s.slice(0, 24)}`}>{s}</li>
               ))}
             </ul>
-          )}
-
-          {/* Live: stream the raw thinking so progress is visible while the model runs. */}
-          {live && (
-            <pre ref={liveRef} className="thinking-text thinking-text-live">
-              {hasThinking ? thinking : status?.trim() || 'Working…'}
-            </pre>
           )}
 
           {!live && !steps.length && !hasTools && (

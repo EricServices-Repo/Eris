@@ -77,6 +77,33 @@ export function asksWhatTheProjectDoes(text: string): boolean {
   )
 }
 
+/** The user wants a list of improvements, not for the agent to apply them. */
+export function asksForRecommendations(text: string): boolean {
+  const t = text.trim()
+  if (!t) return false
+  if (
+    /\b(make|apply|implement)\s+(the\s+|some\s+|these\s+)?improvements?\b/i.test(t) &&
+    !/\bwhat\b/i.test(t)
+  ) {
+    return false
+  }
+  return (
+    /\bwhat\b[\s\S]{0,48}\bimprov/i.test(t) ||
+    /\b(list|suggest|recommend)\b[\s\S]{0,40}\b(improv|changes?|ideas)\b/i.test(t) ||
+    (/\breview\b/i.test(t) && /\bwhat\b[\s\S]{0,48}\b(improv|should we)\b/i.test(t))
+  )
+}
+
+/** A public-web question. The workspace cannot answer it. */
+export function needsWebLookup(text: string): boolean {
+  const t = text.trim()
+  if (!t) return false
+  return (
+    /\b(internet|on the web|online|search the web|look up)\b/i.test(t) ||
+    /\bwho (is|was|are)\b/i.test(t)
+  )
+}
+
 const BY_ID = new Map(CHAT_AGENT_CONTRACTS.map((c) => [c.id, c]))
 
 /** A short reply that depends on the previous turn, not a new task. */
@@ -141,6 +168,7 @@ export function chatAgentForTurn(options: {
 
   const follow = agentForFollowUp(text, options.previousAgentId)
   if (follow) return follow
+  if (needsWebLookup(text)) return 'explainer'
   if (asksWhatTheProjectDoes(text)) return 'explainer'
   if (options.intent === 'review') return 'reviewer'
   if (options.intent === 'edit' || options.intent === 'run') return 'composer'

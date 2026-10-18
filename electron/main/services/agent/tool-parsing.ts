@@ -1,4 +1,5 @@
 import type { NativeToolCall } from '../chat-runtime'
+import { isToolLogReply } from '../../../../src/shared/posted-answer'
 import { isMcpToolName } from '../mcp-runtime'
 import type { ToolCall } from './types'
 
@@ -173,6 +174,8 @@ export function proseOutsideTools(text: string): string {
 /** Prefer the model's full reply over an action-log fallback. */
 export function postedAnswer(modelText: string, fallback: string): string {
   const prose = proseOutsideTools(modelText)
+  if (prose.length >= 40 && !isToolLogReply(prose)) return prose
+  if (fallback.trim() && !isToolLogReply(fallback)) return fallback
   return prose.length >= 40 ? prose : fallback
 }
 

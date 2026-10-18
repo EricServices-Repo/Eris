@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AGENT_HANDOFF_CHARS,
   deriveBlackboardStatus,
   formatHandoffForPrompt,
   formatJobResultForChat
 } from '../src/shared/agent-orchestration'
 import { formatBackgroundJobDetail } from '../src/shared/background-job-detail'
 import type { BackgroundJob } from '../src/shared/background-agents'
+import { compactAgentMessages } from '../electron/main/services/agent/compaction'
+import { getDefaults } from '../electron/main/services/settings'
 import { shouldConsiderMidRunAdapt } from '../electron/main/services/agent/mid-run-adapt'
 
 describe('agent orchestration', () => {
@@ -121,5 +124,35 @@ describe('mid-run adapt gates', () => {
         rerouteCount: 1
       })
     ).toBe(false)
+  })
+})
+
+describe('agent handoff size', () => {
+  it('keeps a long goal and the previous agent memory', async () => {
+    expect(AGENT_HANDOFF_CHARS).toBeGreaterThanOrEqual(5000)
+    const goal = `Goal text ${'g'.repeat(6000)}`
+    const memory = `Memory text ${'m'.repeat(6000)}`
+    const compacted = await compactAgentMessages({
+      messages: [
+        { role: 'system', content: 'system' },
+        ...Array.from({ length: 7 }, (_, i) => ({
+          role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+          content: `turn ${i}`
+        }))
+      ],
+      goal,
+      filesTouched: [],
+      actionLog: [],
+      treeSnapshot: null,
+      priorMemory: memory,
+      settings: getDefaults(),
+      liteModel: 'builtin:composer-lite',
+      temperature: 0,
+      getSecret: () => null,
+      skipLiteSummary: true
+    })
+    const resume = compacted.messages.map((message) => message.content).join('\n')
+    expect(resume).toContain(goal.slice(0, 5000))
+    expect(resume).toContain(memory.slice(0, 5000))
   })
 })

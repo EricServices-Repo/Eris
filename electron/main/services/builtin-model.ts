@@ -42,6 +42,7 @@ import { getResolvedSettings } from './settings'
 import {
   contextCreateOptions,
   contextLimits,
+  REPLY_MAX_TOKENS,
   isMemoryError,
   modelLoadOptions
 } from './vram-fit'
@@ -1019,7 +1020,7 @@ async function* streamBuiltinChatInProcess(options: {
   const llamaCpp = await loadLlamaModule()
   const { LlamaChatSession } = llamaCpp
   const state = await ensureRuntimeInProcess(options.path, options.entry)
-  const maxTokens = options.entry.tier === 'lite' ? 1024 : 4096
+  const maxTokens = REPLY_MAX_TOKENS
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let grammar: any = undefined
@@ -1295,7 +1296,7 @@ async function* streamBuiltinChatViaWorker(options: {
       userMessage: split.userMessage,
       seedMessages: isNew ? split.seed : undefined,
       temperature: options.temperature,
-      maxTokens: options.entry.tier === 'lite' ? 1024 : 4096,
+      maxTokens: REPLY_MAX_TOKENS,
       jsonSchema: options.jsonSchema
     })
   } else {
@@ -1304,7 +1305,7 @@ async function* streamBuiltinChatViaWorker(options: {
       id,
       messages: options.messages,
       temperature: options.temperature,
-      maxTokens: options.entry.tier === 'lite' ? 1024 : 4096,
+      maxTokens: REPLY_MAX_TOKENS,
       jsonSchema: options.jsonSchema
     })
   }

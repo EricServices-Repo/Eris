@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import type { WebContents } from 'electron'
+import { AGENT_HANDOFF_CHARS } from '../../../src/shared/agent-orchestration'
 
 export const USER_QUESTION_TIMEOUT_MS = 15_000
 
@@ -73,7 +74,7 @@ export function requestUserQuestion(
     const req: UserQuestionRequest = {
       requestId,
       questionId,
-      question: question.trim().slice(0, 2000),
+      question: question.trim().slice(0, AGENT_HANDOFF_CHARS),
       choices: choices?.length ? choices : undefined,
       timeoutMs
     }
@@ -87,7 +88,7 @@ export function resolveUserQuestion(questionId: string, reply: string | null): b
   const entry = pending.get(questionId)
   if (!entry) return false
   const text = (reply || '').trim()
-  if (text) entry.done({ kind: 'reply', text: text.slice(0, 4000) })
+  if (text) entry.done({ kind: 'reply', text: text.slice(0, AGENT_HANDOFF_CHARS) })
   else entry.done({ kind: 'timeout' })
   return true
 }

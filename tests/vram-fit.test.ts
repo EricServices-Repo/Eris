@@ -4,8 +4,11 @@ import {
   contextLimits,
   inferenceBudgetBytes,
   OS_RESERVE_BYTES,
-  pickGgufForBudget
+  pickGgufForBudget,
+  REPLY_MAX_TOKENS
 } from '../electron/main/services/vram-fit'
+import { contextBudgetTokens, needsContextCompaction } from '../electron/main/services/agent/compaction'
+import { getDefaults } from '../electron/main/services/settings'
 
 const GB = 1024 ** 3
 
@@ -22,7 +25,7 @@ describe('VRAM fit', () => {
     expect(inferenceBudgetBytes({})).toBe(0)
   })
 
-  it('keeps built-in Lite small and lets local models use the settings window', () => {
+  it('keeps built-in Lite at 32k and lets local models use the settings window', () => {
     expect(
       contextLimits({
         tier: 'lite',
@@ -30,7 +33,7 @@ describe('VRAM fit', () => {
         modelContext: 32768,
         settingsContext: 32768
       })
-    ).toEqual({ min: 4096, max: 8192 })
+    ).toEqual({ min: 4096, max: 32768 })
     expect(
       contextLimits({
         tier: 'full',
@@ -47,6 +50,23 @@ describe('VRAM fit', () => {
         settingsContext: 65536
       })
     ).toEqual({ min: 8192, max: 8192 })
+  })
+
+  it('compacts from the loaded window and allows a 16k reply', () => {
+    expect(REPLY_MAX_TOKENS).toBe(16_384)
+    const settings = structuredClone(getDefaults())
+    expect(contextBudgetTokens(settings, 'builtin:composer-lite')).toBe(Math.floor(32_768 * 0.65))
+    expect(contextBudgetTokens(settings, 'builtin:composer')).toBe(Math.floor(32_768 * 0.65))
+  })
+
+  it('compacts from the token budget instead of a message count', () => {
+    const messages = Array.from({ length: 30 }, (_, i) => ({
+      role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+      content: `step ${i}`
+    }))
+    expect(needsContextCompaction(messages, 20_000, false)).toBe(false)
+    const heavy = messages.map((message) => ({ ...message, content: 'x'.repeat(4000) }))
+    expect(needsContextCompaction(heavy, 20_000, false)).toBe(true)
   })
 
   it('picks the highest quant that fits and falls back when none do', () => {

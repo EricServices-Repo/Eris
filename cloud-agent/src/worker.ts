@@ -18,6 +18,9 @@ import {
 import type { AuthContext } from './auth.js'
 import type { CloudJob, CloudJobCreateRequest, CloudJobToolEvent } from './types.js'
 import { config } from './config.js'
+
+/** Minimum characters kept when a cloud job hands text to the next step. */
+const HANDOFF_CHARS = 8_000
 import { getLocalModelStatus } from './local-model.js'
 import {
   buildJobArtifacts,
@@ -353,11 +356,10 @@ export class WorkerPool {
         nextUser = `Agent: ${job.agentName} (${job.agentId})\nGoal:\n${job.goal}`
       }
 
-      const maxSteps = config.maxSteps
       const toolMaxTokens = Math.min(512, Math.max(256, Math.floor(config.contextSize / 8)))
 
       try {
-        for (let step = startStep; step <= maxSteps; step++) {
+        for (let step = startStep; ; step++) {
           if (ac.signal.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
           this.store.patch(id, (j) => ({
             ...j,
@@ -390,7 +392,7 @@ export class WorkerPool {
 
           this.store.patch(id, (j) => ({
             ...j,
-            thinkingTail: (j.thinkingTail + `\n${assistant}`).slice(-4000)
+            thinkingTail: (j.thinkingTail + `\n${assistant}`).slice(-HANDOFF_CHARS)
           }))
 
           saveCheckpoint(id, { step, messages, workspaceReady: true })
@@ -499,7 +501,7 @@ export class WorkerPool {
             const done: CloudJobToolEvent = {
               ...running,
               status: ok ? 'ok' : 'error',
-              detail: detail.slice(0, 2000),
+              detail: detail.slice(0, HANDOFF_CHARS),
               at: new Date().toISOString()
             }
             this.store.patch(id, (j) => ({
@@ -511,7 +513,7 @@ export class WorkerPool {
               liveStatus: `${call.name}: ${ok ? 'ok' : 'error'}`
             }))
             // Keep model context lean — UI still has fuller detail in recentTools
-            results.push(`TOOL_RESULT ${call.name}:\n${detail.slice(0, 1600)}`)
+            results.push(`TOOL_RESULT ${call.name}:\n${detail.slice(0, HANDOFF_CHARS)}`)
           }
 
           nextUser =
@@ -526,23 +528,6 @@ export class WorkerPool {
         }
       } finally {
         releaseChatSession(id)
-      }
-
-      {
-        const current = this.store.get(id)
-        const pack = buildJobArtifacts(id, current?.filesTouched || [])
-        this.store.setStatus(id, 'failed', {
-          error: 'Step limit reached',
-          liveStatus: 'Failed',
-          answer: current?.answer || 'Stopped at step limit',
-          hasArtifacts: pack.files.length > 0,
-          artifactCount: pack.files.length,
-          artifactsTruncated: pack.truncated,
-          truncatedReasons: pack.truncatedReasons,
-          resumable: true
-        })
-        bumpMetric('jobsFailed')
-        audit('job_failed', { jobId: id, error: 'step_limit' })
       }
     } catch (err) {
       const aborted = err instanceof Error && err.name === 'AbortError'

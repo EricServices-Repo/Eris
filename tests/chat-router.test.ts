@@ -91,7 +91,11 @@ describe('classifyIntent', () => {
     ],
     ['review the project folder', 'agent', 'review'],
     ['Review this project, what does it do?', 'agent', 'explore'],
-    ['improve the calculator UI', 'agent', 'edit']
+    ['Review the internet, who is Steve Embling', 'agent', 'explore'],
+    ['Review the internet, who is Steve Embling', 'ask', 'answer'],
+    ['improve the calculator UI', 'agent', 'edit'],
+    ['review the airbnb website, what 3 improvements should we make?', 'agent', 'review'],
+    ['what 3 improvements should we make?', 'agent', 'review']
   ] as const)('%s (%s) → %s', (text, mode, intent) => {
     expect(classifyIntent(text, mode)).toBe(intent)
   })
@@ -336,6 +340,22 @@ describe('planChatTurn', () => {
     })
     expect(plan.models.chat).toBe('builtin:composer')
     expect(plan.cloudPreferred).toBe(true)
+  })
+
+  it('searches the web for a person instead of answering with no tools', async () => {
+    const plan = await planChatTurn({
+      ...base,
+      settings: getDefaults(),
+      context: {
+        text: 'Review the internet, who is Steve Embling',
+        selectedModel: 'builtin:composer-lite',
+        mode: 'agent'
+      }
+    })
+    expect(plan.agentId).toBe('explainer')
+    expect(plan.intent).toBe('explore')
+    expect(plan.toolPolicy).toBe('read')
+    expect(plan.requiresTools).toBe(true)
   })
 
   it('runs agent turns on Composer even when another model is selected', async () => {

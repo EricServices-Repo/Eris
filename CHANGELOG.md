@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.59 — 2026-10-17
+
+- A request for improvements stays a review and lists them, and a run no longer stops at a step limit.
+
+## 0.2.58 — 2026-10-17
+
+- Composer Lite loads a 32k context, and compaction follows the token budget.
+
+## 0.2.57 — 2026-10-17
+
+- The finished reply is a separate chat summary, and Thinking only lists tool steps.
+
+## 0.2.56 — 2026-10-17
+
+- The finished reply is chat text, and the thinking trace only keeps tool progress.
+
+## 0.2.55 — 2026-10-17
+
+- Each answer can be rated, and thumbs-down opens a prefilled feedback report.
+
+## 0.2.54 — 2026-10-17
+
+- Agents can search the web in a browser and open a public page from the results.
+
 ## 0.2.53 — 2026-10-17
 
 Cross-platform desktop builds (macOS + Windows) from the same version tag.

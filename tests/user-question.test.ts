@@ -106,6 +106,12 @@ describe('project description', () => {
   it('is not a defect review', () => {
     expect(isReviewOnlyGoal('Review this project, what does it do?')).toBe(false)
     expect(isReviewOnlyGoal('code review this PR')).toBe(true)
+    expect(
+      isReviewOnlyGoal('review the airbnb website, what 3 improvements should we make?')
+    ).toBe(true)
+    expect(isReviewOnlyGoal('review the project folder, make improvements to the calculator')).toBe(
+      false
+    )
   })
 
   it('finishes only after a sourced description', () => {
