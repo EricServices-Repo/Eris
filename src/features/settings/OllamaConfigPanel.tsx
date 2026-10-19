@@ -20,7 +20,7 @@ interface Props {
 
 /**
  * Optional external Ollama connection. Curated downloads run natively in Eris
- * via Settings → Local models — this panel is only for users who already run Ollama.
+ * via Settings → Text Models — this panel is only for users who already run Ollama.
  */
 export function OllamaConfigPanel({
   resolved,
@@ -101,7 +101,7 @@ export function OllamaConfigPanel({
       } else if (liveAfter && !liveAfter.reachable) {
         setError(liveAfter.error || 'Could not reach Ollama. Is it running? Try: ollama serve')
       } else {
-        setInfo('Saved. Prefer Local models above if you do not already use Ollama.')
+        setInfo('Saved. Prefer Text Models if you do not already use Ollama.')
       }
       await onRefresh()
     } catch (err) {
@@ -188,7 +188,12 @@ export function OllamaConfigPanel({
           <span>{statusLabel}</span>
           {ollama && (
             <div className="providers-ollama-actions">
-              <button type="button" className="btn" disabled={busy} onClick={() => void toggleEnabled()}>
+              <button
+                type="button"
+                className="btn"
+                disabled={busy}
+                onClick={() => void toggleEnabled()}
+              >
                 {enabled ? 'Disable' : 'Enable'}
               </button>
               <button
@@ -246,7 +251,7 @@ export function OllamaConfigPanel({
         </div>
         <p>
           Advanced: connect an existing Ollama daemon. For most users, download models under{' '}
-          <strong>Local models</strong> — they run inside Eris with no separate app.
+          <strong>Text Models</strong> — they run inside Eris with no separate app.
         </p>
       </div>
 
@@ -305,7 +310,12 @@ export function OllamaConfigPanel({
           {busy ? 'Working…' : ollama ? 'Refresh models' : 'Connect Ollama'}
         </button>
         {ollama && (
-          <button type="button" className="btn" disabled={busy} onClick={() => void toggleEnabled()}>
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={() => void toggleEnabled()}
+          >
             {enabled ? 'Disable' : 'Enable'}
           </button>
         )}

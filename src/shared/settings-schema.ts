@@ -400,7 +400,16 @@ export interface TurnPlan {
   requiresTools: boolean
   escalateToFull: boolean
   reason: string
-  method: 'manual' | 'heuristic' | 'llm' | 'default' | 'override' | 'learned' | 'eval' | 'telemetry' | 'handoff'
+  method:
+    | 'manual'
+    | 'heuristic'
+    | 'llm'
+    | 'default'
+    | 'override'
+    | 'learned'
+    | 'eval'
+    | 'telemetry'
+    | 'handoff'
   /** Intent the classifier picked before any override / learned correction */
   classifiedIntent?: ChatIntent
   /** Set when the selected chat model cannot run (e.g. builtin not downloaded). */
@@ -444,10 +453,6 @@ export interface ChatPromptInput {
     agentId?: string
     agentName?: string
   }>
-  /** Continue a persisted, unfinished agent run */
-  resumeRunId?: string
-  /** When set with resumeRunId, rewind files + worker state to this session step first. */
-  resumeSessionStep?: number
   /** Thread these messages belong to, for conversation continuation metadata. */
   threadId?: string | null
 }
@@ -503,7 +508,7 @@ export interface BuiltinModelStatus {
   downloadError?: string | null
 }
 
-/** Curated GGUF that downloads/runs inside Eris (Settings → Local models). */
+/** Curated GGUF that downloads/runs inside Eris (Settings → Text Models). */
 export interface LocalModelManifestEntry {
   id: string
   ref: string
@@ -545,7 +550,7 @@ export interface LocalModelStatus {
   downloadError?: string | null
 }
 
-/** Hugging Face Hub GGUF search hit (Settings → Local models). */
+/** Hugging Face Hub GGUF search hit (Settings → Text Models). */
 export interface HfGgufSearchHit {
   repoId: string
   url: string

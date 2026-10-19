@@ -12,8 +12,12 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
     items: ['general', 'account', 'feedback', 'logging']
   },
   {
+    label: 'Models',
+    items: ['gpu', 'composer', 'textModels', 'imageModels']
+  },
+  {
     label: 'AI',
-    items: ['composer', 'localModels', 'providers', 'usage', 'agent', 'subagents', 'skills']
+    items: ['providers', 'usage', 'agent', 'subagents', 'skills']
   },
   {
     label: 'Project',
@@ -30,8 +34,10 @@ export const SETTINGS_LABELS: Record<Category, string> = {
   account: 'Account',
   feedback: 'Feedback',
   logging: 'Logging',
+  gpu: 'GPUs',
   composer: 'Composer',
-  localModels: 'Local models',
+  textModels: 'Text Models',
+  imageModels: 'Image Models',
   providers: 'Providers',
   usage: 'Usage',
   agent: 'Agent',
@@ -50,8 +56,10 @@ export const SETTINGS_SUBTITLES: Record<Category, string> = {
   account: 'EricServic.es profile, plan, and sync',
   feedback: 'Report bugs and ideas without leaving Eris',
   logging: 'App log files, level, and directory',
+  gpu: 'Detected graphics hardware, VRAM, acceleration, and eGPU preference',
   composer: 'Built-in Composer Lite / Full and default chat model',
-  localModels: 'Download GGUFs that run inside Eris, plus GPU / eGPU acceleration',
+  textModels: 'Download local GGUF chat and coding models from Hugging Face',
+  imageModels: 'Configure image generation and download local Diffusers models',
   providers: 'Optional cloud APIs and local servers (LM Studio, Ollama)',
   usage: 'Plan limits and 30-day model usage',
   agent: 'Routing, Cloud Agents, and background jobs',
@@ -78,8 +86,10 @@ export const SETTINGS_ROWS_CATEGORIES = new Set<Category>([
 export const SETTINGS_SCOPE_CATEGORIES = new Set<Category>([
   'general',
   'logging',
+  'gpu',
   'composer',
-  'localModels',
+  'textModels',
+  'imageModels',
   'providers',
   'agent',
   'editor'
@@ -91,18 +101,18 @@ export const SETTINGS_PAGE_KEYWORDS: Record<Category, string[]> = {
   account: ['login', 'sign in', 'eric', 'sync', 'plan', 'pro'],
   feedback: ['bug', 'report', 'issue', 'idea'],
   logging: ['logs', 'debug', 'trace', 'directory'],
+  gpu: ['gpu', 'egpu', 'metal', 'cuda', 'vram', 'graphics', 'acceleration'],
   composer: ['composer', 'lite', 'full', 'builtin', 'temperature', 'download', 'models'],
-  localModels: [
-    'local',
-    'gguf',
-    'qwen',
-    'llama',
-    'gemma',
-    'phi',
-    'egpu',
-    'gpu',
+  textModels: ['local', 'gguf', 'qwen', 'llama', 'gemma', 'phi', 'huggingface', 'download'],
+  imageModels: [
+    'image',
+    'generation',
+    'stable diffusion',
+    'sdxl',
+    'diffusers',
     'huggingface',
-    'download'
+    'download',
+    'api'
   ],
   providers: [
     'ollama',
@@ -131,6 +141,7 @@ export const SETTINGS_PAGE_KEYWORDS: Record<Category, string[]> = {
 export function resolveSettingsCategory(id: string | undefined): Category | undefined {
   if (!id) return undefined
   if (id === 'models') return 'composer'
+  if (id === 'localModels') return 'textModels'
   if (id in SETTINGS_LABELS) return id as Category
   return undefined
 }

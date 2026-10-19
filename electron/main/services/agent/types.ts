@@ -33,7 +33,7 @@ export type AgentRunnerEvent =
   | { type: 'checkpoint'; checkpointId: string }
   | { type: 'workspace-changed' }
   | { type: 'status'; text: string }
-  | { type: 'model'; model: string }
+  | { type: 'model'; model: string; agentId?: string; agentName?: string }
   | { type: 'terminal'; text: string }
   | {
       type: 'progress'

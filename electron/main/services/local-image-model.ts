@@ -3,6 +3,7 @@ import { createHash } from 'crypto'
 import { existsSync, statSync } from 'fs'
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
+import { freemem, totalmem } from 'os'
 import { z } from 'zod'
 import type {
   LocalImageModel,
@@ -11,6 +12,8 @@ import type {
 } from '../../../src/shared/image-generation'
 import { appResourcePath, userDataRoot } from './paths'
 import { isPathInside, resolveInWorkspace } from './workspace-fs'
+import { acquireInferenceLease } from './inference-governor'
+import { disposeRuntime } from './builtin-model'
 
 const ManifestSchema = z.object({
   repoId: z.string(),
@@ -36,6 +39,8 @@ const RuntimeSchema = z.object({
 })
 let activity: 'setup' | 'download' | 'generate' | null = null
 const processes = new Set<ChildProcess>()
+const GIB = 1024 ** 3
+export const LOCAL_IMAGE_GENERATION_TIMEOUT_MS = 3 * 60_000
 export const localImageRoot = () => join(userDataRoot(), 'models', 'images')
 export const localImageRuntimeRoot = () => join(userDataRoot(), 'image-runtime')
 export const localImagePython = () =>
@@ -90,7 +95,12 @@ export async function runImageProcess(options: {
         PYTHONUNBUFFERED: '1',
         HF_HUB_DISABLE_TELEMETRY: '1',
         HF_HUB_DISABLE_IMPLICIT_TOKEN: '1',
-        HF_HUB_DOWNLOAD_TIMEOUT: '120'
+        HF_HUB_DOWNLOAD_TIMEOUT: '120',
+        // PyTorch otherwise allows MPS to exceed the device's recommended working set. On
+        // unified-memory Macs that can stall the whole desktop before Python reports an OOM.
+        PYTORCH_MPS_HIGH_WATERMARK_RATIO: '0.75',
+        PYTORCH_MPS_LOW_WATERMARK_RATIO: '0.60',
+        PYTORCH_ENABLE_MPS_FALLBACK: '1'
       },
       stdio: ['pipe', 'pipe', 'pipe']
     })
@@ -143,7 +153,7 @@ export async function runImageProcess(options: {
     child.on('error', (error) => {
       spawnError = error
     })
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       clearTimeout(timer)
       if (forceKill) clearTimeout(forceKill)
       processes.delete(child)
@@ -151,7 +161,15 @@ export async function runImageProcess(options: {
       if (stopped) reject(stopped)
       else if (spawnError) reject(spawnError)
       else if (code !== 0 || protocolError)
-        reject(new Error(protocolError || errorText || `Image worker exited with code ${code}`))
+        reject(
+          new Error(
+            protocolError ||
+              errorText ||
+              (signal
+                ? `Image worker was stopped by ${signal}; the model may have exceeded available memory`
+                : `Image worker exited with code ${code}`)
+          )
+        )
       else resolve(result)
     })
     child.stdin.end(options.input ? JSON.stringify(options.input) + '\n' : undefined)
@@ -175,7 +193,7 @@ async function worker(
         ? 3 * 60 * 60_000
         : input.operation === 'status'
           ? 30_000
-          : 900_000
+          : LOCAL_IMAGE_GENERATION_TIMEOUT_MS
   })
 }
 
@@ -417,15 +435,54 @@ export async function generateLocalImage(options: {
     const status = await localImageStatus()
     if (!status.runtime.ready)
       throw new Error(
-        status.runtime.error ?? 'Set up local image generation in Settings → Providers'
+        status.runtime.error ?? 'Set up local image generation in Settings → Models → Image Models'
       )
-    const model = status.models.find((entry) => entry.id === status.activeModelId)
+    const selected = status.models.find((entry) => entry.id === status.activeModelId)
+    if (!selected)
+      throw new Error('Download a Hugging Face image model in Settings → Models → Image Models')
+    const totalBytes = totalmem()
+    // Darwin reports immediately free pages and omits some reclaimable cache. Keep the check
+    // conservative without making ordinary SD-Turbo generation impossible on a healthy Mac.
+    const freeBytes =
+      process.platform === 'darwin' ? Math.max(freemem(), totalBytes * 0.2) : freemem()
+    const initialHost = { totalBytes, freeBytes }
+    const unsafeReason = localImageMemoryRisk(selected, status.runtime.device, initialHost)
+    const model = unsafeReason
+      ? status.models.find(
+          (entry) => entry.ready && !localImageMemoryRisk(entry, status.runtime.device, initialHost)
+        )
+      : selected
     if (!model)
       throw new Error(
-        'Download a Hugging Face image model in Settings → Providers → Image generation'
+        unsafeReason ?? 'No downloaded image model fits the current system memory budget.'
       )
-    const directory = await mkdtemp(join(localImageRuntimeRoot(), 'generation-'))
+    if (model.id !== selected.id) {
+      options.onProgress?.(
+        `${selected.repoId} was skipped to protect system memory. Using ${model.repoId} instead.`
+      )
+    }
+    const lease = await acquireInferenceLease({
+      workload: 'image',
+      requestedBytes: Math.ceil(
+        model.bytes * (model.pipeline === 'StableDiffusionXLPipeline' ? 1.55 : 1.25) + 2 * GIB
+      ),
+      gpu: status.runtime.device !== 'cpu',
+      exclusiveGpu: true,
+      priority: 10,
+      signal: options.signal
+    })
+    let directory: string | null = null
     try {
+      // The llama worker intentionally keeps its model loaded between chat steps. Once this
+      // image job owns the GPU lease, release that idle runtime before measuring memory again.
+      await disposeRuntime()
+      const refreshedHost = {
+        totalBytes: totalmem(),
+        freeBytes: process.platform === 'darwin' ? Math.max(freemem(), totalmem() * 0.2) : freemem()
+      }
+      const refreshedRisk = localImageMemoryRisk(model, status.runtime.device, refreshedHost)
+      if (refreshedRisk) throw new Error(refreshedRisk)
+      directory = await mkdtemp(join(localImageRuntimeRoot(), 'generation-'))
       const output = join(directory, 'image.png')
       await worker(
         {
@@ -435,7 +492,9 @@ export async function generateLocalImage(options: {
           variant: model.variant,
           prompt: options.prompt,
           size: options.size,
-          outputPath: output
+          outputPath: output,
+          hostMemory: refreshedHost,
+          memoryLimitBytes: Math.floor(refreshedHost.totalBytes * 0.6)
         },
         options.signal,
         (event) => options.onProgress?.(String(event.message ?? 'Generating locally…'))
@@ -445,9 +504,33 @@ export async function generateLocalImage(options: {
         throw new Error('Local image exceeds the output limit')
       return { bytes: await readFile(output), model: model.repoId }
     } finally {
-      await rm(directory, { recursive: true, force: true })
+      if (directory) await rm(directory, { recursive: true, force: true })
+      lease.release()
     }
   })
+}
+
+/** Conservative preflight for shared-memory devices. The worker performs a second device check. */
+export function localImageMemoryRisk(
+  model: Pick<LocalImageModel, 'pipeline' | 'bytes' | 'repoId'>,
+  device: string | undefined,
+  memory: { totalBytes: number; freeBytes: number }
+): string | null {
+  const isSdxl = model.pipeline === 'StableDiffusionXLPipeline'
+  const sharedMemory = device === 'mps' || device === 'cpu'
+  if (!sharedMemory) return null
+  const minimumTotal = isSdxl ? 24 * GIB : 12 * GIB
+  const minimumFree = isSdxl ? 6 * GIB : 3 * GIB
+  const estimatedWorkingSet = model.bytes * (isSdxl ? 1.55 : 1.25) + 2 * GIB
+  if (
+    memory.totalBytes < minimumTotal ||
+    memory.freeBytes < minimumFree ||
+    estimatedWorkingSet > memory.totalBytes * 0.68
+  ) {
+    const family = isSdxl ? 'SDXL' : 'Stable Diffusion'
+    return `${family} is not safe to load with the available unified memory. Close memory-heavy apps or use SD-Turbo. Eris blocked this generation to keep the Mac responsive.`
+  }
+  return null
 }
 
 export function stopLocalImageProcesses(): void {

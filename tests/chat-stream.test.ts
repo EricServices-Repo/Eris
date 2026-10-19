@@ -8,7 +8,6 @@ import type { TurnPlan } from '../src/shared/settings-schema'
 
 type RunnerOptions = {
   approveCommand: (kind: 'run' | 'push', command: string) => Promise<boolean>
-  resume?: { goal: string; actionLog: string[]; filesTouched: string[] }
 }
 type RunnerEvent = Record<string, unknown> & { type: string }
 
@@ -29,7 +28,6 @@ const { registerChatStreamIpc } = await import('../electron/main/ipc/chat-stream
 const { appState } = await import('../electron/main/app-state')
 const { workspaceAllowedCommands } = await import('../electron/main/services/workspace-trust')
 const { getResolvedSettings } = await import('../electron/main/services/settings')
-const { saveAgentRun, loadLastAgentRun } = await import('../electron/main/services/agent-runs')
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown
 let handlers: Record<string, Handler> = {}
@@ -154,60 +152,5 @@ describe('chat:stream command approval', () => {
     expect(results).toEqual([false])
     const done = sent.find((s) => s.channel === 'chat:done')
     expect(done?.payload.aborted).toBe(true)
-  })
-})
-
-describe('chat:stream resume', () => {
-  it('continues a persisted run with its goal and progress', async () => {
-    const ws = appState.currentWorkspace!
-    saveAgentRun(ws, {
-      id: 'run-1',
-      requestId: 'old-req',
-      goal: 'Finish the refactor',
-      agentId: 'composer',
-      mode: 'agent',
-      checkpointId: 'cp-0',
-      status: 'incomplete',
-      step: 4,
-      actionLog: ['edited a.ts'],
-      filesTouched: ['a.ts'],
-      startedAt: '2026-01-01T00:00:00.000Z',
-      updatedAt: '2026-01-01T00:00:00.000Z'
-    })
-    let seenResume: RunnerOptions['resume']
-    runner.script = async function* (opts) {
-      seenResume = opts.resume
-      yield { type: 'checkpoint', checkpointId: 'cp-1' }
-      yield {
-        type: 'progress',
-        step: 6,
-        actionLog: ['edited a.ts', 'edited b.ts'],
-        filesTouched: ['a.ts', 'b.ts']
-      }
-      yield { type: 'answer', text: 'done' }
-    }
-    await stream({ text: 'continue', resumeRunId: 'run-1' })
-
-    expect(seenResume).toEqual({
-      goal: 'Finish the refactor',
-      actionLog: ['edited a.ts'],
-      filesTouched: ['a.ts']
-    })
-    const run = loadLastAgentRun(ws)!
-    expect(run.id).toBe('run-1')
-    expect(run.goal).toBe('Finish the refactor')
-    expect(run.startedAt).toBe('2026-01-01T00:00:00.000Z')
-    expect(run.step).toBe(6)
-    expect(run.filesTouched).toEqual(['a.ts', 'b.ts'])
-    expect(run.status).toBe('done')
-  })
-
-  it('ignores a stale resume id', async () => {
-    let seenResume: RunnerOptions['resume'] = { goal: 'x', actionLog: [], filesTouched: [] }
-    runner.script = async function* (opts) {
-      seenResume = opts.resume
-    }
-    await stream({ text: 'hello', resumeRunId: 'missing' })
-    expect(seenResume).toBeUndefined()
   })
 })

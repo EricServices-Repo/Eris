@@ -98,5 +98,177 @@
       { "type": "answer_matches", "pattern": "\\b3\\b" },
       { "type": "no_changes" }
     ]
+  },
+  {
+    "id": "scenario-fix-cache-invalidation",
+    "title": "Fix a multi-file cache invalidation defect",
+    "intent": "edit",
+    "prompt": "The cache test fails because updating a user leaves stale data. Inspect the implementation, fix the production code, run the test, and do not edit test.js.",
+    "files": {
+      "package.json": "{\"scripts\":{\"test\":\"node test.js\"}}\n",
+      "store.js": "const users = new Map([[\"1\", { id: \"1\", name: \"Ada\" }]])\nfunction getUser(id) { return users.get(id) }\nfunction updateUser(id, patch) { users.set(id, { ...users.get(id), ...patch }) }\nmodule.exports = { getUser, updateUser }\n",
+      "cache.js": "const { getUser } = require('./store')\nconst cache = new Map()\nfunction findUser(id) { if (!cache.has(id)) cache.set(id, getUser(id)); return cache.get(id) }\nmodule.exports = { findUser }\n",
+      "test.js": "const assert = require('assert')\nconst { updateUser } = require('./store')\nconst { findUser } = require('./cache')\nassert.strictEqual(findUser('1').name, 'Ada')\nupdateUser('1', { name: 'Grace' })\nassert.strictEqual(findUser('1').name, 'Grace')\nconsole.log('ok')\n"
+    },
+    "checks": [
+      {
+        "type": "command",
+        "command": "node test.js"
+      },
+      {
+        "type": "changed_files",
+        "include": [
+          "cache.js",
+          "store.js"
+        ],
+        "exclude": [
+          "test.js"
+        ]
+      },
+      {
+        "type": "max_tool_errors",
+        "value": 2
+      },
+      {
+        "type": "max_steps",
+        "value": 18
+      }
+    ]
+  },
+  {
+    "id": "scenario-review-security-no-edit",
+    "title": "Review an authorization boundary without editing",
+    "intent": "review",
+    "prompt": "Review this API for authorization problems. Explain the highest-risk issue with concrete file and function references. Do not change files.",
+    "agentId": "reviewer",
+    "files": {
+      "api.js": "const db = require('./db')\nfunction deleteInvoice(req) { return db.removeInvoice(req.params.id) }\nmodule.exports = { deleteInvoice }\n",
+      "db.js": "function removeInvoice(id) { return { deleted: id } }\nmodule.exports = { removeInvoice }\n",
+      "README.md": "# Invoice API\nAuthenticated users belong to an organization. Invoice access must be scoped to that organization.\n"
+    },
+    "checks": [
+      {
+        "type": "answer_matches",
+        "pattern": "api\\.js|deleteInvoice"
+      },
+      {
+        "type": "answer_matches",
+        "pattern": "organi[sz]ation|tenant|authorization|access"
+      },
+      {
+        "type": "no_changes"
+      },
+      {
+        "type": "max_steps",
+        "value": 12
+      }
+    ]
+  },
+  {
+    "id": "scenario-complete-react-state-change",
+    "title": "Implement a complete stateful UI change",
+    "intent": "edit",
+    "prompt": "Add a dismissible error message to ErrorPanel.tsx. The Dismiss button must hide it, and a changed message prop must show the new message again. Keep the exported component name.",
+    "files": {
+      "package.json": "{\"scripts\":{\"check\":\"node verify.js\"}}\n",
+      "ErrorPanel.tsx": "import React from 'react'\nexport function ErrorPanel({ message }: { message: string }) {\n  return <div role=\"alert\">{message}</div>\n}\n",
+      "verify.js": "const fs=require('fs'); const s=fs.readFileSync('ErrorPanel.tsx','utf8'); process.exit(/use(State|Effect)/.test(s) && /Dismiss/.test(s) && /message/.test(s) ? 0 : 1)\n"
+    },
+    "checks": [
+      {
+        "type": "command",
+        "command": "node verify.js"
+      },
+      {
+        "type": "changed_files",
+        "include": [
+          "ErrorPanel.tsx"
+        ],
+        "exclude": [
+          "verify.js"
+        ],
+        "exact": true
+      },
+      {
+        "type": "max_tool_errors",
+        "value": 1
+      },
+      {
+        "type": "max_steps",
+        "value": 16
+      }
+    ]
+  },
+  {
+    "id": "scenario-follow-existing-pattern",
+    "title": "Follow an existing configuration pattern",
+    "intent": "edit",
+    "prompt": "Add a 30-second request timeout setting. Follow the existing retry configuration pattern across config.js and client.js, preserve the current public API, and verify behavior with node test.js.",
+    "files": {
+      "config.js": "const defaults = { retries: 2 }\nfunction loadConfig(input = {}) { return { ...defaults, ...input } }\nmodule.exports = { loadConfig }\n",
+      "client.js": "const { loadConfig } = require('./config')\nfunction createClient(input) { const config = loadConfig(input); return { retries: config.retries } }\nmodule.exports = { createClient }\n",
+      "test.js": "const assert=require('assert'); const {createClient}=require('./client'); assert.deepStrictEqual(createClient(), {retries:2, timeoutMs:30000}); assert.deepStrictEqual(createClient({timeoutMs:5000}), {retries:2, timeoutMs:5000}); console.log('ok')\n"
+    },
+    "checks": [
+      {
+        "type": "command",
+        "command": "node test.js"
+      },
+      {
+        "type": "changed_files",
+        "include": [
+          "config.js",
+          "client.js"
+        ],
+        "exclude": [
+          "test.js"
+        ],
+        "exact": true
+      },
+      {
+        "type": "max_tool_errors",
+        "value": 2
+      },
+      {
+        "type": "max_steps",
+        "value": 18
+      }
+    ]
+  },
+  {
+    "id": "scenario-recover-from-misleading-readme",
+    "title": "Prefer executable evidence over stale documentation",
+    "intent": "edit",
+    "prompt": "Make the greeting test pass. Inspect the code and tests, implement the correct behavior, and report what you verified.",
+    "files": {
+      "README.md": "The greeting should say Hello followed by a comma. This document may be stale.\n",
+      "greeting.js": "function greeting(name) { return `Hello, ${name}` }\nmodule.exports = { greeting }\n",
+      "test.js": "const assert=require('assert'); const {greeting}=require('./greeting'); assert.strictEqual(greeting('Ada'), 'Welcome, Ada!'); console.log('ok')\n"
+    },
+    "checks": [
+      {
+        "type": "command",
+        "command": "node test.js"
+      },
+      {
+        "type": "changed_files",
+        "include": [
+          "greeting.js"
+        ],
+        "exclude": [
+          "test.js",
+          "README.md"
+        ],
+        "exact": true
+      },
+      {
+        "type": "answer_matches",
+        "pattern": "test|verified|pass"
+      },
+      {
+        "type": "max_steps",
+        "value": 14
+      }
+    ]
   }
 ]

@@ -181,6 +181,9 @@ function prependChangelog(version, body) {
   const date = new Date().toISOString().slice(0, 10)
   const entry = `## ${version} — ${date}\n\n${body.replace(/^## Eris v[\d.]+\n\n/, '')}\n`
   const prev = existsSync(changelogPath) ? readFileSync(changelogPath, 'utf8') : '# Changelog\n\n'
+  if (new RegExp(`^## ${version.replace(/\./g, '\\.')}(?:\\s|$)`, 'm').test(prev)) {
+    return
+  }
   const next = prev.startsWith('# Changelog')
     ? prev.replace('# Changelog\n\n', `# Changelog\n\n${entry}`)
     : `# Changelog\n\n${entry}${prev}`

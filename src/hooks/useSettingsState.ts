@@ -3,10 +3,14 @@ import type { AppSettings } from '@/shared/settings-schema'
 
 export type SettingsCategory =
   | 'general'
+  | 'gpu'
   | 'composer'
+  | 'textModels'
+  | 'imageModels'
+  /** @deprecated Use textModels. */
   | 'localModels'
   | 'providers'
-  /** @deprecated Prefer composer | localModels | providers */
+  /** @deprecated Use composer. */
   | 'models'
   | 'usage'
   | 'account'
@@ -25,6 +29,7 @@ export type SettingsCategory =
 
 function normalizeCategory(category?: SettingsCategory): SettingsCategory {
   if (category === 'models') return 'composer'
+  if (category === 'localModels') return 'textModels'
   return category
 }
 
@@ -42,14 +47,11 @@ export function useSettingsState() {
     return resolved
   }, [])
 
-  const openSettings = useCallback(
-    (category?: SettingsCategory, createSkill = false) => {
-      setSettingsCategory(normalizeCategory(category))
-      setStartCreateSkill(createSkill)
-      setSettingsOpen(true)
-    },
-    []
-  )
+  const openSettings = useCallback((category?: SettingsCategory, createSkill = false) => {
+    setSettingsCategory(normalizeCategory(category))
+    setStartCreateSkill(createSkill)
+    setSettingsOpen(true)
+  }, [])
 
   return {
     settings,

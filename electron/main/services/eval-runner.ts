@@ -1,8 +1,17 @@
 import { randomUUID } from 'crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
-import type { AppSettings } from '../../../src/shared/settings-schema'
+import type { AppSettings, TurnPlan } from '../../../src/shared/settings-schema'
 import type {
   EvalCheck,
   EvalCheckResult,
@@ -16,6 +25,7 @@ import { runWorkspaceCommand } from './shell-run'
 import { appendEvalResults } from './eval-store'
 import { findEvalTask, taskSourceLabel } from './eval-tasks'
 import { logError, logInfo } from './logger'
+import { isSafeCommand } from './command-approval'
 
 export type EvalProgressFn = (event: EvalProgressEvent) => void
 
@@ -49,19 +59,49 @@ function snapshotFiles(root: string, files: Record<string, string>): Record<stri
   return snap
 }
 
+function snapshotWorkspace(root: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  const walk = (dir: string, prefix = ''): void => {
+    for (const name of readdirSync(dir)) {
+      if (name === '.eris' || name === 'node_modules' || name === '.git') continue
+      const abs = join(dir, name)
+      const rel = prefix ? `${prefix}/${name}` : name
+      const stat = statSync(abs)
+      if (stat.isDirectory()) walk(abs, rel)
+      else if (stat.size <= 1024 * 1024) out[rel] = readFileSync(abs, 'utf8')
+    }
+  }
+  walk(root)
+  return out
+}
+
+type EvalContext = {
+  answer: string
+  snapshot: Record<string, string | null>
+  files: Record<string, string>
+  beforeWorkspace?: Record<string, string>
+  steps?: number
+  toolErrors?: number
+  durationMs?: number
+  toolsUsed?: string[]
+}
+
+function changedWorkspaceFiles(workspacePath: string, before: Record<string, string>): string[] {
+  const after = snapshotWorkspace(workspacePath)
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .filter((path) => before[path] !== after[path])
+    .sort()
+}
+
 export function evaluateChecks(
   workspacePath: string,
   checks: EvalCheck[],
-  ctx: { answer: string; snapshot: Record<string, string | null>; files: Record<string, string> }
+  ctx: EvalContext
 ): EvalCheckResult[] {
   return checks.map((check) => runCheck(workspacePath, check, ctx))
 }
 
-function runCheck(
-  workspacePath: string,
-  check: EvalCheck,
-  ctx: { answer: string; snapshot: Record<string, string | null>; files: Record<string, string> }
-): EvalCheckResult {
+function runCheck(workspacePath: string, check: EvalCheck, ctx: EvalContext): EvalCheckResult {
   try {
     switch (check.type) {
       case 'file_contains': {
@@ -98,12 +138,43 @@ function runCheck(
           ? pass(check, 'answer matched')
           : fail(check, `answer did not match /${check.pattern}/`)
       }
+      case 'changed_files': {
+        const changed = changedWorkspaceFiles(workspacePath, ctx.beforeWorkspace ?? ctx.files)
+        const missing = check.include.filter((path) => !changed.includes(path))
+        const forbidden = check.exclude.filter((path) => changed.includes(path))
+        const extras = check.exact ? changed.filter((path) => !check.include.includes(path)) : []
+        return missing.length || forbidden.length || extras.length
+          ? fail(
+              check,
+              `changed [${changed.join(', ')}]; missing [${missing.join(', ')}]; forbidden [${forbidden.join(', ')}]; extra [${extras.join(', ')}]`
+            )
+          : pass(check, `changed [${changed.join(', ')}]`)
+      }
+      case 'tool_used':
+        return (ctx.toolsUsed ?? []).includes(check.name)
+          ? pass(check, `used ${check.name}`)
+          : fail(check, `tool ${check.name} was not used`)
+      case 'max_steps':
+        return (ctx.steps ?? Number.POSITIVE_INFINITY) <= check.value
+          ? pass(check, `${ctx.steps ?? 0} steps`)
+          : fail(check, `${ctx.steps} steps exceeded ${check.value}`)
+      case 'max_tool_errors':
+        return (ctx.toolErrors ?? Number.POSITIVE_INFINITY) <= check.value
+          ? pass(check, `${ctx.toolErrors ?? 0} tool errors`)
+          : fail(check, `${ctx.toolErrors} tool errors exceeded ${check.value}`)
+      case 'max_duration_ms':
+        return (ctx.durationMs ?? Number.POSITIVE_INFINITY) <= check.value
+          ? pass(check, `${ctx.durationMs ?? 0}ms`)
+          : fail(check, `${ctx.durationMs}ms exceeded ${check.value}ms`)
+      case 'has_changes': {
+        const changed = changedWorkspaceFiles(workspacePath, ctx.beforeWorkspace ?? ctx.files)
+        return changed.length
+          ? pass(check, `changed ${changed.join(', ')}`)
+          : fail(check, 'no files changed')
+      }
       case 'no_changes': {
-        for (const [rel, before] of Object.entries(ctx.snapshot)) {
-          const abs = join(workspacePath, rel)
-          const after = existsSync(abs) ? readFileSync(abs, 'utf8') : null
-          if (after !== before) return fail(check, `changed ${rel}`)
-        }
+        const changed = changedWorkspaceFiles(workspacePath, ctx.beforeWorkspace ?? ctx.files)
+        if (changed.length) return fail(check, `changed ${changed.join(', ')}`)
         return pass(check, 'fixtures unchanged')
       }
       case 'command': {
@@ -129,7 +200,7 @@ function fail(check: EvalCheck, detail: string): EvalCheckResult {
 async function evaluateChecksAsync(
   workspacePath: string,
   checks: EvalCheck[],
-  ctx: { answer: string; snapshot: Record<string, string | null>; files: Record<string, string> },
+  ctx: EvalContext,
   signal?: AbortSignal
 ): Promise<EvalCheckResult[]> {
   const out: EvalCheckResult[] = []
@@ -144,7 +215,10 @@ async function evaluateChecksAsync(
       out.push(
         code === expect && !ran.timedOut
           ? pass(check, `exit ${code}`)
-          : fail(check, ran.stderr || ran.stdout || `exit ${code}${ran.timedOut ? ' (timeout)' : ''}`)
+          : fail(
+              check,
+              ran.stderr || ran.stdout || `exit ${code}${ran.timedOut ? ' (timeout)' : ''}`
+            )
       )
       continue
     }
@@ -161,16 +235,23 @@ export async function runEvalTask(options: {
   getSecret: (key: string) => string | null
   signal?: AbortSignal
   onStatus?: (text: string) => void
+  turnPlan?: TurnPlan
 }): Promise<EvalResult> {
   const started = Date.now()
   const dest = mkdtempSync(join(tmpdir(), `eris-eval-${options.task.id}-`))
   materializeEvalTask(options.task, dest)
   const snapshot = snapshotFiles(dest, options.task.files)
+  const beforeWorkspace = snapshotWorkspace(dest)
   let answer = ''
   let steps = 0
   let toolCalls = 0
   let toolErrors = 0
-  const agentId = options.task.agentId || options.settings.agent.routing.fallbackAgentId || 'composer'
+  const toolsUsed = new Set<string>()
+  const agentId =
+    options.turnPlan?.agentId ||
+    options.task.agentId ||
+    options.settings.agent.routing.fallbackAgentId ||
+    'composer'
   const allowUnsafe = options.settings.evals.allowUnsafeCommands
   try {
     options.onStatus?.(`Running ${options.task.id} on ${options.model}`)
@@ -178,34 +259,44 @@ export async function runEvalTask(options: {
       workspacePath: dest,
       settings: options.settings,
       model: options.model,
-      messages: [
-        { role: 'user', content: options.task.prompt }
-      ],
+      messages: [{ role: 'user', content: options.task.prompt }],
       temperature: options.settings.models.temperature,
       signal: options.signal,
       getSecret: options.getSecret,
       mode: options.task.mode,
+      turnPlan: options.turnPlan,
       mcp: 'off',
       approveCommand: async (kind, command) => {
         if (allowUnsafe) return true
-        if (kind === 'run' && /node(\s|$)|npm test|npm run test/i.test(command)) return true
+        if (kind === 'run' && isSafeCommand(command)) return true
         return false
       }
     })) {
-      if (evt.type === 'answer') answer += evt.text
+      if (evt.type === 'answer') answer = evt.replace ? evt.text : answer + evt.text
       else if (evt.type === 'progress') steps = evt.step
       else if (evt.type === 'tool') {
         toolCalls += 1
+        toolsUsed.add(evt.tool.name)
         if (evt.tool.status === 'error') toolErrors += 1
         options.onStatus?.(`${evt.tool.name}: ${evt.tool.status}`)
       } else if (evt.type === 'status') {
         options.onStatus?.(evt.text)
       }
     }
+    const durationMs = Date.now() - started
     const checks = await evaluateChecksAsync(
       dest,
       options.task.checks,
-      { answer, snapshot, files: options.task.files },
+      {
+        answer,
+        snapshot,
+        files: options.task.files,
+        beforeWorkspace,
+        steps,
+        toolErrors,
+        durationMs,
+        toolsUsed: [...toolsUsed]
+      },
       options.signal
     )
     const ok = checks.every((c) => c.ok)
@@ -222,7 +313,7 @@ export async function runEvalTask(options: {
       steps,
       toolCalls,
       toolErrors,
-      durationMs: Date.now() - started,
+      durationMs,
       answer: answer.slice(0, 4000),
       at: new Date().toISOString()
     }
@@ -299,7 +390,13 @@ export async function runEvalSuite(
         getSecret,
         signal: ac.signal,
         onStatus: (text) =>
-          onProgress?.({ type: 'task-status', batchId, taskId: job.task.id, model: job.model, text })
+          onProgress?.({
+            type: 'task-status',
+            batchId,
+            taskId: job.task.id,
+            model: job.model,
+            text
+          })
       })
       result.batchId = batchId
       results.push(result)

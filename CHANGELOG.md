@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.3.6 — 2026-10-19
+
+- Added a chunked 10,000-question real-model smoke-test runner with persistent JSONL results and exportable review reports.
+- Added typed agent workflow outcomes so edit requests cannot finish without a workspace mutation and verification attempt.
+- Added durable main-process chat job snapshots with automatic renderer reconnection.
+- Added shared local inference admission control for text and image models.
+- Added real-model scenario eval checks for mutations, tool errors, step budgets, and latency.
+- Unified agent and search retrieval behind a workspace intelligence service.
+- Removed the stopped-task Resume/Rewind banner and its manual recovery APIs.
+
+## 0.3.5 — 2026-10-18
+
+- Added Metal memory protection, SDXL safety checks, and automatic low-memory fallback for local image generation.
+
+## 0.3.4 — 2026-10-18
+
+- Redesigned Image Models settings with clearer runtime status, installed models, and Hugging Face downloads.
+
+## 0.3.3 — 2026-10-18
+
+- Split model settings into dedicated GPU, Composer, text-model, and image-model pages.
+
+## 0.3.2 — 2026-10-18
+
+- Reorganized Settings into dedicated Models pages for GPUs, Composer, text models, and image models.
+
 ## 0.3.1 — 2026-10-18
 
 Cross-platform desktop builds (macOS + Windows) from the same version tag.

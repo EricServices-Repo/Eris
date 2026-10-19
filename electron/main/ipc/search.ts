@@ -7,19 +7,17 @@ import {
   loadCodeIndex,
   relatedFiles
 } from '../services/code-index'
-import { retrieveContextAsync, workspaceGlob, workspaceGrep } from '../services/workspace-search'
+import { workspaceGlob, workspaceGrep } from '../services/workspace-search'
+import { inspectWorkspace } from '../services/workspace-intelligence'
 import { appState } from '../app-state'
 import { listRules } from '../services/rules'
 import { listSkills } from '../services/skills'
 
 export function registerSearchIpc(): void {
-  ipcMain.handle(
-    'search:grep',
-    async (_e, pattern: string, glob?: string) => {
-      if (!appState.currentWorkspace) return { ok: false, detail: 'No workspace', hits: [] }
-      return workspaceGrep(appState.currentWorkspace, pattern, { glob })
-    }
-  )
+  ipcMain.handle('search:grep', async (_e, pattern: string, glob?: string) => {
+    if (!appState.currentWorkspace) return { ok: false, detail: 'No workspace', hits: [] }
+    return workspaceGrep(appState.currentWorkspace, pattern, { glob })
+  })
 
   ipcMain.handle('search:glob', (_e, pattern: string) => {
     if (!appState.currentWorkspace) return { ok: false, detail: 'No workspace', paths: [] }
@@ -41,7 +39,7 @@ export function registerSearchIpc(): void {
 
   ipcMain.handle('search:retrieve', async (_e, query: string) => {
     if (!appState.currentWorkspace) return { ok: false, detail: 'No workspace', paths: [] }
-    return retrieveContextAsync(appState.currentWorkspace, query)
+    return inspectWorkspace(appState.currentWorkspace, query)
   })
 
   ipcMain.handle('index:rebuild', async () => {

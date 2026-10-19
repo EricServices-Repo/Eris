@@ -2,13 +2,15 @@ import { useEffect, useMemo, useState } from 'react'
 import type { HfGgufSearchHit, LocalModelStatus } from '@/shared/settings-schema'
 import type { ApplySetting } from './fields'
 
-const HF_BROWSE_FALLBACK =
-  'https://huggingface.co/models?library=gguf&sort=downloads'
+const HF_BROWSE_FALLBACK = 'https://huggingface.co/models?library=gguf&sort=downloads'
 
 function sizeLabel(b: LocalModelStatus): string {
-  return b.sizeLabel || (b.approxBytes >= 1e9
-    ? `~${(b.approxBytes / 1e9).toFixed(1)} GB`
-    : `~${Math.round(b.approxBytes / 1e6)} MB`)
+  return (
+    b.sizeLabel ||
+    (b.approxBytes >= 1e9
+      ? `~${(b.approxBytes / 1e9).toFixed(1)} GB`
+      : `~${Math.round(b.approxBytes / 1e6)} MB`)
+  )
 }
 
 function formatDownloads(n: number): string {
@@ -59,7 +61,10 @@ export function LocalModelsPanel({
   const [hfDownloadingRepo, setHfDownloadingRepo] = useState<string | null>(null)
 
   useEffect(() => {
-    void window.ide.hfGgufBrowseUrl().then(setBrowseUrl).catch(() => undefined)
+    void window.ide
+      .hfGgufBrowseUrl()
+      .then(setBrowseUrl)
+      .catch(() => undefined)
   }, [])
 
   useEffect(() => {
@@ -119,10 +124,7 @@ export function LocalModelsPanel({
     const ready = models.filter((m) => m.ready)
     const active = models.filter(
       (m) =>
-        !m.ready &&
-        (m.downloading ||
-          m.id === downloadingId ||
-          (m.progress > 0 && m.progress < 1))
+        !m.ready && (m.downloading || m.id === downloadingId || (m.progress > 0 && m.progress < 1))
     )
     const readyIds = new Set(ready.map((m) => m.id))
     return [...ready, ...active.filter((m) => !readyIds.has(m.id))]
@@ -201,20 +203,19 @@ export function LocalModelsPanel({
     const isDownloading = downloadingId === m.id || Boolean(m.downloading)
     const pct = Math.round((m.progress || 0) * 100)
     const isDefault = defaultModel === m.ref
-    const statusLine =
-      m.ready
-        ? 'Ready on this device'
-        : isDownloading
-          ? m.downloadPhase === 'verifying'
-            ? 'Verifying…'
-            : m.downloadPhase === 'finalizing'
-              ? 'Installing…'
-              : pct > 0
-                ? `Downloading · ${pct}%`
-                : 'Downloading…'
-          : pct > 0
-            ? `Paused · ${pct}% — Resume continues from here`
-            : null
+    const statusLine = m.ready
+      ? 'Ready on this device'
+      : isDownloading
+        ? m.downloadPhase === 'verifying'
+          ? 'Verifying…'
+          : m.downloadPhase === 'finalizing'
+            ? 'Installing…'
+            : pct > 0
+              ? `Downloading · ${pct}%`
+              : 'Downloading…'
+        : pct > 0
+          ? `Paused · ${pct}% — Resume continues from here`
+          : null
     return (
       <div key={m.id} className={`ollama-catalog-row${m.ready ? ' is-ready' : ''}`}>
         <div className="ollama-catalog-main">
@@ -305,7 +306,7 @@ export function LocalModelsPanel({
     <div className="ollama-library">
       <div className="ollama-library-head">
         <div>
-          <strong>Local models</strong>
+          <strong>Text models</strong>
           <span className="model-conn-meta">
             Download a GGUF and it runs inside Eris — no Ollama app, no separate server.
           </span>
@@ -428,7 +429,7 @@ export function LocalModelsPanel({
                     </div>
                     <p>
                       {busy
-                        ? 'Adding to Local models…'
+                        ? 'Adding to Text Models…'
                         : 'GGUF repo on Hugging Face — Eris picks a Q4_K_M (or closest) file.'}
                     </p>
                     {busy && (

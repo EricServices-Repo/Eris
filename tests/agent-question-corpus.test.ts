@@ -82,6 +82,9 @@ type NaturalQuestionCase = {
 const naturalQuestionFixture = fileURLToPath(
   new URL('./fixtures/10000-natural-diverse-coding-questions.txt', import.meta.url)
 )
+const packagedNaturalQuestionFixture = fileURLToPath(
+  new URL('../resources/evals/10000-natural-diverse-coding-questions.txt', import.meta.url)
+)
 
 function loadNaturalQuestions(): Array<{ id: string; question: string }> {
   return readFileSync(naturalQuestionFixture, 'utf8')
@@ -179,11 +182,7 @@ const agentNames: Record<CorpusAgent, string> = {
 
 function planFor(testCase: AgentQuestionCase): TurnPlan {
   const policy: AgentToolsCeiling =
-    testCase.intent === 'answer'
-      ? 'none'
-      : testCase.intent === 'edit'
-        ? 'edit'
-        : 'read'
+    testCase.intent === 'answer' ? 'none' : testCase.intent === 'edit' ? 'edit' : 'read'
   return {
     intent: testCase.intent,
     agentId: testCase.agent,
@@ -207,16 +206,20 @@ function naturalCaseFor(entry: { id: string; question: string }): NaturalQuestio
 
   if (intent === 'edit') {
     outputPath = `src/natural-question-smoke/question-${entry.id}.ts`
-    toolResponses.push(JSON.stringify({
-      name: 'write_file',
-      path: outputPath,
-      content: naturalSourceModule(expectedToken, entry.question)
-    }))
-    toolResponses.push(JSON.stringify({
-      name: 'write_file',
-      path: `tests/natural-question-smoke/question-${entry.id}.test.ts`,
-      content: naturalTestModule(expectedToken)
-    }))
+    toolResponses.push(
+      JSON.stringify({
+        name: 'write_file',
+        path: outputPath,
+        content: naturalSourceModule(expectedToken, entry.question)
+      })
+    )
+    toolResponses.push(
+      JSON.stringify({
+        name: 'write_file',
+        path: `tests/natural-question-smoke/question-${entry.id}.test.ts`,
+        content: naturalTestModule(expectedToken)
+      })
+    )
   } else if (intent === 'verify' || intent === 'run') {
     toolResponses.push(JSON.stringify({ name: 'run', command: 'npm test' }))
   } else if (!['answer', 'capability'].includes(intent)) {
@@ -310,9 +313,11 @@ async function runNaturalCase(testCase: NaturalQuestionCase): Promise<AgentRunne
 
 function lastAnswer(events: AgentRunnerEvent[]): string {
   return (
-    [...events].reverse().find(
-      (event): event is Extract<AgentRunnerEvent, { type: 'answer' }> => event.type === 'answer'
-    )?.text ?? ''
+    [...events]
+      .reverse()
+      .find(
+        (event): event is Extract<AgentRunnerEvent, { type: 'answer' }> => event.type === 'answer'
+      )?.text ?? ''
   )
 }
 
@@ -337,7 +342,14 @@ describe('10,000-question agent build corpus', () => {
           AGENT_QUESTION_CORPUS.filter((entry) => entry.intent === intent).length
         ])
       )
-    ).toEqual({ answer: 1_667, explore: 1_667, edit: 1_667, review: 1_667, plan: 1_666, verify: 1_666 })
+    ).toEqual({
+      answer: 1_667,
+      explore: 1_667,
+      edit: 1_667,
+      review: 1_667,
+      plan: 1_666,
+      verify: 1_666
+    })
   })
 
   it('routes all 10,000 questions and validates every simulated response contract', () => {
@@ -376,10 +388,16 @@ describe('10,000-question agent build corpus', () => {
       if (toolName == null) {
         if (calls.length > 0) failures.push(`${testCase.id}: answer unexpectedly called a tool`)
       } else if (calls.length !== 1 || calls[0]?.name !== toolName) {
-        failures.push(`${testCase.id}: expected one ${toolName} call, received ${calls.map((call) => call.name).join(', ') || 'none'}`)
+        failures.push(
+          `${testCase.id}: expected one ${toolName} call, received ${calls.map((call) => call.name).join(', ') || 'none'}`
+        )
       } else {
-        const validation = validateToolArguments(calls[0].args, getToolContract(calls[0].name)?.schema)
-        if (!validation.ok) failures.push(`${testCase.id}: invalid tool arguments: ${validation.errors.join('; ')}`)
+        const validation = validateToolArguments(
+          calls[0].args,
+          getToolContract(calls[0].name)?.schema
+        )
+        if (!validation.ok)
+          failures.push(`${testCase.id}: invalid tool arguments: ${validation.errors.join('; ')}`)
       }
     }
 
@@ -408,10 +426,14 @@ describe('10,000-question agent build corpus', () => {
         events.some((event) => event.type === 'progress' && event.incomplete === true),
         `${label} should finish without an incomplete marker`
       ).toBe(false)
-      expect(model.replies, `${label} should consume every simulated model response`).toHaveLength(0)
+      expect(model.replies, `${label} should consume every simulated model response`).toHaveLength(
+        0
+      )
 
       const tools = events
-        .filter((event): event is Extract<AgentRunnerEvent, { type: 'tool' }> => event.type === 'tool')
+        .filter(
+          (event): event is Extract<AgentRunnerEvent, { type: 'tool' }> => event.type === 'tool'
+        )
         .map((event) => event.tool)
       if (testCase.intent === 'answer') {
         expect(tools, `${label} should answer without tools`).toHaveLength(0)
@@ -435,6 +457,12 @@ describe('10,000-question agent build corpus', () => {
 })
 
 describe('attached 10,000 natural coding chat questions', () => {
+  it('ships the exact reviewed corpus with the desktop app', () => {
+    expect(readFileSync(packagedNaturalQuestionFixture, 'utf8')).toBe(
+      readFileSync(naturalQuestionFixture, 'utf8')
+    )
+  })
+
   it('loads all numbered questions as unique test data and ignores the document heading', () => {
     expect(naturalQuestions).toHaveLength(10_000)
     expect(naturalQuestions.map((entry) => Number(entry.id))).toEqual(
@@ -470,7 +498,9 @@ describe('attached 10,000 natural coding chat questions', () => {
         failures.push(`${entry.id}: verification routed to ${testCase.agent}`)
       }
 
-      for (const call of testCase.simulatedResponses.flatMap((response) => parseToolCalls(response))) {
+      for (const call of testCase.simulatedResponses.flatMap((response) =>
+        parseToolCalls(response)
+      )) {
         const contract = getToolContract(call.name)
         if (!contract) {
           failures.push(`${entry.id}: unknown simulated tool ${call.name}`)

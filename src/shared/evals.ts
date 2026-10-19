@@ -13,6 +13,18 @@ export const EvalCheckSchema = z.discriminatedUnion('type', [
   }),
   z.object({ type: z.literal('answer_contains'), text: z.string() }),
   z.object({ type: z.literal('answer_matches'), pattern: z.string() }),
+  z.object({
+    type: z.literal('changed_files'),
+    include: z.array(z.string()).default([]),
+    exclude: z.array(z.string()).default([]),
+    exact: z.boolean().default(false)
+  }),
+  z.object({ type: z.literal('tool_used'), name: z.string() }),
+  z.object({ type: z.literal('max_steps'), value: z.number().int().positive() }),
+  z.object({ type: z.literal('max_tool_errors'), value: z.number().int().nonnegative() }),
+  z.object({ type: z.literal('max_duration_ms'), value: z.number().int().positive() }),
+  /** Passes when the agent changes, creates, or removes at least one sandbox file. */
+  z.object({ type: z.literal('has_changes') }),
   /** Fails if any fixture file changed, appeared, or disappeared */
   z.object({ type: z.literal('no_changes') })
 ])
@@ -94,3 +106,58 @@ export type EvalProgressEvent =
   | { type: 'task-status'; batchId: string; taskId: string; model: string; text: string }
   | { type: 'result'; batchId: string; index: number; result: EvalResult }
   | { type: 'done'; batchId: string; passed: number; total: number; cancelled: boolean }
+
+export interface CorpusDebugRunRequest {
+  model: string
+  /** Zero-based question offset in the 10,000-question corpus. */
+  startIndex: number
+  count: number
+  /** Flush a checkpoint summary after this many real model turns. */
+  chunkSize: number
+  maxSteps: number
+}
+
+export interface CorpusDebugQuestionResult {
+  index: number
+  questionId: string
+  question: string
+  plannedIntent: ChatIntent
+  plannedAgentId: string
+  plannedChatModel: string
+  plannedToolsModel: string
+  routeMethod: string
+  result: EvalResult
+}
+
+export interface CorpusDebugRunSummary {
+  runId: string
+  model: string
+  status: 'running' | 'completed' | 'cancelled' | 'failed'
+  startIndex: number
+  requested: number
+  completed: number
+  passed: number
+  failed: number
+  nextIndex: number
+  totalCorpus: number
+  chunkSize: number
+  maxSteps: number
+  startedAt: string
+  finishedAt?: string
+  jsonlPath: string
+  reviewPath: string
+  error?: string
+}
+
+export type CorpusDebugProgressEvent =
+  | { type: 'start'; summary: CorpusDebugRunSummary }
+  | { type: 'question-start'; runId: string; index: number; questionId: string; question: string }
+  | { type: 'status'; runId: string; index: number; text: string }
+  | {
+      type: 'result'
+      runId: string
+      item: CorpusDebugQuestionResult
+      summary: CorpusDebugRunSummary
+    }
+  | { type: 'chunk-saved'; runId: string; summary: CorpusDebugRunSummary }
+  | { type: 'done'; summary: CorpusDebugRunSummary }

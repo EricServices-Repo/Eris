@@ -30,7 +30,15 @@ import type {
   WorkspaceMeta,
   WorkspaceRecord
 } from './settings-schema'
-import type { EvalProgressEvent, EvalResult, EvalScoreboard, EvalTaskInfo } from './evals'
+import type {
+  CorpusDebugProgressEvent,
+  CorpusDebugRunRequest,
+  CorpusDebugRunSummary,
+  EvalProgressEvent,
+  EvalResult,
+  EvalScoreboard,
+  EvalTaskInfo
+} from './evals'
 import type {
   BackgroundJob,
   BackgroundJobEvent,
@@ -38,6 +46,7 @@ import type {
 } from './background-agents'
 import type { AgentOutcomeSummary } from './agent-telemetry'
 import type { OllamaLibraryEntry, OllamaPullProgress } from './ollama-types'
+import type { ChatJobSnapshot } from './chat-jobs'
 
 export interface AppState {
   workspaces: WorkspaceRecord[]
@@ -59,20 +68,6 @@ export interface AgentSessionStepSummary {
   summary: string
   ts: string
   filesTouched: string[]
-}
-
-export interface AgentRunSummary {
-  id: string
-  goal: string
-  agentId: string
-  status: 'running' | 'done' | 'stopped' | 'failed' | 'incomplete' | 'dismissed'
-  step: number
-  actionLog: string[]
-  updatedAt: string
-  sessionId?: string | null
-  checkpointId?: string | null
-  /** Persisted session checkpoints for rewind / resume-from-step. */
-  steps?: AgentSessionStepSummary[]
 }
 
 export interface AppVersionInfo {
@@ -266,7 +261,7 @@ export interface IdeApi {
   deleteLocalModel: (id: string) => Promise<LocalModelStatus | null>
   cancelLocalDownload: () => Promise<boolean>
   onLocalDownloadProgress: (cb: (status: LocalModelStatus) => void) => () => void
-  /** Hugging Face Hub — browse / search / download GGUFs into Local models. */
+  /** Hugging Face Hub — browse / search / download GGUFs into Text Models. */
   hfGgufBrowseUrl: () => Promise<string>
   searchHfGgufModels: (query: string) => Promise<HfGgufSearchHit[]>
   downloadLocalModelFromHf: (repoIdOrUrl: string) => Promise<LocalModelStatus>
@@ -307,7 +302,6 @@ export interface IdeApi {
     to: 'tools' | 'answer'
     agentId: string
   }) => Promise<boolean>
-  getResumableRun: () => Promise<AgentRunSummary | null>
   listSessionSteps: (sessionId: string) => Promise<AgentSessionStepSummary[]>
   getAgentSession: (sessionId: string) => Promise<{
     id: string
@@ -318,7 +312,6 @@ export interface IdeApi {
   } | null>
   getWorkspaceTrust: () => Promise<WorkspaceTrustStatus>
   setWorkspaceTrust: (trusted: boolean) => Promise<boolean>
-  dismissRun: (id: string) => Promise<boolean>
   listChats: () => Promise<ChatThread[]>
   getChat: (id: string, page?: { before?: number; limit?: number }) => Promise<ChatThread | null>
   appendChatMessage: (
@@ -352,6 +345,7 @@ export interface IdeApi {
     threadId?: string | null
     planningDurationMs?: number
   }) => Promise<boolean>
+  getLatestChatJob: () => Promise<ChatJobSnapshot | null>
   stopChat: () => Promise<boolean>
   /** Absolute path of a dropped File ('' when it has none) */
   getPathForFile: (file: File) => string
@@ -781,6 +775,13 @@ export interface IdeApi {
   evalsRunning: () => Promise<boolean>
   clearEvalResults: () => Promise<EvalScoreboard>
   onEvalProgress: (cb: (event: EvalProgressEvent) => void) => () => void
+  listCorpusDebugRuns: () => Promise<CorpusDebugRunSummary[]>
+  runCorpusDebug: (payload: CorpusDebugRunRequest) => Promise<CorpusDebugRunSummary>
+  cancelCorpusDebug: () => Promise<boolean>
+  corpusDebugRunning: () => Promise<boolean>
+  exportCorpusDebug: (runId: string) => Promise<string | null>
+  openCorpusDebugFolder: () => Promise<boolean>
+  onCorpusDebugProgress: (cb: (event: CorpusDebugProgressEvent) => void) => () => void
   listBackgroundJobs: () => Promise<BackgroundJob[]>
   enqueueBackgroundJob: (payload: EnqueueBackgroundJobRequest) => Promise<BackgroundJob>
   stopBackgroundJob: (id: string) => Promise<boolean>

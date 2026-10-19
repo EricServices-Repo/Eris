@@ -1,7 +1,12 @@
 import { asksForImageGeneration } from '../../../src/shared/image-generation'
+import { asksToImplementChanges } from '../../../src/shared/agent-contract'
 import { ipcMain } from 'electron'
 import { getResolvedSettings, setSettings } from '../services/settings'
-import { planChatTurn, turnPlanToRouteResult, localComposerFullActive } from '../services/chat-router'
+import {
+  planChatTurn,
+  turnPlanToRouteResult,
+  localComposerFullActive
+} from '../services/chat-router'
 import {
   commandNeedsApproval,
   denyAllPendingApprovals,
@@ -20,23 +25,14 @@ import {
 import type { ChatPromptInput, TurnPlan } from '../../../src/shared/settings-schema'
 import { AGENT_HANDOFF_CHARS } from '../../../src/shared/agent-orchestration'
 import { buildChatMessages } from '../services/chat-prompt'
-import {
-  loadLastAgentRun,
-  loadResumableRun,
-  saveAgentRun,
-  setAgentRunStatus,
-  type AgentRunRecord
-} from '../services/agent-runs'
+import { saveAgentRun, type AgentRunRecord } from '../services/agent-runs'
 import {
   appendSessionStep,
   createAgentSession,
   listSessionSteps,
   loadAgentSession,
-  loadSessionStep,
-  saveAgentSession,
   setAgentSessionStatus
 } from '../services/agent-sessions'
-import { restoreCheckpointThrough } from '../services/checkpoints'
 import { runAgentWithWorkspaceTools } from '../services/agent-runner'
 import {
   configureBackgroundAgents,
@@ -47,18 +43,18 @@ import { setDiagnosticsPaused } from '../services/diagnostics'
 import { findAgent } from '../services/agents'
 import { appState } from '../app-state'
 import { getSecret, abortAllCompletes } from './shared'
-import {
-  addWorkspaceAllowedCommand,
-  workspaceAllowedCommands
-} from '../services/workspace-trust'
+import { addWorkspaceAllowedCommand, workspaceAllowedCommands } from '../services/workspace-trust'
 import { assertChatWithinPlan, assertCloudJobWithinPlan } from '../services/eris-entitlements'
 import { logError, logInfo, logWarn } from '../services/logger'
 import { recordAgentRun } from '../services/agent-telemetry'
-import {
-  cloudInlineAvailable,
-  runCloudAgentInline
-} from '../services/cloud-agent-inline'
+import { cloudInlineAvailable, runCloudAgentInline } from '../services/cloud-agent-inline'
 import { rememberAgentRun, rememberAskUserReply } from '../services/project-memory'
+import {
+  finishChatJob,
+  getLatestChatJob,
+  recordChatJobEvent,
+  startChatJob
+} from '../services/chat-job-controller'
 
 export function registerChatStreamIpc(): void {
   ipcMain.handle(
@@ -85,11 +81,25 @@ export function registerChatStreamIpc(): void {
       const externalPlanningDurationMs = payload.planningDurationMs || 0
       const settings = getResolvedSettings(appState.currentWorkspace)
       const { requestId } = payload
+      const chatSender = () => {
+        const current = appState.mainWindow?.webContents
+        return current && !current.isDestroyed() ? current : event.sender
+      }
+      const publish = (channel: string, data: Record<string, unknown>): void => {
+        recordChatJobEvent(requestId, channel, data)
+        const target = chatSender()
+        if (!target.isDestroyed()) target.send(channel, data)
+        if (channel === 'chat:done') {
+          finishChatJob(requestId, data.aborted ? 'stopped' : 'done')
+        } else if (channel === 'chat:error') {
+          finishChatJob(requestId, 'failed')
+        }
+      }
       try {
         assertChatWithinPlan(settings, getSecret)
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Plan limit reached'
-        event.sender.send('chat:error', { requestId, error: message })
+        publish('chat:error', { requestId, error: message })
         return { ok: false, error: message }
       }
       appState.chatAbort?.abort()
@@ -99,108 +109,91 @@ export function registerChatStreamIpc(): void {
       // Ghost completes share the llama runtime — never race the agent turn.
       abortAllCompletes()
       const { model, agentId, mode } = payload
-      const resumeRun = payload.prompt?.resumeRunId
-        ? loadLastAgentRun(appState.currentWorkspace)
-        : null
-      const resume =
-        resumeRun && resumeRun.id === payload.prompt?.resumeRunId ? resumeRun : null
-      let resumeLoop:
-        | {
-            goal: string
-            actionLog: string[]
-            filesTouched: string[]
-            workerMessages?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
-            fromStep?: number
-          }
-        | undefined
-      if (resume && appState.currentWorkspace) {
-        resumeLoop = {
-          goal: resume.goal,
-          actionLog: resume.actionLog,
-          filesTouched: resume.filesTouched
-        }
-        const sessionId = resume.sessionId
-        if (sessionId && loadAgentSession(appState.currentWorkspace, sessionId)) {
-          const steps = listSessionSteps(appState.currentWorkspace, sessionId)
-          const wantStep =
-            typeof payload.prompt?.resumeSessionStep === 'number'
-              ? payload.prompt.resumeSessionStep
-              : steps.length
-                ? steps[steps.length - 1]!.step
-                : null
-          const stepRec =
-            wantStep != null
-              ? loadSessionStep(appState.currentWorkspace, sessionId, wantStep)
-              : null
-          if (stepRec) {
-            if (resume.checkpointId) {
-              try {
-                restoreCheckpointThrough(
-                  appState.currentWorkspace,
-                  resume.checkpointId,
-                  stepRec.opThrough
-                )
-              } catch (err) {
-                logWarn('Session rewind failed', {
-                  sessionId,
-                  step: stepRec.step,
-                  error: err instanceof Error ? err.message : String(err)
-                })
-              }
-            }
-            resumeLoop = {
-              goal: resume.goal,
-              actionLog: stepRec.actionLog,
-              filesTouched: stepRec.filesTouched,
-              workerMessages: stepRec.workerMessages,
-              fromStep: stepRec.step
-            }
-          }
-        }
-      }
       const promptBuildStartedAt = Date.now()
-      const messages = payload.prompt
-        ? buildChatMessages(appState.currentWorkspace, settings, {
-            ...payload.prompt,
-            threadId: payload.threadId ?? payload.prompt.threadId,
-            text: resume ? resume.goal : payload.prompt.text
-          })
-        : payload.messages ?? []
+      let messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+      try {
+        messages = payload.prompt
+          ? buildChatMessages(appState.currentWorkspace, settings, {
+              ...payload.prompt,
+              threadId: payload.threadId ?? payload.prompt.threadId
+            })
+          : (payload.messages ?? [])
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Could not build the chat prompt'
+        publish('chat:error', { requestId, error: message })
+        appState.chatStreamActive = false
+        if (appState.activeChatRequestId === requestId) appState.activeChatRequestId = null
+        return false
+      }
       const promptBuildMs = Date.now() - promptBuildStartedAt
       const userText =
-        resume?.goal ||
         payload.prompt?.text ||
-        [...messages].reverse().find((m) => m.role === 'user')?.content.replace(/\n\n\[Eris\][\s\S]*$/, '') ||
+        [...messages]
+          .reverse()
+          .find((m) => m.role === 'user')
+          ?.content.replace(/\n\n\[Eris\][\s\S]*$/, '') ||
         ''
+      startChatJob({
+        id: requestId,
+        workspacePath: appState.currentWorkspace,
+        threadId: payload.threadId ?? payload.prompt?.threadId ?? null,
+        goal: userText
+      })
       const previousAgentId =
-        [...(payload.prompt?.history ?? [])].reverse().find((message) => message.role === 'assistant')
-          ?.agentId ?? null
+        [...(payload.prompt?.history ?? [])]
+          .reverse()
+          .find((message) => message.role === 'assistant')?.agentId ?? null
       let planningDurationMs = payload.planningDurationMs
       let turnPlan: TurnPlan
-      if (payload.turnPlan) {
-        turnPlan = payload.turnPlan
-      } else {
-        const planningStartedAt = Date.now()
-        turnPlan = await planChatTurn({
-          workspacePath: appState.currentWorkspace,
-          settings,
-          context: {
-            text: userText,
-            selectedModel: model || settings.models.defaultModel,
-            mode: mode === 'ask' ? 'ask' : 'agent',
-            manualAgentId: agentId ?? null,
-            previousAgentId
-          },
-          getSecret,
-          signal: appState.chatAbort.signal
-        })
-        planningDurationMs ??= Date.now() - planningStartedAt
+      try {
+        if (payload.turnPlan) {
+          turnPlan = payload.turnPlan
+        } else {
+          const planningStartedAt = Date.now()
+          turnPlan = await planChatTurn({
+            workspacePath: appState.currentWorkspace,
+            settings,
+            context: {
+              text: userText,
+              selectedModel: model || settings.models.defaultModel,
+              mode: mode === 'ask' ? 'ask' : 'agent',
+              manualAgentId: agentId ?? null,
+              previousAgentId
+            },
+            getSecret,
+            signal: appState.chatAbort.signal
+          })
+          planningDurationMs ??= Date.now() - planningStartedAt
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Could not plan the chat turn'
+        publish('chat:error', { requestId, error: message })
+        appState.chatStreamActive = false
+        if (appState.activeChatRequestId === requestId) appState.activeChatRequestId = null
+        return false
       }
-      const agent = findAgent(appState.currentWorkspace, turnPlan.agentId) ||
+      if (
+        (mode ?? 'agent') === 'agent' &&
+        asksToImplementChanges(userText) &&
+        (turnPlan.toolPolicy === 'none' || turnPlan.toolPolicy === 'read')
+      ) {
+        const composer = findAgent(appState.currentWorkspace, 'composer')
+        turnPlan = {
+          ...turnPlan,
+          intent: 'edit',
+          agentId: composer?.id ?? 'composer',
+          agentName: composer?.name ?? 'Composer',
+          toolPolicy: 'edit',
+          requiresTools: true,
+          reason: `Implementation request → ${composer?.name ?? 'Composer'} with edit tools`,
+          method: 'override'
+        }
+      }
+      const agent =
+        findAgent(appState.currentWorkspace, turnPlan.agentId) ||
         (agentId ? findAgent(appState.currentWorkspace, agentId) : null)
       let resolvedModel = turnPlan.models.chat || model || settings.models.defaultModel
-      const temperature =
-        agent?.temperature ?? settings.models.temperature
+      const temperature = agent?.temperature ?? settings.models.temperature
       setDiagnosticsPaused(true)
       // Coalesce high-frequency thinking/answer IPC (~40ms) to cut renderer thrash.
       let pendingThinking = ''
@@ -212,11 +205,11 @@ export function registerChatStreamIpc(): void {
           coalesceTimer = null
         }
         if (pendingThinking) {
-          event.sender.send('chat:thinking', { requestId, chunk: pendingThinking })
+          publish('chat:thinking', { requestId, chunk: pendingThinking })
           pendingThinking = ''
         }
         if (pendingAnswer) {
-          event.sender.send('chat:answer', { requestId, chunk: pendingAnswer })
+          publish('chat:answer', { requestId, chunk: pendingAnswer })
           pendingAnswer = ''
         }
       }
@@ -236,16 +229,11 @@ export function registerChatStreamIpc(): void {
       let usedCloud = false
       let firstModelOutputMs: number | null = null
       const noteFirstModelOutput = (evt: { type: string; text?: string }) => {
-        const hasOutput =
-          (evt.type === 'thinking' || evt.type === 'answer') && Boolean(evt.text)
-        if (
-          firstModelOutputMs !== null ||
-          (!hasOutput && evt.type !== 'tool')
-        ) {
+        const hasOutput = (evt.type === 'thinking' || evt.type === 'answer') && Boolean(evt.text)
+        if (firstModelOutputMs !== null || (!hasOutput && evt.type !== 'tool')) {
           return
         }
-        firstModelOutputMs =
-          externalPlanningDurationMs + Date.now() - requestReceivedAt
+        firstModelOutputMs = externalPlanningDurationMs + Date.now() - requestReceivedAt
         logInfo('Chat first model output', {
           requestId,
           firstOutputMs: firstModelOutputMs,
@@ -290,7 +278,7 @@ export function registerChatStreamIpc(): void {
           setupMs: Date.now() - requestReceivedAt
         })
         const route = turnPlanToRouteResult(turnPlan)
-        event.sender.send('chat:routed', {
+        publish('chat:routed', {
           requestId,
           agentId: route.agentId,
           agentName: route.agentName,
@@ -307,7 +295,7 @@ export function registerChatStreamIpc(): void {
 
         const threadId = payload.threadId ?? null
         if (appState.currentWorkspace) {
-          configureBackgroundAgents({ sender: event.sender, getSecret })
+          configureBackgroundAgents({ sender: chatSender(), getSecret })
         }
         const chatChildIds: string[] = []
         const publishDelegations = () => {
@@ -316,8 +304,9 @@ export function registerChatStreamIpc(): void {
             const job = getBackgroundJob(id)
             if (!job) continue
             const named = findAgent(appState.currentWorkspace, job.agentId)
-            const failed = job.status === 'failed' || job.status === 'stopped' || job.status === 'discarded'
-            event.sender.send('chat:delegation', {
+            const failed =
+              job.status === 'failed' || job.status === 'stopped' || job.status === 'discarded'
+            publish('chat:delegation', {
               requestId,
               delegation: {
                 id: job.id,
@@ -356,14 +345,13 @@ export function registerChatStreamIpc(): void {
           turnPlan.mode === 'agent' &&
           Boolean(appState.currentWorkspace) &&
           usingComposerFull &&
-          cloudPreferred &&
-          !resume
+          cloudPreferred
 
         if (wantCloudInline && (await cloudInlineAvailable(settings, getSecret))) {
           try {
             assertCloudJobWithinPlan(settings, getSecret)
             usedCloud = true
-            event.sender.send('chat:model', {
+            publish('chat:model', {
               requestId,
               model: 'composer',
               agentId: turnPlan.agentId,
@@ -388,21 +376,21 @@ export function registerChatStreamIpc(): void {
               } else {
                 flushStreamChunks()
                 if (evt.type === 'tool') {
-                  event.sender.send('chat:tool', { requestId, tool: evt.tool })
+                  publish('chat:tool', { requestId, tool: evt.tool })
                 } else if (evt.type === 'diff') {
                   telemetryMutated = true
-                  event.sender.send('chat:diff', { requestId, diff: evt.diff })
+                  publish('chat:diff', { requestId, diff: evt.diff })
                 } else if (evt.type === 'checkpoint') {
-                  event.sender.send('chat:checkpoint', {
+                  publish('chat:checkpoint', {
                     requestId,
                     checkpointId: evt.checkpointId
                   })
                 } else if (evt.type === 'workspace-changed') {
-                  event.sender.send('chat:workspace-changed', { requestId })
+                  publish('chat:workspace-changed', { requestId })
                 } else if (evt.type === 'status') {
-                  event.sender.send('chat:status', { requestId, text: evt.text })
+                  publish('chat:status', { requestId, text: evt.text })
                 } else if (evt.type === 'model') {
-                  event.sender.send('chat:model', {
+                  publish('chat:model', {
                     requestId,
                     model: evt.model,
                     agentId: evt.agentId ?? turnPlan.agentId,
@@ -426,14 +414,14 @@ export function registerChatStreamIpc(): void {
                 }
               )
               if (mem.needsConfirm) {
-                event.sender.send('chat:memory-proposal', {
+                publish('chat:memory-proposal', {
                   requestId,
                   note: mem.note,
                   summary: mem.summary,
                   preview: mem.preview
                 })
               } else if (mem.wrote) {
-                event.sender.send('chat:memory-updated', {
+                publish('chat:memory-updated', {
                   requestId,
                   kind: mem.kind,
                   preview: mem.preview
@@ -442,7 +430,7 @@ export function registerChatStreamIpc(): void {
             } catch {
               /* memory is best-effort */
             }
-            event.sender.send('chat:done', { requestId })
+            publish('chat:done', { requestId })
             logInfo('Chat stream done (cloud inline)', {
               requestId,
               totalMs: externalPlanningDurationMs + Date.now() - requestReceivedAt,
@@ -454,7 +442,7 @@ export function registerChatStreamIpc(): void {
             if ((cloudErr as Error).name === 'AbortError') {
               flushStreamChunks()
               persistRun({ status: 'stopped' })
-              event.sender.send('chat:done', { requestId, aborted: true })
+              publish('chat:done', { requestId, aborted: true })
               return false
             }
             logWarn('Cloud inline chat falling back to local', {
@@ -494,7 +482,6 @@ export function registerChatStreamIpc(): void {
           mode: mode ?? 'agent',
           turnPlan,
           jobId: `chat:${requestId}`,
-          resume: resumeLoop,
           onDelegate: async (req) => {
             if (!appState.currentWorkspace) {
               return { ok: false, detail: 'Open a workspace to delegate' }
@@ -518,7 +505,7 @@ export function registerChatStreamIpc(): void {
               // without a parent job, await_children needs another approach: collect ids locally.
               chatChildIds.push(child.id)
               publishDelegations()
-              event.sender.send('chat:status', {
+              publish('chat:status', {
                 requestId,
                 text: `Delegated → ${req.agentId}`
               })
@@ -540,7 +527,7 @@ export function registerChatStreamIpc(): void {
             }
             const deadline = Date.now() + Math.max(5_000, Math.min(timeoutMs, 30 * 60_000))
             const terminal = new Set(['done', 'failed', 'stopped', 'merged', 'discarded'])
-            event.sender.send('chat:status', { requestId, text: 'Waiting for delegated agents…' })
+            publish('chat:status', { requestId, text: 'Waiting for delegated agents…' })
             while (Date.now() < deadline) {
               if (appState.chatAbort?.signal.aborted) {
                 publishDelegations()
@@ -570,7 +557,7 @@ export function registerChatStreamIpc(): void {
             if (!commandNeedsApproval(live, kind, command, workspaceAllowed)) return true
             flushStreamChunks()
             const decision = await requestCommandApproval(
-              event.sender,
+              chatSender(),
               requestId,
               kind,
               command,
@@ -593,7 +580,7 @@ export function registerChatStreamIpc(): void {
             flushStreamChunks()
             const preview = formatMcpApprovalPreview(args)
             const decision = await requestCommandApproval(
-              event.sender,
+              chatSender(),
               requestId,
               'mcp',
               preview,
@@ -605,7 +592,7 @@ export function registerChatStreamIpc(): void {
           },
           askUser: async (question, choices) => {
             flushStreamChunks()
-            const outcome = await requestUserQuestion(event.sender, requestId, question, {
+            const outcome = await requestUserQuestion(chatSender(), requestId, question, {
               choices,
               timeoutMs: USER_QUESTION_TIMEOUT_MS,
               signal: appState.chatAbort?.signal
@@ -623,14 +610,14 @@ export function registerChatStreamIpc(): void {
                 outcome.text
               )
               if (mem.needsConfirm) {
-                event.sender.send('chat:memory-proposal', {
+                publish('chat:memory-proposal', {
                   requestId,
                   note: mem.note,
                   summary: mem.summary,
                   preview: mem.preview
                 })
               } else if (mem.wrote) {
-                event.sender.send('chat:memory-updated', {
+                publish('chat:memory-updated', {
                   requestId,
                   kind: mem.kind,
                   preview: mem.preview
@@ -649,7 +636,7 @@ export function registerChatStreamIpc(): void {
             if (evt.replace) {
               pendingAnswer = ''
               flushStreamChunks()
-              event.sender.send('chat:answer', { requestId, chunk: evt.text, replace: true })
+              publish('chat:answer', { requestId, chunk: evt.text, replace: true })
             } else {
               pendingAnswer += evt.text
               scheduleStreamFlush()
@@ -657,41 +644,30 @@ export function registerChatStreamIpc(): void {
           } else {
             flushStreamChunks()
             if (evt.type === 'asset') {
-              event.sender.send('chat:asset', { requestId, asset: evt.asset })
+              publish('chat:asset', { requestId, asset: evt.asset })
             } else if (evt.type === 'tool') {
-              event.sender.send('chat:tool', { requestId, tool: evt.tool })
+              publish('chat:tool', { requestId, tool: evt.tool })
             } else if (evt.type === 'diff') {
               telemetryMutated = true
-              event.sender.send('chat:diff', { requestId, diff: evt.diff })
+              publish('chat:diff', { requestId, diff: evt.diff })
             } else if (evt.type === 'checkpoint') {
-              event.sender.send('chat:checkpoint', {
+              publish('chat:checkpoint', {
                 requestId,
                 checkpointId: evt.checkpointId
               })
               if (appState.currentWorkspace) {
                 const now = new Date().toISOString()
-                let sessionId = resume?.sessionId ?? null
-                if (sessionId && loadAgentSession(appState.currentWorkspace, sessionId)) {
-                  const existing = loadAgentSession(appState.currentWorkspace, sessionId)!
-                  saveAgentSession(appState.currentWorkspace, {
-                    ...existing,
-                    requestId,
-                    checkpointId: evt.checkpointId,
-                    status: 'running'
-                  })
-                } else {
-                  const session = createAgentSession(appState.currentWorkspace, {
-                    requestId,
-                    threadId,
-                    goal: userText,
-                    agentId: turnPlan.agentId,
-                    mode: mode ?? 'agent',
-                    checkpointId: evt.checkpointId
-                  })
-                  sessionId = session.id
-                }
+                const session = createAgentSession(appState.currentWorkspace, {
+                  requestId,
+                  threadId,
+                  goal: userText,
+                  agentId: turnPlan.agentId,
+                  mode: mode ?? 'agent',
+                  checkpointId: evt.checkpointId
+                })
+                const sessionId = session.id
                 run = {
-                  id: resume?.id ?? requestId,
+                  id: requestId,
                   requestId,
                   goal: userText,
                   agentId: turnPlan.agentId,
@@ -699,14 +675,14 @@ export function registerChatStreamIpc(): void {
                   checkpointId: evt.checkpointId,
                   sessionId,
                   status: 'running',
-                  step: resumeLoop?.fromStep ?? resume?.step ?? 0,
-                  actionLog: resumeLoop?.actionLog ?? resume?.actionLog ?? [],
-                  filesTouched: resumeLoop?.filesTouched ?? resume?.filesTouched ?? [],
-                  startedAt: resume?.startedAt ?? now,
+                  step: 0,
+                  actionLog: [],
+                  filesTouched: [],
+                  startedAt: now,
                   updatedAt: now
                 }
                 persistRun({})
-                event.sender.send('chat:session', {
+                publish('chat:session', {
                   requestId,
                   sessionId,
                   checkpointId: evt.checkpointId
@@ -726,7 +702,7 @@ export function registerChatStreamIpc(): void {
                   filesTouched: evt.filesTouched,
                   workerMessages: evt.workerMessages
                 })
-                event.sender.send('chat:session-step', {
+                publish('chat:session-step', {
                   requestId,
                   sessionId: run.sessionId,
                   step: evt.step,
@@ -752,20 +728,28 @@ export function registerChatStreamIpc(): void {
                 filesTouched: memoryFiles
               })
             } else if (evt.type === 'terminal') {
-              event.sender.send('chat:terminal', { requestId, text: evt.text })
+              publish('chat:terminal', { requestId, text: evt.text })
             } else if (evt.type === 'workspace-changed') {
-              event.sender.send('chat:workspace-changed', { requestId })
+              publish('chat:workspace-changed', { requestId })
             } else if (evt.type === 'status') {
-              event.sender.send('chat:status', { requestId, text: evt.text })
+              publish('chat:status', { requestId, text: evt.text })
             } else if (evt.type === 'delegation') {
-              event.sender.send('chat:delegation', { requestId, delegation: evt.delegation })
+              publish('chat:delegation', { requestId, delegation: evt.delegation })
             } else if (evt.type === 'adapt') {
-              event.sender.send('chat:status', {
+              if (evt.agentId || evt.agentName || evt.model) {
+                turnPlan = {
+                  ...turnPlan,
+                  agentId: evt.agentId ?? turnPlan.agentId,
+                  agentName: evt.agentName ?? turnPlan.agentName,
+                  models: evt.model ? { ...turnPlan.models, tools: evt.model } : turnPlan.models
+                }
+              }
+              publish('chat:status', {
                 requestId,
                 text: evt.reason
               })
               if (evt.model) {
-                event.sender.send('chat:model', {
+                publish('chat:model', {
                   requestId,
                   model: evt.model,
                   agentId: evt.agentId ?? agent?.id ?? agentId,
@@ -773,11 +757,11 @@ export function registerChatStreamIpc(): void {
                 })
               }
             } else if (evt.type === 'model') {
-              event.sender.send('chat:model', {
+              publish('chat:model', {
                 requestId,
                 model: evt.model,
-                agentId: agent?.id ?? agentId,
-                agentName: agent?.name
+                agentId: evt.agentId ?? agent?.id ?? agentId,
+                agentName: evt.agentName ?? agent?.name
               })
             }
           }
@@ -791,25 +775,21 @@ export function registerChatStreamIpc(): void {
             getResolvedSettings(appState.currentWorkspace),
             {
               goal: userText,
-              filesTouched: memoryFiles.length
-                ? memoryFiles
-                : (run?.filesTouched ?? []),
-              actionLog: memoryActions.length
-                ? memoryActions
-                : (run?.actionLog ?? []),
+              filesTouched: memoryFiles.length ? memoryFiles : (run?.filesTouched ?? []),
+              actionLog: memoryActions.length ? memoryActions : (run?.actionLog ?? []),
               incomplete: runIncomplete,
               aborted: false
             }
           )
           if (mem.needsConfirm) {
-            event.sender.send('chat:memory-proposal', {
+            publish('chat:memory-proposal', {
               requestId,
               note: mem.note,
               summary: mem.summary,
               preview: mem.preview
             })
           } else if (mem.wrote) {
-            event.sender.send('chat:memory-updated', {
+            publish('chat:memory-updated', {
               requestId,
               kind: mem.kind,
               preview: mem.preview
@@ -821,7 +801,7 @@ export function registerChatStreamIpc(): void {
             error: memErr instanceof Error ? memErr.message : String(memErr)
           })
         }
-        event.sender.send('chat:done', { requestId })
+        publish('chat:done', { requestId })
         logInfo('Chat stream done', {
           requestId,
           model: resolvedModel,
@@ -841,7 +821,7 @@ export function registerChatStreamIpc(): void {
             firstOutputMs: firstModelOutputMs,
             promptBuildMs
           })
-          event.sender.send('chat:done', { requestId, aborted: true })
+          publish('chat:done', { requestId, aborted: true })
           return false
         }
         const message = err instanceof Error ? err.message : 'Chat failed'
@@ -854,7 +834,7 @@ export function registerChatStreamIpc(): void {
           firstOutputMs: firstModelOutputMs,
           promptBuildMs
         })
-        event.sender.send('chat:error', {
+        publish('chat:error', {
           requestId,
           error: message
         })
@@ -864,6 +844,7 @@ export function registerChatStreamIpc(): void {
         if (coalesceTimer) clearTimeout(coalesceTimer)
         setDiagnosticsPaused(false)
         appState.chatStreamActive = false
+        if (appState.activeChatRequestId === requestId) appState.activeChatRequestId = null
       }
     }
   )
@@ -881,43 +862,13 @@ export function registerChatStreamIpc(): void {
     resolveUserQuestion(String(questionId), reply == null ? null : String(reply))
   )
 
-  ipcMain.handle('runs:resumable', () => {
-    const run = loadResumableRun(
-      appState.currentWorkspace,
-      appState.chatStreamActive ? appState.activeChatRequestId : null
-    )
-    if (!run) return null
-    const steps =
-      run.sessionId && appState.currentWorkspace
-        ? listSessionSteps(appState.currentWorkspace, run.sessionId)
-        : []
-    return {
-      id: run.id,
-      goal: run.goal,
-      agentId: run.agentId,
-      status: run.status,
-      step: run.step,
-      actionLog: run.actionLog,
-      updatedAt: run.updatedAt,
-      sessionId: run.sessionId ?? null,
-      checkpointId: run.checkpointId,
-      steps
-    }
-  })
-  ipcMain.handle('runs:dismiss', (_e, id: string) => {
-    const ok = setAgentRunStatus(appState.currentWorkspace, String(id), 'dismissed')
-    const run = loadLastAgentRun(appState.currentWorkspace)
-    if (run?.sessionId) {
-      setAgentSessionStatus(appState.currentWorkspace, run.sessionId, 'dismissed')
-    }
-    return ok
-  })
   ipcMain.handle('sessions:listSteps', (_e, sessionId: string) =>
     listSessionSteps(appState.currentWorkspace, String(sessionId))
   )
   ipcMain.handle('sessions:get', (_e, sessionId: string) =>
     loadAgentSession(appState.currentWorkspace, String(sessionId))
   )
+  ipcMain.handle('chat:jobLatest', () => getLatestChatJob(appState.currentWorkspace))
 
   ipcMain.handle('chat:stop', () => {
     if (appState.activeChatRequestId) {

@@ -1,4 +1,4 @@
-import { generateLocalImage } from './local-image-model'
+import { generateLocalImage, LOCAL_IMAGE_GENERATION_TIMEOUT_MS } from './local-image-model'
 import { ImageGenerationRequestSchema } from '../../../src/shared/image-generation-schema'
 import { z } from 'zod'
 import { randomUUID } from 'crypto'
@@ -179,11 +179,14 @@ export async function generateImage(options: {
   const request = ImageGenerationRequestSchema.parse(options.request)
   const config = options.settings.images
   if (!config.enabled)
-    throw new Error('Enable image generation in Settings → Providers → Image generation')
+    throw new Error('Enable image generation in Settings → Models → Image Models')
   const local = config.backend === 'local'
   const signal = options.signal
-    ? AbortSignal.any([options.signal, AbortSignal.timeout(local ? 900_000 : 180_000)])
-    : AbortSignal.timeout(local ? 900_000 : 180_000)
+    ? AbortSignal.any([
+        options.signal,
+        AbortSignal.timeout(local ? LOCAL_IMAGE_GENERATION_TIMEOUT_MS : 180_000)
+      ])
+    : AbortSignal.timeout(local ? LOCAL_IMAGE_GENERATION_TIMEOUT_MS : 180_000)
   signal.throwIfAborted()
   options.onProgress?.({ requestId: request.requestId, stage: 'generating' })
   let generated: { bytes: Buffer; revisedPrompt?: string }

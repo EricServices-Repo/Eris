@@ -94,7 +94,9 @@ const HistoricalMessages = memo(function HistoricalMessages({
             ) : (
               <div className="user-text">{message.content}</div>
             )}
-            {message.assets?.map((asset) => <ImageMessage key={asset.id} asset={asset} />)}
+            {message.assets?.map((asset) => (
+              <ImageMessage key={asset.id} asset={asset} />
+            ))}
             {message.role === 'assistant' && (
               <AnswerFeedback message={message} question={questions.get(message.id) || ''} />
             )}
@@ -186,16 +188,6 @@ interface Props {
   onMemoryUndo?: () => void
   /** Re-run the last user message with a forced route */
   onRerouteLast?: (intent: 'tools' | 'answer') => void
-  resumableRun?: {
-    goal: string
-    updatedAt: string
-    step: number
-    sessionId?: string | null
-    steps?: Array<{ step: number; summary: string; opThrough: number; ts: string }>
-  } | null
-  /** Resume from latest, or rewind to a specific session step. */
-  onResumeRun?: (fromStep?: number) => void
-  onDismissResume?: () => void
   /** Live session checkpoints while the current agent run is streaming. */
   liveSessionSteps?: Array<{ step: number; summary: string; opThrough: number }>
 }
@@ -376,9 +368,6 @@ export function ChatPanel({
   onMemoryDismiss,
   onMemoryUndo,
   onRerouteLast,
-  resumableRun = null,
-  onResumeRun,
-  onDismissResume,
   liveSessionSteps = []
 }: Props) {
   const { thinkingBuffer, answerBuffer, agentStatus, toolActivity } = useStore(chatStream)
@@ -489,7 +478,13 @@ export function ChatPanel({
   const slashItems = useMemo((): SlashItem[] => {
     if (slashQuery === null) return []
     const actions: SlashItem[] = [
-      { id: 'image', command: '/image', label: 'Generate image', hint: 'Create an image with your configured image provider', kind: 'action' },
+      {
+        id: 'image',
+        command: '/image',
+        label: 'Generate image',
+        hint: 'Create an image with your configured image provider',
+        kind: 'action'
+      },
       {
         id: 'create-skill',
         command: '/create-skill',
@@ -529,7 +524,11 @@ export function ChatPanel({
 
   const applySlashItem = (item: SlashItem) => {
     if (item.kind === 'action') {
-      if (item.id === 'image') { setDraft('/image '); textareaRef.current?.focus(); return }
+      if (item.id === 'image') {
+        setDraft('/image ')
+        textareaRef.current?.focus()
+        return
+      }
       if (item.id === 'create-skill') {
         setDraft(
           [
@@ -744,49 +743,6 @@ export function ChatPanel({
                 {s.step}
               </span>
             ))}
-          </div>
-        </div>
-      )}
-
-      {resumableRun && !streaming && onResumeRun && (
-        <div className="composer-banner composer-banner-soft session-resume-banner">
-          <span>
-            Last agent task stopped after {resumableRun.step} step
-            {resumableRun.step === 1 ? '' : 's'}: <strong>{resumableRun.goal.slice(0, 120)}</strong>
-          </span>
-          <div className="session-resume-actions">
-            <button className="btn btn-primary" onClick={() => onResumeRun()}>
-              Resume
-            </button>
-            {resumableRun.steps && resumableRun.steps.length > 0 && (
-              <label className="session-rewind-label">
-                Rewind to
-                <select
-                  className="session-rewind-select"
-                  defaultValue=""
-                  onChange={(e) => {
-                    const v = e.target.value
-                    if (!v) return
-                    onResumeRun(Number(v))
-                    e.target.value = ''
-                  }}
-                >
-                  <option value="" disabled>
-                    step…
-                  </option>
-                  {[...resumableRun.steps].reverse().map((s) => (
-                    <option key={s.step} value={s.step}>
-                      {s.step}: {s.summary.slice(0, 48)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            {onDismissResume && (
-              <button className="btn" onClick={onDismissResume}>
-                Dismiss
-              </button>
-            )}
           </div>
         </div>
       )}

@@ -26,7 +26,9 @@ function gpuKindLabel(
 function formatMemoryStat(name: string, bytes?: number): string | null {
   if (!bytes || bytes <= 0) return null
   const size =
-    bytes >= 1e9 ? `${(bytes / 1e9).toFixed(bytes >= 10e9 ? 0 : 1)} GB` : `${Math.round(bytes / 1e6)} MB`
+    bytes >= 1e9
+      ? `${(bytes / 1e9).toFixed(bytes >= 10e9 ? 0 : 1)} GB`
+      : `${Math.round(bytes / 1e6)} MB`
   if (/apple\s+m\d/i.test(name)) return `Unified ${size}`
   return size
 }
@@ -139,14 +141,14 @@ function GpuAccelCard({
               return (
                 <li
                   key={id}
-                  className={[selected ? 'is-selected' : '', d.shared ? 'is-shared' : '']
-                    .filter(Boolean)
-                    .join(' ') || undefined}
+                  className={
+                    [selected ? 'is-selected' : '', d.shared ? 'is-shared' : '']
+                      .filter(Boolean)
+                      .join(' ') || undefined
+                  }
                 >
                   <span
-                    className={`gpu-kind-tag kind-${d.kind}${
-                      tag === 'Metal' ? ' kind-metal' : ''
-                    }`}
+                    className={`gpu-kind-tag kind-${d.kind}${tag === 'Metal' ? ' kind-metal' : ''}`}
                   >
                     {tag}
                   </span>
@@ -183,9 +185,7 @@ export function useModelsPanelState() {
 export type ModelsPanelState = ReturnType<typeof useModelsPanelState>
 
 function sizeLabel(bytes: number): string {
-  return bytes >= 1e9
-    ? `~${(bytes / 1e9).toFixed(1)} GB`
-    : `~${Math.round(bytes / 1e6)} MB`
+  return bytes >= 1e9 ? `~${(bytes / 1e9).toFixed(1)} GB` : `~${Math.round(bytes / 1e6)} MB`
 }
 
 function BuiltinRow({
@@ -217,14 +217,7 @@ function BuiltinRow({
     b.installed ? 'Needs re-download' : `Not installed · ${size}`
   )
 
-  const baseModelLabel = [
-    b.family,
-    b.parameters,
-    b.quant,
-    size
-  ]
-    .filter(Boolean)
-    .join(' · ')
+  const baseModelLabel = [b.family, b.parameters, b.quant, size].filter(Boolean).join(' · ')
 
   const startDownload = () => {
     setDownloadingId(b.id)
@@ -468,13 +461,7 @@ function LocalComposerToggle({
 }
 
 /** Settings → Composer — built-in Lite/Full downloads + default model. */
-export function ComposerModelsPanel({
-  state,
-  resolved,
-  status,
-  apply,
-  load
-}: SharedProps) {
+export function ComposerModelsPanel({ state, resolved, status, apply, load }: SharedProps) {
   const { downloadingId, setDownloadingId, verifyingId, setVerifyingId } = state
   const builtins = status?.builtin ?? []
 
@@ -504,7 +491,7 @@ export function ComposerModelsPanel({
         <p className="models-hint" style={{ marginTop: 0 }}>
           Downloads continue if you close Settings. On flaky networks, use Retry or Open URL in a
           browser to confirm Hugging Face is reachable. For a stronger local model without Cloud,
-          use Settings → Local models (e.g. Qwen2.5-Coder 3B).
+          use Settings → Text Models (e.g. Qwen2.5-Coder 3B).
         </p>
         <div className="models-row-list">
           {builtins.map((b) => (
@@ -521,24 +508,15 @@ export function ComposerModelsPanel({
               currentDefault={resolved.models.defaultModel}
             />
           ))}
-          {builtins.length === 0 && (
-            <div className="models-empty">Loading built-in models…</div>
-          )}
+          {builtins.length === 0 && <div className="models-empty">Loading built-in models…</div>}
         </div>
       </section>
     </div>
   )
 }
 
-/** Settings → Local models — GGUF catalog + eGPU. */
-export function LocalModelsSettingsPanel({
-  resolved,
-  status,
-  apply,
-  load
-}: Omit<SharedProps, 'state'>) {
-  const locals = status?.local ?? []
-
+/** Settings → GPUs — detected accelerators and eGPU preference. */
+export function GpuModelsPanel({ resolved, status, apply, load }: Omit<SharedProps, 'state'>) {
   return (
     <div className="models-page">
       <GpuAccelCard
@@ -547,12 +525,21 @@ export function LocalModelsSettingsPanel({
         apply={apply}
         onRefresh={load}
       />
+    </div>
+  )
+}
 
+/** Settings → Text Models — local GGUF catalog and downloads. */
+export function TextModelsPanel({ resolved, status, apply, load }: Omit<SharedProps, 'state'>) {
+  const locals = status?.local ?? []
+
+  return (
+    <div className="models-page">
       <section className="models-card">
         <header className="models-card-head">
           <div>
-            <h3>Local models</h3>
-            <p>GGUFs that run inside Eris — no Ollama required.</p>
+            <h3>Text models</h3>
+            <p>Download GGUF chat and coding models that run inside Eris — no Ollama required.</p>
           </div>
           <button type="button" className="btn" onClick={() => void load()}>
             Refresh
@@ -565,6 +552,15 @@ export function LocalModelsSettingsPanel({
           load={load}
         />
       </section>
+    </div>
+  )
+}
+
+/** Settings → Image Models — local Hugging Face downloads and API image models. */
+export function ImageModelsPanel({ resolved, apply }: Pick<SharedProps, 'resolved' | 'apply'>) {
+  return (
+    <div className="models-page">
+      <ImageGenerationSettings resolved={resolved} apply={apply} />
     </div>
   )
 }
@@ -601,14 +597,13 @@ export function ProvidersModelsPanel({
 
   return (
     <div className="models-page providers-page">
-      <ImageGenerationSettings resolved={resolved} apply={apply} />
       <section className="models-card">
         <header className="models-card-head">
           <div>
             <h3>API providers</h3>
             <p>
-              Optional. Most chats use <strong>Composer</strong> or{' '}
-              <strong>Local models</strong>. Add a cloud API or local server when you need one.
+              Optional. Most chats use <strong>Composer</strong> or <strong>Text Models</strong>.
+              Add a cloud API or local server when you need one.
             </p>
           </div>
         </header>
@@ -637,9 +632,7 @@ export function ProvidersModelsPanel({
         >
           <span className="providers-advanced-title">
             <span
-              className={`status-dot ${
-                ollamaLive.reachable && ollamaLive.enabled ? 'ok' : ''
-              }`}
+              className={`status-dot ${ollamaLive.reachable && ollamaLive.enabled ? 'ok' : ''}`}
             />
             <strong>Ollama daemon</strong>
             <span className="models-tag">Advanced</span>
@@ -658,8 +651,8 @@ export function ProvidersModelsPanel({
         {showOllama && (
           <div className="providers-advanced-body">
             <p className="models-hint">
-              Only if you already run Ollama. Prefer <strong>Local models</strong> for GGUFs that
-              run inside Eris.
+              Only if you already run Ollama. Prefer <strong>Text Models</strong> for GGUFs that run
+              inside Eris.
             </p>
             <OllamaConfigPanel
               resolved={resolved}

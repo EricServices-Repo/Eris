@@ -14,10 +14,7 @@ import { joinWorkspacePath, pathBasename } from '@/shared/paths'
 import { Sidebar } from '@/layout/Sidebar'
 import { WorkspaceTrustBanner } from '@/features/workspace/WorkspaceTrustBanner'
 import { StatusBar } from '@/layout/StatusBar'
-import {
-  ConnectionStatusStrip,
-  buildConnectionIssues
-} from '@/layout/ConnectionStatusStrip'
+import { ConnectionStatusStrip, buildConnectionIssues } from '@/layout/ConnectionStatusStrip'
 import { UpdateBanner } from '@/layout/UpdateBanner'
 import { useColumnWidths } from '@/layout/useColumnResize'
 import type { UpdateStatusSnapshot, UsageEntitlement } from '@/shared/api'
@@ -262,8 +259,16 @@ export default function App() {
     resetLeftWidth,
     resetRightWidth
   } = useColumnWidths()
-  const { threads, setThreads, activeThread, setActiveThread, activeThreadRef, refreshChats, selectThread, loadEarlier } =
-    useChatThreads()
+  const {
+    threads,
+    setThreads,
+    activeThread,
+    setActiveThread,
+    activeThreadRef,
+    refreshChats,
+    selectThread,
+    loadEarlier
+  } = useChatThreads()
 
   const {
     workspaces,
@@ -323,9 +328,7 @@ export default function App() {
     setPendingQuestion,
     memoryNotice,
     setMemoryNotice,
-    resumableRun,
     liveSessionSteps,
-    setResumableRun,
     chatMode,
     setChatMode,
     messageQueue,
@@ -335,7 +338,6 @@ export default function App() {
     activeCheckpointId,
     sendMessage,
     rerouteLast,
-    resumeLastRun,
     stopChat,
     newChat
   } = useChatSession({
@@ -420,7 +422,10 @@ export default function App() {
         setShowSetupWizard(needsOnboarding)
         setBootReady(true)
 
-        void window.ide.getUpdateStatus().then(setUpdateStatus).catch(() => {})
+        void window.ide
+          .getUpdateStatus()
+          .then(setUpdateStatus)
+          .catch(() => {})
 
         if (resolved) {
           void refreshModels(resolved)
@@ -832,7 +837,8 @@ export default function App() {
                   setThinkingBuffer('')
                   setAnswerBuffer('')
                 } else {
-                  if (!activeThread || !list.some((thread) => thread.id === activeThread.id)) await selectThread(list[0]?.id ?? null)
+                  if (!activeThread || !list.some((thread) => thread.id === activeThread.id))
+                    await selectThread(list[0]?.id ?? null)
                 }
               })
             }}
@@ -911,13 +917,7 @@ export default function App() {
                     void window.ide.undoProjectMemory()
                   }}
                   onRerouteLast={(route) => void rerouteLast(route)}
-                  resumableRun={resumableRun}
                   liveSessionSteps={liveSessionSteps}
-                  onResumeRun={(fromStep) => void resumeLastRun(fromStep)}
-                  onDismissResume={() => {
-                    if (resumableRun) void window.ide.dismissRun(resumableRun.id)
-                    setResumableRun(null)
-                  }}
                   queuedMessages={messageQueue}
                   onQueueMessage={(text, files, skillIds) => {
                     setMessageQueue((prev) => {
@@ -925,7 +925,9 @@ export default function App() {
                       return [...prev, { id: uid(), text, attachments: files, skillIds }]
                     })
                   }}
-                  onRemoveQueued={(id) => setMessageQueue((prev) => prev.filter((q) => q.id !== id))}
+                  onRemoveQueued={(id) =>
+                    setMessageQueue((prev) => prev.filter((q) => q.id !== id))
+                  }
                   onAttachmentsChange={setAttachments}
                   onActiveSkillsChange={setActiveSkills}
                   onImportFiles={() => void importFiles()}
@@ -1300,7 +1302,9 @@ export default function App() {
                       if (!tab) return
                       updateDocument(path, content)
                       if (!tab.dirty) {
-                        setTabs((prev) => prev.map((tab) => tab.path === path ? { ...tab, dirty: true } : tab))
+                        setTabs((prev) =>
+                          prev.map((tab) => (tab.path === path ? { ...tab, dirty: true } : tab))
+                        )
                       }
                     }}
                   />
@@ -1311,209 +1315,211 @@ export default function App() {
         </div>
 
         {workspacePath && pendingDiffs.length > 0 && (
-          <div
-            className={`bottom-drawer${diffReviewExpanded ? ' is-diff-expanded' : ''}`}
-          >
+          <div className={`bottom-drawer${diffReviewExpanded ? ' is-diff-expanded' : ''}`}>
             <Suspense fallback={null}>
-            <DiffReview
-              diffs={pendingDiffs}
-              theme={settings?.editor.theme}
-              expanded={diffReviewExpanded}
-              onExpandedChange={setDiffReviewExpanded}
-              onOpenPath={(path) => {
-                const abs = workspacePath
-                  ? joinWorkspacePath(workspacePath, path)
-                  : path.split(' → ')[0]!
-                void openFile(abs)
-              }}
-              onKeep={(id) => {
-                void window.ide.recordDiffDecision({ kept: 1 }).catch(() => undefined)
-                setPendingDiffs((prev) =>
-                  prev.map((d) => (d.id === id ? { ...d, status: 'kept' } : d))
-                )
-              }}
-              onKeepAll={() =>
-                setPendingDiffs((prev) => {
-                  const n = prev.filter((d) => d.status === 'pending').length
-                  if (n > 0) void window.ide.recordDiffDecision({ kept: n }).catch(() => undefined)
-                  return prev.map((d) =>
-                    d.status === 'pending' ? { ...d, status: 'kept' as const } : d
-                  )
-                })
-              }
-              autoKeepDiffs={Boolean(settings?.agent.autoKeepDiffs)}
-              onAutoKeepDiffsChange={(enabled) => {
-                void window.ide
-                  .setSettings('user', { agent: { autoKeepDiffs: enabled } })
-                  .then(setSettings)
-                if (enabled) {
+              <DiffReview
+                diffs={pendingDiffs}
+                theme={settings?.editor.theme}
+                expanded={diffReviewExpanded}
+                onExpandedChange={setDiffReviewExpanded}
+                onOpenPath={(path) => {
+                  const abs = workspacePath
+                    ? joinWorkspacePath(workspacePath, path)
+                    : path.split(' → ')[0]!
+                  void openFile(abs)
+                }}
+                onKeep={(id) => {
+                  void window.ide.recordDiffDecision({ kept: 1 }).catch(() => undefined)
                   setPendingDiffs((prev) =>
-                    prev.map((d) =>
-                      d.status === 'pending' ? { ...d, status: 'kept' as const } : d
-                    )
+                    prev.map((d) => (d.id === id ? { ...d, status: 'kept' } : d))
                   )
-                }
-              }}
-              onDismiss={() => setPendingDiffs([])}
-              gitBusy={diffGitBusy}
-              onStageKept={() => {
-                void (async () => {
-                  const paths = pendingDiffs
-                    .filter((d) => d.status === 'kept')
-                    .map((d) => d.path.split(' → ')[0] || d.path)
-                  if (!paths.length) return
-                  setDiffGitBusy(true)
-                  try {
-                    const res = await window.ide.gitStage(paths)
-                    if (!res.ok) setChatError(res.error || 'Stage failed')
-                    else setAgentStatus(`Staged ${paths.length} file(s)`)
-                  } finally {
-                    setDiffGitBusy(false)
-                  }
-                })()
-              }}
-              onCommitKept={() => {
-                void (async () => {
-                  const paths = pendingDiffs
-                    .filter((d) => d.status === 'kept')
-                    .map((d) => d.path.split(' → ')[0] || d.path)
-                  if (!paths.length) return
-                  const message =
-                    window.prompt('Commit message', `Agent: update ${paths.length} file(s)`) || ''
-                  if (!message.trim()) return
-                  setDiffGitBusy(true)
-                  try {
-                    const staged = await window.ide.gitStage(paths)
-                    if (!staged.ok) {
-                      setChatError(staged.error || 'Stage failed')
-                      return
-                    }
-                    const committed = await window.ide.gitCommit(message.trim())
-                    if (!committed.ok) setChatError(committed.error || 'Commit failed')
-                    else setAgentStatus('Committed kept changes')
-                  } finally {
-                    setDiffGitBusy(false)
-                  }
-                })()
-              }}
-              onCommitAndPush={() => {
-                void (async () => {
-                  const paths = pendingDiffs
-                    .filter((d) => d.status === 'kept')
-                    .map((d) => d.path.split(' → ')[0] || d.path)
-                  if (!paths.length) return
-                  const defaultMsg = `Agent: update ${paths.length} file(s)`
-                  const message = window.prompt('Commit message', defaultMsg) || ''
-                  if (!message.trim()) return
-                  setDiffGitBusy(true)
-                  try {
-                    const staged = await window.ide.gitStage(paths)
-                    if (!staged.ok) {
-                      setChatError(staged.error || 'Stage failed')
-                      return
-                    }
-                    const committed = await window.ide.gitCommit(message.trim())
-                    if (!committed.ok) {
-                      setChatError(committed.error || 'Commit failed')
-                      return
-                    }
-                    const pushed = await window.ide.githubSync('push')
-                    if (!pushed.ok) {
-                      setChatError(pushed.error || 'Push failed')
-                      setAgentStatus('Committed locally — push failed')
-                      return
-                    }
-                    setAgentStatus('Committed & pushed kept changes')
-                  } finally {
-                    setDiffGitBusy(false)
-                  }
-                })()
-              }}
-              onCreatePr={() => {
-                void (async () => {
-                  const paths = pendingDiffs
-                    .filter((d) => d.status === 'kept')
-                    .map((d) => d.path.split(' → ')[0] || d.path)
-                  if (!paths.length) return
-                  const title =
-                    window.prompt('Pull request title', `Agent updates (${paths.length} files)`) ||
-                    ''
-                  if (!title.trim()) return
-                  setDiffGitBusy(true)
-                  try {
-                    const staged = await window.ide.gitStage(paths)
-                    if (!staged.ok) {
-                      setChatError(staged.error || 'Stage failed')
-                      return
-                    }
-                    const committed = await window.ide.gitCommit(title.trim())
-                    if (!committed.ok) {
-                      setChatError(committed.error || 'Commit failed')
-                      return
-                    }
-                    const pr = await window.ide.githubCreatePullRequest({ title: title.trim() })
-                    if (!pr.ok) setChatError(pr.error || 'Could not create pull request')
-                    else {
-                      setAgentStatus(
-                        typeof pr.number === 'number'
-                          ? `Opened PR #${pr.number}${pr.htmlUrl ? ` · ${pr.htmlUrl}` : ''}`
-                          : pr.htmlUrl || 'Opened pull request'
-                      )
-                    }
-                  } finally {
-                    setDiffGitBusy(false)
-                  }
-                })()
-              }}
-              onUndoFile={(id) => {
-                void (async () => {
-                  const target = pendingDiffs.find((d) => d.id === id)
-                  if (!target || target.status !== 'pending') return
-                  await window.ide.restoreCheckpointOp(target.checkpointId, target.opIndex)
-                  void window.ide.recordDiffDecision({ undone: 1 }).catch(() => undefined)
-                  setPendingDiffs((prev) =>
-                    prev.map((d) => (d.id === id ? { ...d, status: 'undone' } : d))
-                  )
-                  setTree(await window.ide.listTree(workspacePath))
-                  for (const t of tabsRef.current) {
-                    try {
-                      const file = await window.ide.readFile(t.path)
-                      setTabs((prev) =>
-                        prev.map((x) =>
-                          x.path === t.path ? { ...x, content: file.content, dirty: false } : x
-                        )
-                      )
-                    } catch {
-                      // file may have been removed
-                    }
-                  }
-                })()
-              }}
-              onUndoAll={() => {
-                void (async () => {
-                  if (!activeCheckpointId) return
-                  await window.ide.restoreCheckpoint(activeCheckpointId)
+                }}
+                onKeepAll={() =>
                   setPendingDiffs((prev) => {
                     const n = prev.filter((d) => d.status === 'pending').length
-                    if (n > 0) void window.ide.recordDiffDecision({ undone: n }).catch(() => undefined)
-                    return prev.map((d) => ({ ...d, status: 'undone' as const }))
+                    if (n > 0)
+                      void window.ide.recordDiffDecision({ kept: n }).catch(() => undefined)
+                    return prev.map((d) =>
+                      d.status === 'pending' ? { ...d, status: 'kept' as const } : d
+                    )
                   })
-                  setTree(await window.ide.listTree(workspacePath))
-                  for (const t of tabsRef.current) {
-                    try {
-                      const file = await window.ide.readFile(t.path)
-                      setTabs((prev) =>
-                        prev.map((x) =>
-                          x.path === t.path ? { ...x, content: file.content, dirty: false } : x
-                        )
+                }
+                autoKeepDiffs={Boolean(settings?.agent.autoKeepDiffs)}
+                onAutoKeepDiffsChange={(enabled) => {
+                  void window.ide
+                    .setSettings('user', { agent: { autoKeepDiffs: enabled } })
+                    .then(setSettings)
+                  if (enabled) {
+                    setPendingDiffs((prev) =>
+                      prev.map((d) =>
+                        d.status === 'pending' ? { ...d, status: 'kept' as const } : d
                       )
-                    } catch {
-                      // ignore
-                    }
+                    )
                   }
-                })()
-              }}
-            />
+                }}
+                onDismiss={() => setPendingDiffs([])}
+                gitBusy={diffGitBusy}
+                onStageKept={() => {
+                  void (async () => {
+                    const paths = pendingDiffs
+                      .filter((d) => d.status === 'kept')
+                      .map((d) => d.path.split(' → ')[0] || d.path)
+                    if (!paths.length) return
+                    setDiffGitBusy(true)
+                    try {
+                      const res = await window.ide.gitStage(paths)
+                      if (!res.ok) setChatError(res.error || 'Stage failed')
+                      else setAgentStatus(`Staged ${paths.length} file(s)`)
+                    } finally {
+                      setDiffGitBusy(false)
+                    }
+                  })()
+                }}
+                onCommitKept={() => {
+                  void (async () => {
+                    const paths = pendingDiffs
+                      .filter((d) => d.status === 'kept')
+                      .map((d) => d.path.split(' → ')[0] || d.path)
+                    if (!paths.length) return
+                    const message =
+                      window.prompt('Commit message', `Agent: update ${paths.length} file(s)`) || ''
+                    if (!message.trim()) return
+                    setDiffGitBusy(true)
+                    try {
+                      const staged = await window.ide.gitStage(paths)
+                      if (!staged.ok) {
+                        setChatError(staged.error || 'Stage failed')
+                        return
+                      }
+                      const committed = await window.ide.gitCommit(message.trim())
+                      if (!committed.ok) setChatError(committed.error || 'Commit failed')
+                      else setAgentStatus('Committed kept changes')
+                    } finally {
+                      setDiffGitBusy(false)
+                    }
+                  })()
+                }}
+                onCommitAndPush={() => {
+                  void (async () => {
+                    const paths = pendingDiffs
+                      .filter((d) => d.status === 'kept')
+                      .map((d) => d.path.split(' → ')[0] || d.path)
+                    if (!paths.length) return
+                    const defaultMsg = `Agent: update ${paths.length} file(s)`
+                    const message = window.prompt('Commit message', defaultMsg) || ''
+                    if (!message.trim()) return
+                    setDiffGitBusy(true)
+                    try {
+                      const staged = await window.ide.gitStage(paths)
+                      if (!staged.ok) {
+                        setChatError(staged.error || 'Stage failed')
+                        return
+                      }
+                      const committed = await window.ide.gitCommit(message.trim())
+                      if (!committed.ok) {
+                        setChatError(committed.error || 'Commit failed')
+                        return
+                      }
+                      const pushed = await window.ide.githubSync('push')
+                      if (!pushed.ok) {
+                        setChatError(pushed.error || 'Push failed')
+                        setAgentStatus('Committed locally — push failed')
+                        return
+                      }
+                      setAgentStatus('Committed & pushed kept changes')
+                    } finally {
+                      setDiffGitBusy(false)
+                    }
+                  })()
+                }}
+                onCreatePr={() => {
+                  void (async () => {
+                    const paths = pendingDiffs
+                      .filter((d) => d.status === 'kept')
+                      .map((d) => d.path.split(' → ')[0] || d.path)
+                    if (!paths.length) return
+                    const title =
+                      window.prompt(
+                        'Pull request title',
+                        `Agent updates (${paths.length} files)`
+                      ) || ''
+                    if (!title.trim()) return
+                    setDiffGitBusy(true)
+                    try {
+                      const staged = await window.ide.gitStage(paths)
+                      if (!staged.ok) {
+                        setChatError(staged.error || 'Stage failed')
+                        return
+                      }
+                      const committed = await window.ide.gitCommit(title.trim())
+                      if (!committed.ok) {
+                        setChatError(committed.error || 'Commit failed')
+                        return
+                      }
+                      const pr = await window.ide.githubCreatePullRequest({ title: title.trim() })
+                      if (!pr.ok) setChatError(pr.error || 'Could not create pull request')
+                      else {
+                        setAgentStatus(
+                          typeof pr.number === 'number'
+                            ? `Opened PR #${pr.number}${pr.htmlUrl ? ` · ${pr.htmlUrl}` : ''}`
+                            : pr.htmlUrl || 'Opened pull request'
+                        )
+                      }
+                    } finally {
+                      setDiffGitBusy(false)
+                    }
+                  })()
+                }}
+                onUndoFile={(id) => {
+                  void (async () => {
+                    const target = pendingDiffs.find((d) => d.id === id)
+                    if (!target || target.status !== 'pending') return
+                    await window.ide.restoreCheckpointOp(target.checkpointId, target.opIndex)
+                    void window.ide.recordDiffDecision({ undone: 1 }).catch(() => undefined)
+                    setPendingDiffs((prev) =>
+                      prev.map((d) => (d.id === id ? { ...d, status: 'undone' } : d))
+                    )
+                    setTree(await window.ide.listTree(workspacePath))
+                    for (const t of tabsRef.current) {
+                      try {
+                        const file = await window.ide.readFile(t.path)
+                        setTabs((prev) =>
+                          prev.map((x) =>
+                            x.path === t.path ? { ...x, content: file.content, dirty: false } : x
+                          )
+                        )
+                      } catch {
+                        // file may have been removed
+                      }
+                    }
+                  })()
+                }}
+                onUndoAll={() => {
+                  void (async () => {
+                    if (!activeCheckpointId) return
+                    await window.ide.restoreCheckpoint(activeCheckpointId)
+                    setPendingDiffs((prev) => {
+                      const n = prev.filter((d) => d.status === 'pending').length
+                      if (n > 0)
+                        void window.ide.recordDiffDecision({ undone: n }).catch(() => undefined)
+                      return prev.map((d) => ({ ...d, status: 'undone' as const }))
+                    })
+                    setTree(await window.ide.listTree(workspacePath))
+                    for (const t of tabsRef.current) {
+                      try {
+                        const file = await window.ide.readFile(t.path)
+                        setTabs((prev) =>
+                          prev.map((x) =>
+                            x.path === t.path ? { ...x, content: file.content, dirty: false } : x
+                          )
+                        )
+                      } catch {
+                        // ignore
+                      }
+                    }
+                  })()
+                }}
+              />
             </Suspense>
           </div>
         )}

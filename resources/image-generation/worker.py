@@ -1,5 +1,6 @@
 """Isolated Diffusers worker. One JSON request on stdin; JSONL progress/result on stdout."""
 import contextlib
+import gc
 import hashlib
 import json
 import os
@@ -143,54 +144,93 @@ def generate(request):
     # Prevent all Hub network activity during inference. Model downloads are explicit operations.
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    import torch
-    from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
     model_path = Path(request["modelPath"])
     with open(model_path / "model_index.json", encoding="utf8") as file:
         pipeline_name = validate_index(json.load(file))
-    pipeline_type = StableDiffusionXLPipeline if pipeline_name == "StableDiffusionXLPipeline" else StableDiffusionPipeline
-    device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
-    dtype = torch.float32 if device == "cpu" else torch.float16
-    progress("Loading local image model on " + device + "…")
-    options = {"torch_dtype": dtype, "local_files_only": True, "use_safetensors": True}
-    if request.get("variant"):
-        options["variant"] = request["variant"]
-    pipe = pipeline_type.from_pretrained(str(model_path), **options)
-    pipe.set_progress_bar_config(disable=True)
-    pipe.enable_vae_slicing()
-    if device == "cuda":
-        # Prefer the GPU with most available memory, independently of the chat model's device.
-        gpu = max(range(torch.cuda.device_count()), key=lambda index: torch.cuda.mem_get_info(index)[0])
-        free = torch.cuda.mem_get_info(gpu)[0]
-        if free < 4 * 1024**3:
-            pipe.enable_attention_slicing()
-            pipe.enable_sequential_cpu_offload(gpu_id=gpu)
-        else:
-            pipe.enable_model_cpu_offload(gpu_id=gpu)
-    else:
-        if device == "cpu":
-            torch.set_num_threads(min(4, os.cpu_count() or 1))
-        pipe.to(device)
     width, height = map(int, request["size"].split("x"))
-    # SD-Turbo's native generation size is 512. Preserve requested aspect ratio within that budget.
     turbo = request["repoId"] in {"stabilityai/sd-turbo", "stabilityai/sdxl-turbo"}
     if turbo:
         factor = 512 / max(width, height)
         width, height = max(256, int(width * factor) // 8 * 8), max(256, int(height * factor) // 8 * 8)
     if width * height > 1024 * 1024:
         raise ValueError("Local generation is limited to one megapixel. Choose a smaller image size.")
+
+    # Recheck the model footprint inside the isolated worker before importing torch or allocating
+    # a Metal heap. This protects callers that bypass the TypeScript preflight.
+    model_bytes = sum(path.stat().st_size for path in model_path.rglob("*.safetensors") if path.is_file())
+    memory_limit = int(request.get("memoryLimitBytes") or 0)
+    host_memory = request.get("hostMemory") or {}
+    free_memory = int(host_memory.get("freeBytes") or 0)
+    multiplier = 1.55 if pipeline_name == "StableDiffusionXLPipeline" else 1.25
+    estimated = int(model_bytes * multiplier + 2 * 1024**3)
+    if memory_limit and estimated > memory_limit:
+        raise MemoryError("The image model would exceed Eris's safe memory budget. Use SD-Turbo or free system memory.")
+    minimum_free = (6 if pipeline_name == "StableDiffusionXLPipeline" else 3) * 1024**3
+    if free_memory and free_memory < minimum_free:
+        raise MemoryError("There is not enough free system memory to load this image model safely.")
+
+    import torch
+    from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
+    pipeline_type = StableDiffusionXLPipeline if pipeline_name == "StableDiffusionXLPipeline" else StableDiffusionPipeline
+    device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+    dtype = torch.float32 if device == "cpu" else torch.float16
+    gpu = None
+    if device == "cuda":
+        gpu = max(range(torch.cuda.device_count()), key=lambda index: torch.cuda.mem_get_info(index)[0])
+        free = torch.cuda.mem_get_info(gpu)[0]
+        minimum = 8 * 1024**3 if pipeline_name == "StableDiffusionXLPipeline" else 4 * 1024**3
+        if free < minimum:
+            raise MemoryError("The selected CUDA GPU does not have enough free memory for this image model.")
+        torch.cuda.set_device(gpu)
+    elif device == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "set_per_process_memory_fraction"):
+        # Fail this worker at 60% of Metal's recommended working set instead of letting unified
+        # memory pressure freeze the desktop. The process boundary then releases every allocation.
+        torch.mps.set_per_process_memory_fraction(0.60)
+    progress("Loading local image model on " + device + "…")
+    options = {"torch_dtype": dtype, "local_files_only": True, "use_safetensors": True}
+    if request.get("variant"):
+        options["variant"] = request["variant"]
     steps = 2 if turbo else 20
-    progress("Generating locally on " + device + "…")
-    def step_callback(_pipeline, step, _timestep, kwargs):
-        emit({"type": "progress", "message": "Generating image…", "completed": step + 1, "total": steps, "unit": "steps"})
-        return kwargs
-    with torch.inference_mode():
-        result = pipe(prompt=request["prompt"], width=width, height=height, num_inference_steps=steps,
-                      guidance_scale=0.0 if turbo else 7.5, callback_on_step_end=step_callback)
-    if getattr(result, "nsfw_content_detected", None) and any(result.nsfw_content_detected):
-        raise ValueError("The local model did not return an image for this prompt")
-    result.images[0].save(request["outputPath"], format="PNG")
-    return {"device": device, "width": width, "height": height}
+    pipe = None
+    try:
+        pipe = pipeline_type.from_pretrained(str(model_path), **options)
+        pipe.set_progress_bar_config(disable=True)
+        pipe.enable_vae_slicing()
+        if hasattr(pipe, "enable_vae_tiling"):
+            pipe.enable_vae_tiling()
+        if device == "cuda":
+            if free < 10 * 1024**3 or pipeline_name == "StableDiffusionXLPipeline":
+                pipe.enable_attention_slicing()
+                pipe.enable_sequential_cpu_offload(gpu_id=gpu)
+            else:
+                pipe.enable_model_cpu_offload(gpu_id=gpu)
+        else:
+            if device == "cpu":
+                torch.set_num_threads(min(4, os.cpu_count() or 1))
+            elif device == "mps":
+                pipe.enable_attention_slicing("max")
+            pipe.to(device)
+        progress("Generating locally on " + device + "…")
+        def step_callback(_pipeline, step, _timestep, kwargs):
+            emit({"type": "progress", "message": "Generating image…", "completed": step + 1, "total": steps, "unit": "steps"})
+            return kwargs
+        with torch.inference_mode():
+            result = pipe(prompt=request["prompt"], width=width, height=height, num_inference_steps=steps,
+                          guidance_scale=0.0 if turbo else 7.5, callback_on_step_end=step_callback)
+        if getattr(result, "nsfw_content_detected", None) and any(result.nsfw_content_detected):
+            raise ValueError("The local model did not return an image for this prompt")
+        result.images[0].save(request["outputPath"], format="PNG")
+        return {"device": device, "width": width, "height": height}
+    finally:
+        if pipe is not None:
+            del pipe
+        gc.collect()
+        if device == "cuda":
+            with contextlib.suppress(Exception):
+                torch.cuda.empty_cache()
+        elif device == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+            with contextlib.suppress(Exception):
+                torch.mps.empty_cache()
 
 
 def main():
@@ -212,6 +252,8 @@ def main():
         message = str(error)
         if isinstance(error, ModuleNotFoundError):
             message = "Local image runtime needs setup: " + message
+        elif isinstance(error, MemoryError) or "out of memory" in message.lower():
+            message = "Image generation was stopped before it could exhaust system memory. Close memory-heavy apps, choose a smaller model, or use SD-Turbo."
         emit({"type": "error", "error": message[:2000]})
         sys.exit(1)
 

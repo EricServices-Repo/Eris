@@ -33,11 +33,7 @@ import {
   resolveDownloadTotal,
   type DownloadPhase
 } from './http-download'
-import {
-  applyLlamaGpuPreference,
-  noteLlamaBackend,
-  type LlamaGpuBackend
-} from './gpu-accel'
+import { applyLlamaGpuPreference, noteLlamaBackend, type LlamaGpuBackend } from './gpu-accel'
 import { getResolvedSettings } from './settings'
 import {
   contextCreateOptions,
@@ -49,6 +45,7 @@ import {
 } from './vram-fit'
 import { appState } from '../app-state'
 import { messagesToLlamaHistory, splitSessionPrompt } from '../../../src/shared/llama-session'
+import { acquireInferenceLease } from './inference-governor'
 
 type LlamaModule = typeof import('node-llama-cpp')
 
@@ -86,10 +83,7 @@ function enqueueRuntime<T>(fn: () => Promise<T>): Promise<T> {
   )
   return run
 }
-const progressById = new Map<
-  string,
-  { downloaded: number; total: number; phase?: DownloadPhase }
->()
+const progressById = new Map<string, { downloaded: number; total: number; phase?: DownloadPhase }>()
 /** Active download id (survives Settings UI unmount). */
 let activeDownloadId: string | null = null
 const downloadErrorById = new Map<string, string>()
@@ -247,8 +241,9 @@ export function findBuiltinEntry(idOrRef: string): BuiltinModelManifestEntry | n
   const manifest = readManifest()
   const key = idOrRef.replace(/^builtin:/, '')
   return (
-    manifest.builtinModels.find((m) => m.id === key || m.ref === idOrRef || m.ref === `builtin:${key}`) ??
-    null
+    manifest.builtinModels.find(
+      (m) => m.id === key || m.ref === idOrRef || m.ref === `builtin:${key}`
+    ) ?? null
   )
 }
 
@@ -294,9 +289,7 @@ export function getBuiltinStatuses(): BuiltinModelStatus[] {
     const installed = existsSync(path)
     const valid = installed && isValidModelFile(path, entry)
     const live = progressById.get(entry.id)
-    const downloadedBytes = installed
-      ? statSync(path).size
-      : live?.downloaded ?? 0
+    const downloadedBytes = installed ? statSync(path).size : (live?.downloaded ?? 0)
     const total = live?.total || entry.approxBytes
     const phase = downloadingPhase(entry.id, live?.phase)
     let progress = total > 0 ? Math.min(1, downloadedBytes / total) : valid ? 1 : 0
@@ -328,10 +321,7 @@ export function getBuiltinStatuses(): BuiltinModelStatus[] {
   })
 }
 
-function downloadingPhase(
-  id: string,
-  phase?: DownloadPhase
-): DownloadPhase | null {
+function downloadingPhase(id: string, phase?: DownloadPhase): DownloadPhase | null {
   if (activeDownloadId !== id) return null
   return phase || 'downloading'
 }
@@ -349,7 +339,7 @@ export async function ensureComposerDownloaded(
   onProgress?: (status: BuiltinModelStatus) => void,
   id?: string
 ): Promise<BuiltinModelStatus> {
-  const entry = id ? findBuiltinEntry(id) ?? getComposerManifest() : getComposerManifest()
+  const entry = id ? (findBuiltinEntry(id) ?? getComposerManifest()) : getComposerManifest()
   const statuses = getBuiltinStatuses()
   const current = statuses.find((s) => s.id === entry.id)!
   if (current.ready) return current
@@ -391,9 +381,7 @@ export function resolveReadyBuiltinRef(preferred: string): string | null {
   const exact = resolveExactBuiltinRef(preferred)
   if (exact) return exact
   const statuses = getBuiltinStatuses()
-  const ready =
-    statuses.find((s) => s.tier === 'lite' && s.ready) ??
-    statuses.find((s) => s.ready)
+  const ready = statuses.find((s) => s.tier === 'lite' && s.ready) ?? statuses.find((s) => s.ready)
   return ready?.ref ?? null
 }
 
@@ -687,8 +675,7 @@ function ensureLlamaChild(): Promise<void> {
       preferInProcess = true
       throw new Error(`llama worker missing: ${script}`)
     }
-    const preferEgpu =
-      getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
+    const preferEgpu = getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
     const { env: gpuEnv } = await applyLlamaGpuPreference(preferEgpu)
     await new Promise<void>((resolve, reject) => {
       let settled = false
@@ -705,9 +692,11 @@ function ensureLlamaChild(): Promise<void> {
         })
         llamaChild = child
         const onReady = (raw: unknown) => {
-          const msg = (raw && typeof raw === 'object' && 'data' in (raw as object)
-            ? (raw as { data: WorkerMsg }).data
-            : raw) as WorkerMsg
+          const msg = (
+            raw && typeof raw === 'object' && 'data' in (raw as object)
+              ? (raw as { data: WorkerMsg }).data
+              : raw
+          ) as WorkerMsg
           if (msg?.type === 'ready') {
             try {
               child.removeListener?.('message', onReady)
@@ -752,9 +741,11 @@ function onceWorkerMessage(
       return
     }
     const onMsg = (raw: unknown) => {
-      const msg = (raw && typeof raw === 'object' && 'data' in (raw as object)
-        ? (raw as { data: WorkerMsg }).data
-        : raw) as WorkerMsg
+      const msg = (
+        raw && typeof raw === 'object' && 'data' in (raw as object)
+          ? (raw as { data: WorkerMsg }).data
+          : raw
+      ) as WorkerMsg
       if (!predicate(msg)) return
       cleanup()
       resolve(msg)
@@ -908,8 +899,7 @@ async function ensureRuntimeInProcess(
 
     const llamaCpp = await loadLlamaModule()
     const { getLlama } = llamaCpp
-    const preferEgpu =
-      getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
+    const preferEgpu = getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
     const { status: gpuStatus } = await applyLlamaGpuPreference(preferEgpu)
     let llama
     try {
@@ -987,8 +977,7 @@ async function ensureWorkerModel(
     )
   }
   const requestId = `load-${Date.now()}`
-  const preferEgpu =
-    getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
+  const preferEgpu = getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
   const { status: gpuStatus } = await applyLlamaGpuPreference(preferEgpu)
   const plan = contextPlan(entry, gpuStatus.vramBudgetBytes)
   logInfo('Loading builtin model (utilityProcess)', {
@@ -1009,8 +998,7 @@ async function ensureWorkerModel(
     gpu: 'auto'
   })
   const result = await onceWorkerMessage(
-    (m) =>
-      (m.type === 'loaded' || m.type === 'load-error') && m.requestId === requestId
+    (m) => (m.type === 'loaded' || m.type === 'load-error') && m.requestId === requestId
   )
   if (result.type === 'load-error') {
     throw new Error(result.error || 'Failed to load model in worker')
@@ -1130,8 +1118,7 @@ async function* streamBuiltinChatInProcess(options: {
         throw err
       }
       if (caughtError) {
-        const message =
-          caughtError instanceof Error ? caughtError.message : String(caughtError)
+        const message = caughtError instanceof Error ? caughtError.message : String(caughtError)
         const name = caughtError instanceof Error ? caughtError.name : ''
         if (name === 'AbortError' || /abort/i.test(message)) {
           const err = new Error('Aborted')
@@ -1221,8 +1208,7 @@ async function* streamBuiltinChatInProcess(options: {
         throw err
       }
       if (caughtError) {
-        const message =
-          caughtError instanceof Error ? caughtError.message : String(caughtError)
+        const message = caughtError instanceof Error ? caughtError.message : String(caughtError)
         const name = caughtError instanceof Error ? caughtError.name : ''
         if (name === 'AbortError' || /abort/i.test(message)) {
           const err = new Error('Aborted')
@@ -1271,9 +1257,11 @@ async function* streamBuiltinChatViaWorker(options: {
   }
 
   const onMsg = (raw: unknown) => {
-    const msg = (raw && typeof raw === 'object' && 'data' in (raw as object)
-      ? (raw as { data: WorkerMsg }).data
-      : raw) as WorkerMsg
+    const msg = (
+      raw && typeof raw === 'object' && 'data' in (raw as object)
+        ? (raw as { data: WorkerMsg }).data
+        : raw
+    ) as WorkerMsg
     if (msg.id !== id) return
     if (msg.type === 'chunk' && msg.text) {
       queue.push(msg.text)
@@ -1401,11 +1389,24 @@ export function warmLocalInference(
       if (!entry || !path) {
         return {
           ok: false,
-          error: requestedModel ? `Local model ${requestedModel} is not ready` : 'no ready local model'
+          error: requestedModel
+            ? `Local model ${requestedModel} is not ready`
+            : 'no ready local model'
         }
       }
 
-      await ensureWorkerModel(path, entry)
+      const lease = await acquireInferenceLease({
+        workload: 'text',
+        requestedBytes: Math.ceil(entry.approxBytes * 1.25 + 1024 ** 3),
+        gpu: true,
+        exclusiveGpu: true,
+        priority: 5
+      })
+      try {
+        await ensureWorkerModel(path, entry)
+      } finally {
+        lease.release()
+      }
       logInfo('Warmed local inference', { model: entry.ref })
       return { ok: true, model: entry.ref }
     } catch (err) {
@@ -1444,7 +1445,8 @@ export async function* streamBuiltinChat(options: {
   let path: string
 
   if (options.modelRef.startsWith('local:')) {
-    const { findLocalEntry, localModelFilePath, localEntryAsBuiltin } = await import('./local-model')
+    const { findLocalEntry, localModelFilePath, localEntryAsBuiltin } =
+      await import('./local-model')
     const local = findLocalEntry(options.modelRef)
     if (!local) {
       throw new Error(`Unknown local model “${options.modelRef}”. Open Settings → Models.`)
@@ -1471,27 +1473,39 @@ export async function* streamBuiltinChat(options: {
     }
   }
 
-  // Prefer utilityProcess so Metal/CPU inference does not freeze the Electron UI.
-  // Fall back to in-process on worker failures (including sequence races).
-  if (!preferInProcess) {
-    try {
-      yield* streamBuiltinChatViaWorker({ ...options, entry, path })
-      return
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      const name = err instanceof Error ? err.name : ''
-      if (name === 'AbortError' || /abort/i.test(message)) throw err
-      logWarn('llama utilityProcess failed; falling back in-process', { error: message })
-      // Kill broken worker so the next attempt can retry isolation later
+  const lease = await acquireInferenceLease({
+    workload: 'text',
+    requestedBytes: Math.ceil(entry.approxBytes * 1.25 + 1024 ** 3),
+    gpu: true,
+    exclusiveGpu: true,
+    priority: 20,
+    signal: options.signal
+  })
+  try {
+    // Prefer utilityProcess so Metal/CPU inference does not freeze the Electron UI.
+    // Fall back to in-process on worker failures (including sequence races).
+    if (!preferInProcess) {
       try {
-        await disposeRuntime()
-      } catch {
-        // ignore
+        yield* streamBuiltinChatViaWorker({ ...options, entry, path })
+        return
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        const name = err instanceof Error ? err.name : ''
+        if (name === 'AbortError' || /abort/i.test(message)) throw err
+        logWarn('llama utilityProcess failed; falling back in-process', { error: message })
+        // Kill broken worker so the next attempt can retry isolation later
+        try {
+          await disposeRuntime()
+        } catch {
+          // ignore
+        }
+        // One hard failure (missing worker) → stick to in-process for the session
+        if (/worker missing|in-process/i.test(message)) preferInProcess = true
       }
-      // One hard failure (missing worker) → stick to in-process for the session
-      if (/worker missing|in-process/i.test(message)) preferInProcess = true
     }
-  }
 
-  yield* streamBuiltinChatInProcess({ ...options, entry, path })
+    yield* streamBuiltinChatInProcess({ ...options, entry, path })
+  } finally {
+    lease.release()
+  }
 }

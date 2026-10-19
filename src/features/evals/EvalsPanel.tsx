@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { EvalProgressEvent, EvalScoreboard, EvalTaskInfo } from '@/shared/evals'
+import type {
+  CorpusDebugProgressEvent,
+  CorpusDebugRunSummary,
+  EvalProgressEvent,
+  EvalScoreboard,
+  EvalTaskInfo
+} from '@/shared/evals'
 
 interface Props {
   open: boolean
@@ -17,17 +23,32 @@ export function EvalsPanel({ open, models, defaultModel, onClose }: Props) {
   const [running, setRunning] = useState(false)
   const [status, setStatus] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [corpusRuns, setCorpusRuns] = useState<CorpusDebugRunSummary[]>([])
+  const [corpusRunning, setCorpusRunning] = useState(false)
+  const [corpusStatus, setCorpusStatus] = useState('')
+  const [corpusStart, setCorpusStart] = useState(1)
+  const [corpusCount, setCorpusCount] = useState(25)
+  const [corpusChunkSize, setCorpusChunkSize] = useState(10)
+  const [corpusMaxSteps, setCorpusMaxSteps] = useState(20)
 
   const refresh = useCallback(async () => {
-    const [list, scores, active] = await Promise.all([
+    const [list, scores, active, debugRuns, debugActive] = await Promise.all([
       window.ide.listEvalTasks(),
       window.ide.getEvalScoreboard(),
-      window.ide.evalsRunning()
+      window.ide.evalsRunning(),
+      window.ide.listCorpusDebugRuns(),
+      window.ide.corpusDebugRunning()
     ])
     setTasks(list)
     setBoard(scores)
     setRunning(active)
-    setSelected((prev) => (prev.length ? prev.filter((id) => list.some((t) => t.id === id)) : list.map((t) => t.id)))
+    setCorpusRuns(debugRuns)
+    setCorpusRunning(debugActive)
+    setSelected((prev) =>
+      prev.length
+        ? prev.filter((id) => list.some((task) => task.id === id))
+        : list.map((task) => task.id)
+    )
   }, [])
 
   useEffect(() => {
@@ -37,15 +58,40 @@ export function EvalsPanel({ open, models, defaultModel, onClose }: Props) {
       if (evt.type === 'start') {
         setRunning(true)
         setStatus(`Running ${evt.total} jobs…`)
-      } else if (evt.type === 'task-start') {
-        setStatus(`${evt.taskId} · ${evt.model}`)
-      } else if (evt.type === 'task-status') {
-        setStatus(`${evt.taskId}: ${evt.text}`)
-      } else if (evt.type === 'result') {
+      } else if (evt.type === 'task-start') setStatus(`${evt.taskId} · ${evt.model}`)
+      else if (evt.type === 'task-status') setStatus(`${evt.taskId}: ${evt.text}`)
+      else if (evt.type === 'result')
         setStatus(`${evt.result.taskId} ${evt.result.ok ? 'passed' : 'failed'}`)
-      } else if (evt.type === 'done') {
+      else if (evt.type === 'done') {
         setRunning(false)
         setStatus(`${evt.passed}/${evt.total} passed${evt.cancelled ? ' (cancelled)' : ''}`)
+        void refresh()
+      }
+    })
+  }, [open, refresh])
+
+  useEffect(() => {
+    if (!open) return
+    return window.ide.onCorpusDebugProgress((evt: CorpusDebugProgressEvent) => {
+      if (evt.type === 'start') {
+        setCorpusRunning(true)
+        setCorpusStatus(`Starting at question ${evt.summary.startIndex + 1}…`)
+      } else if (evt.type === 'question-start') {
+        setCorpusStatus(`Question ${evt.index + 1}/10,000 · ${evt.question.slice(0, 90)}`)
+      } else if (evt.type === 'status') {
+        setCorpusStatus(`Question ${evt.index + 1}: ${evt.text}`)
+      } else if (evt.type === 'result') {
+        setCorpusStatus(
+          `${evt.summary.passed}/${evt.summary.completed} passed · next ${evt.summary.nextIndex + 1}`
+        )
+      } else if (evt.type === 'chunk-saved') {
+        setCorpusStatus(`Saved checkpoint through question ${evt.summary.nextIndex}`)
+      } else if (evt.type === 'done') {
+        setCorpusRunning(false)
+        setCorpusStatus(
+          `${evt.summary.status}: ${evt.summary.passed}/${evt.summary.completed} passed`
+        )
+        setCorpusStart(Math.min(10_000, evt.summary.nextIndex + 1))
         void refresh()
       }
     })
@@ -56,16 +102,22 @@ export function EvalsPanel({ open, models, defaultModel, onClose }: Props) {
   }, [defaultModel])
 
   if (!open) return null
-
+  const latestCorpus = corpusRuns[0]
   const toggle = (id: string) => {
-    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+    setSelected((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]))
   }
 
   return (
     <div className="git-panel">
       <div className="terminal-bar">
         <strong>Evals</strong>
-        <span className="thinking-status-inline">{running ? status || 'running' : 'idle'}</span>
+        <span className="thinking-status-inline">
+          {corpusRunning
+            ? corpusStatus || 'running model corpus'
+            : running
+              ? status || 'running'
+              : 'idle'}
+        </span>
         <div className="diff-actions">
           <button type="button" className="btn" onClick={() => void refresh()}>
             Refresh
@@ -76,11 +128,128 @@ export function EvalsPanel({ open, models, defaultModel, onClose }: Props) {
         </div>
       </div>
       {error && <div className="git-error">{error}</div>}
+      <section className="eval-corpus-card">
+        <div className="eval-corpus-heading">
+          <div>
+            <strong>10,000-question real-model smoke test</strong>
+            <div className="hint">
+              Runs normal routing and the selected model in isolated sandboxes. Each chunk saves raw
+              JSONL and a Markdown report for review.
+            </div>
+          </div>
+          <span className="thinking-status-inline">{corpusStatus || 'not running'}</span>
+        </div>
+        <div className="debug-toolbar eval-corpus-toolbar">
+          <label>
+            Start
+            <input
+              type="number"
+              min={1}
+              max={10_000}
+              value={corpusStart}
+              onChange={(event) =>
+                setCorpusStart(Math.max(1, Math.min(10_000, Number(event.target.value) || 1)))
+              }
+            />
+          </label>
+          <label>
+            Questions
+            <input
+              type="number"
+              min={1}
+              max={10_000}
+              value={corpusCount}
+              onChange={(event) =>
+                setCorpusCount(Math.max(1, Math.min(10_000, Number(event.target.value) || 1)))
+              }
+            />
+          </label>
+          <label>
+            Save every
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={corpusChunkSize}
+              onChange={(event) =>
+                setCorpusChunkSize(Math.max(1, Math.min(100, Number(event.target.value) || 1)))
+              }
+            />
+          </label>
+          <label>
+            Step cap
+            <input
+              type="number"
+              min={10}
+              max={200}
+              value={corpusMaxSteps}
+              onChange={(event) =>
+                setCorpusMaxSteps(Math.max(10, Math.min(200, Number(event.target.value) || 10)))
+              }
+            />
+          </label>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={running || corpusRunning || !model}
+            onClick={() => {
+              setError(null)
+              setCorpusRunning(true)
+              void window.ide
+                .runCorpusDebug({
+                  model,
+                  startIndex: corpusStart - 1,
+                  count: corpusCount,
+                  chunkSize: corpusChunkSize,
+                  maxSteps: corpusMaxSteps
+                })
+                .catch((err) => {
+                  setError(err instanceof Error ? err.message : 'Corpus run failed')
+                  setCorpusRunning(false)
+                })
+            }}
+          >
+            Run model chunk
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={!corpusRunning}
+            onClick={() => void window.ide.cancelCorpusDebug()}
+          >
+            Stop run
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={!latestCorpus}
+            onClick={() => latestCorpus && void window.ide.exportCorpusDebug(latestCorpus.runId)}
+          >
+            Export latest review
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={!latestCorpus}
+            onClick={() => void window.ide.openCorpusDebugFolder()}
+          >
+            Show saved files
+          </button>
+        </div>
+        {latestCorpus && (
+          <div className="eval-corpus-latest">
+            Latest: {latestCorpus.status} · {latestCorpus.passed}/{latestCorpus.completed} passed ·
+            questions {latestCorpus.startIndex + 1}–
+            {Math.max(latestCorpus.startIndex + 1, latestCorpus.nextIndex)} · next{' '}
+            {Math.min(10_000, latestCorpus.nextIndex + 1)}
+          </div>
+        )}
+      </section>
       <div className="debug-toolbar">
-        <select value={model} onChange={(e) => setModel(e.target.value)}>
-          {(models.includes(model) ? models : [model, ...models]).filter(Boolean).map((m) => (
-            <option key={m} value={m}>
-              {m.replace(/^builtin:/, '')}
+        <select value={model} onChange={(event) => setModel(event.target.value)}>
+          {(models.includes(model) ? models : [model, ...models]).filter(Boolean).map((item) => (
+            <option key={item} value={item}>
+              {item.replace(/^builtin:/, '')}
             </option>
           ))}
         </select>
@@ -91,14 +260,16 @@ export function EvalsPanel({ open, models, defaultModel, onClose }: Props) {
             min={1}
             max={5}
             value={repeats}
-            onChange={(e) => setRepeats(Math.max(1, Math.min(5, Number(e.target.value) || 1)))}
+            onChange={(event) =>
+              setRepeats(Math.max(1, Math.min(5, Number(event.target.value) || 1)))
+            }
             style={{ width: 48, marginLeft: 6 }}
           />
         </label>
         <button
           type="button"
           className="btn btn-primary"
-          disabled={running || selected.length === 0 || !model}
+          disabled={running || corpusRunning || selected.length === 0 || !model}
           onClick={() => {
             setError(null)
             setRunning(true)
@@ -124,11 +295,7 @@ export function EvalsPanel({ open, models, defaultModel, onClose }: Props) {
         <button
           type="button"
           className="btn"
-          onClick={() =>
-            void window.ide.clearEvalResults().then((next) => {
-              setBoard(next)
-            })
-          }
+          onClick={() => void window.ide.clearEvalResults().then(setBoard)}
         >
           Clear scores
         </button>
@@ -136,17 +303,17 @@ export function EvalsPanel({ open, models, defaultModel, onClose }: Props) {
       <div className="git-body">
         <div className="git-files">
           <div className="explorer-section-label">Tasks</div>
-          {tasks.map((t) => (
-            <label key={t.id} className="git-file" style={{ cursor: 'pointer' }}>
+          {tasks.map((task) => (
+            <label key={task.id} className="git-file" style={{ cursor: 'pointer' }}>
               <input
                 type="checkbox"
-                checked={selected.includes(t.id)}
-                onChange={() => toggle(t.id)}
+                checked={selected.includes(task.id)}
+                onChange={() => toggle(task.id)}
               />
               <span>
-                {t.title}
+                {task.title}
                 <div className="hint">
-                  {t.intent} · {t.source} · {t.checks} checks
+                  {task.intent} · {task.source} · {task.checks} checks
                 </div>
               </span>
             </label>
@@ -156,22 +323,25 @@ export function EvalsPanel({ open, models, defaultModel, onClose }: Props) {
           {board && board.scores.length > 0
             ? board.scores
                 .map(
-                  (s) =>
-                    `${s.model.replace(/^builtin:/, '')} · ${s.intent}  ${Math.round(s.successRate * 100)}%  (${s.passed}/${s.runs})  avg ${s.avgSteps.toFixed(1)} steps`
+                  (score) =>
+                    `${score.model.replace(/^builtin:/, '')} · ${score.intent}  ${Math.round(score.successRate * 100)}%  (${score.passed}/${score.runs})  avg ${score.avgSteps.toFixed(1)} steps`
                 )
                 .join('\n')
             : 'No scores yet. Run the suite to measure a model.'}
           {board && board.recent.length > 0
             ? `\n\nRecent\n${board.recent
                 .slice(0, 12)
-                .map((r) => `${r.ok ? 'ok' : 'fail'}  ${r.taskId}  ${r.model.replace(/^builtin:/, '')}${r.error ? `  ${r.error}` : ''}`)
+                .map(
+                  (result) =>
+                    `${result.ok ? 'ok' : 'fail'}  ${result.taskId}  ${result.model.replace(/^builtin:/, '')}${result.error ? `  ${result.error}` : ''}`
+                )
                 .join('\n')}`
             : ''}
         </pre>
       </div>
       <div className="debug-hint">
-        Add project tasks in <code>.eris/evals.json</code>. Routing uses these scores when enough
-        runs exist for an intent.
+        Fast build smoke tests use simulated replies. This corpus runner makes real model calls. Add
+        project tasks in <code>.eris/evals.json</code>.
       </div>
     </div>
   )

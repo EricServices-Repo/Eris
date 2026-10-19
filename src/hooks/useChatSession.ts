@@ -8,7 +8,6 @@ import {
   type MutableRefObject,
   type SetStateAction
 } from 'react'
-import type { AgentRunSummary } from '@/shared/api'
 import type {
   AppSettings,
   ChatDelegation,
@@ -125,7 +124,6 @@ export function useChatSession({
     note?: string
     summary?: string
   } | null>(null)
-  const [resumableRun, setResumableRun] = useState<AgentRunSummary | null>(null)
   const [liveSessionSteps, setLiveSessionSteps] = useState<
     Array<{ step: number; summary: string; opThrough: number }>
   >([])
@@ -157,6 +155,78 @@ export function useChatSession({
     (selectedModel.startsWith('local:') || selectedModel.startsWith('builtin:')) &&
     models.some((model) => model.name === selectedModel && model.ready === true)
 
+  // A renderer reload should reconnect to the active main-process job instead of
+  // presenting a manual recovery banner or silently losing its progress.
+  useEffect(() => {
+    let cancelled = false
+    void window.ide
+      .getLatestChatJob()
+      .then((job) => {
+        if (cancelled || !job || job.status !== 'running' || job.workspacePath !== workspacePath)
+          return
+        requestIdRef.current = job.id
+        requestThreadIdRef.current = job.threadId
+        requestWorkspacePathRef.current = job.workspacePath
+        answerAcc.current = job.answer
+        thinkingAcc.current = ''
+        const restoredTools = new Map<string, ToolActivityItem>()
+        const restoredDiffs = new Map<string, PendingDiff>()
+        let restoredCheckpoint: string | null = null
+        for (const event of job.events) {
+          if (event.channel === 'chat:tool' && event.payload.tool) {
+            const tool = event.payload.tool as ToolActivityItem
+            if (typeof tool.id === 'string') restoredTools.set(tool.id, tool)
+          } else if (event.channel === 'chat:diff' && event.payload.diff) {
+            const diff = event.payload.diff as {
+              checkpointId: string
+              opIndex: number
+              path: string
+              before: string | null
+              after: string
+              op: PendingDiff['op']
+            }
+            if (typeof diff.path === 'string' && typeof diff.checkpointId === 'string') {
+              restoredCheckpoint = diff.checkpointId
+              restoredDiffs.set(`${diff.checkpointId}:${diff.opIndex}:${diff.path}`, {
+                id: `${job.id}:${diff.opIndex}:${diff.path}`,
+                checkpointId: diff.checkpointId,
+                opIndex: diff.opIndex,
+                path: diff.path,
+                before: diff.before,
+                after: diff.after,
+                op: diff.op,
+                status: 'pending'
+              })
+            }
+          } else if (event.channel === 'chat:checkpoint') {
+            const checkpointId = event.payload.checkpointId
+            if (typeof checkpointId === 'string') restoredCheckpoint = checkpointId
+          } else if (event.channel === 'chat:model') {
+            const model = event.payload.model
+            if (typeof model === 'string') routeMetaRef.current.model = model
+          } else if (event.channel === 'chat:routed') {
+            const { agentId, agentName, model } = event.payload
+            if (typeof agentId === 'string') routeMetaRef.current.agentId = agentId
+            if (typeof agentName === 'string') routeMetaRef.current.agentName = agentName
+            if (typeof model === 'string') routeMetaRef.current.model = model
+          }
+        }
+        setToolActivity([...restoredTools.values()])
+        if (!settingsRef.current?.agent.autoKeepDiffs) {
+          setPendingDiffs([...restoredDiffs.values()])
+        }
+        setActiveCheckpointId(restoredCheckpoint)
+        setAnswerBuffer(job.answer)
+        setThinkingBuffer('')
+        setAgentStatus(job.statusText || 'Working…')
+        setStreaming(true)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [settingsRef, workspacePath])
+
   useEffect(() => {
     if (streaming || !selectedLocalModelReady) return
     const timer = window.setTimeout(() => {
@@ -173,7 +243,8 @@ export function useChatSession({
     lastRequestIdRef.current = requestIdRef.current
     requestIdRef.current = null
     // Keep thinking/answer buffers visible until done flushes the partial reply.
-    if (directImageRequestRef.current) void window.ide.cancelImageGeneration(directImageRequestRef.current)
+    if (directImageRequestRef.current)
+      void window.ide.cancelImageGeneration(directImageRequestRef.current)
     void window.ide.stopChat()
   }, [])
 
@@ -223,9 +294,6 @@ export function useChatSession({
       skillIds: string[] = [],
       opts?: {
         forceRoute?: 'tools' | 'answer'
-        resumeRunId?: string
-        /** Rewind session files + worker state to this step before continuing. */
-        resumeSessionStep?: number
         /** Use this thread instead of activeThread (reroute trims the last turn first) */
         thread?: ChatThread
       }
@@ -266,16 +334,31 @@ export function useChatSession({
         const imagePrompt = imagePromptFromCommand(text)
         if (imagePrompt !== null) {
           if (!imagePrompt) throw new Error('Use /image followed by a description of the image.')
-          if (files.length || skillIds.length) throw new Error('/image currently accepts a text prompt. Remove attachments and skills to generate an image.')
+          if (files.length || skillIds.length)
+            throw new Error(
+              '/image currently accepts a text prompt. Remove attachments and skills to generate an image.'
+            )
           let thread = opts?.thread ?? activeThread
-          if (!thread) thread = await window.ide.createChat(selectedModel || settings.models.defaultModel)
+          if (!thread)
+            thread = await window.ide.createChat(selectedModel || settings.models.defaultModel)
           requestThreadIdRef.current = thread.id
-          const userSaved = await window.ide.appendChatMessage(thread.id, {
-            id: uid(), role: 'user', content: text, createdAt: Date.now()
-          }, undefined, workspacePath)
+          const userSaved = await window.ide.appendChatMessage(
+            thread.id,
+            {
+              id: uid(),
+              role: 'user',
+              content: text,
+              createdAt: Date.now()
+            },
+            undefined,
+            workspacePath
+          )
           setActiveThread(userSaved)
           activeThreadRef.current = userSaved
-          setThreads((previous) => [userSaved, ...previous.filter((item) => item.id !== userSaved.id)])
+          setThreads((previous) => [
+            userSaved,
+            ...previous.filter((item) => item.id !== userSaved.id)
+          ])
           setAttachments([])
           setActiveSkills([])
           setRouteLabel('Image generation')
@@ -289,10 +372,20 @@ export function useChatSession({
               if (!result.aborted) throw new Error(result.error)
               return
             }
-            const saved = await window.ide.appendChatMessage(thread.id, {
-              id: `${requestId}:assistant`, role: 'assistant', content: 'Generated image.',
-              assets: [result.asset], model: result.asset.model, agentName: 'Image generation', createdAt: Date.now()
-            }, undefined, workspacePath)
+            const saved = await window.ide.appendChatMessage(
+              thread.id,
+              {
+                id: `${requestId}:assistant`,
+                role: 'assistant',
+                content: 'Generated image.',
+                assets: [result.asset],
+                model: result.asset.model,
+                agentName: 'Image generation',
+                createdAt: Date.now()
+              },
+              undefined,
+              workspacePath
+            )
             if (activeThreadRef.current?.id === saved.id) {
               const merged = mergeChatTail(activeThreadRef.current, saved)
               setActiveThread(merged)
@@ -507,9 +600,7 @@ export function useChatSession({
               agentId: m.agentId,
               agentName: m.agentName
             })),
-            threadId: thread.id,
-            resumeRunId: opts?.resumeRunId,
-            resumeSessionStep: opts?.resumeSessionStep
+            threadId: thread.id
           }
         })
         if (!ok && requestIdRef.current === requestId) {
@@ -574,35 +665,6 @@ export function useChatSession({
     [sendMessage, streaming, activeThreadRef, setActiveThread]
   )
 
-  const refreshResumable = useCallback(async () => {
-    if (!workspacePath) {
-      setResumableRun(null)
-      return
-    }
-    const run = await window.ide.getResumableRun().catch(() => null)
-    setResumableRun(run)
-  }, [workspacePath])
-
-  useEffect(() => {
-    if (!streaming) void refreshResumable()
-  }, [streaming, refreshResumable])
-
-  const resumeLastRun = useCallback(
-    async (fromStep?: number) => {
-      const run = resumableRun
-      if (!run || streaming) return
-      setResumableRun(null)
-      setChatMode('agent')
-      const stepLabel = typeof fromStep === 'number' ? ` from step ${fromStep}` : ''
-      await sendMessage(`Resume${stepLabel}: ${run.goal}`, [], [], {
-        forceRoute: 'tools',
-        resumeRunId: run.id,
-        resumeSessionStep: fromStep
-      })
-    },
-    [resumableRun, sendMessage, streaming]
-  )
-
   // When the active reply finishes, send the next queued message (FIFO, max 3).
   const wasStreamingRef = useRef(false)
   useEffect(() => {
@@ -624,11 +686,19 @@ export function useChatSession({
   useEffect(() => {
     const offAsset = window.ide.onChatAsset(({ requestId, asset }) => {
       if (requestId !== requestIdRef.current) return
-      if (!imageAssetsRef.current.some((item) => item.id === asset.id)) imageAssetsRef.current.push(asset)
+      if (!imageAssetsRef.current.some((item) => item.id === asset.id))
+        imageAssetsRef.current.push(asset)
     })
     const offImageProgress = window.ide.onImageProgress(({ requestId, stage, detail }) => {
       if (requestId !== requestIdRef.current) return
-      setAgentStatus(detail ?? (stage === 'saving' ? 'Saving image…' : stage === 'complete' ? 'Image ready' : 'Generating image…'))
+      setAgentStatus(
+        detail ??
+          (stage === 'saving'
+            ? 'Saving image…'
+            : stage === 'complete'
+              ? 'Image ready'
+              : 'Generating image…')
+      )
     })
     const offThinking = window.ide.onChatThinking(({ requestId, chunk }) => {
       if (requestId !== requestIdRef.current) return
@@ -923,18 +993,36 @@ export function useChatSession({
       const threadId = requestThreadIdRef.current
       if (assets.length && threadId) {
         const meta = routeMetaRef.current
-        void window.ide.appendChatMessage(threadId, {
-          id: `${requestId}:assistant`, role: 'assistant',
-          content: 'Image assets were generated before the agent stopped with an error.',
-          assets, createdAt: Date.now(), agentId: meta.agentId, agentName: meta.agentName, model: meta.model
-        }, meta.model, requestWorkspacePathRef.current).then((saved) => {
-          if (activeThreadRef.current?.id === saved.id) {
-            const merged = mergeChatTail(activeThreadRef.current, saved)
-            activeThreadRef.current = merged
-            setActiveThread(merged)
-          }
-          setThreads((previous) => [saved, ...previous.filter((thread) => thread.id !== saved.id)])
-        }).catch((saveError) => setChatError(`Image reply could not be saved: ${String(saveError)}`))
+        void window.ide
+          .appendChatMessage(
+            threadId,
+            {
+              id: `${requestId}:assistant`,
+              role: 'assistant',
+              content: 'Image assets were generated before the agent stopped with an error.',
+              assets,
+              createdAt: Date.now(),
+              agentId: meta.agentId,
+              agentName: meta.agentName,
+              model: meta.model
+            },
+            meta.model,
+            requestWorkspacePathRef.current
+          )
+          .then((saved) => {
+            if (activeThreadRef.current?.id === saved.id) {
+              const merged = mergeChatTail(activeThreadRef.current, saved)
+              activeThreadRef.current = merged
+              setActiveThread(merged)
+            }
+            setThreads((previous) => [
+              saved,
+              ...previous.filter((thread) => thread.id !== saved.id)
+            ])
+          })
+          .catch((saveError) =>
+            setChatError(`Image reply could not be saved: ${String(saveError)}`)
+          )
       }
     })
     return () => {
@@ -999,8 +1087,6 @@ export function useChatSession({
     setPendingQuestion,
     memoryNotice,
     setMemoryNotice,
-    resumableRun,
-    setResumableRun,
     liveSessionSteps,
     chatMode,
     setChatMode,
@@ -1011,7 +1097,6 @@ export function useChatSession({
     activeCheckpointId,
     sendMessage,
     rerouteLast,
-    resumeLastRun,
     stopChat,
     newChat
   }

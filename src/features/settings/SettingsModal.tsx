@@ -21,8 +21,10 @@ import { LoggingPanel, useLogsState } from './panels/LoggingPanel'
 import { McpPanel, useMcpPanelState } from './panels/McpPanel'
 import {
   ComposerModelsPanel,
-  LocalModelsSettingsPanel,
+  GpuModelsPanel,
+  ImageModelsPanel,
   ProvidersModelsPanel,
+  TextModelsPanel,
   useModelsPanelState
 } from './panels/ModelsPanel'
 import { resolveSettingsCategory } from './settings-meta'
@@ -45,8 +47,8 @@ interface Props {
   hasWorkspace: boolean
   /** Already-loaded app settings for instant paint before IPC returns. */
   seedResolved?: AppSettings | null
-  /** Accepts legacy `models` (mapped to Composer). */
-  initialCategory?: Category | 'models'
+  /** Accepts legacy model page ids and maps them to the new pages. */
+  initialCategory?: Category | 'models' | 'localModels'
   startCreateSkill?: boolean
   onClose: () => void
   onChanged: (resolved: AppSettings) => void
@@ -85,9 +87,7 @@ export function SettingsModal({
 
   const load = async () => {
     const layersP = window.ide.getLayeredSettings()
-    const modelsP = window.ide
-      .modelsStatus({ probe: true, includeGpu: true })
-      .catch(() => null)
+    const modelsP = window.ide.modelsStatus({ probe: true, includeGpu: true }).catch(() => null)
     const agentsP = window.ide.getProjectAgents().catch(() => null)
 
     const layers = await layersP
@@ -140,7 +140,10 @@ export function SettingsModal({
 
   useEffect(() => {
     if (!open || category !== 'mcp') return
-    void window.ide.mcpStatus().then(setMcpRuntime).catch(() => setMcpRuntime(null))
+    void window.ide
+      .mcpStatus()
+      .then(setMcpRuntime)
+      .catch(() => setMcpRuntime(null))
   }, [open, category, layered?.resolved?.mcp])
 
   useEffect(() => {
@@ -156,11 +159,7 @@ export function SettingsModal({
   useEffect(() => {
     if (!open) return
     const offBuiltin = window.ide.onBuiltinDownloadProgress((s) => {
-      setStatus((prev) =>
-        prev
-          ? { ...prev, builtin: upsertDownloadRow(prev.builtin, s) }
-          : prev
-      )
+      setStatus((prev) => (prev ? { ...prev, builtin: upsertDownloadRow(prev.builtin, s) } : prev))
       if (s.downloading) modelsState.setDownloadingId(s.id)
       else if (s.ready || s.downloadError) {
         modelsState.setDownloadingId((cur) => (cur === s.id ? null : cur))
@@ -194,35 +193,33 @@ export function SettingsModal({
   // Use light builtin/local snapshots — full modelsStatus() probes connections and arrives late,
   // which made the percentage jump backwards on Windows.
   useEffect(() => {
-    if (!open || (category !== 'composer' && category !== 'localModels')) return
+    if (!open || (category !== 'composer' && category !== 'textModels')) return
     const downloading =
       Boolean(modelsState.downloadingId) ||
       Boolean(status?.builtin?.some((b) => b.downloading)) ||
       Boolean(status?.local?.some((m) => m.downloading))
     if (!downloading) return
     const id = window.setInterval(() => {
-      void Promise.all([
-        window.ide.builtinModelStatus(),
-        window.ide.localModelStatus()
-      ]).then(([builtin, local]) => {
-        setStatus((prev) => {
-          const next = {
-            ...(prev || {
-              ok: true,
-              builtin: [],
-              local: [],
-              models: [],
-              connections: []
-            }),
-            builtin,
-            local
-          } as ModelsStatus
-          return mergeModelsDownloadStatus(prev, next)
-        })
-        const still =
-          builtin.find((b) => b.downloading) || local.find((m) => m.downloading)
-        modelsState.setDownloadingId(still?.id ?? null)
-      })
+      void Promise.all([window.ide.builtinModelStatus(), window.ide.localModelStatus()]).then(
+        ([builtin, local]) => {
+          setStatus((prev) => {
+            const next = {
+              ...(prev || {
+                ok: true,
+                builtin: [],
+                local: [],
+                models: [],
+                connections: []
+              }),
+              builtin,
+              local
+            } as ModelsStatus
+            return mergeModelsDownloadStatus(prev, next)
+          })
+          const still = builtin.find((b) => b.downloading) || local.find((m) => m.downloading)
+          modelsState.setDownloadingId(still?.id ?? null)
+        }
+      )
     }, 1_500)
     return () => window.clearInterval(id)
   }, [open, category, modelsState.downloadingId])
@@ -421,22 +418,18 @@ export function SettingsModal({
             />
           )}
 
-          {category === 'localModels' && (
-            <LocalModelsSettingsPanel
-              resolved={resolved}
-              status={status}
-              apply={apply}
-              load={load}
-            />
+          {category === 'gpu' && (
+            <GpuModelsPanel resolved={resolved} status={status} apply={apply} load={load} />
           )}
 
+          {category === 'textModels' && (
+            <TextModelsPanel resolved={resolved} status={status} apply={apply} load={load} />
+          )}
+
+          {category === 'imageModels' && <ImageModelsPanel resolved={resolved} apply={apply} />}
+
           {category === 'providers' && (
-            <ProvidersModelsPanel
-              resolved={resolved}
-              status={status}
-              apply={apply}
-              load={load}
-            />
+            <ProvidersModelsPanel resolved={resolved} status={status} apply={apply} load={load} />
           )}
 
           {category === 'agent' && <AgentPanel />}
