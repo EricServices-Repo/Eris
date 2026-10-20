@@ -23,7 +23,7 @@ import {
   USER_QUESTION_TIMEOUT_MS
 } from '../services/user-question'
 import type { ChatPromptInput, TurnPlan } from '../../../src/shared/settings-schema'
-import { AGENT_HANDOFF_CHARS } from '../../../src/shared/agent-orchestration'
+import { AGENT_HANDOFF_CHARS, summarizeAgentResults } from '../../../src/shared/agent-orchestration'
 import { buildChatMessages } from '../services/chat-prompt'
 import { saveAgentRun, type AgentRunRecord } from '../services/agent-runs'
 import {
@@ -109,23 +109,16 @@ export function registerChatStreamIpc(): void {
       // Ghost completes share the llama runtime — never race the agent turn.
       abortAllCompletes()
       const { model, agentId, mode } = payload
-      const promptBuildStartedAt = Date.now()
       let messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
-      try {
-        messages = payload.prompt
-          ? buildChatMessages(appState.currentWorkspace, settings, {
-              ...payload.prompt,
-              threadId: payload.threadId ?? payload.prompt.threadId
-            })
-          : (payload.messages ?? [])
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Could not build the chat prompt'
-        publish('chat:error', { requestId, error: message })
-        appState.chatStreamActive = false
-        if (appState.activeChatRequestId === requestId) appState.activeChatRequestId = null
-        return false
-      }
-      const promptBuildMs = Date.now() - promptBuildStartedAt
+      // Resolve the route before generating role instructions. A renderer route can
+      // be corrected below, so its original agent must never own the final prompt.
+      messages = payload.prompt
+        ? [
+            ...payload.prompt.history.map(({ role, content }) => ({ role, content })),
+            { role: 'user', content: payload.prompt.text }
+          ]
+        : (payload.messages ?? [])
+      let promptBuildMs = 0
       const userText =
         payload.prompt?.text ||
         [...messages]
@@ -158,7 +151,12 @@ export function registerChatStreamIpc(): void {
               selectedModel: model || settings.models.defaultModel,
               mode: mode === 'ask' ? 'ask' : 'agent',
               manualAgentId: agentId ?? null,
-              previousAgentId
+              previousAgentId,
+              previousMessages: payload.prompt?.history.flatMap((message) =>
+                message.role === 'system'
+                  ? []
+                  : [{ role: message.role, content: message.content, agentId: message.agentId }]
+              )
             },
             getSecret,
             signal: appState.chatAbort.signal
@@ -181,6 +179,7 @@ export function registerChatStreamIpc(): void {
         turnPlan = {
           ...turnPlan,
           intent: 'edit',
+          mode: 'agent',
           agentId: composer?.id ?? 'composer',
           agentName: composer?.name ?? 'Composer',
           toolPolicy: 'edit',
@@ -188,6 +187,25 @@ export function registerChatStreamIpc(): void {
           reason: `Implementation request → ${composer?.name ?? 'Composer'} with edit tools`,
           method: 'override'
         }
+      }
+      const promptBuildStartedAt = Date.now()
+      try {
+        if (payload.prompt) {
+          messages = buildChatMessages(appState.currentWorkspace, settings, {
+            ...payload.prompt,
+            mode: turnPlan.mode,
+            agentId: turnPlan.agentId,
+            agentName: turnPlan.agentName,
+            threadId: payload.threadId ?? payload.prompt.threadId
+          })
+        }
+        promptBuildMs = Date.now() - promptBuildStartedAt
+      } catch (err) {
+        const error = err instanceof Error ? err.message : 'Could not build the chat prompt'
+        publish('chat:error', { requestId, error })
+        appState.chatStreamActive = false
+        if (appState.activeChatRequestId === requestId) appState.activeChatRequestId = null
+        return false
       }
       const agent =
         findAgent(appState.currentWorkspace, turnPlan.agentId) ||
@@ -285,6 +303,8 @@ export function registerChatStreamIpc(): void {
           model: resolvedModel,
           reason: turnPlan.reason,
           intent: turnPlan.intent,
+          toolPolicy: turnPlan.toolPolicy,
+          executionPlan: turnPlan.executionPlan,
           toolsModel: turnPlan.models.tools
         })
         pendingThinking += `Route: ${turnPlan.reason}${turnPlan.classifiedIntent && turnPlan.classifiedIntent !== turnPlan.intent ? ` (classified ${turnPlan.classifiedIntent})` : ''} · tools ${turnPlan.toolPolicy}\n`
@@ -537,15 +557,9 @@ export function registerChatStreamIpc(): void {
               const children = chatChildIds.map((id) => getBackgroundJob(id)).filter(Boolean)
               const pending = children.filter((c) => c && !terminal.has(c.status))
               if (pending.length === 0) {
-                const detail = children
-                  .map((c) =>
-                    c
-                      ? `### ${c.agentName || c.agentId} · ${c.status}\n${c.answer.trim().slice(0, AGENT_HANDOFF_CHARS) || '(no answer)'}`
-                      : ''
-                  )
-                  .filter(Boolean)
-                  .join('\n\n')
-                return { ok: true, detail: detail || 'Children finished' }
+                return summarizeAgentResults(
+                  chatChildIds.map((id) => getBackgroundJob(id) ?? undefined)
+                )
               }
               await new Promise((r) => setTimeout(r, 500))
             }

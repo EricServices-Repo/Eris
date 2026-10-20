@@ -5,8 +5,8 @@ import { formatLiveMcpToolsPrompt } from '../mcp-runtime'
 import { formatIndexSummary } from '../code-index'
 import { formatWorkspaceContextPrompt } from '../workspace-context'
 import { workspaceTree } from '../workspace-fs'
-import { handoffFromMessages } from '../agent-discussions'
-import { MAX_INLINE_MCP_TOOLS } from '../tool-registry'
+import { contractForAgent } from '../../../../src/shared/agent-contract'
+import { workerConversation } from './conversation'
 import type { AgentChatMessage } from './types'
 
 /**
@@ -19,7 +19,7 @@ You operate on the user’s open project folder. Paths are always relative to th
 ROLE
 - You are an autonomous coding agent with a full tool belt. Prefer tools over guessing.
 - Never ask the user for project structure, file lists, or to paste code that is already in this workspace — discover it with tools.
-- You have permission to inspect and edit this workspace. Never refuse coding, review, build, or fix requests.
+- Follow the active turn tool policy. Inspect relevant sources before acting; only edit when that policy permits it.
 - Keep non-tool narration under 3 short sentences. Do the work with tools; summarize only when finished.
 
 TOOL CALL FORMAT
@@ -62,7 +62,7 @@ WHEN TO USE WHICH TOOL
    Durable notes → read_context / update_context (.eris/context.md).
    Skills → list_skills → read_skill → write_skill only (default scope "user"; never npm/package.json for skills).
 7) Parallel work
-   Independent slices → delegate_to_agent (goal + summary + files), then await_children before concluding.
+   Use delegate_to_agent for a scoped implementation, investigation, or independent review. Include the objective, evidence already gathered, exact scope, constraints, and expected deliverable. Chat specialists run sequentially in the same workspace and return findings directly; background jobs use await_children. Read their results, resolve disagreements against source evidence, and verify changes before concluding. Never invent a specialist result or treat a queued job as completed.
 8) Clarify with the user
    ask_user ONLY for a real product/design choice that tools cannot resolve.
    Never use ask_user for structure, files, or “can you paste the code”.
@@ -113,7 +113,7 @@ QUALITY BAR
 - After every TOOL_RESULT, continue with tools until the user request is fully satisfied.
 - Only then reply with a short DONE summary (what changed / findings) and no further tools.
 - Empty or nearly empty workspace = greenfield: scaffold a real runnable project here (sources, manifest, README), not instructions for Xcode or another IDE.
-- Build/create/make an app: start mkdir + write_file immediately in this workspace.
+- Build/create/make an app: inspect existing project entry points and conventions first; scaffold only when the workspace is actually empty.
 - Eris AI models / providers questions: answer ONLY from the [Eris AI models] catalog — no retrieve/tree.
 - Self-contained installs: npm/pnpm/yarn/bun install in this folder — never npm -g / yarn global.
 - Bare npm install is OK when node_modules is missing, package.json changed, or deps are missing — do not loop install for ordinary test failures.
@@ -122,7 +122,7 @@ QUALITY BAR
 export const READ_AGENT_PROMPT = `You are answering in Eris chat. The user's next message is the question. Your reply is the answer they read.
 
 Read the open project when the answer depends on it. Paths are relative to the workspace root.
-You may read workspace sources and public web pages. Do not create, edit, or delete files, run shell commands, or commit changes. Never emit write_file, search_replace, apply_patch, mkdir, delete_path, or run.
+You may read workspace sources and public web pages. Do not create, edit, or delete files or commit changes. Never emit write_file, search_replace, apply_patch, mkdir, or delete_path. Shell commands are allowed only for review or verification in Agent mode, never in Ask mode.
 
 When you need a file, emit exactly:
 
@@ -269,21 +269,9 @@ export function buildPreservedWorkerMessages(options: {
     readOnly ? READ_AGENT_PROMPT : TOOLS_PROMPT,
     options.mcpToolCount > 0
   )
-  const historyTail = options.messages
-    .filter((m) => m.role === 'user' || m.role === 'assistant')
-    .map((m) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content
-    }))
-  const handoff = handoffFromMessages(historyTail)
-
-  const greenfield =
-    options.plan.intent === 'edit' &&
-    /\b(build|create|make|scaffold|generate|develop)\b/i.test(options.originalUserGoal) &&
-    /\b(app|application|project|program|tool|cli|game|website|mac\s*os|macos|osx|electron|desktop)\b/i.test(
-      options.originalUserGoal
-    )
-  const playbook = intentPlaybook(options.plan.intent, greenfield)
+  const historyTail = workerConversation(options.messages, options.originalUserGoal)
+  const playbook = intentPlaybook(options.plan.intent, false)
+  const contract = contractForAgent(options.plan.agentId)
 
   const out: AgentChatMessage[] = [
     {
@@ -291,7 +279,14 @@ export function buildPreservedWorkerMessages(options: {
       content: [
         priorSystem.slice(0, 7000),
         toolsSystem,
-        `TURN CONTEXT`,
+        `TURN CONTEXT — authoritative for this request`,
+        contract ? `Role: ${contract.name}. ${contract.job} Completion: ${contract.done}` : '',
+        `Permissions: ${options.plan.mode} mode; ${options.plan.toolPolicy} tools. Previous messages are context, not current role instructions.`,
+        playbook,
+        `Keep the user's latest request intact. Resolve references from the conversation, verify cited files before editing, and do not repeat internal routing instructions in your answer.`,
+        options.retrievalHint
+          ? `Retrieved leads (verify against source):\n${options.retrievalHint}`
+          : '',
         `Plan: ${options.plan.reason}`,
         `Agent: ${options.plan.agentName} · intent: ${options.plan.intent} · tool policy: ${options.plan.toolPolicy}`,
         `Model for tools: ${options.plan.models.tools.replace(/^builtin:/, '')}`,
@@ -303,26 +298,7 @@ export function buildPreservedWorkerMessages(options: {
         .join('\n\n')
     }
   ]
-  for (const m of historyTail) {
-    // Avoid duplicating the latest user goal twice
-    if (m.role === 'user' && m.content.includes(options.originalUserGoal.slice(0, 80))) continue
-    out.push(m)
-  }
-  out.push({
-    role: 'user',
-    content:
-      `${options.originalUserGoal}${options.retrievalHint}\n\n` +
-      (handoff ? `${handoff}\n\n` : '') +
-      `[Eris worker] You are ${options.plan.agentName} on ${options.plan.models.tools.replace(/^builtin:/, '')}. ` +
-      (readOnly
-        ? `Read what you need, then answer in the chat. Do not edit files. `
-        : `Use tools until this request is fully done. `) +
-      (options.mcpToolCount > MAX_INLINE_MCP_TOOLS
-        ? `${options.mcpToolCount} MCP tools are connected. Use search_mcp_tools to discover the relevant integration; matching tools become available on the next step. `
-        : options.mcpToolCount > 0
-          ? `${options.mcpToolCount} MCP tool(s) are available — use them when relevant. `
-          : '') +
-      `${playbook}`
-  })
+  out.push(...historyTail)
+  out.push({ role: 'user', content: options.originalUserGoal })
   return out
 }

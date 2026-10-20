@@ -1047,81 +1047,28 @@ export default function App() {
               </div>
             ) : null}
             {!rightCollapsed && (
-              <div className="right-panel-tabs" role="tablist" aria-label="Right panel">
-                {workspacePath ? (
-                  <>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={rightPanel === 'editor'}
-                      className={`right-panel-tab ${rightPanel === 'editor' ? 'active' : ''}`}
-                      onClick={() => setRightPanel('editor')}
-                    >
-                      Editor
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={rightPanel === 'terminal'}
-                      className={`right-panel-tab ${rightPanel === 'terminal' ? 'active' : ''}`}
-                      onClick={() => setRightPanel('terminal')}
-                    >
-                      Terminal
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={rightPanel === 'git'}
-                      className={`right-panel-tab ${rightPanel === 'git' ? 'active' : ''}`}
-                      onClick={() => setRightPanel('git')}
-                    >
-                      Git
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={rightPanel === 'debug'}
-                      className={`right-panel-tab ${rightPanel === 'debug' ? 'active' : ''}`}
-                      onClick={() => setRightPanel('debug')}
-                    >
-                      Debug
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={rightPanel === 'evals'}
-                      className={`right-panel-tab ${rightPanel === 'evals' ? 'active' : ''}`}
-                      onClick={() => setRightPanel('evals')}
-                    >
-                      Evals
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={rightPanel === 'codemap'}
-                      className={`right-panel-tab ${rightPanel === 'codemap' ? 'active' : ''}`}
-                      onClick={() => setRightPanel('codemap')}
-                    >
-                      Codemap
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={rightPanel === 'agents'}
-                      className={`right-panel-tab ${rightPanel === 'agents' ? 'active' : ''}`}
-                      onClick={() => setRightPanel('agents')}
-                    >
-                      Agents
-                    </button>
-                  </>
-                ) : (
-                  <span className="right-panel-tab active" style={{ flex: 1, cursor: 'default' }}>
-                    Editor
-                  </span>
-                )}
+              <div className="right-panel-tabs right-panel-header">
+                <select
+                  className="right-panel-select"
+                  aria-label="Select right panel"
+                  value={workspacePath ? rightPanel : 'editor'}
+                  onChange={(event) => showRightPanel(event.target.value as typeof rightPanel)}
+                >
+                  <option value="editor">Editor</option>
+                  {workspacePath && (
+                    <>
+                      <option value="terminal">Terminal</option>
+                      <option value="git">Git</option>
+                      <option value="debug">Debug</option>
+                      <option value="evals">Evals</option>
+                      <option value="codemap">Codemap</option>
+                      <option value="agents">Agents</option>
+                    </>
+                  )}
+                </select>
                 <button
                   type="button"
-                  className="right-panel-tab right-panel-collapse"
+                  className="right-panel-collapse"
                   title="Collapse right panel"
                   aria-label="Collapse right panel"
                   onClick={() => setRightCollapsed(true)}

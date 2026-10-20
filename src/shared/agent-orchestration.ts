@@ -3,6 +3,7 @@ export const AGENT_HANDOFF_CHARS = 8_000
 
 /** Structured handoff between orchestrator and specialist agents. */
 export interface AgentHandoffPacket {
+  parentGoal?: string
   goal: string
   summary: string
   files?: string[]
@@ -39,6 +40,7 @@ export function formatHandoffForPrompt(packet: AgentHandoffPacket): string {
   const lines = [
     `[Eris handoff → ${packet.toAgentId}]`,
     `From: ${packet.fromAgentId}`,
+    packet.parentGoal ? `Parent request: ${packet.parentGoal}` : '',
     `Goal: ${packet.goal}`,
     `Summary: ${packet.summary}`
   ]
@@ -101,4 +103,40 @@ export function deriveBlackboardStatus(job: {
   if (live.includes('planning')) return 'planning'
   if (job.status === 'running') return 'running'
   return 'queued'
+}
+
+/** Child completion is a result, not merely the absence of running jobs. */
+export function summarizeAgentResults(
+  children: Array<
+    | {
+        id: string
+        agentId: string
+        agentName?: string
+        status: string
+        answer: string
+        error?: string
+        filesTouched?: string[]
+      }
+    | undefined
+  >
+): { ok: boolean; detail: string } {
+  return {
+    ok: children.every((child) => child && ['done', 'merged'].includes(child.status)),
+    detail: children
+      .map((child) => {
+        if (!child) return 'Missing specialist result. The assignment remains unresolved.'
+        return [
+          `### ${child.agentName || child.agentId} · ${child.status} · ${child.id}`,
+          child.error ? `Error: ${child.error}` : '',
+          child.filesTouched?.length ? `Files: ${child.filesTouched.join(', ')}` : '',
+          child.answer.trim().slice(0, AGENT_HANDOFF_CHARS) || '(no answer)',
+          child.status === 'done' && child.filesTouched?.length
+            ? 'Inspect the reported changes. If they are in a separate worktree, merge/apply them before claiming they are in the user workspace.'
+            : ''
+        ]
+          .filter(Boolean)
+          .join('\n')
+      })
+      .join('\n\n')
+  }
 }

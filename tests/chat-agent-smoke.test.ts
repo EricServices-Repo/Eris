@@ -32,12 +32,14 @@ vi.mock('../electron/main/services/chat-runtime', () => ({
 vi.mock('../electron/main/services/verify', () => ({
   runVerify: async () => {
     harness.verifyCalls++
-    return harness.verifyResults.shift() ?? {
-      ok: true,
-      skipped: false,
-      command: 'npm test',
-      detail: 'smoke verification passed'
-    }
+    return (
+      harness.verifyResults.shift() ?? {
+        ok: true,
+        skipped: false,
+        command: 'npm test',
+        detail: 'smoke verification passed'
+      }
+    )
   }
 }))
 
@@ -85,7 +87,7 @@ beforeEach(() => {
       '}',
       '',
       'export function formatRatio(left: number, right: number): string {',
-      "  return safeDivide(left, right).toFixed(2)",
+      '  return safeDivide(left, right).toFixed(2)',
       '}',
       ''
     ].join('\n')
@@ -141,9 +143,7 @@ function workspaceQuestionPlan(): TurnPlan {
   }
 }
 
-async function drain(
-  generator: AsyncGenerator<AgentRunnerEvent>
-): Promise<AgentRunnerEvent[]> {
+async function drain(generator: AsyncGenerator<AgentRunnerEvent>): Promise<AgentRunnerEvent[]> {
   const events: AgentRunnerEvent[] = []
   for await (const event of generator) events.push(event)
   return events
@@ -157,9 +157,11 @@ function toolsFrom(events: AgentRunnerEvent[]) {
 
 function lastAnswer(events: AgentRunnerEvent[]): string {
   return (
-    [...events].reverse().find(
-      (event): event is Extract<AgentRunnerEvent, { type: 'answer' }> => event.type === 'answer'
-    )?.text ?? ''
+    [...events]
+      .reverse()
+      .find(
+        (event): event is Extract<AgentRunnerEvent, { type: 'answer' }> => event.type === 'answer'
+      )?.text ?? ''
   )
 }
 
@@ -305,9 +307,9 @@ describe('chat agent complex smoke test', () => {
         expect.objectContaining({ name: 'search_replace', status: 'ok' })
       ])
     )
-    expect(harness.prompts.some((prompt) => prompt.includes('Do not retry this blocked action'))).toBe(
-      true
-    )
+    expect(
+      harness.prompts.some((prompt) => prompt.includes('Do not retry this blocked action'))
+    ).toBe(true)
     expectCompleted(events)
     expect(harness.replies).toHaveLength(0)
   })
@@ -315,13 +317,7 @@ describe('chat agent complex smoke test', () => {
   it('stops an identical mutating-tool loop and marks the run incomplete', async () => {
     const content = 'loop guard fixture\n'
     const repeatedWrite = JSON.stringify({ name: 'write_file', path: 'loop.txt', content })
-    harness.replies.push(
-      repeatedWrite,
-      repeatedWrite,
-      repeatedWrite,
-      repeatedWrite,
-      repeatedWrite
-    )
+    harness.replies.push(repeatedWrite, repeatedWrite, repeatedWrite, repeatedWrite, repeatedWrite)
 
     const events = await drain(
       runAgentWithWorkspaceTools({
@@ -339,8 +335,12 @@ describe('chat agent complex smoke test', () => {
 
     expect(readFileSync(join(workspacePath, 'loop.txt'), 'utf8')).toBe(content)
     expect(events.filter((event) => event.type === 'diff')).toHaveLength(1)
-    expect(toolsFrom(events).filter((tool) => tool.name === 'write_file' && tool.status === 'ok')).toHaveLength(1)
-    expect(events.some((event) => event.type === 'progress' && event.incomplete === true)).toBe(true)
+    expect(
+      toolsFrom(events).filter((tool) => tool.name === 'write_file' && tool.status === 'ok')
+    ).toHaveLength(1)
+    expect(events.some((event) => event.type === 'progress' && event.incomplete === true)).toBe(
+      true
+    )
     expect(lastAnswer(events)).toContain('repeated identical tool calls')
     expect(harness.verifyCalls).toBe(0)
     expect(harness.replies).toHaveLength(0)
@@ -467,4 +467,58 @@ describe('chat agent complex smoke test', () => {
     expect(lastAnswer(events)).toContain('verification passed')
     expect(harness.replies).toHaveLength(0)
   })
+})
+
+it('runs chat specialists in the active workspace even when background delegation is available', async () => {
+  const onDelegate = vi.fn(async () => ({ ok: true, detail: 'queued', childJobId: 'background' }))
+  harness.replies.push(
+    JSON.stringify({ name: 'search_tools', query: 'delegate_to_agent' }),
+    JSON.stringify({
+      name: 'delegate_to_agent',
+      agent_id: 'coder',
+      goal: 'Edit src/retry.ts to set MAX_RETRIES to 4. Verify the change.',
+      summary: 'The user wants four retries.',
+      files: ['src/retry.ts']
+    }),
+    JSON.stringify({ name: 'read_file', path: 'src/retry.ts' }),
+    JSON.stringify({
+      name: 'search_replace',
+      path: 'src/retry.ts',
+      old_string: 'MAX_RETRIES = 3',
+      new_string: 'MAX_RETRIES = 4'
+    }),
+    'DONE: Changed MAX_RETRIES to 4 in src/retry.ts; verification passed.',
+    'DONE: Changed MAX_RETRIES to 4 in src/retry.ts; verification passed.'
+  )
+  const events = await drain(
+    runAgentWithWorkspaceTools({
+      workspacePath,
+      settings: getDefaults(),
+      model: 'builtin:composer-lite',
+      messages: [{ role: 'user', content: 'Set MAX_RETRIES to 4 in src/retry.ts.' }],
+      temperature: 0,
+      getSecret: () => null,
+      mode: 'agent',
+      turnPlan: fullEditPlan(),
+      mcp: 'off',
+      jobId: 'chat:delegation-regression',
+      onDelegate
+    })
+  )
+  expect(onDelegate).not.toHaveBeenCalled()
+  expect(readFileSync(join(workspacePath, 'src/retry.ts'), 'utf8')).toContain('MAX_RETRIES = 4')
+  expect(events).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        type: 'delegation',
+        delegation: expect.objectContaining({ status: 'done' })
+      }),
+      expect.objectContaining({
+        type: 'diff',
+        diff: expect.objectContaining({ path: 'src/retry.ts' })
+      })
+    ])
+  )
+  expect(harness.verifyCalls).toBeGreaterThan(0)
+  expectCompleted(events)
 })

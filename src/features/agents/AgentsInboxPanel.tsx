@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ChatAgentActivity } from './ChatAgentActivity'
+import { formatBackgroundJobDetail } from '@/shared/background-job-detail'
 import type { BackgroundJob } from '@/shared/background-agents'
 
 type Props = {
@@ -24,6 +26,7 @@ export function AgentsInboxPanel({ onOpenPath, onOpenChat }: Props) {
   const [diffPreview, setDiffPreview] = useState<{ id: string; text: string } | null>(null)
   const [goal, setGoal] = useState('')
   const [enqueueing, setEnqueueing] = useState(false)
+  const [filter, setFilter] = useState<'all' | 'running' | 'attention'>('all')
 
   const refresh = useCallback(async () => {
     try {
@@ -62,8 +65,17 @@ export function AgentsInboxPanel({ onOpenPath, onOpenChat }: Props) {
   }, [refresh])
 
   const active = useMemo(
-    () => jobs.filter((j) => !['discarded', 'merged'].includes(j.status)),
-    [jobs]
+    () =>
+      jobs
+        .filter((j) => !['discarded', 'merged'].includes(j.status))
+        .filter(
+          (j) =>
+            filter === 'all' ||
+            (filter === 'running'
+              ? ['running', 'queued'].includes(j.status)
+              : ['done', 'failed', 'stopped'].includes(j.status))
+        ),
+    [jobs, filter]
   )
 
   const runAction = async (id: string, fn: () => Promise<unknown>) => {
@@ -104,19 +116,32 @@ export function AgentsInboxPanel({ onOpenPath, onOpenChat }: Props) {
     <div className="agents-inbox">
       <header className="agents-inbox-header">
         <div>
-          <h2>Agents Inbox</h2>
-          <p>Background + Cloud jobs — review, apply, merge, open PRs.</p>
+          <h2>Agents</h2>
+          <p>Follow the active chat, specialist handoffs, and background work.</p>
         </div>
         <button type="button" className="btn" onClick={() => void refresh()}>
           Refresh
         </button>
       </header>
 
+      <ChatAgentActivity />
+      <div className="agent-section-heading">
+        <h3>Background work</h3>
+        <select
+          aria-label="Filter background agents"
+          value={filter}
+          onChange={(event) => setFilter(event.target.value as typeof filter)}
+        >
+          <option value="all">All tasks</option>
+          <option value="running">In progress</option>
+          <option value="attention">Needs review</option>
+        </select>
+      </div>
       <div className="agents-inbox-compose">
         <textarea
           value={goal}
           onChange={(e) => setGoal(e.target.value)}
-          placeholder="Enqueue a background agent task…"
+          placeholder="Describe a separate task, its scope, and what a good result looks like…"
           rows={2}
         />
         <button
@@ -155,6 +180,12 @@ export function AgentsInboxPanel({ onOpenPath, onOpenChat }: Props) {
                 <div className="agents-inbox-goal" title={job.goal}>
                   {job.goal}
                 </div>
+                {job.handoff && (
+                  <div className="agent-handoff-label">
+                    {job.handoff.fromAgentId} → {job.handoff.toAgentId}
+                  </div>
+                )}
+                {job.routeReason && <p className="agents-inbox-live">{job.routeReason}</p>}
                 {job.liveStatus && <div className="agents-inbox-live">{job.liveStatus}</div>}
                 {job.error && <div className="agents-inbox-error">{job.error}</div>}
                 {job.prUrl && (
@@ -162,13 +193,19 @@ export function AgentsInboxPanel({ onOpenPath, onOpenChat }: Props) {
                     Open pull request
                   </a>
                 )}
+                <details className="agent-evidence">
+                  <summary>Assignment, handoff & evidence</summary>
+                  <pre>{formatBackgroundJobDetail(job, '')}</pre>
+                </details>
                 <div className="agents-inbox-actions">
                   {!cloud && ['done', 'stopped', 'failed'].includes(job.status) && (
                     <button
                       type="button"
                       className="btn btn-primary"
                       disabled={busy}
-                      onClick={() => void runAction(job.id, () => window.ide.mergeBackgroundJob(job.id))}
+                      onClick={() =>
+                        void runAction(job.id, () => window.ide.mergeBackgroundJob(job.id))
+                      }
                     >
                       Merge
                     </button>

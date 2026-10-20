@@ -1421,7 +1421,7 @@ export async function* runAgentWithWorkspaceTools(options: {
           }
           yield {
             type: 'thinking',
-            text: '\n\n— Skipping user ask — listing the workspace with tools…\n'
+            text: '\n\n— Inspecting the workspace to answer your request…\n'
           }
           yield {
             type: 'tool',
@@ -2599,6 +2599,7 @@ export async function* runAgentWithWorkspaceTools(options: {
               ? call.args.openQuestions.map((q) => String(q)).filter(Boolean)
               : undefined
           const handoff: AgentHandoffPacket = {
+            parentGoal: originalUserGoal,
             goal,
             summary,
             files,
@@ -2619,7 +2620,13 @@ export async function* runAgentWithWorkspaceTools(options: {
               detail: 'A specialist does not delegate further. Finish the assigned goal yourself.',
               mutated: false
             }
-          } else if (options.jobId?.startsWith('chat:') && !options.onDelegate) {
+          } else if (!findAgent(workspacePath, agentId)?.enabled) {
+            result = {
+              ok: false,
+              detail: `Agent ${agentId} is unavailable or disabled. Choose an enabled specialist.`,
+              mutated: false
+            }
+          } else if (options.jobId?.startsWith('chat:')) {
             const specialist = findAgent(workspacePath, agentId)
             const specialistPlan = await planChatTurn({
               workspacePath,
@@ -2658,6 +2665,8 @@ export async function* runAgentWithWorkspaceTools(options: {
             }
             releaseGgufSession()
             let answer = ''
+            let specialistMutated = false
+            let specialistIncomplete = false
             const specTools: Array<{ name: string; path?: string; status: string }> = []
             try {
               for await (const specEvt of runAgentWithWorkspaceTools({
@@ -2665,10 +2674,8 @@ export async function* runAgentWithWorkspaceTools(options: {
                 settings: options.settings,
                 model: workerModel,
                 messages: [
-                  {
-                    role: 'user',
-                    content: `${formatHandoffForPrompt(handoff)}\n\n${goal}`
-                  }
+                  { role: 'system', content: formatHandoffForPrompt(handoff) },
+                  { role: 'user', content: goal }
                 ],
                 temperature: specialist?.temperature ?? options.temperature,
                 signal: options.signal,
@@ -2693,7 +2700,18 @@ export async function* runAgentWithWorkspaceTools(options: {
                 ) {
                   yield specEvt
                 }
-                if (specEvt.type === 'answer') answer += specEvt.text
+                if (specEvt.type === 'diff') {
+                  specialistMutated = true
+                  filesTouched.push(specEvt.diff.path)
+                  forgetWorkspaceRead(specEvt.diff.path)
+                  if (pathNeedsProjectVerify(specEvt.diff.path)) {
+                    codeMutated = true
+                    codeMutatedThisRound = true
+                  }
+                }
+                if (specEvt.type === 'progress' && specEvt.incomplete) specialistIncomplete = true
+                if (specEvt.type === 'answer')
+                  answer = specEvt.replace ? specEvt.text : answer + specEvt.text
                 if (specEvt.type === 'tool' && specEvt.tool.status !== 'running') {
                   specTools.push({
                     name: specEvt.tool.name,
@@ -2703,22 +2721,32 @@ export async function* runAgentWithWorkspaceTools(options: {
                 }
               }
               result = {
-                ok: true,
-                detail: answer.trim() || `${runningDelegation.agentName} finished.`,
-                mutated: specTools.some((t) => t.status === 'ok')
+                ok: !specialistIncomplete && Boolean(answer.trim()),
+                detail: [
+                  specialistIncomplete
+                    ? 'Specialist stopped before completing the assignment.'
+                    : '',
+                  `Specialist: ${runningDelegation.agentName}. Workspace: current chat workspace.`,
+                  `Tool evidence: ${specTools.map((tool) => `${tool.name}${tool.path ? ` ${tool.path}` : ''}: ${tool.status}`).join('; ') || 'none'}`,
+                  answer.trim() ||
+                    'Specialist returned no answer; the assignment remains unresolved.'
+                ]
+                  .filter(Boolean)
+                  .join('\n'),
+                mutated: specialistMutated
               }
               yield {
                 type: 'delegation',
                 delegation: {
                   ...runningDelegation,
-                  status: 'done',
+                  status: result.ok ? 'done' : 'failed',
                   tools: specTools.slice(-6),
                   result: result.detail.slice(0, AGENT_HANDOFF_CHARS)
                 }
               }
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err)
-              result = { ok: false, detail: message, mutated: false }
+              result = { ok: false, detail: message, mutated: specialistMutated }
               yield {
                 type: 'delegation',
                 delegation: {

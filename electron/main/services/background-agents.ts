@@ -11,6 +11,7 @@ import type {
 } from '../../../src/shared/background-agents'
 import {
   deriveBlackboardStatus,
+  summarizeAgentResults,
   formatHandoffForPrompt,
   formatJobResultForChat,
   type AgentHandoffPacket,
@@ -24,12 +25,7 @@ import {
   workspaceAllowedCommands,
   workspaceKey
 } from './workspace-trust'
-import {
-  addAgentWorktree,
-  diffWorktree,
-  mergeAgentBranch,
-  removeAgentWorktree
-} from './worktrees'
+import { addAgentWorktree, diffWorktree, mergeAgentBranch, removeAgentWorktree } from './worktrees'
 import { logError, logInfo } from './logger'
 import {
   commandNeedsApproval,
@@ -116,7 +112,8 @@ export function onBackgroundJobEvent(cb: (event: BackgroundJobEvent) => void): (
 
 export function listBackgroundJobs(workspacePath: string | null): BackgroundJob[] {
   loadPersisted()
-  if (!workspacePath) return [...jobs.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  if (!workspacePath)
+    return [...jobs.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   const key = workspaceKey(workspacePath)
   return [...jobs.values()]
     .filter((j) => {
@@ -252,6 +249,8 @@ export async function awaitChildJobs(
     ...j,
     liveStatus: 'Waiting for children…'
   }))
+  // A waiting parent releases its slot; immediately wake queued specialists.
+  void pumpQueue()
 
   const deadline = Date.now() + Math.max(5_000, Math.min(timeoutMs, 30 * 60_000))
   const terminal = new Set(['done', 'failed', 'stopped', 'merged', 'discarded'])
@@ -263,25 +262,12 @@ export async function awaitChildJobs(
     const children = childIds.map((id) => jobs.get(id)).filter(Boolean) as BackgroundJob[]
     const pending = children.filter((c) => !terminal.has(c.status))
     if (pending.length === 0) {
-      const lines = children.map((c) => {
-        const ans = c.answer.trim().slice(0, 800)
-        return [
-          `### Child ${c.id.slice(0, 8)} · ${c.agentName || c.agentId} · ${c.status}`,
-          c.claim ? `Claim: ${c.claim}` : '',
-          c.error ? `Error: ${c.error}` : '',
-          ans || '(no answer)'
-        ]
-          .filter(Boolean)
-          .join('\n')
-      })
       patch(parentId, (j) => ({
         ...j,
         liveStatus: 'Children finished',
-        filesTouched: [
-          ...new Set([...j.filesTouched, ...children.flatMap((c) => c.filesTouched)])
-        ]
+        filesTouched: [...new Set([...j.filesTouched, ...children.flatMap((c) => c.filesTouched)])]
       }))
-      return { ok: true, detail: lines.join('\n\n') }
+      return summarizeAgentResults(childIds.map((id) => jobs.get(id)))
     }
     await new Promise((r) => setTimeout(r, 500))
   }
@@ -447,9 +433,7 @@ async function pumpQueue(): Promise<void> {
         const job = group[i]!
         // Claim immediately so parallel pumps / parent await can start siblings.
         patch(job.id, (j) =>
-          j.status === 'queued'
-            ? { ...j, status: 'running', liveStatus: 'Planning route…' }
-            : j
+          j.status === 'queued' ? { ...j, status: 'running', liveStatus: 'Planning route…' } : j
         )
         if (getBackgroundJob(job.id)?.status !== 'running') continue
         launched++
@@ -480,9 +464,7 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
       liveStatus: j.liveStatus || 'Planning route…'
     }))
     const planText =
-      job.handoff != null
-        ? `${formatHandoffForPrompt(job.handoff)}\n\n${job.goal}`
-        : job.goal
+      job.handoff != null ? `${formatHandoffForPrompt(job.handoff)}\n\n${job.goal}` : job.goal
 
     const turnPlan = await planChatTurn({
       workspacePath: job.workspacePath,
@@ -711,8 +693,7 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
           agentName: evt.agentName || cur.agentName,
           toolsModel: evt.model || cur.toolsModel,
           model: evt.model || cur.model,
-          escalateCount:
-            evt.kind === 'escalate' ? (cur.escalateCount || 0) + 1 : cur.escalateCount,
+          escalateCount: evt.kind === 'escalate' ? (cur.escalateCount || 0) + 1 : cur.escalateCount,
           rerouteCount: evt.kind === 'reroute' ? (cur.rerouteCount || 0) + 1 : cur.rerouteCount,
           liveStatus: evt.reason,
           routeHistory: pushRoute(cur, {
@@ -798,10 +779,7 @@ export function configureBackgroundAgents(options: {
 }
 
 /** Validate specialist id exists when delegating from chat. */
-export function resolveDelegateAgentId(
-  workspacePath: string,
-  agentId: string
-): string | null {
+export function resolveDelegateAgentId(workspacePath: string, agentId: string): string | null {
   const agent = findAgent(workspacePath, agentId.trim())
   return agent?.enabled ? agent.id : null
 }

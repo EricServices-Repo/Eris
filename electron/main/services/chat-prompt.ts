@@ -14,42 +14,55 @@ function cap(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}\n…` : text
 }
 
-function workspaceDiscussions(workspacePath: string | null, query: string): string {
+function workspaceDiscussions(
+  workspacePath: string | null,
+  query: string,
+  threadId?: string | null
+): string {
+  if (!threadId) return ''
   let jobs: Parameters<typeof formatAgentDiscussions>[0]['jobs'] = []
   try {
-    jobs = listBackgroundJobs(workspacePath).slice(0, 8).map((job) => ({
-      id: job.id,
-      agentName: job.agentName,
-      goal: job.goal,
-      answer: job.answer,
-      status: job.status,
-      sourceThreadId: job.sourceThreadId
-    }))
+    jobs = listBackgroundJobs(workspacePath)
+      .filter((job) => job.sourceThreadId === threadId)
+      .slice(0, 8)
+      .map((job) => ({
+        id: job.id,
+        agentName: job.agentName,
+        goal: job.goal,
+        answer: job.answer,
+        status: job.status,
+        sourceThreadId: job.sourceThreadId
+      }))
   } catch {
     jobs = []
   }
   return formatAgentDiscussions({ jobs, query, maxItems: 3, maxChars: 2200 })
 }
 
-function compactHistory(
+export function compactHistory(
   history: ChatPromptInput['history'],
   maxChars: number
 ): { recent: ChatPromptInput['history']; summary: string } {
-  const messages = history.filter((message) => message.role === 'user' || message.role === 'assistant')
-  const selected: ChatPromptInput['history'] = []
-  let used = 0
-  let firstSelected = messages.length
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index]!
+  const messages = history.filter(
+    (message) => message.role === 'user' || message.role === 'assistant'
+  )
+  // Reserve space for both sides of the conversation: a long model answer
+  // must not evict the user's request that defines what "those changes" means.
+  const firstSelected = Math.max(0, messages.length - 6)
+  const tail = messages.slice(firstSelected)
+  const perMessage = Math.floor(maxChars / Math.max(1, tail.length))
+  const selected = tail.map((message) => {
     const content = message.content || ''
-    const remaining = maxChars - used
-    if (remaining <= 0) break
-    const clipped = content.length > remaining ? `${content.slice(0, remaining)}…` : content
-    selected.unshift({ ...message, content: clipped })
-    used += clipped.length
-    firstSelected = index
-    if (clipped.length < content.length) break
-  }
+    if (content.length <= perMessage) return message
+    const marker = '\n[earlier content shortened]\n'
+    if (perMessage <= marker.length) return { ...message, content: content.slice(0, perMessage) }
+    const keep = perMessage - marker.length
+    const head = Math.ceil(keep * 0.65)
+    return {
+      ...message,
+      content: content.slice(0, head) + marker + (keep > head ? content.slice(-(keep - head)) : '')
+    }
+  })
 
   const older = messages.slice(0, firstSelected)
   const summary = older
@@ -127,20 +140,30 @@ export function buildChatMessages(
 
   if (settings.agent.includeOpenFiles && input.openFile) {
     const f = input.openFile
-    parts.push(fence('Active file', f.path, f.language || languageFromPath(f.path), f.content, openCap))
+    parts.push(
+      fence('Active file', f.path, f.language || languageFromPath(f.path), f.content, openCap)
+    )
   }
 
   const imported: string[] = []
   for (const file of input.attachments.slice(0, importMaxFiles)) {
     if (typeof file.content === 'string') {
       imported.push(
-        fence('Imported file', file.path, file.language || languageFromPath(file.path), file.content, importCap)
+        fence(
+          'Imported file',
+          file.path,
+          file.language || languageFromPath(file.path),
+          file.content,
+          importCap
+        )
       )
       continue
     }
     try {
       const read = readTextFile(file.path)
-      imported.push(fence('Imported file', read.path, languageFromPath(read.path), read.content, importCap))
+      imported.push(
+        fence('Imported file', read.path, languageFromPath(read.path), read.content, importCap)
+      )
     } catch {
       imported.push(`Imported file: ${file.path}\n(Unable to read file)`)
     }
@@ -154,16 +177,12 @@ export function buildChatMessages(
   if (historySummary) {
     parts.push(`Earlier conversation summary (older turns condensed):\n${historySummary}`)
   }
-  const userContent =
-    input.attachments.length > 0
-      ? `${input.text}\n\n(See system context for ${input.attachments.length} imported file(s).)`
-      : input.text
-  const discussions = workspaceDiscussions(workspacePath, input.text)
+  const userContent = input.text
+  const discussions = workspaceDiscussions(workspacePath, input.text, input.threadId)
   const discussionMessage = discussions
     ? {
         role: 'user' as const,
-        content:
-          `Relevant recent background-agent context. Treat it as a lead and verify details before relying on it.\n\n${discussions}`
+        content: `Relevant recent background-agent context. Treat it as a lead and verify details before relying on it.\n\n${discussions}`
       }
     : null
 
@@ -172,8 +191,7 @@ export function buildChatMessages(
     ...(discussionMessage ? [discussionMessage] : []),
     ...history.map((m) => ({
       role: m.role,
-      content:
-        m.role === 'assistant' && m.agentName ? `[${m.agentName}]\n${m.content}` : m.content
+      content: m.role === 'assistant' && m.agentName ? `[${m.agentName}]\n${m.content}` : m.content
     })),
     { role: 'user' as const, content: userContent }
   ]

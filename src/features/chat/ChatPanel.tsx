@@ -72,7 +72,7 @@ const HistoricalMessages = memo(function HistoricalMessages({
       items={visible}
       itemKey={messageKey}
       renderItem={(message, index) => (
-        <div style={{ paddingBottom: 12 }}>
+        <div className={`chat-message-row ${message.role}`} style={{ paddingBottom: 12 }}>
           <div className={`msg ${message.role}`}>
             <span className="role">
               {message.role}
@@ -908,35 +908,6 @@ export function ChatPanel({
             onAttachmentsChange(next)
           }}
         >
-          {(attachments.length > 0 || activeSkills.length > 0) && (
-            <div className="attachment-chips">
-              {activeSkills.map((s) => (
-                <span key={s.id} className="attachment-chip skill-chip" title={`Skill: ${s.name}`}>
-                  <span className="attachment-name">/{s.id}</span>
-                  <button
-                    className="btn-ghost"
-                    onClick={() => onActiveSkillsChange(activeSkills.filter((x) => x.id !== s.id))}
-                    title="Remove skill"
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-              {attachments.map((a) => (
-                <span key={a.path} className="attachment-chip" title={a.path}>
-                  <span className="attachment-name">{a.name}</span>
-                  <button
-                    className="btn-ghost"
-                    onClick={() => removeAttachment(a.path)}
-                    title="Remove"
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-
           <div className="composer-wrap">
             {queuedMessages.length > 0 && (
               <div className="message-queue" aria-label="Queued messages">
@@ -1007,46 +978,6 @@ export function ChatPanel({
               </div>
             )}
             <div className="composer-bar">
-              <div className="composer-attach" ref={attachMenuRef}>
-                <button
-                  type="button"
-                  className="composer-attach-btn"
-                  title="Add attachment"
-                  aria-label="Add attachment"
-                  onClick={() => {
-                    if (openTabs.length > 0) setAttachMenuOpen((v) => !v)
-                    else onImportFiles()
-                  }}
-                >
-                  +
-                </button>
-                {attachMenuOpen && (
-                  <div className="composer-attach-menu">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAttachMenuOpen(false)
-                        onImportFiles()
-                      }}
-                    >
-                      Browse files…
-                    </button>
-                    {openTabs.map((t) => (
-                      <button
-                        key={t.path}
-                        type="button"
-                        disabled={attachments.some((a) => a.path === t.path)}
-                        onClick={() => {
-                          setAttachMenuOpen(false)
-                          onAttachOpenTab(t.path)
-                        }}
-                      >
-                        {t.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
               <textarea
                 ref={textareaRef}
                 value={draft}
@@ -1125,48 +1056,124 @@ export function ChatPanel({
                   }
                 }}
               />
-              <div className="composer-right">
-                <select
-                  className="composer-model-select"
-                  value={selectValue}
-                  disabled={streaming}
-                  onChange={(e) => onModelChange(e.target.value)}
-                  title={`${modelDataHint(modelOptions.find((m) => m.name === selectValue) || modelOptions[0]!)} Auto chooses a model for the turn; a picked model is used as-is.`}
-                  aria-label="Select model"
-                >
-                  {modelOptions.map((m) => (
-                    <option key={m.name} value={m.name} title={modelDataHint(m)}>
-                      {modelLabel(m)}
-                    </option>
+              {(attachments.length > 0 || activeSkills.length > 0) && (
+                <div className="attachment-chips">
+                  {activeSkills.map((s) => (
+                    <span
+                      key={s.id}
+                      className="attachment-chip skill-chip"
+                      title={`Skill: ${s.name}`}
+                    >
+                      <span className="attachment-name">/{s.id}</span>
+                      <button
+                        className="btn-ghost"
+                        onClick={() =>
+                          onActiveSkillsChange(activeSkills.filter((x) => x.id !== s.id))
+                        }
+                        title="Remove skill"
+                      >
+                        ×
+                      </button>
+                    </span>
                   ))}
-                </select>
-                {streaming ? (
-                  <>
+                  {attachments.map((a) => (
+                    <span key={a.path} className="attachment-chip" title={a.path}>
+                      <span className="attachment-name">{a.name}</span>
+                      <button
+                        className="btn-ghost"
+                        onClick={() => removeAttachment(a.path)}
+                        title="Remove"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="composer-controls">
+                <div className="composer-attach" ref={attachMenuRef}>
+                  <button
+                    type="button"
+                    className="composer-attach-btn"
+                    title="Add attachment"
+                    aria-label="Add attachment"
+                    onClick={() => {
+                      if (openTabs.length > 0) setAttachMenuOpen((v) => !v)
+                      else onImportFiles()
+                    }}
+                  >
+                    +
+                  </button>
+                  {attachMenuOpen && (
+                    <div className="composer-attach-menu">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAttachMenuOpen(false)
+                          onImportFiles()
+                        }}
+                      >
+                        Browse files…
+                      </button>
+                      {openTabs.map((t) => (
+                        <button
+                          key={t.path}
+                          type="button"
+                          disabled={attachments.some((a) => a.path === t.path)}
+                          onClick={() => {
+                            setAttachMenuOpen(false)
+                            onAttachOpenTab(t.path)
+                          }}
+                        >
+                          {t.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="composer-right">
+                  <select
+                    className="composer-model-select"
+                    value={selectValue}
+                    disabled={streaming}
+                    onChange={(e) => onModelChange(e.target.value)}
+                    title={`${modelDataHint(modelOptions.find((m) => m.name === selectValue) || modelOptions[0]!)} Auto chooses a model for the turn; a picked model is used as-is.`}
+                    aria-label="Select model"
+                  >
+                    {modelOptions.map((m) => (
+                      <option key={m.name} value={m.name} title={modelDataHint(m)}>
+                        {modelLabel(m)}
+                      </option>
+                    ))}
+                  </select>
+                  {streaming ? (
+                    <>
+                      <button
+                        className="btn btn-primary composer-send-btn"
+                        onClick={submit}
+                        disabled={!canCompose || queueFull}
+                        title={
+                          queueFull
+                            ? 'Queue is full (max 3)'
+                            : 'Queue this message for after the current reply'
+                        }
+                      >
+                        Queue
+                      </button>
+                      <button className="btn composer-send-btn" onClick={onStop}>
+                        Stop
+                      </button>
+                    </>
+                  ) : (
                     <button
                       className="btn btn-primary composer-send-btn"
                       onClick={submit}
-                      disabled={!canCompose || queueFull}
-                      title={
-                        queueFull
-                          ? 'Queue is full (max 3)'
-                          : 'Queue this message for after the current reply'
-                      }
+                      disabled={!canCompose}
                     >
-                      Queue
+                      Send
                     </button>
-                    <button className="btn composer-send-btn" onClick={onStop}>
-                      Stop
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    className="btn btn-primary composer-send-btn"
-                    onClick={submit}
-                    disabled={!canCompose}
-                  >
-                    Send
-                  </button>
-                )}
+                  )}
+                </div>
               </div>
             </div>
           </div>

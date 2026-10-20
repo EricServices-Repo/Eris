@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.3 — 2026-10-20
+
+- Improved chat agent routing, context handling, specialist delegation, and Agents activity visibility.
+
+## 0.4.2 — 2026-10-20
+
+- Refined workspace spacing, chat composer controls, panel selection, and sent-message alignment.
+
+## 0.4.1 — 2026-10-20
+
+- Redesigned the Eris workspace with a modern visual system, clearer panel hierarchy, and rounded surfaces.
+
 ## 0.3.6 — 2026-10-19
 
 - Added a chunked 10,000-question real-model smoke-test runner with persistent JSONL results and exportable review reports.
