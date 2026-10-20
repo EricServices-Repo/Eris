@@ -2,6 +2,16 @@ import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// These tests simulate Python inference, so host memory must also be deterministic.
+vi.mock('os', async (original) => {
+  const actual = await original<typeof import('os')>()
+  return {
+    ...actual,
+    totalmem: () => 32 * 1024 ** 3,
+    freemem: () => 24 * 1024 ** 3
+  }
+})
+
 vi.mock('child_process', async (original) => {
   const actual = await original<typeof import('child_process')>()
   return {
