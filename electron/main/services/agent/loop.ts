@@ -1,9 +1,10 @@
+import { appendToolObservation } from '../model-protocol'
+import { acquireProjectWrite } from './task-scheduler'
 import { generateImage, saveImageToWorkspace } from '../image-generation'
 import { ImageSizeSchema } from '../../../../src/shared/image-generation-schema'
 import { existsSync, readFileSync, realpathSync, statSync } from 'fs'
 import {
   asksForRecommendations,
-  asksToImplementChanges,
   asksWhatTheProjectDoes,
   needsWebLookup
 } from '../../../../src/shared/agent-contract'
@@ -98,6 +99,9 @@ import {
 } from '../../../../src/shared/agent-orchestration'
 import { isVerifyCommand } from '../command-approval'
 import { buildPreservedWorkerMessages, isReadOnlyChat, truncateForModel } from './prompts'
+import { createTaskContract, childTaskContract } from '../task-intake'
+import { intersectToolPolicy } from '../../../../src/shared/task-contract'
+import { TaskToolGateway } from './tool-gateway'
 import {
   firstHttpsResult,
   httpsResults,
@@ -337,10 +341,12 @@ export async function* runAgentWithWorkspaceTools(options: {
   const messages: AgentChatMessage[] = options.messages.map((m) => ({ ...m }))
   const mode: AgentMode = options.mode === 'ask' ? 'ask' : 'agent'
   const originalUserGoal =
-    [...messages]
+    options.turnPlan?.task?.originalText ??
+    ([...messages]
       .reverse()
       .find((m) => m.role === 'user')
-      ?.content.replace(/\n\n\[Eris\][\s\S]*$/, '') || ''
+      ?.content.replace(/\n\n\[Eris\][\s\S]*$/, '') ||
+      '')
 
   let plan =
     options.turnPlan ??
@@ -356,43 +362,34 @@ export async function* runAgentWithWorkspaceTools(options: {
       getSecret: options.getSecret,
       signal: options.signal
     }))
-  let implementationOverride = false
-  if (
-    mode === 'agent' &&
-    asksToImplementChanges(originalUserGoal) &&
-    (plan.toolPolicy === 'none' || plan.toolPolicy === 'read')
-  ) {
-    const composer = findAgent(options.workspacePath, 'composer')
-    plan = {
-      ...plan,
-      intent: 'edit',
-      agentId: composer?.id ?? 'composer',
-      agentName: composer?.name ?? 'Composer',
-      toolPolicy: 'edit',
-      requiresTools: true,
-      reason: `Implementation request → ${composer?.name ?? 'Composer'} with edit tools`,
-      method: 'override'
-    }
-    implementationOverride = true
-  }
+  const task =
+    options.turnPlan?.task ??
+    createTaskContract({
+      workspacePath: options.workspacePath,
+      text: originalUserGoal,
+      plan,
+      history: messages.slice(0, -1)
+    })
+  plan = { ...plan, task, toolPolicy: intersectToolPolicy(plan.toolPolicy, task) }
+  const gateway = new TaskToolGateway(task)
+  const executionRoot = task.scope.projectRoot ?? options.workspacePath
   const workflow = new AgentWorkflow(plan, originalUserGoal)
 
   yield { type: 'status', text: plan.reason }
-  if (implementationOverride) {
-    yield {
-      type: 'adapt',
-      kind: 'reroute',
-      reason: plan.reason,
-      agentId: plan.agentId,
-      agentName: plan.agentName,
-      model: plan.models.tools
-    }
-  }
   if (plan.error) {
     yield { type: 'answer', text: plan.error, replace: true }
     return
   }
 
+  if (options.workspacePath && task.scope.state !== 'resolved') {
+    yield { type: 'progress', step: 0, actionLog: [], filesTouched: [], incomplete: true }
+    yield {
+      type: 'answer',
+      text: `I couldn't identify the requested project unambiguously in the open workspace. Available projects: ${task.scope.candidates.join(', ') || '(none)'}. Select the intended project folder so I can work on the right code.`,
+      replace: true
+    }
+    return
+  }
   const chatModel = plan.models.chat
   let workerModel = plan.models.tools
   const modelsCatalog =
@@ -554,11 +551,13 @@ export async function* runAgentWithWorkspaceTools(options: {
   const retrieveP =
     plan.intent === 'run'
       ? Promise.resolve(null)
-      : inspectWorkspace(workspacePath, originalUserGoal, 6)
-          .catch(() => null)
-          .finally(() => {
-            retrievalMs = Date.now() - retrievalStartedAt
-          })
+      : task.scope.projectRoot !== task.scope.workspaceRoot
+        ? Promise.resolve(null)
+        : inspectWorkspace(workspacePath, originalUserGoal, 6)
+            .catch(() => null)
+            .finally(() => {
+              retrievalMs = Date.now() - retrievalStartedAt
+            })
 
   const checkpoint = createCheckpoint(workspacePath)
   pruneOldCheckpoints(workspacePath, 20)
@@ -612,10 +611,19 @@ export async function* runAgentWithWorkspaceTools(options: {
     const runTool = COMPOSER_OPENAI_TOOLS.find((t) => t.function.name === 'run')
     if (runTool) openaiTools.push(runTool)
   }
+  let promptBudget =
+    contextBudgetTokens(options.settings, workerModel) -
+    Math.ceil(JSON.stringify(openaiTools).length / 3) -
+    128
+  if (promptBudget < 512)
+    throw new Error(
+      'The available tools exceed this model context window. Increase context or reduce connected tools.'
+    )
   const workerMessages: AgentChatMessage[] = buildPreservedWorkerMessages({
     messages,
     workspacePath,
     settings: options.settings,
+    inputTokenBudget: promptBudget,
     plan,
     originalUserGoal,
     retrievalHint,
@@ -656,7 +664,7 @@ export async function* runAgentWithWorkspaceTools(options: {
       summary: last.slice(0, 240),
       actionLog: [...actionLog],
       filesTouched: [...filesTouched],
-      workerMessages: workerMessages.map((m) => ({ role: m.role, content: m.content }))
+      workerMessages: workerMessages.map((m) => ({ ...m }))
     }
   }
   let mutationsSinceVerify = 0
@@ -746,7 +754,6 @@ export async function* runAgentWithWorkspaceTools(options: {
       return null // Preserve the workspace tool's own path and permission errors.
     }
   }
-  const promptBudget = contextBudgetTokens(options.settings, workerModel)
 
   const productFilesAreTinyStubs = (): boolean => {
     const product = [...new Set(filesTouched)].filter((p) => pathNeedsProjectVerify(p))
@@ -921,7 +928,12 @@ export async function* runAgentWithWorkspaceTools(options: {
             filesTouched
           })
     if (decision.kind === 'reroute' && decision.nextPlan) {
-      plan = decision.nextPlan
+      plan = {
+        ...decision.nextPlan,
+        task,
+        intent: task.intent,
+        toolPolicy: intersectToolPolicy(decision.nextPlan.toolPolicy, task)
+      }
       workerModel = plan.models.tools
       rerouteCount++
       openaiTools.splice(
@@ -949,7 +961,7 @@ export async function* runAgentWithWorkspaceTools(options: {
         workerMessages[0].content += `\n\nRECOVERY ROUTE: ${reason}. Resume from the existing action log and file changes; do not repeat completed work.`
       }
       workerMessages.push({
-        role: 'user',
+        role: 'system',
         content: `[Eris recovery] ${reason}. Continue the original goal. Existing work and failures: ${actionLog.slice(-8).join(' · ')}`
       })
       yield {
@@ -977,7 +989,7 @@ export async function* runAgentWithWorkspaceTools(options: {
     yield { type: 'status', text: reason }
     yield { type: 'thinking', text: `\n\n— ${reason}\n` }
     workerMessages.push({
-      role: 'user',
+      role: 'system',
       content:
         `[Eris] ${reason}\n` +
         `Diagnose the failure category. Use a different tool or smaller step, preserve completed changes, and verify the next result before continuing.`
@@ -991,6 +1003,10 @@ export async function* runAgentWithWorkspaceTools(options: {
       skipLiteSummary?: boolean
     } = {}
   ): AsyncGenerator<AgentRunnerEvent, void, unknown> {
+    promptBudget =
+      contextBudgetTokens(options.settings, workerModel) -
+      Math.ceil(JSON.stringify(openaiTools).length / 3) -
+      128
     const force = Boolean(opts.force)
     if (!needsContextCompaction(workerMessages, promptBudget, force)) return
 
@@ -1039,7 +1055,7 @@ export async function* runAgentWithWorkspaceTools(options: {
   }
 
   const nudgeToTools = (reason: string): AgentChatMessage => ({
-    role: 'user',
+    role: 'system',
     content:
       `${reason}\n\n` +
       (lastTreeResult
@@ -1060,10 +1076,9 @@ export async function* runAgentWithWorkspaceTools(options: {
           ` Never ask the user for project structure.`)
   })
 
-  const nudgeAfterInspect = (snapshot: string): AgentChatMessage => ({
-    role: 'user',
+  const nudgeAfterInspect = (_snapshot: string): AgentChatMessage => ({
+    role: 'system',
     content:
-      `TOOL_RESULT (listing already in context):\n${truncateForModel(snapshot, AGENT_HANDOFF_CHARS)}\n\n` +
       `Do NOT call tree or list_dir again — you already have the listing above.\n` +
       `Active user request:\n${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}\n\n` +
       (answerNext
@@ -1076,7 +1091,7 @@ export async function* runAgentWithWorkspaceTools(options: {
   })
 
   const nudgeContinueWork = (reason: string): AgentChatMessage => ({
-    role: 'user',
+    role: 'system',
     content:
       `${reason}\n\n` +
       `Active user request:\n${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}\n` +
@@ -1099,7 +1114,7 @@ export async function* runAgentWithWorkspaceTools(options: {
   const chatReadBudget = 4
   let latestAssistant = ''
   const webSearchNudge = (): AgentChatMessage => ({
-    role: 'user',
+    role: 'system',
     content:
       `This question is about the public web. Do not read workspace files and do not guess a biography.\n` +
       `Call web_search now:\n{"name":"web_search","query":${JSON.stringify(webSearchQuery(originalUserGoal))}}\n` +
@@ -1222,6 +1237,28 @@ export async function* runAgentWithWorkspaceTools(options: {
   async function* finishChatAnswer(
     latest: string
   ): AsyncGenerator<AgentRunnerEvent, void, unknown> {
+    const outcome = workflow.evaluateOutcome({
+      workspaceMutated,
+      codeMutated,
+      verifyPassed: verifyPassedOnce
+    })
+    if (!outcome.ok) {
+      workflow.block(outcome.reason!)
+      yield {
+        type: 'progress',
+        step,
+        actionLog: [...actionLog],
+        filesTouched: [...filesTouched],
+        incomplete: true
+      }
+      yield { type: 'status', text: 'Incomplete · insufficient evidence' }
+      yield {
+        type: 'answer',
+        text: `I couldn't complete this request with verified project evidence. ${outcome.reason}`,
+        replace: true
+      }
+      return
+    }
     const existing = proseOutsideTools(latest)
     if (existing.length >= 40 && !isToolLogReply(existing)) {
       yield { type: 'status', text: 'Done' }
@@ -1233,7 +1270,7 @@ export async function* runAgentWithWorkspaceTools(options: {
       return path && !path.startsWith('.eris/')
     })
     workerMessages.push({
-      role: 'user',
+      role: 'system',
       content:
         `Thinking is finished. Write the reply the user will read. No tools and no JSON.\n` +
         (changed.length && !listImprovements
@@ -1371,6 +1408,10 @@ export async function* runAgentWithWorkspaceTools(options: {
           ? nativeFromStream
           : parseToolCalls(assistantText)
 
+      toolCalls.forEach((call, index) => {
+        call.id ??= `${task.taskId}:${step}:${index}`
+      })
+
       if (
         chatReply &&
         toolCalls.length > 0 &&
@@ -1393,7 +1434,7 @@ export async function* runAgentWithWorkspaceTools(options: {
           type: 'thinking',
           text: '\n\n— This agent does not edit files. Read the project, then answer…\n'
         }
-        workerMessages.push({ role: 'user', content: answerNext || chatReplyNext })
+        workerMessages.push({ role: 'system', content: answerNext || chatReplyNext })
         continue
       }
 
@@ -1450,10 +1491,10 @@ export async function* runAgentWithWorkspaceTools(options: {
             role: 'assistant',
             content: stripToolBlocks(assistantText).slice(0, AGENT_HANDOFF_CHARS)
           })
+          appendToolObservation(workerMessages, 'tree', treeResult.detail, { path: '.' })
           workerMessages.push({
-            role: 'user',
+            role: 'system',
             content:
-              `TOOL_RESULT tree path=.\n${truncateForModel(treeResult.detail, AGENT_HANDOFF_CHARS)}\n\n` +
               `Do NOT ask the user for project structure or files — you have the listing above. ` +
               `Continue the original request with read_file / search_replace / write_file / run as needed.\n` +
               `User request:\n${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}`
@@ -1496,7 +1537,7 @@ export async function* runAgentWithWorkspaceTools(options: {
               text: '\n\n— No reply after five minutes — continuing with best judgment…\n'
             }
             workerMessages.push({
-              role: 'user',
+              role: 'system',
               content:
                 `The user did not reply within five minutes. Proceed with the original request ` +
                 `using your best judgment. Do not ask another clarifying question unless you are blocked.`
@@ -1574,13 +1615,19 @@ export async function* runAgentWithWorkspaceTools(options: {
         if (codeMutated) {
           workflow.transition('verifying')
           yield { type: 'status', text: 'Final verify…' }
-          const finalVerify = await runVerify(workspacePath, options.signal, {
+          const finalVerify = await runVerify(executionRoot!, options.signal, {
             preferTypecheck: false,
             allowInstall: true,
             approveInstall: options.approveCommand
               ? (cmd) => options.approveCommand!('run', cmd)
               : undefined
           })
+          appendToolObservation(
+            workerMessages,
+            'run',
+            `VERIFY_RESULT (${finalVerify.skipped ? 'skipped' : finalVerify.ok ? 'passed' : 'failed'}):\n${finalVerify.detail}`,
+            { command: finalVerify.command }
+          )
           if (!finalVerify.skipped && !finalVerify.ok) {
             workflow.noteVerification('failed')
             verifyFailures++
@@ -1616,14 +1663,14 @@ export async function* runAgentWithWorkspaceTools(options: {
             })
             const missingDeps = looksLikeMissingDeps(finalVerify.detail)
             const installHint = missingDeps
-              ? installAttempts >= MAX_BARE_INSTALLS_PER_RUN && hasNodeModules(workspacePath)
+              ? installAttempts >= MAX_BARE_INSTALLS_PER_RUN && hasNodeModules(executionRoot!)
                 ? ` Do NOT run bare npm install again — use npm install <package> for a missing dep, or fix imports.`
                 : ` Missing modules: run npm install (or npm install <package>) in this workspace, then re-test.`
               : ` Do not run npm install for ordinary failures.`
             workerMessages.push({
-              role: 'user',
+              role: 'system',
               content:
-                `VERIFY_RESULT (failed):\n${truncateForModel(finalVerify.detail, 8000)}\n\n` +
+                `Verification failed; inspect the tool result above.\n` +
                 `You are NOT done. Fix these errors with write_file/read_file tools now.` +
                 installHint
             })
@@ -1635,7 +1682,10 @@ export async function* runAgentWithWorkspaceTools(options: {
             verifyPassedOnce = true
             actionLog.push(`Verify passed: ${finalVerify.command}`)
           }
-          if (finalVerify.skipped) workflow.noteVerification('skipped')
+          if (finalVerify.skipped) {
+            workflow.noteVerification('skipped')
+            actionLog.push(`Verification skipped: ${finalVerify.detail}`)
+          }
         }
 
         // Reject premature DONE (failed edits, tiny stubs, missing .app build).
@@ -1684,7 +1734,7 @@ export async function* runAgentWithWorkspaceTools(options: {
             content: stripToolBlocks(assistantText).slice(0, AGENT_HANDOFF_CHARS)
           })
           workerMessages.push({
-            role: 'user',
+            role: 'system',
             content:
               `OUTCOME_CHECK_FAILED:\n${unmetReason}\n\n` +
               `You are NOT finished. Continue with tools (write_file / search_replace / run / verify) ` +
@@ -1743,11 +1793,10 @@ export async function* runAgentWithWorkspaceTools(options: {
         // After two skip cycles on review tasks, allow DONE without more tools
         if (reviewOnly && noProgressStreak >= 2) {
           workerMessages.push({
-            role: 'user',
+            role: 'system',
             content:
-              `TOOL_RESULT (cached):\n${truncateForModel(snapshot, AGENT_HANDOFF_CHARS)}\n\n` +
               `Stop calling tree/list_dir. Either emit ONE read_file or run tool, ` +
-              `OR reply with a DONE summary of whether the calculator app looks working — no tools.`
+              `OR answer the actual request using inspected project sources. If evidence is missing, say the review is incomplete.`
           })
         } else {
           workerMessages.push(
@@ -1832,7 +1881,20 @@ export async function* runAgentWithWorkspaceTools(options: {
         text: `\n\n— Running ${toolCalls.length} workspace tool${toolCalls.length === 1 ? '' : 's'}…\n`
       }
 
-      workerMessages.push({ role: 'assistant', content: assistantText })
+      workerMessages.push({
+        role: 'assistant',
+        content: thinkingBeforeTools(assistantText),
+        ...{
+          tool_calls: toolCalls.map((call) => ({
+            id: call.id!,
+            type: 'function' as const,
+            function: {
+              name: call.name,
+              arguments: call.parseError ? call.raw : JSON.stringify(call.args)
+            }
+          }))
+        }
+      })
 
       const resultParts: string[] = []
       let mutatedThisRound = false
@@ -1847,13 +1909,14 @@ export async function* runAgentWithWorkspaceTools(options: {
             PARALLEL_READ_TOOLS.has(call.name) &&
             contract?.effect === 'read' &&
             toolAllowedByPolicy(call.name, plan.toolPolicy) &&
-            validateToolArguments(call.args, contract.schema).ok
+            validateToolArguments(call.args, contract.schema).ok &&
+            !gateway.authorize(workspacePath, call)
           )
         })
       if (canRunReadBatch) {
         for (let index = 0; index < toolCalls.length; index++) {
           const call = toolCalls[index]!
-          const id = `t${toolExecRounds}_${index}`
+          const id = `${task.taskId}:t${toolExecRounds}_${index}`
           parallelReadStartTimes.set(index, Date.now())
           yield {
             type: 'tool',
@@ -1889,602 +1952,427 @@ export async function* runAgentWithWorkspaceTools(options: {
       for (let i = 0; i < toolCalls.length; i++) {
         throwIfAborted(options.signal)
         const call = toolCalls[i]
-        const id = `t${toolExecRounds}_${i}`
-        const toolStartedAt = parallelReadStartTimes.get(i) ?? Date.now()
-        const precomputedResult = parallelReadResults.get(i)
-        const mcpTool = call.name.startsWith('mcp__')
-          ? mcpTools.find((tool) => tool.fqName === call.name)
-          : undefined
-        const toolContract = getToolContract(call.name)
-        const toolEffect = mcpTool ? 'external' : (toolContract?.effect ?? 'external')
-        if (!visibleToolNamesThisStep.has(call.name)) {
-          const detail = `Tool ${call.name} was not available for this step. Use search_tools to discover built-in tools or search_mcp_tools for MCP tools, then call it on the next step.`
-          yield {
-            type: 'tool',
-            tool: {
-              id,
-              name: call.name,
-              status: 'error',
-              effect: toolEffect,
-              changedResources: [],
-              durationMs: Date.now() - toolStartedAt,
-              failure: { code: 'unavailable', retryable: false },
-              detail
-            }
-          }
-          resultParts.push(`TOOL_RESULT ${call.name}: ${detail}`)
-          continue
-        }
-        const validation = validateToolArguments(
-          call.args,
-          mcpTool ? mcpTool.inputSchema : toolContract?.schema
-        )
-        if (!validation.ok) {
-          const detail = `Invalid arguments: ${validation.errors.join('; ')}`
-          yield {
-            type: 'tool',
-            tool: {
-              id,
-              name: call.name,
-              status: 'error',
-              effect: toolEffect,
-              changedResources: [],
-              durationMs: Date.now() - toolStartedAt,
-              failure: toolFailureMetadata(detail, toolEffect),
-              detail
-            }
-          }
-          resultParts.push(
-            `TOOL_RESULT ${call.name}: ${detail}\nRECOVERY: ${toolFailureRecovery(call.name, detail)}`
-          )
-          continue
-        }
-        const verificationRun =
-          mode !== 'ask' &&
-          call.name === 'run' &&
-          (plan.agentId === 'reviewer' || plan.agentId === 'verifier')
-        if (verificationRun && !isVerifyCommand(argString(call.args, 'command'))) {
-          yield {
-            type: 'tool',
-            tool: {
-              id,
-              name: call.name,
-              status: 'error',
-              effect: toolEffect,
-              changedResources: [],
-              durationMs: Date.now() - toolStartedAt,
-              failure: toolFailureMetadata(
-                'Read-only verification agents can only run tests, typecheck, or lint',
-                toolEffect
-              ),
-              detail: 'Read-only verification agents can only run tests, typecheck, or lint'
-            }
-          }
-          resultParts.push(
-            'TOOL_RESULT run: blocked. Reviewer and Verification may only run test, typecheck, or lint commands (npm test, npm run typecheck, npx tsc, pytest, cargo test).\n' +
-              `RECOVERY: ${toolFailureRecovery('run', 'Read-only verification agents can only run tests, typecheck, or lint')}`
-          )
-          continue
-        }
-        if (
-          !toolAllowedByPolicy(call.name, plan.toolPolicy, mcpReadOnlyTools.has(call.name)) &&
-          !verificationRun
-        ) {
-          yield {
-            type: 'tool',
-            tool: {
-              id,
-              name: call.name,
-              status: 'error',
-              effect: toolEffect,
-              changedResources: [],
-              durationMs: Date.now() - toolStartedAt,
-              failure: toolFailureMetadata(
-                `Blocked by tool policy (${plan.toolPolicy}) for agent ${plan.agentName}`,
-                toolEffect
-              ),
-              detail: `Blocked by tool policy (${plan.toolPolicy}) for agent ${plan.agentName}`
-            }
-          }
-          resultParts.push(
-            `TOOL_RESULT ${call.name}: blocked by policy ${plan.toolPolicy}\n` +
-              `RECOVERY: ${toolFailureRecovery(call.name, `Blocked by tool policy (${plan.toolPolicy})`)}`
-          )
-          continue
-        }
-        const path =
-          typeof call.args.path === 'string'
-            ? call.args.path
-            : typeof call.args.to === 'string'
-              ? call.args.to
-              : typeof call.args.command === 'string'
-                ? call.args.command.slice(0, 80)
-                : typeof call.args.query === 'string'
-                  ? call.args.query.slice(0, 80)
-                  : typeof call.args.url === 'string'
-                    ? call.args.url.slice(0, 80)
-                    : undefined
-        const readRequirement = toolContract?.readBeforeWrite
-        const readFailure = readRequirement ? missingReadPrecondition(call, readRequirement) : null
-        if (readFailure) {
-          const detail = readFailure.detail
-          yield {
-            type: 'tool',
-            tool: {
-              id,
-              name: call.name,
-              path: readFailure.path,
-              status: 'error',
-              effect: toolEffect,
-              changedResources: [],
-              durationMs: Date.now() - toolStartedAt,
-              failure: toolFailureMetadata(detail, toolEffect),
-              detail
-            }
-          }
-          resultParts.push(
-            `TOOL_RESULT ${call.name}: ${detail}\nRECOVERY: ${toolFailureRecovery(call.name, detail)}`
-          )
-          continue
-        }
-        if (!precomputedResult) {
-          yield {
-            type: 'tool',
-            tool: {
-              id,
-              name: call.name,
-              path,
-              status: 'running',
-              effect: toolEffect,
-              detail: 'Running…'
-            }
-          }
-        }
-
-        let result: { ok: boolean; detail: string; mutated: boolean; path?: string }
-
-        const approvalKind =
-          toolContract?.approval === 'command'
-            ? 'run'
-            : toolContract?.approval === 'push' && argString(call.args, 'action') === 'push'
-              ? 'push'
-              : null
-        const approvalCommand =
-          approvalKind === 'run'
-            ? argString(call.args, 'command')
-            : approvalKind === 'push'
-              ? 'git push'
-              : ''
-        let mcpApprovalDenied = false
-        let mcpApprovalDetail = ''
-        if (mcpTool) {
-          if (options.approveMcpTool) {
-            yield { type: 'status', text: `Waiting for approval: ${call.name}` }
-            mcpApprovalDenied = !(await options.approveMcpTool(call.name, call.args))
-            if (mcpApprovalDenied) {
-              mcpApprovalDetail =
-                'The user denied this MCP tool call. Continue without retrying it.'
-            }
-          } else {
-            mcpApprovalDenied = true
-            mcpApprovalDetail = 'MCP tool was blocked because no approval handler is available.'
-          }
-        }
-        let approvalDenied = false
-        if (approvalCommand && options.approveCommand && !isGlobalInstallCommand(approvalCommand)) {
-          yield {
-            type: 'status',
-            text: `Waiting for approval: ${approvalCommand.slice(0, 80)}`
-          }
-          approvalDenied = !(await options.approveCommand(
-            approvalKind === 'run' ? 'run' : 'push',
-            approvalCommand
-          ))
-        }
-
-        if (precomputedResult) {
-          result = precomputedResult
-        } else if (mcpApprovalDenied) {
-          result = {
-            ok: false,
-            detail: mcpApprovalDetail,
-            mutated: false
-          }
-          yield { type: 'thinking', text: `\n\n— MCP call denied: ${call.name}\n` }
-        } else if (approvalDenied) {
-          result = {
-            ok: false,
-            detail:
-              `The user denied running \`${approvalCommand}\`. Do not retry it. ` +
-              'Continue without it, or explain what the user should run themselves.',
-            mutated: false
-          }
-          yield { type: 'thinking', text: `\n\n— Command denied by user: ${approvalCommand}\n` }
-        } else if (call.name === 'generate_image') {
-          try {
-            const destination = argString(call.args, 'path')
-            const target = resolveInWorkspace(workspacePath, destination)
-            if (!destination.toLowerCase().endsWith('.png') || existsSync(target)) {
-              throw new Error('Image destination must be a new .png file')
-            }
-            yield { type: 'status', text: 'Generating image…' }
-            const asset = await generateImage({
-              request: {
-                requestId: `image:${checkpoint.id}:${id}`,
-                prompt: argString(call.args, 'prompt'),
-                size: call.args.size == null ? undefined : ImageSizeSchema.parse(call.args.size)
-              },
-              settings: options.settings,
-              getSecret: options.getSecret,
-              signal: options.signal
-            })
-            await saveImageToWorkspace(workspacePath, asset.id, destination)
-            const relativePath = toWorkspaceRelative(workspacePath, target)
-            const record = recordBinaryCreateOp(workspacePath, checkpoint.id, relativePath)
-            yield { type: 'asset', asset: { ...asset, path: relativePath } }
+        const id = `${task.taskId}:t${toolExecRounds}_${i}`
+        const resultStart = resultParts.length
+        let releaseWrite: (() => void) | undefined
+        try {
+          const toolStartedAt = parallelReadStartTimes.get(i) ?? Date.now()
+          const precomputedResult = parallelReadResults.get(i)
+          const mcpTool = call.name.startsWith('mcp__')
+            ? mcpTools.find((tool) => tool.fqName === call.name)
+            : undefined
+          const toolContract = getToolContract(call.name)
+          const toolEffect = mcpTool ? 'external' : (toolContract?.effect ?? 'external')
+          if (!visibleToolNamesThisStep.has(call.name)) {
+            const detail = `Tool ${call.name} was not available for this step. Use search_tools to discover built-in tools or search_mcp_tools for MCP tools, then call it on the next step.`
             yield {
-              type: 'diff',
-              diff: {
-                checkpointId: checkpoint.id,
-                opIndex: record.ops.length - 1,
-                path: relativePath,
-                before: null,
-                after: `Generated PNG: ${asset.width} × ${asset.height}`,
-                op: 'binary'
+              type: 'tool',
+              tool: {
+                id,
+                name: call.name,
+                status: 'error',
+                effect: toolEffect,
+                changedResources: [],
+                durationMs: Date.now() - toolStartedAt,
+                failure: { code: 'unavailable', retryable: false },
+                detail
               }
             }
-            result = {
-              ok: true,
-              detail: `Created ${relativePath} (${asset.width} × ${asset.height} PNG, ${asset.bytes} bytes). Use this path in the application.`,
-              mutated: true,
-              path: relativePath
+            resultParts.push(`TOOL_RESULT ${call.name}: ${detail}`)
+            continue
+          }
+          const validation = call.parseError
+            ? { ok: false, errors: [call.parseError] }
+            : validateToolArguments(call.args, mcpTool ? mcpTool.inputSchema : toolContract?.schema)
+          if (!validation.ok) {
+            const detail = `Invalid arguments: ${validation.errors.join('; ')}`
+            yield {
+              type: 'tool',
+              tool: {
+                id,
+                name: call.name,
+                status: 'error',
+                effect: toolEffect,
+                changedResources: [],
+                durationMs: Date.now() - toolStartedAt,
+                failure: toolFailureMetadata(detail, toolEffect),
+                detail
+              }
             }
-          } catch (error) {
-            if (options.signal?.aborted) throw error
-            result = {
-              ok: false,
-              detail: error instanceof Error ? error.message : 'Image generation failed',
-              mutated: false
+            resultParts.push(
+              `TOOL_RESULT ${call.name}: ${detail}\nRECOVERY: ${toolFailureRecovery(call.name, detail)}`
+            )
+            continue
+          }
+          const verificationRun =
+            mode !== 'ask' &&
+            call.name === 'run' &&
+            (plan.agentId === 'reviewer' || plan.agentId === 'verifier')
+          if (verificationRun && !isVerifyCommand(argString(call.args, 'command'))) {
+            yield {
+              type: 'tool',
+              tool: {
+                id,
+                name: call.name,
+                status: 'error',
+                effect: toolEffect,
+                changedResources: [],
+                durationMs: Date.now() - toolStartedAt,
+                failure: toolFailureMetadata(
+                  'Read-only verification agents can only run tests, typecheck, or lint',
+                  toolEffect
+                ),
+                detail: 'Read-only verification agents can only run tests, typecheck, or lint'
+              }
+            }
+            resultParts.push(
+              'TOOL_RESULT run: blocked. Reviewer and Verification may only run test, typecheck, or lint commands (npm test, npm run typecheck, npx tsc, pytest, cargo test).\n' +
+                `RECOVERY: ${toolFailureRecovery('run', 'Read-only verification agents can only run tests, typecheck, or lint')}`
+            )
+            continue
+          }
+          if (
+            !toolAllowedByPolicy(call.name, plan.toolPolicy, mcpReadOnlyTools.has(call.name)) &&
+            !verificationRun
+          ) {
+            yield {
+              type: 'tool',
+              tool: {
+                id,
+                name: call.name,
+                status: 'error',
+                effect: toolEffect,
+                changedResources: [],
+                durationMs: Date.now() - toolStartedAt,
+                failure: toolFailureMetadata(
+                  `Blocked by tool policy (${plan.toolPolicy}) for agent ${plan.agentName}`,
+                  toolEffect
+                ),
+                detail: `Blocked by tool policy (${plan.toolPolicy}) for agent ${plan.agentName}`
+              }
+            }
+            resultParts.push(
+              `TOOL_RESULT ${call.name}: blocked by policy ${plan.toolPolicy}\n` +
+                `RECOVERY: ${toolFailureRecovery(call.name, `Blocked by tool policy (${plan.toolPolicy})`)}`
+            )
+            continue
+          }
+          const denied = gateway.authorize(workspacePath, call, mcpReadOnlyTools.has(call.name))
+          if (denied) {
+            yield {
+              type: 'tool',
+              tool: {
+                id,
+                name: call.name,
+                status: 'error',
+                effect: toolEffect,
+                detail: denied,
+                changedResources: []
+              }
+            }
+            resultParts.push(`TOOL_RESULT ${call.name}: ${denied}`)
+            continue
+          }
+          if (['workspace', 'command', 'external'].includes(toolEffect)) {
+            releaseWrite = await acquireProjectWrite(
+              task.scope.projectRoot ?? workspacePath,
+              options.signal
+            )
+            const stale = gateway.authorize(workspacePath, call, mcpReadOnlyTools.has(call.name))
+            if (stale) {
+              resultParts.push(`TOOL_RESULT ${call.name}: ${stale}`)
+              yield { type: 'tool', tool: { id, name: call.name, status: 'error', detail: stale } }
+              continue
             }
           }
-        } else if (call.name === 'run') {
-          const command = argString(call.args, 'command')
-          if (!command) {
-            result = { ok: false, detail: 'command is required', mutated: false }
-          } else if (isGlobalInstallCommand(command)) {
+          const path =
+            typeof call.args.path === 'string'
+              ? call.args.path
+              : typeof call.args.to === 'string'
+                ? call.args.to
+                : typeof call.args.command === 'string'
+                  ? call.args.command.slice(0, 80)
+                  : typeof call.args.query === 'string'
+                    ? call.args.query.slice(0, 80)
+                    : typeof call.args.url === 'string'
+                      ? call.args.url.slice(0, 80)
+                      : undefined
+          const readRequirement = toolContract?.readBeforeWrite
+          const readFailure = readRequirement
+            ? missingReadPrecondition(call, readRequirement)
+            : null
+          if (readFailure) {
+            const detail = readFailure.detail
+            yield {
+              type: 'tool',
+              tool: {
+                id,
+                name: call.name,
+                path: readFailure.path,
+                status: 'error',
+                effect: toolEffect,
+                changedResources: [],
+                durationMs: Date.now() - toolStartedAt,
+                failure: toolFailureMetadata(detail, toolEffect),
+                detail
+              }
+            }
+            resultParts.push(
+              `TOOL_RESULT ${call.name}: ${detail}\nRECOVERY: ${toolFailureRecovery(call.name, detail)}`
+            )
+            continue
+          }
+          if (!precomputedResult) {
+            yield {
+              type: 'tool',
+              tool: {
+                id,
+                name: call.name,
+                path,
+                status: 'running',
+                effect: toolEffect,
+                detail: 'Running…'
+              }
+            }
+          }
+
+          let result: { ok: boolean; detail: string; mutated: boolean; path?: string }
+
+          const approvalKind =
+            toolContract?.approval === 'command'
+              ? 'run'
+              : toolContract?.approval === 'push' && argString(call.args, 'action') === 'push'
+                ? 'push'
+                : null
+          const approvalCommand =
+            approvalKind === 'run'
+              ? argString(call.args, 'command')
+              : approvalKind === 'push'
+                ? 'git push'
+                : ''
+          let mcpApprovalDenied = false
+          let mcpApprovalDetail = ''
+          if (mcpTool) {
+            if (options.approveMcpTool) {
+              yield { type: 'status', text: `Waiting for approval: ${call.name}` }
+              mcpApprovalDenied = !(await options.approveMcpTool(call.name, call.args))
+              if (mcpApprovalDenied) {
+                mcpApprovalDetail =
+                  'The user denied this MCP tool call. Continue without retrying it.'
+              }
+            } else {
+              mcpApprovalDenied = true
+              mcpApprovalDetail = 'MCP tool was blocked because no approval handler is available.'
+            }
+          }
+          let approvalDenied = false
+          if (
+            approvalCommand &&
+            options.approveCommand &&
+            !isGlobalInstallCommand(approvalCommand)
+          ) {
+            yield {
+              type: 'status',
+              text: `Waiting for approval: ${approvalCommand.slice(0, 80)}`
+            }
+            approvalDenied = !(await options.approveCommand(
+              approvalKind === 'run' ? 'run' : 'push',
+              approvalCommand
+            ))
+          }
+
+          if (precomputedResult) {
+            result = precomputedResult
+          } else if (mcpApprovalDenied) {
+            result = {
+              ok: false,
+              detail: mcpApprovalDetail,
+              mutated: false
+            }
+            yield { type: 'thinking', text: `\n\n— MCP call denied: ${call.name}\n` }
+          } else if (approvalDenied) {
             result = {
               ok: false,
               detail:
-                'Blocked: global installs are not allowed. Install into this workspace instead ' +
-                '(e.g. `npm install <pkg>`, `npm install`, or a project venv — never `npm -g`).',
+                `The user denied running \`${approvalCommand}\`. Do not retry it. ` +
+                'Continue without it, or explain what the user should run themselves.',
               mutated: false
             }
-            yield {
-              type: 'thinking',
-              text: '\n\n— Blocked global install (workspace must stay self-contained).\n'
+            yield { type: 'thinking', text: `\n\n— Command denied by user: ${approvalCommand}\n` }
+          } else if (call.name === 'generate_image') {
+            try {
+              const destination = argString(call.args, 'path')
+              const target = resolveInWorkspace(workspacePath, destination)
+              if (!destination.toLowerCase().endsWith('.png') || existsSync(target)) {
+                throw new Error('Image destination must be a new .png file')
+              }
+              yield { type: 'status', text: 'Generating image…' }
+              const asset = await generateImage({
+                request: {
+                  requestId: `image:${checkpoint.id}:${id}`,
+                  prompt: argString(call.args, 'prompt'),
+                  size: call.args.size == null ? undefined : ImageSizeSchema.parse(call.args.size)
+                },
+                settings: options.settings,
+                getSecret: options.getSecret,
+                signal: options.signal
+              })
+              await saveImageToWorkspace(workspacePath, asset.id, destination)
+              const relativePath = toWorkspaceRelative(workspacePath, target)
+              const record = recordBinaryCreateOp(workspacePath, checkpoint.id, relativePath)
+              yield { type: 'asset', asset: { ...asset, path: relativePath } }
+              yield {
+                type: 'diff',
+                diff: {
+                  checkpointId: checkpoint.id,
+                  opIndex: record.ops.length - 1,
+                  path: relativePath,
+                  before: null,
+                  after: `Generated PNG: ${asset.width} × ${asset.height}`,
+                  op: 'binary'
+                }
+              }
+              result = {
+                ok: true,
+                detail: `Created ${relativePath} (${asset.width} × ${asset.height} PNG, ${asset.bytes} bytes). Use this path in the application.`,
+                mutated: true,
+                path: relativePath
+              }
+            } catch (error) {
+              if (options.signal?.aborted) throw error
+              result = {
+                ok: false,
+                detail: error instanceof Error ? error.message : 'Image generation failed',
+                mutated: false
+              }
             }
-          } else if (isInstallCommand(command)) {
-            const addingPackage = isPackageAddInstall(command)
-            const modulesPresent = hasNodeModules(workspacePath)
-            const pkgNewer = packageJsonNewerThanModules(workspacePath)
-            // Allow workspace installs freely; only stop bare reinstall loops.
-            const needsInstall = !modulesPresent || pkgNewer
-            const blockBareLoop =
-              !addingPackage && !needsInstall && installAttempts >= MAX_BARE_INSTALLS_PER_RUN
-
-            if (blockBareLoop) {
+          } else if (call.name === 'run') {
+            const command = argString(call.args, 'command')
+            if (!command) {
+              result = { ok: false, detail: 'command is required', mutated: false }
+            } else if (isGlobalInstallCommand(command)) {
               result = {
                 ok: false,
                 detail:
-                  `Blocked: bare install already ran ${MAX_BARE_INSTALLS_PER_RUN} times this session. ` +
-                  'Use `npm install <package>` to add a dependency, or fix code/tests — do not loop install.',
+                  'Blocked: global installs are not allowed. Install into this workspace instead ' +
+                  '(e.g. `npm install <pkg>`, `npm install`, or a project venv — never `npm -g`).',
                 mutated: false
               }
               yield {
                 type: 'thinking',
-                text: '\n\n— Skipped repeat bare install (anti-loop).\n'
+                text: '\n\n— Blocked global install (workspace must stay self-contained).\n'
+              }
+            } else if (isInstallCommand(command)) {
+              const addingPackage = isPackageAddInstall(command)
+              const modulesPresent = hasNodeModules(executionRoot!)
+              const pkgNewer = packageJsonNewerThanModules(executionRoot!)
+              // Allow workspace installs freely; only stop bare reinstall loops.
+              const needsInstall = !modulesPresent || pkgNewer
+              const blockBareLoop =
+                !addingPackage && !needsInstall && installAttempts >= MAX_BARE_INSTALLS_PER_RUN
+
+              if (blockBareLoop) {
+                result = {
+                  ok: false,
+                  detail:
+                    `Blocked: bare install already ran ${MAX_BARE_INSTALLS_PER_RUN} times this session. ` +
+                    'Use `npm install <package>` to add a dependency, or fix code/tests — do not loop install.',
+                  mutated: false
+                }
+                yield {
+                  type: 'thinking',
+                  text: '\n\n— Skipped repeat bare install (anti-loop).\n'
+                }
+              } else {
+                if (!addingPackage) installAttempts++
+                yield { type: 'terminal', text: `$ ${command}\n` }
+                yield {
+                  type: 'thinking',
+                  text: addingPackage
+                    ? '\n\n— Installing package into workspace…\n'
+                    : pkgNewer
+                      ? '\n\n— package.json changed; refreshing workspace dependencies…\n'
+                      : '\n\n— Installing workspace dependencies…\n'
+                }
+                const ran = await runWorkspaceCommand(
+                  call.args.cwd
+                    ? resolveInWorkspace(workspacePath, String(call.args.cwd))
+                    : executionRoot!,
+                  command,
+                  {
+                    signal: options.signal,
+                    timeoutMs: 300_000
+                  }
+                )
+                const out = [ran.stdout, ran.stderr].filter(Boolean).join('\n')
+                if (out) yield { type: 'terminal', text: `${out}\n` }
+                result = {
+                  ok: ran.ok,
+                  detail: ran.timedOut
+                    ? `Timed out.\n${out}\n\nDo not re-run install in a loop. Try the test/build command next.`
+                    : `exit ${ran.code ?? '?'}\n${out || '(no output)'}\n\n` +
+                      (ran.ok
+                        ? 'Install finished into this workspace (node_modules/.bin on PATH). Next: test/typecheck/build.'
+                        : 'Install failed. Inspect the error or fix package.json; do not loop install.'),
+                  mutated: false
+                }
               }
             } else {
-              if (!addingPackage) installAttempts++
               yield { type: 'terminal', text: `$ ${command}\n` }
-              yield {
-                type: 'thinking',
-                text: addingPackage
-                  ? '\n\n— Installing package into workspace…\n'
-                  : pkgNewer
-                    ? '\n\n— package.json changed; refreshing workspace dependencies…\n'
-                    : '\n\n— Installing workspace dependencies…\n'
-              }
-              const ran = await runWorkspaceCommand(workspacePath, command, {
-                signal: options.signal,
-                timeoutMs: 300_000
-              })
+              const ran = await runWorkspaceCommand(
+                call.args.cwd
+                  ? resolveInWorkspace(workspacePath, String(call.args.cwd))
+                  : executionRoot!,
+                command,
+                {
+                  signal: options.signal
+                }
+              )
               const out = [ran.stdout, ran.stderr].filter(Boolean).join('\n')
               if (out) yield { type: 'terminal', text: `${out}\n` }
               result = {
                 ok: ran.ok,
                 detail: ran.timedOut
-                  ? `Timed out.\n${out}\n\nDo not re-run install in a loop. Try the test/build command next.`
-                  : `exit ${ran.code ?? '?'}\n${out || '(no output)'}\n\n` +
-                    (ran.ok
-                      ? 'Install finished into this workspace (node_modules/.bin on PATH). Next: test/typecheck/build.'
-                      : 'Install failed. Inspect the error or fix package.json; do not loop install.'),
+                  ? `Timed out.\n${out}`
+                  : `exit ${ran.code ?? '?'}\n${out || '(no output)'}`,
                 mutated: false
               }
             }
-          } else {
-            yield { type: 'terminal', text: `$ ${command}\n` }
-            const ran = await runWorkspaceCommand(workspacePath, command, {
-              signal: options.signal
-            })
-            const out = [ran.stdout, ran.stderr].filter(Boolean).join('\n')
-            if (out) yield { type: 'terminal', text: `${out}\n` }
-            result = {
-              ok: ran.ok,
-              detail: ran.timedOut
-                ? `Timed out.\n${out}`
-                : `exit ${ran.code ?? '?'}\n${out || '(no output)'}`,
-              mutated: false
-            }
-          }
-        } else if (call.name === 'web_search') {
-          const query = argString(call.args, 'query')
-          try {
-            const detail = await searchWeb(query, options.signal)
-            result = { ok: true, detail, mutated: false }
-            if (!webSearchText || !firstHttpsResult(webSearchText)) webSearchText = detail
-          } catch (err) {
-            result = {
-              ok: false,
-              detail: err instanceof Error ? err.message : 'Web search failed',
-              mutated: false
-            }
-          }
-        } else if (call.name === 'web_open') {
-          const url = argString(call.args, 'url')
-          try {
-            const detail = await openWebPage(url, options.signal)
-            result = { ok: true, detail, mutated: false, path: url }
-            webPageText = [webPageText, detail].filter(Boolean).join('\n\n')
-          } catch (err) {
-            result = {
-              ok: false,
-              detail: err instanceof Error ? err.message : 'Could not open the page',
-              mutated: false,
-              path: url
-            }
-          }
-        } else if (call.name === 'notebook_read') {
-          try {
-            const notebook = readNotebook(
-              workspacePath,
-              argString(call.args, 'path'),
-              typeof call.args.cell_index === 'number' ? call.args.cell_index : undefined
-            )
-            result = { ok: true, detail: notebook.detail, mutated: false, path: notebook.path }
-          } catch (err) {
-            result = {
-              ok: false,
-              detail: err instanceof Error ? err.message : String(err),
-              mutated: false
-            }
-          }
-        } else if (call.name === 'lsp') {
-          const path = argString(call.args, 'path')
-          const action = argString(call.args, 'action')
-          const line = typeof call.args.line === 'number' ? call.args.line : 0
-          const character = typeof call.args.character === 'number' ? call.args.character : 0
-          try {
-            if (!path) throw new Error('lsp requires path')
-            if (
-              !Number.isInteger(line) ||
-              line < 1 ||
-              !Number.isInteger(character) ||
-              character < 1
-            ) {
-              throw new Error('lsp line and character must be positive one-based integers')
-            }
-            const file = readWorkspaceFile(workspacePath, path, 1_000_000)
-            if (file.truncated) throw new Error('LSP queries are limited to files under 1 MB')
-            const absPath = resolveInWorkspace(workspacePath, path)
-            if (!(await lspEnsureOpen(workspacePath, absPath, '', file.content))) {
-              throw new Error('No language server is configured for this file.')
-            }
-            const displayPath = (target: string): string =>
-              isPathInside(workspacePath, target)
-                ? toWorkspaceRelative(workspacePath, target)
-                : target
-            if (action === 'hover') {
-              const hover = await lspHover(workspacePath, absPath, line, character)
-              result = {
-                ok: hover.ok,
-                detail:
-                  hover.contents ||
-                  (hover.ok
-                    ? '(no hover information at this position)'
-                    : 'No language server is available for this file.'),
-                mutated: false,
-                path: file.path
-              }
-            } else if (action === 'definition') {
-              const definitions = await lspDefinition(workspacePath, absPath, line, character)
-              result = {
-                ok: definitions.ok,
-                detail: definitions.ok
-                  ? definitions.locations.length
-                    ? definitions.locations
-                        .map((item) => `${displayPath(item.path)}:${item.line}`)
-                        .join('\n')
-                    : '(no definition found)'
-                  : 'No language server is available for this file.',
-                mutated: false,
-                path: file.path
-              }
-            } else if (action === 'references') {
-              const references = await lspReferences(workspacePath, absPath, line, character)
-              result = {
-                ok: references.ok,
-                detail: references.ok
-                  ? references.locations.length
-                    ? references.locations
-                        .map((item) => `${displayPath(item.path)}:${item.line}`)
-                        .join('\n')
-                    : '(no references found)'
-                  : 'No language server is available for this file.',
-                mutated: false,
-                path: file.path
-              }
-            } else if (action === 'completion') {
-              const completion = await lspCompletion(workspacePath, absPath, line, character)
-              result = {
-                ok: completion.ok,
-                detail: completion.ok
-                  ? completion.items.length
-                    ? completion.items
-                        .slice(0, 25)
-                        .map((item) => `${item.label}${item.detail ? ` — ${item.detail}` : ''}`)
-                        .join('\n')
-                    : '(no completion items)'
-                  : 'No language server is available for this file.',
-                mutated: false,
-                path: file.path
-              }
-            } else {
-              result = { ok: false, detail: `Unknown LSP action: ${action}`, mutated: false, path }
-            }
-          } catch (err) {
-            result = {
-              ok: false,
-              detail: err instanceof Error ? err.message : String(err),
-              mutated: false,
-              path: path || undefined
-            }
-          }
-        } else if (call.name === 'grep') {
-          const pattern = argString(call.args, 'pattern') || argString(call.args, 'query')
-          const glob = argString(call.args, 'glob') || undefined
-          const grepped = await workspaceGrep(workspacePath, pattern, { glob })
-          result = { ok: grepped.ok, detail: grepped.detail, mutated: false }
-        } else if (call.name === 'glob') {
-          const pattern = argString(call.args, 'pattern') || '**/*'
-          const globbed = workspaceGlob(workspacePath, pattern)
-          result = { ok: globbed.ok, detail: globbed.detail, mutated: false }
-        } else if (call.name === 'search_symbols') {
-          const query = argString(call.args, 'query') || argString(call.args, 'pattern')
-          const found = await findSymbols(workspacePath, query)
-          result = { ok: found.ok, detail: found.detail, mutated: false }
-        } else if (call.name === 'find_references') {
-          const name =
-            argString(call.args, 'name') ||
-            argString(call.args, 'query') ||
-            argString(call.args, 'symbol')
-          const found = await findReferences(workspacePath, name)
-          result = { ok: found.ok, detail: found.detail, mutated: false }
-        } else if (call.name === 'semantic_search') {
-          const query =
-            argString(call.args, 'query') || argString(call.args, 'pattern') || originalUserGoal
-          const retrieved = await inspectWorkspace(workspacePath, query, 8)
-          result = { ok: retrieved.ok, detail: retrieved.detail, mutated: false }
-        } else if (call.name === 'related_files') {
-          const path = argString(call.args, 'path') || argString(call.args, 'file')
-          const related = await relatedFiles(workspacePath, path)
-          result = { ok: related.ok, detail: related.detail, mutated: false }
-        } else if (call.name === 'retrieve') {
-          const query =
-            argString(call.args, 'query') || argString(call.args, 'pattern') || originalUserGoal
-          const retrieved = await inspectWorkspace(workspacePath, query, 8)
-          result = { ok: retrieved.ok, detail: retrieved.detail, mutated: false }
-        } else if (call.name === 'read_context') {
-          const prompt = formatWorkspaceContextPrompt(workspacePath, { full: true })
-          const doc = getWorkspaceContext(workspacePath)
-          result = {
-            ok: true,
-            detail:
-              prompt ||
-              '(empty — edit .eris/context.md or use update_context to save workspace facts)',
-            path: '.eris/context.md',
-            mutated: false
-          }
-          if (doc.pin) {
-            result.detail = `${prompt}\n\n[pin length ${doc.pin.length} chars]`
-          }
-        } else if (call.name === 'list_skills') {
-          result = {
-            ok: true,
-            detail: formatSkillsListForAgent(workspacePath),
-            path: userSkillsDir(),
-            mutated: false
-          }
-        } else if (call.name === 'read_skill') {
-          const idRaw =
-            argString(call.args, 'id') ||
-            argString(call.args, 'skill_id') ||
-            argString(call.args, 'name')
-          const id = idRaw ? slugifySkillId(idRaw) : ''
-          const scopeRaw = (argString(call.args, 'scope') || '').toLowerCase()
-          const scope =
-            scopeRaw === 'workspace' || scopeRaw === 'user'
-              ? (scopeRaw as 'user' | 'workspace')
-              : undefined
-          const skill = id ? getSkill(workspacePath, id, scope) : null
-          result = skill
-            ? {
-                ok: true,
-                detail:
-                  `id: ${skill.id}\nscope: ${skill.scope}\nname: ${skill.name}\n` +
-                  `description: ${skill.description}\npath: ${skill.path}\n\n${skill.body}`,
-                path: skill.path,
-                mutated: false
-              }
-            : {
-                ok: false,
-                detail: id
-                  ? `Skill “${id}” not found${scope ? ` in ${scope} scope` : ''}`
-                  : 'read_skill requires id',
-                mutated: false
-              }
-        } else if (call.name === 'write_skill') {
-          const skillName =
-            argString(call.args, 'skill_name') ||
-            argString(call.args, 'name') ||
-            argString(call.args, 'title')
-          const description =
-            argString(call.args, 'description') || argString(call.args, 'desc') || ''
-          const body =
-            argString(call.args, 'body') ||
-            argString(call.args, 'content') ||
-            argString(call.args, 'instructions')
-          const idArg = argString(call.args, 'id') || argString(call.args, 'skill_id') || skillName
-          const scopeRaw = (argString(call.args, 'scope') || 'user').toLowerCase()
-          const scope = scopeRaw === 'workspace' ? 'workspace' : 'user'
-          if (!skillName.trim() || !body.trim()) {
-            result = {
-              ok: false,
-              detail: 'write_skill requires skill_name and body (markdown instructions)',
-              mutated: false
-            }
-          } else {
+          } else if (call.name === 'web_search') {
+            const query = argString(call.args, 'query')
             try {
-              const skill = upsertSkill(workspacePath, {
-                id: idArg,
-                name: skillName,
-                description,
-                body,
-                scope
-              })
+              const detail = await searchWeb(query, options.signal)
+              result = { ok: true, detail, mutated: false }
+              if (!webSearchText || !firstHttpsResult(webSearchText)) webSearchText = detail
+            } catch (err) {
               result = {
-                ok: true,
-                detail:
-                  `Saved ${skill.scope} skill “${skill.name}” (${skill.id})\n` +
-                  `path: ${skill.path}\n` +
-                  (skill.scope === 'user'
-                    ? 'Stored outside the project (user skills folder).'
-                    : 'Stored in this project under .eris/skills/.'),
-                path: skill.path,
-                // Skill files are not product code — never trigger npm/test verify.
+                ok: false,
+                detail: err instanceof Error ? err.message : 'Web search failed',
                 mutated: false
               }
-              yield { type: 'workspace-changed' }
+            }
+          } else if (call.name === 'web_open') {
+            const url = argString(call.args, 'url')
+            try {
+              const detail = await openWebPage(url, options.signal)
+              result = { ok: true, detail, mutated: false, path: url }
+              webPageText = [webPageText, detail].filter(Boolean).join('\n\n')
+            } catch (err) {
+              result = {
+                ok: false,
+                detail: err instanceof Error ? err.message : 'Could not open the page',
+                mutated: false,
+                path: url
+              }
+            }
+          } else if (call.name === 'notebook_read') {
+            try {
+              const notebook = readNotebook(
+                workspacePath,
+                argString(call.args, 'path'),
+                typeof call.args.cell_index === 'number' ? call.args.cell_index : undefined
+              )
+              result = { ok: true, detail: notebook.detail, mutated: false, path: notebook.path }
             } catch (err) {
               result = {
                 ok: false,
@@ -2492,700 +2380,966 @@ export async function* runAgentWithWorkspaceTools(options: {
                 mutated: false
               }
             }
-          }
-        } else if (call.name === 'update_context') {
-          const text =
-            argString(call.args, 'text') ||
-            argString(call.args, 'content') ||
-            argString(call.args, 'note')
-          const mode = (argString(call.args, 'mode') || 'append').toLowerCase()
-          if (!text.trim()) {
-            result = { ok: false, detail: 'update_context requires text', mutated: false }
-          } else if (mode === 'summary' || mode === 'set_summary') {
-            const doc = setContextSummary(workspacePath, text)
-            result = {
-              ok: true,
-              detail: `Updated pinned Summary (${doc.pin.length} chars).\nPin:\n${doc.pin}`,
-              path: '.eris/context.md',
-              // Not a source-tree mutation — skip verify/diff pipeline.
-              mutated: false
-            }
-          } else {
-            const doc = appendContextNote(workspacePath, text)
-            result = {
-              ok: true,
-              detail: `Appended note to .eris/context.md.\nPin:\n${doc.pin || '(no summary yet)'}`,
-              path: '.eris/context.md',
-              mutated: false
-            }
-          }
-        } else if (call.name === 'ask_user') {
-          const question =
-            argString(call.args, 'question') ||
-            argString(call.args, 'prompt') ||
-            argString(call.args, 'text')
-          const choices = Array.isArray(call.args.choices)
-            ? call.args.choices
-                .map((c) => String(c))
-                .filter(Boolean)
-                .slice(0, 6)
-            : undefined
-          if (!question.trim()) {
-            result = { ok: false, detail: 'ask_user requires question', mutated: false }
-          } else if (askUserCount >= MAX_ASK_USER) {
-            result = {
-              ok: true,
-              detail:
-                'Ask budget exhausted for this run. Proceed with best judgment; do not ask again.',
-              mutated: false
-            }
-            yield {
-              type: 'thinking',
-              text: '\n\n— Skipping further questions (limit reached) — continuing…\n'
-            }
-          } else if (!options.askUser) {
-            result = {
-              ok: true,
-              detail:
-                'User prompt UI unavailable. Proceed with best judgment on the original request.',
-              mutated: false
-            }
-          } else {
-            askUserCount++
-            yield { type: 'status', text: 'Waiting for your reply…' }
-            yield {
-              type: 'thinking',
-              text: `\n\n— Asking you: ${question.slice(0, 200)}${question.length > 200 ? '…' : ''}\n`
-            }
-            const reply = await options.askUser(question.trim(), choices)
-            throwIfAborted(options.signal)
-            if (reply) {
-              result = {
-                ok: true,
-                detail: `User replied:\n${reply}\n\nContinue with this answer. Prefer tools over more questions.`,
-                mutated: false
-              }
-              yield {
-                type: 'thinking',
-                text: `\n\n— You replied: ${reply.slice(0, 160)}\n`
-              }
-            } else {
-              result = {
-                ok: true,
-                detail:
-                  'User did not reply within five minutes. Proceed with the original request using your best judgment. Do not ask another clarifying question unless you are blocked.',
-                mutated: false
-              }
-              yield {
-                type: 'thinking',
-                text: '\n\n— No reply after five minutes — continuing with best judgment…\n'
-              }
-            }
-            yield { type: 'status', text: `${plan.agentName} continuing…` }
-          }
-        } else if (call.name === 'delegate_to_agent') {
-          const agentId = argString(call.args, 'agent_id') || argString(call.args, 'agentId')
-          const goal = argString(call.args, 'goal')
-          const summary = argString(call.args, 'summary') || goal
-          const claim = argString(call.args, 'claim') || undefined
-          const confidence =
-            typeof call.args.confidence === 'number' ? call.args.confidence : undefined
-          const files = Array.isArray(call.args.files)
-            ? call.args.files.map((f) => String(f)).filter(Boolean)
-            : undefined
-          const openQuestions = Array.isArray(call.args.open_questions)
-            ? call.args.open_questions.map((q) => String(q)).filter(Boolean)
-            : Array.isArray(call.args.openQuestions)
-              ? call.args.openQuestions.map((q) => String(q)).filter(Boolean)
-              : undefined
-          const handoff: AgentHandoffPacket = {
-            parentGoal: originalUserGoal,
-            goal,
-            summary,
-            files,
-            openQuestions,
-            confidence,
-            fromAgentId: plan.agentId,
-            toAgentId: agentId
-          }
-          if (!agentId || !goal) {
-            result = {
-              ok: false,
-              detail: 'delegate_to_agent requires agent_id and goal',
-              mutated: false
-            }
-          } else if (options.allowDelegate === false) {
-            result = {
-              ok: false,
-              detail: 'A specialist does not delegate further. Finish the assigned goal yourself.',
-              mutated: false
-            }
-          } else if (!findAgent(workspacePath, agentId)?.enabled) {
-            result = {
-              ok: false,
-              detail: `Agent ${agentId} is unavailable or disabled. Choose an enabled specialist.`,
-              mutated: false
-            }
-          } else if (options.jobId?.startsWith('chat:')) {
-            const specialist = findAgent(workspacePath, agentId)
-            const specialistPlan = await planChatTurn({
-              workspacePath,
-              settings: options.settings,
-              context: {
-                text: goal,
-                selectedModel: workerModel,
-                mode: 'agent',
-                manualAgentId: agentId,
-                forceRoute: 'tools'
-              },
-              getSecret: options.getSecret,
-              signal: options.signal
-            })
-            specialistPlan.models = {
-              ...specialistPlan.models,
-              chat: workerModel,
-              tools: workerModel
-            }
-            specialistPlan.escalateToFull = false
-            specialistPlan.cloudPreferred = false
-            const delegationId = `${options.jobId}:${agentId}:${step}`
-            const runningDelegation = {
-              id: delegationId,
-              agentId,
-              agentName: specialist?.name || specialistPlan.agentName || agentId,
-              goal,
-              status: 'running' as const,
-              tools: [] as Array<{ name: string; path?: string; status: string }>,
-              result: ''
-            }
-            yield { type: 'delegation', delegation: runningDelegation }
-            yield {
-              type: 'thinking',
-              text: `\n\n— ${runningDelegation.agentName} working in this workspace…\n`
-            }
-            releaseGgufSession()
-            let answer = ''
-            let specialistMutated = false
-            let specialistIncomplete = false
-            const specTools: Array<{ name: string; path?: string; status: string }> = []
+          } else if (call.name === 'lsp') {
+            const path = argString(call.args, 'path')
+            const action = argString(call.args, 'action')
+            const line = typeof call.args.line === 'number' ? call.args.line : 0
+            const character = typeof call.args.character === 'number' ? call.args.character : 0
             try {
-              for await (const specEvt of runAgentWithWorkspaceTools({
-                workspacePath,
-                settings: options.settings,
-                model: workerModel,
-                messages: [
-                  { role: 'system', content: formatHandoffForPrompt(handoff) },
-                  { role: 'user', content: goal }
-                ],
-                temperature: specialist?.temperature ?? options.temperature,
-                signal: options.signal,
-                getSecret: options.getSecret,
-                mode: 'agent',
-                turnPlan: specialistPlan,
-                approveCommand: options.approveCommand,
-                approveMcpTool: options.approveMcpTool,
-                askUser: options.askUser,
-                mcp: 'reuse',
-                jobId: `${options.jobId}:inline:${agentId}`,
-                allowDelegate: false
-              })) {
-                if (
-                  specEvt.type === 'thinking' ||
-                  specEvt.type === 'tool' ||
-                  specEvt.type === 'diff' ||
-                  specEvt.type === 'status' ||
-                  specEvt.type === 'workspace-changed' ||
-                  specEvt.type === 'checkpoint' ||
-                  specEvt.type === 'terminal'
-                ) {
-                  yield specEvt
-                }
-                if (specEvt.type === 'diff') {
-                  specialistMutated = true
-                  filesTouched.push(specEvt.diff.path)
-                  forgetWorkspaceRead(specEvt.diff.path)
-                  if (pathNeedsProjectVerify(specEvt.diff.path)) {
-                    codeMutated = true
-                    codeMutatedThisRound = true
-                  }
-                }
-                if (specEvt.type === 'progress' && specEvt.incomplete) specialistIncomplete = true
-                if (specEvt.type === 'answer')
-                  answer = specEvt.replace ? specEvt.text : answer + specEvt.text
-                if (specEvt.type === 'tool' && specEvt.tool.status !== 'running') {
-                  specTools.push({
-                    name: specEvt.tool.name,
-                    path: specEvt.tool.path,
-                    status: specEvt.tool.status
-                  })
-                }
+              if (!path) throw new Error('lsp requires path')
+              if (
+                !Number.isInteger(line) ||
+                line < 1 ||
+                !Number.isInteger(character) ||
+                character < 1
+              ) {
+                throw new Error('lsp line and character must be positive one-based integers')
               }
-              result = {
-                ok: !specialistIncomplete && Boolean(answer.trim()),
-                detail: [
-                  specialistIncomplete
-                    ? 'Specialist stopped before completing the assignment.'
-                    : '',
-                  `Specialist: ${runningDelegation.agentName}. Workspace: current chat workspace.`,
-                  `Tool evidence: ${specTools.map((tool) => `${tool.name}${tool.path ? ` ${tool.path}` : ''}: ${tool.status}`).join('; ') || 'none'}`,
-                  answer.trim() ||
-                    'Specialist returned no answer; the assignment remains unresolved.'
-                ]
-                  .filter(Boolean)
-                  .join('\n'),
-                mutated: specialistMutated
+              const file = readWorkspaceFile(workspacePath, path, 1_000_000)
+              if (file.truncated) throw new Error('LSP queries are limited to files under 1 MB')
+              const absPath = resolveInWorkspace(workspacePath, path)
+              if (!(await lspEnsureOpen(workspacePath, absPath, '', file.content))) {
+                throw new Error('No language server is configured for this file.')
               }
-              yield {
-                type: 'delegation',
-                delegation: {
-                  ...runningDelegation,
-                  status: result.ok ? 'done' : 'failed',
-                  tools: specTools.slice(-6),
-                  result: result.detail.slice(0, AGENT_HANDOFF_CHARS)
+              const displayPath = (target: string): string =>
+                isPathInside(workspacePath, target)
+                  ? toWorkspaceRelative(workspacePath, target)
+                  : target
+              if (action === 'hover') {
+                const hover = await lspHover(workspacePath, absPath, line, character)
+                result = {
+                  ok: hover.ok,
+                  detail:
+                    hover.contents ||
+                    (hover.ok
+                      ? '(no hover information at this position)'
+                      : 'No language server is available for this file.'),
+                  mutated: false,
+                  path: file.path
+                }
+              } else if (action === 'definition') {
+                const definitions = await lspDefinition(workspacePath, absPath, line, character)
+                result = {
+                  ok: definitions.ok,
+                  detail: definitions.ok
+                    ? definitions.locations.length
+                      ? definitions.locations
+                          .map((item) => `${displayPath(item.path)}:${item.line}`)
+                          .join('\n')
+                      : '(no definition found)'
+                    : 'No language server is available for this file.',
+                  mutated: false,
+                  path: file.path
+                }
+              } else if (action === 'references') {
+                const references = await lspReferences(workspacePath, absPath, line, character)
+                result = {
+                  ok: references.ok,
+                  detail: references.ok
+                    ? references.locations.length
+                      ? references.locations
+                          .map((item) => `${displayPath(item.path)}:${item.line}`)
+                          .join('\n')
+                      : '(no references found)'
+                    : 'No language server is available for this file.',
+                  mutated: false,
+                  path: file.path
+                }
+              } else if (action === 'completion') {
+                const completion = await lspCompletion(workspacePath, absPath, line, character)
+                result = {
+                  ok: completion.ok,
+                  detail: completion.ok
+                    ? completion.items.length
+                      ? completion.items
+                          .slice(0, 25)
+                          .map((item) => `${item.label}${item.detail ? ` — ${item.detail}` : ''}`)
+                          .join('\n')
+                      : '(no completion items)'
+                    : 'No language server is available for this file.',
+                  mutated: false,
+                  path: file.path
+                }
+              } else {
+                result = {
+                  ok: false,
+                  detail: `Unknown LSP action: ${action}`,
+                  mutated: false,
+                  path
                 }
               }
             } catch (err) {
-              const message = err instanceof Error ? err.message : String(err)
-              result = { ok: false, detail: message, mutated: specialistMutated }
-              yield {
-                type: 'delegation',
-                delegation: {
-                  ...runningDelegation,
-                  status: 'failed',
-                  tools: specTools.slice(-6),
-                  result: message.slice(0, AGENT_HANDOFF_CHARS)
+              result = {
+                ok: false,
+                detail: err instanceof Error ? err.message : String(err),
+                mutated: false,
+                path: path || undefined
+              }
+            }
+          } else if (call.name === 'grep') {
+            const pattern = argString(call.args, 'pattern') || argString(call.args, 'query')
+            const glob = argString(call.args, 'glob') || undefined
+            const grepped = await workspaceGrep(workspacePath, pattern, { glob })
+            result = { ok: grepped.ok, detail: grepped.detail, mutated: false }
+          } else if (call.name === 'glob') {
+            const pattern = argString(call.args, 'pattern') || '**/*'
+            const globbed = workspaceGlob(workspacePath, pattern)
+            result = { ok: globbed.ok, detail: globbed.detail, mutated: false }
+          } else if (call.name === 'search_symbols') {
+            const query = argString(call.args, 'query') || argString(call.args, 'pattern')
+            const found = await findSymbols(workspacePath, query)
+            result = { ok: found.ok, detail: found.detail, mutated: false }
+          } else if (call.name === 'find_references') {
+            const name =
+              argString(call.args, 'name') ||
+              argString(call.args, 'query') ||
+              argString(call.args, 'symbol')
+            const found = await findReferences(workspacePath, name)
+            result = { ok: found.ok, detail: found.detail, mutated: false }
+          } else if (call.name === 'semantic_search') {
+            const query =
+              argString(call.args, 'query') || argString(call.args, 'pattern') || originalUserGoal
+            const retrieved = await inspectWorkspace(workspacePath, query, 8)
+            result = { ok: retrieved.ok, detail: retrieved.detail, mutated: false }
+          } else if (call.name === 'related_files') {
+            const path = argString(call.args, 'path') || argString(call.args, 'file')
+            const related = await relatedFiles(workspacePath, path)
+            result = { ok: related.ok, detail: related.detail, mutated: false }
+          } else if (call.name === 'retrieve') {
+            const query =
+              argString(call.args, 'query') || argString(call.args, 'pattern') || originalUserGoal
+            const retrieved = await inspectWorkspace(workspacePath, query, 8)
+            result = { ok: retrieved.ok, detail: retrieved.detail, mutated: false }
+          } else if (call.name === 'read_context') {
+            const prompt = formatWorkspaceContextPrompt(workspacePath, { full: true })
+            const doc = getWorkspaceContext(workspacePath)
+            result = {
+              ok: true,
+              detail:
+                prompt ||
+                '(empty — edit .eris/context.md or use update_context to save workspace facts)',
+              path: '.eris/context.md',
+              mutated: false
+            }
+            if (doc.pin) {
+              result.detail = `${prompt}\n\n[pin length ${doc.pin.length} chars]`
+            }
+          } else if (call.name === 'list_skills') {
+            result = {
+              ok: true,
+              detail: formatSkillsListForAgent(workspacePath),
+              path: userSkillsDir(),
+              mutated: false
+            }
+          } else if (call.name === 'read_skill') {
+            const idRaw =
+              argString(call.args, 'id') ||
+              argString(call.args, 'skill_id') ||
+              argString(call.args, 'name')
+            const id = idRaw ? slugifySkillId(idRaw) : ''
+            const scopeRaw = (argString(call.args, 'scope') || '').toLowerCase()
+            const scope =
+              scopeRaw === 'workspace' || scopeRaw === 'user'
+                ? (scopeRaw as 'user' | 'workspace')
+                : undefined
+            const skill = id ? getSkill(workspacePath, id, scope) : null
+            result = skill
+              ? {
+                  ok: true,
+                  detail:
+                    `id: ${skill.id}\nscope: ${skill.scope}\nname: ${skill.name}\n` +
+                    `description: ${skill.description}\npath: ${skill.path}\n\n${skill.body}`,
+                  path: skill.path,
+                  mutated: false
+                }
+              : {
+                  ok: false,
+                  detail: id
+                    ? `Skill “${id}” not found${scope ? ` in ${scope} scope` : ''}`
+                    : 'read_skill requires id',
+                  mutated: false
+                }
+          } else if (call.name === 'write_skill') {
+            const skillName =
+              argString(call.args, 'skill_name') ||
+              argString(call.args, 'name') ||
+              argString(call.args, 'title')
+            const description =
+              argString(call.args, 'description') || argString(call.args, 'desc') || ''
+            const body =
+              argString(call.args, 'body') ||
+              argString(call.args, 'content') ||
+              argString(call.args, 'instructions')
+            const idArg =
+              argString(call.args, 'id') || argString(call.args, 'skill_id') || skillName
+            const scopeRaw = (argString(call.args, 'scope') || 'user').toLowerCase()
+            const scope = scopeRaw === 'workspace' ? 'workspace' : 'user'
+            if (!skillName.trim() || !body.trim()) {
+              result = {
+                ok: false,
+                detail: 'write_skill requires skill_name and body (markdown instructions)',
+                mutated: false
+              }
+            } else {
+              try {
+                const skill = upsertSkill(workspacePath, {
+                  id: idArg,
+                  name: skillName,
+                  description,
+                  body,
+                  scope
+                })
+                result = {
+                  ok: true,
+                  detail:
+                    `Saved ${skill.scope} skill “${skill.name}” (${skill.id})\n` +
+                    `path: ${skill.path}\n` +
+                    (skill.scope === 'user'
+                      ? 'Stored outside the project (user skills folder).'
+                      : 'Stored in this project under .eris/skills/.'),
+                  path: skill.path,
+                  // Skill files are not product code — never trigger npm/test verify.
+                  mutated: false
+                }
+                yield { type: 'workspace-changed' }
+              } catch (err) {
+                result = {
+                  ok: false,
+                  detail: err instanceof Error ? err.message : String(err),
+                  mutated: false
                 }
               }
             }
-            actionLog.push(`Delegated → ${agentId}: ${goal.slice(0, 80)}`)
-          } else if (!options.onDelegate) {
-            result = {
-              ok: false,
-              detail: 'Delegation is unavailable in this run context',
-              mutated: false
+          } else if (call.name === 'update_context') {
+            const text =
+              argString(call.args, 'text') ||
+              argString(call.args, 'content') ||
+              argString(call.args, 'note')
+            const mode = (argString(call.args, 'mode') || 'append').toLowerCase()
+            if (!text.trim()) {
+              result = { ok: false, detail: 'update_context requires text', mutated: false }
+            } else if (mode === 'summary' || mode === 'set_summary') {
+              const doc = setContextSummary(workspacePath, text)
+              result = {
+                ok: true,
+                detail: `Updated pinned Summary (${doc.pin.length} chars).\nPin:\n${doc.pin}`,
+                path: '.eris/context.md',
+                // Not a source-tree mutation — skip verify/diff pipeline.
+                mutated: false
+              }
+            } else {
+              const doc = appendContextNote(workspacePath, text)
+              result = {
+                ok: true,
+                detail: `Appended note to .eris/context.md.\nPin:\n${doc.pin || '(no summary yet)'}`,
+                path: '.eris/context.md',
+                mutated: false
+              }
             }
-          } else {
-            const delegated = await options.onDelegate({
-              agentId,
+          } else if (call.name === 'ask_user') {
+            const question =
+              argString(call.args, 'question') ||
+              argString(call.args, 'prompt') ||
+              argString(call.args, 'text')
+            const choices = Array.isArray(call.args.choices)
+              ? call.args.choices
+                  .map((c) => String(c))
+                  .filter(Boolean)
+                  .slice(0, 6)
+              : undefined
+            if (!question.trim()) {
+              result = { ok: false, detail: 'ask_user requires question', mutated: false }
+            } else if (askUserCount >= MAX_ASK_USER) {
+              result = {
+                ok: true,
+                detail:
+                  'Ask budget exhausted for this run. Proceed with best judgment; do not ask again.',
+                mutated: false
+              }
+              yield {
+                type: 'thinking',
+                text: '\n\n— Skipping further questions (limit reached) — continuing…\n'
+              }
+            } else if (!options.askUser) {
+              result = {
+                ok: true,
+                detail:
+                  'User prompt UI unavailable. Proceed with best judgment on the original request.',
+                mutated: false
+              }
+            } else {
+              askUserCount++
+              yield { type: 'status', text: 'Waiting for your reply…' }
+              yield {
+                type: 'thinking',
+                text: `\n\n— Asking you: ${question.slice(0, 200)}${question.length > 200 ? '…' : ''}\n`
+              }
+              const reply = await options.askUser(question.trim(), choices)
+              throwIfAborted(options.signal)
+              if (reply) {
+                result = {
+                  ok: true,
+                  detail: `User replied:\n${reply}\n\nContinue with this answer. Prefer tools over more questions.`,
+                  mutated: false
+                }
+                yield {
+                  type: 'thinking',
+                  text: `\n\n— You replied: ${reply.slice(0, 160)}\n`
+                }
+              } else {
+                result = {
+                  ok: true,
+                  detail:
+                    'User did not reply within five minutes. Proceed with the original request using your best judgment. Do not ask another clarifying question unless you are blocked.',
+                  mutated: false
+                }
+                yield {
+                  type: 'thinking',
+                  text: '\n\n— No reply after five minutes — continuing with best judgment…\n'
+                }
+              }
+              yield { type: 'status', text: `${plan.agentName} continuing…` }
+            }
+          } else if (call.name === 'delegate_to_agent') {
+            const agentId = argString(call.args, 'agent_id') || argString(call.args, 'agentId')
+            const goal = argString(call.args, 'goal')
+            const summary = argString(call.args, 'summary') || goal
+            const claim = argString(call.args, 'claim') || undefined
+            const confidence =
+              typeof call.args.confidence === 'number' ? call.args.confidence : undefined
+            const files = Array.isArray(call.args.files)
+              ? call.args.files.map((f) => String(f)).filter(Boolean)
+              : undefined
+            const openQuestions = Array.isArray(call.args.open_questions)
+              ? call.args.open_questions.map((q) => String(q)).filter(Boolean)
+              : Array.isArray(call.args.openQuestions)
+                ? call.args.openQuestions.map((q) => String(q)).filter(Boolean)
+                : undefined
+            const handoff: AgentHandoffPacket = {
+              task,
+              parentGoal: originalUserGoal,
               goal,
               summary,
               files,
               openQuestions,
               confidence,
-              claim,
-              handoff
-            })
-            result = {
-              ok: delegated.ok,
-              detail: delegated.detail,
-              mutated: false
+              fromAgentId: plan.agentId,
+              toAgentId: agentId
             }
-            if (delegated.ok) {
-              yield {
-                type: 'adapt',
-                kind: 'delegate',
-                reason: `Delegated to ${agentId}: ${goal.slice(0, 120)}`,
+            if (!agentId || !goal) {
+              result = {
+                ok: false,
+                detail: 'delegate_to_agent requires agent_id and goal',
+                mutated: false
+              }
+            } else if (options.allowDelegate === false) {
+              result = {
+                ok: false,
+                detail:
+                  'A specialist does not delegate further. Finish the assigned goal yourself.',
+                mutated: false
+              }
+            } else if (!findAgent(workspacePath, agentId)?.enabled) {
+              result = {
+                ok: false,
+                detail: `Agent ${agentId} is unavailable or disabled. Choose an enabled specialist.`,
+                mutated: false
+              }
+            } else if (options.jobId?.startsWith('chat:')) {
+              const specialist = findAgent(workspacePath, agentId)
+              const specialistPlan = await planChatTurn({
+                workspacePath,
+                settings: options.settings,
+                context: {
+                  text: goal,
+                  selectedModel: workerModel,
+                  mode: 'agent',
+                  manualAgentId: agentId,
+                  forceRoute: 'tools'
+                },
+                getSecret: options.getSecret,
+                signal: options.signal
+              })
+              specialistPlan.models = {
+                ...specialistPlan.models,
+                chat: workerModel,
+                tools: workerModel
+              }
+              specialistPlan.task = childTaskContract(
+                task,
+                specialistPlan,
+                goal,
+                workspacePath,
+                `${task.taskId}:${agentId}:${step}`
+              )
+              specialistPlan.toolPolicy = intersectToolPolicy(specialistPlan.toolPolicy, task)
+              specialistPlan.escalateToFull = false
+              specialistPlan.cloudPreferred = false
+              const delegationId = `${options.jobId}:${agentId}:${step}`
+              const runningDelegation = {
+                id: delegationId,
                 agentId,
-                childJobId: delegated.childJobId
+                agentName: specialist?.name || specialistPlan.agentName || agentId,
+                goal,
+                status: 'running' as const,
+                tools: [] as Array<{ name: string; path?: string; status: string }>,
+                result: ''
+              }
+              yield { type: 'delegation', delegation: runningDelegation }
+              yield {
+                type: 'thinking',
+                text: `\n\n— ${runningDelegation.agentName} working in this workspace…\n`
+              }
+              releaseGgufSession()
+              let answer = ''
+              let specialistMutated = false
+              let specialistIncomplete = false
+              const specTools: Array<{ name: string; path?: string; status: string }> = []
+              try {
+                for await (const specEvt of runAgentWithWorkspaceTools({
+                  workspacePath,
+                  settings: options.settings,
+                  model: workerModel,
+                  messages: [
+                    { role: 'system', content: formatHandoffForPrompt(handoff) },
+                    { role: 'user', content: goal }
+                  ],
+                  temperature: specialist?.temperature ?? options.temperature,
+                  signal: options.signal,
+                  getSecret: options.getSecret,
+                  mode: 'agent',
+                  turnPlan: specialistPlan,
+                  approveCommand: options.approveCommand,
+                  approveMcpTool: options.approveMcpTool,
+                  askUser: options.askUser,
+                  mcp: 'reuse',
+                  jobId: `${options.jobId}:inline:${agentId}`,
+                  allowDelegate: false
+                })) {
+                  if (
+                    specEvt.type === 'thinking' ||
+                    specEvt.type === 'tool' ||
+                    specEvt.type === 'evidence' ||
+                    specEvt.type === 'diff' ||
+                    specEvt.type === 'status' ||
+                    specEvt.type === 'workspace-changed' ||
+                    specEvt.type === 'checkpoint' ||
+                    specEvt.type === 'terminal'
+                  ) {
+                    yield specEvt
+                  }
+                  if (specEvt.type === 'diff') {
+                    specialistMutated = true
+                    filesTouched.push(specEvt.diff.path)
+                    forgetWorkspaceRead(specEvt.diff.path)
+                    if (pathNeedsProjectVerify(specEvt.diff.path)) {
+                      codeMutated = true
+                      codeMutatedThisRound = true
+                      verifyPassedOnce = false
+                      workflow.invalidateVerification()
+                    }
+                  }
+                  if (specEvt.type === 'progress' && specEvt.incomplete) specialistIncomplete = true
+                  if (specEvt.type === 'answer')
+                    answer = specEvt.replace ? specEvt.text : answer + specEvt.text
+                  if (specEvt.type === 'tool' && specEvt.tool.status !== 'running') {
+                    specTools.push({
+                      name: specEvt.tool.name,
+                      path: specEvt.tool.path,
+                      status: specEvt.tool.status
+                    })
+                  }
+                }
+                result = {
+                  ok: !specialistIncomplete && Boolean(answer.trim()),
+                  detail: [
+                    specialistIncomplete
+                      ? 'Specialist stopped before completing the assignment.'
+                      : '',
+                    `Specialist: ${runningDelegation.agentName}. Workspace: current chat workspace.`,
+                    `Tool evidence: ${specTools.map((tool) => `${tool.name}${tool.path ? ` ${tool.path}` : ''}: ${tool.status}`).join('; ') || 'none'}`,
+                    answer.trim() ||
+                      'Specialist returned no answer; the assignment remains unresolved.'
+                  ]
+                    .filter(Boolean)
+                    .join('\n'),
+                  mutated: specialistMutated
+                }
+                yield {
+                  type: 'delegation',
+                  delegation: {
+                    ...runningDelegation,
+                    status: result.ok ? 'done' : 'failed',
+                    tools: specTools.slice(-6),
+                    result: result.detail.slice(0, AGENT_HANDOFF_CHARS)
+                  }
+                }
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err)
+                result = { ok: false, detail: message, mutated: specialistMutated }
+                yield {
+                  type: 'delegation',
+                  delegation: {
+                    ...runningDelegation,
+                    status: 'failed',
+                    tools: specTools.slice(-6),
+                    result: message.slice(0, AGENT_HANDOFF_CHARS)
+                  }
+                }
               }
               actionLog.push(`Delegated → ${agentId}: ${goal.slice(0, 80)}`)
+            } else if (!options.onDelegate) {
+              result = {
+                ok: false,
+                detail: 'Delegation is unavailable in this run context',
+                mutated: false
+              }
+            } else {
+              const delegated = await options.onDelegate({
+                agentId,
+                goal,
+                summary,
+                files,
+                openQuestions,
+                confidence,
+                claim,
+                handoff
+              })
+              result = {
+                ok: delegated.ok,
+                detail: delegated.detail,
+                mutated: false
+              }
+              if (delegated.ok) {
+                yield {
+                  type: 'adapt',
+                  kind: 'delegate',
+                  reason: `Delegated to ${agentId}: ${goal.slice(0, 120)}`,
+                  agentId,
+                  childJobId: delegated.childJobId
+                }
+                actionLog.push(`Delegated → ${agentId}: ${goal.slice(0, 80)}`)
+              }
             }
-          }
-        } else if (call.name === 'await_children') {
-          if (!options.onAwaitChildren) {
+          } else if (call.name === 'await_children') {
+            if (!options.onAwaitChildren) {
+              result = {
+                ok: false,
+                detail: 'await_children requires a background/orchestrator job context',
+                mutated: false
+              }
+            } else {
+              yield { type: 'status', text: 'Waiting for children…' }
+              const timeoutMs =
+                typeof call.args.timeout_ms === 'number' ? call.args.timeout_ms : 600_000
+              const awaited = await options.onAwaitChildren(timeoutMs)
+              result = { ok: awaited.ok, detail: awaited.detail, mutated: false }
+            }
+          } else if (call.name === 'search_tools') {
             result = {
-              ok: false,
-              detail: 'await_children requires a background/orchestrator job context',
+              ok: true,
+              detail: discoverTools(argString(call.args, 'query')),
               mutated: false
             }
-          } else {
-            yield { type: 'status', text: 'Waiting for children…' }
-            const timeoutMs =
-              typeof call.args.timeout_ms === 'number' ? call.args.timeout_ms : 600_000
-            const awaited = await options.onAwaitChildren(timeoutMs)
-            result = { ok: awaited.ok, detail: awaited.detail, mutated: false }
-          }
-        } else if (call.name === 'search_tools') {
-          result = {
-            ok: true,
-            detail: discoverTools(argString(call.args, 'query')),
-            mutated: false
-          }
-        } else if (mcpMode !== 'off' && isMcpToolName(call.name)) {
-          const mcpResult = await callMcpTool(call.name, call.args)
-          result = { ok: mcpResult.ok, detail: mcpResult.detail, mutated: false }
-        } else if (call.name === 'search_mcp_tools') {
-          result = {
-            ok: true,
-            detail: discoverMcpTools(argString(call.args, 'query')),
-            mutated: false
-          }
-        } else if (
-          call.name === 'write_file' ||
-          call.name === 'search_replace' ||
-          call.name === 'apply_patch' ||
-          call.name === 'notebook_edit'
-        ) {
-          const writePath =
-            call.name === 'apply_patch'
-              ? '' // resolved inside tool
-              : argString(call.args, 'path')
-          let before: string | null = writePath
-            ? snapshotBeforeWrite(workspacePath, checkpoint.id, writePath)
-            : null
-          let afterContent: string | null =
-            call.name === 'write_file' && typeof call.args.content === 'string'
-              ? call.args.content
+          } else if (mcpMode !== 'off' && isMcpToolName(call.name)) {
+            const mcpResult = await callMcpTool(call.name, call.args)
+            result = { ok: mcpResult.ok, detail: mcpResult.detail, mutated: false }
+          } else if (call.name === 'search_mcp_tools') {
+            result = {
+              ok: true,
+              detail: discoverMcpTools(argString(call.args, 'query')),
+              mutated: false
+            }
+          } else if (
+            call.name === 'write_file' ||
+            call.name === 'search_replace' ||
+            call.name === 'apply_patch' ||
+            call.name === 'notebook_edit'
+          ) {
+            const writePath =
+              call.name === 'apply_patch'
+                ? '' // resolved inside tool
+                : argString(call.args, 'path')
+            let before: string | null = writePath
+              ? snapshotBeforeWrite(workspacePath, checkpoint.id, writePath)
               : null
-          if (call.name === 'search_replace' && writePath) {
-            try {
-              const oldString =
-                argString(call.args, 'old_string') || argString(call.args, 'oldString')
-              const newString =
-                typeof call.args.new_string === 'string'
-                  ? call.args.new_string
-                  : typeof call.args.newString === 'string'
-                    ? call.args.newString
-                    : ''
-              const replaceAll = Boolean(call.args.replace_all ?? call.args.replaceAll)
-              const edited = searchReplaceInFile(
+            let afterContent: string | null =
+              call.name === 'write_file' && typeof call.args.content === 'string'
+                ? call.args.content
+                : null
+            if (call.name === 'search_replace' && writePath) {
+              try {
+                const oldString =
+                  argString(call.args, 'old_string') || argString(call.args, 'oldString')
+                const newString =
+                  typeof call.args.new_string === 'string'
+                    ? call.args.new_string
+                    : typeof call.args.newString === 'string'
+                      ? call.args.newString
+                      : ''
+                const replaceAll = Boolean(call.args.replace_all ?? call.args.replaceAll)
+                const edited = searchReplaceInFile(
+                  workspacePath,
+                  writePath,
+                  oldString,
+                  newString,
+                  replaceAll
+                )
+                before = edited.before
+                afterContent = edited.after
+                result = {
+                  ok: true,
+                  detail: `Replaced ${edited.replacements} occurrence(s) in ${edited.path}`,
+                  mutated: true,
+                  path: edited.path
+                }
+              } catch (err) {
+                result = {
+                  ok: false,
+                  detail: err instanceof Error ? err.message : String(err),
+                  mutated: false,
+                  path: writePath || undefined
+                }
+              }
+            } else if (call.name === 'notebook_edit') {
+              try {
+                const edited = editNotebookCell(workspacePath, {
+                  path: writePath,
+                  operation: argString(call.args, 'operation') as
+                    'replace_source' | 'insert_before' | 'insert_after' | 'delete',
+                  cellIndex:
+                    typeof call.args.cell_index === 'number' ? call.args.cell_index : Number.NaN,
+                  source: typeof call.args.source === 'string' ? call.args.source : undefined,
+                  cellType:
+                    call.args.cell_type === 'markdown' || call.args.cell_type === 'raw'
+                      ? call.args.cell_type
+                      : 'code'
+                })
+                before = edited.before
+                afterContent = edited.after
+                result = { ok: true, detail: edited.detail, mutated: true, path: edited.path }
+              } catch (err) {
+                result = {
+                  ok: false,
+                  detail: err instanceof Error ? err.message : String(err),
+                  mutated: false,
+                  path: writePath || undefined
+                }
+              }
+            } else if (call.name === 'apply_patch') {
+              try {
+                const patch = argString(call.args, 'patch') || argString(call.args, 'diff')
+                const edited = applyUnifiedPatch(workspacePath, patch)
+                before = edited.before
+                afterContent = edited.after
+                result = {
+                  ok: true,
+                  detail: `Applied patch to ${edited.path}`,
+                  mutated: true,
+                  path: edited.path
+                }
+              } catch (err) {
+                result = {
+                  ok: false,
+                  detail: err instanceof Error ? err.message : String(err),
+                  mutated: false
+                }
+              }
+            } else {
+              result = executeTool(workspacePath, call)
+            }
+            if (result.ok && result.path && afterContent != null) {
+              const rec = recordWriteOp(
                 workspacePath,
-                writePath,
-                oldString,
-                newString,
-                replaceAll
+                checkpoint.id,
+                result.path,
+                before,
+                afterContent
               )
-              before = edited.before
-              afterContent = edited.after
-              result = {
-                ok: true,
-                detail: `Replaced ${edited.replacements} occurrence(s) in ${edited.path}`,
-                mutated: true,
-                path: edited.path
-              }
-            } catch (err) {
-              result = {
-                ok: false,
-                detail: err instanceof Error ? err.message : String(err),
-                mutated: false,
-                path: writePath || undefined
+              const opIndex = rec ? rec.ops.length - 1 : 0
+              invalidateDiagnosticsCache()
+              yield {
+                type: 'diff',
+                diff: {
+                  checkpointId: checkpoint.id,
+                  opIndex,
+                  path: result.path,
+                  before,
+                  after: afterContent,
+                  op: 'write'
+                }
               }
             }
-          } else if (call.name === 'notebook_edit') {
-            try {
-              const edited = editNotebookCell(workspacePath, {
-                path: writePath,
-                operation: argString(call.args, 'operation') as
-                  'replace_source' | 'insert_before' | 'insert_after' | 'delete',
-                cellIndex:
-                  typeof call.args.cell_index === 'number' ? call.args.cell_index : Number.NaN,
-                source: typeof call.args.source === 'string' ? call.args.source : undefined,
-                cellType:
-                  call.args.cell_type === 'markdown' || call.args.cell_type === 'raw'
-                    ? call.args.cell_type
-                    : 'code'
-              })
-              before = edited.before
-              afterContent = edited.after
-              result = { ok: true, detail: edited.detail, mutated: true, path: edited.path }
-            } catch (err) {
-              result = {
-                ok: false,
-                detail: err instanceof Error ? err.message : String(err),
-                mutated: false,
-                path: writePath || undefined
-              }
-            }
-          } else if (call.name === 'apply_patch') {
-            try {
-              const patch = argString(call.args, 'patch') || argString(call.args, 'diff')
-              const edited = applyUnifiedPatch(workspacePath, patch)
-              before = edited.before
-              afterContent = edited.after
+          } else if (call.name === 'git_status') {
+            const st = await gitStatus(workspacePath)
+            if (!st.ok) {
+              result = { ok: false, detail: st.error || 'git status failed', mutated: false }
+            } else {
+              const lines = [
+                `branch ${st.branch || '?'} ↑${st.ahead} ↓${st.behind}`,
+                ...st.entries.map((e) => `${e.status} ${e.path}`)
+              ]
               result = {
                 ok: true,
-                detail: `Applied patch to ${edited.path}`,
-                mutated: true,
-                path: edited.path
-              }
-            } catch (err) {
-              result = {
-                ok: false,
-                detail: err instanceof Error ? err.message : String(err),
+                detail: lines.join('\n') || 'clean',
                 mutated: false
+              }
+            }
+          } else if (call.name === 'git_diff') {
+            const path = argString(call.args, 'path') || undefined
+            const d = await gitDiff(workspacePath, path)
+            result = {
+              ok: d.ok,
+              detail: d.ok ? d.diff : d.error || 'git diff failed',
+              mutated: false,
+              path
+            }
+          } else if (call.name === 'git_stage') {
+            const paths = Array.isArray(call.args.paths)
+              ? call.args.paths.map(String)
+              : argString(call.args, 'path')
+                ? [argString(call.args, 'path')]
+                : []
+            const staged = await gitStage(workspacePath, paths)
+            result = {
+              ok: staged.ok,
+              detail: staged.ok ? `Staged ${paths.join(', ')}` : staged.error || 'stage failed',
+              mutated: false
+            }
+          } else if (call.name === 'git_commit') {
+            const message = argString(call.args, 'message')
+            const committed = await gitCommit(workspacePath, message)
+            result = {
+              ok: committed.ok,
+              detail: committed.ok ? `Committed: ${message}` : committed.error || 'commit failed',
+              mutated: committed.ok
+            }
+          } else if (call.name === 'git_stash') {
+            const action = (argString(call.args, 'action', 'push') || 'push') as
+              'push' | 'pop' | 'list'
+            const message = argString(call.args, 'message') || undefined
+            const stashed = await gitStash(workspacePath, action, message)
+            result = {
+              ok: stashed.ok,
+              detail: stashed.ok
+                ? stashed.output || `stash ${action} ok`
+                : stashed.error || 'stash failed',
+              mutated: action !== 'list' && stashed.ok
+            }
+          } else if (call.name === 'git_sync') {
+            const action = (argString(call.args, 'action', 'pull') || 'pull') as
+              'fetch' | 'pull' | 'push'
+            const settings = options.settings
+            const remoteName = settings?.github?.remoteName || 'origin'
+            const branch = (await gitStatus(workspacePath)).branch
+            const tokenRef = settings?.github?.tokenRef
+            const token = tokenRef ? options.getSecret(tokenRef) : null
+            const ref = settings?.github?.repository
+              ? parseGithubRepo(settings.github.repository, settings.github.host || 'github.com')
+              : null
+            const synced = await pushPullFetch(
+              workspacePath,
+              action,
+              remoteName,
+              branch,
+              token,
+              ref,
+              settings?.github?.preferredProtocol || 'https'
+            )
+            result = {
+              ok: synced.ok,
+              detail: synced.ok
+                ? synced.output || `${action} ok`
+                : synced.error || `${action} failed`,
+              mutated: false
+            }
+          } else if (call.name === 'delete_path') {
+            const delPath = argString(call.args, 'path')
+            let before = ''
+            let wasDirectory = false
+            if (delPath) {
+              try {
+                const abs = resolveInWorkspace(workspacePath, delPath)
+                if (existsSync(abs)) {
+                  wasDirectory = statSync(abs).isDirectory()
+                  if (!wasDirectory) before = readFileSync(abs, 'utf8')
+                }
+              } catch {
+                // ignore
+              }
+            }
+            result = executeTool(workspacePath, call)
+            if (result.ok && delPath) {
+              const rec = recordDeleteOp(
+                workspacePath,
+                checkpoint.id,
+                delPath,
+                before,
+                wasDirectory
+              )
+              const opIndex = rec ? rec.ops.length - 1 : 0
+              yield {
+                type: 'diff',
+                diff: {
+                  checkpointId: checkpoint.id,
+                  opIndex,
+                  path: result.path ?? delPath,
+                  before,
+                  after: '',
+                  op: 'delete'
+                }
+              }
+            }
+          } else if (call.name === 'rename_path') {
+            const from = argString(call.args, 'path')
+            const to = argString(call.args, 'to')
+            const before = from ? snapshotBeforeWrite(workspacePath, checkpoint.id, from) : null
+            result = executeTool(workspacePath, call)
+            if (result.ok && from && to) {
+              const rec = recordRenameOp(workspacePath, checkpoint.id, from, to, before)
+              const opIndex = rec ? rec.ops.length - 1 : 0
+              yield {
+                type: 'diff',
+                diff: {
+                  checkpointId: checkpoint.id,
+                  opIndex,
+                  path: `${from} → ${to}`,
+                  before,
+                  after: before ?? '',
+                  op: 'rename'
+                }
+              }
+            }
+          } else if (call.name === 'mkdir') {
+            const mkdirPath = argString(call.args, 'path')
+            result = executeTool(workspacePath, call)
+            if (result.ok && result.mutated && mkdirPath) {
+              const rec = recordMkdirOp(workspacePath, checkpoint.id, mkdirPath)
+              const opIndex = rec ? rec.ops.length - 1 : 0
+              yield {
+                type: 'diff',
+                diff: {
+                  checkpointId: checkpoint.id,
+                  opIndex,
+                  path: result.path ?? mkdirPath,
+                  before: null,
+                  after: '',
+                  op: 'mkdir'
+                }
               }
             }
           } else {
             result = executeTool(workspacePath, call)
           }
-          if (result.ok && result.path && afterContent != null) {
-            const rec = recordWriteOp(
-              workspacePath,
-              checkpoint.id,
-              result.path,
-              before,
-              afterContent
-            )
-            const opIndex = rec ? rec.ops.length - 1 : 0
-            invalidateDiagnosticsCache()
-            yield {
-              type: 'diff',
-              diff: {
-                checkpointId: checkpoint.id,
-                opIndex,
-                path: result.path,
-                before,
-                after: afterContent,
-                op: 'write'
-              }
-            }
-          }
-        } else if (call.name === 'git_status') {
-          const st = await gitStatus(workspacePath)
-          if (!st.ok) {
-            result = { ok: false, detail: st.error || 'git status failed', mutated: false }
-          } else {
-            const lines = [
-              `branch ${st.branch || '?'} ↑${st.ahead} ↓${st.behind}`,
-              ...st.entries.map((e) => `${e.status} ${e.path}`)
-            ]
-            result = {
-              ok: true,
-              detail: lines.join('\n') || 'clean',
-              mutated: false
-            }
-          }
-        } else if (call.name === 'git_diff') {
-          const path = argString(call.args, 'path') || undefined
-          const d = await gitDiff(workspacePath, path)
-          result = {
-            ok: d.ok,
-            detail: d.ok ? d.diff : d.error || 'git diff failed',
-            mutated: false,
-            path
-          }
-        } else if (call.name === 'git_stage') {
-          const paths = Array.isArray(call.args.paths)
-            ? call.args.paths.map(String)
-            : argString(call.args, 'path')
-              ? [argString(call.args, 'path')]
-              : []
-          const staged = await gitStage(workspacePath, paths)
-          result = {
-            ok: staged.ok,
-            detail: staged.ok ? `Staged ${paths.join(', ')}` : staged.error || 'stage failed',
-            mutated: false
-          }
-        } else if (call.name === 'git_commit') {
-          const message = argString(call.args, 'message')
-          const committed = await gitCommit(workspacePath, message)
-          result = {
-            ok: committed.ok,
-            detail: committed.ok ? `Committed: ${message}` : committed.error || 'commit failed',
-            mutated: committed.ok
-          }
-        } else if (call.name === 'git_stash') {
-          const action = (argString(call.args, 'action', 'push') || 'push') as
-            'push' | 'pop' | 'list'
-          const message = argString(call.args, 'message') || undefined
-          const stashed = await gitStash(workspacePath, action, message)
-          result = {
-            ok: stashed.ok,
-            detail: stashed.ok
-              ? stashed.output || `stash ${action} ok`
-              : stashed.error || 'stash failed',
-            mutated: action !== 'list' && stashed.ok
-          }
-        } else if (call.name === 'git_sync') {
-          const action = (argString(call.args, 'action', 'pull') || 'pull') as
-            'fetch' | 'pull' | 'push'
-          const settings = options.settings
-          const remoteName = settings?.github?.remoteName || 'origin'
-          const branch = (await gitStatus(workspacePath)).branch
-          const tokenRef = settings?.github?.tokenRef
-          const token = tokenRef ? options.getSecret(tokenRef) : null
-          const ref = settings?.github?.repository
-            ? parseGithubRepo(settings.github.repository, settings.github.host || 'github.com')
-            : null
-          const synced = await pushPullFetch(
-            workspacePath,
-            action,
-            remoteName,
-            branch,
-            token,
-            ref,
-            settings?.github?.preferredProtocol || 'https'
-          )
-          result = {
-            ok: synced.ok,
-            detail: synced.ok
-              ? synced.output || `${action} ok`
-              : synced.error || `${action} failed`,
-            mutated: false
-          }
-        } else if (call.name === 'delete_path') {
-          const delPath = argString(call.args, 'path')
-          let before = ''
-          let wasDirectory = false
-          if (delPath) {
-            try {
-              const abs = resolveInWorkspace(workspacePath, delPath)
-              if (existsSync(abs)) {
-                wasDirectory = statSync(abs).isDirectory()
-                if (!wasDirectory) before = readFileSync(abs, 'utf8')
-              }
-            } catch {
-              // ignore
-            }
-          }
-          result = executeTool(workspacePath, call)
-          if (result.ok && delPath) {
-            const rec = recordDeleteOp(workspacePath, checkpoint.id, delPath, before, wasDirectory)
-            const opIndex = rec ? rec.ops.length - 1 : 0
-            yield {
-              type: 'diff',
-              diff: {
-                checkpointId: checkpoint.id,
-                opIndex,
-                path: result.path ?? delPath,
-                before,
-                after: '',
-                op: 'delete'
-              }
-            }
-          }
-        } else if (call.name === 'rename_path') {
-          const from = argString(call.args, 'path')
-          const to = argString(call.args, 'to')
-          const before = from ? snapshotBeforeWrite(workspacePath, checkpoint.id, from) : null
-          result = executeTool(workspacePath, call)
-          if (result.ok && from && to) {
-            const rec = recordRenameOp(workspacePath, checkpoint.id, from, to, before)
-            const opIndex = rec ? rec.ops.length - 1 : 0
-            yield {
-              type: 'diff',
-              diff: {
-                checkpointId: checkpoint.id,
-                opIndex,
-                path: `${from} → ${to}`,
-                before,
-                after: before ?? '',
-                op: 'rename'
-              }
-            }
-          }
-        } else if (call.name === 'mkdir') {
-          const mkdirPath = argString(call.args, 'path')
-          result = executeTool(workspacePath, call)
-          if (result.ok && result.mutated && mkdirPath) {
-            const rec = recordMkdirOp(workspacePath, checkpoint.id, mkdirPath)
-            const opIndex = rec ? rec.ops.length - 1 : 0
-            yield {
-              type: 'diff',
-              diff: {
-                checkpointId: checkpoint.id,
-                opIndex,
-                path: result.path ?? mkdirPath,
-                before: null,
-                after: '',
-                op: 'mkdir'
-              }
-            }
-          }
-        } else {
-          result = executeTool(workspacePath, call)
-        }
 
-        if (result.mutated) {
-          mutatedThisRound = true
-          workspaceMutated = true
-          forgetWorkspaceRead(result.path)
-          if (call.name === 'rename_path') forgetWorkspaceRead(argString(call.args, 'path'))
-          if (result.path) filesTouched.push(result.path)
-          if (pathNeedsProjectVerify(result.path)) {
-            codeMutated = true
-            codeMutatedThisRound = true
+          if (result.mutated) {
+            mutatedThisRound = true
+            workspaceMutated = true
+            forgetWorkspaceRead(result.path)
+            if (call.name === 'rename_path') forgetWorkspaceRead(argString(call.args, 'path'))
+            if (result.path) filesTouched.push(result.path)
+            if (pathNeedsProjectVerify(result.path)) {
+              codeMutated = true
+              codeMutatedThisRound = true
+              verifyPassedOnce = false
+              workflow.invalidateVerification()
+            }
           }
-        }
-        workflow.noteTool(result)
-        if (call.name === 'run' || call.name === 'git_sync' || mcpTool) {
-          // Commands and external tools may alter files without reporting their paths.
-          observedWorkspaceReads.clear()
-        }
-        if (result.ok) {
-          if (call.name === 'read_file' && result.path) {
-            recordWorkspaceRead(result.path, 'file')
-          } else if (call.name === 'notebook_read' && result.path) {
-            recordWorkspaceRead(result.path, 'notebook')
+          workflow.noteTool({ ...result, name: call.name })
+          yield { type: 'evidence', evidence: gateway.record(`${task.taskId}:${id}`, call, result) }
+          if (call.name === 'run' || call.name === 'git_sync' || mcpTool) {
+            // Commands and external tools may alter files without reporting their paths.
+            observedWorkspaceReads.clear()
           }
-          if (
-            call.name === 'read_file' &&
-            result.path &&
-            !result.path.replace(/\\/g, '/').startsWith('.eris/')
-          ) {
-            sourceReads.push({
-              path: result.path,
-              text: result.detail.slice(0, AGENT_HANDOFF_CHARS)
-            })
+          if (result.ok) {
+            if (call.name === 'read_file' && result.path) {
+              recordWorkspaceRead(result.path, 'file')
+            } else if (call.name === 'notebook_read' && result.path) {
+              recordWorkspaceRead(result.path, 'notebook')
+            }
+            if (
+              call.name === 'read_file' &&
+              result.path &&
+              !result.path.replace(/\\/g, '/').startsWith('.eris/')
+            ) {
+              sourceReads.push({
+                path: result.path,
+                text: result.detail.slice(0, AGENT_HANDOFF_CHARS)
+              })
+            }
+            if (call.name === 'tree') {
+              lastTreeResult = result.detail
+              lastInspectResult = result.detail
+            } else if (call.name === 'list_dir' || call.name === 'retrieve') {
+              lastInspectResult = result.detail
+              if (!lastTreeResult) lastTreeResult = result.detail
+            }
+            const label =
+              call.name === 'write_file' ||
+              call.name === 'search_replace' ||
+              call.name === 'apply_patch' ||
+              call.name === 'mkdir' ||
+              call.name === 'delete_path' ||
+              call.name === 'rename_path' ||
+              call.name === 'run' ||
+              call.name.startsWith('git_')
+                ? result.detail.split('\n')[0]!.slice(0, 160)
+                : call.name === 'read_file'
+                  ? `Read ${result.path ?? path ?? 'file'}`
+                  : call.name === 'tree' || call.name === 'list_dir'
+                    ? `Inspected ${result.path ?? path ?? '.'}`
+                    : call.name === 'verify'
+                      ? `Verify ${result.ok ? 'ok' : 'fail'}`
+                      : result.detail.slice(0, AGENT_HANDOFF_CHARS)
+            actionLog.push(label)
+            consecutiveToolErrors = 0
+          } else {
+            consecutiveToolErrors++
+            actionLog.push(
+              `Failed ${call.name}${path ? ` ${path}` : ''}: ${result.detail.slice(0, AGENT_HANDOFF_CHARS)}`
+            )
           }
-          if (call.name === 'tree') {
-            lastTreeResult = result.detail
-            lastInspectResult = result.detail
-          } else if (call.name === 'list_dir' || call.name === 'retrieve') {
-            lastInspectResult = result.detail
-            if (!lastTreeResult) lastTreeResult = result.detail
+          yield {
+            type: 'progress',
+            step,
+            actionLog: [...actionLog],
+            filesTouched: [...filesTouched]
           }
-          const label =
-            call.name === 'write_file' ||
-            call.name === 'search_replace' ||
-            call.name === 'apply_patch' ||
-            call.name === 'mkdir' ||
-            call.name === 'delete_path' ||
-            call.name === 'rename_path' ||
-            call.name === 'run' ||
-            call.name.startsWith('git_')
-              ? result.detail.split('\n')[0]!.slice(0, 160)
-              : call.name === 'read_file'
-                ? `Read ${result.path ?? path ?? 'file'}`
-                : call.name === 'tree' || call.name === 'list_dir'
-                  ? `Inspected ${result.path ?? path ?? '.'}`
-                  : call.name === 'verify'
-                    ? `Verify ${result.ok ? 'ok' : 'fail'}`
-                    : result.detail.slice(0, AGENT_HANDOFF_CHARS)
-          actionLog.push(label)
-          consecutiveToolErrors = 0
-        } else {
-          consecutiveToolErrors++
-          actionLog.push(
-            `Failed ${call.name}${path ? ` ${path}` : ''}: ${result.detail.slice(0, AGENT_HANDOFF_CHARS)}`
+          yield {
+            type: 'tool',
+            tool: {
+              id,
+              name: call.name,
+              path: result.path ?? path,
+              status: result.ok ? 'ok' : 'error',
+              effect: toolEffect,
+              changedResources: toolEffect === 'read' || !result.path ? [] : [result.path],
+              durationMs: Date.now() - toolStartedAt,
+              failure: result.ok ? undefined : toolFailureMetadata(result.detail, toolEffect),
+              detail: result.detail.slice(0, AGENT_HANDOFF_CHARS)
+            }
+          }
+          // Short breadcrumb only — detail stays on the tool row, not a wall of thinking text.
+          yield {
+            type: 'thinking',
+            text: `\n[${result.ok ? 'ok' : 'error'}] ${call.name}${
+              result.path ? ` ${result.path}` : ''
+            }\n`
+          }
+          resultParts.push(
+            `TOOL_RESULT ${call.name}${result.path ? ` path=${result.path}` : ''}:\n${truncateForModel(result.detail)}` +
+              (result.ok ? '' : `\nRECOVERY: ${toolFailureRecovery(call.name, result.detail)}`)
           )
+        } finally {
+          releaseWrite?.()
+          workerMessages.push({
+            role: 'tool',
+            tool_call_id: call.id!,
+            content:
+              resultParts.slice(resultStart).join('\n') ||
+              'Tool execution interrupted; no successful outcome was recorded.'
+          })
         }
-        yield { type: 'progress', step, actionLog: [...actionLog], filesTouched: [...filesTouched] }
-        yield {
-          type: 'tool',
-          tool: {
-            id,
-            name: call.name,
-            path: result.path ?? path,
-            status: result.ok ? 'ok' : 'error',
-            effect: toolEffect,
-            changedResources: toolEffect === 'read' || !result.path ? [] : [result.path],
-            durationMs: Date.now() - toolStartedAt,
-            failure: result.ok ? undefined : toolFailureMetadata(result.detail, toolEffect),
-            detail: result.detail.slice(0, AGENT_HANDOFF_CHARS)
-          }
-        }
-        // Short breadcrumb only — detail stays on the tool row, not a wall of thinking text.
-        yield {
-          type: 'thinking',
-          text: `\n[${result.ok ? 'ok' : 'error'}] ${call.name}${
-            result.path ? ` ${result.path}` : ''
-          }\n`
-        }
-        resultParts.push(
-          `TOOL_RESULT ${call.name}${result.path ? ` path=${result.path}` : ''}:\n${truncateForModel(result.detail)}` +
-            (result.ok ? '' : `\nRECOVERY: ${toolFailureRecovery(call.name, result.detail)}`)
-        )
       }
       if (webLookup) {
         if (!webSearchText && webSearchNudges < 1) {
@@ -3224,11 +3378,17 @@ export async function* runAgentWithWorkspaceTools(options: {
           yield { type: 'status', text: 'Verifying (typecheck/tests)…' }
           yield { type: 'thinking', text: '\n\n— Running verify (typecheck/tests)…\n' }
           // Mid-loop: typecheck-first, never npm install (keeps agent moving).
-          const verified = await runVerify(workspacePath, options.signal, {
+          const verified = await runVerify(executionRoot!, options.signal, {
             preferTypecheck: true,
             allowInstall: false
           })
           throwIfAborted(options.signal)
+          appendToolObservation(
+            workerMessages,
+            'run',
+            `VERIFY_RESULT (${verified.skipped ? 'skipped' : verified.ok ? 'passed' : 'failed'}):\n${verified.detail}`,
+            { command: verified.command }
+          )
           if (!verified.skipped) {
             yield { type: 'terminal', text: `$ ${verified.command}\n${verified.detail}\n` }
             yield {
@@ -3240,14 +3400,17 @@ export async function* runAgentWithWorkspaceTools(options: {
                 detail: verified.detail.slice(0, AGENT_HANDOFF_CHARS)
               }
             }
-            verifyNote = `\n\nVERIFY_RESULT (${verified.ok ? 'passed' : 'failed'}):\n${truncateForModel(verified.detail, 8000)}\n`
+            verifyNote = `\n\nVerification ${verified.ok ? 'passed' : 'failed'}; full result recorded above.\n`
             if (!verified.ok) {
               workflow.noteVerification('failed')
               verifyFailures++
               const missingDeps = looksLikeMissingDeps(verified.detail)
               verifyNote += `Verify failed (${verifyFailures}/${MAX_VERIFY_FAILURES}). Fix with write_file/read_file.\n`
               if (missingDeps) {
-                if (installAttempts >= MAX_BARE_INSTALLS_PER_RUN && hasNodeModules(workspacePath)) {
+                if (
+                  installAttempts >= MAX_BARE_INSTALLS_PER_RUN &&
+                  hasNodeModules(executionRoot!)
+                ) {
                   verifyNote += `Missing-module errors: prefer npm install <package> or fix imports — avoid bare install loops.\n`
                 } else {
                   verifyNote += `Missing-module errors: run npm install (or npm install <package>) in this workspace, then re-test.\n`
@@ -3288,23 +3451,29 @@ export async function* runAgentWithWorkspaceTools(options: {
               actionLog.push(`Verify passed: ${verified.command}`)
             }
           }
-          if (verified.skipped) workflow.noteVerification('skipped')
+          if (verified.skipped) {
+            workflow.noteVerification('skipped')
+            actionLog.push(`Verification skipped: ${verified.detail}`)
+          }
           workflow.transition('executing')
         }
       }
 
       if (onlyInspect) {
-        const snap = lastInspectResult || lastTreeResult || resultParts.join('\n\n')
-        workerMessages.push(nudgeAfterInspect(snap))
+        workerMessages.push({
+          role: 'system',
+          content:
+            'Inspection results are recorded above. Read relevant sources if evidence is missing; otherwise answer the original request with paths.'
+        })
       } else {
         const progress =
           filesTouched.length > 0
             ? `Files touched so far: ${[...new Set(filesTouched)].join(', ')}.\n`
             : ''
         workerMessages.push({
-          role: 'user',
+          role: 'system',
           content:
-            `${resultParts.join('\n\n')}${verifyNote}\n\n${progress}` +
+            `${verifyNote}\n\n${progress}` +
             (reviewOnly
               ? `If you still need evidence, emit read_file or run. ` +
                 `If you can already confirm the review, reply with a DONE summary and no tools. ` +

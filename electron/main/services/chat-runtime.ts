@@ -1,3 +1,5 @@
+import { contextBudgetTokens } from './agent/context-budget'
+import { compileModelMessages, budgetModelMessages, type ModelMessage } from './model-protocol'
 import type { AppSettings } from '../../../src/shared/settings-schema'
 import { isNativeGgufRef, resolveExactBuiltinRef, streamBuiltinChat } from './builtin-model'
 import { isLocalRef, resolveExactLocalRef } from './local-model'
@@ -8,11 +10,7 @@ import {
   type OpenAIToolDef
 } from './openai-compatible'
 import { resolveConnectionForModel } from './model-catalog'
-import {
-  estimateMessagesTokens,
-  estimateTokens,
-  recordModelUsage
-} from './usage-stats'
+import { estimateMessagesTokens, estimateTokens, recordModelUsage } from './usage-stats'
 
 export type { NativeToolCall, OpenAIToolDef }
 
@@ -31,14 +29,39 @@ export async function* streamModelChat(options: {
   /** Reuse local GGUF KV / chat session across agent steps. */
   sessionKey?: string
 }): AsyncGenerator<string, void, unknown> {
-  let model =
-    options.model || options.settings.models.defaultModel || 'builtin:composer-lite'
-  const inputEstimate = estimateMessagesTokens(
-    options.messages.map((m) => ({
-      role: m.role === 'tool' ? 'user' : m.role,
-      content: typeof m.content === 'string' ? m.content : ''
-    }))
+  let model = options.model || options.settings.models.defaultModel || 'builtin:composer-lite'
+  const protocol = isNativeGgufRef(model)
+    ? 'text-tools'
+    : (resolveConnectionForModel(options.settings, model)?.toolProtocol ?? 'native-tools')
+  const inputMessages = options.messages.map((message) => ({
+    ...message,
+    content: message.content ?? ''
+  })) as ModelMessage[]
+  if (protocol === 'text-tools' && options.tools?.length)
+    inputMessages.splice(1, 0, {
+      role: 'system',
+      content:
+        'Available tools (JSON schemas):\n' +
+        JSON.stringify(options.tools.map((tool) => tool.function))
+    })
+  const schemaTokens =
+    protocol === 'text-tools' ? 0 : Math.ceil(JSON.stringify(options.tools ?? []).length / 3)
+  const budgeted = budgetModelMessages(
+    inputMessages,
+    Math.max(512, contextBudgetTokens(options.settings, model) - schemaTokens)
   )
+  const compiled = compileModelMessages(budgeted.messages, {
+    protocol,
+    contextWindow: options.settings.models.contextWindow || 8192,
+    outputReserve: 1024
+  })
+  const inputEstimate =
+    estimateMessagesTokens(
+      compiled.map((message) => ({
+        role: message.role === 'tool' ? 'user' : message.role,
+        content: message.content ?? ''
+      }))
+    ) + schemaTokens
   let outputText = ''
   let provider: string | null = null
   let reportedPrompt: number | null = null
@@ -80,7 +103,7 @@ export async function* streamModelChat(options: {
       }
       for await (const chunk of streamBuiltinChat({
         modelRef: model,
-        messages: options.messages
+        messages: compiled
           .filter((m) => m.role === 'system' || m.role === 'user' || m.role === 'assistant')
           .map((m) => ({
             role: m.role as 'system' | 'user' | 'assistant',
@@ -114,10 +137,10 @@ export async function* streamModelChat(options: {
       baseUrl: connection.baseUrl,
       apiKey,
       model,
-      messages: options.messages as ChatRequestMessage[],
+      messages: compiled,
       temperature: options.temperature,
       signal: options.signal,
-      tools: options.tools,
+      tools: protocol === 'native-tools' ? options.tools : undefined,
       toolChoice: options.toolChoice,
       onNativeToolCalls: options.onNativeToolCalls,
       onUsage: (usage) => {

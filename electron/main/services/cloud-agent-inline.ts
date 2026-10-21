@@ -1,3 +1,4 @@
+import type { TaskContract } from '../../../src/shared/task-contract'
 /**
  * Run a Cloud Agent job and stream progress into the same chat event shape
  * as the local agent loop (thinking / status / tools / answer / diffs).
@@ -68,9 +69,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 function syncAuth(settings: AppSettings, getSecret: (ref: string) => string | null): boolean {
-  const token = settings.ericServices.tokenRef
-    ? getSecret(settings.ericServices.tokenRef)
-    : null
+  const token = settings.ericServices.tokenRef ? getSecret(settings.ericServices.tokenRef) : null
   const ok = isEricServicesAuthenticated(settings, token)
   setCloudAgentsAuthToken(ok ? token : null)
   return ok
@@ -114,12 +113,16 @@ export async function prefetchCloudAgentsWarm(
  */
 export async function cloudInlineAvailable(
   settings: AppSettings,
-  getSecret: (ref: string) => string | null
+  getSecret: (ref: string) => string | null,
+  requiredTaskVersion = 1
 ): Promise<boolean> {
   if (!syncAuth(settings, getSecret)) return false
   try {
     const health = await refreshInlineHealth(false)
-    return shouldUseCloudAgents(health)
+    return (
+      shouldUseCloudAgents(health) &&
+      (requiredTaskVersion === 1 || (health?.taskContractVersion ?? 1) >= requiredTaskVersion)
+    )
   } catch {
     return false
   }
@@ -150,7 +153,6 @@ function* emitJobDelta(
   }
 
   for (const t of current.recentTools || []) {
-    const key = `${t.id}:${t.status}`
     if (state.seenTools.get(t.id) === t.status) continue
     state.seenTools.set(t.id, t.status)
     yield {
@@ -173,24 +175,15 @@ function* emitJobDelta(
   }
 }
 
-async function* pollJobUntilDone(
-  jobId: string,
-  signal?: AbortSignal
-): AsyncGenerator<CloudJob> {
-  let current: CloudJob | null = null
+async function* pollJobUntilDone(jobId: string, signal?: AbortSignal): AsyncGenerator<CloudJob> {
   while (true) {
     if (signal?.aborted) {
       throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
     }
     const next = await getCloudJob(jobId)
     if (next) {
-      current = next
       yield next
-      if (
-        next.status === 'done' ||
-        next.status === 'failed' ||
-        next.status === 'stopped'
-      ) {
+      if (next.status === 'done' || next.status === 'failed' || next.status === 'stopped') {
         return
       }
     }
@@ -199,6 +192,7 @@ async function* pollJobUntilDone(
 }
 
 export async function* runCloudAgentInline(options: {
+  task?: TaskContract
   workspacePath: string
   settings: AppSettings
   goal: string
@@ -222,7 +216,9 @@ export async function* runCloudAgentInline(options: {
   yield { type: 'status', text: 'Starting Cloud Agent…' }
 
   const health = await refreshInlineHealth(false)
-  const cloudWarming = Boolean(health && shouldUseCloudAgents(health) && !isCloudAgentsReady(health))
+  const cloudWarming = Boolean(
+    health && shouldUseCloudAgents(health) && !isCloudAgentsReady(health)
+  )
   if (cloudWarming) {
     const detail =
       health?.localModel?.status === 'downloading'
@@ -239,17 +235,13 @@ export async function* runCloudAgentInline(options: {
     repoUrl = `https://${host}/${settings.github.repository}.git`
     branch = settings.github.defaultBranch || 'main'
   }
-  const githubToken = settings.github.tokenRef
-    ? getSecret(settings.github.tokenRef)
-    : null
+  const githubToken = settings.github.tokenRef ? getSecret(settings.github.tokenRef) : null
 
   // Prefer clone over shipping file bodies — avoids multi‑MB seed + dual workspace prep.
-  const files =
-    repoUrl && githubToken
-      ? []
-      : collectWorkspaceFilesForCloud(workspacePath)
+  const files = repoUrl && githubToken ? [] : collectWorkspaceFilesForCloud(workspacePath)
 
   const job = await enqueueCloudJob({
+    task: options.task,
     goal,
     agentId,
     model: 'composer',
@@ -346,7 +338,7 @@ export async function* runCloudAgentInline(options: {
 
     if (current.hasArtifacts || (current.artifactCount && current.artifactCount > 0)) {
       yield { type: 'status', text: 'Applying file changes…' }
-      const applied = await applyCloudJobArtifacts(workspacePath, current.id)
+      const applied = await applyCloudJobArtifacts(workspacePath, current.id, options.task)
       if (applied.ok && applied.diffs.length) {
         yield { type: 'checkpoint', checkpointId: applied.checkpointId }
         for (const d of applied.diffs) {

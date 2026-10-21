@@ -5,8 +5,7 @@ import { COMPOSER_OPENAI_TOOLS } from '../tool-registry'
 import type { ToolCall } from './types'
 
 const TOOL_BLOCK_RE = /<<<TOOL>>>\s*([\s\S]*?)\s*<<<END>>>/gi
-const TOOL_XML_RE =
-  /<tool_call>\s*<name>\s*([^<]+?)\s*<\/name>\s*([\s\S]*?)<\/tool_call>/gi
+const TOOL_XML_RE = /<tool_call>\s*<name>\s*([^<]+?)\s*<\/name>\s*([\s\S]*?)<\/tool_call>/gi
 
 export function parseJsonObject(text: string): Record<string, unknown> | null {
   const trimmed = text.trim()
@@ -103,9 +102,7 @@ function pushToolEnvelope(
   const args =
     nested && typeof nested === 'object' && !Array.isArray(nested)
       ? (nested as Record<string, unknown>)
-      : Object.fromEntries(
-          Object.entries(envelope).filter(([key]) => key !== 'name')
-        )
+      : Object.fromEntries(Object.entries(envelope).filter(([key]) => key !== 'name'))
   pushToolCall(calls, seen, envelope.name, args, raw)
 }
 
@@ -120,7 +117,9 @@ export function parseToolCalls(text: string): ToolCall[] {
   }
 
   FENCE_JSON_RE.lastIndex = 0
-  while ((m = FENCE_JSON_RE.exec(text)) !== null) {
+  const fencedOnly = text.replace(FENCE_JSON_RE, '').trim().length === 0
+  FENCE_JSON_RE.lastIndex = 0
+  while (fencedOnly && (m = FENCE_JSON_RE.exec(text)) !== null) {
     pushToolEnvelope(calls, seen, parseJsonObject(m[1]), m[0])
   }
 
@@ -139,9 +138,11 @@ export function parseToolCalls(text: string): ToolCall[] {
   }
 
   // Bare / unfenced JSON objects (including incomplete fences that still have a full object)
-  for (const raw of extractBalancedJsonObjects(text)) {
-    pushToolEnvelope(calls, seen, parseJsonObject(raw), raw)
-  }
+  const bare = extractBalancedJsonObjects(text)
+  const residue = bare
+    .reduce((value, raw) => value.replace(raw, ''), text)
+    .replace(/[\s,;[\]]/g, '')
+  if (!residue) for (const raw of bare) pushToolEnvelope(calls, seen, parseJsonObject(raw), raw)
 
   return calls
 }
@@ -195,19 +196,17 @@ export function argString(args: Record<string, unknown>, key: string, fallback =
 }
 
 export function nativeToToolCalls(calls: NativeToolCall[]): ToolCall[] {
-  const out: ToolCall[] = []
-  const seen = new Set<string>()
-  for (const c of calls) {
+  return calls.map((call) => {
     let args: Record<string, unknown> = {}
+    let parseError: string | undefined
     try {
-      const parsed = JSON.parse(c.arguments || '{}') as unknown
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        args = parsed as Record<string, unknown>
-      }
+      const parsed = JSON.parse(call.arguments || '{}')
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+        throw new Error('Arguments must be an object')
+      args = parsed
     } catch {
-      args = {}
+      parseError = 'Malformed native tool arguments; return a valid JSON object.'
     }
-    pushToolCall(out, seen, c.name, args, c.arguments || c.name)
-  }
-  return out
+    return { id: call.id, name: call.name, args, raw: call.arguments, parseError }
+  })
 }

@@ -1,8 +1,10 @@
+import type { TaskContract } from './task-contract'
 /** Minimum characters kept when one agent passes text to another. */
 export const AGENT_HANDOFF_CHARS = 8_000
 
 /** Structured handoff between orchestrator and specialist agents. */
 export interface AgentHandoffPacket {
+  task?: TaskContract
   parentGoal?: string
   goal: string
   summary: string
@@ -42,6 +44,9 @@ export function formatHandoffForPrompt(packet: AgentHandoffPacket): string {
     `From: ${packet.fromAgentId}`,
     packet.parentGoal ? `Parent request: ${packet.parentGoal}` : '',
     `Goal: ${packet.goal}`,
+    packet.task
+      ? `Task ${packet.task.taskId} · scope ${packet.task.scope.projectRoot} · tools ${packet.task.authority.tools}`
+      : '',
     `Summary: ${packet.summary}`
   ]
   if (packet.files?.length) lines.push(`Files: ${packet.files.join(', ')}`)

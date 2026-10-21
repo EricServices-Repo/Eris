@@ -1,4 +1,4 @@
-export type ChatJobStatus = 'running' | 'done' | 'stopped' | 'failed'
+export type ChatJobStatus = 'running' | 'done' | 'stopped' | 'failed' | 'incomplete'
 
 export type ChatJobEvent = {
   sequence: number

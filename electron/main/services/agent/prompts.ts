@@ -1,3 +1,8 @@
+import { loadWorkspaceRules } from '../chats'
+import { loadSkillsPrompt } from '../skills'
+import { findAgent } from '../agents'
+import { compileTaskContext } from './context-compiler'
+import { contextBudgetTokens } from './context-budget'
 import type { AppSettings, ChatIntent, TurnPlan } from '../../../../src/shared/settings-schema'
 import { AGENT_HANDOFF_CHARS } from '../../../../src/shared/agent-orchestration'
 import { formatMcpServersPrompt } from '../mcp'
@@ -260,19 +265,31 @@ export function buildPreservedWorkerMessages(options: {
   originalUserGoal: string
   retrievalHint: string
   mcpToolCount: number
+  inputTokenBudget?: number
 }): AgentChatMessage[] {
   const priorSystem = options.messages.find((m) => m.role === 'system')?.content || ''
   const readOnly = isReadOnlyChat(options.plan, options.plan.mode)
+  const historyTail = workerConversation(options.messages, options.originalUserGoal)
+  const playbook = intentPlaybook(options.plan.intent, false)
+  const contract = contractForAgent(options.plan.agentId)
+
+  if (options.plan.task) {
+    const compiled = compileTaskContext({
+      task: options.plan.task,
+      guidance: `${options.settings.agent.systemPrompt}\n${loadWorkspaceRules(options.workspacePath)}\n${options.plan.task.skillIds?.length ? loadSkillsPrompt(options.workspacePath, options.plan.task.skillIds) : ''}\n${findAgent(options.workspacePath, options.plan.agentId)?.builtin === false ? findAgent(options.workspacePath, options.plan.agentId)?.systemPrompt : ''}\n${contract ? `Role: ${contract.name}. ${contract.job} ${contract.done}` : ''}\n${playbook}`,
+      project: priorSystem,
+      retrieval: options.retrievalHint,
+      maxInputTokens:
+        options.inputTokenBudget ?? contextBudgetTokens(options.settings, options.plan.models.tools)
+    })
+    return [compiled.message, ...historyTail, { role: 'user', content: options.originalUserGoal }]
+  }
   const toolsSystem = buildWorkspaceToolsSystem(
     options.workspacePath,
     options.settings,
     readOnly ? READ_AGENT_PROMPT : TOOLS_PROMPT,
     options.mcpToolCount > 0
   )
-  const historyTail = workerConversation(options.messages, options.originalUserGoal)
-  const playbook = intentPlaybook(options.plan.intent, false)
-  const contract = contractForAgent(options.plan.agentId)
-
   const out: AgentChatMessage[] = [
     {
       role: 'system',

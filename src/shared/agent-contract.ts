@@ -23,7 +23,8 @@ export const CHAT_AGENT_CONTRACTS: ChatAgentContract[] = [
     job: 'Owns changes: inspect the workspace, edit it, verify, and delegate only when the work splits.',
     tools: 'full',
     auto: true,
-    doesNot: 'Does not ask the user to paste files that are already in the workspace, and does not hand off a small single-file fix.',
+    doesNot:
+      'Does not ask the user to paste files that are already in the workspace, and does not hand off a small single-file fix.',
     done: 'A short summary of files changed or what was found. Delegated work is included only after those agents finish.'
   },
   {
@@ -41,7 +42,8 @@ export const CHAT_AGENT_CONTRACTS: ChatAgentContract[] = [
     job: 'Reads the workspace and explains how it actually behaves.',
     tools: 'read',
     auto: true,
-    doesNot: 'Does not edit files. In Ask mode it may read relevant workspace sources but cannot mutate or run commands.',
+    doesNot:
+      'Does not edit files. In Ask mode it may read relevant workspace sources but cannot mutate or run commands.',
     done: 'A short explanation with the real file paths and symbols it read.'
   },
   {
@@ -50,7 +52,8 @@ export const CHAT_AGENT_CONTRACTS: ChatAgentContract[] = [
     job: 'Reads the change or the project and reports bugs, risks, and missing tests.',
     tools: 'read',
     auto: true,
-    doesNot: 'Does not edit. May run project tests, typecheck, or lint. If the user wants fixes, it says to run Composer.',
+    doesNot:
+      'Does not edit. May run project tests, typecheck, or lint. If the user wants fixes, it says to run Composer.',
     done: 'Findings with a path, what is wrong, why it matters, and a suggested fix. Ordered blockers, risks, suggestions, nits.'
   },
   {
@@ -108,8 +111,7 @@ export function asksToImplementChanges(text: string): boolean {
   return (
     /\b(?:code|implement|apply|write|build|make|add)\b[\s\S]{0,48}\b(?:these|those|the|above|recommended|suggested)?\s*(?:changes?|improvements?|fixes?)\b/i.test(
       t
-    ) ||
-    /\b(?:code|implement|apply|write|build|make|add)\s+(?:it|that|those|them|these)\b/i.test(t)
+    ) || /\b(?:code|implement|apply|write|build|make|add)\s+(?:it|that|those|them|these)\b/i.test(t)
   )
 }
 
@@ -117,7 +119,9 @@ export function asksToImplementChanges(text: string): boolean {
 export function asksForPlan(text: string): boolean {
   const t = text.trim()
   if (!t || asksToImplementChanges(t)) return false
-  if (/\b(?:and|then)\s+(?:implement|code|build|create|write|add|change|update|fix|apply)\b/i.test(t)) {
+  if (
+    /\b(?:and|then)\s+(?:implement|code|build|create|write|add|change|update|fix|apply)\b/i.test(t)
+  ) {
     return false
   }
   return (
@@ -170,6 +174,15 @@ export function asksForRecommendations(text: string): boolean {
   const t = text.trim()
   if (!t) return false
   if (asksToImplementChanges(t)) return false
+  // A review request phrased as “review the code, improve it for …” asks for
+  // improvement advice. A separate “and improve/make changes” asks for edits.
+  const reviewImprovementQuestion =
+    /^(?:please\s+)?review\b[\s\S]{0,160}\bimprov(?:e|ements?)\b/i.test(t) &&
+    !/\b(?:and|then)\s+(?:improve|make|apply|implement|fix|edit|change|update|code|write)\b/i.test(
+      t
+    ) &&
+    !/\bmake\s+(?:those\s+|the\s+)?improvements?\b/i.test(t)
+  if (reviewImprovementQuestion) return true
   if (
     /\b(make|apply|implement)\s+(the\s+|some\s+|these\s+)?improvements?\b/i.test(t) &&
     !/\bwhat\b/i.test(t)
@@ -188,8 +201,12 @@ export function needsWebLookup(text: string): boolean {
   const t = text.trim()
   if (!t) return false
   return (
-    /\b(internet|on the web|online|search (?:the )?web|look up online|look up on the web)\b/i.test(t) ||
-    /\b(latest|current|recent|today|yesterday|this week|this month|as of now)\b[\s\S]{0,60}\b(news|price|prices|release|version|weather|schedule|policy|law|regulation|market|score|availability|status)\b/i.test(t) ||
+    /\b(internet|on the web|online|search (?:the )?web|look up online|look up on the web)\b/i.test(
+      t
+    ) ||
+    /\b(latest|current|recent|today|yesterday|this week|this month|as of now)\b[\s\S]{0,60}\b(news|price|prices|release|version|weather|schedule|policy|law|regulation|market|score|availability|status)\b/i.test(
+      t
+    ) ||
     /\bwho (is|was|are)\b/i.test(t)
   )
 }
@@ -199,9 +216,15 @@ export function asksWorkspaceQuestion(text: string, fileNames: string[] = []): b
   const t = text.trim()
   if (!t) return false
   if (
-    /\b(this|that|the|my|our)\s+(project|repo|repository|workspace|codebase|app|application|folder|file|code|component|function|service|api)\b/i.test(t) ||
-    /\b(where is|which file|what file|find (?:the )?(?:file|function|class|component)|in the (?:repo|project|workspace))\b/i.test(t) ||
-    /\b(stack trace|test failure|build error|source code|bug|exception|crash(?:es|ed|ing)?|fail(?:s|ed|ing)?|broken|not working|doesn't work|compile error|compiler error|import error)\b/i.test(t)
+    /\b(this|that|the|my|our)\s+(project|repo|repository|workspace|codebase|app|application|folder|file|code|component|function|service|api)\b/i.test(
+      t
+    ) ||
+    /\b(where is|which file|what file|find (?:the )?(?:file|function|class|component)|in the (?:repo|project|workspace))\b/i.test(
+      t
+    ) ||
+    /\b(stack trace|test failure|build error|source code|bug|exception|crash(?:es|ed|ing)?|fail(?:s|ed|ing)?|broken|not working|doesn't work|compile error|compiler error|import error)\b/i.test(
+      t
+    )
   ) {
     return true
   }
@@ -236,10 +259,7 @@ export function agentForFollowUp(
 ): ChatAgentContract['id'] | null {
   if (!isConversationFollowUp(text)) return null
   if (/\bwhat did you (change|do|edit)\b/i.test(text)) return 'explainer'
-  if (
-    asksToImplementChanges(text) ||
-    /\b(fix|change|edit|implement|update|apply)\b/i.test(text)
-  ) {
+  if (asksToImplementChanges(text) || /\b(fix|change|edit|implement|update|apply)\b/i.test(text)) {
     return 'composer'
   }
   if (previousAgentId && BY_ID.has(previousAgentId as ChatAgentContract['id'])) {
@@ -280,8 +300,6 @@ export function chatAgentForTurn(options: {
 
   if (options.intent === 'plan') return 'planner'
   if (options.intent === 'verify') return 'verifier'
-  const follow = agentForFollowUp(text, options.previousAgentId)
-  if (follow) return follow
   if (needsWebLookup(text)) return 'explainer'
   if (asksWhatTheProjectDoes(text)) return 'explainer'
   if (options.intent === 'review') return 'reviewer'

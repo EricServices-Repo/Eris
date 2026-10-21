@@ -14,12 +14,7 @@ import { suppressWatcherFor } from './workspace-watcher'
 import type { AgentChatMessage } from './agent/types'
 
 export type AgentSessionStatus =
-  | 'running'
-  | 'done'
-  | 'stopped'
-  | 'failed'
-  | 'incomplete'
-  | 'dismissed'
+  'running' | 'done' | 'stopped' | 'failed' | 'incomplete' | 'dismissed'
 
 export interface AgentSessionStep {
   step: number
@@ -93,12 +88,21 @@ export function compactWorkerMessagesForSession(
     const m = messages[i]!
     const len = m.content?.length ?? 0
     if (out.length > 0 && total + len > maxChars) break
-    out.push({ role: m.role, content: m.content })
+    out.push({ ...m })
     total += len
   }
   out.reverse()
+  // Never persist an orphaned tool result after trimming the call that owns it.
+  while (out[0]?.role === 'tool') out.shift()
+  const pinned = messages.find((message) => message.role === 'system')
+  if (
+    pinned &&
+    !out.includes(pinned) &&
+    !out.some((message) => message.role === 'system' && message.content === pinned.content)
+  )
+    out.unshift({ ...pinned })
   if (out.length < messages.length) {
-    out.unshift({
+    out.splice(pinned ? 1 : 0, 0, {
       role: 'system',
       content: `[Eris] Earlier session context trimmed (${messages.length - out.length} messages). Continue from the preserved turns.`
     })
@@ -222,8 +226,9 @@ export function listSessionSteps(
   if (!workspacePath) return []
   const dir = stepsDir(workspacePath, sessionId)
   if (!existsSync(dir)) return []
-  const out: Array<Pick<AgentSessionStep, 'step' | 'opThrough' | 'summary' | 'ts' | 'filesTouched'>> =
-    []
+  const out: Array<
+    Pick<AgentSessionStep, 'step' | 'opThrough' | 'summary' | 'ts' | 'filesTouched'>
+  > = []
   for (const name of readdirSync(dir)) {
     if (!name.endsWith('.json')) continue
     const n = Number(name.replace(/\.json$/, ''))

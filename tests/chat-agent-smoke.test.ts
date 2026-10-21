@@ -11,6 +11,8 @@ import { join } from 'path'
 const harness = vi.hoisted(() => ({
   replies: [] as string[],
   prompts: [] as string[],
+  nativeCalls: [] as Array<Array<{ id: string; name: string; arguments: string }> | undefined>,
+  transcripts: [] as Array<Array<{ role: string; content: string }>>,
   verifyCalls: 0,
   verifyResults: [] as Array<{
     ok: boolean
@@ -23,8 +25,12 @@ const harness = vi.hoisted(() => ({
 vi.mock('../electron/main/services/chat-runtime', () => ({
   streamModelChat: async function* (options: {
     messages: Array<{ role: string; content: string }>
+    onNativeToolCalls?: (calls: Array<{ id: string; name: string; arguments: string }>) => void
   }) {
-    harness.prompts.push(options.messages.at(-1)?.content ?? '')
+    harness.prompts.push(options.messages.map((message) => message.content).join('\n'))
+    harness.transcripts.push(structuredClone(options.messages))
+    const native = harness.nativeCalls.shift()
+    if (native) options.onNativeToolCalls?.(native)
     yield harness.replies.shift() ?? 'DONE: The smoke-test model ran out of scripted replies.'
   }
 }))
@@ -65,6 +71,7 @@ vi.mock('../electron/main/services/code-index', () => ({
 }))
 
 import { runAgentWithWorkspaceTools } from '../electron/main/services/agent/loop'
+
 import { getDefaults } from '../electron/main/services/settings'
 import type { AgentChatMessage, AgentRunnerEvent } from '../electron/main/services/agent/types'
 import type { TurnPlan } from '../src/shared/settings-schema'
@@ -103,6 +110,8 @@ beforeEach(() => {
       ''
     ].join('\n')
   )
+  harness.nativeCalls.length = 0
+  harness.transcripts.length = 0
   harness.replies.length = 0
   harness.prompts.length = 0
   harness.verifyCalls = 0
@@ -520,5 +529,140 @@ it('runs chat specialists in the active workspace even when background delegatio
     ])
   )
   expect(harness.verifyCalls).toBeGreaterThan(0)
+  expectCompleted(events)
+})
+
+it('does not inspect or edit an unrelated project when the named site is absent', async () => {
+  const events = await drain(
+    runAgentWithWorkspaceTools({
+      workspacePath,
+      settings: getDefaults(),
+      model: 'builtin:composer-lite',
+      messages: [{ role: 'user', content: 'Review the code, improve it for the AirBNB website' }],
+      temperature: 0,
+      getSecret: () => null,
+      mode: 'agent',
+      turnPlan: fullEditPlan(),
+      mcp: 'off'
+    })
+  )
+  expect(lastAnswer(events)).toContain("couldn't identify the requested project")
+  expect(toolsFrom(events)).toHaveLength(0)
+  expect(readFileSync(join(workspacePath, 'src/retry.ts'), 'utf8')).toContain('MAX_RETRIES = 3')
+})
+
+it('blocks a model write to another project when the named site is present', async () => {
+  mkdirSync(join(workspacePath, 'airbnb-clone'))
+  harness.replies.push(
+    JSON.stringify({ name: 'write_file', path: 'src/retry.ts', content: 'wrong project' }),
+    'DONE: Updated the site.'
+  )
+  const settings = structuredClone(getDefaults())
+  settings.agent.maxStepsPerRun = 2
+  const events = await drain(
+    runAgentWithWorkspaceTools({
+      workspacePath,
+      settings,
+      model: 'builtin:composer-lite',
+      messages: [{ role: 'user', content: 'Improve it for the AirBNB website' }],
+      temperature: 0,
+      getSecret: () => null,
+      mode: 'agent',
+      turnPlan: fullEditPlan(),
+      mcp: 'off'
+    })
+  )
+  expect(readFileSync(join(workspacePath, 'src/retry.ts'), 'utf8')).toContain('MAX_RETRIES = 3')
+  expect(toolsFrom(events)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        name: 'write_file',
+        status: 'error',
+        detail: expect.stringContaining('another project')
+      })
+    ])
+  )
+})
+
+it('replays native call IDs and tool results through a real read-edit-verify loop', async () => {
+  harness.nativeCalls.push(
+    [{ id: 'native-read', name: 'read_file', arguments: JSON.stringify({ path: 'src/retry.ts' }) }],
+    [
+      {
+        id: 'native-edit',
+        name: 'search_replace',
+        arguments: JSON.stringify({
+          path: 'src/retry.ts',
+          old_string: 'MAX_RETRIES = 3',
+          new_string: 'MAX_RETRIES = 5'
+        })
+      }
+    ]
+  )
+  harness.replies.push(
+    '',
+    '',
+    'DONE: Changed src/retry.ts to five retries and verification passed.'
+  )
+  const plan = fullEditPlan()
+  plan.models = { chat: 'api:test', tools: 'api:test' }
+  const events = await drain(
+    runAgentWithWorkspaceTools({
+      workspacePath,
+      settings: getDefaults(),
+      model: 'api:test',
+      messages: [{ role: 'user', content: 'Set MAX_RETRIES to 5 in src/retry.ts' }],
+      temperature: 0,
+      getSecret: () => null,
+      mode: 'agent',
+      turnPlan: plan,
+      mcp: 'off'
+    })
+  )
+  expect(readFileSync(join(workspacePath, 'src/retry.ts'), 'utf8')).toContain('MAX_RETRIES = 5')
+  expect(harness.transcripts[1]).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        role: 'assistant',
+        tool_calls: expect.arrayContaining([expect.objectContaining({ id: 'native-read' })])
+      }),
+      expect.objectContaining({
+        role: 'tool',
+        tool_call_id: 'native-read',
+        content: expect.stringContaining('MAX_RETRIES = 3')
+      })
+    ])
+  )
+  expect(events.filter((event) => event.type === 'progress' && event.incomplete)).toEqual([])
+  expectCompleted(events)
+})
+
+it('requires fresh verification after a later source edit', async () => {
+  for (const [before, after] of Array.from({ length: 9 }, (_, index) => [index + 3, index + 4]))
+    harness.replies.push(
+      JSON.stringify({ name: 'read_file', path: 'src/retry.ts' }),
+      JSON.stringify({
+        name: 'search_replace',
+        path: 'src/retry.ts',
+        old_string: `MAX_RETRIES = ${before}`,
+        new_string: `MAX_RETRIES = ${after}`
+      })
+    )
+  harness.replies.push('DONE: Updated src/retry.ts to twelve retries and verified the final code.')
+  const events = await drain(
+    runAgentWithWorkspaceTools({
+      workspacePath,
+      settings: getDefaults(),
+      model: 'builtin:composer-lite',
+      messages: [{ role: 'user', content: 'Set MAX_RETRIES to 6 in src/retry.ts' }],
+      temperature: 0,
+      getSecret: () => null,
+      mode: 'agent',
+      turnPlan: fullEditPlan(),
+      mcp: 'off'
+    })
+  )
+  expect(readFileSync(join(workspacePath, 'src/retry.ts'), 'utf8')).toContain('MAX_RETRIES = 12')
+  expect(harness.verifyCalls).toBe(2)
   expectCompleted(events)
 })

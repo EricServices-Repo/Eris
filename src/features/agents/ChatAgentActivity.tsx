@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { TaskContract } from '@/shared/task-contract'
 import type { ChatJobSnapshot } from '@/shared/chat-jobs'
 
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
@@ -33,6 +34,7 @@ export function ChatAgentActivity() {
     .slice()
     .reverse()
     .find((event) => event.channel === 'chat:routed')?.payload
+  const task = route?.task as TaskContract | undefined
   const plan =
     route?.executionPlan && typeof route.executionPlan === 'object'
       ? (route.executionPlan as Record<string, unknown>)
@@ -63,6 +65,13 @@ export function ChatAgentActivity() {
       ) : (
         <>
           <p className="agent-current-goal">{job.goal}</p>
+          {task && (
+            <p className="agents-inbox-live">
+              {task.deliverable} ·{' '}
+              {task.scope.projectRoot?.split(/[\\/]/).pop() || 'Project unresolved'} ·{' '}
+              {task.authority.edit ? 'Changes allowed' : 'Read only'}
+            </p>
+          )}
           <dl className="agent-route-facts">
             <div>
               <dt>Owner</dt>

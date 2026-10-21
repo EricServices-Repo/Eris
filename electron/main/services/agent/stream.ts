@@ -1,8 +1,13 @@
 import type { AppSettings } from '../../../../src/shared/settings-schema'
-import { isBuiltinRef, isNativeGgufRef } from '../builtin-model'
+import { isNativeGgufRef } from '../builtin-model'
 import { streamModelChat, type OpenAIToolDef } from '../chat-runtime'
 import { looksLikeDegenerateLoop } from './heuristics'
-import { hasExecutableToolCall, nativeToToolCalls, stripToolBlocks, thinkingBeforeTools } from './tool-parsing'
+import {
+  hasExecutableToolCall,
+  nativeToToolCalls,
+  stripToolBlocks,
+  thinkingBeforeTools
+} from './tool-parsing'
 import type { AgentChatMessage, ToolCall } from './types'
 
 /** Collect a one-shot model reply without streaming to the UI. */
@@ -47,8 +52,7 @@ export async function* streamThinkingText(options: {
       full: string
       aborted?: 'loop' | 'tool' | 'user'
       nativeToolCalls?: ToolCall[]
-    }
-  ,
+    },
   void,
   unknown
 > {
@@ -76,9 +80,7 @@ export async function* streamThinkingText(options: {
     chunk.includes('</tool')
 
   const useNativeTools =
-    Boolean(options.tools?.length) &&
-    options.stopOnToolCall &&
-    !isBuiltinRef(options.model)
+    Boolean(options.tools?.length) && options.stopOnToolCall && !isNativeGgufRef(options.model)
 
   try {
     rethrowIfUserStop()
@@ -91,7 +93,7 @@ export async function* streamThinkingText(options: {
       getSecret: options.getSecret,
       builtinJsonSchema: options.builtinJsonSchema,
       sessionKey: isNativeGgufRef(options.model) ? options.sessionKey : undefined,
-      tools: useNativeTools ? options.tools : undefined,
+      tools: options.stopOnToolCall ? options.tools : undefined,
       toolChoice: useNativeTools ? 'auto' : undefined,
       onNativeToolCalls: useNativeTools
         ? (calls) => {
@@ -146,10 +148,7 @@ export async function* streamThinkingText(options: {
   } catch (err) {
     const name = err instanceof Error ? err.name : ''
     const msg = err instanceof Error ? err.message : String(err)
-    const isAbort =
-      name === 'AbortError' ||
-      localAbort.signal.aborted ||
-      /abort/i.test(msg)
+    const isAbort = name === 'AbortError' || localAbort.signal.aborted || /abort/i.test(msg)
 
     // User clicked Stop — unwind the whole agent run (do not continue tools).
     if (options.signal?.aborted) {
@@ -161,8 +160,7 @@ export async function* streamThinkingText(options: {
     // Local abort only (early tool stop / stream cancel) — hand partial text back.
     if (isAbort) {
       const reason: 'tool' | undefined =
-        options.stopOnToolCall &&
-        (Boolean(nativeToolCalls?.length) || hasExecutableToolCall(full))
+        options.stopOnToolCall && (Boolean(nativeToolCalls?.length) || hasExecutableToolCall(full))
           ? 'tool'
           : undefined
       yield { kind: 'done', full, aborted: reason, nativeToolCalls }

@@ -101,7 +101,14 @@ export function finishChatJob(id: string, status: ChatJobStatus): void {
   const job = jobs.get(id)
   if (!job) return
   job.status = status
-  job.statusText = status === 'done' ? 'Done' : status === 'stopped' ? 'Stopped' : 'Failed'
+  job.statusText =
+    status === 'done'
+      ? 'Done'
+      : status === 'stopped'
+        ? 'Stopped'
+        : status === 'incomplete'
+          ? 'Incomplete'
+          : 'Failed'
   job.updatedAt = new Date().toISOString()
   const timer = persistTimers.get(id)
   if (timer) clearTimeout(timer)
@@ -126,6 +133,18 @@ export function getLatestChatJob(workspacePath?: string | null): ChatJobSnapshot
     }
     jobs.set(parsed.id, parsed)
     return structuredClone(parsed)
+  } catch {
+    return null
+  }
+}
+
+/** Idempotence also covers completed submissions and process restarts. */
+export function getChatJob(id: string): ChatJobSnapshot | null {
+  const memory = jobs.get(id)
+  if (memory) return structuredClone(memory)
+  try {
+    const job = JSON.parse(readFileSync(jobPath(id), 'utf8')) as ChatJobSnapshot
+    return job.id === id ? job : null
   } catch {
     return null
   }

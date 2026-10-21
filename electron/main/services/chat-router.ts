@@ -9,11 +9,7 @@ import type {
   TurnPlan
 } from '../../../src/shared/settings-schema'
 import { allAgentsFlat, findAgent } from './agents'
-import {
-  isBuiltinRef,
-  isExactBuiltinReady,
-  resolveExactBuiltinRef
-} from './builtin-model'
+import { isBuiltinRef, isExactBuiltinReady, resolveExactBuiltinRef } from './builtin-model'
 import { getLocalStatuses, isLocalRef, resolveExactLocalRef } from './local-model'
 import { streamModelChat } from './chat-runtime'
 import { getToolContract, type ToolAccess } from './tool-registry'
@@ -61,7 +57,13 @@ const NON_CHAT_LOCAL = /mmproj|embed|clip|vision|encoder/i
  * Unknown or too-small budgets stay on Composer Lite.
  */
 export function bestFittingLocalModel(
-  models: Array<{ ref: string; ready?: boolean; approxBytes?: number; filename?: string; name?: string }>,
+  models: Array<{
+    ref: string
+    ready?: boolean
+    approxBytes?: number
+    filename?: string
+    name?: string
+  }>,
   budgetBytes: number
 ): string | null {
   if (budgetBytes <= 0) return null
@@ -96,8 +98,7 @@ export async function readyLocalHandoffRef(settings: AppSettings): Promise<strin
 
 export function localComposerFullActive(settings: AppSettings): boolean {
   return (
-    settings.agent.routing.useLocalComposerFull === true &&
-    isExactBuiltinReady('builtin:composer')
+    settings.agent.routing.useLocalComposerFull === true && isExactBuiltinReady('builtin:composer')
   )
 }
 
@@ -160,7 +161,11 @@ export function isErisCapabilityQuestion(text: string): boolean {
   return false
 }
 
-export function classifyIntent(text: string, mode: 'ask' | 'agent', fileNames: string[] = []): ChatIntent {
+export function classifyIntent(
+  text: string,
+  mode: 'ask' | 'agent',
+  fileNames: string[] = []
+): ChatIntent {
   if (isErisCapabilityQuestion(text)) return 'capability'
   if (needsWebLookup(text)) return 'explore'
   if (
@@ -322,9 +327,7 @@ export function toolAllowedByPolicy(
       ? 'read'
       : 'full'
     : getToolContract(toolName)?.access
-  return Boolean(
-    requiredAccess && POLICY_ACCESS_RANK[policy] >= TOOL_ACCESS_RANK[requiredAccess]
-  )
+  return Boolean(requiredAccess && POLICY_ACCESS_RANK[policy] >= TOOL_ACCESS_RANK[requiredAccess])
 }
 
 export function filterToolsByPolicy<T extends { function: { name: string } }>(
@@ -334,11 +337,7 @@ export function filterToolsByPolicy<T extends { function: { name: string } }>(
 ): T[] {
   if (policy === 'none') return []
   return tools.filter((t) =>
-    toolAllowedByPolicy(
-      t.function.name,
-      policy,
-      mcpReadOnlyTools?.has(t.function.name) ?? false
-    )
+    toolAllowedByPolicy(t.function.name, policy, mcpReadOnlyTools?.has(t.function.name) ?? false)
   )
 }
 
@@ -370,7 +369,9 @@ async function chooseAutoChatModel(
     const candidates = [
       ...(isExactBuiltinReady('builtin:composer-lite') ? ['builtin:composer-lite'] : []),
       ...(isExactBuiltinReady('builtin:composer') ? ['builtin:composer'] : []),
-      ...getLocalStatuses().filter((m) => m.ready && isLocalRef(m.ref)).map((m) => m.ref),
+      ...getLocalStatuses()
+        .filter((m) => m.ready && isLocalRef(m.ref))
+        .map((m) => m.ref),
       ...settings.models.connections
         .filter((c) => c.enabled && c.type !== 'builtin')
         .flatMap((c) => c.models.filter((name) => name.trim()))
@@ -388,9 +389,7 @@ async function chooseAutoChatModel(
   const profile = settings.agent.routing.profile ?? 'auto'
   const localFull = localComposerFullActive(settings)
   const preferCloud =
-    !localFull &&
-    profile !== 'local' &&
-    settings.agent.routing.preferCloudComposer !== false
+    !localFull && profile !== 'local' && settings.agent.routing.preferCloudComposer !== false
   if (heavy && (localFull || preferCloud)) return { model: 'builtin:composer', basis: 'profile' }
   if (isExactBuiltinReady('builtin:composer-lite')) {
     return { model: 'builtin:composer-lite', basis: 'profile' }
@@ -467,8 +466,7 @@ function formatReason(parts: {
     parts.escalateToFull || parts.chat !== parts.tools
       ? `${chatShort} → tools:${toolsShort}`
       : chatShort
-  const profileBit =
-    parts.profile === 'max' ? 'Max' : parts.profile === 'local' ? 'Local' : 'Auto'
+  const profileBit = parts.profile === 'max' ? 'Max' : parts.profile === 'local' ? 'Local' : 'Auto'
   const cloudBit = parts.cloudPreferred ? ' · Cloud' : ''
   const label: Record<TurnPlan['method'], string> = {
     manual: 'Manual',
@@ -605,11 +603,10 @@ export async function planChatTurn(options: {
   const corrections = readRoutingCorrections()
   const pickedModel = options.context.selectedModel.trim()
   const selectedModel =
-    pickedModel ||
-    options.settings.models.defaultModel ||
-    'builtin:composer-lite'
+    pickedModel || options.settings.models.defaultModel || 'builtin:composer-lite'
 
-  const heuristicIntent = classifyIntent(text, mode, options.context.fileNames || [])
+  const heuristicIntent =
+    options.context.resolvedIntent ?? classifyIntent(text, mode, options.context.fileNames || [])
 
   const route: RouteResult = await routeMessage({
     workspacePath: options.workspacePath,
@@ -620,8 +617,7 @@ export async function planChatTurn(options: {
   })
 
   let agent =
-    findAgent(options.workspacePath, route.agentId) ||
-    allAgentsFlat(options.workspacePath)[0]
+    findAgent(options.workspacePath, route.agentId) || allAgentsFlat(options.workspacePath)[0]
 
   let method: TurnPlan['method'] = route.method
   let intent = heuristicIntent
@@ -654,6 +650,7 @@ export async function planChatTurn(options: {
     options.settings.agent.routing.enabled &&
     wantLlmRouter &&
     !options.context.manualAgentId &&
+    !options.context.skipModelRouter &&
     !deterministicRouteIsClear
   ) {
     const agents = roster.filter((a) => a.enabled)
@@ -737,7 +734,10 @@ export async function planChatTurn(options: {
   const classifiedIntent = intent
   const correction =
     forceRoute ??
-    (mode === 'agent' && !asksToImplementChanges(text) && !explicitSpecialistIntent
+    (mode === 'agent' &&
+    !options.context.resolvedIntent &&
+    !asksToImplementChanges(text) &&
+    !explicitSpecialistIntent
       ? learnedRouteFor(text, corrections)
       : null)
   if (correction === 'answer') {
@@ -750,10 +750,16 @@ export async function planChatTurn(options: {
   }
 
   const followId = agentForFollowUp(text, options.context.previousAgentId)
-  if (mode === 'agent' && followId && !explicitSpecialistIntent) {
-    const previousUserText = [...(options.context.previousMessages ?? [])]
-      .reverse()
-      .find((message) => message.role === 'user')?.content || ''
+  if (
+    mode === 'agent' &&
+    followId &&
+    !explicitSpecialistIntent &&
+    !options.context.resolvedIntent
+  ) {
+    const previousUserText =
+      [...(options.context.previousMessages ?? [])]
+        .reverse()
+        .find((message) => message.role === 'user')?.content || ''
     const previousIntent = previousUserText ? classifyIntent(previousUserText, 'agent') : null
     const isContinuation =
       isConversationFollowUp(text) &&
@@ -797,7 +803,10 @@ export async function planChatTurn(options: {
   }
 
   if (correction === 'tools' && agent && CEILING_RANK[agent.tools ?? 'edit'] < CEILING_RANK.edit) {
-    const fallback = findAgent(options.workspacePath, options.settings.agent.routing.fallbackAgentId)
+    const fallback = findAgent(
+      options.workspacePath,
+      options.settings.agent.routing.fallbackAgentId
+    )
     if (fallback?.enabled && CEILING_RANK[fallback.tools ?? 'edit'] >= CEILING_RANK.edit) {
       agent = fallback
     }
@@ -865,8 +874,7 @@ export async function planChatTurn(options: {
   })
 
   const requiresTools = toolPolicy !== 'none' && intentNeedsTools(intent)
-  const usingComposerFull =
-    roles.chat === 'builtin:composer' || roles.tools === 'builtin:composer'
+  const usingComposerFull = roles.chat === 'builtin:composer' || roles.tools === 'builtin:composer'
   const localFull = localComposerFullActive(options.settings)
   const cloudPreferred =
     mode === 'agent' &&
@@ -912,7 +920,10 @@ function executionPlanFor(
   intent: ChatIntent
 ): { steps: string[]; doneWhen: string } {
   if (intent === 'capability') {
-    return { steps: ['Check Eris model and provider catalog'], doneWhen: 'Answer from the current catalog.' }
+    return {
+      steps: ['Check Eris model and provider catalog'],
+      doneWhen: 'Answer from the current catalog.'
+    }
   }
   if (intent === 'plan') {
     return {
@@ -921,7 +932,8 @@ function executionPlanFor(
         'Trace dependencies and integration points',
         'Return ordered steps with files, risks, and completion checks'
       ],
-      doneWhen: 'The plan is grounded in inspected files and clearly distinguishes decisions from assumptions.'
+      doneWhen:
+        'The plan is grounded in inspected files and clearly distinguishes decisions from assumptions.'
     }
   }
   if (intent === 'verify') {
@@ -932,19 +944,49 @@ function executionPlanFor(
         'Run relevant approved verification commands',
         'Report observed results and remaining risks'
       ],
-      doneWhen: 'Every claimed result is supported by inspection or command output, with no files edited.'
+      doneWhen:
+        'Every claimed result is supported by inspection or command output, with no files edited.'
     }
   }
   if (mode === 'ask' || intent === 'explore') {
-    return { steps: ['Find relevant workspace sources', 'Read the matching files', 'Answer with paths and evidence'], doneWhen: 'The answer is grounded in the files that were read.' }
+    return {
+      steps: [
+        'Find relevant workspace sources',
+        'Read the matching files',
+        'Answer with paths and evidence'
+      ],
+      doneWhen: 'The answer is grounded in the files that were read.'
+    }
   }
   if (intent === 'review') {
-    return { steps: ['Map the requested scope', 'Inspect relevant implementation and tests', 'Rank findings with evidence'], doneWhen: 'Each finding has a path, impact, and actionable fix.' }
+    return {
+      steps: [
+        'Map the requested scope',
+        'Inspect relevant implementation and tests',
+        'Rank findings with evidence'
+      ],
+      doneWhen: 'Each finding has a path, impact, and actionable fix.'
+    }
   }
   if (intent === 'run') {
-    return { steps: ['Inspect the requested run target if needed', 'Run it with required approval', 'Report the result'], doneWhen: 'The command result and any remaining failure are stated accurately.' }
+    return {
+      steps: [
+        'Inspect the requested run target if needed',
+        'Run it with required approval',
+        'Report the result'
+      ],
+      doneWhen: 'The command result and any remaining failure are stated accurately.'
+    }
   }
-  return { steps: ['Inspect affected code and project rules', 'Make the requested changes', 'Run relevant verification', 'Summarize the diff'], doneWhen: 'The requested behavior is implemented and verification results are reported.' }
+  return {
+    steps: [
+      'Inspect affected code and project rules',
+      'Make the requested changes',
+      'Run relevant verification',
+      'Summarize the diff'
+    ],
+    doneWhen: 'The requested behavior is implemented and verification results are reported.'
+  }
 }
 
 /** Legacy RouteResult from a TurnPlan (status bar / older callers). */

@@ -73,16 +73,32 @@ export function getToolContract(name: string): ToolContract | undefined {
 
 /** Built-in workspace tools exposed via native tool calling. */
 export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
-  tool('generate_image', 'Generate a PNG image using the configured local Hugging Face model or image API automatically and save it to a NEW workspace path. Never use write_file for binary images. The provider must be enabled in Settings. Existing files are never overwritten.', {
-    prompt: { type: 'string', minLength: 1, maxLength: 16000 },
-    path: pathProp,
-    size: { type: 'string', enum: ['512x512', '768x512', '512x768', '1024x1024', '1536x1024', '1024x1536'] }
-  }, ['prompt', 'path'], { access: 'edit', effect: 'workspace' }),
-  tool('tree', 'List a directory tree', { path: pathProp, maxDepth: { type: 'number' } }, [
-    'path'
-  ]),
+  tool(
+    'generate_image',
+    'Generate a PNG image using the configured local Hugging Face model or image API automatically and save it to a NEW workspace path. Never use write_file for binary images. The provider must be enabled in Settings. Existing files are never overwritten.',
+    {
+      prompt: { type: 'string', minLength: 1, maxLength: 16000 },
+      path: pathProp,
+      size: {
+        type: 'string',
+        enum: ['512x512', '768x512', '512x768', '1024x1024', '1536x1024', '1024x1536']
+      }
+    },
+    ['prompt', 'path'],
+    { access: 'edit', effect: 'workspace' }
+  ),
+  tool('tree', 'List a directory tree', { path: pathProp, maxDepth: { type: 'number' } }, ['path']),
   tool('list_dir', 'List directory entries', { path: pathProp }, ['path']),
-  tool('read_file', 'Read a text file', { path: pathProp }, ['path']),
+  tool(
+    'read_file',
+    'Read a text file; use line ranges to inspect large files',
+    {
+      path: pathProp,
+      start_line: { type: 'integer', minimum: 1 },
+      end_line: { type: 'integer', minimum: 1 }
+    },
+    ['path']
+  ),
   tool(
     'notebook_read',
     'Read a Jupyter notebook as indexed cells with compact text outputs',
@@ -153,17 +169,42 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
     ['path', 'content'],
     { access: 'edit', effect: 'workspace', readBeforeWrite: 'file' }
   ),
-  tool('mkdir', 'Create a directory', { path: pathProp }, ['path'], { access: 'edit', effect: 'workspace' }),
-  tool('delete_path', 'Delete a file or directory', { path: pathProp }, ['path'], { access: 'edit', effect: 'workspace' }),
-  tool('rename_path', 'Rename or move a path', { path: pathProp, to: pathProp }, ['path', 'to'], { access: 'edit', effect: 'workspace' }),
-  tool('run', 'Run a shell command in the workspace', { command: { type: 'string' } }, [
-    'command'
-  ], { access: 'full', effect: 'command', approval: 'command' }),
-  tool('grep', 'Search file contents', {
-    pattern: { type: 'string' },
-    query: { type: 'string' },
-    glob: { type: 'string' }
-  }, [], { requiredAnyOf: [['pattern'], ['query']] }),
+  tool('mkdir', 'Create a directory', { path: pathProp }, ['path'], {
+    access: 'edit',
+    effect: 'workspace'
+  }),
+  tool('delete_path', 'Delete a file or directory', { path: pathProp }, ['path'], {
+    access: 'edit',
+    effect: 'workspace'
+  }),
+  tool('rename_path', 'Rename or move a path', { path: pathProp, to: pathProp }, ['path', 'to'], {
+    access: 'edit',
+    effect: 'workspace'
+  }),
+  tool(
+    'run',
+    'Run a shell command in the selected project',
+    {
+      command: { type: 'string' },
+      cwd: {
+        type: 'string',
+        description: 'Directory relative to the workspace; defaults to the task project'
+      }
+    },
+    ['command'],
+    { access: 'full', effect: 'command', approval: 'command' }
+  ),
+  tool(
+    'grep',
+    'Search file contents',
+    {
+      pattern: { type: 'string' },
+      query: { type: 'string' },
+      glob: { type: 'string' }
+    },
+    [],
+    { requiredAnyOf: [['pattern'], ['query']] }
+  ),
   tool('glob', 'Find files by path pattern', { pattern: { type: 'string' } }, ['pattern']),
   tool(
     'search_symbols',
@@ -191,10 +232,16 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
     ['action', 'path', 'line', 'character'],
     { discovery: 'deferred' }
   ),
-  tool('semantic_search', 'Find files related to a natural-language query (embeddings + keywords)', {
-    query: { type: 'string' },
-    pattern: { type: 'string' }
-  }, [], { requiredAnyOf: [['query'], ['pattern']], discovery: 'deferred' }),
+  tool(
+    'semantic_search',
+    'Find files related to a natural-language query (embeddings + keywords)',
+    {
+      query: { type: 'string' },
+      pattern: { type: 'string' }
+    },
+    [],
+    { requiredAnyOf: [['query'], ['pattern']], discovery: 'deferred' }
+  ),
   tool(
     'related_files',
     'Files that share symbols with a path',
@@ -260,9 +307,18 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
     'Stage paths',
     { paths: { type: 'array', items: { type: 'string' } }, path: { type: 'string' } },
     [],
-    { access: 'edit', effect: 'workspace', discovery: 'deferred', requiredAnyOf: [['paths'], ['path']] }
+    {
+      access: 'edit',
+      effect: 'workspace',
+      discovery: 'deferred',
+      requiredAnyOf: [['paths'], ['path']]
+    }
   ),
-  tool('git_commit', 'Create a commit', { message: { type: 'string' } }, ['message'], { access: 'edit', effect: 'workspace', discovery: 'deferred' }),
+  tool('git_commit', 'Create a commit', { message: { type: 'string' } }, ['message'], {
+    access: 'edit',
+    effect: 'workspace',
+    discovery: 'deferred'
+  }),
   tool(
     'git_sync',
     'Fetch, pull, or push',
@@ -420,12 +476,7 @@ export function mcpToolsToOpenAI(
   tools: Array<{ fqName: string; description?: string; inputSchema?: Record<string, unknown> }>
 ): OpenAIToolDef[] {
   return tools.map((t) => {
-    const definition = tool(
-      t.fqName,
-      t.description || `MCP tool ${t.fqName}`,
-      {},
-      []
-    )
+    const definition = tool(t.fqName, t.description || `MCP tool ${t.fqName}`, {}, [])
     const schema = t.inputSchema
     const inputSchema =
       schema &&

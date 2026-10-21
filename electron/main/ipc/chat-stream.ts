@@ -1,5 +1,6 @@
+import { appendTaskEvent, flushTaskLedger } from '../services/task-ledger'
+import { reviewTaskOutcome } from '../services/task-outcome'
 import { asksForImageGeneration } from '../../../src/shared/image-generation'
-import { asksToImplementChanges } from '../../../src/shared/agent-contract'
 import { ipcMain } from 'electron'
 import { getResolvedSettings, setSettings } from '../services/settings'
 import {
@@ -24,6 +25,10 @@ import {
 } from '../services/user-question'
 import type { ChatPromptInput, TurnPlan } from '../../../src/shared/settings-schema'
 import { AGENT_HANDOFF_CHARS, summarizeAgentResults } from '../../../src/shared/agent-orchestration'
+import { previousTask, saveTask } from '../services/task-store'
+import { realpathSync } from 'fs'
+import { resolveTaskIntent } from '../services/task-resolver'
+import { createTaskContract } from '../services/task-intake'
 import { buildChatMessages } from '../services/chat-prompt'
 import { saveAgentRun, type AgentRunRecord } from '../services/agent-runs'
 import {
@@ -52,6 +57,7 @@ import { rememberAgentRun, rememberAskUserReply } from '../services/project-memo
 import {
   finishChatJob,
   getLatestChatJob,
+  getChatJob,
   recordChatJobEvent,
   startChatJob
 } from '../services/chat-job-controller'
@@ -69,17 +75,29 @@ export function registerChatStreamIpc(): void {
         prompt?: ChatPromptInput
         agentId?: string
         mode?: 'ask' | 'agent'
+        workspacePath?: string | null
+        forceRoute?: 'tools' | 'answer'
         turnPlan?: TurnPlan
         planningDurationMs?: number
         /** Active chat thread — used when orchestrator delegates specialists. */
         threadId?: string | null
       }
     ) => {
+      const workspacePath = appState.currentWorkspace
+      if (payload.workspacePath !== undefined && payload.workspacePath !== workspacePath) {
+        event.sender.send('chat:error', {
+          requestId: payload.requestId,
+          error:
+            'The workspace changed before submission. Send the message again in the intended project.'
+        })
+        return false
+      }
+      if (getChatJob(payload.requestId)) return true
       const requestReceivedAt = Date.now()
       // Renderer planning happens before this IPC request; fallback planning below
       // is already included in the elapsed IPC time.
       const externalPlanningDurationMs = payload.planningDurationMs || 0
-      const settings = getResolvedSettings(appState.currentWorkspace)
+      const settings = getResolvedSettings(workspacePath)
       const { requestId } = payload
       const chatSender = () => {
         const current = appState.mainWindow?.webContents
@@ -87,12 +105,18 @@ export function registerChatStreamIpc(): void {
       }
       const publish = (channel: string, data: Record<string, unknown>): void => {
         recordChatJobEvent(requestId, channel, data)
+        if (['chat:task', 'chat:evidence', 'chat:outcome'].includes(channel))
+          appendTaskEvent(requestId, channel, data)
         const target = chatSender()
         if (!target.isDestroyed()) target.send(channel, data)
         if (channel === 'chat:done') {
-          finishChatJob(requestId, data.aborted ? 'stopped' : 'done')
+          finishChatJob(
+            requestId,
+            data.aborted ? 'stopped' : data.incomplete ? 'incomplete' : 'done'
+          )
         } else if (channel === 'chat:error') {
           finishChatJob(requestId, 'failed')
+          void flushTaskLedger(requestId)
         }
       }
       try {
@@ -100,10 +124,11 @@ export function registerChatStreamIpc(): void {
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Plan limit reached'
         publish('chat:error', { requestId, error: message })
-        return { ok: false, error: message }
+        return false
       }
       appState.chatAbort?.abort()
-      appState.chatAbort = new AbortController()
+      const controller = new AbortController()
+      appState.chatAbort = controller
       appState.chatStreamActive = true
       appState.activeChatRequestId = payload.requestId
       // Ghost completes share the llama runtime — never race the agent turn.
@@ -128,7 +153,7 @@ export function registerChatStreamIpc(): void {
         ''
       startChatJob({
         id: requestId,
-        workspacePath: appState.currentWorkspace,
+        workspacePath: workspacePath,
         threadId: payload.threadId ?? payload.prompt?.threadId ?? null,
         goal: userText
       })
@@ -139,12 +164,10 @@ export function registerChatStreamIpc(): void {
       let planningDurationMs = payload.planningDurationMs
       let turnPlan: TurnPlan
       try {
-        if (payload.turnPlan) {
-          turnPlan = payload.turnPlan
-        } else {
+        {
           const planningStartedAt = Date.now()
           turnPlan = await planChatTurn({
-            workspacePath: appState.currentWorkspace,
+            workspacePath: workspacePath,
             settings,
             context: {
               text: userText,
@@ -152,6 +175,8 @@ export function registerChatStreamIpc(): void {
               mode: mode === 'ask' ? 'ask' : 'agent',
               manualAgentId: agentId ?? null,
               previousAgentId,
+              skipModelRouter: true,
+              forceRoute: payload.forceRoute,
               previousMessages: payload.prompt?.history.flatMap((message) =>
                 message.role === 'system'
                   ? []
@@ -159,39 +184,95 @@ export function registerChatStreamIpc(): void {
               )
             },
             getSecret,
-            signal: appState.chatAbort.signal
+            signal: controller.signal
           })
           planningDurationMs ??= Date.now() - planningStartedAt
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Could not plan the chat turn'
         publish('chat:error', { requestId, error: message })
-        appState.chatStreamActive = false
-        if (appState.activeChatRequestId === requestId) appState.activeChatRequestId = null
+        if (appState.activeChatRequestId === requestId) {
+          appState.chatStreamActive = false
+          appState.activeChatRequestId = null
+        }
         return false
       }
-      if (
-        (mode ?? 'agent') === 'agent' &&
-        asksToImplementChanges(userText) &&
-        (turnPlan.toolPolicy === 'none' || turnPlan.toolPolicy === 'read')
-      ) {
-        const composer = findAgent(appState.currentWorkspace, 'composer')
-        turnPlan = {
-          ...turnPlan,
-          intent: 'edit',
-          mode: 'agent',
-          agentId: composer?.id ?? 'composer',
-          agentName: composer?.name ?? 'Composer',
-          toolPolicy: 'edit',
-          requiresTools: true,
-          reason: `Implementation request → ${composer?.name ?? 'Composer'} with edit tools`,
-          method: 'override'
+      if (turnPlan.error) {
+        publish('chat:error', { requestId, error: turnPlan.error })
+        if (appState.activeChatRequestId === requestId) {
+          appState.chatStreamActive = false
+          appState.activeChatRequestId = null
         }
+        return false
+      }
+      try {
+        const semanticIntent = payload.forceRoute
+          ? turnPlan.intent
+          : await resolveTaskIntent({
+              text: userText,
+              fallback: turnPlan.intent,
+              settings,
+              model: turnPlan.models.chat,
+              mode: mode ?? 'agent',
+              history: payload.prompt?.history,
+              signal: controller.signal,
+              getSecret
+            })
+        if (semanticIntent !== turnPlan.intent) {
+          turnPlan = await planChatTurn({
+            workspacePath,
+            settings,
+            context: {
+              text: userText,
+              mode: mode ?? 'agent',
+              selectedModel: model,
+              manualAgentId: agentId ?? null,
+              resolvedIntent: semanticIntent,
+              skipModelRouter: true,
+              previousMessages: payload.prompt?.history.flatMap((message) =>
+                message.role === 'system'
+                  ? []
+                  : [{ role: message.role, content: message.content, agentId: message.agentId }]
+              )
+            },
+            getSecret,
+            signal: controller.signal
+          })
+        }
+        const taskThreadId = payload.threadId ?? payload.prompt?.threadId ?? null
+        let canonicalRoot = workspacePath
+        try {
+          if (workspacePath) canonicalRoot = realpathSync(workspacePath)
+        } catch {
+          /* reported by runtime */
+        }
+        turnPlan.task = createTaskContract({
+          taskId: requestId,
+          threadId: payload.threadId ?? payload.prompt?.threadId,
+          workspacePath,
+          text: userText,
+          plan: turnPlan,
+          skillIds: payload.prompt?.skillIds,
+          history: payload.prompt?.history,
+          priorTask: previousTask(canonicalRoot, taskThreadId)
+        })
+        saveTask(turnPlan.task)
+        publish('chat:task', { requestId, task: turnPlan.task })
+      } catch (error) {
+        publish('chat:error', {
+          requestId,
+          error: error instanceof Error ? error.message : 'Task intake failed'
+        })
+        if (appState.activeChatRequestId === requestId) {
+          appState.chatStreamActive = false
+          appState.activeChatRequestId = null
+        }
+        return false
       }
       const promptBuildStartedAt = Date.now()
       try {
         if (payload.prompt) {
-          messages = buildChatMessages(appState.currentWorkspace, settings, {
+          messages = buildChatMessages(workspacePath, settings, {
             ...payload.prompt,
             mode: turnPlan.mode,
             agentId: turnPlan.agentId,
@@ -203,13 +284,15 @@ export function registerChatStreamIpc(): void {
       } catch (err) {
         const error = err instanceof Error ? err.message : 'Could not build the chat prompt'
         publish('chat:error', { requestId, error })
-        appState.chatStreamActive = false
-        if (appState.activeChatRequestId === requestId) appState.activeChatRequestId = null
+        if (appState.activeChatRequestId === requestId) {
+          appState.chatStreamActive = false
+          appState.activeChatRequestId = null
+        }
         return false
       }
       const agent =
-        findAgent(appState.currentWorkspace, turnPlan.agentId) ||
-        (agentId ? findAgent(appState.currentWorkspace, agentId) : null)
+        findAgent(workspacePath, turnPlan.agentId) ||
+        (agentId ? findAgent(workspacePath, agentId) : null)
       let resolvedModel = turnPlan.models.chat || model || settings.models.defaultModel
       const temperature = agent?.temperature ?? settings.models.temperature
       setDiagnosticsPaused(true)
@@ -237,6 +320,8 @@ export function registerChatStreamIpc(): void {
       }
       let run: AgentRunRecord | null = null
       let runIncomplete = false
+      let finalAnswer = ''
+      const outcomeEvidence: string[] = []
       /** Accumulated for project memory even when no checkpoint/run record exists. */
       let memoryFiles: string[] = []
       let memoryActions: string[] = []
@@ -274,11 +359,11 @@ export function registerChatStreamIpc(): void {
         }
       }
       const persistRun = (patch: Partial<AgentRunRecord>) => {
-        if (!run || !appState.currentWorkspace) return
+        if (!run || !workspacePath) return
         run = { ...run, ...patch }
-        saveAgentRun(appState.currentWorkspace, run)
+        saveAgentRun(workspacePath, run)
         if (run.sessionId && patch.status) {
-          setAgentSessionStatus(appState.currentWorkspace, run.sessionId, patch.status)
+          setAgentSessionStatus(workspacePath, run.sessionId, patch.status)
         }
       }
       try {
@@ -305,6 +390,7 @@ export function registerChatStreamIpc(): void {
           intent: turnPlan.intent,
           toolPolicy: turnPlan.toolPolicy,
           executionPlan: turnPlan.executionPlan,
+          task: turnPlan.task,
           toolsModel: turnPlan.models.tools
         })
         pendingThinking += `Route: ${turnPlan.reason}${turnPlan.classifiedIntent && turnPlan.classifiedIntent !== turnPlan.intent ? ` (classified ${turnPlan.classifiedIntent})` : ''} · tools ${turnPlan.toolPolicy}\n`
@@ -314,7 +400,7 @@ export function registerChatStreamIpc(): void {
         scheduleStreamFlush()
 
         const threadId = payload.threadId ?? null
-        if (appState.currentWorkspace) {
+        if (workspacePath) {
           configureBackgroundAgents({ sender: chatSender(), getSecret })
         }
         const chatChildIds: string[] = []
@@ -323,7 +409,7 @@ export function registerChatStreamIpc(): void {
           for (const id of chatChildIds) {
             const job = getBackgroundJob(id)
             if (!job) continue
-            const named = findAgent(appState.currentWorkspace, job.agentId)
+            const named = findAgent(workspacePath, job.agentId)
             const failed =
               job.status === 'failed' || job.status === 'stopped' || job.status === 'discarded'
             publish('chat:delegation', {
@@ -363,11 +449,14 @@ export function registerChatStreamIpc(): void {
           !asksForImageGeneration(userText) &&
           (mode ?? 'agent') === 'agent' &&
           turnPlan.mode === 'agent' &&
-          Boolean(appState.currentWorkspace) &&
+          Boolean(workspacePath) &&
           usingComposerFull &&
           cloudPreferred
 
-        if (wantCloudInline && (await cloudInlineAvailable(settings, getSecret))) {
+        if (
+          wantCloudInline &&
+          (await cloudInlineAvailable(settings, getSecret, turnPlan.task?.version))
+        ) {
           try {
             assertCloudJobWithinPlan(settings, getSecret)
             usedCloud = true
@@ -378,13 +467,14 @@ export function registerChatStreamIpc(): void {
               agentName: turnPlan.agentName
             })
             for await (const evt of runCloudAgentInline({
-              workspacePath: appState.currentWorkspace!,
+              task: turnPlan.task,
+              workspacePath: workspacePath!,
               settings,
               goal: userText,
               agentId: turnPlan.agentId,
               agentName: turnPlan.agentName,
               getSecret,
-              signal: appState.chatAbort.signal
+              signal: controller.signal
             })) {
               noteFirstModelOutput(evt)
               if (evt.type === 'thinking') {
@@ -423,16 +513,12 @@ export function registerChatStreamIpc(): void {
             persistRun({ status: 'done' })
             recordTelemetry('done')
             try {
-              const mem = rememberAgentRun(
-                appState.currentWorkspace,
-                getResolvedSettings(appState.currentWorkspace),
-                {
-                  goal: userText,
-                  filesTouched: memoryFiles,
-                  actionLog: memoryActions,
-                  aborted: false
-                }
-              )
+              const mem = rememberAgentRun(workspacePath, getResolvedSettings(workspacePath), {
+                goal: userText,
+                filesTouched: memoryFiles,
+                actionLog: memoryActions,
+                aborted: false
+              })
               if (mem.needsConfirm) {
                 publish('chat:memory-proposal', {
                   requestId,
@@ -492,23 +578,23 @@ export function registerChatStreamIpc(): void {
         }
 
         for await (const evt of runAgentWithWorkspaceTools({
-          workspacePath: appState.currentWorkspace,
+          workspacePath: workspacePath,
           settings,
           model: resolvedModel,
           messages,
           temperature,
-          signal: appState.chatAbort.signal,
+          signal: controller.signal,
           getSecret,
           mode: mode ?? 'agent',
           turnPlan,
           jobId: `chat:${requestId}`,
           onDelegate: async (req) => {
-            if (!appState.currentWorkspace) {
+            if (!workspacePath) {
               return { ok: false, detail: 'Open a workspace to delegate' }
             }
             try {
               const child = delegateFromAgent({
-                workspacePath: appState.currentWorkspace,
+                workspacePath: workspacePath,
                 parentJobId: null,
                 sourceThreadId: threadId,
                 model: resolvedModel,
@@ -566,8 +652,8 @@ export function registerChatStreamIpc(): void {
             return { ok: false, detail: 'Timed out waiting for delegated children' }
           },
           approveCommand: async (kind, command) => {
-            const live = getResolvedSettings(appState.currentWorkspace)
-            const workspaceAllowed = workspaceAllowedCommands(appState.currentWorkspace)
+            const live = getResolvedSettings(workspacePath)
+            const workspaceAllowed = workspaceAllowedCommands(workspacePath)
             if (!commandNeedsApproval(live, kind, command, workspaceAllowed)) return true
             flushStreamChunks()
             const decision = await requestCommandApproval(
@@ -579,8 +665,8 @@ export function registerChatStreamIpc(): void {
             )
             logInfo('Command approval', { requestId, kind, command, decision })
             if (decision === 'always') {
-              if (appState.currentWorkspace) {
-                addWorkspaceAllowedCommand(appState.currentWorkspace, normalizeCommand(command))
+              if (workspacePath) {
+                addWorkspaceAllowedCommand(workspacePath, normalizeCommand(command))
               } else {
                 const allowed = [
                   ...new Set([...live.agent.allowedCommands, normalizeCommand(command)])
@@ -618,8 +704,8 @@ export function registerChatStreamIpc(): void {
             })
             if (outcome.kind === 'reply') {
               const mem = rememberAskUserReply(
-                appState.currentWorkspace,
-                getResolvedSettings(appState.currentWorkspace),
+                workspacePath,
+                getResolvedSettings(workspacePath),
                 question,
                 outcome.text
               )
@@ -647,6 +733,7 @@ export function registerChatStreamIpc(): void {
             pendingThinking += evt.text
             scheduleStreamFlush()
           } else if (evt.type === 'answer') {
+            finalAnswer = evt.replace ? evt.text : finalAnswer + evt.text
             if (evt.replace) {
               pendingAnswer = ''
               flushStreamChunks()
@@ -659,9 +746,23 @@ export function registerChatStreamIpc(): void {
             flushStreamChunks()
             if (evt.type === 'asset') {
               publish('chat:asset', { requestId, asset: evt.asset })
+            } else if (evt.type === 'evidence') {
+              publish('chat:evidence', { requestId, evidence: evt.evidence })
             } else if (evt.type === 'tool') {
+              if (
+                evt.tool.status !== 'running' &&
+                ['read_file', 'notebook_read', 'run', 'search_replace', 'write_file'].includes(
+                  evt.tool.name
+                )
+              )
+                outcomeEvidence.push(
+                  `${evt.tool.name} ${evt.tool.path ?? ''}: ${evt.tool.status}\n${evt.tool.detail}`
+                )
               publish('chat:tool', { requestId, tool: evt.tool })
             } else if (evt.type === 'diff') {
+              outcomeEvidence.push(
+                `Observed diff ${evt.diff.path}:\nBefore: ${(evt.diff.before ?? '').slice(0, 600)}\nAfter: ${(evt.diff.after ?? '').slice(0, 900)}`
+              )
               telemetryMutated = true
               publish('chat:diff', { requestId, diff: evt.diff })
             } else if (evt.type === 'checkpoint') {
@@ -669,9 +770,9 @@ export function registerChatStreamIpc(): void {
                 requestId,
                 checkpointId: evt.checkpointId
               })
-              if (appState.currentWorkspace) {
+              if (workspacePath) {
                 const now = new Date().toISOString()
-                const session = createAgentSession(appState.currentWorkspace, {
+                const session = createAgentSession(workspacePath, {
                   requestId,
                   threadId,
                   goal: userText,
@@ -707,8 +808,8 @@ export function registerChatStreamIpc(): void {
               memoryActions = evt.actionLog.slice(-120)
               telemetrySteps = evt.step
               if (evt.filesTouched.length) telemetryMutated = true
-              if (run?.sessionId && appState.currentWorkspace) {
-                appendSessionStep(appState.currentWorkspace, run.sessionId, {
+              if (run?.sessionId && workspacePath) {
+                appendSessionStep(workspacePath, run.sessionId, {
                   step: evt.step,
                   opThrough: evt.opThrough,
                   summary: evt.summary,
@@ -780,21 +881,48 @@ export function registerChatStreamIpc(): void {
             }
           }
         }
+        if (
+          !runIncomplete &&
+          turnPlan.task &&
+          ['review', 'plan', 'edit', 'verify', 'run'].includes(turnPlan.intent)
+        ) {
+          publish('chat:status', {
+            requestId,
+            text: 'Checking the response against task evidence…'
+          })
+          if (memoryActions.length) outcomeEvidence.push(memoryActions.slice(-15).join('\n'))
+          const verdict = await reviewTaskOutcome({
+            task: turnPlan.task,
+            answer: finalAnswer,
+            evidence: outcomeEvidence,
+            settings,
+            model: turnPlan.models.chat,
+            signal: controller.signal,
+            getSecret
+          })
+          publish('chat:outcome', { requestId, ...verdict })
+          if (verdict.verdict !== 'supported') {
+            runIncomplete = true
+            flushStreamChunks()
+            publish('chat:answer', {
+              requestId,
+              chunk: `${finalAnswer}\n\nOutcome check: ${verdict.verdict}. ${verdict.reason}`,
+              replace: true
+            })
+          }
+        }
+        await flushTaskLedger(requestId)
         flushStreamChunks()
         persistRun({ status: runIncomplete ? 'incomplete' : 'done' })
         recordTelemetry(runIncomplete ? 'incomplete' : 'done')
         try {
-          const mem = rememberAgentRun(
-            appState.currentWorkspace,
-            getResolvedSettings(appState.currentWorkspace),
-            {
-              goal: userText,
-              filesTouched: memoryFiles.length ? memoryFiles : (run?.filesTouched ?? []),
-              actionLog: memoryActions.length ? memoryActions : (run?.actionLog ?? []),
-              incomplete: runIncomplete,
-              aborted: false
-            }
-          )
+          const mem = rememberAgentRun(workspacePath, getResolvedSettings(workspacePath), {
+            goal: userText,
+            filesTouched: memoryFiles.length ? memoryFiles : (run?.filesTouched ?? []),
+            actionLog: memoryActions.length ? memoryActions : (run?.actionLog ?? []),
+            incomplete: runIncomplete,
+            aborted: false
+          })
           if (mem.needsConfirm) {
             publish('chat:memory-proposal', {
               requestId,
@@ -815,7 +943,7 @@ export function registerChatStreamIpc(): void {
             error: memErr instanceof Error ? memErr.message : String(memErr)
           })
         }
-        publish('chat:done', { requestId })
+        publish('chat:done', { requestId, incomplete: runIncomplete })
         logInfo('Chat stream done', {
           requestId,
           model: resolvedModel,
@@ -856,9 +984,11 @@ export function registerChatStreamIpc(): void {
         return false
       } finally {
         if (coalesceTimer) clearTimeout(coalesceTimer)
-        setDiagnosticsPaused(false)
-        appState.chatStreamActive = false
-        if (appState.activeChatRequestId === requestId) appState.activeChatRequestId = null
+        if (appState.activeChatRequestId === requestId) setDiagnosticsPaused(false)
+        if (appState.activeChatRequestId === requestId) {
+          appState.chatStreamActive = false
+          appState.activeChatRequestId = null
+        }
       }
     }
   )

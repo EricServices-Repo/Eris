@@ -1,3 +1,4 @@
+import type { TaskContract } from './task-contract'
 import { z } from 'zod'
 import { ImageGenerationSettingsSchema } from './image-generation-schema'
 import type { GeneratedImageAsset } from './image-generation'
@@ -46,6 +47,8 @@ export const ModelConnectionSchema = z.object({
   type: z.enum(['builtin', 'openai-compatible']),
   /** UI preset hint: ollama | lmstudio | openai | openrouter | groq | together | deepseek | custom */
   provider: z.string(),
+  /** Explicit provider capability; text templates receive serialized tool envelopes. */
+  toolProtocol: z.enum(['native-tools', 'text-tools']).optional(),
   enabled: z.boolean(),
   baseUrl: z.string(),
   /** Key name in local secrets.json, never raw secret in settings JSON */
@@ -386,6 +389,7 @@ export interface RouteResult {
 
 /** Central routing decision for one chat turn (main-process authority). */
 export interface TurnPlan {
+  task?: TaskContract
   intent: ChatIntent
   agentId: string
   agentName: string
@@ -423,6 +427,9 @@ export interface TurnPlan {
 }
 
 export interface ChatTurnContext {
+  /** Main-process task intake only. */
+  resolvedIntent?: ChatIntent
+  skipModelRouter?: boolean
   text: string
   fileNames?: string[]
   manualAgentId?: string | null

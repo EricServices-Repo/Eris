@@ -1,3 +1,4 @@
+import type { TaskContract } from './task-contract'
 /**
  * Public Cloud Agent endpoint for every Eris install.
  * TLS on :443. nginx on the server proxies this to the container upstream.
@@ -68,6 +69,8 @@ export interface CloudJobArtifacts {
 }
 
 export interface CloudHealth {
+  /** Executor must explicitly advertise enforcement of this task contract version. */
+  taskContractVersion?: number
   ok: boolean
   service: string
   version: string
@@ -99,6 +102,7 @@ export interface CloudHealth {
 }
 
 export interface EnqueueCloudJobRequest {
+  task?: TaskContract
   goal: string
   agentId?: string | null
   model?: string | null
@@ -120,10 +124,7 @@ export interface EnqueueCloudJobRequest {
  * Auth is required; otherwise only hard cloud failures (not "model still downloading").
  */
 export type CloudAgentsFallbackReason =
-  | 'not-authenticated'
-  | 'unreachable'
-  | 'model-error'
-  | 'not-configured'
+  'not-authenticated' | 'unreachable' | 'model-error' | 'not-configured'
 
 export function cloudAgentsFallbackReason(
   health: CloudHealth | null | undefined

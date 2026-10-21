@@ -1,3 +1,5 @@
+import type { TaskContract } from '../../../src/shared/task-contract'
+import { TaskToolGateway } from './agent/tool-gateway'
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
 import { join, relative } from 'path'
 import {
@@ -13,7 +15,7 @@ import {
   type EnqueueCloudJobRequest
 } from '../../../src/shared/cloud-agents'
 import { createCheckpoint, recordWriteOp, snapshotBeforeWrite } from './checkpoints'
-import { writeWorkspaceFile } from './workspace-fs'
+import { writeWorkspaceFile, resolveInWorkspace } from './workspace-fs'
 
 export interface CloudAppliedDiff {
   id: string
@@ -367,6 +369,7 @@ export async function enqueueCloudJob(req: EnqueueCloudJobRequest): Promise<Clou
     logLabel: 'enqueue job',
     timeoutMs: ENQUEUE_TIMEOUT_MS,
     body: JSON.stringify({
+      task: req.task,
       goal: req.goal,
       agentId: req.agentId,
       model: req.model,
@@ -580,7 +583,8 @@ export async function fetchCloudJobArtifacts(id: string): Promise<CloudJobArtifa
  */
 export async function applyCloudJobArtifacts(
   workspacePath: string,
-  jobId: string
+  jobId: string,
+  task?: TaskContract
 ): Promise<{
   ok: boolean
   checkpointId: string
@@ -606,6 +610,23 @@ export async function applyCloudJobArtifacts(
         diffs: [],
         truncated: pack.truncated,
         error: 'Artifact bundle is empty'
+      }
+    }
+    if (task) {
+      const gateway = new TaskToolGateway(task)
+      for (const file of pack.files) {
+        const denied = gateway.authorize(workspacePath, {
+          name: 'write_file',
+          args: { path: file.path, content: file.content },
+          raw: ''
+        })
+        if (denied) throw new Error(denied)
+        const path = resolveInWorkspace(workspacePath, file.path)
+        const current = existsSync(path) ? readFileSync(path, 'utf8') : null
+        if (current !== file.before)
+          throw new Error(
+            `Cloud patch for ${file.path} is stale; inspect and rebase it before applying.`
+          )
       }
     }
     const checkpoint = createCheckpoint(workspacePath)

@@ -1,6 +1,5 @@
 import type { AppSettings, TurnPlan } from '../../../../src/shared/settings-schema'
 import { findAgent, getProjectAgents, listResolvedAgents } from '../agents'
-import { planChatTurn } from '../chat-router'
 
 export type MidRunAdaptKind = 'escalate' | 'reroute' | null
 
@@ -64,32 +63,19 @@ export async function decideMidRunAdapt(options: {
     return { kind: null, reason: '' }
   }
 
-  const contextBlob = [
-    options.goal,
-    '',
-    'Prior progress:',
-    ...options.actionLog.slice(-12).map((l) => `- ${l}`),
-    options.filesTouched.length
-      ? `Files touched: ${[...new Set(options.filesTouched)].join(', ')}`
-      : '',
-    `Re-route from ${options.plan.agentId} → ${targetId} after stuck signals.`
-  ]
-    .filter(Boolean)
-    .join('\n')
-
-  const nextPlan = await planChatTurn({
-    workspacePath: options.workspacePath,
-    settings: options.settings,
-    context: {
-      text: contextBlob,
-      selectedModel: options.selectedModel,
-      mode: 'agent',
-      manualAgentId: targetId,
-      forceRoute: 'tools'
-    },
-    getSecret: options.getSecret,
-    signal: options.signal
-  })
+  const target = findAgent(options.workspacePath, targetId)
+  if (!target?.enabled) return { kind: null, reason: '' }
+  const ranks = ['none', 'read', 'edit', 'full'] as const
+  const ceiling = target.tools ?? 'read'
+  const toolPolicy =
+    ranks[Math.min(ranks.indexOf(options.plan.toolPolicy), ranks.indexOf(ceiling))]!
+  const nextPlan: TurnPlan = {
+    ...options.plan,
+    agentId: target.id,
+    agentName: target.name,
+    toolPolicy,
+    method: 'handoff'
+  }
 
   if (nextPlan.error) return { kind: null, reason: '' }
 

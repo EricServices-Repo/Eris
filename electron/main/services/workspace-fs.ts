@@ -11,14 +11,7 @@ import {
 } from 'fs'
 import { basename, dirname, join, relative, resolve, sep } from 'path'
 
-const SKIP_DIR_NAMES = new Set([
-  'node_modules',
-  '.git',
-  'out',
-  'dist',
-  'release',
-  '.DS_Store'
-])
+const SKIP_DIR_NAMES = new Set(['node_modules', '.git', 'out', 'dist', 'release', '.DS_Store'])
 
 const workspaceTreeCache = new Map<string, { at: number; tree: string }>()
 const WORKSPACE_TREE_CACHE_MS = 30_000
@@ -110,7 +103,10 @@ export function toWorkspaceRelative(workspacePath: string, absPath: string): str
   return rel.split(sep).join('/') || '.'
 }
 
-export function listDir(workspacePath: string, userPath = '.'): Array<{
+export function listDir(
+  workspacePath: string,
+  userPath = '.'
+): Array<{
   name: string
   path: string
   isDirectory: boolean
@@ -147,17 +143,35 @@ export function listDir(workspacePath: string, userPath = '.'): Array<{
 export function readWorkspaceFile(
   workspacePath: string,
   userPath: string,
-  maxChars = 80_000
-): { path: string; content: string; truncated: boolean; bytes: number } {
+  maxChars = 80_000,
+  range?: { startLine?: number; endLine?: number }
+): { path: string; content: string; truncated: boolean; bytes: number; lineRange?: string } {
   const abs = resolveInWorkspace(workspacePath, userPath)
   if (!existsSync(abs)) throw new WorkspaceFsError(`Not found: ${userPath}`)
   if (statSync(abs).isDirectory()) throw new WorkspaceFsError(`Is a directory: ${userPath}`)
   const buf = readFileSync(abs)
-  const text = buf.toString('utf8')
+  let text = buf.toString('utf8')
+  let lineRange: string | undefined
+  if (range) {
+    const lines = text.split('\n')
+    const start = range.startLine ?? 1
+    const end = range.endLine ?? Math.min(lines.length, start + 199)
+    if (
+      !Number.isInteger(start) ||
+      !Number.isInteger(end) ||
+      start < 1 ||
+      end < start ||
+      start > lines.length
+    )
+      throw new WorkspaceFsError('Invalid one-based line range')
+    text = lines.slice(start - 1, end).join('\n')
+    lineRange = `Lines ${start}-${Math.min(end, lines.length)} of ${lines.length}`
+  }
   const truncated = text.length > maxChars
   return {
     path: toWorkspaceRelative(workspacePath, abs),
     content: truncated ? text.slice(0, maxChars) : text,
+    ...(lineRange ? { lineRange } : {}),
     truncated,
     bytes: buf.length
   }
@@ -385,11 +399,7 @@ export function renameWorkspacePath(
   }
 }
 
-export function workspaceTree(
-  workspacePath: string,
-  userPath = '.',
-  maxDepth = 3
-): string {
+export function workspaceTree(workspacePath: string, userPath = '.', maxDepth = 3): string {
   const root = resolveInWorkspace(workspacePath, userPath)
   if (!existsSync(root)) throw new WorkspaceFsError(`Not found: ${userPath}`)
   const cacheKey = `${resolve(workspacePath)}\0${root}\0${maxDepth}`

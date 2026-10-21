@@ -425,100 +425,13 @@ export function useChatSession({
         requestThreadIdRef.current = thread.id
 
         const selected = selectedModel || settings.models.defaultModel || 'builtin:composer-lite'
-        const previousAgentId =
-          [...thread.messages].reverse().find((message) => message.role === 'assistant')?.agentId ??
-          null
-        const planningStartedAt = performance.now()
-        const turnPlan = await window.ide.planChatTurn({
-          text,
-          fileNames: files.map((f) => f.name),
-          manualAgentId: selectedAgentId === 'auto' ? null : selectedAgentId,
-          selectedModel: selected,
-          mode: chatMode,
-          forceRoute: opts?.forceRoute,
-          previousAgentId,
-          previousMessages: thread.messages
-            .filter((message) => message.role === 'user' || message.role === 'assistant')
-            .slice(-6)
-            .map((message) => ({
-              role: message.role as 'user' | 'assistant',
-              content: message.content.slice(0, 1200),
-              agentId: message.agentId
-            }))
-        })
-        const planningDurationMs = Math.max(0, Math.round(performance.now() - planningStartedAt))
-        lastTurnRef.current = { text, intent: turnPlan.intent, agentId: turnPlan.agentId }
-        const runModel = turnPlan.models.chat
-        setRouteLabel(turnPlan.reason)
+        const runModel = selected
+        lastTurnRef.current = { text, intent: 'answer', agentId: selectedAgentId }
+        setRouteLabel('Resolving task and project…')
         routeMetaRef.current = {
-          agentId: turnPlan.agentId,
-          agentName: turnPlan.agentName,
-          model: runModel
-        }
-
-        const abortUi = () => {
-          if (requestIdRef.current === requestId || lastRequestIdRef.current === requestId) {
-            setStreaming(false)
-            setAgentStatus(null)
-            requestIdRef.current = null
-          }
-        }
-
-        if (turnPlan.error) {
-          abortUi()
-          setChatError(turnPlan.error)
-          const displayContent =
-            files.length > 0 ? `${text}\n\nAttached: ${files.map((f) => f.name).join(', ')}` : text
-          const saved = await window.ide.appendChatMessage(
-            thread.id,
-            { id: uid(), role: 'user', content: displayContent, createdAt: Date.now() },
-            runModel,
-            workspacePath
-          )
-          const merged = mergeChatTail(thread, saved)
-          setActiveThread(merged)
-          activeThreadRef.current = merged
-          setThreads((prev) => [saved, ...prev.filter((t) => t.id !== saved.id)])
-          setAttachments([])
-          setActiveSkills([])
-          return
-        }
-
-        const modelInfo = catalog.find((m) => m.name === runModel)
-        const isLocalModel = runModel.startsWith('local:')
-        const isBuiltinModel = runModel.startsWith('builtin:')
-        const cannotRunLocal = isLocalModel && modelInfo?.ready !== true
-        const cannotRunBuiltin = isBuiltinModel && modelInfo?.ready !== true
-        const cannotRunExternal =
-          !isLocalModel &&
-          !isBuiltinModel &&
-          (!hasConnection || (modelInfo ? modelInfo.ready === false : !hasConnection))
-        if (cannotRunLocal || cannotRunBuiltin || cannotRunExternal) {
-          abortUi()
-          setChatError(
-            cannotRunLocal
-              ? `Local model “${runModel}” isn’t ready. Download it in Settings → Models → Local.`
-              : cannotRunExternal
-                ? `Can’t reach model “${runModel}”. Open Settings → Models, refresh your API/Ollama connection, or pick a Local model.`
-                : hasConnection || localReady
-                  ? `Model “${runModel}” isn’t installed. Download it in Settings → Models, or pick another model.`
-                  : 'No model ready. Download a Local model or Composer Lite in Settings → Models.'
-          )
-          const displayContent =
-            files.length > 0 ? `${text}\n\nAttached: ${files.map((f) => f.name).join(', ')}` : text
-          const saved = await window.ide.appendChatMessage(
-            thread.id,
-            { id: uid(), role: 'user', content: displayContent, createdAt: Date.now() },
-            runModel,
-            workspacePath
-          )
-          const merged = mergeChatTail(thread, saved)
-          setActiveThread(merged)
-          activeThreadRef.current = merged
-          setThreads((prev) => [saved, ...prev.filter((t) => t.id !== saved.id)])
-          setAttachments([])
-          setActiveSkills([])
-          return
+          agentId: selectedAgentId,
+          agentName: 'Resolving…',
+          model: selected
         }
 
         const selectedTab = tabsRef.current.find((t) => t.path === activeFile)
@@ -573,16 +486,16 @@ export function useChatSession({
         const ok = await window.ide.streamChat({
           requestId,
           model: runModel,
-          agentId: turnPlan.agentId,
-          mode: turnPlan.mode,
-          turnPlan,
+          agentId: selectedAgentId === 'auto' ? undefined : selectedAgentId,
+          mode: chatMode,
+          forceRoute: opts?.forceRoute,
+          workspacePath,
           threadId: thread.id,
-          planningDurationMs,
           prompt: {
             text,
-            mode: turnPlan.mode,
-            agentId: turnPlan.agentId,
-            agentName: turnPlan.agentName,
+            mode: chatMode,
+            agentId: selectedAgentId,
+
             skillIds,
             openFile: openTab
               ? { path: openTab.path, language: openTab.language, content: openTab.content }
@@ -711,10 +624,20 @@ export function useChatSession({
       schedulePaint()
     })
     const offRouted = window.ide.onChatRouted(
-      ({ requestId, agentId, agentName, model, reason, toolsModel }) => {
+      ({ requestId, agentId, agentName, model, reason, toolsModel, task, intent }) => {
         if (requestId !== requestIdRef.current) return
         routeMetaRef.current = { agentId, agentName, model }
-        if (reason) setRouteLabel(reason)
+        if (lastTurnRef.current && intent)
+          lastTurnRef.current = {
+            ...lastTurnRef.current,
+            intent: intent as ChatIntent,
+            agentId: agentId ?? ''
+          }
+        if (task)
+          setRouteLabel(
+            `${task.deliverable} · ${task.scope.projectRoot?.split(/[\\/]/).pop() || 'Project unresolved'} · ${task.authority.edit ? 'Changes allowed' : 'Read only'}`
+          )
+        else if (reason) setRouteLabel(reason)
         else if (agentName) {
           const tools =
             toolsModel && toolsModel !== model ? ` → ${toolsModel.replace(/^builtin:/, '')}` : ''

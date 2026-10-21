@@ -341,6 +341,8 @@ export interface IdeApi {
     prompt?: ChatPromptInput
     agentId?: string
     mode?: 'ask' | 'agent'
+    workspacePath?: string | null
+    forceRoute?: 'tools' | 'answer'
     turnPlan?: TurnPlan
     threadId?: string | null
     planningDurationMs?: number
@@ -455,6 +457,7 @@ export interface IdeApi {
       model: string
       reason?: string
       intent?: string
+      task?: import('./task-contract').TaskContract
       toolsModel?: string
     }) => void
   ) => () => void

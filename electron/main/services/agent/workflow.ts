@@ -32,7 +32,9 @@ const TRANSITIONS: Record<AgentWorkflowPhase, ReadonlySet<AgentWorkflowPhase>> =
 }
 
 export function outcomeContractFor(plan: TurnPlan, goal = ''): AgentOutcomeContract {
-  const requiresMutation = plan.intent === 'edit' || asksToImplementChanges(goal)
+  const requiresMutation = plan.task
+    ? plan.task.deliverable === 'patch' && plan.task.authority.edit
+    : plan.mode !== 'ask' && (plan.intent === 'edit' || asksToImplementChanges(goal))
   return {
     intent: plan.intent,
     requiresWorkspaceEvidence:
@@ -51,6 +53,8 @@ export class AgentWorkflow {
   private toolCalls = 0
   private successfulToolCalls = 0
   private mutations = 0
+  private sourceReads = 0
+  private commandObservations = 0
   private verification: AgentWorkflowSnapshot['verification'] = 'not-run'
   private blockedReason: string | undefined
 
@@ -68,10 +72,22 @@ export class AgentWorkflow {
     this.phase = next
   }
 
-  noteTool(result: { ok: boolean; mutated: boolean }): void {
+  noteTool(result: { ok: boolean; mutated: boolean; name?: string; path?: string }): void {
     this.toolCalls += 1
+    if (result.name === 'run') this.commandObservations += 1
     if (result.ok) this.successfulToolCalls += 1
+    if (
+      result.ok &&
+      ['read_file', 'notebook_read'].includes(result.name ?? '') &&
+      result.path &&
+      !result.path.startsWith('.eris/')
+    )
+      this.sourceReads += 1
     if (result.ok && result.mutated) this.mutations += 1
+  }
+
+  invalidateVerification(): void {
+    this.verification = 'not-run'
   }
 
   noteVerification(result: 'passed' | 'failed' | 'skipped'): void {
@@ -83,8 +99,22 @@ export class AgentWorkflow {
     codeMutated: boolean
     verifyPassed: boolean
   }): { ok: boolean; reason?: string } {
-    if (this.contract.requiresWorkspaceEvidence && this.successfulToolCalls === 0) {
+    if (
+      this.contract.requiresWorkspaceEvidence &&
+      this.successfulToolCalls === 0 &&
+      !(['run', 'verify'].includes(this.contract.intent) && this.commandObservations > 0)
+    ) {
       return { ok: false, reason: 'The agent produced no successful workspace evidence.' }
+    }
+    if (
+      ['review', 'plan'].includes(this.contract.intent) &&
+      this.contract.requiresWorkspaceEvidence &&
+      !this.sourceReads
+    ) {
+      return {
+        ok: false,
+        reason: 'No project source was inspected. A directory listing does not ground this task.'
+      }
     }
     if (this.contract.requiresMutation && !input.workspaceMutated) {
       return { ok: false, reason: 'This edit request did not change the workspace.' }

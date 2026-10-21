@@ -1,5 +1,6 @@
 import type { GeneratedImageAsset } from '../../../../src/shared/image-generation'
-export type AgentChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
+import type { ModelMessage } from '../model-protocol'
+export type AgentChatMessage = ModelMessage
 export type AgentMode = 'ask' | 'agent'
 
 export type AgentToolEvent = {
@@ -25,6 +26,7 @@ export type AgentDiffEvent = {
 }
 
 export type AgentRunnerEvent =
+  | { type: 'evidence'; evidence: import('./tool-gateway').EvidenceRecord }
   | { type: 'asset'; asset: GeneratedImageAsset }
   | { type: 'thinking'; text: string }
   | { type: 'answer'; text: string; replace?: boolean }
@@ -76,6 +78,8 @@ export type AgentRunnerEvent =
     }
 
 export interface ToolCall {
+  id?: string
+  parseError?: string
   name: string
   args: Record<string, unknown>
   raw: string

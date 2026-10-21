@@ -31,18 +31,39 @@ export function executeTool(
         const path = argString(call.args, 'path', '.')
         const entries = listDir(workspacePath, path)
         const detail = entries
-          .map((e) => `${e.isDirectory ? 'dir ' : 'file'} ${e.path}${e.size != null ? ` (${e.size}b)` : ''}`)
+          .map(
+            (e) =>
+              `${e.isDirectory ? 'dir ' : 'file'} ${e.path}${e.size != null ? ` (${e.size}b)` : ''}`
+          )
           .join('\n')
         return { ok: true, detail: detail || '(empty)', mutated: false, path }
       }
       case 'read_file': {
         const path = argString(call.args, 'path')
         if (!path) throw new WorkspaceFsError('path is required')
-        const file = readWorkspaceFile(workspacePath, path)
+        const ranged =
+          typeof call.args.start_line === 'number' || typeof call.args.end_line === 'number'
+        const file = readWorkspaceFile(
+          workspacePath,
+          path,
+          80_000,
+          ranged
+            ? {
+                startLine:
+                  typeof call.args.start_line === 'number' ? call.args.start_line : undefined,
+                endLine: typeof call.args.end_line === 'number' ? call.args.end_line : undefined
+              }
+            : undefined
+        )
         const detail = file.truncated
           ? `${file.content}\n\n[truncated at ${file.content.length} chars; file is ${file.bytes} bytes]`
           : file.content
-        return { ok: true, detail, mutated: false, path: file.path }
+        return {
+          ok: true,
+          detail: file.lineRange ? `[${file.lineRange}]\n${detail}` : detail,
+          mutated: false,
+          path: file.path
+        }
       }
       case 'write_file': {
         const path = argString(call.args, 'path')
@@ -131,6 +152,11 @@ export function executeTool(
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    return { ok: false, detail: message, mutated: false, path: argString(call.args, 'path') || undefined }
+    return {
+      ok: false,
+      detail: message,
+      mutated: false,
+      path: argString(call.args, 'path') || undefined
+    }
   }
 }

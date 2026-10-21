@@ -70,6 +70,7 @@ const PRESETS: ConnectionPreset[] = [
 ]
 
 type Draft = {
+  toolProtocol?: ModelConnection['toolProtocol']
   id: string
   name: string
   provider: string
@@ -86,6 +87,7 @@ function toDraft(conn: ModelConnection, hasStoredKey: boolean): Draft {
   return {
     id: conn.id,
     name: conn.name,
+    toolProtocol: conn.toolProtocol,
     provider: conn.provider || 'custom',
     baseUrl: conn.baseUrl,
     enabled: conn.enabled,
@@ -187,10 +189,7 @@ export function ModelConnectionsPanel({
     setError(null)
     setInfo(null)
     try {
-      const apiKeyRef =
-        draft.apiKey || draft.hasStoredKey
-          ? `connection.${draft.id}.apiKey`
-          : ''
+      const apiKeyRef = draft.apiKey || draft.hasStoredKey ? `connection.${draft.id}.apiKey` : ''
       if (draft.apiKey) {
         await window.ide.setSecret(apiKeyRef, draft.apiKey)
       }
@@ -199,6 +198,7 @@ export function ModelConnectionsPanel({
         name: draft.name.trim(),
         type: 'openai-compatible',
         provider: draft.provider || 'custom',
+        toolProtocol: draft.toolProtocol ?? 'native-tools',
         enabled: draft.enabled,
         baseUrl: draft.baseUrl.trim().replace(/\/$/, ''),
         apiKeyRef,
@@ -269,7 +269,7 @@ export function ModelConnectionsPanel({
   }
 
   const activePreset = draft
-    ? PRESETS.find((p) => p.provider === draft.provider) ?? PRESETS[PRESETS.length - 1]!
+    ? (PRESETS.find((p) => p.provider === draft.provider) ?? PRESETS[PRESETS.length - 1]!)
     : null
 
   const editor = draft && activePreset && (
@@ -281,15 +281,13 @@ export function ModelConnectionsPanel({
       <p className="model-conn-hint">{activePreset.hint}</p>
       <label className="field">
         <span>Name</span>
-        <input
-          value={draft.name}
-          onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-        />
+        <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
       </label>
       {(activePreset.requiresKey || Boolean(draft.apiKey || draft.hasStoredKey)) && (
         <p className="model-conn-hint">
-          Prompts and attached files are sent to this endpoint. The API key is stored in Eris&apos;s local
-          app data on this device; anyone with access to your account files may be able to read it.
+          Prompts and attached files are sent to this endpoint. The API key is stored in Eris&apos;s
+          local app data on this device; anyone with access to your account files may be able to
+          read it.
         </p>
       )}
       <label className="field">
@@ -400,8 +398,9 @@ export function ModelConnectionsPanel({
           </label>
           {(activePreset.requiresKey || Boolean(draft.apiKey || draft.hasStoredKey)) && (
             <p className="model-conn-hint">
-              Prompts and attached files go to this provider. The API key is stored in Eris&apos;s local
-              app data on this device; anyone with access to your account files may be able to read it.
+              Prompts and attached files go to this provider. The API key is stored in Eris&apos;s
+              local app data on this device; anyone with access to your account files may be able to
+              read it.
             </p>
           )}
           <label className="field">
@@ -437,6 +436,21 @@ export function ModelConnectionsPanel({
               spellCheck={false}
             />
           </label>
+          <label className="field">
+            <span>Tool support</span>
+            <select
+              value={draft.toolProtocol ?? 'native-tools'}
+              onChange={(event) =>
+                setDraft({
+                  ...draft,
+                  toolProtocol: event.target.value as ModelConnection['toolProtocol']
+                })
+              }
+            >
+              <option value="native-tools">Native tool calls</option>
+              <option value="text-tools">Text tool format (compatibility)</option>
+            </select>
+          </label>
           <label className="providers-enable-row">
             <input
               type="checkbox"
@@ -446,10 +460,7 @@ export function ModelConnectionsPanel({
             <span>Enabled for chat</span>
           </label>
           {(error || info) && (
-            <div
-              className="models-inline-msg"
-              data-tone={error ? 'danger' : 'ok'}
-            >
+            <div className="models-inline-msg" data-tone={error ? 'danger' : 'ok'}>
               {error || info}
             </div>
           )}
@@ -522,14 +533,15 @@ export function ModelConnectionsPanel({
                         <strong>{c.name}</strong>
                         <span className="models-tag">{c.provider || 'custom'}</span>
                         {!c.enabled && <span className="models-tag">Off</span>}
-                        {c.enabled &&
-                          models.includes(defaultModel) && (
-                            <span className="models-tag is-accent">Default</span>
-                          )}
+                        {c.enabled && models.includes(defaultModel) && (
+                          <span className="models-tag is-accent">Default</span>
+                        )}
                       </div>
                       <div className="models-row-meta" title={c.baseUrl}>
                         {statusText}
-                        {c.enabled && live?.reachable ? ` · ${c.baseUrl.replace(/^https?:\/\//, '')}` : ''}
+                        {c.enabled && live?.reachable
+                          ? ` · ${c.baseUrl.replace(/^https?:\/\//, '')}`
+                          : ''}
                       </div>
                     </div>
                   </div>
@@ -627,9 +639,7 @@ export function ModelConnectionsPanel({
                 <div className="model-conn-meta">
                   {c.baseUrl}
                   {live?.error ? ` · ${live.error}` : ''}
-                  {live?.reachable && models.length === 0
-                    ? ' · connected (no models listed)'
-                    : ''}
+                  {live?.reachable && models.length === 0 ? ' · connected (no models listed)' : ''}
                 </div>
                 {models.length > 0 && (
                   <div className="model-chip-row">

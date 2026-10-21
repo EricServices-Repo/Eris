@@ -49,7 +49,7 @@ describe('chat agent contract', () => {
     expect(
       chatAgentForTurn({
         mode: 'agent',
-        intent: 'explore',
+        intent: 'edit',
         text: 'fix that',
         previousAgentId: 'explainer'
       })
@@ -57,7 +57,7 @@ describe('chat agent contract', () => {
     expect(
       chatAgentForTurn({
         mode: 'agent',
-        intent: 'edit',
+        intent: 'explore',
         text: 'what did you change?',
         previousAgentId: 'composer'
       })
@@ -68,6 +68,14 @@ describe('chat agent contract', () => {
     expect(
       chatAgentForTurn({ mode: 'agent', intent: 'explore', text: 'where is AuthService defined?' })
     ).toBe('fast')
+    expect(
+      chatAgentForTurn({
+        mode: 'agent',
+        intent: 'review',
+        text: 'and those issues?',
+        previousAgentId: 'composer'
+      })
+    ).toBe('reviewer')
     expect(
       chatAgentForTurn({ mode: 'ask', intent: 'answer', text: 'how does this app work?' })
     ).toBe('explainer')

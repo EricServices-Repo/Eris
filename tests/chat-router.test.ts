@@ -107,6 +107,7 @@ describe('classifyIntent', () => {
     ['Review the internet, who is Steve Embling', 'ask', 'explore'],
     ['improve the calculator UI', 'agent', 'edit'],
     ['review the airbnb website, what 3 improvements should we make?', 'agent', 'review'],
+    ['Review the code, improve it for the AirBNB website', 'agent', 'review'],
     ['what 3 improvements should we make?', 'agent', 'review']
   ] as const)('%s (%s) → %s', (text, mode, intent) => {
     expect(classifyIntent(text, mode)).toBe(intent)
@@ -439,6 +440,19 @@ describe('planChatTurn', () => {
     })
     expect(review.agentId).toBe('reviewer')
     expect(review.toolPolicy).toBe('read')
+
+    const airbnbReview = await planChatTurn({
+      ...base,
+      settings: getDefaults(),
+      context: {
+        text: 'Review the code, improve it for the AirBNB website',
+        selectedModel: 'builtin:composer-lite',
+        mode: 'agent'
+      }
+    })
+    expect(airbnbReview.intent).toBe('review')
+    expect(airbnbReview.agentId).toBe('reviewer')
+    expect(airbnbReview.toolPolicy).toBe('read')
 
     const explain = await planChatTurn({
       ...base,

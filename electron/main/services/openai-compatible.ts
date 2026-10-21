@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto'
 export interface ChatRequestMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string | null
@@ -51,9 +52,8 @@ export async function* streamOpenAICompatible(options: {
   if (options.apiKey) headers.Authorization = `Bearer ${options.apiKey}`
 
   // include_usage is OpenAI-style; many local servers (Ollama/LM Studio) reject unknown fields.
-  const supportsUsageHint = /openai\.com|openrouter\.ai|together\.xyz|groq\.com|deepseek\.com/i.test(
-    root
-  )
+  const supportsUsageHint =
+    /openai\.com|openrouter\.ai|together\.xyz|groq\.com|deepseek\.com/i.test(root)
   const body: Record<string, unknown> = {
     model: options.model,
     messages: options.messages,
@@ -81,10 +81,9 @@ export async function* streamOpenAICompatible(options: {
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
-  const toolAcc = new Map<
-    number,
-    { id: string; name: string; arguments: string }
-  >()
+  let complete = false
+  let finishReason: string | null = null
+  const toolAcc = new Map<number, { id: string; name: string; arguments: string }>()
 
   while (true) {
     const { done, value } = await reader.read()
@@ -97,6 +96,7 @@ export async function* streamOpenAICompatible(options: {
       if (!trimmed.startsWith('data:')) continue
       const data = trimmed.slice(5).trim()
       if (data === '[DONE]') {
+        complete = true
         finishNativeTools()
         return
       }
@@ -126,11 +126,14 @@ export async function* streamOpenAICompatible(options: {
           options.onUsage({
             promptTokens,
             completionTokens,
-            totalTokens:
-              Number(json.usage.total_tokens) || promptTokens + completionTokens
+            totalTokens: Number(json.usage.total_tokens) || promptTokens + completionTokens
           })
         }
         const choice = json.choices?.[0]
+        if (choice?.finish_reason) {
+          finishReason = choice.finish_reason
+          complete = true
+        }
         const chunk = choice?.delta?.content
         if (chunk) yield chunk
 
@@ -155,10 +158,12 @@ export async function* streamOpenAICompatible(options: {
 
   function finishNativeTools(): void {
     if (!options.onNativeToolCalls || toolAcc.size === 0) return
+    if (!complete || finishReason === 'length' || finishReason === 'content_filter')
+      throw new Error('Incomplete model tool stream; no tool actions were accepted.')
     const calls: NativeToolCall[] = [...toolAcc.entries()]
       .sort((a, b) => a[0] - b[0])
-      .map(([, v], i) => ({
-        id: v.id || `call_${i}`,
+      .map(([, v]) => ({
+        id: v.id || `call_${randomUUID()}`,
         name: v.name,
         arguments: v.arguments || '{}'
       }))
@@ -169,10 +174,7 @@ export async function* streamOpenAICompatible(options: {
 
 const LIST_MODELS_TIMEOUT_MS = 2_500
 
-export async function listOpenAIModels(
-  baseUrl: string,
-  apiKey?: string | null
-): Promise<string[]> {
+export async function listOpenAIModels(baseUrl: string, apiKey?: string | null): Promise<string[]> {
   const root = baseUrl.replace(/\/$/, '')
   if (!root) throw new Error('Base URL is required')
   const url = root.endsWith('/v1') ? `${root}/models` : `${root}/v1/models`
@@ -190,16 +192,12 @@ export async function listOpenAIModels(
     res = await fetch(url, { headers, signal })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    throw new Error(
-      `Cannot reach ${url} — is the server running? (${message})`
-    )
+    throw new Error(`Cannot reach ${url} — is the server running? (${message})`)
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     const snippet = text.slice(0, 160).replace(/\s+/g, ' ')
-    throw new Error(
-      `List models failed: HTTP ${res.status}${snippet ? ` · ${snippet}` : ''}`
-    )
+    throw new Error(`List models failed: HTTP ${res.status}${snippet ? ` · ${snippet}` : ''}`)
   }
   const data = (await res.json()) as { data?: Array<{ id: string }> }
   return (data.data ?? []).map((m) => m.id).filter(Boolean)

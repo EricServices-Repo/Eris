@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.4 — 2026-10-21
+
+- Rebuilt agent task intake, model tool protocols, project scope enforcement, and outcome verification.
+
 ## 0.4.3 — 2026-10-20
 
 - Improved chat agent routing, context handling, specialist delegation, and Agents activity visibility.

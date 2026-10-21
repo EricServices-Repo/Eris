@@ -1,15 +1,11 @@
 import type { AppSettings } from '../../../../src/shared/settings-schema'
 import { AGENT_HANDOFF_CHARS } from '../../../../src/shared/agent-orchestration'
-import { findBuiltinEntry, isBuiltinRef } from '../builtin-model'
 import { truncateForModel } from './prompts'
 import { collectModelText } from './stream'
 import type { AgentChatMessage } from './types'
-import { contextLimits } from '../vram-fit'
 
 /** Keep this many non-system messages verbatim after compaction. */
 const COMPACT_TAIL_MESSAGES = 5
-/** Fraction of model context reserved for prompt before compacting. */
-const COMPACT_BUDGET_RATIO = 0.65
 /** Keep older tool-result messages small before paying for model summarization. */
 const MICRO_COMPACT_MAX_CHARS = 1_800
 
@@ -18,7 +14,7 @@ export function buildWorkSummary(goal: string, actions: string[], workerNote: st
   const uniqueActions = [...new Set(actions)].slice(-40)
   const goalLine = goal.replace(/\s+/g, ' ').trim().slice(0, 160)
   const lines: string[] = []
-  if (goalLine) lines.push(`Finished: ${goalLine}`)
+  if (goalLine) lines.push(`Task: ${goalLine}`)
   if (uniqueActions.length > 0) {
     lines.push('')
     lines.push('What I did:')
@@ -35,8 +31,9 @@ export function buildWorkSummary(goal: string, actions: string[], workerNote: st
 /** Rough token estimate for local budgeting (chars/4). */
 function estimateTokens(messages: AgentChatMessage[]): number {
   let chars = 0
-  for (const m of messages) chars += m.content.length + 8
-  return Math.ceil(chars / 4)
+  for (const m of messages)
+    chars += m.content.length + JSON.stringify(m.tool_calls ?? []).length + 8
+  return Math.ceil(chars / 3)
 }
 
 /**
@@ -66,7 +63,11 @@ export function microCompactAgentMessages(
     const message = compacted[index]!
     const targetChars =
       index >= protectedFrom ? MICRO_COMPACT_MAX_CHARS * 2 : MICRO_COMPACT_MAX_CHARS
-    if (!message.content.includes('TOOL_RESULT') || message.content.length <= targetChars) continue
+    if (
+      (message.role !== 'tool' && !message.content.includes('TOOL_RESULT')) ||
+      message.content.length <= targetChars
+    )
+      continue
     const marker =
       `[Earlier tool output shortened by local context cleanup. Treat omitted details as unknown; ` +
       `inspect again if needed, and do not repeat mutations just to recover this output.]`
@@ -87,21 +88,7 @@ export function microCompactAgentMessages(
   }
 }
 
-/** Prompt budget before compaction — same window the model was loaded with. */
-export function contextBudgetTokens(settings: AppSettings, workerModel: string): number {
-  if (isBuiltinRef(workerModel)) {
-    const entry = findBuiltinEntry(workerModel)
-    const limits = contextLimits({
-      tier: entry?.tier,
-      role: entry?.role,
-      modelContext: entry?.contextWindow,
-      settingsContext: settings.models.contextWindow
-    })
-    return Math.floor(limits.max * COMPACT_BUDGET_RATIO)
-  }
-  const window = settings.models.contextWindow || 32768
-  return Math.floor(Math.min(Math.max(window, 2048), 128000) * COMPACT_BUDGET_RATIO)
-}
+export { contextBudgetTokens } from './context-budget'
 
 export function needsContextCompaction(
   messages: AgentChatMessage[],
@@ -117,9 +104,7 @@ export function formatActionLogForResume(actionLog: string[], limit = 40): strin
   const unique = [...new Set(actionLog)]
   const slice = unique.slice(-limit)
   const omitted = unique.length - slice.length
-  return (
-    (omitted > 0 ? `(…${omitted} earlier)\n` : '') + slice.map((a) => `• ${a}`).join('\n')
-  )
+  return (omitted > 0 ? `(…${omitted} earlier)\n` : '') + slice.map((a) => `• ${a}`).join('\n')
 }
 
 function buildFallbackProgressSummary(
@@ -157,7 +142,7 @@ function buildResumeMessage(options: {
     role: 'user',
     content:
       `Original request:\n${options.goal.slice(0, AGENT_HANDOFF_CHARS)}\n\n` +
-      `Progress summary (compacted context — trust this over forgotten earlier turns):\n` +
+      `Progress summary (fallible execution memory; the task contract remains authoritative):\n` +
       `${options.progressSummary.slice(0, AGENT_HANDOFF_CHARS * 3)}\n\n` +
       `Action log:\n${formatActionLogForResume(options.actionLog)}\n\n` +
       `${files}${treeBit}\n` +
@@ -268,8 +253,11 @@ export async function compactAgentMessages(options: {
     return { messages: options.messages, memory: options.priorMemory ?? '' }
   }
 
-  const tail = nonSystem.slice(-COMPACT_TAIL_MESSAGES)
-  const middle = nonSystem.slice(0, Math.max(0, nonSystem.length - COMPACT_TAIL_MESSAGES))
+  let split = Math.max(0, nonSystem.length - COMPACT_TAIL_MESSAGES)
+  // Move the boundary before the assistant call so every retained result has its call.
+  while (split > 0 && nonSystem[split]?.role === 'tool') split--
+  const tail = nonSystem.slice(split)
+  const middle = nonSystem.slice(0, split)
 
   let progressSummary: string
   if (options.skipLiteSummary) {

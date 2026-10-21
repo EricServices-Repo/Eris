@@ -1,3 +1,5 @@
+import { appendTaskEvent, flushTaskLedger } from './task-ledger'
+import { createTaskContract, childTaskContract } from './task-intake'
 import { randomUUID } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
@@ -552,6 +554,17 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
       }))
     }
 
+    turnPlan.task = job.handoff?.task
+      ? childTaskContract(job.handoff.task, turnPlan, job.goal, treePath, job.id)
+      : createTaskContract({
+          taskId: job.id,
+          threadId: job.sourceThreadId,
+          workspacePath: treePath,
+          text: job.goal,
+          plan: turnPlan
+        })
+
+    appendTaskEvent(job.id, 'task', turnPlan.task)
     const sender = currentSender
     let thinkingBuf = ''
     let lastUpsert = 0
@@ -570,6 +583,7 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
     const userContent =
       job.handoff != null ? `${formatHandoffForPrompt(job.handoff)}\n\n${job.goal}` : job.goal
 
+    let incomplete = false
     for await (const evt of runAgentWithWorkspaceTools({
       workspacePath: treePath,
       settings,
@@ -672,7 +686,10 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
       } else if (evt.type === 'thinking') {
         thinkingBuf += evt.text
         flushThinking()
+      } else if (evt.type === 'evidence') {
+        appendTaskEvent(job.id, 'evidence', evt.evidence)
       } else if (evt.type === 'progress') {
+        if (evt.incomplete) incomplete = true
         upsert({
           ...cur,
           step: evt.step,
@@ -738,13 +755,19 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
         upsert({ ...cur, toolsModel: evt.model, model: evt.model })
       }
     }
+    await flushTaskLedger(job.id)
     flushThinking(true)
     const done = getBackgroundJob(job.id)
     if (done && done.status === 'running') {
       upsert({
         ...done,
-        status: ac.signal.aborted ? 'stopped' : 'done',
-        liveStatus: ac.signal.aborted ? 'Stopped' : 'Done — review diff to merge'
+        status: ac.signal.aborted ? 'stopped' : incomplete ? 'failed' : 'done',
+        error: incomplete ? 'The agent stopped before satisfying its task contract.' : undefined,
+        liveStatus: ac.signal.aborted
+          ? 'Stopped'
+          : incomplete
+            ? 'Incomplete — inspect the remaining work'
+            : 'Done — review diff to merge'
       })
     }
     logInfo('Background agent finished', { id: job.id, status: getBackgroundJob(job.id)?.status })
@@ -762,6 +785,7 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
     }
     logError('Background agent failed', { id: job.id, error: message })
   } finally {
+    await flushTaskLedger(job.id)
     aborts.delete(job.id)
     void pumpQueue()
   }

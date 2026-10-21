@@ -1,4 +1,5 @@
 /* eslint-disable require-yield -- fake runners only need to exercise approveCommand */
+import { randomUUID } from 'crypto'
 import { mkdtempSync, realpathSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -7,6 +8,8 @@ import { ipcMain } from 'electron'
 import type { TurnPlan } from '../src/shared/settings-schema'
 
 type RunnerOptions = {
+  workspacePath: string
+  turnPlan: TurnPlan
   approveCommand: (kind: 'run' | 'push', command: string) => Promise<boolean>
 }
 type RunnerEvent = Record<string, unknown> & { type: string }
@@ -18,6 +21,22 @@ const runner = vi.hoisted(() => ({
 vi.mock('../electron/main/services/agent-runner', () => ({
   runAgentWithWorkspaceTools: (opts: RunnerOptions) => runner.script(opts)
 }))
+vi.mock('../electron/main/services/task-resolver', () => ({
+  resolveTaskIntent: async (input: { fallback: string }) => input.fallback
+}))
+vi.mock('../electron/main/services/task-outcome', () => ({
+  reviewTaskOutcome: async () => ({ verdict: 'supported', reason: 'test verdict' })
+}))
+vi.mock('../electron/main/services/builtin-model', async () => {
+  const actual = await vi.importActual<typeof import('../electron/main/services/builtin-model')>(
+    '../electron/main/services/builtin-model'
+  )
+  return {
+    ...actual,
+    isExactBuiltinReady: () => true,
+    resolveExactBuiltinRef: (model: string) => model
+  }
+})
 vi.mock('../electron/main/services/diagnostics', () => ({ setDiagnosticsPaused: () => undefined }))
 vi.mock('../electron/main/ipc/shared', () => ({
   getSecret: () => '',
@@ -61,11 +80,11 @@ const plan: TurnPlan = {
   method: 'manual'
 }
 
-function stream(prompt?: Record<string, unknown>) {
+function stream(prompt?: Record<string, unknown>, requestId = randomUUID()) {
   return handlers['chat:stream']!(
     { sender },
     {
-      requestId: 'req-1',
+      requestId,
       model: 'builtin:composer-lite',
       mode: 'agent',
       turnPlan: plan,
@@ -152,5 +171,52 @@ describe('chat:stream command approval', () => {
     expect(results).toEqual([false])
     const done = sent.find((s) => s.channel === 'chat:done')
     expect(done?.payload.aborted).toBe(true)
+  })
+})
+
+describe('main-process task authority', () => {
+  it('ignores a renderer editing plan when the request is a review', async () => {
+    let actual: TurnPlan | undefined
+    runner.script = async function* (options) {
+      actual = options.turnPlan
+      yield { type: 'answer', text: 'Findings from the selected project.' }
+    }
+    await stream({ text: 'Review the code, improve it for the Airbnb website' })
+    expect(actual?.intent).toBe('review')
+    expect(actual?.task?.authority.edit).toBe(false)
+    expect(actual?.task?.originalText).toContain('Airbnb')
+  })
+  it('executes one request ID once', async () => {
+    let calls = 0
+    runner.script = async function* () {
+      calls++
+      yield { type: 'answer', text: 'Answer' }
+    }
+    const requestId = randomUUID()
+    await stream(undefined, requestId)
+    await stream(undefined, requestId)
+    expect(calls).toBe(1)
+  })
+  it('keeps the execution workspace bound after a workspace switch', async () => {
+    const original = appState.currentWorkspace
+    runner.script = async function* (options) {
+      appState.currentWorkspace = realpathSync(mkdtempSync(join(tmpdir(), 'eris-other-')))
+      expect(options.workspacePath).toBe(original)
+      expect(options.turnPlan.task?.scope.workspaceRoot).toBe(original)
+      yield { type: 'answer', text: 'Bound to original workspace' }
+    }
+    await stream()
+    const { getLatestChatJob } = await import('../electron/main/services/chat-job-controller')
+    expect(getLatestChatJob(original)?.workspacePath).toBe(original)
+  })
+  it('persists incomplete outcomes without relabeling them done', async () => {
+    const original = appState.currentWorkspace
+    runner.script = async function* () {
+      yield { type: 'progress', step: 1, filesTouched: [], actionLog: [], incomplete: true }
+      yield { type: 'answer', text: 'Incomplete: source evidence missing.' }
+    }
+    await stream()
+    const { getLatestChatJob } = await import('../electron/main/services/chat-job-controller')
+    expect(getLatestChatJob(original)?.status).toBe('incomplete')
   })
 })
