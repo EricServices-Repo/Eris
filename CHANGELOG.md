@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.8 — 2026-10-22
+
+Cross-platform desktop builds (macOS + Windows) from the same version tag.
+
+| Platform | Download |
+|----------|----------|
+| macOS | `Eris-0.4.8-mac-*.dmg` / `.zip` |
+| Windows | `Eris-0.4.8-win-*-setup.exe` |
+
+CI builds both platforms on tag push (`.github/workflows/release.yml`).
+
+### Changes
+- Merge pull request #44 from EricServices-Repo/codex/review-project-and-recommend-6 (4a23276)
+- Remove branding from the macOS title bar and bump version (d0d16fd)
+- Enforce diagnostics effect boundaries and expand agent tests (1cd5190)
+- Merge pull request #43 from EricServices-Repo/codex/review-project-and-recommend-6 (e61af1c)
+- Enforce tool schemas and synchronize agent recovery context (b3c05dd)
+- Merge pull request #41 from EricServices-Repo/worktree-smoke-debug-mode (94fd11f)
+- Add simulated and real-model agent diagnostics runs (e7c99f1)
+
 ## ${next} — 2026-10-22
 
 - Removed the app name and logo from the macOS title bar so they don’t overlap the window controls.
