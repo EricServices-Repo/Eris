@@ -714,10 +714,6 @@ export default function App() {
         }}
       />
       <div className="titlebar">
-        <div className="titlebar-brand">
-          <img src={logo} alt="" className="titlebar-logo" draggable={false} />
-          <span>Eris{activeWorkspace ? ` — ${activeWorkspace.name}` : ''}</span>
-        </div>
         <div className="titlebar-actions">
           {workspacePath && (
             <>

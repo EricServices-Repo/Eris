@@ -14,6 +14,8 @@ Implementation notes for the first release of the smoke-test/debug mode describe
 | Phase 1: per-case timeline, failure stage/category, JSON + Markdown export, replay of recorded responses | Done |
 | Phase 2: real-model smoke on the same curated cases (opt-in, isolated) | Basic: single model, no repeats, baselines, or cost estimates |
 | Phase 3: build console (run typecheck/test/lint/build stages from the app) | Deferred |
+| Build gate: diagnostics, sandbox, and scripted `chat:stream` tests run in `test:agents` (`prebuild`) | Done |
+| Effect refusals enforced by the scope at each service boundary, not by coordinator options alone | Done |
 
 ## Architecture
 
@@ -24,12 +26,20 @@ Implementation notes for the first release of the smoke-test/debug mode describe
 - **Oracle** — `debug-runs/oracle.ts`. Route, tool protocol, workspace effects, answer, blocked effects, and terminal state are separate checks. The earliest failing stage becomes the case failure. An answer that claims success never substitutes for a required diff.
 - **Store/export** — `debug-runs/store.ts` and `debug-runs/export.ts`. Local only, under `<userData>/debug-runs/`: summary JSON, append-only case JSONL, and an optional replies JSONL; the newest 30 runs are kept. Exports are redacted and saved to a path the user picks; model replies are included only when the user opts in.
 - **IPC/UI** — `ipc/debug-runs.ts`, plus `src/features/evals/DiagnosticsSection.tsx` inside the Evals panel. Every payload is validated with Zod in the main process, and run IDs are restricted to plain identifiers.
+- **Scripted `chat:stream` case** — `tests/chat-stream-diagnostics.test.ts` runs the real `chat:stream` handler inside a simulated scope. It covers routing, task intake, the agent loop, tool execution, diffs, outcome review, chat-job status, and the command-approval IPC round trip. The test supplies the renderer (a fake sender) and the user's approval answer. No in-app runner uses this path yet.
 
 ## Invariants and where they are enforced
 
 - **Simulated runs never call a provider.** The scope routes every model call to the scripted adapter. Simulated settings drop all connections and carry a non-serialized marker, so `streamProviderChat` refuses any simulated call that loses its scope. Tests mock both provider modules and assert zero calls.
 - **Real-model runs are labeled and isolated.** They require `acknowledgeLiveCalls: true` plus a renderer confirmation, and use user-level settings only. They run in a temp fixture, never the selected workspace, and every result is labeled `REAL MODEL`.
-- **No external effects, and replay grants no approvals.** `approveCommand`/`approveMcpTool` always deny. `runWorkspaceCommand`, `runVerify`, `searchWeb`, and `openWebPage` refuse inside a scope; MCP is `off`, and image generation and delegation are disabled. Replays therefore re-encounter every effect and are refused again.
+- **No external effects, and replay grants no approvals.** `approveCommand`/`approveMcpTool` always deny. Inside a scope, these refuse at their own boundary and report a blocked effect, whatever options the caller passed:
+  - `runWorkspaceCommand`, `runVerify`, `searchWeb`, and `openWebPage`.
+  - MCP: `syncMcpRuntime` never connects, `listMcpTools`/`getMcpStatuses` return nothing, and `callMcpTool` refuses.
+  - `generateImage`.
+  - `enqueueBackgroundJob`. A persisted job would outlive the case's sandbox and run outside the scope.
+  - Cloud Agents inline: `cloudInlineAvailable` and `runCloudAgentInline`.
+
+  The coordinator also passes `mcp: 'off'` and `allowDelegate: false` and disables images, as a second layer. Replays therefore re-encounter every effect and are refused again.
 - **Terminal states are distinct.** `task-deadline.ts` links run cancellation and a per-task timer and records which fired first. `drainUntilStopped` abandons a producer that ignores its signal.
 - **Paths stay in the sandbox.** `SandboxPathSchema` rejects absolute, drive-qualified, traversal, and NUL paths. `sandbox-paths.ts` re-checks through real paths, which catches symlink escapes, and fixtures are validated in full before the first write.
 
@@ -45,9 +55,8 @@ These are current product behaviors (also present with the uncommitted agent cha
 ## Follow-on work
 
 - Phase 3 build console: run the exact `prebuild` gate and the Quick, Full check, and Package profiles through command approval and workspace trust, with per-stage logs and retry.
-- Add `tests/debug-runs.test.ts` and `tests/eval-sandbox.test.ts` to `test:agents` (it was left alone because `package.json` has uncommitted changes).
 - Real-model smoke: 15–50 labeled cases, repeats, baselines, token/cost display, and a JSON-schema `outcome` expectation per scenario.
-- An IPC integration case that drives `chat:stream` with a scripted transport.
+- An in-app runner for the scripted `chat:stream` path, with oracle checks and exported bundles like coordinator runs. It also needs coverage of renderer streaming, reload/reconnect, task persistence, and the approvals UI.
 - Context manifests (retrieved paths and excerpt hashes) in case results.
 - Scenario authoring from `.eris/diagnostics/*.json`, using the same schema and path checks.
 - Corpus labels per question, so corpus pass rates measure routing accuracy.

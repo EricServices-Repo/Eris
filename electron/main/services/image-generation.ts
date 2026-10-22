@@ -11,6 +11,7 @@ import type {
   ImageGenerationProgress,
   ImageGenerationRequest
 } from '../../../src/shared/image-generation'
+import { activeDiagnosticsScope } from './model-transport'
 import { userDataRoot } from './paths'
 import { isPathInside, resolveInWorkspace } from './workspace-fs'
 
@@ -177,6 +178,12 @@ export async function generateImage(options: {
   adapter?: ImageProviderAdapter
 }): Promise<GeneratedImageAsset> {
   const request = ImageGenerationRequestSchema.parse(options.request)
+  // Image backends are a provider call or a local runtime; diagnostics reaches neither.
+  const diagnostics = activeDiagnosticsScope()
+  if (diagnostics) {
+    diagnostics.onBlockedEffect('image', 'Image generation request refused')
+    throw new Error('Image generation is disabled in diagnostics runs')
+  }
   const config = options.settings.images
   if (!config.enabled)
     throw new Error('Enable image generation in Settings → Models → Image Models')

@@ -51,7 +51,15 @@ export const ScriptedVerifySchema = z.object({
   detail: z.string().default('')
 })
 
-export const BlockedEffectKindSchema = z.enum(['command', 'verify', 'web', 'mcp'])
+export const BlockedEffectKindSchema = z.enum([
+  'command',
+  'verify',
+  'web',
+  'mcp',
+  'image',
+  'delegation',
+  'cloud'
+])
 export type BlockedEffectKind = z.infer<typeof BlockedEffectKindSchema>
 
 export const DebugScenarioSchema = z.object({

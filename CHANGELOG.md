@@ -1,5 +1,13 @@
 # Changelog
 
+## ${next} — 2026-10-22
+
+- Removed the app name and logo from the macOS title bar so they don’t overlap the window controls.
+
+## ${next} — 2026-10-22
+
+${bullet}
+
 ## 0.4.6 — 2026-10-21
 
 - Enforced valid local tool arguments, excluded internal session data from retrieval, and added PHP and SQL indexing.

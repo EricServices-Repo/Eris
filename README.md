@@ -4,6 +4,8 @@ Eris is a desktop IDE for writing software with agents. You open a project folde
 
 The agent decides how the turn is handled: whether to read, edit, review, or explain. The model menu decides which model runs that turn. Those are separate choices.
 
+For the implementation map, chat/agent/model interaction contracts, and production improvement roadmap, see the [architecture reference](docs/ARCHITECTURE.md).
+
 **[Download the latest release](https://github.com/EricServices-Repo/Eris/releases/latest)** for macOS (Apple Silicon) and Windows (x64).
 
 | Platform | Installer |
