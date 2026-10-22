@@ -11,10 +11,15 @@ import {
 } from './openai-compatible'
 import { resolveConnectionForModel } from './model-catalog'
 import { estimateMessagesTokens, estimateTokens, recordModelUsage } from './usage-stats'
+import {
+  activeDiagnosticsScope,
+  assertProviderCallAllowed,
+  type ModelPurpose
+} from './model-transport'
 
 export type { NativeToolCall, OpenAIToolDef }
 
-export async function* streamModelChat(options: {
+export type StreamModelChatOptions = {
   settings: AppSettings
   model: string
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string } | ChatRequestMessage>
@@ -28,8 +33,32 @@ export async function* streamModelChat(options: {
   builtinJsonSchema?: Record<string, unknown>
   /** Reuse local GGUF KV / chat session across agent steps. */
   sessionKey?: string
-}): AsyncGenerator<string, void, unknown> {
+  /** Which pipeline stage asked; lets diagnostics adapters answer each stage separately. */
+  purpose?: ModelPurpose
+}
+
+/**
+ * The single model transport entry point. A diagnostics scope substitutes its
+ * adapter here; simulated settings that lose their scope are refused rather
+ * than falling through to a provider.
+ */
+export async function* streamModelChat(
+  options: StreamModelChatOptions
+): AsyncGenerator<string, void, unknown> {
+  const scope = activeDiagnosticsScope()
+  if (scope) {
+    yield* scope.adapter.stream({ ...options, purpose: options.purpose ?? 'agent' })
+    return
+  }
+  yield* streamProviderChat(options)
+}
+
+/** Provider transport only. Diagnostics live adapters call this directly. */
+export async function* streamProviderChat(
+  options: StreamModelChatOptions
+): AsyncGenerator<string, void, unknown> {
   let model = options.model || options.settings.models.defaultModel || 'builtin:composer-lite'
+  assertProviderCallAllowed(options.settings, model)
   const protocol = isNativeGgufRef(model)
     ? 'text-tools'
     : (resolveConnectionForModel(options.settings, model)?.toolProtocol ?? 'native-tools')

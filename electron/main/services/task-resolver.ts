@@ -65,6 +65,7 @@ export async function resolveTaskIntent(input: {
       temperature: 0,
       signal: abort.signal,
       getSecret: input.getSecret,
+      purpose: 'intent',
       builtinJsonSchema: {
         type: 'object',
         properties: {

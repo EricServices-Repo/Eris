@@ -91,6 +91,7 @@ export async function* streamThinkingText(options: {
       temperature: options.temperature,
       signal: localAbort.signal,
       getSecret: options.getSecret,
+      purpose: 'agent',
       builtinJsonSchema: options.builtinJsonSchema,
       sessionKey: isNativeGgufRef(options.model) ? options.sessionKey : undefined,
       tools: options.stopOnToolCall ? options.tools : undefined,

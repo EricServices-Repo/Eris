@@ -1,40 +1,60 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { EvalTaskSchema, type EvalTask, type EvalTaskInfo } from '../../../src/shared/evals'
+import {
+  EvalTaskSchema,
+  type EvalTask,
+  type EvalTaskInfo,
+  type RejectedEvalTask
+} from '../../../src/shared/evals'
 import { appResourcePath, workspaceConfigDir } from './paths'
 
 export function builtinEvalTasks(): EvalTask[] {
   try {
     const raw = JSON.parse(readFileSync(appResourcePath('evals/builtin.json'), 'utf8')) as unknown
-    return parseTaskList(raw, 'builtin')
+    return parseTaskList(raw, 'builtin').tasks
   } catch {
     return []
   }
 }
 
-export function workspaceEvalTasks(workspacePath: string | null): EvalTask[] {
-  if (!workspacePath) return []
+/** Workspace eval tasks plus every definition kept out of the run list and why. */
+export function loadWorkspaceEvalTasks(workspacePath: string | null): {
+  tasks: EvalTask[]
+  rejected: RejectedEvalTask[]
+} {
+  if (!workspacePath) return { tasks: [], rejected: [] }
   const dir = join(workspaceConfigDir(workspacePath), 'evals')
   const file = join(workspaceConfigDir(workspacePath), 'evals.json')
-  const out: EvalTask[] = []
-  if (existsSync(file)) {
+  const tasks: EvalTask[] = []
+  const rejected: RejectedEvalTask[] = []
+  const load = (path: string, label: string) => {
+    let raw: unknown
     try {
-      out.push(...parseTaskList(JSON.parse(readFileSync(file, 'utf8')), 'workspace'))
-    } catch {
-      // skip
+      raw = JSON.parse(readFileSync(path, 'utf8'))
+    } catch (err) {
+      rejected.push({ file: label, error: err instanceof Error ? err.message : String(err) })
+      return
     }
+    const parsed = parseTaskList(raw, 'workspace')
+    tasks.push(...parsed.tasks)
+    rejected.push(...parsed.rejected.map((item) => ({ ...item, file: label })))
   }
+  if (existsSync(file)) load(file, '.eris/evals.json')
   if (existsSync(dir)) {
     for (const name of readdirSync(dir)) {
       if (!name.endsWith('.json')) continue
-      try {
-        out.push(...parseTaskList(JSON.parse(readFileSync(join(dir, name), 'utf8')), 'workspace'))
-      } catch {
-        // skip
-      }
+      load(join(dir, name), `.eris/evals/${name}`)
     }
   }
-  return out
+  return { tasks, rejected }
+}
+
+export function workspaceEvalTasks(workspacePath: string | null): EvalTask[] {
+  return loadWorkspaceEvalTasks(workspacePath).tasks
+}
+
+export function listRejectedEvalTasks(workspacePath: string | null): RejectedEvalTask[] {
+  return loadWorkspaceEvalTasks(workspacePath).rejected
 }
 
 export function listEvalTaskInfo(workspacePath: string | null): EvalTaskInfo[] {
@@ -58,12 +78,16 @@ export function saveWorkspaceEvalTasks(workspacePath: string, tasks: EvalTask[])
   writeFileSync(join(dir, 'evals.json'), JSON.stringify(tasks, null, 2), 'utf8')
 }
 
-function parseTaskList(raw: unknown, _source: 'builtin' | 'workspace'): EvalTask[] {
+function parseTaskList(
+  raw: unknown,
+  _source: 'builtin' | 'workspace'
+): { tasks: EvalTask[]; rejected: Array<Omit<RejectedEvalTask, 'file'>> } {
   const list = Array.isArray(raw) ? raw : raw && typeof raw === 'object' && 'tasks' in raw
     ? (raw as { tasks: unknown }).tasks
     : []
-  if (!Array.isArray(list)) return []
-  const out: EvalTask[] = []
+  if (!Array.isArray(list)) return { tasks: [], rejected: [] }
+  const tasks: EvalTask[] = []
+  const rejected: Array<Omit<RejectedEvalTask, 'file'>> = []
   for (const item of list) {
     const parsed = EvalTaskSchema.safeParse({
       mode: 'agent',
@@ -71,9 +95,19 @@ function parseTaskList(raw: unknown, _source: 'builtin' | 'workspace'): EvalTask
       files: {},
       ...(item as object)
     })
-    if (parsed.success) out.push(parsed.data)
+    if (parsed.success) tasks.push(parsed.data)
+    else {
+      const id = item && typeof item === 'object' && 'id' in item ? String(item.id) : undefined
+      rejected.push({
+        ...(id ? { id } : {}),
+        error: parsed.error.issues
+          .slice(0, 3)
+          .map((issue) => `${issue.path.join('.') || 'task'}: ${issue.message}`)
+          .join('; ')
+      })
+    }
   }
-  return out
+  return { tasks, rejected }
 }
 
 function toInfo(task: EvalTask, source: 'builtin' | 'workspace'): EvalTaskInfo {

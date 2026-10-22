@@ -1,6 +1,7 @@
 import { spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { buildWorkspaceProcessEnv } from './workspace-env'
+import { activeDiagnosticsScope } from './model-transport'
 
 const DEFAULT_TIMEOUT_MS = 60_000
 const MAX_OUTPUT = 80_000
@@ -54,6 +55,18 @@ export function runWorkspaceCommand(
       code: null,
       stdout: '',
       stderr: 'Command blocked for safety',
+      timedOut: false,
+      command: cmd
+    })
+  }
+  const diagnostics = activeDiagnosticsScope()
+  if (diagnostics) {
+    diagnostics.onBlockedEffect('command', cmd)
+    return Promise.resolve({
+      ok: false,
+      code: null,
+      stdout: '',
+      stderr: 'Host commands are disabled in diagnostics runs',
       timedOut: false,
       command: cmd
     })

@@ -3,11 +3,16 @@ import { reviewTaskOutcome } from '../services/task-outcome'
 import { asksForImageGeneration } from '../../../src/shared/image-generation'
 import { ipcMain } from 'electron'
 import { getResolvedSettings, setSettings } from '../services/settings'
+import { turnPlanToRouteResult } from '../services/chat-router'
 import {
-  planChatTurn,
-  turnPlanToRouteResult,
-  localComposerFullActive
-} from '../services/chat-router'
+  buildChatTurnMessages,
+  localChatTurnModel,
+  needsOutcomeReview,
+  OutcomeEvidence,
+  planInitialChatTurn,
+  resolveChatTurnContract,
+  type ChatTurnInput
+} from '../services/chat-turn'
 import {
   commandNeedsApproval,
   denyAllPendingApprovals,
@@ -25,11 +30,7 @@ import {
 } from '../services/user-question'
 import type { ChatPromptInput, TurnPlan } from '../../../src/shared/settings-schema'
 import { AGENT_HANDOFF_CHARS, summarizeAgentResults } from '../../../src/shared/agent-orchestration'
-import { previousTask, saveTask } from '../services/task-store'
-import { realpathSync } from 'fs'
-import { resolveTaskIntent } from '../services/task-resolver'
-import { createTaskContract } from '../services/task-intake'
-import { buildChatMessages } from '../services/chat-prompt'
+import { saveTask } from '../services/task-store'
 import { saveAgentRun, type AgentRunRecord } from '../services/agent-runs'
 import {
   appendSessionStep,
@@ -163,29 +164,26 @@ export function registerChatStreamIpc(): void {
           .find((message) => message.role === 'assistant')?.agentId ?? null
       let planningDurationMs = payload.planningDurationMs
       let turnPlan: TurnPlan
+      const turnInput: ChatTurnInput = {
+        requestId,
+        workspacePath,
+        settings,
+        text: userText,
+        model,
+        mode,
+        manualAgentId: agentId ?? null,
+        previousAgentId,
+        forceRoute: payload.forceRoute,
+        history: payload.prompt?.history,
+        threadId: payload.threadId ?? payload.prompt?.threadId,
+        skillIds: payload.prompt?.skillIds,
+        getSecret,
+        signal: controller.signal
+      }
       try {
         {
           const planningStartedAt = Date.now()
-          turnPlan = await planChatTurn({
-            workspacePath: workspacePath,
-            settings,
-            context: {
-              text: userText,
-              selectedModel: model || settings.models.defaultModel,
-              mode: mode === 'ask' ? 'ask' : 'agent',
-              manualAgentId: agentId ?? null,
-              previousAgentId,
-              skipModelRouter: true,
-              forceRoute: payload.forceRoute,
-              previousMessages: payload.prompt?.history.flatMap((message) =>
-                message.role === 'system'
-                  ? []
-                  : [{ role: message.role, content: message.content, agentId: message.agentId }]
-              )
-            },
-            getSecret,
-            signal: controller.signal
-          })
+          turnPlan = await planInitialChatTurn(turnInput)
           planningDurationMs ??= Date.now() - planningStartedAt
         }
       } catch (err) {
@@ -206,58 +204,10 @@ export function registerChatStreamIpc(): void {
         return false
       }
       try {
-        const semanticIntent = payload.forceRoute
-          ? turnPlan.intent
-          : await resolveTaskIntent({
-              text: userText,
-              fallback: turnPlan.intent,
-              settings,
-              model: turnPlan.models.chat,
-              mode: mode ?? 'agent',
-              history: payload.prompt?.history,
-              signal: controller.signal,
-              getSecret
-            })
-        if (semanticIntent !== turnPlan.intent) {
-          turnPlan = await planChatTurn({
-            workspacePath,
-            settings,
-            context: {
-              text: userText,
-              mode: mode ?? 'agent',
-              selectedModel: model,
-              manualAgentId: agentId ?? null,
-              resolvedIntent: semanticIntent,
-              skipModelRouter: true,
-              previousMessages: payload.prompt?.history.flatMap((message) =>
-                message.role === 'system'
-                  ? []
-                  : [{ role: message.role, content: message.content, agentId: message.agentId }]
-              )
-            },
-            getSecret,
-            signal: controller.signal
-          })
-        }
-        const taskThreadId = payload.threadId ?? payload.prompt?.threadId ?? null
-        let canonicalRoot = workspacePath
-        try {
-          if (workspacePath) canonicalRoot = realpathSync(workspacePath)
-        } catch {
-          /* reported by runtime */
-        }
-        turnPlan.task = createTaskContract({
-          taskId: requestId,
-          threadId: payload.threadId ?? payload.prompt?.threadId,
-          workspacePath,
-          text: userText,
-          plan: turnPlan,
-          skillIds: payload.prompt?.skillIds,
-          history: payload.prompt?.history,
-          priorTask: previousTask(canonicalRoot, taskThreadId)
-        })
-        saveTask(turnPlan.task)
-        publish('chat:task', { requestId, task: turnPlan.task })
+        const contract = await resolveChatTurnContract(turnInput, turnPlan)
+        turnPlan = contract.plan
+        saveTask(contract.task)
+        publish('chat:task', { requestId, task: contract.task })
       } catch (error) {
         publish('chat:error', {
           requestId,
@@ -272,13 +222,13 @@ export function registerChatStreamIpc(): void {
       const promptBuildStartedAt = Date.now()
       try {
         if (payload.prompt) {
-          messages = buildChatMessages(workspacePath, settings, {
-            ...payload.prompt,
-            mode: turnPlan.mode,
-            agentId: turnPlan.agentId,
-            agentName: turnPlan.agentName,
-            threadId: payload.threadId ?? payload.prompt.threadId
-          })
+          messages = buildChatTurnMessages(
+            workspacePath,
+            settings,
+            payload.prompt,
+            turnPlan,
+            payload.threadId
+          )
         }
         promptBuildMs = Date.now() - promptBuildStartedAt
       } catch (err) {
@@ -321,7 +271,7 @@ export function registerChatStreamIpc(): void {
       let run: AgentRunRecord | null = null
       let runIncomplete = false
       let finalAnswer = ''
-      const outcomeEvidence: string[] = []
+      const outcomeEvidence = new OutcomeEvidence()
       /** Accumulated for project memory even when no checkpoint/run record exists. */
       let memoryFiles: string[] = []
       let memoryActions: string[] = []
@@ -566,16 +516,9 @@ export function registerChatStreamIpc(): void {
           }
         }
 
-        if (
-          (resolvedModel === 'builtin:composer' || resolvedModel === 'composer') &&
-          !localComposerFullActive(settings)
-        ) {
-          resolvedModel = 'builtin:composer-lite'
-          turnPlan = {
-            ...turnPlan,
-            models: { ...turnPlan.models, chat: resolvedModel, tools: resolvedModel }
-          }
-        }
+        const localTurn = localChatTurnModel(turnPlan, resolvedModel, settings)
+        resolvedModel = localTurn.model
+        turnPlan = localTurn.plan
 
         for await (const evt of runAgentWithWorkspaceTools({
           workspacePath: workspacePath,
@@ -749,20 +692,10 @@ export function registerChatStreamIpc(): void {
             } else if (evt.type === 'evidence') {
               publish('chat:evidence', { requestId, evidence: evt.evidence })
             } else if (evt.type === 'tool') {
-              if (
-                evt.tool.status !== 'running' &&
-                ['read_file', 'notebook_read', 'run', 'search_replace', 'write_file'].includes(
-                  evt.tool.name
-                )
-              )
-                outcomeEvidence.push(
-                  `${evt.tool.name} ${evt.tool.path ?? ''}: ${evt.tool.status}\n${evt.tool.detail}`
-                )
+              outcomeEvidence.observe(evt)
               publish('chat:tool', { requestId, tool: evt.tool })
             } else if (evt.type === 'diff') {
-              outcomeEvidence.push(
-                `Observed diff ${evt.diff.path}:\nBefore: ${(evt.diff.before ?? '').slice(0, 600)}\nAfter: ${(evt.diff.after ?? '').slice(0, 900)}`
-              )
+              outcomeEvidence.observe(evt)
               telemetryMutated = true
               publish('chat:diff', { requestId, diff: evt.diff })
             } else if (evt.type === 'checkpoint') {
@@ -881,20 +814,16 @@ export function registerChatStreamIpc(): void {
             }
           }
         }
-        if (
-          !runIncomplete &&
-          turnPlan.task &&
-          ['review', 'plan', 'edit', 'verify', 'run'].includes(turnPlan.intent)
-        ) {
+        if (turnPlan.task && needsOutcomeReview(turnPlan, runIncomplete)) {
           publish('chat:status', {
             requestId,
             text: 'Checking the response against task evidence…'
           })
-          if (memoryActions.length) outcomeEvidence.push(memoryActions.slice(-15).join('\n'))
+          outcomeEvidence.addActions(memoryActions)
           const verdict = await reviewTaskOutcome({
             task: turnPlan.task,
             answer: finalAnswer,
-            evidence: outcomeEvidence,
+            evidence: outcomeEvidence.items,
             settings,
             model: turnPlan.models.chat,
             signal: controller.signal,

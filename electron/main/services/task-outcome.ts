@@ -48,6 +48,7 @@ export async function reviewTaskOutcome(input: {
       temperature: 0,
       signal: controller.signal,
       getSecret: input.getSecret,
+      purpose: 'outcome',
       builtinJsonSchema: {
         type: 'object',
         properties: {

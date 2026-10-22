@@ -7425,3 +7425,26 @@ button:disabled {
 .agent-specialist { border-left: 3px solid var(--accent); }
 .agent-handoff-label { color: var(--accent); font-size: 12px; margin-top: 8px; }
 .agents-inbox-status.is-live { color: var(--success); }
+
+/* Build & agent diagnostics: run mode is always labeled next to results. */
+.diag-badge { flex: none; align-self: flex-start; padding: 3px 8px; border-radius: 999px; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; border: 1px solid var(--border); }
+.diag-badge.is-sim { color: var(--accent); background: var(--accent-soft); }
+.diag-badge.is-live { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, transparent); }
+.diag-scenarios { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 8px 10px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-muted); }
+.diag-scenarios label { display: flex; align-items: center; gap: 5px; }
+.diag-run { padding: 8px 10px 10px; border-top: 1px solid var(--border); }
+.diag-run-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 6px; }
+.diag-verdict { font-size: 11px; font-weight: 700; }
+.diag-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.diag-table th { text-align: left; color: var(--text-muted); font-weight: 500; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.diag-table td { padding: 4px 6px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.diag-table tbody tr { cursor: pointer; }
+.diag-table tbody tr:hover, .diag-table tbody tr.is-active { background: var(--bg-hover); }
+.diag-case { margin-top: 8px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); }
+.diag-list { margin: 6px 0; padding-left: 18px; font-size: 11px; line-height: 1.5; }
+.diag-limits { margin: 6px 0; font-size: 11px; color: var(--text-muted); }
+.diag-limits summary { cursor: pointer; }
+.diag-timeline { max-height: 320px; overflow: auto; white-space: pre-wrap; font-size: 11px; }
+.diag-card .is-pass, .diag-verdict.is-pass { color: var(--success); }
+.diag-card .is-fail, .diag-verdict.is-fail { color: var(--danger); }
+.diag-card .is-muted, .diag-verdict.is-muted { color: var(--text-muted); }

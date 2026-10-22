@@ -552,7 +552,8 @@ async function llmRouteHint(options: {
       ],
       temperature: 0,
       signal: options.signal,
-      getSecret: options.getSecret
+      getSecret: options.getSecret,
+      purpose: 'route'
     })) {
       out += chunk
     }

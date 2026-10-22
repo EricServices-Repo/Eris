@@ -1,11 +1,29 @@
 import { z } from 'zod'
 import { ChatIntentSchema, type ChatIntent } from './settings-schema'
 
+/**
+ * Why a fixture/check path could leave its disposable sandbox, or null when it
+ * is a plain relative path. Symlink escapes are checked again on disk.
+ */
+export function unsafeSandboxPathReason(path: string): string | null {
+  if (!path.trim()) return 'empty path'
+  if (path.includes('\0')) return 'NUL byte'
+  if (/^[\\/]/.test(path)) return 'absolute path'
+  if (/^[a-zA-Z]:/.test(path)) return 'drive-qualified path'
+  if (path.split(/[\\/]+/).some((segment) => segment === '..')) return 'parent-directory traversal'
+  return null
+}
+
+export const SandboxPathSchema = z.string().superRefine((path, ctx) => {
+  const reason = unsafeSandboxPathReason(path)
+  if (reason) ctx.addIssue({ code: 'custom', message: `Unsafe sandbox path “${path}”: ${reason}` })
+})
+
 export const EvalCheckSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('file_contains'), path: z.string(), text: z.string() }),
-  z.object({ type: z.literal('file_matches'), path: z.string(), pattern: z.string() }),
-  z.object({ type: z.literal('file_exists'), path: z.string() }),
-  z.object({ type: z.literal('file_absent'), path: z.string() }),
+  z.object({ type: z.literal('file_contains'), path: SandboxPathSchema, text: z.string() }),
+  z.object({ type: z.literal('file_matches'), path: SandboxPathSchema, pattern: z.string() }),
+  z.object({ type: z.literal('file_exists'), path: SandboxPathSchema }),
+  z.object({ type: z.literal('file_absent'), path: SandboxPathSchema }),
   z.object({
     type: z.literal('command'),
     command: z.string(),
@@ -36,7 +54,7 @@ export const EvalTaskSchema = z.object({
   intent: ChatIntentSchema,
   prompt: z.string().min(1),
   /** Starting repo state: relative path → file content */
-  files: z.record(z.string()).default({}),
+  files: z.record(SandboxPathSchema, z.string()).default({}),
   checks: z.array(EvalCheckSchema).min(1),
   agentId: z.string().optional(),
   mode: z.enum(['ask', 'agent']).default('agent'),
@@ -52,11 +70,21 @@ export interface EvalTaskInfo {
   checks: number
 }
 
+/** A workspace eval definition that was kept out of the run list. */
+export interface RejectedEvalTask {
+  file: string
+  id?: string
+  error: string
+}
+
 export interface EvalCheckResult {
   check: EvalCheck
   ok: boolean
   detail: string
 }
+
+/** Terminal state of one eval task. Timeout and user cancellation are distinct. */
+export type EvalResultStatus = 'passed' | 'failed' | 'timed_out' | 'cancelled' | 'error'
 
 export interface EvalResult {
   /** Groups results from one Run click / CLI invocation */
@@ -75,6 +103,11 @@ export interface EvalResult {
   durationMs: number
   answer: string
   error?: string
+  /** Absent on results saved before terminal states were recorded. */
+  status?: EvalResultStatus
+  /** Stable category for failed, timed out, cancelled, or errored tasks. */
+  failureCategory?:
+    'check_failed' | 'timed_out' | 'user_cancelled' | 'fixture_invalid' | 'execution_error'
   at: string
 }
 
@@ -129,8 +162,18 @@ export interface CorpusDebugQuestionResult {
   result: EvalResult
 }
 
+/** What the corpus runner exercises and what its pass rate can establish. */
+export const CORPUS_RUN_COVERAGE = {
+  label: 'REAL MODEL · corpus run',
+  path: 'Chat routing (planChatTurn) → agent runner in a disposable fixture. Bypasses production chat intake: semantic intent re-resolution, task contract, prompt construction, streaming IPC, and outcome review.',
+  oracle:
+    'Generic checks only: nonempty answer, zero tool errors, and changes for routed edit intents (no changes otherwise). Questions have no labeled intent, so a misrouted request can pass. Treat the pass rate as profiling, not verified task quality.'
+} as const
+
 export interface CorpusDebugRunSummary {
   runId: string
+  /** Corpus runs always call the selected model; absent on runs saved before labeling. */
+  mode?: 'real-model'
   model: string
   status: 'running' | 'completed' | 'cancelled' | 'failed'
   startIndex: number

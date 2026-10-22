@@ -1,12 +1,13 @@
 import { randomUUID } from 'crypto'
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
-  statSync,
   writeFileSync
 } from 'fs'
 import { tmpdir } from 'os'
@@ -26,6 +27,8 @@ import { appendEvalResults } from './eval-store'
 import { findEvalTask, taskSourceLabel } from './eval-tasks'
 import { logError, logInfo } from './logger'
 import { isSafeCommand } from './command-approval'
+import { resolveSandboxPath, SandboxPathError } from './sandbox-paths'
+import { createTaskDeadline, drainUntilStopped } from './task-deadline'
 
 export type EvalProgressFn = (event: EvalProgressEvent) => void
 
@@ -41,10 +44,20 @@ export function cancelEvalRun(): boolean {
   return true
 }
 
+/**
+ * Write fixture files under `dest`. Every path is validated before the first
+ * write, so an unsafe entry never leaves a partially materialized sandbox.
+ */
 export function materializeEvalTask(task: EvalTask, dest: string): void {
+  materializeSandboxFiles(dest, task.files)
+}
+
+export function materializeSandboxFiles(dest: string, files: Record<string, string>): void {
   mkdirSync(dest, { recursive: true })
-  for (const [rel, content] of Object.entries(task.files)) {
-    const abs = join(dest, rel)
+  const targets = Object.entries(files).map(
+    ([rel, content]) => [resolveSandboxPath(dest, rel), content] as const
+  )
+  for (const [abs, content] of targets) {
     mkdirSync(dirname(abs), { recursive: true })
     writeFileSync(abs, content, 'utf8')
   }
@@ -53,22 +66,24 @@ export function materializeEvalTask(task: EvalTask, dest: string): void {
 function snapshotFiles(root: string, files: Record<string, string>): Record<string, string | null> {
   const snap: Record<string, string | null> = {}
   for (const rel of Object.keys(files)) {
-    const abs = join(root, rel)
+    const abs = resolveSandboxPath(root, rel)
     snap[rel] = existsSync(abs) ? readFileSync(abs, 'utf8') : null
   }
   return snap
 }
 
-function snapshotWorkspace(root: string): Record<string, string> {
+/** Regular files under `root`; symlinks are never followed out of the sandbox. */
+export function snapshotWorkspace(root: string): Record<string, string> {
   const out: Record<string, string> = {}
   const walk = (dir: string, prefix = ''): void => {
     for (const name of readdirSync(dir)) {
       if (name === '.eris' || name === 'node_modules' || name === '.git') continue
       const abs = join(dir, name)
       const rel = prefix ? `${prefix}/${name}` : name
-      const stat = statSync(abs)
+      const stat = lstatSync(abs)
+      if (stat.isSymbolicLink()) continue
       if (stat.isDirectory()) walk(abs, rel)
-      else if (stat.size <= 1024 * 1024) out[rel] = readFileSync(abs, 'utf8')
+      else if (stat.isFile() && stat.size <= 1024 * 1024) out[rel] = readFileSync(abs, 'utf8')
     }
   }
   walk(root)
@@ -105,7 +120,7 @@ function runCheck(workspacePath: string, check: EvalCheck, ctx: EvalContext): Ev
   try {
     switch (check.type) {
       case 'file_contains': {
-        const abs = join(workspacePath, check.path)
+        const abs = resolveSandboxPath(workspacePath, check.path)
         if (!existsSync(abs)) return fail(check, `missing ${check.path}`)
         const body = readFileSync(abs, 'utf8')
         return body.includes(check.text)
@@ -113,7 +128,7 @@ function runCheck(workspacePath: string, check: EvalCheck, ctx: EvalContext): Ev
           : fail(check, `“${check.text.slice(0, 80)}” not in ${check.path}`)
       }
       case 'file_matches': {
-        const abs = join(workspacePath, check.path)
+        const abs = resolveSandboxPath(workspacePath, check.path)
         if (!existsSync(abs)) return fail(check, `missing ${check.path}`)
         const re = new RegExp(check.pattern, 'm')
         return re.test(readFileSync(abs, 'utf8'))
@@ -121,11 +136,11 @@ function runCheck(workspacePath: string, check: EvalCheck, ctx: EvalContext): Ev
           : fail(check, `/${check.pattern}/ not in ${check.path}`)
       }
       case 'file_exists':
-        return existsSync(join(workspacePath, check.path))
+        return existsSync(resolveSandboxPath(workspacePath, check.path))
           ? pass(check, check.path)
           : fail(check, `missing ${check.path}`)
       case 'file_absent':
-        return existsSync(join(workspacePath, check.path))
+        return existsSync(resolveSandboxPath(workspacePath, check.path))
           ? fail(check, `still present: ${check.path}`)
           : pass(check, `absent ${check.path}`)
       case 'answer_contains':
@@ -238,10 +253,9 @@ export async function runEvalTask(options: {
   turnPlan?: TurnPlan
 }): Promise<EvalResult> {
   const started = Date.now()
-  const dest = mkdtempSync(join(tmpdir(), `eris-eval-${options.task.id}-`))
-  materializeEvalTask(options.task, dest)
-  const snapshot = snapshotFiles(dest, options.task.files)
-  const beforeWorkspace = snapshotWorkspace(dest)
+  const dest = realpathSync(mkdtempSync(join(tmpdir(), `eris-eval-${options.task.id}-`)))
+  // The per-task deadline bounds the agent and its checks; the run signal only cancels.
+  const deadline = createTaskDeadline(options.signal, options.task.timeoutMs)
   let answer = ''
   let steps = 0
   let toolCalls = 0
@@ -253,36 +267,91 @@ export async function runEvalTask(options: {
     options.settings.agent.routing.fallbackAgentId ||
     'composer'
   const allowUnsafe = options.settings.evals.allowUnsafeCommands
+  const result = (
+    patch: Pick<EvalResult, 'ok' | 'checks' | 'status'> & Partial<EvalResult>
+  ): EvalResult => ({
+    batchId: '',
+    taskId: options.task.id,
+    taskTitle: options.task.title,
+    source: options.source,
+    intent: options.task.intent,
+    model: options.model,
+    agentId,
+    steps,
+    toolCalls,
+    toolErrors,
+    durationMs: Date.now() - started,
+    answer: answer.slice(0, 4000),
+    at: new Date().toISOString(),
+    ...patch
+  })
+  const stopped = (reason: 'timeout' | 'cancelled'): EvalResult =>
+    reason === 'timeout'
+      ? result({
+          ok: false,
+          checks: [],
+          status: 'timed_out',
+          failureCategory: 'timed_out',
+          error: `Timed out after ${options.task.timeoutMs}ms`
+        })
+      : result({
+          ok: false,
+          checks: [],
+          status: 'cancelled',
+          failureCategory: 'user_cancelled',
+          error: 'Cancelled'
+        })
   try {
-    options.onStatus?.(`Running ${options.task.id} on ${options.model}`)
-    for await (const evt of runAgentWithWorkspaceTools({
-      workspacePath: dest,
-      settings: options.settings,
-      model: options.model,
-      messages: [{ role: 'user', content: options.task.prompt }],
-      temperature: options.settings.models.temperature,
-      signal: options.signal,
-      getSecret: options.getSecret,
-      mode: options.task.mode,
-      turnPlan: options.turnPlan,
-      mcp: 'off',
-      approveCommand: async (kind, command) => {
-        if (allowUnsafe) return true
-        if (kind === 'run' && isSafeCommand(command)) return true
-        return false
-      }
-    })) {
-      if (evt.type === 'answer') answer = evt.replace ? evt.text : answer + evt.text
-      else if (evt.type === 'progress') steps = evt.step
-      else if (evt.type === 'tool') {
-        toolCalls += 1
-        toolsUsed.add(evt.tool.name)
-        if (evt.tool.status === 'error') toolErrors += 1
-        options.onStatus?.(`${evt.tool.name}: ${evt.tool.status}`)
-      } else if (evt.type === 'status') {
-        options.onStatus?.(evt.text)
-      }
+    let snapshot: Record<string, string | null>
+    let beforeWorkspace: Record<string, string>
+    try {
+      materializeEvalTask(options.task, dest)
+      snapshot = snapshotFiles(dest, options.task.files)
+      beforeWorkspace = snapshotWorkspace(dest)
+    } catch (err) {
+      if (!(err instanceof SandboxPathError)) throw err
+      return result({
+        ok: false,
+        checks: [],
+        status: 'error',
+        failureCategory: 'fixture_invalid',
+        error: err.message
+      })
     }
+    options.onStatus?.(`Running ${options.task.id} on ${options.model}`)
+    const ended = await drainUntilStopped(
+      runAgentWithWorkspaceTools({
+        workspacePath: dest,
+        settings: options.settings,
+        model: options.model,
+        messages: [{ role: 'user', content: options.task.prompt }],
+        temperature: options.settings.models.temperature,
+        signal: deadline.signal,
+        getSecret: options.getSecret,
+        mode: options.task.mode,
+        turnPlan: options.turnPlan,
+        mcp: 'off',
+        approveCommand: async (kind, command) => {
+          if (allowUnsafe) return true
+          if (kind === 'run' && isSafeCommand(command)) return true
+          return false
+        }
+      }),
+      deadline,
+      (evt) => {
+        if (evt.type === 'answer') answer = evt.replace ? evt.text : answer + evt.text
+        else if (evt.type === 'progress') steps = evt.step
+        else if (evt.type === 'tool') {
+          toolCalls += 1
+          toolsUsed.add(evt.tool.name)
+          if (evt.tool.status === 'error') toolErrors += 1
+          options.onStatus?.(`${evt.tool.name}: ${evt.tool.status}`)
+        } else if (evt.type === 'status') {
+          options.onStatus?.(evt.text)
+        }
+      }
+    )
+    if (ended !== 'completed') return stopped(ended)
     const durationMs = Date.now() - started
     const checks = await evaluateChecksAsync(
       dest,
@@ -297,48 +366,30 @@ export async function runEvalTask(options: {
         durationMs,
         toolsUsed: [...toolsUsed]
       },
-      options.signal
+      deadline.signal
     )
+    const late = deadline.stopReason()
+    if (late) return stopped(late)
     const ok = checks.every((c) => c.ok)
-    return {
-      batchId: '',
-      taskId: options.task.id,
-      taskTitle: options.task.title,
-      source: options.source,
-      intent: options.task.intent,
-      model: options.model,
-      agentId,
+    return result({
       ok,
       checks,
-      steps,
-      toolCalls,
-      toolErrors,
       durationMs,
-      answer: answer.slice(0, 4000),
-      at: new Date().toISOString()
-    }
+      status: ok ? 'passed' : 'failed',
+      ...(ok ? {} : { failureCategory: 'check_failed' as const })
+    })
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    const aborted = err instanceof Error && err.name === 'AbortError'
-    return {
-      batchId: '',
-      taskId: options.task.id,
-      taskTitle: options.task.title,
-      source: options.source,
-      intent: options.task.intent,
-      model: options.model,
-      agentId,
+    const late = deadline.stopReason()
+    if (late) return stopped(late)
+    return result({
       ok: false,
       checks: [],
-      steps,
-      toolCalls,
-      toolErrors,
-      durationMs: Date.now() - started,
-      answer: answer.slice(0, 4000),
-      error: aborted ? 'Cancelled' : message,
-      at: new Date().toISOString()
-    }
+      status: 'error',
+      failureCategory: 'execution_error',
+      error: err instanceof Error ? err.message : String(err)
+    })
   } finally {
+    deadline.dispose()
     try {
       rmSync(dest, { recursive: true, force: true })
     } catch {

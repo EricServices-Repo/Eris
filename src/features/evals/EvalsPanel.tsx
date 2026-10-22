@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
-import type {
-  CorpusDebugProgressEvent,
-  CorpusDebugRunSummary,
-  EvalProgressEvent,
-  EvalScoreboard,
-  EvalTaskInfo
+import {
+  CORPUS_RUN_COVERAGE,
+  type CorpusDebugProgressEvent,
+  type CorpusDebugRunSummary,
+  type EvalProgressEvent,
+  type EvalScoreboard,
+  type EvalTaskInfo,
+  type RejectedEvalTask
 } from '@/shared/evals'
+import { DiagnosticsSection } from './DiagnosticsSection'
 
 interface Props {
   open: boolean
@@ -16,6 +19,7 @@ interface Props {
 
 export function EvalsPanel({ open, models, defaultModel, onClose }: Props) {
   const [tasks, setTasks] = useState<EvalTaskInfo[]>([])
+  const [rejected, setRejected] = useState<RejectedEvalTask[]>([])
   const [board, setBoard] = useState<EvalScoreboard | null>(null)
   const [selected, setSelected] = useState<string[]>([])
   const [model, setModel] = useState(defaultModel)
@@ -32,14 +36,16 @@ export function EvalsPanel({ open, models, defaultModel, onClose }: Props) {
   const [corpusMaxSteps, setCorpusMaxSteps] = useState(20)
 
   const refresh = useCallback(async () => {
-    const [list, scores, active, debugRuns, debugActive] = await Promise.all([
+    const [list, scores, active, debugRuns, debugActive, invalid] = await Promise.all([
       window.ide.listEvalTasks(),
       window.ide.getEvalScoreboard(),
       window.ide.evalsRunning(),
       window.ide.listCorpusDebugRuns(),
-      window.ide.corpusDebugRunning()
+      window.ide.corpusDebugRunning(),
+      window.ide.listRejectedEvalTasks()
     ])
     setTasks(list)
+    setRejected(invalid)
     setBoard(scores)
     setRunning(active)
     setCorpusRuns(debugRuns)
@@ -128,13 +134,18 @@ export function EvalsPanel({ open, models, defaultModel, onClose }: Props) {
         </div>
       </div>
       {error && <div className="git-error">{error}</div>}
+      <DiagnosticsSection
+        models={models}
+        defaultModel={defaultModel}
+        busy={running || corpusRunning}
+      />
       <section className="eval-corpus-card">
         <div className="eval-corpus-heading">
           <div>
-            <strong>10,000-question real-model smoke test</strong>
+            <strong>10,000-question real-model corpus run</strong>
             <div className="hint">
-              Runs normal routing and the selected model in isolated sandboxes. Each chunk saves raw
-              JSONL and a Markdown report for review.
+              {CORPUS_RUN_COVERAGE.path} {CORPUS_RUN_COVERAGE.oracle} Each chunk saves raw JSONL and
+              a Markdown report for review.
             </div>
           </div>
           <span className="thinking-status-inline">{corpusStatus || 'not running'}</span>
@@ -303,6 +314,11 @@ export function EvalsPanel({ open, models, defaultModel, onClose }: Props) {
       <div className="git-body">
         <div className="git-files">
           <div className="explorer-section-label">Tasks</div>
+          {rejected.map((item, index) => (
+            <div key={`${item.file}-${item.id ?? index}`} className="git-error">
+              Skipped {item.id ? `“${item.id}”` : 'a task'} in {item.file}: {item.error}
+            </div>
+          ))}
           {tasks.map((task) => (
             <label key={task.id} className="git-file" style={{ cursor: 'pointer' }}>
               <input
@@ -340,8 +356,10 @@ export function EvalsPanel({ open, models, defaultModel, onClose }: Props) {
         </pre>
       </div>
       <div className="debug-hint">
-        Fast build smoke tests use simulated replies. This corpus runner makes real model calls. Add
-        project tasks in <code>.eris/evals.json</code>.
+        Diagnostics simulations and the <code>npm run test:agents</code> prebuild gate use scripted
+        model replies; neither is a real-model result, and the prebuild gate is not the full{' '}
+        <code>npm run check</code> (typecheck, lint, every test). The corpus runner and the suite
+        above make real model calls. Add project tasks in <code>.eris/evals.json</code>.
       </div>
     </div>
   )
