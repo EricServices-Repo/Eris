@@ -55,6 +55,12 @@ const { streamModelChat } = await import('../electron/main/services/chat-runtime
 const { getDefaults } = await import('../electron/main/services/settings')
 const { appState } = await import('../electron/main/app-state')
 const transport = await import('../electron/main/services/model-transport')
+const mcp = await import('../electron/main/services/mcp-runtime')
+const { generateImage } = await import('../electron/main/services/image-generation')
+const { enqueueBackgroundJob, listBackgroundJobs } =
+  await import('../electron/main/services/background-agents')
+const { cloudInlineAvailable, runCloudAgentInline } =
+  await import('../electron/main/services/cloud-agent-inline')
 
 const deps = (settings = getDefaults()) => ({ settings, getSecret: () => null })
 
@@ -436,6 +442,81 @@ describe('scenario and artifact boundaries', () => {
     const markdown = renderDebugRunMarkdown(detail)
     expect(markdown.split('\n')[0]).toBe('# Eris diagnostics run — SIMULATED MODEL RESPONSES')
     expect(markdown).toContain('What this run can and cannot establish')
+  })
+
+  it('refuses MCP, image, background-agent, and Cloud Agent effects at their own boundary', async () => {
+    // Enabled, signed-in settings: without the scope each call below would reach out.
+    const settings = liveSettings()
+    settings.images = {
+      ...settings.images,
+      enabled: true,
+      backend: 'api',
+      connectionId: 'test',
+      model: 'test-image-model'
+    }
+    settings.ericServices = { ...settings.ericServices, linked: true, tokenRef: 'eris-token' }
+    const workspace = mkdtempSync(join(tmpdir(), 'eris-boundary-'))
+    const network = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network in test'))
+    const images: string[] = []
+    const blocked: Array<{ kind: string; detail: string }> = []
+    await transport.runInDiagnosticsScope(
+      {
+        runId: 'boundary',
+        mode: 'simulated',
+        adapter: { kind: 'scripted', stream: async function* () {} },
+        onBlockedEffect: (kind, detail) => blocked.push({ kind, detail })
+      },
+      async () => {
+        expect(mcp.listMcpTools()).toEqual([])
+        expect(mcp.getMcpStatuses()).toEqual([])
+        expect(await mcp.callMcpTool('mcp__server__tool', {})).toMatchObject({ ok: false })
+        await expect(
+          generateImage({
+            request: { requestId: 'image-1', prompt: 'a lighthouse at dusk' },
+            settings,
+            getSecret: () => 'key',
+            adapter: {
+              generate: async () => {
+                images.push('generate')
+                return { bytes: Buffer.alloc(0) }
+              }
+            }
+          })
+        ).rejects.toThrow(/disabled in diagnostics/)
+        expect(() =>
+          enqueueBackgroundJob(workspace, {
+            goal: 'Refactor src/retry.ts',
+            model: transport.SIMULATED_MODEL_REF,
+            agentId: 'coder'
+          })
+        ).toThrow(/disabled in diagnostics/)
+        expect(await cloudInlineAvailable(settings, () => 'eseris_test')).toBe(false)
+        await expect(
+          runCloudAgentInline({
+            workspacePath: workspace,
+            settings,
+            goal: 'private cloud task description',
+            getSecret: () => null
+          }).next()
+        ).rejects.toThrow(/disabled in diagnostics/)
+      }
+    )
+    expect(blocked.map((item) => item.kind)).toEqual([
+      'mcp',
+      'image',
+      'delegation',
+      'cloud',
+      'cloud'
+    ])
+    expect(blocked.map((item) => item.detail).join('\n')).not.toContain('a lighthouse at dusk')
+    expect(blocked.map((item) => item.detail).join('\n')).not.toContain('Refactor src/retry.ts')
+    expect(blocked.map((item) => item.detail).join('\n')).not.toContain(
+      'private cloud task description'
+    )
+    expect(images).toEqual([])
+    expect(network).not.toHaveBeenCalled()
+    expect(listBackgroundJobs(workspace)).toEqual([])
+    expect(provider.calls).toEqual([])
   })
 
   it('marks a run left running by an earlier session as interrupted', () => {

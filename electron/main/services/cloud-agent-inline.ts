@@ -22,6 +22,7 @@ import {
 } from './cloud-agents-client'
 import { isEricServicesAuthenticated } from './ericservices'
 import { logInfo, logWarn } from './logger'
+import { activeDiagnosticsScope } from './model-transport'
 import { recordCloudJobEnqueue } from './usage-stats'
 
 export type CloudInlineEvent =
@@ -116,6 +117,13 @@ export async function cloudInlineAvailable(
   getSecret: (ref: string) => string | null,
   requiredTaskVersion = 1
 ): Promise<boolean> {
+  // Cloud Agents is a model provider outside the scope's adapter. Refuse before
+  // the health probe, so the turn stays on the local loop and its adapter.
+  const diagnostics = activeDiagnosticsScope()
+  if (diagnostics) {
+    diagnostics.onBlockedEffect('cloud', 'Cloud Composer inline')
+    return false
+  }
   if (!syncAuth(settings, getSecret)) return false
   try {
     const health = await refreshInlineHealth(false)
@@ -202,6 +210,11 @@ export async function* runCloudAgentInline(options: {
   signal?: AbortSignal
 }): AsyncGenerator<CloudInlineEvent> {
   const { workspacePath, settings, goal, agentId, agentName, getSecret, signal } = options
+  const diagnostics = activeDiagnosticsScope()
+  if (diagnostics) {
+    diagnostics.onBlockedEffect('cloud', 'Cloud Agent execution refused')
+    throw new Error('Cloud Agents are disabled in diagnostics runs')
+  }
   if (!syncAuth(settings, getSecret)) {
     throw new Error('Sign in to EricServic.es to use Cloud Agents')
   }

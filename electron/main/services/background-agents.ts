@@ -29,6 +29,7 @@ import {
 } from './workspace-trust'
 import { addAgentWorktree, diffWorktree, mergeAgentBranch, removeAgentWorktree } from './worktrees'
 import { logError, logInfo } from './logger'
+import { activeDiagnosticsScope } from './model-transport'
 import {
   commandNeedsApproval,
   formatMcpApprovalPreview,
@@ -146,6 +147,16 @@ export function enqueueBackgroundJob(
   workspacePath: string,
   request: EnqueueBackgroundJobRequest
 ): BackgroundJob {
+  // A persisted job would outlive the diagnostics case and its disposable
+  // sandbox, then run outside the scope with the user's settings.
+  const diagnostics = activeDiagnosticsScope()
+  if (diagnostics) {
+    diagnostics.onBlockedEffect(
+      'delegation',
+      `Background agent enqueue refused${request.agentId ? ` for ${request.agentId}` : ''}`
+    )
+    throw new Error('Background agents are disabled in diagnostics runs')
+  }
   loadPersisted()
   const now = new Date().toISOString()
   const goal = String(request.goal || '').trim()

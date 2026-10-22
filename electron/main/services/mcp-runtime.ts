@@ -3,6 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import type { AppSettings, McpServerConfig } from '../../../src/shared/settings-schema'
 import { listEnabledMcpServers } from './mcp'
 import { logError, logInfo, logWarn } from './logger'
+import { activeDiagnosticsScope } from './model-transport'
 import { MAX_INLINE_MCP_TOOLS } from './tool-registry'
 
 function appVersion(): string {
@@ -300,6 +301,14 @@ export async function syncMcpRuntime(
   workspacePath: string | null
 ): Promise<McpServerStatus[]> {
   const enabled = listEnabledMcpServers(settings)
+  // Connecting starts host processes or network sessions; diagnostics never
+  // connects, and leaves the app session's servers as they are.
+  const diagnostics = activeDiagnosticsScope()
+  if (diagnostics) {
+    if (enabled.length)
+      diagnostics.onBlockedEffect('mcp', `connect ${enabled.map((s) => s.name).join(', ')}`)
+    return []
+  }
   const keep = new Set(enabled.map((s) => s.id))
 
   for (const [id, session] of [...sessions.entries()]) {
@@ -375,7 +384,9 @@ export async function syncMcpRuntime(
   return getMcpStatuses()
 }
 
+/** App-session MCP servers are invisible inside a diagnostics scope. */
 export function getMcpStatuses(): McpServerStatus[] {
+  if (activeDiagnosticsScope()) return []
   return [...sessions.values()].map((s) => ({
     id: s.config.id,
     name: s.config.name,
@@ -387,6 +398,7 @@ export function getMcpStatuses(): McpServerStatus[] {
 }
 
 export function listMcpTools(): McpToolInfo[] {
+  if (activeDiagnosticsScope()) return []
   const out: McpToolInfo[] = []
   for (const session of sessions.values()) {
     if (session.connected) out.push(...session.tools)
@@ -430,6 +442,11 @@ export async function callMcpTool(
   fq: string,
   args: Record<string, unknown>
 ): Promise<{ ok: boolean; detail: string }> {
+  const diagnostics = activeDiagnosticsScope()
+  if (diagnostics) {
+    diagnostics.onBlockedEffect('mcp', fq.slice(0, 200))
+    return { ok: false, detail: 'MCP tools are disabled in diagnostics runs' }
+  }
   const parsed = parseFqName(fq)
   if (!parsed) return { ok: false, detail: `Invalid MCP tool name: ${fq}` }
 

@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'async_hooks'
+import type { BlockedEffectKind } from '../../../src/shared/debug-runs'
 import type { AppSettings } from '../../../src/shared/settings-schema'
 import type { StreamModelChatOptions } from './chat-runtime'
 
@@ -17,7 +18,7 @@ export interface ModelAdapter {
   stream(request: ModelTransportRequest): AsyncGenerator<string, void, unknown>
 }
 
-export type BlockedEffectKind = 'command' | 'verify' | 'web' | 'mcp'
+export type { BlockedEffectKind }
 
 export interface VerifyStubResult {
   ok: boolean
@@ -30,7 +31,11 @@ export interface DiagnosticsScope {
   runId: string
   mode: 'simulated' | 'real-model'
   adapter: ModelAdapter
-  /** Called whenever a host process, network, or MCP effect is refused. */
+  /**
+   * Called whenever a host process, network, MCP, image, background-agent, or
+   * Cloud Agent effect is refused. Each effect is refused at its own service
+   * boundary, so a caller that forgets an option still cannot reach it.
+   */
   onBlockedEffect: (kind: BlockedEffectKind, detail: string) => void
   /** Scripted verification result; absent = verification is reported as skipped. */
   verify?: (request: { root: string; preferTypecheck: boolean }) => VerifyStubResult
