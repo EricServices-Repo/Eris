@@ -3,11 +3,7 @@
  * All load/chat work is serialized. Job sessions keep KV warm across agent steps.
  */
 
-import {
-  contextCreateOptions,
-  isMemoryError,
-  modelLoadOptions
-} from './services/vram-fit'
+import { contextCreateOptions, isMemoryError, modelLoadOptions } from './services/vram-fit'
 
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
 
@@ -34,7 +30,7 @@ type Incoming =
       id: string
       sessionKey: string
       userMessage: string
-      /** Seed history when creating the session (all messages before this user turn). */
+      /** Authoritative history before this turn, including for reused sessions. */
       seedMessages?: ChatMessage[]
       systemPrompt?: string
       temperature: number
@@ -138,8 +134,7 @@ async function ensureContext(): Promise<void> {
   } catch {
     context = await model.createContext(contextCreateOptions(plan.min, plan.max, false))
   }
-  loadedContextSize =
-    typeof context.contextSize === 'number' ? context.contextSize : contextMax
+  loadedContextSize = typeof context.contextSize === 'number' ? context.contextSize : contextMax
 }
 
 async function getOrCreateSession(
@@ -224,12 +219,10 @@ async function handleLoad(
 }
 
 async function buildGrammar(jsonSchema?: Record<string, unknown>): Promise<unknown> {
-  if (!jsonSchema || !llama?.createGrammarForJsonSchema) return undefined
-  try {
-    return await llama.createGrammarForJsonSchema(jsonSchema)
-  } catch {
-    return undefined
-  }
+  if (!jsonSchema) return undefined
+  if (!llama?.createGrammarForJsonSchema)
+    throw new Error('This local runtime cannot enforce the requested tool schema.')
+  return await llama.createGrammarForJsonSchema(jsonSchema)
 }
 
 /** Legacy oneshot: flatten full transcript, dispose sequence after. */
@@ -310,18 +303,14 @@ async function runSessionTurn(options: {
         .map((m) => m.content)
         .join('\n\n') ||
       undefined
-    const { session } = await getOrCreateSession(options.sessionKey, system)
-    const seed = (options.seedMessages || []).filter((m) => m.role !== 'system')
-    if (seed.length) {
-      try {
-        session.setChatHistory(messagesToHistory(options.seedMessages || []))
-      } catch {
-        // History seed optional — next prompt still works from empty session.
-      }
-    }
+    await getOrCreateSession(options.sessionKey, system)
   }
 
   const { session } = await getOrCreateSession(options.sessionKey)
+  if (options.seedMessages !== undefined) {
+    // Synchronization failure must not silently generate against stale history.
+    session.setChatHistory(messagesToHistory(options.seedMessages))
+  }
   const grammar = await buildGrammar(options.jsonSchema)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const promptOpts: any = {
@@ -470,13 +459,7 @@ function onMessage(raw: Incoming): void {
   switch (raw.type) {
     case 'load':
       enqueue(() =>
-        handleLoad(
-          raw.modelPath,
-          raw.contextSize,
-          raw.requestId,
-          raw.gpu ?? 'auto',
-          raw.contextMin
-        )
+        handleLoad(raw.modelPath, raw.contextSize, raw.requestId, raw.gpu ?? 'auto', raw.contextMin)
       )
       break
     case 'chat':

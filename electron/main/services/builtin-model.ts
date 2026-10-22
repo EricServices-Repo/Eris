@@ -1024,11 +1024,7 @@ async function* streamBuiltinChatInProcess(options: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let grammar: any = undefined
   if (options.jsonSchema) {
-    try {
-      grammar = await state.llama.createGrammarForJsonSchema(options.jsonSchema)
-    } catch {
-      grammar = undefined
-    }
+    grammar = await state.llama.createGrammarForJsonSchema(options.jsonSchema)
   }
 
   const split = options.sessionKey ? splitSessionPrompt(options.messages) : null
@@ -1051,15 +1047,10 @@ async function* streamBuiltinChatInProcess(options: {
       entry = { session, sequence }
       inProcessSessions.set(key, entry)
       activeChatSessions.add(key)
-      if (split.seed.length) {
-        try {
-          // node-llama-cpp ChatHistoryItem — keep loosely typed across versions.
-          session.setChatHistory(messagesToLlamaHistory(split.seed) as never)
-        } catch {
-          // optional
-        }
-      }
     }
+    // Synchronize runtime edits, batched results and recovery instructions on
+    // every turn. Reusing KV must not mean reusing stale conversation history.
+    entry.session.setChatHistory(messagesToLlamaHistory(split.seed) as never)
 
     const queue: string[] = []
     let done = false
@@ -1287,13 +1278,12 @@ async function* streamBuiltinChatViaWorker(options: {
 
   const split = options.sessionKey ? splitSessionPrompt(options.messages) : null
   if (options.sessionKey && split) {
-    const isNew = !activeChatSessions.has(options.sessionKey)
     postToWorker({
       type: 'chat-turn',
       id,
       sessionKey: options.sessionKey,
       userMessage: split.userMessage,
-      seedMessages: isNew ? split.seed : undefined,
+      seedMessages: split.seed,
       temperature: options.temperature,
       maxTokens: REPLY_MAX_TOKENS,
       jsonSchema: options.jsonSchema

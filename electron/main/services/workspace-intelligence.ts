@@ -1,5 +1,6 @@
 import { findSymbols, relatedFiles } from './code-index'
 import { retrieveContextAsync } from './workspace-search'
+import { shouldSkipWorkspacePath } from './workspace-ignore'
 
 export type WorkspaceIntelligenceResult = {
   ok: boolean
@@ -26,7 +27,9 @@ export async function inspectWorkspace(
     retrieveContextAsync(workspacePath, query, maxFiles),
     Promise.all(symbols.map((symbol) => findSymbols(workspacePath, symbol, 8).catch(() => null)))
   ])
-  const symbolHits = symbolResults.flatMap((result) => result?.hits ?? [])
+  const symbolHits = symbolResults
+    .flatMap((result) => result?.hits ?? [])
+    .filter((hit) => !shouldSkipWorkspacePath(workspacePath, hit.path))
   const seedPath = retrieval.paths[0] || symbolHits[0]?.path
   const related = seedPath ? await relatedFiles(workspacePath, seedPath, 6).catch(() => null) : null
   const paths = [
@@ -35,7 +38,9 @@ export async function inspectWorkspace(
       ...symbolHits.map((hit) => hit.path),
       ...(related?.paths ?? [])
     ])
-  ].slice(0, maxFiles)
+  ]
+    .filter((path) => !shouldSkipWorkspacePath(workspacePath, path))
+    .slice(0, maxFiles)
   const reasons = paths.map((path) => {
     const signals: string[] = []
     if (retrieval.paths.includes(path)) signals.push('content and path relevance')

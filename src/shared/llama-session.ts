@@ -7,7 +7,8 @@ export type SessionChatMessage = {
 
 /**
  * Split a full transcript into seed history + the next user turn.
- * Returns null when there is no trailing user message to prompt.
+ * Preserve runtime instructions after the last user/tool-result message, too.
+ * The caller must synchronize seed history on every turn, including reused sessions.
  */
 export function splitSessionPrompt(messages: SessionChatMessage[]): {
   seed: SessionChatMessage[]
@@ -21,6 +22,14 @@ export function splitSessionPrompt(messages: SessionChatMessage[]): {
     }
   }
   if (lastUser < 0) return null
+  if (lastUser !== messages.length - 1) {
+    return {
+      seed: messages.map((message) => ({ ...message })),
+      userMessage:
+        'Continue the active request using the latest runtime instructions and tool results above. ' +
+        'Preserve completed work and address the next unfinished step.'
+    }
+  }
   const userMessage = messages[lastUser]!.content
   return {
     seed: messages.slice(0, lastUser),

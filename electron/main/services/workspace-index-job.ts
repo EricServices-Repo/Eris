@@ -45,7 +45,7 @@ export async function scanWorkspaceIndex(root: string, indexPath: string): Promi
         continue
       }
       if (
-        !/\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs)$/i.test(name) ||
+        !/\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|php|phtml|sql)$/i.test(name) ||
         st.size >= 800_000 ||
         shouldSkipWorkspacePath(root, rel, false)
       )
@@ -125,7 +125,7 @@ export async function patchWorkspaceIndex(
     if (st.isDirectory()) return scanWorkspaceIndex(root, indexPath)
     if (
       st.isSymbolicLink() ||
-      !/\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs)$/i.test(rel) ||
+      !/\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|php|phtml|sql)$/i.test(rel) ||
       st.size >= 800_000 ||
       shouldSkipWorkspacePath(root, rel, false)
     )

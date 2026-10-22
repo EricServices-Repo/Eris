@@ -124,7 +124,9 @@ export function shouldSkipWorkspacePath(
   if (!rel) return true
   const parts = rel.split('/')
   const base = parts[parts.length - 1] || ''
-  if (DEFAULT_SKIP_DIRS.has(base)) return true
+  // Apply hard exclusions to every ancestor, including paths returned by rg or
+  // loaded from an older index. A normal filename inside .eris is still metadata.
+  if (parts.some((part) => DEFAULT_SKIP_DIRS.has(part))) return true
   if (base.startsWith('.') && base !== '.github' && !base.startsWith('.env')) {
     // Skip most dotdirs/files; allow .github and env files for search.
     if (isDir || parts.length > 1) {

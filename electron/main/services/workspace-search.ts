@@ -1,16 +1,11 @@
 import { spawn } from 'child_process'
-import {
-  existsSync,
-  readdirSync,
-  readFileSync,
-  statSync
-} from 'fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
 import { join, relative, sep } from 'path'
 import { resolveInWorkspace, toWorkspaceRelative } from './workspace-fs'
 import { buildWorkspaceProcessEnv } from './workspace-env'
 import { cosine, hashEmbed } from './embeddings'
 import { ensureCodeIndexAsync, loadCodeIndex } from './code-index'
-import { shouldSkipDir, shouldSkipWorkspacePath } from './workspace-ignore'
+import { DEFAULT_SKIP_DIRS, shouldSkipDir, shouldSkipWorkspacePath } from './workspace-ignore'
 
 const TEXT_EXT = new Set([
   '.ts',
@@ -24,6 +19,9 @@ const TEXT_EXT = new Set([
   '.css',
   '.scss',
   '.html',
+  '.php',
+  '.phtml',
+  '.sql',
   '.py',
   '.go',
   '.rs',
@@ -76,6 +74,7 @@ function runRg(
       '--glob',
       '!dist'
     ]
+    for (const dir of DEFAULT_SKIP_DIRS) args.push('--glob', `!**/${dir}/**`)
     if (glob) args.push('--glob', glob)
     args.push('--', pattern, '.')
     const child = spawn('rg', args, {
@@ -119,6 +118,7 @@ function runRg(
             }
           }
           if (row.type !== 'match' || !row.data?.path?.text) continue
+          if (shouldSkipWorkspacePath(workspacePath, row.data.path.text)) continue
           hits.push({
             path: row.data.path.text.split(sep).join('/'),
             line: row.data.line_number || 0,
@@ -226,9 +226,7 @@ export async function workspaceGrep(
       hits
     }
   }
-  const detail = hits
-    .map((h) => `${h.path}:${h.line}: ${h.text}`)
-    .join('\n')
+  const detail = hits.map((h) => `${h.path}:${h.line}: ${h.text}`).join('\n')
   return {
     ok: true,
     detail: `${hits.length} hit(s)${rgHits ? ' (rg)' : ' (scan)'}:\n${detail}`,
@@ -269,10 +267,7 @@ export function workspaceGlob(
   }
   return {
     ok: true,
-    detail:
-      paths.length === 0
-        ? `No files matching ${raw}`
-        : paths.map((p) => p).join('\n'),
+    detail: paths.length === 0 ? `No files matching ${raw}` : paths.map((p) => p).join('\n'),
     paths
   }
 }
@@ -311,7 +306,10 @@ function retrievalSnippet(content: string, terms: string[]): string {
   }
   const start = bestIndex < 0 ? 0 : Math.max(0, bestIndex - 2)
   const selected = lines.slice(start, start + 7)
-  return selected.map((line, index) => `${start + index + 1}: ${line}`).join('\n').slice(0, 500)
+  return selected
+    .map((line, index) => `${start + index + 1}: ${line}`)
+    .join('\n')
+    .slice(0, 500)
 }
 
 /** Rank workspace files for a natural-language / keyword query (sync). */
@@ -358,9 +356,7 @@ export function retrieveContext(
   }
   scored.sort((a, b) => b.score - a.score)
   const top = scored.slice(0, maxFiles)
-  const detail = top
-    .map((t) => `### ${t.path} (score ${t.score})\n${t.snippet}`)
-    .join('\n\n')
+  const detail = top.map((t) => `### ${t.path} (score ${t.score})\n${t.snippet}`).join('\n\n')
   return {
     ok: true,
     detail: top.length ? detail : 'No relevant files found',
@@ -406,6 +402,7 @@ export async function retrieveContextAsync(
     for (let i = 0; i < index.files.length; i++) {
       if (i > 0 && i % 200 === 0) await yieldEventLoop()
       const rel = index.files[i]!
+      if (shouldSkipWorkspacePath(workspacePath, rel)) continue
       let score = 0
       const lowerPath = rel.toLowerCase()
       for (const t of terms) {
@@ -420,6 +417,7 @@ export async function retrieveContextAsync(
     for (let i = 0; i < index.symbols.length; i++) {
       if (i > 0 && i % 400 === 0) await yieldEventLoop()
       const s = index.symbols[i]!
+      if (shouldSkipWorkspacePath(workspacePath, s.path)) continue
       const name = s.name.toLowerCase()
       let bump = 0
       for (const t of terms) {
@@ -475,7 +473,9 @@ export async function retrieveContextAsync(
     }
   }
 
-  const ranked = [...scored.entries()].sort((a, b) => b[1] - a[1]).slice(0, Math.max(maxFiles * 3, 24))
+  const ranked = [...scored.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, Math.max(maxFiles * 3, 24))
   const top: Array<{ path: string; score: number; snippet: string }> = []
   for (const [rel, score] of ranked) {
     if (top.length >= maxFiles) break
