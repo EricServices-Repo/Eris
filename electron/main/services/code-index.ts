@@ -74,7 +74,7 @@ function walk(root: string, dir: string, files: string[], maxFiles: number): voi
       if (shouldSkipDir(root, name, rel)) continue
       walk(root, full, files, maxFiles)
     } else if (
-      /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs)$/i.test(name) &&
+      /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|php|phtml|sql)$/i.test(name) &&
       st.size < 800_000 &&
       !shouldSkipWorkspacePath(root, rel, false)
     ) {

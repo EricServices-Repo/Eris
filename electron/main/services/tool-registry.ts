@@ -443,9 +443,9 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
 ]
 
 /**
- * A permissive JSON schema describing one visible tool call, for grammar-constrained
- * decoding on the local GGUF model. It keeps tool names in the current policy scope
- * and permits scalar arguments plus the shallow arrays/objects used by our tools.
+ * A JSON schema describing one visible tool call for local grammar decoding.
+ * Structured mode derives a separate arguments object from each tool contract;
+ * the legacy scalar format remains available for callers that request it.
  * Used only on retries where a tool is required (never when a prose answer is OK).
  */
 export function toolCallJsonSchema(
@@ -456,19 +456,60 @@ export function toolCallJsonSchema(
   const names = (
     availableNames ?? [...COMPOSER_OPENAI_TOOLS.map((t) => t.function.name), ...extraNames]
   ).filter(Boolean)
+  if (allowStructuredArguments) {
+    // llama.cpp treats declared object properties as mandatory. Include only
+    // required fields in retry grammars; optional fields remain available in
+    // ordinary tool calls. Never let a generic scalar stand in for arguments.
+    const requiredSchema = (schema: Record<string, unknown>): Record<string, unknown> => {
+      if (schema.type === 'object' || schema.properties) {
+        const properties = (schema.properties ?? {}) as Record<string, Record<string, unknown>>
+        const required = (schema.required ?? []) as string[]
+        const alternatives = Array.isArray(schema.anyOf)
+          ? (schema.anyOf as Array<{ required?: string[] }>).map((item) => item.required ?? [])
+          : [[]]
+        const variants = alternatives.map((extra) => {
+          const fields = [...new Set([...required, ...extra])]
+          return {
+            type: 'object',
+            properties: Object.fromEntries(
+              fields.map((key) => [key, requiredSchema(properties[key] ?? {})])
+            ),
+            required: fields,
+            additionalProperties: false
+          }
+        })
+        return variants.length === 1 ? variants[0]! : { oneOf: variants }
+      }
+      if (schema.type === 'array')
+        return { ...schema, items: requiredSchema((schema.items ?? {}) as Record<string, unknown>) }
+      return schema
+    }
+    const variants = [...new Set(names)].flatMap((name) => {
+      const schema = getToolContract(name)?.schema
+      if (!schema) return []
+      return [
+        {
+          type: 'object',
+          properties: {
+            name: { const: name },
+            arguments: requiredSchema(schema)
+          },
+          required: ['name', 'arguments'],
+          additionalProperties: false
+        }
+      ]
+    })
+    if (!variants.length)
+      throw new Error('No tool schemas are available for constrained generation.')
+    return { oneOf: variants }
+  }
   return {
     type: 'object',
     properties: {
       name: { type: 'string', enum: Array.from(new Set(names)) }
     },
     required: ['name'],
-    additionalProperties: allowStructuredArguments
-      ? {
-          type: ['string', 'number', 'boolean', 'null', 'array', 'object'],
-          items: { type: ['string', 'number', 'boolean', 'null'] },
-          additionalProperties: { type: ['string', 'number', 'boolean', 'null'] }
-        }
-      : { type: ['string', 'number', 'boolean'] }
+    additionalProperties: { type: ['string', 'number', 'boolean'] }
   }
 }
 

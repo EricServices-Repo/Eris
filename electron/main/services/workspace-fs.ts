@@ -11,7 +11,15 @@ import {
 } from 'fs'
 import { basename, dirname, join, relative, resolve, sep } from 'path'
 
-const SKIP_DIR_NAMES = new Set(['node_modules', '.git', 'out', 'dist', 'release', '.DS_Store'])
+const SKIP_DIR_NAMES = new Set([
+  'node_modules',
+  '.git',
+  '.eris',
+  'out',
+  'dist',
+  'release',
+  '.DS_Store'
+])
 
 const workspaceTreeCache = new Map<string, { at: number; tree: string }>()
 const WORKSPACE_TREE_CACHE_MS = 30_000

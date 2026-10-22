@@ -1,4 +1,8 @@
-import { asksForRecommendations, asksWhatTheProjectDoes } from '../../../../src/shared/agent-contract'
+import { createHash } from 'crypto'
+import {
+  asksForRecommendations,
+  asksWhatTheProjectDoes
+} from '../../../../src/shared/agent-contract'
 import { parseToolCalls, stripToolBlocks } from './tool-parsing'
 import type { ToolCall } from './types'
 
@@ -33,7 +37,12 @@ export function looksLikeDegenerateLoop(text: string): boolean {
     .map((l) => l.trim())
     .filter(Boolean)
   if (lines.length >= 10) {
-    const normalized = lines.map((l) => l.replace(/^\d+\.\s*/, '').slice(0, 72).toLowerCase())
+    const normalized = lines.map((l) =>
+      l
+        .replace(/^\d+\.\s*/, '')
+        .slice(0, 72)
+        .toLowerCase()
+    )
     const last = normalized.slice(-10)
     const unique = new Set(last)
     if (unique.size <= 3) return true
@@ -225,21 +234,29 @@ export function shouldKeepWorking(opts: {
 }
 
 export function toolFingerprint(calls: ToolCall[]): string {
-  return calls
-    .map((c) => {
-      const path = typeof c.args.path === 'string' ? c.args.path : ''
-      const to = typeof c.args.to === 'string' ? c.args.to : ''
-      const query =
-        typeof c.args.query === 'string'
-          ? c.args.query
-          : typeof c.args.url === 'string'
-            ? c.args.url
-            : ''
-      const contentLen =
-        typeof c.args.content === 'string' ? String(c.args.content.length) : ''
-      return `${c.name}:${path}:${to}:${query}:${contentLen}`
-    })
-    .join('|')
+  const canonical = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(canonical)
+    if (value !== null && typeof value === 'object')
+      return Object.fromEntries(
+        Object.entries(value)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, item]) => [key, canonical(item)])
+      )
+    return value
+  }
+  // IDs and formatting do not affect identity; all executable arguments do.
+  // Hash content rather than retaining source code or commands in diagnostics.
+  return createHash('sha256')
+    .update(
+      JSON.stringify(
+        calls.map((call) => ({
+          name: call.name,
+          args: canonical(call.args),
+          ...(call.parseError ? { invalid: call.raw } : {})
+        }))
+      )
+    )
+    .digest('hex')
 }
 
 /** User asked for a packaged / native / installable app artifact. */
@@ -269,8 +286,9 @@ export function actionLogHasBuildSuccess(actions: string[]): boolean {
 export function trailingMutationFailed(actions: string[]): boolean {
   const mut = actions.filter(
     (a) =>
-      /^Failed (?:write_file|search_replace|apply_patch|mkdir|delete_path|rename_path)\b/i.test(a) ||
-      /\b(?:Wrote|Created|Updated|Patched|Replaced|Deleted|Renamed)\b/i.test(a)
+      /^Failed (?:write_file|search_replace|apply_patch|mkdir|delete_path|rename_path)\b/i.test(
+        a
+      ) || /\b(?:Wrote|Created|Updated|Patched|Replaced|Deleted|Renamed)\b/i.test(a)
   )
   if (mut.length === 0) return false
   let lastFail = -1
@@ -356,7 +374,8 @@ export function assessGoalCompletion(opts: {
   ) {
     return {
       unmet: true,
-      reason: 'No product files were changed. Use write_file / search_replace to implement the request.'
+      reason:
+        'No product files were changed. Use write_file / search_replace to implement the request.'
     }
   }
 

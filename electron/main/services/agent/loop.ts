@@ -895,6 +895,54 @@ export async function* runAgentWithWorkspaceTools(options: {
     ].join('\n')
   }
 
+  function* recordSkippedToolCalls(
+    calls: ToolCall[],
+    assistantText: string,
+    detail: string
+  ): Generator<AgentRunnerEvent, void, unknown> {
+    // A rejected request is still a complete tool exchange. In particular,
+    // native providers must receive a result for every assistant call ID.
+    workerMessages.push({
+      role: 'assistant',
+      content: thinkingBeforeTools(assistantText),
+      tool_calls: calls.map((call) => ({
+        id: call.id!,
+        type: 'function' as const,
+        function: {
+          name: call.name,
+          arguments: call.parseError ? call.raw : JSON.stringify(call.args)
+        }
+      }))
+    })
+    for (const call of calls) {
+      workerMessages.push({
+        role: 'tool',
+        tool_call_id: call.id!,
+        content: `TOOL_RESULT ${call.name}: NOT_EXECUTED\n${detail}`
+      })
+      yield {
+        type: 'tool',
+        tool: {
+          id: call.id!,
+          name: call.name,
+          path: typeof call.args.path === 'string' ? call.args.path : undefined,
+          status: 'error',
+          changedResources: [],
+          failure: { code: 'NO_PROGRESS', retryable: true },
+          detail
+        }
+      }
+    }
+    logInfo('Agent tool request skipped', {
+      taskId: task.taskId,
+      step,
+      agentId: plan.agentId,
+      model: workerModel,
+      tools: calls.map((call) => call.name),
+      fingerprint: toolFingerprint(calls)
+    })
+  }
+
   async function* tryMidRunAdapt(
     trigger: string
   ): AsyncGenerator<AgentRunnerEvent, boolean, unknown> {
@@ -954,6 +1002,25 @@ export async function* runAgentWithWorkspaceTools(options: {
         if (runTool) openaiTools.push(runTool)
       }
       const reason = `${decision.reason} after ${trigger}`
+      // Install the new agent's actual instructions, not just its display name.
+      // Retain execution evidence and the original task's authority ceiling.
+      const recoveryMessages = buildPreservedWorkerMessages({
+        messages,
+        workspacePath,
+        settings: options.settings,
+        inputTokenBudget: promptBudget,
+        plan,
+        originalUserGoal,
+        retrievalHint,
+        mcpToolCount: plan.toolPolicy === 'read' || plan.toolPolicy === 'none' ? 0 : mcpToolCount
+      })
+      if (recoveryMessages[0]?.role === 'system') {
+        if (workerMessages[0]?.role === 'system') workerMessages[0] = recoveryMessages[0]
+        else workerMessages.unshift(recoveryMessages[0])
+      }
+      releaseGgufSession()
+      lastFingerprint = ''
+      repeatFingerprint = 0
       consecutiveToolErrors = 0
       noProgressStreak = 0
       verifyFailures = Math.max(0, verifyFailures - 1)
@@ -982,16 +1049,18 @@ export async function* runAgentWithWorkspaceTools(options: {
     const reason =
       mode === 'ask'
         ? `Ask mode stays read-only while ${plan.agentName} recovers. ${trigger}.`
-        : `${plan.agentName} has no configured recovery agent. ${trigger}.`
+        : `${plan.agentName} is correcting the failed tool request using the current task context.`
     consecutiveToolErrors = 0
     noProgressStreak = 0
     verifyFailures = Math.max(0, verifyFailures - 1)
+    constrainNextToolCall = true
     yield { type: 'status', text: reason }
     yield { type: 'thinking', text: `\n\n— ${reason}\n` }
     workerMessages.push({
       role: 'system',
       content:
         `[Eris] ${reason}\n` +
+        `Recent actions and failures: ${actionLog.slice(-8).join(' · ')}\n` +
         `Diagnose the failure category. Use a different tool or smaller step, preserve completed changes, and verify the next result before continuing.`
     })
     return true
@@ -1786,10 +1855,11 @@ export async function* runAgentWithWorkspaceTools(options: {
             : '\n\n— Enough directory listings; read files or finish…\n'
         }
         const snapshot = lastInspectResult || lastTreeResult || '(listing already returned earlier)'
-        workerMessages.push({
-          role: 'assistant',
-          content: assistantText.slice(0, AGENT_HANDOFF_CHARS)
-        })
+        yield* recordSkippedToolCalls(
+          toolCalls,
+          assistantText,
+          `Directory inspection was not executed again. Use the earlier listing and inspect a specific source file next.\n${snapshot}`
+        )
         // After two skip cycles on review tasks, allow DONE without more tools
         if (reviewOnly && noProgressStreak >= 2) {
           workerMessages.push({
@@ -1830,10 +1900,13 @@ export async function* runAgentWithWorkspaceTools(options: {
             ? '\n\n— Same tool call repeated; answer the user from the files already read…\n'
             : '\n\n— Same tool call repeated; moving on to the next unfinished edit…\n'
         }
-        workerMessages.push({
-          role: 'assistant',
-          content: assistantText.slice(0, AGENT_HANDOFF_CHARS)
-        })
+        yield* recordSkippedToolCalls(
+          toolCalls,
+          assistantText,
+          'This identical tool request was not executed again. Inspect its previous result above. ' +
+            'If it failed, correct the arguments or prerequisites. If it succeeded, continue with the next unfinished step.'
+        )
+        constrainNextToolCall = true
         workerMessages.push(
           nudgeContinueWork(
             'You repeated the same tool call. Move on to the next unfinished part of the request.'
@@ -1843,7 +1916,7 @@ export async function* runAgentWithWorkspaceTools(options: {
         if (duplicateToolBlocks >= MAX_DUPLICATE_TOOL_BLOCKS) {
           const stopNote =
             `Stopped after ${duplicateToolBlocks} repeated identical tool calls. ` +
-            `This run is incomplete and needs a different model or a resumed run from the saved checkpoint.`
+            `Recovery did not produce a new action. This run is incomplete; existing workspace changes are preserved.`
           actionLog.push(stopNote)
           yield {
             type: 'progress',
@@ -1899,6 +1972,7 @@ export async function* runAgentWithWorkspaceTools(options: {
       const resultParts: string[] = []
       let mutatedThisRound = false
       let codeMutatedThisRound = false
+      let inspectedSourceThisRound = false
       const parallelReadResults = new Map<number, ToolExecutionResult>()
       const parallelReadStartTimes = new Map<number, number>()
       const canRunReadBatch =
@@ -1985,7 +2059,16 @@ export async function* runAgentWithWorkspaceTools(options: {
             ? { ok: false, errors: [call.parseError] }
             : validateToolArguments(call.args, mcpTool ? mcpTool.inputSchema : toolContract?.schema)
           if (!validation.ok) {
+            constrainNextToolCall = true
+            consecutiveToolErrors++
             const detail = `Invalid arguments: ${validation.errors.join('; ')}`
+            actionLog.push(`Failed ${call.name}: ${detail}`)
+            yield {
+              type: 'progress',
+              step,
+              actionLog: [...actionLog],
+              filesTouched: [...filesTouched]
+            }
             yield {
               type: 'tool',
               tool: {
@@ -2000,7 +2083,9 @@ export async function* runAgentWithWorkspaceTools(options: {
               }
             }
             resultParts.push(
-              `TOOL_RESULT ${call.name}: ${detail}\nRECOVERY: ${toolFailureRecovery(call.name, detail)}`
+              `TOOL_RESULT ${call.name}: ${detail}\nRECOVERY: ${toolFailureRecovery(call.name, detail)}\n` +
+                `Expected arguments object: ${JSON.stringify(mcpTool ? mcpTool.inputSchema : toolContract?.schema)}\n` +
+                'A validation failure does not mean the file is missing. No filesystem operation was executed.'
             )
             continue
           }
@@ -3252,6 +3337,9 @@ export async function* runAgentWithWorkspaceTools(options: {
             observedWorkspaceReads.clear()
           }
           if (result.ok) {
+            // Reading distinct source/ranges is productive work, even before an
+            // edit. Do not reroute an agent just for inspecting several files.
+            if (toolEffect === 'read' && !onlyInspect) inspectedSourceThisRound = true
             if (call.name === 'read_file' && result.path) {
               recordWorkspaceRead(result.path, 'file')
             } else if (call.name === 'notebook_read' && result.path) {
@@ -3361,6 +3449,8 @@ export async function* runAgentWithWorkspaceTools(options: {
       if (mutatedThisRound) {
         noProgressStreak = 0
         yield { type: 'workspace-changed' }
+      } else if (inspectedSourceThisRound) {
+        noProgressStreak = 0
       } else if (!onlyInspect) {
         noProgressStreak++
       }

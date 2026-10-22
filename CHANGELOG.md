@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.6 — 2026-10-21
+
+- Enforced valid local tool arguments, excluded internal session data from retrieval, and added PHP and SQL indexing.
+
+## 0.4.5 — 2026-10-21
+
+- Fixed local agent history synchronization, tool repeat detection, and recovery context.
+
 ## 0.4.4 — 2026-10-21
 
 - Rebuilt agent task intake, model tool protocols, project scope enforcement, and outcome verification.
