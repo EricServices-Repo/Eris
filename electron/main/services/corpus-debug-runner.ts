@@ -10,13 +10,14 @@ import {
 } from 'fs'
 import { basename, join } from 'path'
 import type { AppSettings, ChatIntent } from '../../../src/shared/settings-schema'
-import type {
-  CorpusDebugProgressEvent,
-  CorpusDebugQuestionResult,
-  CorpusDebugRunRequest,
-  CorpusDebugRunSummary,
-  EvalCheck,
-  EvalTask
+import {
+  CORPUS_RUN_COVERAGE,
+  type CorpusDebugProgressEvent,
+  type CorpusDebugQuestionResult,
+  type CorpusDebugRunRequest,
+  type CorpusDebugRunSummary,
+  type EvalCheck,
+  type EvalTask
 } from '../../../src/shared/evals'
 import { appResourcePath, userDataRoot } from './paths'
 import { planChatTurn } from './chat-router'
@@ -137,6 +138,9 @@ function renderReview(summary: CorpusDebugRunSummary): string {
   const lines = [
     '# Eris real-model corpus review',
     '',
+    `- Mode: ${CORPUS_RUN_COVERAGE.label} (live calls to the selected model)`,
+    `- Path: ${CORPUS_RUN_COVERAGE.path}`,
+    `- Oracle: ${CORPUS_RUN_COVERAGE.oracle}`,
     `- Run: \`${summary.runId}\``,
     `- Model: \`${summary.model}\``,
     `- Status: ${summary.status}`,
@@ -168,7 +172,7 @@ function renderReview(summary: CorpusDebugRunSummary): string {
       '',
       item.question,
       '',
-      `- Error: ${item.result.error ?? 'check failure'}`,
+      `- Error: ${item.result.error ?? 'check failure'}${item.result.status ? ` (${item.result.status})` : ''}`,
       `- Routed models: chat \`${item.plannedChatModel}\`, tools \`${item.plannedToolsModel}\``,
       `- Checks: ${item.result.checks.map((check) => `${check.ok ? 'pass' : 'fail'} ${check.detail}`).join('; ') || 'none'}`,
       `- Steps/tools/errors: ${item.result.steps}/${item.result.toolCalls}/${item.result.toolErrors}`,
@@ -246,6 +250,7 @@ export async function runCorpusDebug(
   const reviewPath = join(runsDir(), `${runId}.review.md`)
   const summary: CorpusDebugRunSummary = {
     runId,
+    mode: 'real-model',
     model: request.model,
     status: 'running',
     startIndex,

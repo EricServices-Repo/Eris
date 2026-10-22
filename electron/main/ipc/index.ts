@@ -19,6 +19,7 @@ import { registerAiIpc } from './ai'
 import { registerDebugIpc } from './debug'
 import { registerContextIpc } from './context'
 import { registerEvalsIpc } from './evals'
+import { registerDebugRunsIpc } from './debug-runs'
 import { registerBackgroundAgentsIpc } from './background-agents'
 import { registerCloudAgentsIpc } from './cloud-agents'
 import { registerUpdatesIpc } from './updates'
@@ -46,6 +47,7 @@ export function registerIpc(): void {
   registerDebugIpc()
   registerContextIpc()
   registerEvalsIpc()
+  registerDebugRunsIpc()
   registerBackgroundAgentsIpc()
   registerCloudAgentsIpc()
   registerUpdatesIpc()

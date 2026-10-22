@@ -3,8 +3,9 @@ import { basename, join } from 'path'
 import { getResolvedSettings } from '../services/settings'
 import { appState } from '../app-state'
 import { getSecret } from './shared'
-import { listEvalTaskInfo } from '../services/eval-tasks'
+import { listEvalTaskInfo, listRejectedEvalTasks } from '../services/eval-tasks'
 import { cancelEvalRun, isEvalRunActive, runEvalSuite } from '../services/eval-runner'
+import { isDebugRunActive } from '../services/debug-runs/coordinator'
 import { clearEvalResults, getEvalScoreboard } from '../services/eval-store'
 import {
   cancelCorpusDebugRun,
@@ -17,6 +18,7 @@ import type { CorpusDebugRunRequest } from '../../../src/shared/evals'
 
 export function registerEvalsIpc(): void {
   ipcMain.handle('evals:list', () => listEvalTaskInfo(appState.currentWorkspace))
+  ipcMain.handle('evals:rejected', () => listRejectedEvalTasks(appState.currentWorkspace))
   ipcMain.handle('evals:scoreboard', () => getEvalScoreboard())
   ipcMain.handle('evals:clear', () => {
     clearEvalResults()
@@ -37,7 +39,7 @@ export function registerEvalsIpc(): void {
     const run = listCorpusDebugRuns().find((item) => item.runId === runId)
     if (!run) throw new Error('Corpus debug report not found')
     const options = {
-      title: 'Export model smoke-test review',
+      title: 'Export real-model corpus review',
       defaultPath: join(appState.currentWorkspace || '', basename(run.reviewPath)),
       filters: [{ name: 'Markdown', extensions: ['md'] }]
     }
@@ -50,6 +52,7 @@ export function registerEvalsIpc(): void {
   })
   ipcMain.handle('evals:corpusRun', async (event, payload: CorpusDebugRunRequest) => {
     if (isEvalRunActive()) throw new Error('Stop the eval suite before starting a corpus run')
+    if (isDebugRunActive()) throw new Error('Stop the diagnostics run before starting a corpus run')
     const settings = getResolvedSettings(appState.currentWorkspace)
     return runCorpusDebug(appState.currentWorkspace, settings, payload, getSecret, (evt) => {
       if (!event.sender.isDestroyed()) event.sender.send('evals:corpusProgress', evt)
@@ -58,6 +61,7 @@ export function registerEvalsIpc(): void {
   ipcMain.handle(
     'evals:run',
     async (event, payload: { taskIds: string[]; models: string[]; repeats?: number }) => {
+      if (isDebugRunActive()) throw new Error('Stop the diagnostics run before starting evals')
       const settings = getResolvedSettings(appState.currentWorkspace)
       return runEvalSuite(
         appState.currentWorkspace,

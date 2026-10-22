@@ -1,3 +1,5 @@
+import { activeDiagnosticsScope } from './model-transport'
+
 const PAGE_TEXT_LIMIT = 12_000
 const SEARCH_RESULT_LIMIT = 8
 const LOAD_TIMEOUT_MS = 20_000
@@ -142,7 +144,16 @@ const PAGE_EXTRACT = `(() => ({
   text: document.body ? document.body.innerText : ''
 }))()`
 
+/** Diagnostics runs never contact the network for web lookups. */
+function assertWebAllowed(detail: string): void {
+  const diagnostics = activeDiagnosticsScope()
+  if (!diagnostics) return
+  diagnostics.onBlockedEffect('web', detail)
+  throw new Error('Web access is disabled in diagnostics runs')
+}
+
 export async function searchWeb(query: string, signal?: AbortSignal): Promise<string> {
+  assertWebAllowed(`search: ${query.slice(0, 200)}`)
   const page = searchPageUrl(query)
   const raw = (await readBrowserPage(page, signal, SEARCH_EXTRACT)) as Array<{
     title?: string
@@ -168,6 +179,7 @@ export async function searchWeb(query: string, signal?: AbortSignal): Promise<st
 }
 
 export async function openWebPage(rawUrl: string, signal?: AbortSignal): Promise<string> {
+  assertWebAllowed(`open: ${rawUrl.slice(0, 200)}`)
   const url = publicHttpsUrl(rawUrl)
   const page = (await readBrowserPage(url, signal, PAGE_EXTRACT)) as {
     title?: string

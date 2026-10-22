@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { runWorkspaceCommand } from './shell-run'
+import { activeDiagnosticsScope } from './model-transport'
 
 export type VerifyResult = {
   ok: boolean
@@ -226,6 +227,19 @@ export async function runVerify(
   signal?: AbortSignal,
   opts?: VerifyOptions
 ): Promise<VerifyResult> {
+  // Diagnostics runs never spawn verification processes; scenarios script them.
+  const diagnostics = activeDiagnosticsScope()
+  if (diagnostics) {
+    const preferTypecheck = opts?.preferTypecheck === true
+    if (diagnostics.verify) return diagnostics.verify({ root: workspacePath, preferTypecheck })
+    diagnostics.onBlockedEffect('verify', 'Verification commands are disabled in diagnostics runs')
+    return {
+      ok: true,
+      command: '',
+      detail: 'Diagnostics run: verification commands are disabled; verify was skipped.',
+      skipped: true
+    }
+  }
   const allowInstall = opts?.allowInstall !== false
   const approve = async (cmd: string) => !opts?.approveInstall || opts.approveInstall(cmd)
   const command = detectVerifyCommand(workspacePath, {

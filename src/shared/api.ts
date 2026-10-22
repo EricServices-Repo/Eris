@@ -37,8 +37,19 @@ import type {
   EvalProgressEvent,
   EvalResult,
   EvalScoreboard,
-  EvalTaskInfo
+  EvalTaskInfo,
+  RejectedEvalTask
 } from './evals'
+import type {
+  DebugExportPreview,
+  DebugExportRequest,
+  DebugReplayRequest,
+  DebugRunDetail,
+  DebugRunProgressEvent,
+  DebugRunRequest,
+  DebugRunSummary,
+  DebugScenarioInfo
+} from './debug-runs'
 import type {
   BackgroundJob,
   BackgroundJobEvent,
@@ -785,6 +796,21 @@ export interface IdeApi {
   exportCorpusDebug: (runId: string) => Promise<string | null>
   openCorpusDebugFolder: () => Promise<boolean>
   onCorpusDebugProgress: (cb: (event: CorpusDebugProgressEvent) => void) => () => void
+  listRejectedEvalTasks: () => Promise<RejectedEvalTask[]>
+  listDebugScenarios: () => Promise<DebugScenarioInfo[]>
+  listDebugRuns: () => Promise<DebugRunSummary[]>
+  getDebugRun: (runId: string) => Promise<DebugRunDetail>
+  debugRunActive: () => Promise<boolean>
+  startDebugRun: (request: DebugRunRequest) => Promise<DebugRunSummary>
+  replayDebugRun: (request: DebugReplayRequest) => Promise<DebugRunSummary>
+  cancelDebugRun: () => Promise<boolean>
+  previewDebugRunExport: (request: DebugExportRequest) => Promise<DebugExportPreview>
+  exportDebugRun: (
+    request: DebugExportRequest
+  ) => Promise<{ jsonPath: string; markdownPath: string } | null>
+  deleteDebugRun: (runId: string) => Promise<boolean>
+  deleteAllDebugRuns: () => Promise<number>
+  onDebugRunEvent: (cb: (event: DebugRunProgressEvent) => void) => () => void
   listBackgroundJobs: () => Promise<BackgroundJob[]>
   enqueueBackgroundJob: (payload: EnqueueBackgroundJobRequest) => Promise<BackgroundJob>
   stopBackgroundJob: (id: string) => Promise<boolean>
