@@ -1,3 +1,4 @@
+import { interpretationOf } from '../../../../src/shared/task-contract'
 import { randomUUID } from 'crypto'
 import { mkdtempSync, realpathSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -588,8 +589,10 @@ async function runCase(
       const {
         plan: turnPlan,
         task,
-        semanticIntent
+        semanticIntent,
+        resolution
       } = await resolveChatTurnContract(turnInput, initial)
+      const interpretation = interpretationOf(task)
       route = {
         expectedIntents: (scenario.expect.intent ?? []) as ChatIntent[],
         initialIntent: initial.intent,
@@ -602,24 +605,29 @@ async function runCase(
         method: turnPlan.method,
         reason: turnPlan.reason,
         chatModel: turnPlan.models.chat,
-        toolsModel: turnPlan.models.tools
+        toolsModel: turnPlan.models.tools,
+        resolution,
+        ...(turnPlan.routeTrace ? { routeTrace: turnPlan.routeTrace } : {})
       }
       contract = {
         deliverable: task.deliverable,
         authority: task.authority,
         scopeState: task.scope.state,
-        acceptanceCriteria: task.acceptanceCriteria
+        acceptanceCriteria: task.acceptanceCriteria,
+        artifact: interpretation.artifact,
+        destination: interpretation.destination,
+        obligations: interpretation.obligations
       }
       timeline.add(
         'route',
         'route',
         `${initial.intent}${semanticIntent !== initial.intent ? ` → ${semanticIntent}` : ''} → ${turnPlan.intent} · ${turnPlan.agentName} · tools ${turnPlan.toolPolicy}`,
-        turnPlan.reason
+        `${turnPlan.reason} · resolver ${resolution.source}:${resolution.rule}${resolution.failure ? ` (${resolution.failure})` : ''}${resolution.downgrade ? ` · ${resolution.downgrade.from} → ${resolution.downgrade.to} by ${resolution.downgrade.rule}` : ''}`
       )
       timeline.add(
         'contract',
         'route',
-        `deliverable ${task.deliverable} · edit ${task.authority.edit ? 'allowed' : 'denied'} · execute ${task.authority.execute}`
+        `artifact ${interpretation.artifact} → ${interpretation.destination} · deliverable ${task.deliverable} · edit ${task.authority.edit ? 'allowed' : 'denied'} · execute ${task.authority.execute}`
       )
       const prompt: ChatPromptInput = {
         text: scenario.request.text,

@@ -5,12 +5,13 @@ import type {
   ChatPromptInput,
   TurnPlan
 } from '../../../src/shared/settings-schema'
-import type { TaskContract } from '../../../src/shared/task-contract'
+import type { IntentResolution, TaskContract } from '../../../src/shared/task-contract'
 import type { AgentRunnerEvent } from './agent/types'
 import { buildChatMessages, type BuiltChatMessage } from './chat-prompt'
 import { localComposerFullActive, planChatTurn } from './chat-router'
 import { createTaskContract } from './task-intake'
-import { resolveTaskIntent } from './task-resolver'
+import { resolveTaskDecision } from './task-resolver'
+import { appendTaskEvent } from './task-ledger'
 import { previousTask } from './task-store'
 
 /**
@@ -72,11 +73,22 @@ export function planInitialChatTurn(input: ChatTurnInput): Promise<TurnPlan> {
 export async function resolveChatTurnContract(
   input: ChatTurnInput,
   initial: TurnPlan
-): Promise<{ plan: TurnPlan; task: TaskContract; semanticIntent: ChatIntent }> {
+): Promise<{
+  plan: TurnPlan
+  task: TaskContract
+  semanticIntent: ChatIntent
+  resolution: IntentResolution
+}> {
   let plan = initial
-  const semanticIntent = input.forceRoute
-    ? plan.intent
-    : await resolveTaskIntent({
+  const resolution: IntentResolution = input.forceRoute
+    ? {
+        intent: plan.intent,
+        initialIntent: plan.intent,
+        source: 'forced',
+        rule: `force-route:${input.forceRoute}`,
+        durationMs: 0
+      }
+    : await resolveTaskDecision({
         text: input.text,
         fallback: plan.intent,
         settings: input.settings,
@@ -86,6 +98,7 @@ export async function resolveChatTurnContract(
         signal: input.signal,
         getSecret: input.getSecret
       })
+  const semanticIntent = resolution.intent
   if (semanticIntent !== plan.intent) {
     plan = await planChatTurn({
       workspacePath: input.workspacePath,
@@ -117,10 +130,25 @@ export async function resolveChatTurnContract(
     plan,
     skillIds: input.skillIds,
     history: input.history,
-    priorTask: previousTask(canonicalRoot, input.threadId ?? null)
+    priorTask: previousTask(canonicalRoot, input.threadId ?? null),
+    resolution
   })
   plan.task = task
-  return { plan, task, semanticIntent }
+  // One decision record: initial route, resolver outcome, final route and resulting effects.
+  appendTaskEvent(task.taskId, 'route-decision', {
+    revision: task.revision,
+    initial: { intent: initial.intent, agentId: initial.agentId, trace: initial.routeTrace },
+    resolution,
+    final: {
+      intent: plan.intent,
+      agentId: plan.agentId,
+      toolPolicy: plan.toolPolicy,
+      trace: plan.routeTrace
+    },
+    interpretation: task.interpretation,
+    authority: task.authority
+  })
+  return { plan, task, semanticIntent, resolution }
 }
 
 /** Role instructions are generated for the resolved route, never the renderer's guess. */

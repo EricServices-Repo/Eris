@@ -180,10 +180,10 @@ function withoutFeatureVerificationNouns(text: string): string {
  */
 export function asksForCodeExample(text: string): boolean {
   const t = text.trim()
-  if (!t || asksToImplementChanges(t)) return false
+  if (!t || asksToImplementChanges(t) || asksForPlan(t)) return false
   if (asksForCodeDestination(t)) return false
   const artifact =
-    /\b(?:example|sample|snippet|demo|function|implementation|version|code|class|module|middleware|endpoint|script|component)\b/i
+    /\b(?:example|sample|snippet|demo|function|implementation|version|code|class|module|middleware|endpoint|script|component|logic|algorithm|handler|helper|hook|parser|query)\b/i
   const producing =
     /\b(?:write|generate|show|give|create|build|implement|draft|sketch|provide|turn)\b/i
   return producing.test(t) && artifact.test(t)
@@ -210,6 +210,13 @@ export function asksForVerification(text: string): boolean {
   // “Write an implementation of seeding test data” asks for code. Combined
   // implement-and-test requests keep the implementation as the controlling action.
   if (leadsWithArtifactRequest(raw)) return false
+  // “What's a good way to test X?” asks for testing advice, not a check of existing code.
+  if (
+    /^(?:what(?:'s| is)\s+(?:a|the)\s+(?:good|best|right)\s+way|how\s+(?:should|would|do|can)\s+(?:i|we|you))\s+(?:to\s+)?(?:test|verify|validate)\b/i.test(
+      raw
+    )
+  )
+    return false
   const t = withoutFeatureVerificationNouns(raw).trim()
   if (!t) return false
   if (

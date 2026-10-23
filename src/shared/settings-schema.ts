@@ -424,6 +424,8 @@ export interface TurnPlan {
   cloudPreferred?: boolean
   /** Small, explicit work plan and completion condition shown to the user and worker. */
   executionPlan?: { steps: string[]; doneWhen: string }
+  /** Stable IDs of the classifier rule and each later override that shaped this route. */
+  routeTrace?: { heuristicRule: string; overrides: string[] }
 }
 
 export interface ChatTurnContext {

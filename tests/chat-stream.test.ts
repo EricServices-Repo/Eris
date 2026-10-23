@@ -22,7 +22,14 @@ vi.mock('../electron/main/services/agent-runner', () => ({
   runAgentWithWorkspaceTools: (opts: RunnerOptions) => runner.script(opts)
 }))
 vi.mock('../electron/main/services/task-resolver', () => ({
-  resolveTaskIntent: async (input: { fallback: string }) => input.fallback
+  resolveTaskIntent: async (input: { fallback: string }) => input.fallback,
+  resolveTaskDecision: async (input: { fallback: string }) => ({
+    intent: input.fallback,
+    initialIntent: input.fallback,
+    source: 'bypass',
+    rule: 'test',
+    durationMs: 0
+  })
 }))
 vi.mock('../electron/main/services/task-outcome', () => ({
   reviewTaskOutcome: async () => ({ verdict: 'supported', reason: 'test verdict' })

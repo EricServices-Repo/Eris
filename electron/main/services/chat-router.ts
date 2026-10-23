@@ -28,6 +28,7 @@ import {
   chatAgentForTurn
 } from '../../../src/shared/agent-contract'
 import { CONTEXT_HEADROOM_BYTES, inferenceBudgetBytes } from './vram-fit'
+import { forbidsMutation, requestTextForIntent } from '../../../src/shared/task-interpretation'
 
 /** A custom agent must be at least this sure to replace the roster role. */
 const CUSTOM_AGENT_MIN_CONFIDENCE = 0.75
@@ -172,31 +173,54 @@ export function isErisCapabilityQuestion(text: string): boolean {
   return false
 }
 
+/** Deterministic intent. “Do not edit” keeps any reading of the request read-only. */
 export function classifyIntent(
   text: string,
   mode: 'ask' | 'agent',
   fileNames: string[] = []
 ): ChatIntent {
-  if (isErisCapabilityQuestion(text)) return 'capability'
-  if (needsWebLookup(text)) return 'explore'
+  return classifyIntentTraced(text, mode, fileNames).intent
+}
+
+/** Intent with the stable ID of the rule that produced it. */
+export function classifyIntentTraced(
+  text: string,
+  mode: 'ask' | 'agent',
+  fileNames: string[] = []
+): { intent: ChatIntent; rule: string } {
+  const result = classifyIntentRule(text, mode, fileNames)
+  if ((result.intent === 'edit' || result.intent === 'run') && forbidsMutation(text))
+    return { intent: 'explore', rule: `negated-mutation:${result.rule}` }
+  return result
+}
+
+function classifyIntentRule(
+  rawText: string,
+  mode: 'ask' | 'agent',
+  fileNames: string[] = []
+): { intent: ChatIntent; rule: string } {
+  // Quoted strings and code blocks are content; their verbs are not the request.
+  const text = requestTextForIntent(rawText) || rawText
+  if (isErisCapabilityQuestion(text)) return { intent: 'capability', rule: 'capability-question' }
+  if (needsWebLookup(text)) return { intent: 'explore', rule: 'web-lookup' }
   if (
     mode === 'ask' &&
     !asksWorkspaceQuestion(text, fileNames) &&
     !asksForPlan(text) &&
     !asksForVerification(text)
   ) {
-    return 'answer'
+    return { intent: 'answer', rule: 'ask-general-answer' }
   }
-  if (mode === 'ask') return classifyIntent(text, 'agent', fileNames)
+  if (mode === 'ask') return classifyIntentRule(text, 'agent', fileNames)
 
   const t = text.trim()
-  if (!t) return 'answer'
+  if (!t) return { intent: 'answer', rule: 'empty' }
   // An explicit implementation request can contain command-like nouns ('make all').
   if (
     asksToImplementChanges(t) ||
     /^(?:please\s+)?(?:edit|fix|implement|refactor|repair|update)\b/i.test(t)
   )
-    return 'edit'
+    return { intent: 'edit', rule: 'implement-changes' }
 
   if (
     /\b(npm (test|run|start|install)|yarn |pnpm |bun |pytest|cargo test|docker )\b/i.test(t) ||
@@ -209,10 +233,10 @@ export function classifyIntent(
     ) ||
     /\b(launch|run|start|open)\b[\s\S]{0,24}\b(the\s+)?(app|application|\.app)\b/i.test(t)
   ) {
-    return 'run'
+    return { intent: 'run', rule: 'command' }
   }
 
-  if (asksForImageGeneration(t)) return 'edit'
+  if (asksForImageGeneration(t)) return { intent: 'edit', rule: 'image-generation' }
   // In Agent mode, natural implementation requests such as “show me how to add”
   // and “I need to implement … how would you approach it?” must reach Composer.
   // Routing them as explore/verify creates an impossible read-only loop because
@@ -222,16 +246,16 @@ export function classifyIntent(
       t
     )
   ) {
-    return 'edit'
+    return { intent: 'edit', rule: 'natural-implementation' }
   }
-  if (asksForPlan(t)) return 'plan'
-  if (asksForVerification(t)) return 'verify'
+  if (asksForPlan(t)) return { intent: 'plan', rule: 'explicit-plan' }
+  if (asksForVerification(t)) return { intent: 'verify', rule: 'explicit-verification' }
 
   // “What does this project do?” is a description, even when the message says “review”.
-  if (asksWhatTheProjectDoes(t)) return 'explore'
+  if (asksWhatTheProjectDoes(t)) return { intent: 'explore', rule: 'project-description' }
 
   // “What improvements should we make?” is a review list, not an edit.
-  if (asksForRecommendations(t)) return 'review'
+  if (asksForRecommendations(t)) return { intent: 'review', rule: 'recommendations' }
 
   // Improvements / polish count as edits even when the user also says "review".
   if (
@@ -239,7 +263,7 @@ export function classifyIntent(
       t
     )
   ) {
-    return 'edit'
+    return { intent: 'edit', rule: 'improvement-wording' }
   }
 
   if (
@@ -258,7 +282,7 @@ export function classifyIntent(
     /\b(get|make)\b[\s\S]{0,24}\b(it|this|the app)\b[\s\S]{0,24}\bwork/i.test(t) ||
     /\b(write|add)\b[\s\S]{0,20}\b(skill|skills)\b/i.test(t)
   ) {
-    return 'edit'
+    return { intent: 'edit', rule: 'edit-wording' }
   }
 
   if (
@@ -268,7 +292,7 @@ export function classifyIntent(
         t
       ))
   ) {
-    return 'review'
+    return { intent: 'review', rule: 'review-wording' }
   }
 
   if (
@@ -277,17 +301,17 @@ export function classifyIntent(
     /\b(explore|inspect|list files|tree)\b/i.test(t) ||
     /\bwhat (files?|does|is in)\b/i.test(t)
   ) {
-    return 'explore'
+    return { intent: 'explore', rule: 'lookup-wording' }
   }
 
   if (/\b(explain|how does|what does|overview|summarize|why)\b/i.test(t)) {
     // Agent mode must read the workspace. Ask mode stays a plain answer.
-    return mode === 'agent' ? 'explore' : 'answer'
+    return { intent: mode === 'agent' ? 'explore' : 'answer', rule: 'explanation-wording' }
   }
 
-  if (mode === 'agent' && needsWebLookup(t)) return 'explore'
+  if (mode === 'agent' && needsWebLookup(t)) return { intent: 'explore', rule: 'agent-web-lookup' }
 
-  return 'answer'
+  return { intent: 'answer', rule: 'default-answer' }
 }
 
 function intentToolFloor(intent: ChatIntent): AgentToolsCeiling {
@@ -622,8 +646,12 @@ export async function planChatTurn(options: {
   const selectedModel =
     pickedModel || options.settings.models.defaultModel || 'builtin:composer-lite'
 
-  const heuristicIntent =
-    options.context.resolvedIntent ?? classifyIntent(text, mode, options.context.fileNames || [])
+  const heuristic = options.context.resolvedIntent
+    ? { intent: options.context.resolvedIntent, rule: 'resolved-intent' }
+    : classifyIntentTraced(text, mode, options.context.fileNames || [])
+  const heuristicIntent = heuristic.intent
+  // Every later change to intent or role is recorded by a stable ID.
+  const overrides: string[] = []
 
   const route: RouteResult = await routeMessage({
     workspacePath: options.workspacePath,
@@ -713,6 +741,7 @@ export async function planChatTurn(options: {
       const llmDowngradesExplicitEdit =
         asksToImplementChanges(text) && heuristicIntent === 'edit' && hint.intent !== 'edit'
       if (!llmStripsTools && !llmDowngradesExplicitEdit) {
+        if (hint.intent !== intent) overrides.push(`llm-intent:${hint.intent}`)
         intent = hint.intent
         method = 'llm'
       }
@@ -730,7 +759,14 @@ export async function planChatTurn(options: {
   }
 
   // Capability always wins over LLM misclassifies
-  if (isErisCapabilityQuestion(text) && !options.context.resolvedIntent) intent = 'capability'
+  if (
+    isErisCapabilityQuestion(text) &&
+    !options.context.resolvedIntent &&
+    intent !== 'capability'
+  ) {
+    overrides.push('capability-question')
+    intent = 'capability'
+  }
 
   // Explicit specialist asks outrank router hints and learned corrections.
   // A pinned agent still remains the user's selected role.
@@ -743,6 +779,8 @@ export async function planChatTurn(options: {
         ? 'verify'
         : null
   if (explicitSpecialistIntent && !options.context.manualAgentId) {
+    if (explicitSpecialistIntent !== intent)
+      overrides.push(`explicit-specialist:${explicitSpecialistIntent}`)
     intent = explicitSpecialistIntent
     method = 'heuristic'
     llmAgentSelected = false
@@ -765,6 +803,7 @@ export async function planChatTurn(options: {
     intent = 'edit'
   }
   if (correction && intent !== classifiedIntent) {
+    overrides.push(`${forceRoute ? 'forced-route' : 'learned-correction'}:${correction}`)
     method = forceRoute ? 'override' : 'learned'
   }
 
@@ -796,6 +835,7 @@ export async function planChatTurn(options: {
     } else if (followId === 'composer') intent = 'edit'
     else if (followId === 'reviewer') intent = 'review'
     else if (followId === 'explainer' || followId === 'fast') intent = 'explore'
+    overrides.push(`follow-up:${followId}`)
   }
 
   // Auto chat uses the roster contract. A pinned agent, a learned/forced
@@ -866,6 +906,7 @@ export async function planChatTurn(options: {
       )
     if (editor) {
       agent = editor
+      overrides.push('mutation-requires-editor')
       llmAgentSelected = false
       method = 'heuristic'
     }
@@ -927,6 +968,7 @@ export async function planChatTurn(options: {
     })} · model ${modelBasis}`,
     method,
     classifiedIntent,
+    routeTrace: { heuristicRule: heuristic.rule, overrides },
     error: roles.error,
     routingProfile,
     cloudPreferred,

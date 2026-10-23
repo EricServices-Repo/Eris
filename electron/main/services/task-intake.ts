@@ -2,7 +2,8 @@ import { isPathInside } from './workspace-fs'
 import { createHash, randomUUID } from 'crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'fs'
 import { basename, join, relative } from 'path'
-import type { TaskContract } from '../../../src/shared/task-contract'
+import type { IntentResolution, TaskContract } from '../../../src/shared/task-contract'
+import { forbidsMutation, interpretRequest } from '../../../src/shared/task-interpretation'
 import type { TurnPlan } from '../../../src/shared/settings-schema'
 import { namedProjectTarget } from './agent/project-target'
 
@@ -104,6 +105,7 @@ export function createTaskContract(input: {
   skillIds?: string[]
   priorTask?: TaskContract
   history?: Array<{ role: string; content: string }>
+  resolution?: IntentResolution
 }): TaskContract {
   const root =
     input.workspacePath && existsSync(input.workspacePath)
@@ -162,8 +164,12 @@ export function createTaskContract(input: {
             source: createHash('sha256').update(priorAnswer.content).digest('hex').slice(0, 16)
           }))
       : []
+  // An explicit “do not edit / do not run” is a constraint, whatever the route says.
+  const forbids = forbidsMutation(input.text)
   const policy =
-    input.plan.mode === 'ask' && input.plan.toolPolicy !== 'none' ? 'read' : input.plan.toolPolicy
+    (input.plan.mode === 'ask' || forbids) && input.plan.toolPolicy !== 'none'
+      ? 'read'
+      : input.plan.toolPolicy
   const canEdit = policy === 'edit' || policy === 'full'
   const deliverable = feasibleDeliverable(
     input.plan.intent === 'edit'
@@ -179,6 +185,16 @@ export function createTaskContract(input: {
             : 'answer',
     canEdit
   )
+  const interpretation = {
+    ...interpretRequest({
+      text: input.text,
+      intent: input.plan.intent,
+      canEdit,
+      revision: 1,
+      route: input.plan.routeTrace
+    }),
+    ...(input.resolution ? { resolution: input.resolution } : {})
+  }
   return {
     version: 2,
     taskId: input.taskId ?? randomUUID(),
@@ -203,6 +219,7 @@ export function createTaskContract(input: {
         policy === 'full'
           ? 'approved'
           : policy !== 'none' &&
+              !forbids &&
               ['edit', 'review', 'verify'].includes(input.plan.intent) &&
               input.plan.mode !== 'ask'
             ? 'verification'
@@ -211,7 +228,8 @@ export function createTaskContract(input: {
     },
     skillIds: input.skillIds ?? input.priorTask?.skillIds,
     recommendations,
-    acceptanceCriteria: acceptanceCriteriaFor(input.plan, deliverable, input.text)
+    acceptanceCriteria: acceptanceCriteriaFor(input.plan, deliverable, input.text, interpretation),
+    interpretation
   }
 }
 
@@ -230,13 +248,15 @@ function feasibleDeliverable(
 function acceptanceCriteriaFor(
   plan: TurnPlan,
   deliverable: TaskContract['deliverable'],
-  fallback: string
+  fallback: string,
+  interpretation: NonNullable<TaskContract['interpretation']>
 ): string[] {
-  if (deliverable === 'answer' && (plan.intent === 'edit' || plan.intent === 'run'))
-    return [
-      'The requested change is described or shown in chat without claiming it was applied or verified.'
-    ]
-  return plan.executionPlan ? [plan.executionPlan.doneWhen] : [fallback]
+  const base =
+    deliverable === 'answer' && (plan.intent === 'edit' || plan.intent === 'run')
+      ? 'The requested change is described or shown in chat without claiming it was applied or verified.'
+      : (plan.executionPlan?.doneWhen ?? fallback)
+  // Each obligation is checked on its own; one satisfied part never completes the task.
+  return [...new Set([base, ...interpretation.obligations.map((obligation) => obligation.text)])]
 }
 
 export function childTaskContract(
@@ -262,6 +282,13 @@ export function childTaskContract(
             : 'answer',
     edit
   )
+  const interpretation = interpretRequest({
+    text: goal,
+    intent: plan.intent,
+    canEdit: edit,
+    revision: parent.revision,
+    route: plan.routeTrace
+  })
   const root = realpathSync(workspacePath)
   const relativeProject =
     parent.scope.workspaceRoot && parent.scope.projectRoot
@@ -291,6 +318,7 @@ export function childTaskContract(
               : 'none',
       externalEffects: parent.authority.externalEffects && tools === 'full'
     },
-    acceptanceCriteria: acceptanceCriteriaFor(plan, deliverable, goal)
+    acceptanceCriteria: acceptanceCriteriaFor(plan, deliverable, goal, interpretation),
+    interpretation
   }
 }

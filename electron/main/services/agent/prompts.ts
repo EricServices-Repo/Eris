@@ -14,6 +14,8 @@ import { workspaceTree } from '../workspace-fs'
 import { contractForAgent } from '../../../../src/shared/agent-contract'
 import { workerConversation } from './conversation'
 import { sharedPromptBlocks } from '../chat-prompt'
+import { interpretationOf } from '../../../../src/shared/task-contract'
+import { artifactResponseContract } from '../../../../src/shared/task-interpretation'
 import type { AgentChatMessage } from './types'
 
 /**
@@ -291,7 +293,9 @@ export function buildPreservedWorkerMessages(options: {
   const priorSystem = options.messages.find((m) => m.role === 'system')?.content || ''
   const readOnly = isReadOnlyChat(options.plan, options.plan.mode)
   const historyTail = workerConversation(options.messages, options.originalUserGoal)
-  const playbook = intentPlaybook(options.plan.intent, false)
+  const playbook = options.plan.task
+    ? `${intentPlaybook(options.plan.intent, false)}\n${artifactResponseContract(interpretationOf(options.plan.task))}`
+    : intentPlaybook(options.plan.intent, false)
   const contract = contractForAgent(options.plan.agentId)
 
   if (options.plan.task) {

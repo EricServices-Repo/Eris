@@ -100,7 +100,12 @@ import {
 import { isVerifyCommand } from '../command-approval'
 import { buildPreservedWorkerMessages, isReadOnlyChat, truncateForModel } from './prompts'
 import { createTaskContract, childTaskContract } from '../task-intake'
-import { intersectToolPolicy, taskContractConflicts } from '../../../../src/shared/task-contract'
+import {
+  interpretationOf,
+  intersectToolPolicy,
+  taskContractConflicts
+} from '../../../../src/shared/task-contract'
+import { artifactResponseContract } from '../../../../src/shared/task-interpretation'
 import { compileTaskContext } from './context-compiler'
 import { appendTaskEvent } from '../task-ledger'
 import { TaskToolGateway } from './tool-gateway'
@@ -465,6 +470,7 @@ export async function* runAgentWithWorkspaceTools(options: {
             : `${plan.agentName}…`
     }
     const tips: string[] = [...(modelsCatalog ? [modelsCatalog] : [])]
+    if (plan.intent !== 'capability') tips.push(artifactResponseContract(interpretationOf(task)))
     if (plan.executionPlan) {
       tips.push(
         `Task plan:\n${plan.executionPlan.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}\nDone when: ${plan.executionPlan.doneWhen}`

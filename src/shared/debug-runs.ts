@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { EvalCheckSchema, SandboxPathSchema } from './evals'
 import { AgentToolsCeilingSchema, ChatIntentSchema, type ChatIntent } from './settings-schema'
-import type { TaskContract } from './task-contract'
+import type { IntentResolution, TaskContract, TaskInterpretation } from './task-contract'
 
 /**
  * Build & agent diagnostics runs. Every run is labeled with how model output
@@ -271,6 +271,9 @@ export interface DebugRouteRecord {
   reason: string
   chatModel: string
   toolsModel: string
+  /** Absent in reports written before route decisions were traced. */
+  resolution?: IntentResolution
+  routeTrace?: { heuristicRule: string; overrides: string[] }
 }
 
 export interface DebugContractRecord {
@@ -278,6 +281,9 @@ export interface DebugContractRecord {
   authority: TaskContract['authority']
   scopeState: TaskContract['scope']['state']
   acceptanceCriteria: string[]
+  artifact?: TaskInterpretation['artifact']
+  destination?: TaskInterpretation['destination']
+  obligations?: TaskInterpretation['obligations']
 }
 
 export interface DebugCaseResult {

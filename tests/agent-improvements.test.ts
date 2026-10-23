@@ -142,7 +142,7 @@ describe('AG-001/AG-002 answer plans and acceptance', () => {
     })
     expect(
       taskContractConflicts({ ...task, authority: { ...task.authority, edit: false } })
-    ).toEqual(['A patch deliverable requires edit authority.'])
+    ).toContain('A patch deliverable requires edit authority.')
   })
 })
 
@@ -176,7 +176,12 @@ describe('AG-005 complete examples are not replaced by plans', () => {
 })
 
 describe('AG-006 verification is a requested action, not a feature noun', () => {
-  it.each([Q42, Q111, Q524])('does not treat %s as a verification request', (q) => {
+  it.each([
+    Q42,
+    Q111,
+    Q524,
+    "What's a good way to test cache invalidation after data changes without hitting real external services?"
+  ])('does not treat %s as a verification request', (q) => {
     expect(asksForVerification(q)).toBe(false)
   })
 
