@@ -102,7 +102,13 @@ function parseTaskList(
         ...(id ? { id } : {}),
         error: parsed.error.issues
           .slice(0, 3)
-          .map((issue) => `${issue.path.join('.') || 'task'}: ${issue.message}`)
+          .map((issue) => {
+            // Zod 4 wraps record-key validation failures; keep the sandbox reason visible.
+            const details = issue.code === 'invalid_key'
+              ? issue.issues.slice(0, 3).map((nested) => nested.message).join('; ')
+              : ''
+            return `${issue.path.join('.') || 'task'}: ${issue.message}${details ? `: ${details}` : ''}`
+          })
           .join('; ')
       })
     }

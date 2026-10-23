@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
 import { describe, expect, it } from 'vitest'
 import { userSettingsPath } from '../electron/main/services/paths'
+import { McpServerSchema, SettingsSchema } from '../src/shared/settings-schema'
 import {
   getDefaults,
   getResolvedSettings,
@@ -16,6 +17,27 @@ function writeUserSettings(raw: unknown) {
 }
 
 describe('settings defaults', () => {
+  it('fills image defaults when older settings omit the section', () => {
+    const settings = SettingsSchema.parse({ ...getDefaults(), images: undefined })
+    expect(settings.images).toEqual({
+      backend: 'api',
+      enabled: false,
+      connectionId: '',
+      model: '',
+      size: '1024x1024',
+      quality: 'auto'
+    })
+  })
+
+  it('preserves MCP environment records while rejecting non-string values', () => {
+    const server = {
+      id: 'example', name: 'Example', enabled: true, transport: 'stdio',
+      command: 'node', args: [], url: '', env: { EXAMPLE_MODE: 'local' }, notes: ''
+    }
+    expect(McpServerSchema.parse(server).env).toEqual({ EXAMPLE_MODE: 'local' })
+    expect(McpServerSchema.safeParse({ ...server, env: { EXAMPLE_MODE: 7 } }).success).toBe(false)
+  })
+
   it('default settings pass the schema and ask before agent commands', () => {
     const d = getDefaults()
     expect(d.agent.commandApproval).toBe('ask')
