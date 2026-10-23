@@ -150,10 +150,14 @@ export function parseToolCalls(text: string): ToolCall[] {
 /** Prose the user should read. Tool JSON and status lines stay in Thinking. */
 export function proseOutsideTools(text: string): string {
   let rest = stripToolBlocks(text)
-  for (const raw of extractBalancedJsonObjects(rest)) {
-    const parsed = parseJsonObject(raw)
-    if (parsed && typeof parsed.name === 'string') rest = rest.replace(raw, '')
-  }
+  // A bare object is protocol only when the reply is nothing but tool envelopes,
+  // exactly when parseToolCalls would execute it. {"name":"Alice"} is an answer.
+  const bare = extractBalancedJsonObjects(rest)
+  const onlyObjects = !bare
+    .reduce((value, raw) => value.replace(raw, ''), rest)
+    .replace(/[\s,;[\]]/g, '')
+  if (onlyObjects)
+    for (const raw of bare) if (isToolEnvelopeBody(raw)) rest = rest.replace(raw, '')
   return rest
     .split('\n')
     .filter((line) => !/^\s*—/.test(line))
@@ -181,17 +185,29 @@ export function hasExecutableToolCall(text: string): boolean {
   return parseToolCalls(text).length > 0
 }
 
-/** A fenced block's body is a tool-call envelope ({"name": …}), not code to show. */
+/**
+ * A tool-call envelope for a tool this runtime knows: {"name":"read_file", …}.
+ * A string `name` alone is ordinary data — package manifests and user records have one.
+ */
 function isToolEnvelopeBody(body: string): boolean {
   const parsed = parseJsonObject(body)
-  return Boolean(parsed && typeof parsed.name === 'string')
+  if (!parsed || typeof parsed.name !== 'string') return false
+  const name = parsed.name.trim()
+  return KNOWN_TOOLS.has(name) || isMcpToolName(name)
 }
 
 export function stripToolBlocks(text: string): string {
+  // Fenced envelopes are protocol only when the reply is nothing but fences, the
+  // same rule parseToolCalls uses to execute them. Otherwise a fence documenting a
+  // tool call, or any ```json example, is part of the answer.
+  FENCE_JSON_RE.lastIndex = 0
+  const fencedOnly = text.replace(FENCE_JSON_RE, '').trim().length === 0
+  FENCE_JSON_RE.lastIndex = 0
   return text
     .replace(TOOL_BLOCK_RE, '')
-    // Only tool-call fences are protocol; a ```ts example is part of the answer.
-    .replace(FENCE_JSON_RE, (block, body: string) => (isToolEnvelopeBody(body) ? '' : block))
+    .replace(FENCE_JSON_RE, (block, body: string) =>
+      fencedOnly && isToolEnvelopeBody(body) ? '' : block
+    )
     .replace(TOOL_XML_RE, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()

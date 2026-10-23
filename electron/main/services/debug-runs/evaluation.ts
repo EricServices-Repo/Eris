@@ -5,7 +5,8 @@ import type {
   DebugEvaluation,
   DebugFailureCategory,
   DebugOutcomeClass,
-  DebugScenario
+  DebugScenario,
+  DebugTimeoutEvidence
 } from '../../../../src/shared/debug-runs'
 
 /** Categories caused by where or how a case ran rather than by the agent. */
@@ -17,14 +18,54 @@ const ENVIRONMENT: ReadonlySet<DebugFailureCategory> = new Set([
 const HARNESS: ReadonlySet<DebugFailureCategory> = new Set([
   'fixture_invalid',
   'script_exhausted',
+  'evaluation_invalid',
   'internal_error'
 ])
+
+/**
+ * What the case was doing when it stopped, from its own evidence. A model wait that
+ * fills the deadline is a provider stall; the same tool step repeated is agent work
+ * going in circles; anything else stays unknown rather than defaulting to environment.
+ */
+export function timeoutEvidence(result: DebugCaseResult): DebugTimeoutEvidence {
+  const modelWaitMs = result.modelCalls.reduce((sum, call) => sum + (call.durationMs ?? 0), 0)
+  const progress = result.timeline.filter((event) =>
+    ['model_call', 'tool', 'diff', 'verification'].includes(event.kind)
+  )
+  const counts = new Map<string, number>()
+  for (const event of result.timeline)
+    if (event.kind === 'tool') counts.set(event.summary, (counts.get(event.summary) ?? 0) + 1)
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]
+  const repeatedWork = top && top[1] >= 3 ? { summary: top[0], count: top[1] } : null
+  const lastCall = result.modelCalls.at(-1)
+  const cause: DebugTimeoutEvidence['cause'] =
+    result.status === 'cancelled' || result.failure?.category === 'user_cancelled'
+      ? 'user-cancelled'
+      : repeatedWork
+        ? 'repeated-work'
+        : lastCall?.error ||
+            (result.durationMs > 0 && modelWaitMs >= result.durationMs * 0.8)
+          ? 'provider-stall'
+          : 'unknown'
+  return {
+    cause,
+    lastProgressMs: progress.at(-1)?.atMs ?? null,
+    modelWaitMs,
+    toolCalls: result.toolCalls,
+    repeatedWork
+  }
+}
 
 export function outcomeClass(result: DebugCaseResult): DebugOutcomeClass {
   if (!result.checks.length && !result.failure) return 'ungraded'
   if (result.status === 'passed') return 'passed'
   const category = result.failure?.category
-  if (result.status === 'cancelled' || result.status === 'timed_out') return 'environment'
+  if (result.status === 'cancelled' || result.status === 'timed_out') {
+    const cause = (result.timeoutEvidence ?? timeoutEvidence(result)).cause
+    if (cause === 'repeated-work') return 'agent_defect'
+    if (cause === 'provider-stall' || cause === 'user-cancelled') return 'environment'
+    return 'unknown'
+  }
   if (category && ENVIRONMENT.has(category)) return 'environment'
   if (category && HARNESS.has(category)) return 'harness'
   return 'agent_defect'
@@ -93,23 +134,49 @@ export function coverageOf(
   scenarios: DebugScenario[],
   results: DebugCaseResult[]
 ): DebugCoverage {
-  const stages: Record<string, number> = Object.fromEntries(STAGES.map((stage) => [stage, 0]))
+  const zero = () => Object.fromEntries(STAGES.map((stage) => [stage, 0])) as Record<string, number>
+  const stages = zero()
+  const attempts = zero()
+  const passed = zero()
   const byArtifact: Record<string, number> = {}
   const byTag: Record<string, number> = {}
-  const add = (stage: (typeof STAGES)[number]) => (stages[stage] = (stages[stage] ?? 0) + 1)
+  type Stage = (typeof STAGES)[number]
+  // Each stage is counted as attempted, completed (stages) and passed separately, so a
+  // refused delegation or a failed provider call never reads as exercised work.
+  const record = (stage: Stage, attempted: boolean, completed: boolean, ok = completed) => {
+    if (attempted) attempts[stage]! += 1
+    if (completed) stages[stage]! += 1
+    if (completed && ok) passed[stage]! += 1
+  }
   for (const result of results) {
     const scenario = scenarios.find((item) => item.id === result.scenarioId)
-    if (result.route) add('routing')
-    if (result.modelCalls.some((call) => call.purpose === 'agent')) {
-      if (result.responseSource === 'live') add('live model inference')
-      else add('scripted model inference')
-    }
-    if (result.toolCalls > 0) add('tool execution')
-    if (result.changedPaths.length) add('workspace changes')
-    if (result.timeline.some((event) => event.kind === 'verification')) add('verification')
-    if (result.outcomeReview) add('outcome review')
-    if ((result.turns?.length ?? 0) > 1) add('multi-turn follow-up')
-    if (result.timeline.some((event) => /delegat/i.test(event.summary))) add('specialist delegation')
+    record('routing', Boolean(result.route), Boolean(result.route))
+    const agentCalls = result.modelCalls.filter((call) => call.purpose === 'agent')
+    const answered = agentCalls.some(
+      (call) => !call.error && !call.exhausted && (call.responseChars ?? 1) > 0
+    )
+    record(
+      result.responseSource === 'live' ? 'live model inference' : 'scripted model inference',
+      agentCalls.length > 0,
+      answered
+    )
+    record('tool execution', result.toolCalls > 0, result.toolCalls - (result.toolErrors ?? 0) > 0)
+    record('workspace changes', result.changedPaths.length > 0, result.changedPaths.length > 0)
+    const verifications = result.timeline.filter((event) => event.kind === 'verification')
+    record(
+      'verification',
+      verifications.length > 0,
+      verifications.length > 0,
+      verifications.length > 0 && verifications.every((event) => /\bpassed\b/i.test(event.summary))
+    )
+    record('outcome review', Boolean(result.outcomeReview), Boolean(result.outcomeReview))
+    const turns = (result.turns?.length ?? 0) > 1
+    record('multi-turn follow-up', turns, turns)
+    // Typed delegation outcomes: “delegation reviewer: done”. Only an accepted child counts.
+    const delegations = result.timeline
+      .map((event) => event.summary.match(/^delegation\s+\S+:\s*(\w+)/i)?.[1]?.toLowerCase())
+      .filter((status): status is string => Boolean(status))
+    record('specialist delegation', delegations.length > 0, delegations.includes('done'))
     const artifact = result.contract?.artifact ?? 'unknown'
     byArtifact[artifact] = (byArtifact[artifact] ?? 0) + 1
     for (const tag of scenario?.tags ?? []) byTag[tag] = (byTag[tag] ?? 0) + 1
@@ -117,6 +184,8 @@ export function coverageOf(
   return {
     cases: results.length,
     stages,
+    attempts,
+    passed,
     uncovered: STAGES.filter((stage) => !stages[stage]),
     byArtifact,
     byTag

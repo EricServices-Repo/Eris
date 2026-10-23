@@ -4,15 +4,21 @@ import type { IntentResolution } from '../../../src/shared/task-contract'
 import { streamModelChat } from './chat-runtime'
 import { createTaskDeadline } from './task-deadline'
 import {
+  asksForCodeDestination,
   asksForCodeExample,
   asksForRecommendations,
   asksForPlan,
   asksForVerification,
   asksToImplementChanges,
+  asksWorkspaceQuestion,
   needsWebLookup,
   withoutLeadingScope
 } from '../../../src/shared/agent-contract'
-import { forbidsMutation, requestTextForIntent } from '../../../src/shared/task-interpretation'
+import {
+  effectConstraints,
+  isQuotedContentOnly,
+  requestTextForIntent
+} from '../../../src/shared/task-interpretation'
 
 const intents = [
   'answer',
@@ -54,11 +60,16 @@ export interface ResolveTaskInput {
  * Feature nouns (“test data”, “checks that verify”) are excluded by the helpers themselves.
  */
 export function resolverBypassRule(text: string, fallback: ChatIntent): string | null {
-  const t = withoutLeadingScope(requestTextForIntent(text) || text)
+  // Quoted content alone never becomes an instruction, so nothing is left to resolve.
+  if (isQuotedContentOnly(text)) return 'quoted-content-only'
+  const t = withoutLeadingScope(requestTextForIntent(text))
   if (fallback === 'capability') return 'capability-question'
   if (needsWebLookup(t)) return 'web-lookup'
   if (/^(?:please\s+)?review\b/i.test(t) && ['review', 'explore'].includes(fallback))
     return 'leading-review'
+  // A requested code artifact with no destination may belong in chat. Resolve the
+  // destination before an imperative grants edit authority; never bypass into a patch.
+  if (fallback === 'edit' && unresolvedCodeDestination(t)) return null
   if (asksToImplementChanges(t)) return 'implement-changes'
   if (asksForRecommendations(t)) return 'recommendations'
   if (asksForPlan(t)) return 'explicit-plan'
@@ -77,6 +88,35 @@ export function resolverBypassRule(text: string, fallback: ChatIntent): string |
   )
     return 'imperative'
   return null
+}
+
+/**
+ * “Write a clear implementation of X in Java?” asks for code but names no file or
+ * project to put it in. That is a chat example unless the semantic resolver, which
+ * sees the conversation, says otherwise; “add it to src/api.ts” names a destination.
+ */
+export function unresolvedCodeDestination(text: string): boolean {
+  if (asksForCodeDestination(text)) return false
+  if (asksForCodeExample(text)) return true
+  // “Can you write feature flags that …?” names neither a file nor this project.
+  return (
+    /^(?:can|could|would)\s+you\s+(?:please\s+)?(?:write|build|create)\b/i.test(text) &&
+    !asksWorkspaceQuestion(text)
+  )
+}
+
+/** A question about how something would be done, rather than a request to do it. */
+export function asksAboutApproach(text: string): boolean {
+  const t = requestTextForIntent(text)
+  if (/^\s*(?:how|what|why|can we|could we|should we)\b/i.test(t)) return true
+  // “I want X to be easy to reason about. How would you write it?”
+  return t
+    .split(/(?<=[.?!;])\s+/)
+    .some((sentence) =>
+      /^(?:so\s+|then\s+)?(?:how\s+(?:would|should|could|might)\s+(?:you|i|we|one)|what\s+would\s+(?:you|it)|what(?:'s|\s+is)\s+the\s+(?:best|right|cleanest)\s+way)\b/i.test(
+        sentence
+      )
+    )
 }
 
 /** Resolve meaning independently of worker identity. A failed resolver grants no new effects. */
@@ -163,11 +203,13 @@ export async function resolveTaskDecision(input: ResolveTaskInput): Promise<Inte
           const proposed = parsed.data.intent
           // Ask mode never becomes an execution contract. Ambiguous mutation proposals,
           // and requests that forbid changes, need explicit wording.
+          const forbidden = effectConstraints(input.text)
           if (
             ['edit', 'run'].includes(proposed) &&
             (input.mode === 'ask' ||
-              /^\s*(?:how|what|why|can we|could we|should we)\b/i.test(input.text) ||
-              forbidsMutation(input.text))
+              asksAboutApproach(input.text) ||
+              (proposed === 'edit' && forbidden.edit) ||
+              (proposed === 'run' && (forbidden.execution || forbidden.verification)))
           ) {
             const to = input.fallback === 'review' ? 'review' : 'explore'
             return done({

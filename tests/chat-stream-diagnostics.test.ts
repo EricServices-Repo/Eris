@@ -171,6 +171,43 @@ describe('chat:stream on a scripted diagnostics transport', () => {
     expect(turn.of('chat:done')).toEqual([{ requestId: turn.requestId, incomplete: false }])
   })
 
+  it('FR-010: keeps JSON and named objects visible in the posted answer', async () => {
+    const answer =
+      'Here is package.json:\n```json\n{"name":"demo","scripts":{"test":"vitest"}}\n```\nAnd the record you asked for: {"name":"Alice","age":30}\nTo read a file the agent calls:\n```json\n{"name":"read_file","arguments":{"path":"src/a.ts"}}\n```'
+    const turn = await scriptedTurn('Show me an example package.json for a vitest project', {
+      // The read is the evidence an explore turn needs; the answer follows it.
+      agent: [tool('read_file', { path: 'src/divide.ts' }), { text: answer }],
+      outcome: [{ text: JSON.stringify({ verdict: 'supported', reason: 'Example given.' }) }]
+    })
+    const posted = String(turn.of('chat:answer').at(-1)?.chunk)
+    expect(posted).toContain('{"name":"demo","scripts":{"test":"vitest"}}')
+    expect(posted).toContain('{"name":"Alice","age":30}')
+    // A fence documenting a tool call is part of the answer; it was never executed.
+    expect(posted).toContain('{"name":"read_file","arguments":{"path":"src/a.ts"}}')
+    expect(
+      turn.of('chat:tool').every((event) => (event.tool as { path?: string }).path !== 'src/a.ts')
+    ).toBe(true)
+  })
+
+  it('FR-010: hides a tool envelope the runtime actually executed', async () => {
+    const turn = await scriptedTurn('Explain what src/divide.ts does', {
+      agent: [
+        {
+          text:
+            '```json\n' +
+            JSON.stringify({ name: 'read_file', arguments: { path: 'src/divide.ts' } }) +
+            '\n```'
+        },
+        { text: 'src/divide.ts exports divide(), which returns a / b without guarding zero.' }
+      ],
+      outcome: [{ text: JSON.stringify({ verdict: 'supported', reason: 'Cites source.' }) }]
+    })
+    const posted = String(turn.of('chat:answer').at(-1)?.chunk)
+    expect(posted).toContain('divide()')
+    expect(posted).not.toContain('"read_file"')
+    expect(turn.of('chat:tool').length).toBeGreaterThan(0)
+  })
+
   it('preserves a missing-project explanation instead of posting routing text as the answer', async () => {
     const turn = await scriptedTurn('Review the Airbnb website and recommend 5 improvements', {})
     expect(turn.calls).toEqual([])

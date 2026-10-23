@@ -16,6 +16,14 @@ declare global {
     erisDev: DevApi
   }
 }
+const RUN_PAGE = 10
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
 function App() {
   const [questions, setQuestions] = useState<DevQuestion[]>([])
   const [preview, setPreview] = useState<DevImportPreview | null>(null)
@@ -37,6 +45,7 @@ function App() {
   >('messages')
   const [callIndex, setCallIndex] = useState(0)
   const [runs, setRuns] = useState<DevRunListing[]>([])
+  const [runPage, setRunPage] = useState(0)
   const [comparison, setComparison] = useState<DevComparison | null>(null)
   // Filters over loaded summaries; request bodies stay on disk until a case is opened.
   const [search, setSearch] = useState('')
@@ -287,17 +296,17 @@ function App() {
           </button>
           <button
             disabled={running || !completed}
-            title="Redact secrets and absolute paths; question IDs, relative paths and traces are kept"
+            title="Automated redaction of known secret formats, credential fields and absolute paths; question IDs, relative paths and traces are kept. Not a guarantee that all sensitive data is removed."
             onClick={() =>
               void attempt(async () => {
                 const saved = await window.erisDev.exportRun({ sanitized: true })
                 if (saved)
                   setNotice(
-                    `Exported a sanitized copy to ${saved.path}. Redactions: ${
+                    `Exported a copy with automated redaction to ${saved.path}. Redactions: ${
                       Object.entries(saved.redaction?.replacements ?? {})
                         .map(([kind, count]) => `${kind} ${count}`)
-                        .join(', ') || 'none needed'
-                    }.`
+                        .join(', ') || 'none found'
+                    }. Automated redaction is not a guarantee: ${(saved.redaction?.limitations ?? []).join(' ')}`
                   )
               })
             }
@@ -346,39 +355,129 @@ function App() {
             <span>{forReview.toLocaleString()} for review</span>
           </p>
         )}
-        {!running &&
-          runs
-            .filter((item) => item.state === 'interrupted' || item.state === 'stopped')
-            .slice(0, 3)
-            .map((item) => (
-              <div className="notice" key={item.runId}>
-                {item.state === 'interrupted' ? 'Interrupted' : 'Stopped'} run of {item.corpus}:{' '}
-                {item.completed.toLocaleString()} / {item.total.toLocaleString()} questions.{' '}
+        {!running && runs.length > 0 && (
+          <details className="hint">
+            <summary>
+              Saved runs ({runs.length.toLocaleString()}) ·{' '}
+              {formatBytes(runs.reduce((sum, item) => sum + (item.bytes ?? 0), 0))} on disk
+            </summary>
+            <ul>
+              {runs.slice(runPage * RUN_PAGE, (runPage + 1) * RUN_PAGE).map((item) => (
+                <li key={item.runId}>
+                  {new Date(item.created).toLocaleString()} · {item.corpus} · {item.state} ·{' '}
+                  {item.completed.toLocaleString()} / {item.total.toLocaleString()} ·{' '}
+                  {item.mode ?? '—'} · {item.context ?? '—'} tokens · {item.fixture ?? '—'} ·{' '}
+                  {item.gitSha ? item.gitSha.slice(0, 8) : 'source unknown'} ·{' '}
+                  {formatBytes(item.bytes ?? 0)}{' '}
+                  <button
+                    title="Open this run's saved results without running anything"
+                    onClick={() =>
+                      void attempt(async () => {
+                        const opened = await window.erisDev.openRun(item.runId)
+                        setQuestions(opened.corpus.questions)
+                        setPreview(null)
+                        setName(`${opened.corpus.name} · ${opened.state} run (read-only)`)
+                        setResults(Object.fromEntries(opened.results.map((r) => [r.index, r])))
+                        setCompleted(opened.results.length)
+                        setComparison(null)
+                        if (opened.invalid.length)
+                          setNotice(
+                            `Stopped at case ${opened.invalid[0]!.index + 1}: ${opened.invalid[0]!.reason}.`
+                          )
+                      })
+                    }
+                  >
+                    Open
+                  </button>
+                  {(item.state === 'interrupted' || item.state === 'stopped') && (
+                    <button
+                      onClick={() =>
+                        void attempt(async () => {
+                          const resumed = await window.erisDev.resumeRun(item.runId)
+                          setQuestions(resumed.corpus.questions)
+                          setPreview(null)
+                          setName(
+                            `${resumed.corpus.name} · resumed at question ${resumed.next + 1}`
+                          )
+                          setResults(Object.fromEntries(resumed.results.map((r) => [r.index, r])))
+                          setCompleted(resumed.next)
+                          setRunning(true)
+                          if (resumed.invalid.length)
+                            setNotice(
+                              `Recapturing ${resumed.invalid.length} saved case(s): ${resumed.invalid
+                                .map((entry) => `${entry.index + 1} (${entry.reason})`)
+                                .join(', ')}.`
+                            )
+                        })
+                      }
+                    >
+                      Resume
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {runs.length > RUN_PAGE && (
+              <p>
+                <button disabled={runPage === 0} onClick={() => setRunPage(runPage - 1)}>
+                  Newer
+                </button>{' '}
+                Page {runPage + 1} of {Math.ceil(runs.length / RUN_PAGE)}{' '}
                 <button
-                  onClick={() =>
-                    void attempt(async () => {
-                      const resumed = await window.erisDev.resumeRun(item.runId)
-                      setQuestions(resumed.corpus.questions)
-                      setPreview(null)
-                      setName(`${resumed.corpus.name} · resumed at question ${resumed.next + 1}`)
-                      setResults(Object.fromEntries(resumed.results.map((r) => [r.index, r])))
-                      setCompleted(resumed.next)
-                      setRunning(true)
-                    })
-                  }
+                  disabled={(runPage + 1) * RUN_PAGE >= runs.length}
+                  onClick={() => setRunPage(runPage + 1)}
                 >
-                  Resume
+                  Older
                 </button>
-              </div>
-            ))}
+              </p>
+            )}
+          </details>
+        )}
         {comparison && (
           <details className="hint" open>
             <summary>
               Compared with {comparison.file}: {comparison.matched.toLocaleString()} matched ·{' '}
-              {comparison.changed.length.toLocaleString()} changed · {comparison.added.length} new ·{' '}
+              {comparison.totalChanged.toLocaleString()} changed · {comparison.added.length} new ·{' '}
               {comparison.removed.length} missing. Task IDs, paths and timings are ignored.
             </summary>
+            <p className={comparison.compatibility.status === 'controlled' ? '' : 'defects'}>
+              {comparison.compatibility.status === 'controlled'
+                ? 'Controlled comparison: the runs differ only in the code under test'
+                : comparison.compatibility.status === 'legacy'
+                  ? 'Legacy export: its settings and fixture are unknown, so differences may not be regressions'
+                  : 'Confounded comparison: differences may come from the run setup, not the code'}
+              {comparison.compatibility.confounders.length
+                ? ` — ${comparison.compatibility.confounders.join('; ')}`
+                : ''}
+              {comparison.compatibility.controlled.length
+                ? `. Code under test: ${comparison.compatibility.controlled.join('; ')}`
+                : ''}
+              .
+              {comparison.identity.legacyMigrated > 0 && (
+                <>
+                  <br />
+                  {comparison.identity.legacyMigrated.toLocaleString()} legacy records were matched
+                  by question text
+                  {comparison.identity.ambiguous.length
+                    ? `; ${comparison.identity.ambiguous.length} duplicated question(s) are paired by order and may be ambiguous`
+                    : ''}
+                  .
+                </>
+              )}
+              {comparison.duplicates.before.length + comparison.duplicates.after.length > 0 && (
+                <>
+                  <br />
+                  Duplicate IDs left out of the comparison:{' '}
+                  {[...comparison.duplicates.before, ...comparison.duplicates.after].join(', ')}
+                </>
+              )}
+            </p>
             <p>
+              Changed categories:{' '}
+              {Object.entries(comparison.byCategory)
+                .map(([category, count]) => `${category} ${count}`)
+                .join(' · ') || 'none'}
+              <br />
               Changed fields:{' '}
               {Object.entries(comparison.byField)
                 .map(([field, count]) => `${field} ${count}`)
@@ -392,19 +491,54 @@ function App() {
                 .join(' · ') || 'none'}
             </p>
             <ul>
-              {comparison.changed.slice(0, 20).map((item) => (
+              {comparison.changed.map((item) => (
                 <li key={item.questionId}>
                   Line {item.sourceLine}: {item.question.slice(0, 90)} —{' '}
                   {Object.entries(item.changes)
-                    .map(
-                      ([field, change]) =>
-                        `${field}: ${JSON.stringify(change.before)} → ${JSON.stringify(change.after)}`
+                    .map(([field, change]) =>
+                      change.detail
+                        ? `${field}: ${change.detail}`
+                        : `${field}: ${JSON.stringify(change.before)} → ${JSON.stringify(change.after)}`
                     )
                     .join('; ')
-                    .slice(0, 240)}
+                    .slice(0, 400)}
                 </li>
               ))}
             </ul>
+            <p className="muted">
+              Showing {comparison.totalChanged ? comparison.page.offset + 1 : 0}–
+              {comparison.page.offset + comparison.page.returned} of{' '}
+              {comparison.totalChanged.toLocaleString()} changed questions (page size{' '}
+              {comparison.page.size}). The full comparison is saved to {comparison.savedTo}.
+            </p>
+            <button
+              disabled={comparison.page.offset === 0}
+              onClick={() =>
+                void attempt(async () => {
+                  const page = await window.erisDev.comparePage(
+                    Math.max(0, comparison.page.offset - comparison.page.size)
+                  )
+                  setComparison({ ...comparison, changed: page.changed, page: page.page })
+                })
+              }
+            >
+              Previous page
+            </button>{' '}
+            <button
+              disabled={
+                comparison.page.offset + comparison.page.returned >= comparison.totalChanged
+              }
+              onClick={() =>
+                void attempt(async () => {
+                  const page = await window.erisDev.comparePage(
+                    comparison.page.offset + comparison.page.size
+                  )
+                  setComparison({ ...comparison, changed: page.changed, page: page.page })
+                })
+              }
+            >
+              Next page
+            </button>{' '}
             <button onClick={() => setComparison(null)}>Close comparison</button>
           </details>
         )}

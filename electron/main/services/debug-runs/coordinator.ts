@@ -1,6 +1,6 @@
 import { interpretationOf, type TaskContract } from '../../../../src/shared/task-contract'
-import { caseOutcome, coverageOf, evaluationOf, outcomeClass } from './evaluation'
-import { randomUUID } from 'crypto'
+import { caseOutcome, coverageOf, evaluationOf, outcomeClass, timeoutEvidence } from './evaluation'
+import { createHash, randomUUID } from 'crypto'
 import { mkdtempSync, realpathSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -72,7 +72,7 @@ import {
   type RecordedReply,
   type ScriptQueues
 } from './model-adapters'
-import { evaluateScenario, firstFailure } from './oracle'
+import { evaluateScenario, firstFailure, type ObservedVerification } from './oracle'
 import { redactDiagnostic } from './redact'
 import { findDebugScenario, scenarioHash } from './scenarios'
 import {
@@ -83,6 +83,14 @@ import {
   readDebugRun,
   writeRunSummary
 } from './store'
+
+/** Digest of the sandbox contents; a verification is current only on the same digest. */
+function workspaceRevision(root: string): string {
+  const files = snapshotWorkspace(root)
+  const hash = createHash('sha256')
+  for (const path of Object.keys(files).sort()) hash.update(path).update('\0').update(files[path]!)
+  return hash.digest('hex').slice(0, 16)
+}
 
 export type DebugRunProgressFn = (event: DebugRunProgressEvent) => void
 
@@ -483,7 +491,7 @@ async function runCase(
   const warnings: string[] = []
   const verifyQueue = [...spec.verify]
   // Every verification result the harness returned, so pass claims can be checked.
-  const verifications: Array<{ ok: boolean; skipped: boolean }> = []
+  const verifications: ObservedVerification[] = []
   // Changed files after the case, kept after the sandbox is removed.
   const artifacts: DebugRecordedResponse[] = []
   const sink = (call: DebugModelCall, reply: RecordedReply) => {
@@ -516,9 +524,15 @@ async function runCase(
         detail
       )
     },
-    verify: ({ preferTypecheck }) => {
+    verify: ({ root, preferTypecheck }) => {
       const next = verifyQueue.shift()
-      verifications.push({ ok: next?.ok ?? true, skipped: !next })
+      // Bound to the command and the workspace revision it ran against.
+      verifications.push({
+        ok: next?.ok ?? true,
+        skipped: !next,
+        // The whole sandbox, not the command's project folder, so it compares with the final digest.
+        ...(next ? { command: next.command, revision: workspaceRevision(sandbox ?? root) } : {})
+      })
       if (!next) {
         scope.onBlockedEffect('verify', 'No scripted verification result; verify was skipped')
         return {
@@ -589,6 +603,7 @@ async function runCase(
   let lastExpect = scenario.expect
   let turnBefore = null as Record<string, string> | null
   let turnChanged: string[] = []
+  let turnAfter: Record<string, string> | undefined
   let turnVerificationStart = 0
   const fail = (stage: DebugFailureStage, category: DebugFailureCategory, detail: string) => {
     failure = { stage, category, detail: redactDiagnostic(detail, sandbox) }
@@ -839,7 +854,8 @@ async function runCase(
         }
         const late = deadline.stopReason()
         if (late) return late
-        turnChanged = changedFiles(turnBefore, snapshotWorkspace(caseSandbox))
+        turnAfter = snapshotWorkspace(caseSandbox)
+        turnChanged = changedFiles(turnBefore, turnAfter)
         priorTask = completeChatTurnTask(task, {
           answer,
           changedFiles: turnChanged,
@@ -881,7 +897,9 @@ async function runCase(
               toolFailureCodes,
               toolsUsed: [...toolsUsed],
               blockedEffects: blocked.map((item) => item.kind),
-              verifications: verifications.slice(turnVerificationStart)
+              verifications: verifications.slice(turnVerificationStart),
+              finalRevision: workspaceRevision(caseSandbox),
+              afterWorkspace: turnAfter
             }).map((item) => ({ ...item, name: `turn ${turnIndex + 1}: ${item.name}` }))
           )
         }
@@ -914,7 +932,9 @@ async function runCase(
         toolFailureCodes,
         toolsUsed: [...toolsUsed],
         blockedEffects: blocked.map((item) => item.kind),
-        verifications: verifications.slice(multiTurn ? turnVerificationStart : 0)
+        verifications: verifications.slice(multiTurn ? turnVerificationStart : 0),
+        finalRevision: sandbox ? workspaceRevision(sandbox) : undefined,
+        afterWorkspace: sandbox ? snapshotWorkspace(sandbox) : undefined
       })
       checks = [
         ...earlierChecks,
@@ -1020,6 +1040,8 @@ async function runCase(
     finishedAt: new Date(finished).toISOString()
   }
   result.outcome = caseOutcome(result)
+  if (result.status === 'timed_out' || result.status === 'cancelled')
+    result.timeoutEvidence = timeoutEvidence(result)
   result.outcomeClass = outcomeClass(result)
   result.evaluation = evaluationOf(scenario, result)
   const responses: DebugRecordedResponse[] = [

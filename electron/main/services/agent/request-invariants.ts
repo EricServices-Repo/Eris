@@ -59,7 +59,7 @@ export function requestInvariantFindings(input: {
   }
   const { task } = input
   const reading = interpretationOf(task)
-  const text = requestTextForIntent(task.originalText) || task.originalText
+  const text = requestTextForIntent(task.originalText)
 
   for (const conflict of taskContractConflicts(task)) add('contract-conflict', 'defect', conflict)
   if (
@@ -91,6 +91,36 @@ export function requestInvariantFindings(input: {
     )
   if (reading.artifact === 'code-example' && task.intent === 'plan')
     add('code-example-as-plan', 'review', 'A requested code example is routed as a plan.')
+  // FR-007: every selected recommendation is an obligation; a batch limit is not a scope limit.
+  const recommendationObligations = reading.obligations.filter((item) =>
+    item.id.startsWith('recommendation-')
+  ).length
+  if (
+    reading.artifact === 'patch' &&
+    task.recommendations.length &&
+    recommendationObligations < task.recommendations.length
+  )
+    add(
+      'recommendations-truncated',
+      'defect',
+      `${task.recommendations.length} recommendations were selected, but only ${recommendationObligations} became obligations.`
+    )
+  // FR-003: a forbidden effect must not survive into the granted authority.
+  if (reading.constraints?.edit && task.authority.edit)
+    add(
+      'forbidden-edit-granted',
+      'defect',
+      'The request forbids edits, but edit authority was granted.'
+    )
+  if (
+    (reading.constraints?.execution || reading.constraints?.verification) &&
+    task.authority.execute !== 'none'
+  )
+    add(
+      'forbidden-run-granted',
+      'defect',
+      'The request forbids running commands, but execution was granted.'
+    )
 
   for (const request of input.requests.filter((item) => item.purpose === 'agent')) {
     const system = systemText(request)

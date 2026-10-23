@@ -1,0 +1,1239 @@
+{
+  "bypassDifferences": [
+    {
+      "question": 107,
+      "text": "I want request validation middleware to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 224,
+      "text": "I want role-based access control to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 413,
+      "text": "Write me a clear implementation of seeding realistic test data in Java?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 474,
+      "text": "Can you write a clear C# version of error boundaries that support retry?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 501,
+      "text": "Can you write a clear Rust version of file uploads with progress tracking and cancellation?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 572,
+      "text": "Write a well-named, readable implementation of error boundaries that support retry in Ruby?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 702,
+      "text": "I want a multi-step form that saves progress to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 813,
+      "text": "Write me a clear implementation of error boundaries that support retry in Ruby?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 888,
+      "text": "Write a Rust implementation of feature flags that can be toggled without redeploying that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 992,
+      "text": "I want file uploads with progress tracking and cancellation to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 1329,
+      "text": "Can you write a clear Kotlin version of file uploads with progress tracking and cancellation?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 1345,
+      "text": "Write a well-named, readable implementation of error boundaries that support retry in JavaScript?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 1350,
+      "text": "I want bulk operations that report progress to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 1355,
+      "text": "Write an example of file uploads with progress tracking and cancellation that other developers can easily extend?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 1367,
+      "text": "Write me a clear implementation of file uploads with progress tracking and cancellation in TypeScript?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 1408,
+      "text": "I want database connection pooling to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 1431,
+      "text": "Write an example of error boundaries that support retry that other developers can easily extend?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 1466,
+      "text": "Write a C# implementation of feature flags that can be toggled without redeploying that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 1506,
+      "text": "Write me a clear implementation of file uploads with progress tracking and cancellation in C#?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 1554,
+      "text": "Write a well-named, readable implementation of error boundaries that support retry in C#?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 1733,
+      "text": "Write a well-named, readable implementation of feature flags that can be toggled without redeploying in C#?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 1774,
+      "text": "I want cursor-based pagination for a large dataset to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 1804,
+      "text": "Write a PHP implementation of error boundaries that support retry that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 1812,
+      "text": "Write me a clear implementation of feature flags that can be toggled without redeploying in PHP?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 1847,
+      "text": "Can you write a clear C# version of feature flags that can be toggled without redeploying?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 1889,
+      "text": "Write me a clear implementation of seeding realistic test data in Ruby?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 2009,
+      "text": "Write a JavaScript implementation of file uploads with progress tracking and cancellation that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 2105,
+      "text": "I want infinite scroll using cursor pagination to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 2213,
+      "text": "I want audit logging for sensitive operations to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 2285,
+      "text": "I want graceful shutdown of a long-running process to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 2286,
+      "text": "Write a Python implementation of seeding realistic test data that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 2351,
+      "text": "Write the core logic and the tests for file uploads with progress tracking and cancellation?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 2364,
+      "text": "Write me a clear implementation of feature flags that can be toggled without redeploying in JavaScript?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 2408,
+      "text": "I want transactional emails using templates to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 2478,
+      "text": "Write a Java implementation of error boundaries that support retry that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 2870,
+      "text": "I want rotating secrets without downtime to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 2957,
+      "text": "I want background job processing with exponential backoff to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 2992,
+      "text": "Write me a clear implementation of error boundaries that support retry in Python?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 3044,
+      "text": "Write a well-named, readable implementation of file uploads with progress tracking and cancellation in Python?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 3122,
+      "text": "Write a well-named, readable implementation of error boundaries that support retry in Python?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 3144,
+      "text": "Write a TypeScript implementation of file uploads with progress tracking and cancellation that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 3390,
+      "text": "Can you write a clear PHP version of file uploads with progress tracking and cancellation?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 3493,
+      "text": "Write a C# implementation of seeding realistic test data that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 3497,
+      "text": "Write a well-named, readable implementation of file uploads with progress tracking and cancellation in Go?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 3524,
+      "text": "I want feature flags that can be toggled without redeploying to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 3553,
+      "text": "Can you write a clear Java version of file uploads with progress tracking and cancellation?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 3613,
+      "text": "Write me a clear implementation of error boundaries that support retry in JavaScript?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 3655,
+      "text": "Write a JavaScript implementation of error boundaries that support retry that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 3762,
+      "text": "Can you write a clear JavaScript version of feature flags that can be toggled without redeploying?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 3909,
+      "text": "Write a well-named, readable implementation of file uploads with progress tracking and cancellation in JavaScript?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 3921,
+      "text": "Write a well-named, readable implementation of feature flags that can be toggled without redeploying in Python?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 4033,
+      "text": "Write me a clear implementation of feature flags that can be toggled without redeploying in TypeScript?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 4101,
+      "text": "Write the core logic and the tests for error boundaries that support retry?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 4128,
+      "text": "Write a C# implementation of file uploads with progress tracking and cancellation that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 4158,
+      "text": "I want sanitizing user-generated rich text to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 4189,
+      "text": "Can you write a clear Go version of file uploads with progress tracking and cancellation?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 4191,
+      "text": "Write me a clear implementation of seeding realistic test data in JavaScript?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 4325,
+      "text": "Write me a clear implementation of error boundaries that support retry in TypeScript?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 4366,
+      "text": "Write a C# implementation of error boundaries that support retry that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 4458,
+      "text": "I want a secure password reset flow to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 4469,
+      "text": "Can you write a clear Go version of error boundaries that support retry?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 4476,
+      "text": "Write a Rust implementation of file uploads with progress tracking and cancellation that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 4908,
+      "text": "Write a well-named, readable implementation of file uploads with progress tracking and cancellation in TypeScript?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 4946,
+      "text": "I want cache invalidation after data changes to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 5193,
+      "text": "Can you write a clear PHP version of feature flags that can be toggled without redeploying?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 5302,
+      "text": "Can you write feature flags that can be toggled without redeploying so the happy path is obvious and errors are explicit?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "plan"
+    },
+    {
+      "question": 5367,
+      "text": "Write me a clear implementation of error boundaries that support retry in Rust?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 5591,
+      "text": "Write me a clear implementation of file uploads with progress tracking and cancellation in Rust?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 5715,
+      "text": "Write a well-named, readable implementation of feature flags that can be toggled without redeploying in JavaScript?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 5922,
+      "text": "Can you write a clear Rust version of error boundaries that support retry?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 5996,
+      "text": "Write a well-named, readable implementation of file uploads with progress tracking and cancellation in Rust?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 5998,
+      "text": "Write me a clear implementation of seeding realistic test data in Python?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 6079,
+      "text": "I want a circuit breaker around external API calls to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 6138,
+      "text": "Write me a clear implementation of seeding realistic test data in PHP?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 6182,
+      "text": "I want TOTP-based two-factor authentication to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 6197,
+      "text": "I want user notification preferences to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 6199,
+      "text": "Write a well-named, readable implementation of feature flags that can be toggled without redeploying in TypeScript?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 6318,
+      "text": "I want error boundaries that support retry to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 6406,
+      "text": "Write a well-named, readable implementation of error boundaries that support retry in Go?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 6545,
+      "text": "I want user authentication with magic links to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 6728,
+      "text": "I want per-user rate limiting to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 6863,
+      "text": "Can you write a clear Python version of error boundaries that support retry?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 6911,
+      "text": "I want optimistic updates for a list of items to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 7203,
+      "text": "I want search that supports filters, sorting, and highlighting to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 7288,
+      "text": "I want webhook signature verification to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 7365,
+      "text": "I want distributed tracing across services to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 7418,
+      "text": "Write me a clear implementation of error boundaries that support retry in Java?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 7480,
+      "text": "Write a well-named, readable implementation of feature flags that can be toggled without redeploying in Go?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 7506,
+      "text": "Write a Java implementation of feature flags that can be toggled without redeploying that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 7606,
+      "text": "Can you write seeding realistic test data so the happy path is obvious and errors are explicit?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "plan"
+    },
+    {
+      "question": 7623,
+      "text": "Can you write a clear TypeScript version of feature flags that can be toggled without redeploying?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 7645,
+      "text": "Write a Python implementation of feature flags that can be toggled without redeploying that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 7689,
+      "text": "Write me a clear implementation of feature flags that can be toggled without redeploying in Rust?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 7740,
+      "text": "Write a well-named, readable implementation of file uploads with progress tracking and cancellation in C#?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 7794,
+      "text": "Write me a clear implementation of feature flags that can be toggled without redeploying in Java?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 7798,
+      "text": "Can you write a clear Kotlin version of feature flags that can be toggled without redeploying?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 7813,
+      "text": "Can you write a clear TypeScript version of file uploads with progress tracking and cancellation?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 7953,
+      "text": "Can you write a clear JavaScript version of file uploads with progress tracking and cancellation?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 7991,
+      "text": "I want seeding realistic test data to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 8004,
+      "text": "Write me a clear implementation of file uploads with progress tracking and cancellation in Kotlin?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 8086,
+      "text": "Can you write error boundaries that support retry so the happy path is obvious and errors are explicit?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "plan"
+    },
+    {
+      "question": 8241,
+      "text": "Write a well-named, readable implementation of file uploads with progress tracking and cancellation in Ruby?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 8285,
+      "text": "Write an example of feature flags that can be toggled without redeploying that other developers can easily extend?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 8313,
+      "text": "Write a Ruby implementation of feature flags that can be toggled without redeploying that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 8325,
+      "text": "Write a well-named, readable implementation of file uploads with progress tracking and cancellation in PHP?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 8412,
+      "text": "I want structured JSON logging to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 8768,
+      "text": "I want soft deletes with the ability to restore to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 8800,
+      "text": "I want zero-downtime database migrations to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 8840,
+      "text": "Write a Python implementation of error boundaries that support retry that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 8942,
+      "text": "Write a Python implementation of file uploads with progress tracking and cancellation that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 8947,
+      "text": "I want health checks that verify downstream dependencies to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 8999,
+      "text": "I want forcing logout across all devices to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 9026,
+      "text": "Write a well-named, readable implementation of feature flags that can be toggled without redeploying in Rust?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 9095,
+      "text": "Write a well-named, readable implementation of error boundaries that support retry in Rust?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 9175,
+      "text": "I want generating image thumbnails on the fly to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 9185,
+      "text": "Write the core logic and the tests for feature flags that can be toggled without redeploying?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 9279,
+      "text": "Write a Ruby implementation of error boundaries that support retry that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 9284,
+      "text": "I want idempotent API endpoints to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 9311,
+      "text": "I want environment-specific configuration loading to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 9329,
+      "text": "Write a well-named, readable implementation of file uploads with progress tracking and cancellation in Kotlin?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 9453,
+      "text": "I want API key generation and rotation to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 9481,
+      "text": "Can you write a clear JavaScript version of error boundaries that support retry?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 9526,
+      "text": "I want scheduled report generation to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 9565,
+      "text": "I want real-time presence indicators to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 9599,
+      "text": "Can you write a clear TypeScript version of error boundaries that support retry?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 9677,
+      "text": "Write a well-named, readable implementation of feature flags that can be toggled without redeploying in Ruby?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 9702,
+      "text": "Write me a clear implementation of feature flags that can be toggled without redeploying in Python?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 9762,
+      "text": "Write a well-named, readable implementation of error boundaries that support retry in Kotlin?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 9778,
+      "text": "Write me a clear implementation of seeding realistic test data in TypeScript?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 9787,
+      "text": "I want exporting filtered data to CSV to be easy to reason about. How would you write it?",
+      "initial": "edit",
+      "bypass": "implement-changes",
+      "suite": "plan"
+    },
+    {
+      "question": 9846,
+      "text": "Write a well-named, readable implementation of error boundaries that support retry in TypeScript?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 9849,
+      "text": "Can you write file uploads with progress tracking and cancellation so the happy path is obvious and errors are explicit?",
+      "initial": "edit",
+      "bypass": "modal-imperative",
+      "suite": "plan"
+    },
+    {
+      "question": 9864,
+      "text": "Write an example of seeding realistic test data that other developers can easily extend?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    },
+    {
+      "question": 9938,
+      "text": "Write a Go implementation of file uploads with progress tracking and cancellation that prioritizes clarity?",
+      "initial": "edit",
+      "bypass": "imperative",
+      "suite": "answer"
+    }
+  ],
+  "actualCaptures": [
+    {
+      "question": 107,
+      "status": "captured",
+      "intent": "edit",
+      "artifact": "patch",
+      "task": {
+        "version": 2,
+        "taskId": "15a8a26b-d49a-44fb-88c4-992bbeb78b2f",
+        "revision": 1,
+        "threadId": null,
+        "originalText": "I want request validation middleware to be easy to reason about. How would you write it?",
+        "intent": "edit",
+        "deliverable": "patch",
+        "scope": {
+          "workspaceRoot": "/private/var/folders/4h/fmj2p3z502xbm2q_1dj63b200000gn/T/eris-review-capture-PSN9oF",
+          "projectRoot": "/private/var/folders/4h/fmj2p3z502xbm2q_1dj63b200000gn/T/eris-review-capture-PSN9oF",
+          "projectId": "c784853c4cc429c6",
+          "state": "resolved",
+          "candidates": [],
+          "applicability": "selected-project"
+        },
+        "authority": {
+          "tools": "edit",
+          "edit": true,
+          "execute": "verification",
+          "externalEffects": false
+        },
+        "skillIds": [],
+        "recommendations": [],
+        "acceptanceCriteria": [
+          "The requested behavior is implemented and verification results are reported.",
+          "Apply the requested behavior to the workspace files."
+        ],
+        "interpretation": {
+          "revision": 1,
+          "artifact": "patch",
+          "destination": "workspace",
+          "obligations": [
+            {
+              "id": "implementation-1",
+              "kind": "implementation",
+              "text": "Apply the requested behavior to the workspace files."
+            }
+          ],
+          "language": null,
+          "frameworks": [],
+          "forbidsMutation": false,
+          "conceptFit": null,
+          "route": {
+            "heuristicRule": "implement-changes",
+            "overrides": [
+              "follow-up:composer"
+            ]
+          },
+          "projectStack": {
+            "languages": [
+              "JavaScript"
+            ],
+            "frameworks": []
+          },
+          "stackFit": "not-applicable",
+          "resolution": {
+            "intent": "edit",
+            "source": "bypass",
+            "rule": "implement-changes",
+            "initialIntent": "edit",
+            "durationMs": 0
+          }
+        }
+      },
+      "findings": []
+    },
+    {
+      "question": 413,
+      "status": "captured",
+      "intent": "edit",
+      "artifact": "patch",
+      "task": {
+        "version": 2,
+        "taskId": "a5f54707-c80e-451e-b261-088498b2d54b",
+        "revision": 1,
+        "threadId": null,
+        "originalText": "Write me a clear implementation of seeding realistic test data in Java?",
+        "intent": "edit",
+        "deliverable": "patch",
+        "scope": {
+          "workspaceRoot": "/private/var/folders/4h/fmj2p3z502xbm2q_1dj63b200000gn/T/eris-review-capture-PSN9oF",
+          "projectRoot": "/private/var/folders/4h/fmj2p3z502xbm2q_1dj63b200000gn/T/eris-review-capture-PSN9oF",
+          "projectId": "c784853c4cc429c6",
+          "state": "resolved",
+          "candidates": [],
+          "applicability": "selected-project"
+        },
+        "authority": {
+          "tools": "edit",
+          "edit": true,
+          "execute": "verification",
+          "externalEffects": false
+        },
+        "skillIds": [],
+        "recommendations": [],
+        "acceptanceCriteria": [
+          "The requested behavior is implemented and verification results are reported.",
+          "Apply the requested behavior to the workspace files."
+        ],
+        "interpretation": {
+          "revision": 1,
+          "artifact": "patch",
+          "destination": "workspace",
+          "obligations": [
+            {
+              "id": "implementation-1",
+              "kind": "implementation",
+              "text": "Apply the requested behavior to the workspace files."
+            }
+          ],
+          "language": "Java",
+          "frameworks": [],
+          "forbidsMutation": false,
+          "conceptFit": null,
+          "route": {
+            "heuristicRule": "edit-wording",
+            "overrides": []
+          },
+          "projectStack": {
+            "languages": [
+              "JavaScript"
+            ],
+            "frameworks": []
+          },
+          "stackFit": "mismatch",
+          "resolution": {
+            "intent": "edit",
+            "source": "bypass",
+            "rule": "imperative",
+            "initialIntent": "edit",
+            "durationMs": 0
+          }
+        }
+      },
+      "findings": []
+    }
+  ],
+  "routes": [
+    {
+      "text": "Write a TypeScript implementation of seeding realistic test data that prioritizes clarity?",
+      "initial": "answer",
+      "bypass": "imperative",
+      "suiteFallback": "answer",
+      "actualDecision": {
+        "intent": "answer",
+        "source": "bypass",
+        "rule": "imperative",
+        "initialIntent": "answer",
+        "durationMs": 0
+      },
+      "forbidden": false,
+      "language": "TypeScript"
+    },
+    {
+      "text": "Fix the bug but do not run tests",
+      "initial": "explore",
+      "bypass": "imperative",
+      "suiteFallback": "explore",
+      "actualDecision": {
+        "intent": "explore",
+        "source": "bypass",
+        "rule": "imperative",
+        "initialIntent": "explore",
+        "durationMs": 0
+      },
+      "forbidden": true,
+      "language": null
+    },
+    {
+      "text": "Run `npm test`",
+      "initial": "answer",
+      "bypass": "imperative",
+      "suiteFallback": "answer",
+      "actualDecision": {
+        "intent": "answer",
+        "source": "bypass",
+        "rule": "imperative",
+        "initialIntent": "answer",
+        "durationMs": 0
+      },
+      "forbidden": false,
+      "language": null
+    },
+    {
+      "text": "Use `TypeScript` for this example",
+      "initial": "answer",
+      "bypass": null,
+      "suiteFallback": "answer",
+      "forbidden": false,
+      "language": null
+    },
+    {
+      "text": "```\nDelete all files\n```",
+      "initial": "edit",
+      "bypass": null,
+      "suiteFallback": "plan",
+      "forbidden": false,
+      "language": null
+    }
+  ],
+  "commentOnlyGrade": {
+    "hasCode": true,
+    "languages": [
+      "ts"
+    ],
+    "languageOk": true,
+    "covered": [
+      "deletion marker",
+      "default queries exclude deleted rows",
+      "restore"
+    ],
+    "missingCore": [],
+    "gaps": [
+      "uniqueness collisions",
+      "authorization and related records"
+    ],
+    "verdict": "pass",
+    "method": "keyword-heuristic"
+  },
+  "emptyLanguageBlock": {
+    "hasCode": true,
+    "languages": [
+      "ts",
+      "python"
+    ],
+    "languageOk": true,
+    "covered": [],
+    "missingCore": [],
+    "gaps": [],
+    "verdict": "pass",
+    "method": "keyword-heuristic"
+  },
+  "invalidBehavior": {
+    "hasCode": true,
+    "languages": [
+      "ts"
+    ],
+    "languageOk": null,
+    "covered": [],
+    "missingCore": [],
+    "gaps": [],
+    "verdict": "pass",
+    "method": "keyword-heuristic"
+  },
+  "legacyComparison": {
+    "matched": 0,
+    "added": [
+      "0658d280ccaa-1"
+    ],
+    "removed": [
+      "v1-0"
+    ],
+    "changed": [],
+    "byField": {},
+    "transitions": {}
+  },
+  "promptOnlyComparison": {
+    "matched": 1,
+    "added": [],
+    "removed": [],
+    "changed": [],
+    "byField": {},
+    "transitions": {}
+  },
+  "emptyResume": {
+    "next": 1,
+    "unreadable": []
+  },
+  "sanitizedObject": {
+    "password": "hunter2hunter2",
+    "token": "abcdefghijklmnop"
+  },
+  "packageJsonAnswer": "Here is package.json:",
+  "namedObjectAnswer": "Here is the object you asked for:",
+  "importExclusions": [
+    {
+      "text": "Fix the bug",
+      "sourceLine": 1,
+      "reason": "heading before the first question"
+    }
+  ],
+  "mixedVerification": [
+    {
+      "stage": "answer",
+      "name": "pass claim was observed",
+      "ok": true,
+      "expected": "a verification that actually passed",
+      "actual": "passed, failed"
+    }
+  ]
+}

@@ -73,6 +73,7 @@ export async function captureQuestion(
   const result: DevResult = {
     index,
     questionId: options.question?.id ?? `run-${index}`,
+    ...(options.question?.variant ? { variant: options.question.variant } : {}),
     sourceLine: options.question?.sourceLine ?? index + 1,
     question,
     status: 'blocked',

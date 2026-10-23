@@ -12,14 +12,157 @@ import {
 } from '../../../../src/shared/debug-runs'
 import { evaluateChecks } from '../eval-runner'
 import { gradeCodeExample } from '../../../../src/shared/code-grading'
-import { rubricForTopic } from '../../../../src/shared/topic-rubrics'
+import { TOPIC_RUBRICS } from '../../../../src/shared/topic-rubrics'
 
-/** The answer says something was changed or applied. */
+/** The answer says something was changed or applied, actively or passively. */
 const CHANGE_CLAIM =
-  /\b(?:i(?:'ve| have)?|we(?:'ve| have)?|now)\s+(?:\w+\s+){0,2}?(?:implemented|added|fixed|updated|changed|created|applied|modified|refactored)\b|^\s*DONE:\s*(?:\w+\s+){0,3}?(?:implemented|added|fixed|updated|changed|created|applied|modified)\b/im
+  /\b(?:i(?:'ve| have)?|we(?:'ve| have)?|now)\s+(?:\w+\s+){0,2}?(?:implemented|added|fixed|updated|changed|created|applied|modified|refactored)\b|\b(?:is|are|has\s+been|have\s+been|was|were)\s+(?:now\s+)?(?:fully\s+|successfully\s+)?(?:implemented|added|fixed|updated|changed|created|applied|modified|refactored)\b|^\s*DONE:\s*(?:\w+\s+){0,3}?(?:implemented|added|fixed|updated|changed|created|applied|modified)\b/im
 /** The answer says a check passed. */
 const PASS_CLAIM =
-  /\b(?:tests?|typecheck|lint|verification|build|checks?)\s+(?:all\s+)?(?:passed|pass|passes|succeeded|green)\b|\bverification passed\b/i
+  /\b(?:tests?|typecheck|lint|verification|build|checks?)\s+(?:all\s+)?(?:passed|pass|passes|succeeded|green)\b|\bverification passed\b|\b(?:tests?|checks?|builds?)\s+(?:are|were|have\s+been|is)\s+(?:all\s+)?(?:passing|passed|green|successful)\b|\b(?:everything|all\s+checks|ci)\s+(?:is\s+|are\s+)?(?:green|passing)\b/i
+const NEGATED =
+  /\b(?:not|n't|never|no|none|failed|fail|unable|cannot|couldn't|wasn't|weren't|haven't|hasn't|isn't|aren't)\b/i
+
+/**
+ * Sentences the answer asserts in its own voice: code, quotes and blockquotes are
+ * removed, and a sentence that negates its claim (“tests did not pass”) is dropped.
+ * Regex claims are a secondary consistency check over observed state, never the
+ * primary record of what happened.
+ */
+export function assertedSentences(answer: string, claim: RegExp): string[] {
+  const own = answer
+    .replace(/```[\s\S]*?(?:```|$)/g, ' ')
+    .replace(/`[^`\n]*`/g, ' ')
+    .replace(/^\s*>.*$/gm, ' ')
+    .replace(/"[^"\n]{1,300}"|“[^”\n]{1,300}”/g, ' ')
+  return own
+    .split(/(?<=[.!?])\s+|\n+/)
+    .filter((sentence) => claim.test(sentence))
+    .filter((sentence) => {
+      // Negation before the claim, in the same sentence, withdraws it.
+      const match = sentence.match(claim)
+      const before = sentence.slice(0, match?.index ?? 0)
+      const after = sentence.slice(
+        (match?.index ?? 0) + (match?.[0].length ?? 0),
+        (match?.index ?? 0) + (match?.[0].length ?? 0) + 12
+      )
+      return (
+        !NEGATED.test(before.split(/[,;:]/).pop() ?? '') &&
+        !/^\s*(?:yet|not)\b/i.test(after) &&
+        !NEGATED.test(match?.[0] ?? '')
+      )
+    })
+}
+
+const claims = (answer: string, claim: RegExp) => assertedSentences(answer, claim).length > 0
+
+export type VerificationKind = 'test' | 'typecheck' | 'lint' | 'build' | 'other'
+
+/** One verification the harness observed, bound to its command and workspace revision. */
+export interface ObservedVerification {
+  ok: boolean
+  skipped: boolean
+  /** The command that ran; absent on records from before commands were kept. */
+  command?: string
+  /** Workspace digest when the check ran; a later edit makes the result stale. */
+  revision?: string
+}
+
+export function verificationKind(command: string | undefined): VerificationKind | null {
+  if (!command) return null
+  if (/\b(?:tsc|typecheck|type-check|mypy|pyright)\b/i.test(command)) return 'typecheck'
+  if (/\b(?:lint|eslint|ruff|clippy|rubocop|golangci)\b/i.test(command)) return 'lint'
+  if (
+    /\b(?:test|tests|spec|vitest|jest|pytest|mocha|rspec|cargo\s+test|go\s+test)\b/i.test(command)
+  )
+    return 'test'
+  if (/\bbuild\b/i.test(command)) return 'build'
+  return 'other'
+}
+
+/** Which kinds of check a pass claim names. “All checks passed” names every kind. */
+function claimedKinds(answer: string): Array<VerificationKind | 'all'> {
+  const kinds = new Set<VerificationKind | 'all'>()
+  const asserted = assertedSentences(answer, PASS_CLAIM).join('\n')
+  for (const match of asserted.matchAll(new RegExp(PASS_CLAIM.source, 'gi'))) {
+    const noun = match[0].toLowerCase()
+    if (/^tests?\b/.test(noun)) kinds.add('test')
+    else if (/^typecheck/.test(noun)) kinds.add('typecheck')
+    else if (/^lint/.test(noun)) kinds.add('lint')
+    else if (/^build/.test(noun)) kinds.add('build')
+    else kinds.add('all')
+  }
+  if (/\ball\s+(?:the\s+)?(?:tests?|checks?)\b/i.test(asserted)) kinds.add('all')
+  return [...kinds]
+}
+
+/**
+ * A pass claim is supported only by the latest result of each relevant command,
+ * on the final workspace revision. A failure is superseded only by a passing rerun
+ * of the same command; lint passing never supports “tests passed”.
+ */
+export function passClaimSupport(
+  answer: string,
+  verifications: ObservedVerification[],
+  finalRevision?: string
+): { ok: boolean; actual: string } {
+  const ran = verifications.filter((item) => !item.skipped)
+  if (!ran.length)
+    return {
+      ok: false,
+      actual: verifications.length
+        ? verifications.map(() => 'skipped').join(', ')
+        : 'answer claims a pass; no verification ran'
+    }
+  const latest = new Map<string, ObservedVerification>()
+  for (const item of ran) latest.set(item.command ?? '', item)
+  const describe = (item: ObservedVerification) =>
+    `${item.command ? `${item.command}: ` : ''}${item.ok ? 'passed' : 'failed'}${
+      finalRevision && item.revision && item.revision !== finalRevision ? ' (stale revision)' : ''
+    }`
+  const problems: string[] = []
+  for (const kind of claimedKinds(answer)) {
+    const relevant = [...latest.values()].filter(
+      (item) => kind === 'all' || !item.command || verificationKind(item.command) === kind
+    )
+    if (!relevant.length) problems.push(`no ${kind} check ran`)
+    for (const item of relevant) {
+      if (!item.ok) problems.push(describe(item))
+      else if (finalRevision && item.revision && item.revision !== finalRevision)
+        problems.push(describe(item))
+    }
+  }
+  return {
+    ok: problems.length === 0,
+    actual: problems.length
+      ? `${problems.join('; ')} — observed ${ran.map(describe).join(', ')}`
+      : ran.map(describe).join(', ')
+  }
+}
+
+/** Files that cannot substantiate a feature: docs, lockfiles, and deleted tests. */
+function substantiveChanges(
+  changed: string[],
+  before: Record<string, string>,
+  after: Record<string, string> | undefined
+): string[] {
+  return changed.filter((path) => {
+    if (
+      /(?:^|\/)(?:README|CHANGELOG|LICENSE)[^/]*$|\.(?:md|txt|rst)$|(?:^|\/)(?:package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$/i.test(
+        path
+      )
+    )
+      return false
+    if (!after) return true
+    const next = after[path]
+    const prior = before[path]
+    // Deleting a test file, or a whitespace-only edit, is not an implementation.
+    if (next === undefined)
+      return !/(?:^|\/)(?:tests?|__tests__|spec)\/|\.(?:test|spec)\.[\w]+$/i.test(path)
+    if (prior !== undefined && prior.replace(/\s+/g, '') === next.replace(/\s+/g, '')) return false
+    return true
+  })
+}
 
 export interface OracleInput {
   scenario: DebugScenario
@@ -37,7 +180,11 @@ export interface OracleInput {
   toolsUsed: string[]
   blockedEffects: BlockedEffectKind[]
   /** Verification results the harness observed, in order. Absent: not tracked. */
-  verifications?: Array<{ ok: boolean; skipped: boolean }>
+  verifications?: ObservedVerification[]
+  /** Workspace digest at the end of the turn, to detect checks made stale by later edits. */
+  finalRevision?: string
+  /** Workspace after the turn; lets claim checks ignore whitespace-only and doc-only edits. */
+  afterWorkspace?: Record<string, string>
 }
 
 function check(
@@ -257,42 +404,54 @@ export function evaluateScenario(input: OracleInput): DebugOracleCheck[] {
     expect.mutation === 'required' ||
     ['edit', 'run'].includes(input.route?.intent ?? '') ||
     input.contract?.artifact === 'patch'
-  if (changeTurn && CHANGE_CLAIM.test(input.answer)) {
+  if (changeTurn && claims(input.answer, CHANGE_CLAIM)) {
+    // A diff only shows that a change occurred. A README edit, a whitespace-only edit,
+    // or a deleted test never substantiates “I implemented …”; the requested behavior
+    // is the scenario's own requiredPaths and checks, reported separately above.
+    const substantive = substantiveChanges(changed, input.beforeWorkspace, input.afterWorkspace)
     checks.push(
       check(
         'answer',
         'change claim has a diff',
-        changed.length > 0,
-        'claimed changes appear in the workspace',
-        changed.length ? changed.join(', ') : 'answer claims changes; no file changed',
+        substantive.length > 0,
+        'claimed changes appear as substantive source changes',
+        substantive.length
+          ? `${substantive.join(', ')}${
+              expect.requiredPaths.length || expect.checks.length
+                ? ''
+                : ' (a change occurred; no scenario paths or checks verify the claimed behavior)'
+            }`
+          : changed.length
+            ? `only non-substantive changes: ${changed.join(', ')}`
+            : 'answer claims changes; no file changed',
         'unsupported_claim'
       )
     )
   }
-  if (input.verifications && PASS_CLAIM.test(input.answer)) {
-    const passed = input.verifications.some((item) => item.ok && !item.skipped)
+  if (input.verifications && claims(input.answer, PASS_CLAIM)) {
+    const support = passClaimSupport(input.answer, input.verifications, input.finalRevision)
     checks.push(
       check(
         'answer',
         'pass claim was observed',
-        passed,
-        'a verification that actually passed',
-        input.verifications.length
-          ? input.verifications
-              .map((item) => (item.skipped ? 'skipped' : item.ok ? 'passed' : 'failed'))
-              .join(', ')
-          : 'answer claims a pass; no verification ran',
+        support.ok,
+        'the latest run of each claimed check passed on the final revision',
+        support.actual,
         'unsupported_claim'
       )
     )
   }
   if (expect.codeExample) {
-    const rubric = expect.codeExample.rubric ? rubricForTopic(expect.codeExample.rubric) : undefined
+    // Exact ID lookup: a misspelled rubric must not resolve to a looser text match or to none.
+    const rubricId = expect.codeExample.rubric
+    const rubric = rubricId ? TOPIC_RUBRICS.find((item) => item.id === rubricId) : undefined
     const grade = gradeCodeExample(input.answer, {
       language: expect.codeExample.language,
       rubric,
+      rubricId,
       behaviors: expect.codeExample.behaviors
     })
+    const behaviors = expect.codeExample.behaviors
     checks.push(
       check(
         'answer',
@@ -301,18 +460,28 @@ export function evaluateScenario(input: OracleInput): DebugOracleCheck[] {
         [
           'fenced code',
           expect.codeExample.language ? `in ${expect.codeExample.language}` : '',
-          rubric ? `covering ${rubric.id} core behaviors` : ''
+          rubric
+            ? `covering ${rubric.id} ${behaviors ? `behaviors ${behaviors.join(', ')}` : 'core behaviors'}`
+            : ''
         ]
           .filter(Boolean)
           .join(' '),
-        !grade.hasCode
-          ? 'no code block'
-          : grade.languageOk === false
-            ? `code in ${grade.languages.join(', ') || 'an untagged block'}`
-            : grade.missingCore.length
-              ? `missing: ${grade.missingCore.join(', ')}`
-              : `covers ${grade.covered.join(', ')}${grade.gaps.length ? `; gaps: ${grade.gaps.join(', ')}` : ''} (keyword heuristic)`,
-        'answer_incomplete'
+        grade.verdict === 'invalid'
+          ? `evaluation criteria invalid: ${grade.configErrors!.join(' ')}`
+          : !grade.hasCode
+            ? 'no executable code block (empty, comment-only or TODO-only)'
+            : grade.languageOk === false
+              ? `no nonempty ${expect.codeExample.language} block; found ${grade.languages.join(', ') || 'untagged blocks'}`
+              : grade.missingCore.length
+                ? `missing in code: ${grade.missingCore.join(', ')}${
+                    grade.keywordCoverage.length
+                      ? `; keywords elsewhere: ${grade.keywordCoverage.join(', ')}`
+                      : ''
+                  }`
+                : grade.verdict === 'review'
+                  ? `needs review: ${grade.review!.join(' ')}`
+                  : `covers ${grade.covered.join(', ')}${grade.gaps.length ? `; gaps: ${grade.gaps.join(', ')}` : ''} (keyword heuristic over code tokens; not executed)`,
+        grade.verdict === 'invalid' ? 'evaluation_invalid' : 'answer_incomplete'
       )
     )
   }

@@ -51,7 +51,7 @@ export function outcomeContractFor(plan: TurnPlan, goal = ''): AgentOutcomeContr
   const targetFiles = requiresMutation
     ? [
         ...new Set([
-          ...pathsIn(requestTextForIntent(plan.task?.originalText ?? goal) || goal),
+          ...pathsIn(requestTextForIntent(plan.task?.originalText ?? goal)),
           ...(plan.task?.recommendations ?? []).flatMap((item) => item.targets ?? [])
         ])
       ]

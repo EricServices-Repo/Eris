@@ -278,7 +278,8 @@ describe('AG-075 sanitized exports', () => {
     expect(text).toContain('src/config.ts')
     expect(text).toContain('<workspace>/src/config.ts')
     expect(clean.questionId).toBe('3f2a9c1b04de-1')
-    const tokens = text.match(/\[REDACTED:api-key:[0-9a-f]{8}\]/g) ?? []
+    // Keyed, export-scoped 64-bit markers (FR-035).
+    const tokens = text.match(/\[REDACTED:api-key:[0-9a-f]{16}\]/g) ?? []
     expect(tokens).toHaveLength(2)
     expect(new Set(tokens).size).toBe(1)
     expect(sanitizer.manifest().replacements).toMatchObject({ 'api-key': 2, 'home-path': 1 })
@@ -301,12 +302,33 @@ describe('AG-076 resumable runs', () => {
     config: { context: 8192, mode: 'agent', intentReplyMode: 'fallback', projectKind: 'sample', project: null }
   })
 
-  it('resumes at the first missing or unreadable case', () => {
+  it('resumes at the first missing, unreadable or invalid case', () => {
     const dir = tempDir()
+    const questions = prepareQuestions('a?\nb?\nc?', '.txt').questions
+    const record = (index: number) => ({
+      index,
+      questionId: questions[index]!.id,
+      question: questions[index]!.text,
+      status: 'captured',
+      stages: {},
+      findings: {},
+      phases: {},
+      requests: [],
+      findingsDetail: [],
+      findingIds: [],
+      events: []
+    })
+    // FR-025: valid JSON is not a completed case.
     writeFileSync(join(dir, '0.json'), '{}')
-    expect(resumePoint(dir, 3)).toEqual({ next: 1, unreadable: [] })
+    expect(resumePoint(dir, questions)).toEqual({
+      next: 0,
+      unreadable: [],
+      invalid: [{ index: 0, reason: 'index undefined does not match case 0' }]
+    })
+    writeFileSync(join(dir, '0.json'), JSON.stringify(record(0)))
+    expect(resumePoint(dir, questions)).toMatchObject({ next: 1, unreadable: [] })
     writeFileSync(join(dir, '1.json'), '{"partial":')
-    expect(resumePoint(dir, 3)).toEqual({ next: 1, unreadable: [1] })
+    expect(resumePoint(dir, questions)).toMatchObject({ next: 1, unreadable: [1] })
   })
 
   it('refuses to resume under changed settings, versions or source', () => {
@@ -328,7 +350,17 @@ describe('AG-076 resumable runs', () => {
     expect(markInterruptedRuns(captures)).toBe(1)
     expect(readProgress(dir)?.state).toBe('interrupted')
     expect(listRuns(captures)).toEqual([
-      { runId, created: header.created, corpus: 'corpus.txt', total: 3, completed: 1, state: 'interrupted' }
+      expect.objectContaining({
+        runId,
+        created: header.created,
+        corpus: 'corpus.txt',
+        total: 3,
+        completed: 1,
+        state: 'interrupted',
+        mode: 'agent',
+        context: 8192,
+        bytes: expect.any(Number)
+      })
     ])
   })
 })
@@ -376,10 +408,13 @@ describe('AG-077 run comparison by stable question ID', () => {
 
 describe('defects found while qualifying', () => {
   it('keeps code fences in answers and strips only tool-call fences', () => {
+    // FR-010: a fence is protocol only when the runtime would execute it — a reply of
+    // nothing but envelope fences. Beside prose it documents a call and stays visible.
     const answer = 'Here:\n```ts\nexport const x = 1\n```\n```json\n{"name":"read_file","path":"a.ts"}\n```'
     const out = stripToolBlocks(answer)
     expect(out).toContain('```ts\nexport const x = 1\n```')
-    expect(out).not.toContain('read_file')
+    expect(out).toContain('read_file')
+    expect(stripToolBlocks('```json\n{"name":"read_file","path":"a.ts"}\n```')).toBe('')
   })
 
   it('answers an Ask-mode edit request as a read-only chat', () => {

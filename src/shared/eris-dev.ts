@@ -18,8 +18,14 @@ export interface DevQuestion {
   sourceLine: number
   /** One-based occurrence of identical text, so duplicates stay addressable. */
   occurrence: number
+  /** Digest of the case content (text and history) without the occurrence. */
+  contentHash?: string
+  /** Distinguishes scripted variants of the same content; absent for the default script. */
+  variant?: string
   /** Scripted intent reply supplied by the corpus, never by a model. */
   intentReply?: { intent: string; confidence: number }
+  /** The scripted reply is deliberately malformed, for resolver-failure testing. */
+  intentReplyMalformed?: boolean
   /** Earlier turns, so a follow-up (“implement those”) is captured as a follow-up. */
   history?: Array<{ role: 'user' | 'assistant'; content: string }>
 }
@@ -58,6 +64,13 @@ export interface DevSummary {
   /** Zero-based position in this run; display adds one. */
   index: number
   questionId: string
+  /** Scripted variant of the case, when the corpus supplied a resolver reply. */
+  variant?: string
+  /**
+   * How questionId was assigned on a legacy record: v1-index is the record's position,
+   * v1-content was migrated from its text. Absent on v2 records, whose IDs came from import.
+   */
+  identity?: 'v1-index' | 'v1-content'
   sourceLine: number
   question: string
   status: DevStages['reachability']
@@ -108,8 +121,28 @@ export interface DevResult extends DevSummary {
 export interface DevRunHeader {
   format: typeof CAPTURE_FORMAT
   created: string
-  app: { name: 'Eris-Dev'; version: string; gitSha: string; dirty: boolean | null }
-  versions: { routing: string; prompt: string; schema: typeof CAPTURE_FORMAT }
+  app: {
+    name: 'Eris-Dev'
+    version: string
+    gitSha: string
+    dirty: boolean | null
+    /** Digest of uncommitted changes at build time; null when clean or unknown. */
+    dirtyDigest?: string | null
+    buildId?: string
+    /** injected: stamped at build time; git: read from a checkout at run time; unknown: neither. */
+    provenance?: 'injected' | 'git' | 'unknown'
+  }
+  versions: {
+    routing: string
+    prompt: string
+    schema: typeof CAPTURE_FORMAT
+    /** Request invariant checker; absent on runs recorded before it was versioned. */
+    invariants?: string
+    /** Oracle and grading policy. */
+    evaluation?: string
+    /** Fingerprint of everything above plus the source revision; resume requires a match. */
+    harness?: string
+  }
   /** sha256 of the capture settings; settings never contain credentials in capture. */
   settingsDigest: string
   corpus: { id: string; name: string; total: number; excluded: number }
@@ -158,10 +191,28 @@ export interface DevProgress {
 export interface DevApi {
   importQuestions(): Promise<DevImportPreview | null>
   listRuns(): Promise<DevRunListing[]>
-  resumeRun(
-    runId: string
-  ): Promise<{ corpus: DevImportPreview; next: number; results: DevSummary[] }>
+  resumeRun(runId: string): Promise<{
+    corpus: DevImportPreview
+    next: number
+    results: DevSummary[]
+    /** Saved cases that were rejected and will be captured again, with reasons. */
+    invalid: Array<{ index: number; reason: string }>
+  }>
+  /** Open any run read-only, completed runs included, without running it again. */
+  openRun(runId: string): Promise<{
+    corpus: DevImportPreview
+    header: DevRunHeader
+    state: DevRunListing['state']
+    results: DevSummary[]
+    invalid: Array<{ index: number; reason: string }>
+  }>
   compareWith(): Promise<DevComparison | null>
+  /** A further page of the last comparison's changed questions. */
+  comparePage(offset: number): Promise<{
+    changed: DevComparison['changed']
+    page: DevComparison['page']
+    totalChanged: number
+  }>
   chooseProject(): Promise<string | null>
   setProjectKind(kind: 'sample' | 'none'): Promise<void>
   start(input: {
@@ -177,7 +228,7 @@ export interface DevApi {
   }): Promise<{
     path: string
     records: number
-    redaction?: { replacements: Record<string, number> }
+    redaction?: { replacements: Record<string, number>; limitations: readonly string[] }
   } | null>
   onProgress(listener: (event: DevProgress) => void): () => void
 }
@@ -189,21 +240,41 @@ export interface DevRunListing {
   total: number
   completed: number
   state: 'running' | 'completed' | 'stopped' | 'interrupted'
+  gitSha?: string
+  mode?: 'ask' | 'agent'
+  context?: number
+  fixture?: string
+  bytes?: number
 }
 
 export interface DevComparison {
   file: string
+  /** Whether the two runs differ only in the code under test. */
+  compatibility: {
+    status: 'controlled' | 'confounded' | 'legacy'
+    confounders: string[]
+    controlled: string[]
+  }
+  /** v1 records given content IDs; duplicated texts whose occurrence pairing is uncertain. */
+  identity: { legacyMigrated: number; ambiguous: string[] }
   matched: number
   added: string[]
   removed: string[]
+  /** One page of changed questions; totalChanged counts all of them. */
   changed: Array<{
     questionId: string
     sourceLine: number
     question: string
-    changes: Record<string, { before: unknown; after: unknown }>
+    changes: Record<string, { before: unknown; after: unknown; detail?: string }>
   }>
+  totalChanged: number
+  page: { offset: number; size: number; returned: number }
+  /** The complete comparison, saved beside the run. */
+  savedTo: string
   byField: Record<string, number>
+  byCategory: Record<string, number>
   transitions: Record<string, number>
+  duplicates: { before: string[]; after: string[] }
 }
 
 const ZERO_PHASES = { routeMs: 0, resolveMs: 0, promptMs: 0, toBoundaryMs: 0 }
@@ -218,6 +289,7 @@ export function readCaptureRecord(record: Record<string, unknown>): DevResult {
   return {
     index: Number(record.index ?? 0),
     questionId: String(record.questionId ?? `v1-${record.index ?? 0}`),
+    ...(record.questionId ? {} : { identity: 'v1-index' as const }),
     sourceLine: Number(record.index ?? 0) + 1,
     question: String(record.question ?? ''),
     status,

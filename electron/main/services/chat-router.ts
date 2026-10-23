@@ -17,6 +17,7 @@ import { routeHeuristic, routeMessage } from './router'
 import { learnedRouteFor, readRoutingCorrections, routingExamples } from './routing-feedback'
 import {
   agentForFollowUp,
+  asksForCodeDestination,
   asksForRecommendations,
   asksForPlan,
   asksForVerification,
@@ -30,7 +31,12 @@ import {
   chatAgentForTurn
 } from '../../../src/shared/agent-contract'
 import { CONTEXT_HEADROOM_BYTES, inferenceBudgetBytes } from './vram-fit'
-import { forbidsMutation, requestTextForIntent } from '../../../src/shared/task-interpretation'
+import {
+  COMMAND_OPERAND,
+  effectConstraints,
+  isQuotedContentOnly,
+  requestTextForIntent
+} from '../../../src/shared/task-interpretation'
 
 /** A custom agent must be at least this sure to replace the roster role. */
 const CUSTOM_AGENT_MIN_CONFIDENCE = 0.75
@@ -191,9 +197,24 @@ export function classifyIntentTraced(
   fileNames: string[] = []
 ): { intent: ChatIntent; rule: string } {
   const result = classifyIntentRule(text, mode, fileNames)
-  if ((result.intent === 'edit' || result.intent === 'run') && forbidsMutation(text))
+  if (result.intent !== 'edit' && result.intent !== 'run') return result
+  // Each prohibition removes only the effect it names: “fix it but do not run tests”
+  // is still an edit; “run the tests without changing files” is still a check.
+  const forbidden = effectConstraints(text)
+  if (result.intent === 'edit' && forbidden.edit)
     return { intent: 'explore', rule: `negated-mutation:${result.rule}` }
+  if (result.intent === 'run' && (forbidden.execution || forbidden.verification))
+    return { intent: 'explore', rule: `negated-mutation:${result.rule}` }
+  if (result.intent === 'run' && forbidden.edit && asksToRunChecks(text))
+    return { intent: 'verify', rule: `no-edit-check:${result.rule}` }
   return result
+}
+
+/** “Run the tests”, “run typecheck”: a check rather than an arbitrary command. */
+function asksToRunChecks(text: string): boolean {
+  return /\b(?:run|execute)\b[\s\S]{0,24}\b(?:tests?|specs?|typecheck|lint|checks?)\b/i.test(
+    requestTextForIntent(text)
+  )
 }
 
 function classifyIntentRule(
@@ -202,7 +223,9 @@ function classifyIntentRule(
   fileNames: string[] = []
 ): { intent: ChatIntent; rule: string } {
   // Quoted strings and code blocks are content; their verbs are not the request.
-  const text = requestTextForIntent(rawText) || rawText
+  // A message that is only quoted content has no instruction to act on.
+  if (isQuotedContentOnly(rawText)) return { intent: 'answer', rule: 'quoted-content-only' }
+  const text = requestTextForIntent(rawText)
   if (isErisCapabilityQuestion(text)) return { intent: 'capability', rule: 'capability-question' }
   if (needsWebLookup(text)) return { intent: 'explore', rule: 'web-lookup' }
   if (
@@ -224,6 +247,11 @@ function classifyIntentRule(
   )
     return { intent: 'edit', rule: 'implement-changes' }
 
+  // “Run `npm test`”: the unquoted verb binds the quoted command as its operand.
+  if (
+    new RegExp(`\\b(?:run|execute)\\s+(?:the\\s+)?(?:command\\s+)?${COMMAND_OPERAND}`, 'i').test(t)
+  )
+    return { intent: 'run', rule: 'quoted-command' }
   if (
     /\b(npm (test|run|start|install)|yarn |pnpm |bun |pytest|cargo test|docker )\b/i.test(t) ||
     // Makefile targets only — not "make a new app/project"
@@ -238,6 +266,14 @@ function classifyIntentRule(
     return { intent: 'run', rule: 'command' }
   }
 
+  // An edit verb with a named file or the open project as its destination.
+  if (
+    /^(?:please\s+)?(?:add|update|change|modify|insert|remove|delete|rename|move|replace|write|put|append)\b/i.test(
+      t
+    ) &&
+    asksForCodeDestination(t)
+  )
+    return { intent: 'edit', rule: 'named-destination' }
   if (asksForImageGeneration(t)) return { intent: 'edit', rule: 'image-generation' }
   // In Agent mode, natural implementation requests such as “show me how to add”
   // and “I need to implement … how would you approach it?” must reach Composer.

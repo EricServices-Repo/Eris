@@ -36,6 +36,15 @@ export interface TaskRecommendation {
   source: string
   /** Workspace paths the recommendation names. */
   targets?: string[]
+  /** The heading it appeared under, lowercased. */
+  section?: string
+}
+
+/** How one selected recommendation ended; every selected item gets exactly one. */
+export interface RecommendationStatus {
+  id: string
+  state: 'completed' | 'deferred' | 'blocked' | 'pending'
+  reason?: string
 }
 
 export interface TaskTurnResult {
@@ -44,6 +53,8 @@ export interface TaskTurnResult {
   offeredRecommendations: TaskRecommendation[]
   changedFiles: string[]
   answerDigest: string
+  /** Per-recommendation accounting for a turn that implemented earlier recommendations. */
+  recommendationStatus?: RecommendationStatus[]
 }
 
 /** How the resolver reached the final intent. Stable rule IDs, not prose. */
@@ -75,8 +86,27 @@ export interface TaskInterpretation {
   /** Explicit language and framework requirements from the request text. */
   language: string | null
   frameworks: string[]
-  /** Request explicitly forbids workspace edits or commands ("do not edit"). */
+  /** Language being converted from (“convert this Python to TypeScript”); language is the target. */
+  sourceLanguage?: string | null
+  /** Several explicitly named languages without a stated target. */
+  languageAmbiguity?: string[]
+  /** Request explicitly forbids workspace edits ("do not edit", "without changing files"). */
   forbidsMutation: boolean
+  /**
+   * Each effect the request forbids, with the phrase that forbade it. Absent on
+   * contracts saved before effects were separated, and when nothing is forbidden.
+   */
+  constraints?: {
+    edit: boolean
+    verification: boolean
+    execution: boolean
+    commit: boolean
+    external: boolean
+    trace: Array<{
+      phrase: string
+      effects: Array<'edit' | 'verification' | 'execution' | 'commit' | 'external'>
+    }>
+  }
   /** Observed project stack, compared with the requested one. */
   projectStack?: ProjectStack | null
   stackFit?: 'match' | 'mismatch' | 'unknown' | 'not-applicable'
@@ -116,6 +146,12 @@ export interface TaskContract {
   skillIds?: string[]
   /** Recommendations this follow-up refers to (“implement those”), resolved at intake. */
   recommendations: TaskRecommendation[]
+  /** How the follow-up selected them: all, by number, by name, or all except some. */
+  recommendationSelection?: {
+    mode: 'all' | 'numbered' | 'named' | 'except'
+    excludedIds: string[]
+    unresolved?: string
+  }
   acceptanceCriteria: string[]
   /** Set when this turn continues an earlier task in the same thread and project. */
   continuation?: {
@@ -187,7 +223,16 @@ export function taskContractConflicts(contract: TaskContract): string[] {
       conflicts.push('A workspace destination requires edit authority.')
     if (interpretation.artifact === 'patch' && deliverable !== 'patch')
       conflicts.push('A patch artifact requires a patch deliverable.')
-    if (interpretation.forbidsMutation && (authority.edit || authority.execute === 'approved'))
+    const constraints = interpretation.constraints
+    if (constraints) {
+      if (constraints.edit && authority.edit)
+        conflicts.push('The request forbids edits, but the contract grants them.')
+      if ((constraints.execution || constraints.verification) && authority.execute !== 'none')
+        conflicts.push('The request forbids running commands, but the contract grants it.')
+    } else if (
+      interpretation.forbidsMutation &&
+      (authority.edit || authority.execute === 'approved')
+    )
       conflicts.push('The request forbids changes, but the contract grants them.')
   }
   return conflicts
