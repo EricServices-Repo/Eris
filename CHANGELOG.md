@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.10 — 2026-10-23
+
+- Rebuild the macOS desktop app with the latest agent architecture safeguards.
+
+## 0.4.9 — 2026-10-22
+
+- Serialize overlapping project edits, detect stale inspected files, and record context compilation manifests.
+
 ## 0.4.8 — 2026-10-22
 
 Cross-platform desktop builds (macOS + Windows) from the same version tag.
