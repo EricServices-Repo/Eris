@@ -82,6 +82,28 @@ function fence(label: string, path: string, language: string, content: string, m
   return `${label}: ${path}\n\`\`\`${language}\n${content.slice(0, max)}\n\`\`\``
 }
 
+/**
+ * Shared rules and workspace rules exactly as buildChatMessages inserts them.
+ * Worker prompts carry these in their own required block and drop these copies.
+ */
+export function sharedPromptBlocks(
+  workspacePath: string | null,
+  settings: AppSettings,
+  mode: ChatPromptInput['mode']
+): { systemPrompt: string; rules: string } {
+  const lean = mode === 'agent'
+  let rules = ''
+  try {
+    rules = loadWorkspaceRules(workspacePath)
+  } catch {
+    rules = ''
+  }
+  return {
+    systemPrompt: settings.agent.systemPrompt.slice(0, lean ? 2000 : 5000),
+    rules: rules ? `Workspace rules:\n${cap(rules, lean ? 1800 : 6000)}` : ''
+  }
+}
+
 /** Assemble system context + history + user turn for a chat request. */
 export function buildChatMessages(
   workspacePath: string | null,
@@ -90,7 +112,7 @@ export function buildChatMessages(
 ): BuiltChatMessage[] {
   // Agent turns are leaner so builtin 4k/8k windows keep room for tool output.
   const lean = input.mode === 'agent'
-  const rulesCap = lean ? 1800 : 6000
+  const shared = sharedPromptBlocks(workspacePath, settings, input.mode)
   const openCap = lean ? 2500 : 10000
   const importCap = lean ? 3000 : 16000
   const importMaxFiles = lean ? 2 : 8
@@ -102,19 +124,13 @@ export function buildChatMessages(
     contract
       ? `AGENT CONTRACT — ${contract.name}\nJob: ${contract.job}\nTools: ${contract.tools}. ${contract.doesNot}\nDone when: ${contract.done}`
       : '',
-    settings.agent.systemPrompt.slice(0, lean ? 2000 : 5000),
+    shared.systemPrompt,
     agent
       ? `You are the “${agent.name}” ${isOrchestrator ? 'orchestrator' : 'subagent'}.\n${agent.systemPrompt.slice(0, lean ? 2800 : 8000)}`
       : `You are the “${input.agentName || input.agentId}” agent.`
   ].filter(Boolean)
 
-  let rules = ''
-  try {
-    rules = loadWorkspaceRules(workspacePath)
-  } catch {
-    rules = ''
-  }
-  if (rules) parts.push(`Workspace rules:\n${cap(rules, rulesCap)}`)
+  if (shared.rules) parts.push(shared.rules)
 
   let pin = ''
   try {

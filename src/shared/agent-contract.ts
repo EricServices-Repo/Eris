@@ -138,10 +138,80 @@ export function asksForPlan(text: string): boolean {
   )
 }
 
-/** The user wants the implementation tested or validated, not merely reviewed. */
-export function asksForVerification(text: string): boolean {
+/**
+ * The request leads with producing something (code, an example, an implementation).
+ * Later verification words then describe the artifact, not the controlling action.
+ */
+function leadsWithArtifactRequest(text: string): boolean {
+  return (
+    /^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:write|implement|build|create|generate|draft|sketch|code|scaffold|design)\b/i.test(
+      text
+    ) ||
+    /^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:show|give)\s+(?:me\s+)?(?:an?\s+|the\s+|some\s+)?(?:\w+\s+){0,3}?(?:example|sample|snippet|implementation|code|version|demo|how)\b/i.test(
+      text
+    ) ||
+    /^(?:i\s+(?:need|want|would like)\s+to|help me(?:\s+to)?)\s+(?:implement|write|build|create|add|design)\b/i.test(
+      text
+    )
+  )
+}
+
+/**
+ * Remove verification words that describe a feature rather than request a check:
+ * relative clauses (“health checks that verify dependencies”) and noun modifiers
+ * (“seeding realistic test data”, “good test coverage”).
+ */
+function withoutFeatureVerificationNouns(text: string): string {
+  return text
+    .replace(
+      /\b(?:that|which|who)\s+(?:verif(?:y|ies)|validates?|tests?|checks?|confirms?)\b[^.?!;]*/gi,
+      ' '
+    )
+    .replace(
+      /\btest\s+(?:data|coverage|fixtures?|doubles?|harness(?:es)?|accounts?|users?|environments?|records?|seeds?)\b/gi,
+      ' '
+    )
+    .replace(/\bhealth\s+checks?\b/gi, ' ')
+}
+
+/**
+ * A self-contained code artifact for chat: “show a TypeScript example”, “write a Java
+ * version of …”. A named file or the open project as destination makes it a patch instead.
+ */
+export function asksForCodeExample(text: string): boolean {
   const t = text.trim()
   if (!t || asksToImplementChanges(t)) return false
+  if (asksForCodeDestination(t)) return false
+  const artifact =
+    /\b(?:example|sample|snippet|demo|function|implementation|version|code|class|module|middleware|endpoint|script|component)\b/i
+  const producing =
+    /\b(?:write|generate|show|give|create|build|implement|draft|sketch|provide|turn)\b/i
+  return producing.test(t) && artifact.test(t)
+}
+
+/** The request names where code should land: a file path, the open project, or “here”. */
+export function asksForCodeDestination(text: string): boolean {
+  return (
+    /\b(?:to|in|into|inside)\s+(?:the\s+)?[\w./-]+\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|swift|php|cs|cpp|c|h|vue|svelte|css|html|json|ya?ml|toml|sql)\b/i.test(
+      text
+    ) ||
+    /\b(?:to|in|into|inside)\s+(?:this|our|my|the)\s+(?:project|repo|repository|codebase|workspace|app|application|folder)\b/i.test(
+      text
+    ) ||
+    /\b(?:add|apply|put|save)\s+it\b/i.test(text) ||
+    /\b(?:build|create|scaffold)\b[\s\S]{0,40}\bhere\b/i.test(text)
+  )
+}
+
+/** The user wants the implementation tested or validated, not merely reviewed. */
+export function asksForVerification(text: string): boolean {
+  const raw = text.trim()
+  if (!raw || asksToImplementChanges(raw)) return false
+  // “Write an implementation of seeding test data” asks for code. Combined
+  // implement-and-test requests keep the implementation as the controlling action.
+  if (leadsWithArtifactRequest(raw)) return false
+  const t = withoutFeatureVerificationNouns(raw).trim()
+  if (!t) return false
   if (
     /\b(?:fix|change|edit|implement|update|apply|repair)\b[\s\S]{0,32}\b(?:code|file|bug|feature|issue|failure|error|changes?|it|this|that)\b/i.test(
       t
@@ -308,6 +378,8 @@ export function chatAgentForTurn(options: {
   if (options.intent === 'edit' || options.intent === 'run') return 'composer'
   if (options.intent === 'explore') return shortLookup ? 'fast' : 'explainer'
   if (explains) return 'explainer'
+  // A requested code artifact needs room for the implementation, however short the ask.
+  if (asksForCodeExample(text)) return 'explainer'
   if (text.length > 0 && text.length < 80) return 'fast'
   return 'explainer'
 }

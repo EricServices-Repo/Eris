@@ -13,6 +13,7 @@ import { formatWorkspaceContextPrompt } from '../workspace-context'
 import { workspaceTree } from '../workspace-fs'
 import { contractForAgent } from '../../../../src/shared/agent-contract'
 import { workerConversation } from './conversation'
+import { sharedPromptBlocks } from '../chat-prompt'
 import type { AgentChatMessage } from './types'
 
 /**
@@ -199,7 +200,7 @@ export function intentPlaybook(intent: ChatIntent | string, greenfield: boolean)
     case 'edit':
       return (
         `EDIT PLAYBOOK — (1) retrieve/grep to find the right files, (2) read_file, ` +
-        `(3) search_replace or write_file, (4) run verify (test/typecheck), (5) fix failures, ` +
+        `(3) search_replace or write_file, (4) verify with run, limited to test, typecheck, or lint commands, (5) fix failures, ` +
         `(6) DONE summary of what changed. Keep using tools until the request is fully done.`
       )
     case 'run':
@@ -258,6 +259,25 @@ export function buildWorkspaceToolsSystem(
   return parts.join('\n\n')
 }
 
+/**
+ * The task guidance block already carries the shared and workspace rules. Drop the
+ * chat prompt's copies by their exact generated text so each appears once.
+ */
+export function withoutSharedBlocks(
+  priorSystem: string,
+  workspacePath: string | null,
+  settings: AppSettings
+): string {
+  let out = priorSystem
+  for (const mode of ['agent', 'ask'] as const) {
+    const shared = sharedPromptBlocks(workspacePath, settings, mode)
+    for (const block of [shared.systemPrompt, shared.rules]) {
+      if (block && out.includes(block)) out = out.replace(block, '')
+    }
+  }
+  return out.replace(/\n{3,}/g, '\n\n').trim()
+}
+
 export function buildPreservedWorkerMessages(options: {
   messages: AgentChatMessage[]
   workspacePath: string
@@ -277,8 +297,9 @@ export function buildPreservedWorkerMessages(options: {
   if (options.plan.task) {
     const compiled = compileTaskContext({
       task: options.plan.task,
+      toolsAvailable: options.plan.toolPolicy !== 'none',
       guidance: `${options.settings.agent.systemPrompt}\n${loadWorkspaceRules(options.workspacePath)}\n${options.plan.task.skillIds?.length ? loadSkillsPrompt(options.workspacePath, options.plan.task.skillIds) : ''}\n${findAgent(options.workspacePath, options.plan.agentId)?.builtin === false ? findAgent(options.workspacePath, options.plan.agentId)?.systemPrompt : ''}\n${contract ? `Role: ${contract.name}. ${contract.job} ${contract.done}` : ''}\n${playbook}`,
-      project: priorSystem,
+      project: withoutSharedBlocks(priorSystem, options.workspacePath, options.settings),
       retrieval: options.retrievalHint,
       maxInputTokens:
         options.inputTokenBudget ?? contextBudgetTokens(options.settings, options.plan.models.tools)

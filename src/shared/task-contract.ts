@@ -35,3 +35,23 @@ export function intersectToolPolicy(
   const levels: AgentToolsCeiling[] = ['none', 'read', 'edit', 'full']
   return levels[Math.min(levels.indexOf(policy), levels.indexOf(contract.authority.tools))]!
 }
+
+/**
+ * Internally impossible contracts: a deliverable or acceptance rule the granted
+ * authority cannot satisfy. Callers reject these before inference.
+ */
+export function taskContractConflicts(contract: TaskContract): string[] {
+  const conflicts: string[] = []
+  const { authority, deliverable } = contract
+  if (deliverable === 'patch' && !authority.edit)
+    conflicts.push('A patch deliverable requires edit authority.')
+  if (authority.edit && authority.tools !== 'edit' && authority.tools !== 'full')
+    conflicts.push('Edit authority exceeds the tool ceiling.')
+  if (authority.execute === 'approved' && authority.tools !== 'full')
+    conflicts.push('Approved execution requires the full tool ceiling.')
+  if (authority.externalEffects && authority.tools !== 'full')
+    conflicts.push('External effects require the full tool ceiling.')
+  if (deliverable === 'answer' && authority.tools === 'none' && authority.execute !== 'none')
+    conflicts.push('A tool-free answer cannot execute commands.')
+  return conflicts
+}

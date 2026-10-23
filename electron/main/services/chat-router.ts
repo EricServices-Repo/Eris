@@ -143,11 +143,22 @@ export function intentNeedsMutation(intent: ChatIntent): boolean {
 export function isErisCapabilityQuestion(text: string): boolean {
   const t = text.trim()
   if (!t) return false
-  if (
-    /\b(what|which|list|show|name)\b[\s\S]{0,48}\b(ai\s+)?models?\b/i.test(t) ||
-    /\b(ai\s+)?models?\b[\s\S]{0,48}\b(access|available|have|installed|connected|ready|using|use)\b/i.test(
+  const inferenceContext =
+    /\b(ai|llm|llms|language|inference|gguf|local|cloud|ollama|openai|anthropic|claude|gpt|composer|eris|providers?)\b/i.test(
       t
     )
+  // “Design the data model and API” is application design, not the model catalog.
+  const domainModel =
+    /\b(data|domain|database|db|orm|object|entity|schema|view|mental|threat|business|pricing|relational|django|rails|sequelize|prisma|mongoose)\s+models?\b/i.test(
+      t
+    ) || /\bmodels?\s+(?:and|&)\s+(?:an?\s+)?(?:api|apis|schema|endpoints?|routes?)\b/i.test(t)
+  if (domainModel && !inferenceContext) return false
+  if (
+    /\b(what|which|list|show|name)\b[\s\S]{0,48}\b(ai\s+)?models?\b/i.test(t) ||
+    /\b(ai\s+)?models?\b[\s\S]{0,48}\b(access|available|installed|connected|ready)\b/i.test(t) ||
+    // “use/have” is too common in design questions to stand alone.
+    ((inferenceContext || /\byou\b/i.test(t)) &&
+      /\bmodels?\b[\s\S]{0,48}\b(have|using|use)\b/i.test(t))
   ) {
     return true
   }
@@ -719,12 +730,14 @@ export async function planChatTurn(options: {
   }
 
   // Capability always wins over LLM misclassifies
-  if (isErisCapabilityQuestion(text)) intent = 'capability'
+  if (isErisCapabilityQuestion(text) && !options.context.resolvedIntent) intent = 'capability'
 
   // Explicit specialist asks outrank router hints and learned corrections.
   // A pinned agent still remains the user's selected role.
-  const explicitSpecialistIntent =
-    !isErisCapabilityQuestion(text) && asksForPlan(text)
+  // A resolved interpretation is final; worker selection must not re-read keywords over it.
+  const explicitSpecialistIntent = options.context.resolvedIntent
+    ? null
+    : !isErisCapabilityQuestion(text) && asksForPlan(text)
       ? 'plan'
       : !isErisCapabilityQuestion(text) && asksForVerification(text)
         ? 'verify'
@@ -929,6 +942,17 @@ function executionPlanFor(
     return {
       steps: ['Check Eris model and provider catalog'],
       doneWhen: 'Answer from the current catalog.'
+    }
+  }
+  // A tool-free answer cannot inspect, mutate, or verify. Its plan is the reply itself.
+  if (intent === 'answer') {
+    return {
+      steps: [
+        'Identify the requested deliverable, language, and constraints',
+        'Answer directly; when code is requested, include a complete example with its dependencies and limitations'
+      ],
+      doneWhen:
+        'The question is answered in chat. No workspace edits, command runs, or verification are claimed.'
     }
   }
   if (intent === 'plan') {

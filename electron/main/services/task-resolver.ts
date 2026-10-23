@@ -1,6 +1,7 @@
 import type { AppSettings, ChatIntent } from '../../../src/shared/settings-schema'
 import { streamModelChat } from './chat-runtime'
 import {
+  asksForCodeExample,
   asksForRecommendations,
   asksForPlan,
   asksForVerification,
@@ -120,5 +121,15 @@ export async function resolveTaskIntent(input: {
     clearTimeout(timeout)
     input.signal?.removeEventListener('abort', cancel)
   }
-  return input.fallback === 'edit' ? 'plan' : input.fallback === 'run' ? 'explore' : input.fallback
+  return conservativeFallback(input.text, input.fallback)
+}
+
+/**
+ * Without a confident semantic decision, mutation fallbacks lose their effects.
+ * A requested code example stays a chat answer rather than becoming a plan of future work.
+ */
+export function conservativeFallback(text: string, fallback: ChatIntent): ChatIntent {
+  if (fallback === 'edit') return asksForCodeExample(text) ? 'answer' : 'plan'
+  if (fallback === 'run') return 'explore'
+  return fallback
 }

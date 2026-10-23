@@ -164,6 +164,21 @@ export function createTaskContract(input: {
       : []
   const policy =
     input.plan.mode === 'ask' && input.plan.toolPolicy !== 'none' ? 'read' : input.plan.toolPolicy
+  const canEdit = policy === 'edit' || policy === 'full'
+  const deliverable = feasibleDeliverable(
+    input.plan.intent === 'edit'
+      ? input.plan.mode === 'ask'
+        ? 'answer'
+        : 'patch'
+      : input.plan.intent === 'run' || input.plan.intent === 'verify'
+        ? 'execution-report'
+        : input.plan.intent === 'review'
+          ? 'review'
+          : input.plan.intent === 'plan'
+            ? 'plan'
+            : 'answer',
+    canEdit
+  )
   return {
     version: 2,
     taskId: input.taskId ?? randomUUID(),
@@ -171,18 +186,7 @@ export function createTaskContract(input: {
     threadId: input.threadId ?? null,
     originalText: input.text,
     intent: input.plan.intent,
-    deliverable:
-      input.plan.intent === 'edit'
-        ? input.plan.mode === 'ask'
-          ? 'answer'
-          : 'patch'
-        : input.plan.intent === 'run' || input.plan.intent === 'verify'
-          ? 'execution-report'
-          : input.plan.intent === 'review'
-            ? 'review'
-            : input.plan.intent === 'plan'
-              ? 'plan'
-              : 'answer',
+    deliverable,
     scope: {
       workspaceRoot: root,
       projectRoot: selected,
@@ -194,21 +198,45 @@ export function createTaskContract(input: {
     },
     authority: {
       tools: policy,
-      edit: policy === 'edit' || policy === 'full',
+      edit: canEdit,
       execute:
         policy === 'full'
           ? 'approved'
-          : ['edit', 'review', 'verify'].includes(input.plan.intent) && input.plan.mode !== 'ask'
+          : policy !== 'none' &&
+              ['edit', 'review', 'verify'].includes(input.plan.intent) &&
+              input.plan.mode !== 'ask'
             ? 'verification'
             : 'none',
       externalEffects: policy === 'full'
     },
     skillIds: input.skillIds ?? input.priorTask?.skillIds,
     recommendations,
-    acceptanceCriteria: input.plan.executionPlan
-      ? [input.plan.executionPlan.doneWhen]
-      : [input.text]
+    acceptanceCriteria: acceptanceCriteriaFor(input.plan, deliverable, input.text)
   }
+}
+
+/** A patch the authority cannot write becomes a described change in chat. */
+function feasibleDeliverable(
+  deliverable: TaskContract['deliverable'],
+  canEdit: boolean
+): TaskContract['deliverable'] {
+  return deliverable === 'patch' && !canEdit ? 'answer' : deliverable
+}
+
+/**
+ * Acceptance follows the deliverable the authority can produce. A mutation plan's
+ * completion rule never applies to an answer that cannot edit or run anything.
+ */
+function acceptanceCriteriaFor(
+  plan: TurnPlan,
+  deliverable: TaskContract['deliverable'],
+  fallback: string
+): string[] {
+  if (deliverable === 'answer' && (plan.intent === 'edit' || plan.intent === 'run'))
+    return [
+      'The requested change is described or shown in chat without claiming it was applied or verified.'
+    ]
+  return plan.executionPlan ? [plan.executionPlan.doneWhen] : [fallback]
 }
 
 export function childTaskContract(
@@ -221,6 +249,19 @@ export function childTaskContract(
   const levels = ['none', 'read', 'edit', 'full'] as const
   const tools =
     levels[Math.min(levels.indexOf(parent.authority.tools), levels.indexOf(plan.toolPolicy))]!
+  const edit = parent.authority.edit && ['edit', 'full'].includes(tools)
+  const deliverable = feasibleDeliverable(
+    plan.intent === 'edit'
+      ? 'patch'
+      : plan.intent === 'review'
+        ? 'review'
+        : plan.intent === 'plan'
+          ? 'plan'
+          : plan.intent === 'run' || plan.intent === 'verify'
+            ? 'execution-report'
+            : 'answer',
+    edit
+  )
   const root = realpathSync(workspacePath)
   const relativeProject =
     parent.scope.workspaceRoot && parent.scope.projectRoot
@@ -235,22 +276,13 @@ export function childTaskContract(
     parentTaskId: parent.taskId,
     originalText: goal,
     intent: plan.intent,
-    deliverable:
-      plan.intent === 'edit'
-        ? 'patch'
-        : plan.intent === 'review'
-          ? 'review'
-          : plan.intent === 'plan'
-            ? 'plan'
-            : plan.intent === 'run' || plan.intent === 'verify'
-              ? 'execution-report'
-              : 'answer',
+    deliverable,
     scope: { ...parent.scope, workspaceRoot: root, projectRoot },
     authority: {
       tools,
-      edit: parent.authority.edit && ['edit', 'full'].includes(tools),
+      edit,
       execute:
-        parent.authority.execute === 'none'
+        parent.authority.execute === 'none' || tools === 'none'
           ? 'none'
           : tools === 'full'
             ? parent.authority.execute
@@ -259,6 +291,6 @@ export function childTaskContract(
               : 'none',
       externalEffects: parent.authority.externalEffects && tools === 'full'
     },
-    acceptanceCriteria: plan.executionPlan ? [plan.executionPlan.doneWhen] : [goal]
+    acceptanceCriteria: acceptanceCriteriaFor(plan, deliverable, goal)
   }
 }

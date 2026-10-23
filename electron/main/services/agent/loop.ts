@@ -100,7 +100,9 @@ import {
 import { isVerifyCommand } from '../command-approval'
 import { buildPreservedWorkerMessages, isReadOnlyChat, truncateForModel } from './prompts'
 import { createTaskContract, childTaskContract } from '../task-intake'
-import { intersectToolPolicy } from '../../../../src/shared/task-contract'
+import { intersectToolPolicy, taskContractConflicts } from '../../../../src/shared/task-contract'
+import { compileTaskContext } from './context-compiler'
+import { appendTaskEvent } from '../task-ledger'
 import { TaskToolGateway } from './tool-gateway'
 import {
   firstHttpsResult,
@@ -383,6 +385,22 @@ export async function* runAgentWithWorkspaceTools(options: {
     return
   }
 
+  const contractConflicts = taskContractConflicts(task)
+  if (contractConflicts.length > 0) {
+    logWarn('Agent blocked before inference', {
+      taskId: task.taskId,
+      reason: 'contract-conflict',
+      conflicts: contractConflicts
+    })
+    yield { type: 'progress', step: 0, actionLog: [], filesTouched: [], incomplete: true }
+    yield {
+      type: 'answer',
+      text: `This request's task contract is internally inconsistent, so no model was called: ${contractConflicts.join(' ')}`,
+      replace: true
+    }
+    return
+  }
+
   if (options.workspacePath && task.scope.state !== 'resolved') {
     logWarn('Agent blocked before inference', {
       taskId: task.taskId,
@@ -446,8 +464,7 @@ export async function* runAgentWithWorkspaceTools(options: {
             ? `Ask · ${plan.agentName}…`
             : `${plan.agentName}…`
     }
-    const askMessages = messages.map((m) => ({ ...m }))
-    const tips: string[] = [...(modelsCatalog ? [modelsCatalog] : []), `Routing: ${plan.reason}`]
+    const tips: string[] = [...(modelsCatalog ? [modelsCatalog] : [])]
     if (plan.executionPlan) {
       tips.push(
         `Task plan:\n${plan.executionPlan.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}\nDone when: ${plan.executionPlan.doneWhen}`
@@ -465,16 +482,28 @@ export async function* runAgentWithWorkspaceTools(options: {
           'Do not retrieve, tree, or search the workspace for “models”.'
       )
     }
-    const tip = tips.join('\n\n')
-    const idx = askMessages.findIndex((m) => m.role === 'system')
-    if (idx >= 0) {
-      askMessages[idx] = {
-        role: 'system',
-        content: `${askMessages[idx].content}\n\n${tip}`
-      }
-    } else {
-      askMessages.unshift({ role: 'system', content: tip })
-    }
+    // Answer-only turns compile the same task contract as tool workers, with a
+    // tool-free protocol, so task identity and permissions agree across branches.
+    const priorSystem = messages.find((m) => m.role === 'system')?.content || ''
+    const compiled = compileTaskContext({
+      task,
+      toolsAvailable: false,
+      guidance: tips.join('\n\n'),
+      project: priorSystem,
+      retrieval: '',
+      maxInputTokens: contextBudgetTokens(options.settings, chatModel)
+    })
+    appendTaskEvent(task.taskId, 'context-compiled', {
+      revision: task.revision,
+      agentId: plan.agentId,
+      model: chatModel,
+      blocks: compiled.blocks,
+      budget: compiled.budget
+    })
+    const askMessages = [
+      compiled.message,
+      ...messages.filter((m) => m.role !== 'system').map((m) => ({ ...m }))
+    ]
     const askSessionKey =
       isNativeGgufRef(chatModel) && options.jobId ? `gguf:${options.jobId}` : undefined
     let full = ''
@@ -593,12 +622,29 @@ export async function* runAgentWithWorkspaceTools(options: {
   )
   const discoveredBuiltinToolNames = new Set<string>()
   const discoveredMcpToolNames = new Set<string>()
+  // Disabled features and empty catalogs are omitted rather than offered and rejected.
+  const runtimeUnavailable = (name: string): boolean =>
+    (name === 'generate_image' && !options.settings.images?.enabled) ||
+    (name === 'search_mcp_tools' && mcpToolCount <= MAX_INLINE_MCP_TOOLS)
   const visibleComposerToolDefinitions = (): OpenAIToolDef[] =>
     COMPOSER_OPENAI_TOOLS.filter(
       (definition) =>
-        getToolContract(definition.function.name)?.discovery === 'core' ||
-        discoveredBuiltinToolNames.has(definition.function.name)
+        !runtimeUnavailable(definition.function.name) &&
+        (getToolContract(definition.function.name)?.discovery === 'core' ||
+          discoveredBuiltinToolNames.has(definition.function.name))
     )
+  // Reviewer and Verification, and edit tasks whose contract grants verification,
+  // see a run tool limited to test/typecheck/lint commands by the gateway.
+  const verificationRunAllowed = (): boolean =>
+    mode !== 'ask' &&
+    (plan.agentId === 'reviewer' ||
+      plan.agentId === 'verifier' ||
+      (task.authority.edit && task.authority.execute === 'verification'))
+  const ensureVerificationRunTool = () => {
+    if (!verificationRunAllowed() || openaiTools.some((t) => t.function.name === 'run')) return
+    const runTool = COMPOSER_OPENAI_TOOLS.find((t) => t.function.name === 'run')
+    if (runTool) openaiTools.push(runTool)
+  }
   const visibleMcpToolDefinitions = (): OpenAIToolDef[] =>
     mcpToolCount <= MAX_INLINE_MCP_TOOLS
       ? mcpToolDefinitions
@@ -610,14 +656,7 @@ export async function* runAgentWithWorkspaceTools(options: {
     plan.toolPolicy,
     mcpReadOnlyTools
   )
-  if (
-    mode !== 'ask' &&
-    (plan.agentId === 'reviewer' || plan.agentId === 'verifier') &&
-    !openaiTools.some((t) => t.function.name === 'run')
-  ) {
-    const runTool = COMPOSER_OPENAI_TOOLS.find((t) => t.function.name === 'run')
-    if (runTool) openaiTools.push(runTool)
-  }
+  ensureVerificationRunTool()
   let promptBudget =
     contextBudgetTokens(options.settings, workerModel) -
     Math.ceil(JSON.stringify(openaiTools).length / 3) -
@@ -1000,14 +1039,7 @@ export async function* runAgentWithWorkspaceTools(options: {
           mcpReadOnlyTools
         )
       )
-      if (
-        mode !== 'ask' &&
-        (plan.agentId === 'reviewer' || plan.agentId === 'verifier') &&
-        !openaiTools.some((tool) => tool.function.name === 'run')
-      ) {
-        const runTool = COMPOSER_OPENAI_TOOLS.find((tool) => tool.function.name === 'run')
-        if (runTool) openaiTools.push(runTool)
-      }
+      ensureVerificationRunTool()
       const reason = `${decision.reason} after ${trigger}`
       // Install the new agent's actual instructions, not just its display name.
       // Retain execution evidence and the original task's authority ceiling.
@@ -2096,10 +2128,7 @@ export async function* runAgentWithWorkspaceTools(options: {
             )
             continue
           }
-          const verificationRun =
-            mode !== 'ask' &&
-            call.name === 'run' &&
-            (plan.agentId === 'reviewer' || plan.agentId === 'verifier')
+          const verificationRun = call.name === 'run' && verificationRunAllowed()
           if (verificationRun && !isVerifyCommand(argString(call.args, 'command'))) {
             yield {
               type: 'tool',
@@ -2111,15 +2140,15 @@ export async function* runAgentWithWorkspaceTools(options: {
                 changedResources: [],
                 durationMs: Date.now() - toolStartedAt,
                 failure: toolFailureMetadata(
-                  'Read-only verification agents can only run tests, typecheck, or lint',
+                  'Verification runs may only use test, typecheck, or lint commands',
                   toolEffect
                 ),
-                detail: 'Read-only verification agents can only run tests, typecheck, or lint'
+                detail: 'Verification runs may only use test, typecheck, or lint commands'
               }
             }
             resultParts.push(
-              'TOOL_RESULT run: blocked. Reviewer and Verification may only run test, typecheck, or lint commands (npm test, npm run typecheck, npx tsc, pytest, cargo test).\n' +
-                `RECOVERY: ${toolFailureRecovery('run', 'Read-only verification agents can only run tests, typecheck, or lint')}`
+              'TOOL_RESULT run: blocked. This task may only run test, typecheck, or lint commands (npm test, npm run typecheck, npx tsc, pytest, cargo test).\n' +
+                `RECOVERY: ${toolFailureRecovery('run', 'Verification runs may only use test, typecheck, or lint commands')}`
             )
             continue
           }
