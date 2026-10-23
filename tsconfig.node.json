@@ -26,6 +26,7 @@
     "resources/agents.json",
     "src/features/chat/thinking-summary.ts",
     "tests/**/*",
-    "vitest.config.ts"
+    "vitest.config.ts",
+    "electron.dev.config.ts"
   ]
 }

@@ -13,3 +13,6 @@ release
 *.tsbuildinfo
 # Built-in Eris → Eris-feedback credential (CI injects; never commit)
 resources/eris-feedback-token
+
+out-dev/
+dist-dev/
