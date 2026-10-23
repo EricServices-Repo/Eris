@@ -2,6 +2,18 @@ import { describe, expect, it } from 'vitest'
 import { promoteThinkingToAnswer, stripAnswerFromThinking } from '../src/shared/posted-answer'
 
 describe('promoteThinkingToAnswer', () => {
+  const routing =
+    'Route: Auto → Composer · edit · local:qwen25-coder-7b\nPlan: Inspect affected code and project rules → Make the requested changes → Run relevant verification → Summarize the diff.'
+  it.each(['Could not identify the requested project.', 'No agents configured', 'Done.'])(
+    'keeps an explicit answer even when routing text is longer: %s',
+    (answer) => {
+      expect(promoteThinkingToAnswer(answer, routing)).toBe(answer)
+    }
+  )
+  it('does not present routing or a plan preamble as a missing answer', () => {
+    expect(promoteThinkingToAnswer('', routing)).toBe('')
+  })
+
   it('posts the thinking reply when the body is only the tool log', () => {
     const thinking =
       'This project is a calculator. src/main.ts adds numbers and src/App.tsx draws the keypad.'
@@ -20,6 +32,11 @@ describe('promoteThinkingToAnswer', () => {
     const answer = 'This project is a calculator in src/main.ts and the keypad is in src/App.tsx.'
     expect(stripAnswerFromThinking(answer, answer)).toBe('')
     expect(stripAnswerFromThinking(`Route: Auto\n\n${answer}`, answer)).toBe('Route: Auto')
-    expect(stripAnswerFromThinking('This is the whole reply in a paragraph.', 'This is the whole reply in a paragraph.')).toBe('')
+    expect(
+      stripAnswerFromThinking(
+        'This is the whole reply in a paragraph.',
+        'This is the whole reply in a paragraph.'
+      )
+    ).toBe('')
   })
 })

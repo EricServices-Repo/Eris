@@ -524,6 +524,8 @@ Each package should become one or more focused changes. “P0” means prerequis
 
 ### ARCH-05 — Capability and context manifest · P1
 
+**2026-10-22 implementation increment:** `agent/context-compiler.ts` now returns metadata for every block, including empty/omitted blocks: source/included character counts, omitted counts, required status, truncation reason, and source/included digests. Separator characters count against the enforced budget. `agent/prompts.ts` persists this manifest as a `context-compiled` ledger event with task revision, worker and model. Raw prompt/source text is not added to this event. The budget is explicitly a character estimate for the compiled system context, not a tokenizer measurement or the complete serialized provider request. Backend capability snapshots, tokenizer integration and final request manifests remain open.
+
 **Problem:** configured capabilities and estimated token budgets conceal actual request composition. **Change:** versioned backend/template capabilities, tokenizer-aware budgeting where possible, and context manifests. **Touchpoints:** `model-catalog.ts`, `model-protocol.ts`, `context-compiler.ts`, `context-budget.ts`, `compaction.ts`.
 
 **Acceptance:** a small-context local model preserves task authority and pending exchanges or fails explicitly; diagnostics explain omitted evidence and final serialized size; unsupported schema features produce an actionable fallback/error. **Dependency:** ARCH-04.
@@ -535,6 +537,8 @@ Each package should become one or more focused changes. “P0” means prerequis
 **Acceptance:** one failed required child makes the parent partial/failed; optional failure is disclosed; an unapplied worktree patch is never reported as integrated; waiting parents do not consume child capacity. **Dependency:** ARCH-02/03.
 
 ### ARCH-07 — Overlap-aware execution and edit receipts · P0
+
+**2026-10-22 implementation increment:** `agent/task-scheduler.ts` serializes overlapping canonical roots (including workspace/subproject and symlink aliases) across in-process workers. Independent sibling projects can proceed concurrently; older overlapping waiters retain priority, and cancelled waiters are removed. `agent/tool-gateway.ts` uses canonical read-hash keys, rejects files deleted since inspection, and retains a new baseline after successful mutations to detect subsequent external changes. The existing post-lease authorization check remains in place. These are process-local safeguards, not filesystem transactions: editor-buffer version checks, cross-process locking, durable operation receipts and recoverable multi-file groups remain open.
 
 **Problem:** project-key leases and read hashes do not supply cross-root transactions or durable effect idempotency. **Change:** canonical resource sets, operation receipts, document-version preconditions, and recoverable edit groups. **Touchpoints:** `task-scheduler.ts`, `tool-gateway.ts`, `workspace-fs.ts`, `checkpoints.ts`, document state.
 

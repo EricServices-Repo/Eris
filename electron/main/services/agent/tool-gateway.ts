@@ -45,7 +45,7 @@ export class TaskToolGateway {
   }
   rememberRead(path: string, complete = true): void {
     try {
-      const abs = resolveInWorkspace(this.task.scope.workspaceRoot!, path)
+      const abs = realpathAllowMissing(resolveInWorkspace(this.task.scope.workspaceRoot!, path))
       this.readHashes.set(abs, this.hash(abs))
       if (complete) this.partialReads.delete(abs)
       else this.partialReads.add(abs)
@@ -111,8 +111,7 @@ export class TaskToolGateway {
           if (
             contract?.effect === 'workspace' &&
             before &&
-            existsSync(abs) &&
-            this.hash(abs) !== before
+            (!existsSync(abs) || this.hash(abs) !== before)
           )
             return `File ${path} changed after inspection. Read it again before editing.`
         }
@@ -159,7 +158,12 @@ export class TaskToolGateway {
       )
     if (result.mutated && result.path) {
       try {
-        this.readHashes.delete(resolveInWorkspace(this.task.scope.workspaceRoot!, result.path))
+        const path = realpathAllowMissing(
+          resolveInWorkspace(this.task.scope.workspaceRoot!, result.path)
+        )
+        // Preserve a baseline after our own edit so subsequent external changes are detected.
+        if (existsSync(path)) this.readHashes.set(path, this.hash(path))
+        else this.readHashes.delete(path)
       } catch {
         /* path failure already recorded */
       }

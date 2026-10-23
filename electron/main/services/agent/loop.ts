@@ -127,7 +127,7 @@ import {
   thinkingBeforeTools
 } from './tool-parsing'
 import { isNativeGgufRef, releaseLocalChatSession } from '../builtin-model'
-import { logInfo } from '../logger'
+import { logInfo, logWarn } from '../logger'
 import type { AgentChatMessage, AgentMode, AgentRunnerEvent, ToolCall } from './types'
 import type { AgentHandoffPacket } from '../../../../src/shared/agent-orchestration'
 import { AgentWorkflow } from './workflow'
@@ -377,11 +377,18 @@ export async function* runAgentWithWorkspaceTools(options: {
 
   yield { type: 'status', text: plan.reason }
   if (plan.error) {
+    logWarn('Agent blocked before inference', { taskId: task.taskId, reason: 'route-error' })
+    yield { type: 'progress', step: 0, actionLog: [], filesTouched: [], incomplete: true }
     yield { type: 'answer', text: plan.error, replace: true }
     return
   }
 
   if (options.workspacePath && task.scope.state !== 'resolved') {
+    logWarn('Agent blocked before inference', {
+      taskId: task.taskId,
+      reason: 'project-scope',
+      scopeState: task.scope.state
+    })
     yield { type: 'progress', step: 0, actionLog: [], filesTouched: [], incomplete: true }
     yield {
       type: 'answer',

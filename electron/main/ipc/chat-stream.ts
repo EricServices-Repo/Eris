@@ -281,13 +281,13 @@ export function registerChatStreamIpc(): void {
       let telemetryMutated = false
       let usedCloud = false
       let firstModelOutputMs: number | null = null
-      const noteFirstModelOutput = (evt: { type: string; text?: string }) => {
+      const noteFirstAgentOutput = (evt: { type: string; text?: string }) => {
         const hasOutput = (evt.type === 'thinking' || evt.type === 'answer') && Boolean(evt.text)
         if (firstModelOutputMs !== null || (!hasOutput && evt.type !== 'tool')) {
           return
         }
         firstModelOutputMs = externalPlanningDurationMs + Date.now() - requestReceivedAt
-        logInfo('Chat first model output', {
+        logInfo('Chat first agent output', {
           requestId,
           firstOutputMs: firstModelOutputMs,
           outputType: evt.type
@@ -426,7 +426,7 @@ export function registerChatStreamIpc(): void {
               getSecret,
               signal: controller.signal
             })) {
-              noteFirstModelOutput(evt)
+              noteFirstAgentOutput(evt)
               if (evt.type === 'thinking') {
                 pendingThinking += evt.text
                 scheduleStreamFlush()
@@ -671,7 +671,7 @@ export function registerChatStreamIpc(): void {
             return null
           }
         })) {
-          noteFirstModelOutput(evt)
+          noteFirstAgentOutput(evt)
           if (evt.type === 'thinking') {
             pendingThinking += evt.text
             scheduleStreamFlush()

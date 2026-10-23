@@ -180,6 +180,12 @@ export function classifyIntent(
 
   const t = text.trim()
   if (!t) return 'answer'
+  // An explicit implementation request can contain command-like nouns ('make all').
+  if (
+    asksToImplementChanges(t) ||
+    /^(?:please\s+)?(?:edit|fix|implement|refactor|repair|update)\b/i.test(t)
+  )
+    return 'edit'
 
   if (
     /\b(npm (test|run|start|install)|yarn |pnpm |bun |pytest|cargo test|docker )\b/i.test(t) ||
@@ -196,7 +202,6 @@ export function classifyIntent(
   }
 
   if (asksForImageGeneration(t)) return 'edit'
-  if (asksToImplementChanges(t)) return 'edit'
   // In Agent mode, natural implementation requests such as “show me how to add”
   // and “I need to implement … how would you approach it?” must reach Composer.
   // Routing them as explore/verify creates an impossible read-only loop because

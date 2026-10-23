@@ -97,6 +97,26 @@ const BUILTIN_SCENARIOS: DebugScenarioInput[] = [
     }
   },
   {
+    id: 'review-website-build-issue-45',
+    title: 'Website review reaches the model',
+    description:
+      'Issue #45: a generic website review must use the current workspace and return grounded recommendations.',
+    tags: ['review', 'read-only', 'regression'],
+    modes: ['simulated', 'real-model'],
+    request: { text: 'Review the website build\nRecommend 5 improvements' },
+    fixture: FIXTURE,
+    expect: { intent: ['review'], mutation: 'forbidden', terminal: 'complete' },
+    script: {
+      agent: [
+        tool('read_file', { path: 'src/retry.ts' }),
+        reply(
+          '1. Validate negative attempts in src/retry.ts.\n2. Handle non-integer attempts.\n3. Reject non-finite inputs.\n4. Enforce MAX_RETRIES.\n5. Document the 4000 ms delay cap.'
+        )
+      ],
+      outcome: [verdict('supported', 'Recommendations cite inspected retry logic.')]
+    }
+  },
+  {
     id: 'review-read-only',
     title: 'Review stays read-only',
     description: 'A review request may inspect files but must not modify the project.',

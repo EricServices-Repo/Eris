@@ -14,13 +14,13 @@ export function promoteThinkingToAnswer(content: string, thinking: string): stri
     .split('\n')
     .filter((line) => {
       const trimmed = line.trim()
-      return trimmed.length > 0 && !trimmed.startsWith('—') && !trimmed.startsWith('{')
+      return trimmed.length > 0 && !/^(?:Route:|Plan:|—|\{|\[(?:ok|error)\])/.test(trimmed)
     })
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
   const body = content.trim()
-  if (prose.length >= 40 && !isToolLogReply(prose) && (isToolLogReply(body) || prose.length > body.length + 40)) {
+  if (prose.length >= 40 && !isToolLogReply(prose) && isToolLogReply(body)) {
     return prose
   }
   return content
@@ -46,7 +46,7 @@ export function stripAnswerFromThinking(thinking: string, answer: string): strin
   return trace
     .split('\n')
     .map((line) => line.trim())
-    .filter((line) => /^(?:—|-|\[|Route:)/.test(line))
+    .filter((line) => /^(?:—|-|\[|Route:|Plan:)/.test(line))
     .join('\n')
     .trim()
 }

@@ -35,6 +35,18 @@ vi.mock('../electron/main/services/chat-runtime', () => ({
   }
 }))
 
+// The transport is scripted: model readiness must not depend on local downloads.
+vi.mock('../electron/main/services/builtin-model', async () => {
+  const actual = await vi.importActual<typeof import('../electron/main/services/builtin-model')>(
+    '../electron/main/services/builtin-model'
+  )
+  return {
+    ...actual,
+    isExactBuiltinReady: () => true,
+    resolveExactBuiltinRef: (ref: string) => ref
+  }
+})
+
 vi.mock('../electron/main/services/verify', () => ({
   runVerify: async () => {
     harness.verifyCalls++

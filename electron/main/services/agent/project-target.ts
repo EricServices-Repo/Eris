@@ -9,7 +9,8 @@ export function namedProjectTarget(goal: string): string | null {
   const found = match ?? direct
   if (!found) return null
   const target = found[1]!.trim()
-  return /^(?:this|that|my|our|your|current|existing|new|same|other|client|user|whole|entire|local|web)$/i.test(
+  // The optional article can backtrack into the capture in 'Review the website'.
+  return /^(?:the|a|an|this|that|my|our|your|current|existing|new|same|other|client|user|whole|entire|local|web)$/i.test(
     target
   )
     ? null

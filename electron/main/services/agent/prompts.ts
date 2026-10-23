@@ -2,6 +2,7 @@ import { loadWorkspaceRules } from '../chats'
 import { loadSkillsPrompt } from '../skills'
 import { findAgent } from '../agents'
 import { compileTaskContext } from './context-compiler'
+import { appendTaskEvent } from '../task-ledger'
 import { contextBudgetTokens } from './context-budget'
 import type { AppSettings, ChatIntent, TurnPlan } from '../../../../src/shared/settings-schema'
 import { AGENT_HANDOFF_CHARS } from '../../../../src/shared/agent-orchestration'
@@ -281,6 +282,13 @@ export function buildPreservedWorkerMessages(options: {
       retrieval: options.retrievalHint,
       maxInputTokens:
         options.inputTokenBudget ?? contextBudgetTokens(options.settings, options.plan.models.tools)
+    })
+    appendTaskEvent(options.plan.task.taskId, 'context-compiled', {
+      revision: options.plan.task.revision,
+      agentId: options.plan.agentId,
+      model: options.plan.models.tools,
+      blocks: compiled.blocks,
+      budget: compiled.budget
     })
     return [compiled.message, ...historyTail, { role: 'user', content: options.originalUserGoal }]
   }

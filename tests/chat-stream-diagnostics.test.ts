@@ -135,6 +135,56 @@ beforeEach(() => {
 })
 
 describe('chat:stream on a scripted diagnostics transport', () => {
+  it('processes issue 45 as a grounded review in the current project', async () => {
+    const answer =
+      '1. Guard division by zero in src/divide.ts.\n2. Validate numeric inputs.\n3. Handle non-finite results.\n4. Document rounding in formatRatio.\n5. Expose a useful error state.'
+    const turn = await scriptedTurn('Review the website build\nRecommend 5 improvements', {
+      agent: [tool('read_file', { path: 'src/divide.ts' }), { text: answer }],
+      outcome: [
+        {
+          text: JSON.stringify({ verdict: 'supported', reason: 'Findings cite inspected source.' })
+        }
+      ]
+    })
+    expect(turn.of('chat:task')[0]?.task).toMatchObject({
+      intent: 'review',
+      scope: { state: 'resolved', projectRoot: workspace },
+      authority: { edit: false }
+    })
+    expect(turn.of('chat:routed')[0]).toMatchObject({
+      agentId: 'reviewer',
+      intent: 'review',
+      toolPolicy: 'read'
+    })
+    expect(turn.calls.some((call) => call.purpose === 'agent')).toBe(true)
+    expect(
+      turn
+        .of('chat:tool')
+        .some(
+          (event) =>
+            (event.tool as { name: string; status: string }).name === 'read_file' &&
+            (event.tool as { status: string }).status === 'ok'
+        )
+    ).toBe(true)
+    expect(turn.of('chat:diff')).toEqual([])
+    expect(turn.of('chat:answer').at(-1)?.chunk).toContain('src/divide.ts')
+    expect(turn.of('chat:done')).toEqual([{ requestId: turn.requestId, incomplete: false }])
+  })
+
+  it('preserves a missing-project explanation instead of posting routing text as the answer', async () => {
+    const turn = await scriptedTurn('Review the Airbnb website and recommend 5 improvements', {})
+    expect(turn.calls).toEqual([])
+    expect(turn.of('chat:done')).toEqual([{ requestId: turn.requestId, incomplete: true }])
+    const answer = String(turn.of('chat:answer').at(-1)?.chunk)
+    const thinking = turn
+      .of('chat:thinking')
+      .map((event) => event.chunk)
+      .join('')
+    const { promoteThinkingToAnswer } = await import('../src/shared/posted-answer')
+    expect(answer).toContain("couldn't identify the requested project")
+    expect(promoteThinkingToAnswer(answer, thinking)).toBe(answer)
+  })
+
   it('runs a real edit turn end to end without any provider call', async () => {
     const scenario = findDebugScenario('edit-explicit-fix')!
     const { agent, route, intent, outcome } = scenario.script

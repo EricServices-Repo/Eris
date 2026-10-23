@@ -843,6 +843,9 @@ export function useChatSession({
       if (!content.trim() && thinkingRaw && !aborted) {
         content = promoteThinkingToAnswer('', thinkingRaw)
       }
+      if (!content.trim() && !aborted && !imageAssetsRef.current.length) {
+        content = 'The agent ended without a response. Please retry the message or report this run.'
+      }
       const thinking = stripAnswerFromThinking(thinkingRaw, content)
       if (aborted) {
         if (content) {

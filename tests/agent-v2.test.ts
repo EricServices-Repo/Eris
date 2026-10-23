@@ -67,6 +67,17 @@ const exchange: ModelMessage[] = [
 ]
 
 describe('agent v2 task boundary', () => {
+  it.each([
+    'Review the website build',
+    'Review the app',
+    'Inspect the project',
+    'Review my website'
+  ])('binds a generic project reference to the current workspace: %s', (text) => {
+    const root = fixture()
+    const task = createTaskContract({ workspacePath: root, text, plan })
+    expect(task.scope).toMatchObject({ state: 'resolved', projectRoot: realpathSync(root) })
+  })
+
   it('finds nested projects by package metadata and binds implementation follow-ups to that scope', () => {
     const root = fixture()
     const project = join(root, 'clients', 'web')

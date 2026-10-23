@@ -108,8 +108,10 @@ export function asksToImplementChanges(text: string): boolean {
   ) {
     return false
   }
+  // Require the changes to be the verb's object. Proximity alone treats
+  // 'Review the website build; recommend improvements' as permission to edit.
   return (
-    /\b(?:code|implement|apply|write|build|make|add)\b[\s\S]{0,48}\b(?:these|those|the|above|recommended|suggested)?\s*(?:changes?|improvements?|fixes?)\b/i.test(
+    /\b(?:code|implement|apply|write|build|make|add)\s+(?:(?:all|of|these|those|the|above|recommended|suggested|requested|following|needed|proposed|some|my|our|\d+)\s+)*(?:changes?|improvements?|fixes?)\b/i.test(
       t
     ) || /\b(?:code|implement|apply|write|build|make|add)\s+(?:it|that|those|them|these)\b/i.test(t)
   )
@@ -191,7 +193,7 @@ export function asksForRecommendations(text: string): boolean {
   }
   return (
     /\bwhat\b[\s\S]{0,48}\bimprov/i.test(t) ||
-    /\b(list|suggest|recommend)\b[\s\S]{0,40}\b(improv|changes?|ideas)\b/i.test(t) ||
+    /\b(list|suggest|recommend)\b[\s\S]{0,40}\b(improvements?|changes?|ideas)\b/i.test(t) ||
     (/\breview\b/i.test(t) && /\bwhat\b[\s\S]{0,48}\b(improv|should we)\b/i.test(t))
   )
 }
