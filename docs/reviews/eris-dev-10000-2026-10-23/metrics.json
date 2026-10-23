@@ -1,0 +1,247 @@
+{
+  "source": "/Users/ericembling/Desktop/eris-dev-requests.jsonl",
+  "source_sha256": "66f5c64ff535c1225fe11da3f890391424dd189469713c8a598d31610592508b",
+  "questions": "/Users/ericembling/Desktop/10000_natural_diverse_coding_questions.txt",
+  "questions_sha256": "aae2466b194274b0fec5a814600a31fb7c99307dd5ea9cedc17bced15efa5e12",
+  "capture_metadata": {
+    "format": "eris-dev-capture-v1",
+    "created": "2026-10-23T12:36:06.260Z",
+    "project": "sample fixture",
+    "context": 8192,
+    "mode": "agent",
+    "total": 10000,
+    "modelResponses": "none; semantic intent uses deterministic fallback"
+  },
+  "records": 10000,
+  "questions_match_exactly": true,
+  "unique_questions": 10000,
+  "observed_model_answers": 0,
+  "coverage": "pre-inference request capture only",
+  "candidate_flags_are_not_ground_truth": true,
+  "counts": {
+    "status": {
+      "captured": 10000
+    },
+    "agent": {
+      "Plan": 3941,
+      "Explainer": 4738,
+      "Fast": 1096,
+      "Verification": 94,
+      "Composer": 131
+    },
+    "intent": {
+      "plan": 3941,
+      "answer": 5512,
+      "explore": 319,
+      "verify": 94,
+      "edit": 131,
+      "capability": 3
+    },
+    "purpose": {
+      "intent": 8838,
+      "agent": 10000
+    },
+    "flags": {
+      "shared_rules_duplicated": 4485,
+      "plan_route_without_explicit_plan_word_candidate": 3941,
+      "code_artifact_request_routed_to_plan_candidate": 789,
+      "answer_has_edit_execution_plan": 5512,
+      "tool_less_prompt_mentions_workspace_tools": 5515,
+      "compiled_prompt_omits_task_contract": 5515,
+      "fast_brief_answer_role_for_code_artifact_candidate": 477,
+      "verification_route_without_top_level_verification_request_candidate": 94,
+      "image_tool_visible_in_images_disabled_capture": 131,
+      "edit_prompt_requires_verification_without_initial_run_tool": 131,
+      "hypothetical_code_question_granted_edit_authority_candidate": 40,
+      "verification_route_correlates_with_topic_words_candidate": 78,
+      "application_data_model_routed_to_eris_capability": 3
+    },
+    "topic": {
+      "database connection pooling": 266,
+      "soft deletes with the ability to restore": 259,
+      "user authentication with magic links": 249,
+      "zero-downtime database migrations": 255,
+      "rotating secrets without downtime": 246,
+      "per-user rate limiting": 246,
+      "generating image thumbnails on the fly": 253,
+      "role-based access control": 248,
+      "scheduled report generation": 258,
+      "error boundaries that support retry": 254,
+      "optimistic updates for a list of items": 268,
+      "environment-specific configuration loading": 228,
+      "forcing logout across all devices": 243,
+      "user notification preferences": 259,
+      "webhook signature verification": 246,
+      "a secure password reset flow": 258,
+      "structured JSON logging": 251,
+      "cache invalidation after data changes": 252,
+      "TOTP-based two-factor authentication": 258,
+      "background job processing with exponential backoff": 259,
+      "feature flags that can be toggled without redeploying": 261,
+      "search that supports filters, sorting, and highlighting": 272,
+      "bulk operations that report progress": 235,
+      "file uploads with progress tracking and cancellation": 249,
+      "a circuit breaker around external API calls": 260,
+      "seeding realistic test data": 253,
+      "a multi-step form that saves progress": 240,
+      "graceful shutdown of a long-running process": 241,
+      "transactional emails using templates": 237,
+      "health checks that verify downstream dependencies": 236,
+      "exporting filtered data to CSV": 237,
+      "API key generation and rotation": 240,
+      "real-time presence indicators": 238,
+      "sanitizing user-generated rich text": 254,
+      "infinite scroll using cursor pagination": 250,
+      "distributed tracing across services": 251,
+      "idempotent API endpoints": 243,
+      "cursor-based pagination for a large dataset": 251,
+      "request validation middleware": 258,
+      "audit logging for sensitive operations": 238
+    },
+    "tool_count": {
+      "14": 4260,
+      "0": 5515,
+      "15": 94,
+      "21": 131
+    },
+    "prompt_variant": {
+      "afc71342e5c9adc50f70a79f1d17399f71c0239fa2f80a47e22657367e3fca43": 3941,
+      "7b8d92bc345cc8143feb0605dd0fabe6f556f586559dea828ef286c392e28556": 4416,
+      "377594957162742e5fcbbc3f8a81cad679349eff5178fdcd15d3d6122befc4f3": 1096,
+      "892e28e419c971a5e3d42def441343234ca74d6b066f1e47b4e07ba375d5375a": 279,
+      "1d0ff824ffbb58f46da8f635995e33da25d1ece6d5db6679fb0b6de305ae5747": 92,
+      "95c922cfc3242f83c9e878b0318d1312abd1f293b91bf2158bc94f8fb797cf62": 39,
+      "739e70208b8d7b577cd2ace1a30fc475c1893697b5e533ef90b0a1bc72f354e8": 113,
+      "fbae6a3d80b9d890a2c4105ddd6f3a6520637a1cee59733e5caa7b74f2c6b9d3": 2,
+      "e4741bb54726e6cc4764f1fec1de03871c3b0978f965837ba4557abe77a8eba8": 3,
+      "a4e375a04556ab5d9d6ac86ca235cf00a75d9f3d5d6d12ce81860f2a120ad170": 1,
+      "fee46234b214cf4c7a3344480b6041263f60fd807a93b367714b9e4bac38f192": 1,
+      "839b4507e4bc1a5eddcee2a1c346d5988e001e8565434bf76c5fc612349343f9": 2,
+      "c05aaceb52e2892159e5f5b72067c97c62b4c95c886ace0bdd644621129254aa": 3,
+      "8e19860b5eecdb93a96b4879e86a11e35f61f28927f6f729a3966543c6628f31": 2,
+      "f734c3a00f920163772ac8b2519cdd7d2340b006e2b83fcb844af3ddb3da8657": 1,
+      "917cb177c6c6eef55ae7c77a480698a5a9135ccb49fa01acf9ac72b61fa2be8f": 2,
+      "4788699e6cfe880594bca929eb09189f59320dc7ca180644a1121825d323e16f": 1,
+      "1a37496cfa33663a4fd2c5e46b560148ebabd16eff478ce04736312fb2e53566": 1,
+      "97cdb042b2a8e642d5a181369d931bafea07d624df89d50530e093340429fd4c": 1,
+      "2fe1ed1dd8dcad5b14ce4806d4db08d7e1a5060661f420db1c9fadd84245964c": 2,
+      "b4da47c2fb5a0fb0094ec8067c4de36a7ef488251dae169fce72282456f96a13": 2
+    },
+    "acceptance_criteria": {
+      "The plan is grounded in inspected files and clearly distinguishes decisions from assumptions.": 3941,
+      "The requested behavior is implemented and verification results are reported.": 5643,
+      "The answer is grounded in the files that were read.": 319,
+      "Every claimed result is supported by inspection or command output, with no files edited.": 94,
+      "Answer from the current catalog.": 3
+    },
+    "topic_missing": {},
+    "response_fields": {}
+  },
+  "topic_count": 40,
+  "capture_duration_ms": {
+    "min": 0,
+    "median": 1.0,
+    "p95_nearest_rank": 17,
+    "max": 156
+  },
+  "request_size_chars_by_agent": {
+    "Plan": {
+      "system_chars": {
+        "min": 4525,
+        "median": 4559,
+        "max": 4608
+      },
+      "tools_json_chars": {
+        "min": 4250,
+        "median": 4250,
+        "max": 4250
+      },
+      "question_chars": {
+        "min": 60,
+        "median": 94,
+        "max": 143
+      }
+    },
+    "Explainer": {
+      "system_chars": {
+        "min": 1886,
+        "median": 1886.0,
+        "max": 5142
+      },
+      "tools_json_chars": {
+        "min": 2,
+        "median": 2.0,
+        "max": 4250
+      },
+      "question_chars": {
+        "min": 59,
+        "median": 92.0,
+        "max": 139
+      }
+    },
+    "Fast": {
+      "system_chars": {
+        "min": 1543,
+        "median": 1543.0,
+        "max": 1543
+      },
+      "tools_json_chars": {
+        "min": 2,
+        "median": 2.0,
+        "max": 2
+      },
+      "question_chars": {
+        "min": 52,
+        "median": 74.0,
+        "max": 79
+      }
+    },
+    "Verification": {
+      "system_chars": {
+        "min": 4761,
+        "median": 4797.5,
+        "max": 4988
+      },
+      "tools_json_chars": {
+        "min": 4588,
+        "median": 4588.0,
+        "max": 4588
+      },
+      "question_chars": {
+        "min": 66,
+        "median": 102.0,
+        "max": 131
+      }
+    },
+    "Composer": {
+      "system_chars": {
+        "min": 4591,
+        "median": 4619,
+        "max": 4646
+      },
+      "tools_json_chars": {
+        "min": 7139,
+        "median": 7139,
+        "max": 7139
+      },
+      "question_chars": {
+        "min": 70,
+        "median": 95,
+        "max": 121
+      }
+    }
+  },
+  "additional_counts": {
+    "all_requests_system_user_only": 10000,
+    "agent_requests_with_retrieved_leads": 48,
+    "tasks_with_recommendations": 0,
+    "tasks_with_skills": 0,
+    "unique_thread_ids": [
+      null
+    ],
+    "unique_project_ids": [
+      "dac102a8f29cb887"
+    ]
+  },
+  "method": "All records scanned with explicit structural rules; selected examples and source reviewed manually. No live inference, response grading, or independently adjudicated 10,000-item intent labels."
+}
