@@ -15,7 +15,8 @@ export default tseslint.config(
       'resources/**',
       '**/*.d.ts',
       'coverage/**',
-      '.eris/cache/**'
+      '.eris/cache/**',
+      '.claude/worktrees/**'
     ]
   },
   js.configs.recommended,
@@ -52,6 +53,11 @@ export default tseslint.config(
   },
   {
     files: ['scripts/**/*.cjs'],
+    rules: { '@typescript-eslint/no-require-imports': 'off' }
+  },
+  {
+    files: ['tests/**/*.{js,mjs,cjs}'],
+    languageOptions: { globals: globals.node },
     rules: { '@typescript-eslint/no-require-imports': 'off' }
   }
 )
