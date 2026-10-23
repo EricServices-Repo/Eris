@@ -67,7 +67,7 @@ export const McpServerSchema = z.object({
   /** sse/http: server URL */
   url: z.string(),
   /** Extra env vars (values may be secret refs later) */
-  env: z.record(z.string()),
+  env: z.record(z.string(), z.string()),
   notes: z.string()
 })
 
@@ -84,7 +84,7 @@ export const LanguageServerSchema = z.object({
 })
 
 export const SettingsSchema = z.object({
-  images: ImageGenerationSettingsSchema.default({}),
+  images: ImageGenerationSettingsSchema.prefault({}),
   models: z.object({
     defaultModel: z.string(),
     temperature: z.number().min(0).max(2),
