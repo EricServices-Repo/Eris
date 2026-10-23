@@ -423,7 +423,12 @@ export interface TurnPlan {
   /** True when this turn should prefer Cloud Composer for built-in Agent tools. */
   cloudPreferred?: boolean
   /** Small, explicit work plan and completion condition shown to the user and worker. */
-  executionPlan?: { steps: string[]; doneWhen: string }
+  executionPlan?: {
+    steps: string[]
+    doneWhen: string
+    /** Operation each step requires, aligned with steps; checked against the turn's capabilities. */
+    needs?: Array<'none' | 'read' | 'edit' | 'run'>
+  }
   /** Stable IDs of the classifier rule and each later override that shaped this route. */
   routeTrace?: { heuristicRule: string; overrides: string[] }
 }

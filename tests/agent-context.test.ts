@@ -1,3 +1,4 @@
+import { createTaskContract } from '../electron/main/services/task-intake'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -98,10 +99,15 @@ describe('agent context boundaries', () => {
       reason: 'Apply recommendations',
       method: 'override'
     }
+    const task = createTaskContract({
+      workspacePath: folder,
+      text: 'Add those improvements',
+      plan
+    })
     const messages = buildPreservedWorkerMessages({
       workspacePath: folder,
       settings: getDefaults(),
-      plan,
+      plan: { ...plan, task },
       originalUserGoal: 'Add those improvements',
       retrievalHint: 'Inspect booking.php',
       mcpToolCount: 0,

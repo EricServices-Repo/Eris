@@ -199,7 +199,7 @@ export function artifactResponseContract(interpretation: TaskInterpretation): st
     ? ` Use ${stack} as requested, even if the open project uses another stack.`
     : ''
   const lines: Record<RequestedArtifact, string> = {
-    'code-example': `RESPONSE CONTRACT — code example in chat. Include complete, runnable code in a fenced block with its imports or dependencies, then brief notes on usage and limitations. Keep it concise but do not truncate the code to fit a sentence limit; do not reply with only a plan of future steps.${inStack}`,
+    'code-example': `RESPONSE CONTRACT — code example in chat. Include complete, runnable code in a fenced block with its imports or dependencies, then brief notes on usage and limitations. Keep it concise but do not truncate the code to fit a sentence limit; do not reply with only a plan of future steps. This outranks any brevity rule in role text.${inStack}`,
     design: `RESPONSE CONTRACT — design answer. Describe the data structures or schema, interfaces or endpoints, and the main tradeoffs. Ordered implementation steps are optional.${inStack}`,
     plan: 'RESPONSE CONTRACT — plan. Return ordered steps with affected files, dependencies, risks, and a completion check for each.',
     review:

@@ -979,10 +979,11 @@ export async function planChatTurn(options: {
 function executionPlanFor(
   mode: 'ask' | 'agent',
   intent: ChatIntent
-): { steps: string[]; doneWhen: string } {
+): NonNullable<TurnPlan['executionPlan']> {
   if (intent === 'capability') {
     return {
       steps: ['Check Eris model and provider catalog'],
+      needs: ['none'],
       doneWhen: 'Answer from the current catalog.'
     }
   }
@@ -993,6 +994,7 @@ function executionPlanFor(
         'Identify the requested deliverable, language, and constraints',
         'Answer directly; when code is requested, include a complete example with its dependencies and limitations'
       ],
+      needs: ['none', 'none'],
       doneWhen:
         'The question is answered in chat. No workspace edits, command runs, or verification are claimed.'
     }
@@ -1004,6 +1006,7 @@ function executionPlanFor(
         'Trace dependencies and integration points',
         'Return ordered steps with files, risks, and completion checks'
       ],
+      needs: ['read', 'read', 'none'],
       doneWhen:
         'The plan is grounded in inspected files and clearly distinguishes decisions from assumptions.'
     }
@@ -1016,6 +1019,7 @@ function executionPlanFor(
         'Run relevant approved verification commands',
         'Report observed results and remaining risks'
       ],
+      needs: ['read', 'read', 'run', 'none'],
       doneWhen:
         'Every claimed result is supported by inspection or command output, with no files edited.'
     }
@@ -1027,6 +1031,7 @@ function executionPlanFor(
         'Read the matching files',
         'Answer with paths and evidence'
       ],
+      needs: ['read', 'read', 'none'],
       doneWhen: 'The answer is grounded in the files that were read.'
     }
   }
@@ -1037,6 +1042,7 @@ function executionPlanFor(
         'Inspect relevant implementation and tests',
         'Rank findings with evidence'
       ],
+      needs: ['read', 'read', 'none'],
       doneWhen: 'Each finding has a path, impact, and actionable fix.'
     }
   }
@@ -1047,6 +1053,7 @@ function executionPlanFor(
         'Run it with required approval',
         'Report the result'
       ],
+      needs: ['read', 'run', 'none'],
       doneWhen: 'The command result and any remaining failure are stated accurately.'
     }
   }
@@ -1057,6 +1064,7 @@ function executionPlanFor(
       'Run relevant verification',
       'Summarize the diff'
     ],
+    needs: ['read', 'edit', 'run', 'none'],
     doneWhen: 'The requested behavior is implemented and verification results are reported.'
   }
 }

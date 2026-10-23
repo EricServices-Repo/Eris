@@ -1,18 +1,8 @@
 import type { ChatIntent } from './settings-schema'
-import type {
-  AgentHandoffPacket,
-  AgentRouteStep,
-  BlackboardStatus
-} from './agent-orchestration'
+import type { AgentHandoffPacket, AgentRouteStep, BlackboardStatus } from './agent-orchestration'
 
 export type BackgroundJobStatus =
-  | 'queued'
-  | 'running'
-  | 'done'
-  | 'failed'
-  | 'stopped'
-  | 'merged'
-  | 'discarded'
+  'queued' | 'running' | 'done' | 'failed' | 'stopped' | 'merged' | 'discarded'
 
 export interface BackgroundJobToolEvent {
   id: string
@@ -22,7 +12,7 @@ export interface BackgroundJobToolEvent {
   effect?: 'read' | 'workspace' | 'external' | 'command' | 'orchestration'
   changedResources?: string[]
   durationMs?: number
-  failure?: { code: string; retryable: boolean }
+  failure?: { code: string; retryable: boolean; cause?: string }
   detail: string
   at: string
 }
@@ -80,8 +70,7 @@ export interface BackgroundJob {
 }
 
 export type BackgroundJobEvent =
-  | { type: 'upsert'; job: BackgroundJob }
-  | { type: 'removed'; id: string }
+  { type: 'upsert'; job: BackgroundJob } | { type: 'removed'; id: string }
 
 export interface EnqueueBackgroundJobRequest {
   goal: string

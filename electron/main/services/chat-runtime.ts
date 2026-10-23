@@ -10,6 +10,7 @@ import {
   type OpenAIToolDef
 } from './openai-compatible'
 import { resolveConnectionForModel } from './model-catalog'
+import { toolProtocolFor } from './tool-protocol'
 import { estimateMessagesTokens, estimateTokens, recordModelUsage } from './usage-stats'
 import {
   activeDiagnosticsScope,
@@ -59,9 +60,7 @@ export async function* streamProviderChat(
 ): AsyncGenerator<string, void, unknown> {
   let model = options.model || options.settings.models.defaultModel || 'builtin:composer-lite'
   assertProviderCallAllowed(options.settings, model)
-  const protocol = isNativeGgufRef(model)
-    ? 'text-tools'
-    : (resolveConnectionForModel(options.settings, model)?.toolProtocol ?? 'native-tools')
+  const protocol = toolProtocolFor(options.settings, model)
   const inputMessages = options.messages.map((message) => ({
     ...message,
     content: message.content ?? ''

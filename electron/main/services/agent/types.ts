@@ -11,7 +11,7 @@ export type AgentToolEvent = {
   effect?: 'read' | 'workspace' | 'external' | 'command' | 'orchestration'
   changedResources?: string[]
   durationMs?: number
-  failure?: { code: string; retryable: boolean }
+  failure?: { code: string; retryable: boolean; cause?: string }
   detail: string
 }
 

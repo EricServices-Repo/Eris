@@ -33,6 +33,8 @@ import {
   COMPOSER_OPENAI_TOOLS,
   getToolContract,
   MAX_INLINE_MCP_TOOLS,
+  isVisibleCapability,
+  resolveToolCapabilities,
   mcpToolsToOpenAI,
   toolCallJsonSchema
 } from '../tool-registry'
@@ -107,6 +109,7 @@ import {
 } from '../../../../src/shared/task-contract'
 import { artifactResponseContract } from '../../../../src/shared/task-interpretation'
 import { compileTaskContext } from './context-compiler'
+import { lintExecutionPlan } from './workflow-lint'
 import { appendTaskEvent } from '../task-ledger'
 import { TaskToolGateway } from './tool-gateway'
 import {
@@ -171,10 +174,10 @@ function answerFromProjectFiles(reads: Array<{ path: string; text: string }>): s
 
 type ToolExecutionResult = { ok: boolean; detail: string; mutated: boolean; path?: string }
 
-function toolFailureMetadata(
+export function toolFailureMetadata(
   detail: string,
   effect: 'read' | 'workspace' | 'external' | 'command' | 'orchestration'
-): { code: string; retryable: boolean } {
+): { code: string; retryable: boolean; cause?: string } {
   const code = /\bdenied\b|\bblocked\b|no approval handler|reviewer can only/i.test(detail)
     ? 'permission_denied'
     : /read required before editing/i.test(detail)
@@ -186,11 +189,25 @@ function toolFailureMetadata(
           : /not found|not connected|no .* available/i.test(detail)
             ? 'unavailable'
             : 'execution_failed'
+  // A refused approval is not a failed check or a wrong agent action; say which layer stopped it.
+  const cause =
+    code !== 'permission_denied'
+      ? undefined
+      : /user denied/i.test(detail)
+        ? 'approval-denied'
+        : /no approval handler/i.test(detail)
+          ? 'approval-unavailable'
+          : /task contract|does not permit|only permits|belongs to (?:another|a different)/i.test(
+                detail
+              )
+            ? 'task-authority'
+            : 'tool-policy'
   return {
     code,
     retryable:
       code === 'precondition_failed' ||
-      (effect === 'read' && !['permission_denied', 'invalid_arguments'].includes(code))
+      (effect === 'read' && !['permission_denied', 'invalid_arguments'].includes(code)),
+    ...(cause ? { cause } : {})
   }
 }
 
@@ -390,6 +407,18 @@ export async function* runAgentWithWorkspaceTools(options: {
     return
   }
 
+  function applyWorkflowLint(branch: string, can: Parameters<typeof lintExecutionPlan>[1]) {
+    const linted = lintExecutionPlan(plan.executionPlan, can)
+    if (linted.conflicts.length === 0) return
+    appendTaskEvent(task.taskId, 'workflow-lint', { branch, conflicts: linted.conflicts })
+    logInfo('Adjusted infeasible workflow steps', {
+      taskId: task.taskId,
+      branch,
+      conflicts: linted.conflicts.map((conflict) => `${conflict.needs}:${conflict.layer}`)
+    })
+    plan = { ...plan, executionPlan: linted.executionPlan }
+  }
+
   const contractConflicts = taskContractConflicts(task)
   if (contractConflicts.length > 0) {
     logWarn('Agent blocked before inference', {
@@ -454,6 +483,14 @@ export async function* runAgentWithWorkspaceTools(options: {
 
   if (answerOnly) {
     workflow.transition('answering')
+    // A tool-free reply cannot follow steps that read, edit or run.
+    applyWorkflowLint('answer-only', {
+      tools: false,
+      read: false,
+      edit: false,
+      run: false,
+      editAuthority: task.authority.edit
+    })
     yield {
       type: 'model',
       model: chatModel,
@@ -628,17 +665,6 @@ export async function* runAgentWithWorkspaceTools(options: {
   )
   const discoveredBuiltinToolNames = new Set<string>()
   const discoveredMcpToolNames = new Set<string>()
-  // Disabled features and empty catalogs are omitted rather than offered and rejected.
-  const runtimeUnavailable = (name: string): boolean =>
-    (name === 'generate_image' && !options.settings.images?.enabled) ||
-    (name === 'search_mcp_tools' && mcpToolCount <= MAX_INLINE_MCP_TOOLS)
-  const visibleComposerToolDefinitions = (): OpenAIToolDef[] =>
-    COMPOSER_OPENAI_TOOLS.filter(
-      (definition) =>
-        !runtimeUnavailable(definition.function.name) &&
-        (getToolContract(definition.function.name)?.discovery === 'core' ||
-          discoveredBuiltinToolNames.has(definition.function.name))
-    )
   // Reviewer and Verification, and edit tasks whose contract grants verification,
   // see a run tool limited to test/typecheck/lint commands by the gateway.
   const verificationRunAllowed = (): boolean =>
@@ -646,10 +672,24 @@ export async function* runAgentWithWorkspaceTools(options: {
     (plan.agentId === 'reviewer' ||
       plan.agentId === 'verifier' ||
       (task.authority.edit && task.authority.execute === 'verification'))
-  const ensureVerificationRunTool = () => {
-    if (!verificationRunAllowed() || openaiTools.some((t) => t.function.name === 'run')) return
-    const runTool = COMPOSER_OPENAI_TOOLS.find((t) => t.function.name === 'run')
-    if (runTool) openaiTools.push(runTool)
+  // Role policy, feature settings, MCP catalog and discovery resolve to one record.
+  const toolCapabilities = () =>
+    resolveToolCapabilities({
+      allowedByPolicy: (name) => toolAllowedByPolicy(name, plan.toolPolicy, false),
+      toolPolicy: plan.toolPolicy,
+      imagesEnabled: Boolean(options.settings.images?.enabled),
+      mcpToolCount,
+      verificationRun: verificationRunAllowed(),
+      discovered: discoveredBuiltinToolNames,
+      deferWeb: !webQuestion
+    })
+  const visibleComposerToolDefinitions = (): OpenAIToolDef[] => {
+    const visible = new Set(
+      toolCapabilities()
+        .filter(isVisibleCapability)
+        .map((capability) => capability.name)
+    )
+    return COMPOSER_OPENAI_TOOLS.filter((definition) => visible.has(definition.function.name))
   }
   const visibleMcpToolDefinitions = (): OpenAIToolDef[] =>
     mcpToolCount <= MAX_INLINE_MCP_TOOLS
@@ -657,12 +697,34 @@ export async function* runAgentWithWorkspaceTools(options: {
       : mcpToolDefinitions.filter((definition) =>
           discoveredMcpToolNames.has(definition.function.name)
         )
-  const openaiTools: OpenAIToolDef[] = filterToolsByPolicy(
-    [...visibleComposerToolDefinitions(), ...visibleMcpToolDefinitions()],
-    plan.toolPolicy,
-    mcpReadOnlyTools
-  )
-  ensureVerificationRunTool()
+  const visibleToolDefinitions = (): OpenAIToolDef[] => [
+    ...visibleComposerToolDefinitions(),
+    ...filterToolsByPolicy(visibleMcpToolDefinitions(), plan.toolPolicy, mcpReadOnlyTools)
+  ]
+  const openaiTools: OpenAIToolDef[] = visibleToolDefinitions()
+  const recordToolManifest = (reason: string) =>
+    appendTaskEvent(task.taskId, 'tool-manifest', {
+      reason,
+      agentId: plan.agentId,
+      toolPolicy: plan.toolPolicy,
+      tools: toolCapabilities(),
+      mcp: { mode: mcpMode, count: mcpToolCount, inline: mcpToolCount <= MAX_INLINE_MCP_TOOLS },
+      visible: openaiTools.map((tool) => tool.function.name),
+      visibleSchemaChars: JSON.stringify(openaiTools).length
+    })
+  recordToolManifest('initial')
+  {
+    const visible = new Set(openaiTools.map((tool) => tool.function.name))
+    applyWorkflowLint('worker', {
+      tools: openaiTools.length > 0,
+      read: ['read_file', 'grep', 'retrieve', 'tree'].some((name) => visible.has(name)),
+      edit:
+        task.authority.edit &&
+        ['write_file', 'search_replace', 'apply_patch'].some((name) => visible.has(name)),
+      run: visible.has('run'),
+      editAuthority: task.authority.edit
+    })
+  }
   let promptBudget =
     contextBudgetTokens(options.settings, workerModel) -
     Math.ceil(JSON.stringify(openaiTools).length / 3) -
@@ -676,7 +738,7 @@ export async function* runAgentWithWorkspaceTools(options: {
     workspacePath,
     settings: options.settings,
     inputTokenBudget: promptBudget,
-    plan,
+    plan: { ...plan, task },
     originalUserGoal,
     retrievalHint,
     mcpToolCount: plan.toolPolicy === 'read' || plan.toolPolicy === 'none' ? 0 : mcpToolCount
@@ -828,6 +890,22 @@ export async function* runAgentWithWorkspaceTools(options: {
   const localConstrainEnabled = options.settings.agent.constrainLocalToolCalls !== false
   let constrainNextToolCall = false
 
+  // Discovery changes the next request's schemas; record what was added and its size.
+  // The prompt budget is recomputed from openaiTools before every compaction check.
+  function recordToolDiscovery(
+    via: string,
+    query: string,
+    added: Array<{ name: string; kind: string; schemaChars: number }>
+  ) {
+    appendTaskEvent(task.taskId, 'tools-discovered', {
+      step,
+      via,
+      query,
+      added,
+      visibleSchemaChars: JSON.stringify(openaiTools).length
+    })
+  }
+
   function discoverMcpTools(query: string): string {
     const terms = [...new Set(query.toLowerCase().match(/[a-z0-9_-]{2,}/g) || [])]
     if (terms.length === 0) return 'Describe an MCP integration or capability to search for.'
@@ -855,13 +933,20 @@ export async function* runAgentWithWorkspaceTools(options: {
         (definition) => [definition.function.name, definition]
       )
     )
+    const added: Array<{ name: string; kind: string; schemaChars: number }> = []
     for (const { tool } of ranked) {
       discoveredMcpToolNames.add(tool.fqName)
       const definition = eligibleDefinitions.get(tool.fqName)
       if (definition && !openaiTools.some((item) => item.function.name === tool.fqName)) {
         openaiTools.push(definition)
+        added.push({
+          name: tool.fqName,
+          kind: 'MCP',
+          schemaChars: JSON.stringify(definition).length
+        })
       }
     }
+    recordToolDiscovery('search_mcp_tools', query, added)
     return [
       `Found ${ranked.length} MCP tool(s). They are now available for the next step:`,
       ...ranked.map(({ tool }) => `- ${tool.fqName} — ${tool.description || tool.name}`)
@@ -904,10 +989,15 @@ export async function* runAgentWithWorkspaceTools(options: {
     const mcpByName = new Map(
       mcpDefinitions.map((definition) => [definition.function.name, definition])
     )
+    const deferred = new Set(
+      toolCapabilities()
+        .filter((capability) => capability.status === 'deferred')
+        .map((capability) => capability.name)
+    )
     const ranked = [
       ...COMPOSER_OPENAI_TOOLS.filter(
         (definition) =>
-          getToolContract(definition.function.name)?.discovery === 'deferred' &&
+          deferred.has(definition.function.name) &&
           definition.function.name !== 'search_tools' &&
           builtinByName.has(definition.function.name)
       ).map((definition) => ({
@@ -932,13 +1022,20 @@ export async function* runAgentWithWorkspaceTools(options: {
       .slice(0, 8)
 
     if (ranked.length === 0) return `No available tools matched “${query}”.`
+    const added: Array<{ name: string; kind: string; schemaChars: number }> = []
     for (const candidate of ranked) {
       if (candidate.kind === 'built-in') discoveredBuiltinToolNames.add(candidate.name)
       else discoveredMcpToolNames.add(candidate.name)
       if (!openaiTools.some((item) => item.function.name === candidate.name)) {
         openaiTools.push(candidate.definition)
+        added.push({
+          name: candidate.name,
+          kind: candidate.kind,
+          schemaChars: JSON.stringify(candidate.definition).length
+        })
       }
     }
+    recordToolDiscovery('search_tools', query, added)
     return [
       `Found ${ranked.length} tool(s). They are available on the next step:`,
       ...ranked.map(
@@ -1036,16 +1133,8 @@ export async function* runAgentWithWorkspaceTools(options: {
       }
       workerModel = plan.models.tools
       rerouteCount++
-      openaiTools.splice(
-        0,
-        openaiTools.length,
-        ...filterToolsByPolicy(
-          [...visibleComposerToolDefinitions(), ...visibleMcpToolDefinitions()],
-          plan.toolPolicy,
-          mcpReadOnlyTools
-        )
-      )
-      ensureVerificationRunTool()
+      openaiTools.splice(0, openaiTools.length, ...visibleToolDefinitions())
+      recordToolManifest('reroute')
       const reason = `${decision.reason} after ${trigger}`
       // Install the new agent's actual instructions, not just its display name.
       // Retain execution evidence and the original task's authority ceiling.
@@ -1054,7 +1143,7 @@ export async function* runAgentWithWorkspaceTools(options: {
         workspacePath,
         settings: options.settings,
         inputTokenBudget: promptBudget,
-        plan,
+        plan: { ...plan, task },
         originalUserGoal,
         retrievalHint,
         mcpToolCount: plan.toolPolicy === 'read' || plan.toolPolicy === 'none' ? 0 : mcpToolCount
