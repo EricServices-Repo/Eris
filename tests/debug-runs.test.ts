@@ -45,7 +45,7 @@ vi.mock('../electron/main/services/debug-runs/scenarios', async () => {
   }
 })
 
-const { DebugScenarioSchema, debugRunVerdict } = await import('../src/shared/debug-runs')
+const { DebugRunRequestSchema, DebugScenarioSchema, debugRunVerdict } = await import('../src/shared/debug-runs')
 const coordinator = await import('../electron/main/services/debug-runs/coordinator')
 const { builtinDebugScenarios } = await import('../electron/main/services/debug-runs/scenarios')
 const store = await import('../electron/main/services/debug-runs/store')
@@ -95,6 +95,33 @@ beforeEach(() => {
   provider.calls.length = 0
   provider.replies.length = 0
   extra.scenarios.clear()
+})
+
+describe('diagnostics schema security and defaults', () => {
+  it.each([
+    { mode: 'simulated', limit: 100 },
+    { mode: 'real-model', limit: 50 }
+  ] as const)('rejects oversized $mode collections before validating their elements', ({ mode, limit }) => {
+    const readElement = vi.fn(() => null)
+    const scenarioIds = Array.from({ length: limit + 1 }, () => null)
+    Object.defineProperty(scenarioIds, 0, { get: readElement })
+    const result = DebugRunRequestSchema.safeParse({
+      mode, scenarioIds, model: 'example', acknowledgeLiveCalls: true
+    })
+    expect(readElement).not.toHaveBeenCalled()
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues).toHaveLength(1)
+      expect(result.error.issues[0]).toMatchObject({ code: 'too_big', path: ['scenarioIds'], maximum: limit })
+    }
+  })
+
+  it.each([undefined, {}])('fills every omitted scripted response queue for %j', (script) => {
+    const scenario = DebugScenarioSchema.parse({
+      id: 'defaults-regression', title: 'Defaults', request: { text: 'Explain the code' }, expect: {}, script
+    })
+    expect(scenario.script).toEqual({ agent: [], route: [], intent: [], outcome: [], verify: [] })
+  })
 })
 
 describe('simulated diagnostics runs', () => {

@@ -178,7 +178,7 @@ export const DebugScenarioSchema = z.object({
       outcome: z.array(ScriptedModelTurnSchema).default([]),
       verify: z.array(ScriptedVerifySchema).default([])
     })
-    .default({}),
+    .prefault({}),
   timeoutMs: z.number().int().positive().max(600_000).default(60_000)
 })
 export type DebugScenario = z.infer<typeof DebugScenarioSchema>
