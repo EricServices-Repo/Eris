@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -197,7 +197,7 @@ describe('AG-055 children never exceed the parent', () => {
       text: 'Review the shop app',
       plan: plan({})
     })
-    expect(parent.scope.projectRoot).toMatch(/apps\/shop$/)
+    expect(parent.scope.projectRoot).toBe(realpathSync(join(root, 'apps', 'shop')))
     const child = childTaskContract(
       parent,
       plan({ intent: 'edit', agentId: 'coder', toolPolicy: 'full' }),
