@@ -1,0 +1,26 @@
+{
+  "review_date": "2026-10-23",
+  "checkout_commit": "92f3e6885bc9ab2cc94029a8dde5bba7e3a01e19",
+  "latest_main_commit": "3c6cfeade82661ea57eedc702feaf7492273177d",
+  "source_trees_equal": true,
+  "recommendations": 45,
+  "word_count": 7603,
+  "focused_tests": {
+    "files_passed": 4,
+    "tests_passed": 91
+  },
+  "corpus_resolver_bypass_discrepancies": 134,
+  "production_boundary_probe_questions": [
+    107,
+    413
+  ],
+  "live_model_calls": 0,
+  "full_production_boundary_10000_rerun": false,
+  "artifacts": {
+    "FOLLOW-UP-REVIEW.md": "96609fe7ccb05a1d3bb34852ddfb3abb2fad19a5652e6d1a4bafeb35082c2600",
+    "backlog.json": "60f068d6e04b3165ca5eca8fe85e736483b9e11b31ccad8b7c14b63a7f2156ef",
+    "probe-results.json": "37d7540a7175ba1177a5c1c5cf534e998beaad62aed7c1dfdd17a68fde678ef5",
+    "review-followup-probes.test.ts.txt": "fa8ee5345372990e3ef572d84e693fbc884c83464f62a417d3d8e2f092450acb",
+    "validation.txt": "a73160a146a1916512a49525b0964fdc33dc3c012fc08aef549bdfb0158e845f"
+  }
+}

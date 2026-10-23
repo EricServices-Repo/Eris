@@ -10,7 +10,9 @@ const api: DevApi = {
   exportRun: (options) => ipcRenderer.invoke('dev:export', options),
   listRuns: () => ipcRenderer.invoke('dev:runs'),
   resumeRun: (runId) => ipcRenderer.invoke('dev:resume', runId),
+  openRun: (runId) => ipcRenderer.invoke('dev:open', runId),
   compareWith: () => ipcRenderer.invoke('dev:compare'),
+  comparePage: (offset) => ipcRenderer.invoke('dev:compare-page', offset),
   onProgress: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: DevProgress) => listener(progress)
     ipcRenderer.on('dev:progress', handler)

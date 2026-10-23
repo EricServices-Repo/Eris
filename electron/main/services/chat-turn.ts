@@ -11,7 +11,11 @@ import {
   type TaskContract,
   type TaskTurnResult
 } from '../../../src/shared/task-contract'
-import { extractRecommendations, stableHash } from '../../../src/shared/recommendations'
+import {
+  extractRecommendations,
+  recommendationAccounting,
+  stableHash
+} from '../../../src/shared/recommendations'
 import type { AgentRunnerEvent } from './agent/types'
 import { buildChatMessages, type BuiltChatMessage } from './chat-prompt'
 import { localComposerFullActive, planChatTurn } from './chat-router'
@@ -185,7 +189,10 @@ export function completeChatTurnTask(
       terminal: outcome.terminal,
       offeredRecommendations: offersAdvice ? extractRecommendations(outcome.answer) : [],
       changedFiles: [...new Set(outcome.changedFiles)].sort(),
-      answerDigest: stableHash(outcome.answer)
+      answerDigest: stableHash(outcome.answer),
+      ...(task.recommendations.length && task.deliverable === 'patch'
+        ? { recommendationStatus: recommendationAccounting(outcome.answer, task.recommendations) }
+        : {})
     }
   }
 }

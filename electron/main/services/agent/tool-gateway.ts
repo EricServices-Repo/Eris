@@ -68,6 +68,12 @@ export class TaskToolGateway {
       if (authority.execute === 'none') return 'This task does not permit shell execution.'
       if (authority.execute === 'verification' && !isVerifyCommand(String(call.args.command ?? '')))
         return 'This task only permits verification commands.'
+      const forbidden = this.task.interpretation?.constraints
+      const command = String(call.args.command ?? '')
+      if (forbidden?.commit && /\bgit\s+(?:commit|push|merge|rebase|tag)\b/i.test(command))
+        return 'The request forbids committing.'
+      if (forbidden?.external && /\b(?:git\s+push|npm\s+publish|deploy)\b/i.test(command))
+        return 'The request forbids pushing, deploying or publishing.'
       // Existing command approval remains mandatory for general commands.
       if (scope.projectRoot && scope.projectRoot !== scope.workspaceRoot) {
         const cwd = String(call.args.cwd ?? scope.projectRoot)

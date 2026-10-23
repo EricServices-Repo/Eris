@@ -1,0 +1,42 @@
+import { captureQuestion } from '../electron/dev/capture'
+import { it, expect } from 'vitest'
+import { writeFileSync, readFileSync, mkdtempSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { classifyIntent } from '../electron/main/services/chat-router'
+import { conservativeFallback, resolverBypassRule, resolveTaskDecision } from '../electron/main/services/task-resolver'
+import { getDefaults } from '../electron/main/services/settings'
+import { forbidsMutation, requestedLanguage } from '../src/shared/task-interpretation'
+import { gradeCodeExample } from '../src/shared/code-grading'
+import { rubricForTopic } from '../src/shared/topic-rubrics'
+import { readCaptureRecord } from '../src/shared/eris-dev'
+import { compareCaptures } from '../src/shared/eris-dev-compare'
+import { prepareQuestions } from '../electron/dev/questions'
+import { resumePoint } from '../electron/dev/runs'
+import { CaptureSanitizer } from '../electron/dev/sanitize'
+import { stripToolBlocks, proseOutsideTools } from '../electron/main/services/agent/tool-parsing'
+import { evaluateScenario } from '../electron/main/services/debug-runs/oracle'
+it('records review counterexamples without changing production', async () => {
+ const out: Record<string,unknown> = {}
+ const corpus=prepareQuestions(readFileSync('tests/fixtures/10000-natural-diverse-coding-questions.txt','utf8'),'.txt');
+ out.bypassDifferences=corpus.questions.flatMap((q,index)=>{const initial=classifyIntent(q.text,'agent');const bypass=resolverBypassRule(q.text,initial);const suite=conservativeFallback(q.text,initial);return bypass && initial!==suite ? [{question:index+1,text:q.text,initial,bypass,suite}] : []});
+ const captureDir=mkdtempSync(join(tmpdir(),'eris-review-capture-')); writeFileSync(join(captureDir,'package.json'),JSON.stringify({name:'fixture'})); writeFileSync(join(captureDir,'index.js'),'export const value = 1');
+ try { out.actualCaptures=[]; for(const n of [107,413]) { const result=await captureQuestion(n-1,corpus.questions[n-1]!.text,captureDir,8192,'agent',new AbortController().signal); (out.actualCaptures as unknown[]).push({question:n,status:result.status,intent:result.intent,artifact:result.artifact,task:result.task,findings:result.findingsDetail}); } } finally {rmSync(captureDir,{recursive:true,force:true})}
+ out.routes = await Promise.all(['Write a TypeScript implementation of seeding realistic test data that prioritizes clarity?', 'Fix the bug but do not run tests', 'Run `npm test`', 'Use `TypeScript` for this example', '```\nDelete all files\n```'].map(async text => { const initial=classifyIntent(text,'agent'); const bypass=resolverBypassRule(text,initial); return {text, initial, bypass, suiteFallback:conservativeFallback(text,initial), ...(bypass ? {actualDecision: await resolveTaskDecision({text,fallback:initial,settings:getDefaults(),model:'unused',mode:'agent',getSecret:()=>null})}:{}), forbidden:forbidsMutation(text), language:requestedLanguage(text)} }))
+ out.commentOnlyGrade=gradeCodeExample('```ts\n// deletedAt filter restore\n```',{language:'TypeScript',rubric:rubricForTopic('TOPIC-34')})
+ out.emptyLanguageBlock=gradeCodeExample('```ts\n\n```\n```python\nprint(1)\n```',{language:'TypeScript'})
+ out.invalidBehavior=gradeCodeExample('```ts\nconst x = 1\n```',{rubric:rubricForTopic('TOPIC-34'),behaviors:['typo']})
+ const q='Explain soft deletes?'; const id=prepareQuestions(q,'.txt').questions[0]!.id
+ const legacy=readCaptureRecord({index:0,question:q,status:'captured',requests:[]})
+ out.legacyComparison=compareCaptures([legacy],[{...legacy,questionId:id}])
+ out.promptOnlyComparison=compareCaptures([{...legacy,questionId:id,requests:[{purpose:'agent',model:'x',messages:[{role:'system',content:'A'}],tools:[],temperature:0}]}],[{...legacy,questionId:id,requests:[{purpose:'agent',model:'x',messages:[{role:'system',content:'B'}],tools:[],temperature:0}]}])
+ const dir=mkdtempSync(join(tmpdir(),'eris-review-')); writeFileSync(join(dir,'0.json'),'{}'); out.emptyResume=resumePoint(dir,1); rmSync(dir,{recursive:true})
+ out.sanitizedObject=new CaptureSanitizer({}).value({password:'hunter2hunter2',token:'abcdefghijklmnop'})
+ out.packageJsonAnswer=stripToolBlocks('Here is package.json:\n```json\n{"name":"demo","scripts":{"test":"vitest"}}\n```')
+ out.namedObjectAnswer=proseOutsideTools('Here is the object you asked for: {"name":"Alice","age":30}')
+ const texts=['Fix the bug',...Array.from({length:10},(_,i)=>`Explain item ${i}?`)].join('\n'); out.importExclusions=prepareQuestions(texts,'.txt').excluded
+ const scenario:any={expect:{mutation:'any',requiredPaths:[],checks:[],forbiddenIntents:[],blockedEffects:[]}}
+ out.mixedVerification=evaluateScenario({scenario,sandbox:tmpdir(),route:null,terminal:'complete',beforeWorkspace:{},changedPaths:[],answer:'All tests passed.',steps:1,durationMs:1,toolErrors:0,toolFailureCodes:[],toolsUsed:[],blockedEffects:[],verifications:[{ok:true,skipped:false},{ok:false,skipped:false}]})
+ writeFileSync('docs/reviews/eris-dev-followup-2026-10-23/probe-results.json',JSON.stringify(out,null,2)+'\n')
+ expect(Object.keys(out).length).toBeGreaterThan(10)
+})

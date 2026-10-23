@@ -100,7 +100,7 @@ export function asksWhatTheProjectDoes(text: string): boolean {
 
 /** The user is asking to apply previously discussed changes, not list them. */
 export function asksToImplementChanges(text: string): boolean {
-  const t = text.trim()
+  let t = text.trim()
   if (!t) return false
   if (
     /^(?:verify|validate|test|check|confirm)\b/i.test(t) &&
@@ -108,6 +108,11 @@ export function asksToImplementChanges(text: string): boolean {
   ) {
     return false
   }
+  // “How would you write it?” asks about an approach; it does not ask to apply one.
+  t = t.replace(
+    /\bhow\s+(?:would|should|could|do|can|might)\s+(?:you|i|we|one)\s+(?:go\s+about\s+)?(?:code|implement|apply|write|build|make|add)\s+(?:it|that|those|them|these)\b/gi,
+    ' '
+  )
   // Require the changes to be the verb's object. Proximity alone treats
   // 'Review the website build; recommend improvements' as permission to edit.
   return (

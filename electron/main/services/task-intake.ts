@@ -2,7 +2,7 @@ import { isPathInside } from './workspace-fs'
 import { createHash, randomUUID } from 'crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'fs'
 import { basename, join, relative } from 'path'
-import { extractRecommendations } from '../../../src/shared/recommendations'
+import { extractRecommendations, selectRecommendations } from '../../../src/shared/recommendations'
 import type {
   IntentResolution,
   ProjectStack,
@@ -12,7 +12,7 @@ import type {
   TaskInterpretation
 } from '../../../src/shared/task-contract'
 import {
-  forbidsMutation,
+  effectConstraints,
   interpretRequest,
   requestTextForIntent,
   stackFit
@@ -177,9 +177,7 @@ function scopeApplicability(
   if (interpretation.destination !== 'chat') return 'selected-project'
   if (!hasProject) return 'generic'
   const generic = ['code-example', 'design', 'explanation'].includes(interpretation.artifact)
-  return generic && !asksWorkspaceQuestion(requestTextForIntent(text) || text)
-    ? 'generic'
-    : 'unverified'
+  return generic && !asksWorkspaceQuestion(requestTextForIntent(text)) ? 'generic' : 'unverified'
 }
 
 export function createTaskContract(input: {
@@ -239,29 +237,42 @@ export function createTaskContract(input: {
   // Follow-ups resolve against the recommendation objects the prior turn recorded;
   // older threads fall back to reading the prior answer's prose.
   const refersToPrior =
-    /\b(those|these|them|recommended|suggested|recommendations?|all of (?:it|them))\b/i.test(
+    /\b(those|these|them|recommended|suggested|recommendations?|all of (?:it|them)|items?\s*#?\d|#\d|(?:first|second|third|fourth|fifth|last)\s+(?:one|item|recommendation|suggestion|fix|two|three)|the\s+[\w-]+(?:\s+[\w-]+){0,3}\s+(?:one|recommendation|suggestion))\b/i.test(
       input.text
     )
   const offered = input.priorTask?.result?.offeredRecommendations ?? []
-  const recommendations: TaskRecommendation[] = !refersToPrior
+  const available: TaskRecommendation[] = !refersToPrior
     ? []
     : offered.length
       ? offered
       : priorAnswer
         ? extractRecommendations(priorAnswer.content)
         : []
+  // “Only 2 and 4”, “all except caching”: the selection is resolved to stable IDs
+  // before any edit, and an unresolvable one is asked about instead of widened.
+  const selection = available.length ? selectRecommendations(input.text, available) : null
+  const recommendations: TaskRecommendation[] = selection?.unresolved
+    ? []
+    : (selection?.selected ?? [])
   const recommendationSource = !recommendations.length
     ? 'none'
     : offered.length
       ? 'prior-task'
       : 'prior-answer-prose'
   // An explicit “do not edit / do not run” is a constraint, whatever the route says.
-  const forbids = forbidsMutation(input.text)
+  // Each forbidden effect is removed on its own: no edits keeps approved checks,
+  // no commands keeps the patch.
+  const forbidden = effectConstraints(input.text)
+  const noCommands = forbidden.execution || forbidden.verification
   const policy =
-    (input.plan.mode === 'ask' || forbids) && input.plan.toolPolicy !== 'none'
-      ? 'read'
-      : input.plan.toolPolicy
-  const canEdit = policy === 'edit' || policy === 'full'
+    input.plan.toolPolicy === 'none'
+      ? 'none'
+      : input.plan.mode === 'ask' || (forbidden.edit && (noCommands || input.plan.intent !== 'run'))
+        ? 'read'
+        : noCommands && input.plan.toolPolicy === 'full'
+          ? 'edit'
+          : input.plan.toolPolicy
+  const canEdit = (policy === 'edit' || policy === 'full') && !forbidden.edit
   const deliverable = feasibleDeliverable(
     input.plan.intent === 'edit'
       ? input.plan.mode === 'ask'
@@ -284,15 +295,35 @@ export function createTaskContract(input: {
     route: input.plan.routeTrace
   })
   const projectStack = detectProjectStack(selected)
-  // Implementing referenced recommendations makes each one a separate obligation.
+  // Implementing referenced recommendations makes each one a separate obligation —
+  // every selected item, never an implicit first ten. The full text stays on the
+  // contract's recommendations; the obligation line is only a prompt-sized pointer.
   if (reading.artifact === 'patch' && recommendations.length)
     reading.obligations = [
       ...reading.obligations,
-      ...recommendations.slice(0, 10).map((recommendation, index) => ({
+      ...recommendations.map((recommendation, index) => ({
         id: `recommendation-${recommendation.id}`,
         kind: 'implementation' as const,
-        text: `Apply recommendation ${index + 1}: ${recommendation.text.slice(0, 240)}`
-      }))
+        text: `Apply recommendation ${index + 1}: ${
+          recommendation.text.length > 240
+            ? `${recommendation.text.slice(0, 240)}… (full text in the task's recommendations)`
+            : recommendation.text
+        }`
+      })),
+      {
+        id: 'accounting-recommendations',
+        kind: 'answer' as const,
+        text: `Account for all ${recommendations.length} recommendations by number: completed, deferred (with reason), blocked (with reason), or pending. Doing some in this turn is fine; leaving any unaccounted is not.`
+      }
+    ]
+  if (reading.artifact === 'patch' && selection?.unresolved)
+    reading.obligations = [
+      ...reading.obligations,
+      {
+        id: 'clarify-recommendation-selection',
+        kind: 'answer' as const,
+        text: `Before editing, ask which earlier recommendations to apply: ${selection.unresolved}`
+      }
     ]
   const interpretation: TaskInterpretation = {
     ...reading,
@@ -327,19 +358,30 @@ export function createTaskContract(input: {
     authority: {
       tools: policy,
       edit: canEdit,
-      execute:
-        policy === 'full'
+      execute: noCommands
+        ? 'none'
+        : policy === 'full'
           ? 'approved'
           : policy !== 'none' &&
-              !forbids &&
-              ['edit', 'review', 'verify'].includes(input.plan.intent) &&
-              input.plan.mode !== 'ask'
+              input.plan.mode !== 'ask' &&
+              (forbidden.edit
+                ? ['review', 'verify'].includes(input.plan.intent)
+                : ['edit', 'review', 'verify'].includes(input.plan.intent))
             ? 'verification'
             : 'none',
-      externalEffects: policy === 'full'
+      externalEffects: policy === 'full' && !forbidden.external && !forbidden.commit
     },
     skillIds: input.skillIds ?? input.priorTask?.skillIds,
     recommendations,
+    ...(selection && (selection.mode !== 'all' || selection.unresolved)
+      ? {
+          recommendationSelection: {
+            mode: selection.mode,
+            excludedIds: selection.excluded.map((item) => item.id),
+            ...(selection.unresolved ? { unresolved: selection.unresolved } : {})
+          }
+        }
+      : {}),
     ...(input.priorTask && input.priorTask.scope.workspaceRoot === root
       ? {
           continuation: {

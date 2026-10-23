@@ -13,25 +13,145 @@ import {
   asksForRecommendations
 } from './agent-contract'
 
-/**
- * The user's own words with quoted and fenced material removed. Action verbs
- * inside `write_file`, "run npm test" or a pasted code block are content, not requests.
- */
-export function requestTextForIntent(text: string): string {
-  return text
-    .replace(/```[\s\S]*?(?:```|$)/g, ' ')
-    .replace(/`[^`\n]*`/g, ' ')
-    .replace(/"[^"\n]{1,200}"/g, ' ')
-    .replace(/“[^”\n]{1,200}”/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
+/** Placeholder for a quoted shell command the surrounding instruction refers to. */
+export const COMMAND_OPERAND = '⟦cmd⟧'
+
+const COMMAND_START =
+  /^(?:npm|npx|pnpm|yarn|bun|node|deno|pytest|python3?|pip3?|cargo|go|make|docker|git|gradle|mvn|dotnet|bundle|rake|rspec|jest|vitest|tsc|eslint|composer|php|ruby|swift|xcodebuild|uv|poetry)\b/i
+
+/** One quoted or fenced span: data the instruction may refer to, never an instruction itself. */
+export interface QuotedOperand {
+  kind: 'fence' | 'inline' | 'quote'
+  text: string
+  role: 'command' | 'language' | 'path' | 'data'
 }
 
-/** “Do not edit”, “without changing anything”, “don't run it”. */
-export function forbidsMutation(text: string): boolean {
-  return /\b(?:do\s+not|don['’]t|dont|never|without)\s+(?:\w+\s+){0,2}?(?:edit(?:ing)?|chang(?:e|ing)|modify(?:ing)?|touch(?:ing)?|writ(?:e|ing)|apply(?:ing)?|commit(?:ting)?|run(?:ning)?|execut(?:e|ing))\b/i.test(
-    requestTextForIntent(text)
+export interface RequestSpans {
+  /** The user's own words, with quoted data removed or replaced by a typed operand marker. */
+  instruction: string
+  operands: QuotedOperand[]
+  /** The message has content, but none of it is outside quotes or fences. */
+  quotedOnly: boolean
+}
+
+function operandRole(kind: QuotedOperand['kind'], text: string): QuotedOperand['role'] {
+  const t = text.trim()
+  if (kind !== 'fence' && LANGUAGE_NAMES.has(t.toLowerCase())) return 'language'
+  if (kind !== 'fence' && /^[\w@./-]+\.[a-z0-9]{1,8}$/i.test(t) && !/\s/.test(t)) return 'path'
+  if (kind === 'inline' && COMMAND_START.test(t) && !/\n/.test(t)) return 'command'
+  return 'data'
+}
+
+/**
+ * Split a request into the user's instruction and the quoted data it refers to.
+ * Verbs inside `write_file`, “Delete all files” in a fence, or a pasted command are
+ * content, not requests. The surrounding instruction can still bind them as operands:
+ * a quoted language name or file path stays readable, and a quoted command becomes
+ * a marker that “Run …” can refer to. A quoted command is never scanned on its own.
+ */
+export function requestSpans(text: string): RequestSpans {
+  const operands: QuotedOperand[] = []
+  const keep = (kind: QuotedOperand['kind'], body: string) => {
+    const role = operandRole(kind, body)
+    operands.push({ kind, text: body, role })
+    if (role === 'language' || role === 'path') return ` ${body.trim()} `
+    if (role === 'command') return ` ${COMMAND_OPERAND} `
+    return ' '
+  }
+  const instruction = text
+    .replace(/```[^\n]*\n?([\s\S]*?)(?:```|$)/g, (_, body: string) => keep('fence', body))
+    .replace(/`([^`\n]*)`/g, (_, body: string) => keep('inline', body))
+    .replace(/"([^"\n]{1,200})"/g, (_, body: string) => keep('quote', body))
+    .replace(/“([^”\n]{1,200})”/g, (_, body: string) => keep('quote', body))
+    .replace(/\s+/g, ' ')
+    .trim()
+  return { instruction, operands, quotedOnly: !instruction && /\S/.test(text) }
+}
+
+/**
+ * The user's own words with quoted and fenced material removed. Empty when the
+ * whole message is quoted; callers must not fall back to the quoted text.
+ */
+export function requestTextForIntent(text: string): string {
+  return requestSpans(text).instruction
+}
+
+/** The message is only quoted or fenced content, with no instruction around it. */
+export function isQuotedContentOnly(text: string): boolean {
+  return requestSpans(text).quotedOnly
+}
+
+export type ForbiddenEffect = 'edit' | 'verification' | 'execution' | 'commit' | 'external'
+
+/** Effects the request forbids, each with the phrase that forbade it. */
+export interface EffectConstraints {
+  edit: boolean
+  /** Running tests, typecheck, lint or build. */
+  verification: boolean
+  /** Running any command. */
+  execution: boolean
+  commit: boolean
+  /** Pushing, deploying, publishing, or other effects outside the workspace. */
+  external: boolean
+  trace: Array<{ phrase: string; effects: ForbiddenEffect[] }>
+}
+
+const NEGATION =
+  /\b(?:do\s+not|don['’]t|dont|never|without|no\s+need\s+to|avoid|refrain\s+from)\s+((?:(?:any|anything|the|any\s+of\s+the|actually|yet|please|ever|really|make|making|me|you)\s+){0,3})(edit(?:s|ing)?|chang(?:e|es|ing)|modif(?:y|ying|ications?)|touch(?:ing)?|writ(?:e|ing)|apply(?:ing)?|delet(?:e|ing)|renam(?:e|ing)|commit(?:ting)?|push(?:ing)?|deploy(?:ing)?|publish(?:ing)?|run(?:ning)?|execut(?:e|ing)|launch(?:ing)?|start(?:ing)?|test(?:ing)?|build(?:ing)?)\b((?:\s+(?!(?:and|but|or|nor|then|never|so)\b)[\w-]+){0,3})/gi
+
+const WORKSPACE_OBJECT =
+  /^\s+(?:(?:any|the|my|our|this|these|those|your|its)\s+)*(?:files?|code(?:base)?|repo(?:sitory)?|workspace|project|source|anything(?!\s+else)|it|them|nothing)\b/i
+const VERIFICATION_OBJECT =
+  /\b(?:tests?|specs?|test\s+suite|typecheck|type-?check|lint(?:er)?|build|checks?|ci)\b/i
+
+/**
+ * “Fix the bug but do not run tests” forbids running checks, not the patch.
+ * “Run tests without changing files” forbids edits, not the check. “Do not change
+ * anything” forbids both. Each effect is recorded with the phrase that denied it.
+ */
+export function effectConstraints(text: string): EffectConstraints {
+  const t = requestTextForIntent(text)
+  const out: EffectConstraints = {
+    edit: false,
+    verification: false,
+    execution: false,
+    commit: false,
+    external: false,
+    trace: []
+  }
+  const deny = (phrase: string, effects: ForbiddenEffect[]) => {
+    for (const effect of effects) out[effect] = true
+    out.trace.push({ phrase: phrase.trim(), effects })
+  }
+  for (const match of t.matchAll(NEGATION)) {
+    const verb = match[2]!.toLowerCase()
+    const object = (match[1] ?? '') + (match[3] ?? '')
+    const everything = /\banything\b(?!\s+else)/i.test(object) && !/\bfiles?\b/i.test(object)
+    if (/^(?:commit)/.test(verb)) deny(match[0], ['commit'])
+    else if (/^(?:push|deploy|publish)/.test(verb)) deny(match[0], ['commit', 'external'])
+    else if (/^(?:run|execut|launch|start)/.test(verb))
+      deny(
+        match[0],
+        VERIFICATION_OBJECT.test(match[3] ?? '') ? ['verification'] : ['verification', 'execution']
+      )
+    else if (/^(?:test|build)/.test(verb)) deny(match[0], ['verification'])
+    else if (everything) deny(match[0], ['edit', 'verification', 'execution'])
+    // “Without changing the public API” or “don't touch anything else” limits the
+    // patch; it does not forbid one. Only the workspace as a whole, or no object, does.
+    else if (WORKSPACE_OBJECT.test(match[3] ?? '') || !(match[3] ?? '').trim())
+      deny(match[0], ['edit'])
+    else out.trace.push({ phrase: match[0].trim(), effects: [] })
+  }
+  const readOnly = t.match(
+    /\bread[\s-]only\b|\bno\s+(?:file\s+)?(?:edits|changes|modifications)\b|\bjust\s+(?:look|read)\b/i
   )
+  if (readOnly) deny(readOnly[0], ['edit'])
+  return out
+}
+
+/** “Do not edit”, “without changing anything”. Run-only prohibitions do not forbid edits. */
+export function forbidsMutation(text: string): boolean {
+  return effectConstraints(text).edit
 }
 
 const LANGUAGES: Array<[string, RegExp]> = [
@@ -51,6 +171,28 @@ const LANGUAGES: Array<[string, RegExp]> = [
   ['Swift', /\bswift\b/i],
   ['C++', /\bc\+\+|\bcpp\b/i]
 ]
+const LANGUAGE_NAMES = new Set([
+  'typescript',
+  'ts',
+  'javascript',
+  'js',
+  'node',
+  'node.js',
+  'nodejs',
+  'python',
+  'java',
+  'kotlin',
+  'go',
+  'golang',
+  'rust',
+  'php',
+  'ruby',
+  'c#',
+  'csharp',
+  'swift',
+  'c++',
+  'cpp'
+])
 const FRAMEWORKS: Array<[string, RegExp]> = [
   ['Django', /\bdjango\b/i],
   ['Flask', /\bflask\b/i],
@@ -65,15 +207,95 @@ const FRAMEWORKS: Array<[string, RegExp]> = [
   ['ASP.NET', /\basp\.net\b/i]
 ]
 
-/** The first explicitly named language. Framework names imply their language. */
-export function requestedLanguage(text: string): string | null {
-  const t = requestTextForIntent(text)
-  let best: { name: string; index: number } | null = null
-  for (const [name, pattern] of LANGUAGES) {
-    const index = t.search(pattern)
-    if (index >= 0 && (!best || index < best.index)) best = { name, index }
+/** Languages named outright; framework names only imply a language. */
+const FRAMEWORK_IMPLIED = new Set(['Python', 'Java', 'PHP', 'Ruby', 'C#'])
+const EXPLICIT_LANGUAGES: Array<[string, RegExp]> = LANGUAGES.map(([name, pattern]) =>
+  FRAMEWORK_IMPLIED.has(name)
+    ? [
+        name,
+        {
+          Python: /\bpython\b/i,
+          Java: /\bjava\b(?!script)/i,
+          PHP: /\bphp\b/i,
+          Ruby: /\bruby\b/i,
+          'C#': /\bc#|\bcsharp\b/i
+        }[name as 'Python']
+      ]
+    : [name, pattern]
+)
+
+function languageAt(
+  text: string,
+  table: Array<[string, RegExp]>
+): Array<{ name: string; index: number; match: string }> {
+  const found: Array<{ name: string; index: number; match: string }> = []
+  for (const [name, pattern] of table) {
+    const global = new RegExp(pattern.source, pattern.flags + 'g')
+    for (const match of text.matchAll(global))
+      found.push({ name, index: match.index ?? 0, match: match[0] })
   }
-  return best?.name ?? null
+  return found.sort((a, b) => a.index - b.index)
+}
+
+/** Source and target language as separate roles, with any ambiguity kept visible. */
+export interface LanguageRoles {
+  /** The language the answer or patch must be written in. */
+  target: string | null
+  /** The language being converted from, when the request is a conversion. */
+  source: string | null
+  /** Distinct explicitly named languages that leave the target undecided. */
+  ambiguous: string[]
+}
+
+const CONVERSION =
+  /\b(?:convert|port|translate|rewrite|migrate|transpile|turn)\b[\s\S]{0,80}?\b(?:to|into)\s+(?:idiomatic\s+|modern\s+)?([\w#+.]+)/i
+
+/**
+ * “Convert this Python example to TypeScript” has a source and a target; the first
+ * language mentioned is not the target. Explicit names outrank framework-implied ones,
+ * and frameworks from different ecosystems leave the language to the frameworks.
+ */
+export function languageRoles(text: string): LanguageRoles {
+  const t = requestTextForIntent(text)
+  const named = languageAt(t, EXPLICIT_LANGUAGES)
+  const conversion = t.match(CONVERSION)
+  if (conversion) {
+    const targetIndex = (conversion.index ?? 0) + conversion[0].length - conversion[1]!.length
+    // The conversion's object names the target, even a bare “Go” the general table skips.
+    const token = conversion[1]!.toLowerCase()
+    const target =
+      (token === 'go' || token === 'golang'
+        ? 'Go'
+        : EXPLICIT_LANGUAGES.find(([, pattern]) => pattern.test(conversion[1]!))?.[0]) ??
+      named.find((item) => item.index >= targetIndex)?.name ??
+      null
+    const source = named.find((item) => item.index < targetIndex && item.name !== target)?.name
+    if (target) return { target, source: source ?? null, ambiguous: [] }
+  }
+  // “… in Java”, “using Go”, “a Rust version” name the target directly.
+  const directed = named.find(
+    (item) =>
+      /^(?:in|using|with)\s/i.test(item.match) ||
+      /\b(?:in|using|with|as)\s+(?:idiomatic\s+|modern\s+|plain\s+)?$/i.test(
+        t.slice(0, item.index)
+      ) ||
+      /^\S+\s+(?:version|implementation|example|code)\b/i.test(t.slice(item.index))
+  )
+  const distinct = [...new Set(named.map((item) => item.name))]
+  if (directed) return { target: directed.name, source: null, ambiguous: [] }
+  if (distinct.length > 1) return { target: distinct[0]!, source: null, ambiguous: distinct }
+  if (distinct.length === 1) return { target: distinct[0]!, source: null, ambiguous: [] }
+  // Only framework-implied: one ecosystem decides the language; two leave it open.
+  const implied = [...new Set(languageAt(t, LANGUAGES).map((item) => item.name))]
+  const frameworks = requestedFrameworks(text)
+  const families = new Set(frameworks.map((name) => FRAMEWORK_LANGUAGES[name]?.[0] ?? name))
+  if (families.size > 1) return { target: null, source: null, ambiguous: [] }
+  return { target: implied[0] ?? null, source: null, ambiguous: [] }
+}
+
+/** The language the reply or patch must use. See languageRoles for the source language. */
+export function requestedLanguage(text: string): string | null {
+  return languageRoles(text).target
 }
 
 export function requestedFrameworks(text: string): string[] {
@@ -111,7 +333,7 @@ export function requestedArtifact(
   intent: ChatIntent,
   canEdit: boolean
 ): { artifact: RequestedArtifact; destination: ArtifactDestination } {
-  const t = requestTextForIntent(text) || text
+  const t = requestTextForIntent(text)
   const chat = (artifact: RequestedArtifact) => ({ artifact, destination: 'chat' as const })
   if (intent === 'review') return chat('review')
   if (intent === 'verify' || intent === 'run') return chat('execution-report')
@@ -177,15 +399,20 @@ export function interpretRequest(input: {
   route?: TaskInterpretation['route']
 }): TaskInterpretation {
   const { artifact, destination } = requestedArtifact(input.text, input.intent, input.canEdit)
-  const language = requestedLanguage(input.text)
+  const roles = languageRoles(input.text)
+  const language = roles.target
+  const constraints = effectConstraints(input.text)
   return {
     revision: input.revision,
     artifact,
     destination,
     obligations: requestObligations(input.text, artifact, language),
     language,
+    ...(roles.source ? { sourceLanguage: roles.source } : {}),
+    ...(roles.ambiguous.length ? { languageAmbiguity: roles.ambiguous } : {}),
     frameworks: requestedFrameworks(input.text),
-    forbidsMutation: forbidsMutation(input.text),
+    forbidsMutation: constraints.edit,
+    ...(constraints.trace.length ? { constraints } : {}),
     conceptFit: conceptFit(requestTextForIntent(input.text), language),
     route: input.route ?? { heuristicRule: 'unknown', overrides: [] }
   }
@@ -200,9 +427,14 @@ export function artifactResponseContract(
   applicability?: ScopeApplicability
 ): string {
   const stack = [interpretation.language, ...interpretation.frameworks].filter(Boolean).join(', ')
-  const inStack = stack
-    ? ` Use ${stack} as requested, even if the open project uses another stack.`
-    : ''
+  const inStack =
+    (stack ? ` Use ${stack} as requested, even if the open project uses another stack.` : '') +
+    (interpretation.sourceLanguage && interpretation.language
+      ? ` Convert from ${interpretation.sourceLanguage} to ${interpretation.language}; the result is ${interpretation.language}, not ${interpretation.sourceLanguage}.`
+      : '') +
+    (interpretation.languageAmbiguity?.length
+      ? ` The request names ${interpretation.languageAmbiguity.join(' and ')}; state which language each part uses.`
+      : '')
   const lines: Record<RequestedArtifact, string> = {
     'code-example': `RESPONSE CONTRACT — code example in chat. Include complete, runnable code in a fenced block with its imports or dependencies, then brief notes on usage and limitations. Keep it concise but do not truncate the code to fit a sentence limit; do not reply with only a plan of future steps. This outranks any brevity rule in role text.${inStack}`,
     design: `RESPONSE CONTRACT — design answer. Describe the data structures or schema, interfaces or endpoints, and the main tradeoffs. Ordered implementation steps are optional.${inStack}`,
@@ -217,11 +449,34 @@ export function artifactResponseContract(
   const obligations = interpretation.obligations.length
     ? `\nObligations, each checked separately:\n${interpretation.obligations.map((o, i) => `${i + 1}. ${o.text}`).join('\n')}`
     : ''
-  const forbids = interpretation.forbidsMutation
-    ? '\nThe user asked for no edits or commands. Do not change files or run anything.'
-    : ''
+  const forbids = constraintLines(interpretation)
   const scope = scopeAndStackGuidance(interpretation, applicability)
   return lines[interpretation.artifact] + obligations + forbids + (scope ? `\n${scope}` : '')
+}
+
+/**
+ * One line per forbidden effect, so “do not run tests” never reads as “do not edit”.
+ * Contracts saved before constraints existed keep their single read-only line.
+ */
+function constraintLines(interpretation: TaskInterpretation): string {
+  const c = interpretation.constraints
+  if (!c) {
+    return interpretation.forbidsMutation
+      ? '\nThe user asked for no edits or commands. Do not change files or run anything.'
+      : ''
+  }
+  const lines: string[] = []
+  if (c.edit) lines.push('Do not change files.')
+  if (c.execution) lines.push('Do not run commands.')
+  else if (c.verification) lines.push('Do not run tests, typecheck, lint or builds.')
+  if (c.commit) lines.push('Do not commit.')
+  if (c.external) lines.push('Do not push, deploy or publish.')
+  if (!lines.length) return ''
+  const quoted = c.trace
+    .filter((item) => item.effects.length)
+    .map((item) => `“${item.phrase}”`)
+    .join(', ')
+  return `\nThe user restricted effects (${quoted}). ${lines.join(' ')}`
 }
 
 const FRAMEWORK_LANGUAGES: Record<string, string[]> = {

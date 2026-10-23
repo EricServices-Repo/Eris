@@ -2,6 +2,8 @@ import { z } from 'zod'
 import { EvalCheckSchema, SandboxPathSchema } from './evals'
 import { AgentToolsCeilingSchema, ChatIntentSchema, type ChatIntent } from './settings-schema'
 import type { IntentResolution, TaskContract, TaskInterpretation } from './task-contract'
+import { codeExampleConfigErrors } from './code-grading'
+import { TOPIC_RUBRICS } from './topic-rubrics'
 
 /**
  * Build & agent diagnostics runs. Every run is labeled with how model output
@@ -117,6 +119,14 @@ export const DebugExpectSchema = z.object({
       language: z.string().optional(),
       rubric: z.string().optional(),
       behaviors: z.array(z.string()).optional()
+    })
+    // FR-013: invalid criteria are a setup error when the run is planned, never an easier pass.
+    .superRefine((value, ctx) => {
+      const rubric = value.rubric
+        ? TOPIC_RUBRICS.find((item) => item.id === value.rubric)
+        : undefined
+      for (const message of codeExampleConfigErrors(value.rubric, rubric, value.behaviors))
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message })
     })
     .optional()
 })
@@ -262,6 +272,8 @@ export type DebugFailureCategory =
   | 'blocked_effect_missing'
   | 'terminal_mismatch'
   | 'outcome_unsupported'
+  /** The scenario's own evaluation criteria are invalid (unknown rubric, unresolved behaviors). */
+  | 'evaluation_invalid'
   | 'timed_out'
   | 'user_cancelled'
   | 'internal_error'
@@ -363,7 +375,29 @@ export interface DebugContractRecord {
  * and harness failures are limits of where or how the case ran; ungraded cases
  * have no expectations and never count as passes.
  */
-export type DebugOutcomeClass = 'passed' | 'agent_defect' | 'environment' | 'harness' | 'ungraded'
+/** unknown: a timeout or other stop whose recorded evidence does not identify a cause. */
+export type DebugOutcomeClass =
+  | 'passed'
+  | 'agent_defect'
+  | 'environment'
+  | 'harness'
+  | 'unknown'
+  | 'ungraded'
+
+/**
+ * What a timed-out case was doing when its deadline fired. The terminal status alone
+ * never decides the cause: a stalled provider, a repeated tool loop and an unreached
+ * stage are different defects.
+ */
+export interface DebugTimeoutEvidence {
+  cause: 'provider-stall' | 'repeated-work' | 'user-cancelled' | 'unknown'
+  /** Milliseconds since the case started when the last progress event was recorded. */
+  lastProgressMs: number | null
+  modelWaitMs: number
+  toolCalls: number
+  /** The most repeated tool summary and how often it appeared. */
+  repeatedWork: { summary: string; count: number } | null
+}
 
 /** How the case ended, typed so incomplete work never reads as success. */
 export type DebugCaseOutcome =
@@ -391,7 +425,12 @@ export interface DebugEvaluation {
 /** Which execution stages a run actually exercised, and which it did not. */
 export interface DebugCoverage {
   cases: number
+  /** Cases with completed evidence for each stage; this is what “covered” means. */
   stages: Record<string, number>
+  /** Cases that attempted each stage, failures and refusals included. */
+  attempts?: Record<string, number>
+  /** Cases whose stage also passed (verification passed, delegation accepted). */
+  passed?: Record<string, number>
   uncovered: string[]
   byArtifact: Record<string, number>
   byTag: Record<string, number>
@@ -428,6 +467,8 @@ export interface DebugCaseResult {
   turns?: DebugTurnRecord[]
   outcome?: DebugCaseOutcome
   outcomeClass?: DebugOutcomeClass
+  /** Set for timed-out and cancelled cases. */
+  timeoutEvidence?: DebugTimeoutEvidence
   evaluation?: DebugEvaluation
   changedPaths: string[]
   diffHash: string | null

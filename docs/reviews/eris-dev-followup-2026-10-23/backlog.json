@@ -1,0 +1,455 @@
+{
+  "review_date": "2026-10-23",
+  "items": [
+    {
+      "id": "FR-001",
+      "title": "The full-corpus regression sweep bypasses production precedence",
+      "priority": "P0",
+      "evidence_and_targets": "reproduced. **Classification:** newly added test blind spot. **Targets:** `tests/agent-regression-suite.test.ts::fallbackRoute`; `electron/main/services/task-resolver.ts::resolveTaskDecision`.",
+      "problem_and_evidence": "**Priority/evidence:** P0, reproduced. **Classification:** newly added test blind spot. **Targets:** `tests/agent-regression-suite.test.ts::fallbackRoute`; `electron/main/services/task-resolver.ts::resolveTaskDecision`.\n\nThe suite always calls `conservativeFallback(text, classifyIntent(...))`. Production first applies `resolverBypassRule` and returns the initial intent for matching rules. Across 10,000 questions, 134 bypassed cases would be reported differently by the suite. Its assertion that no corpus question receives edit/run effects therefore does not establish that property in production. Q107 is reported as plan by the helper while the actual capture prepares an editable patch.\n\n",
+      "implementation": "replace the reconstructed pipeline with the production resolver under a deterministic transport adapter. Report bypass, semantic and fallback populations separately. Keep helper tests as unit tests, but do not use their outputs as production routing metrics.",
+      "acceptance": "every corpus case records the actual resolution source. Q107 and Q413 reproduce current production behavior before a routing fix, then fail until the behavior is corrected. Preserve the 10,000 denominator and publish discrepancies rather than hiding them behind an all-green aggregate.",
+      "document_line": 56
+    },
+    {
+      "id": "FR-002",
+      "title": "\u201cHow would you write it?\u201d still acquires patch authority",
+      "priority": "P0",
+      "evidence_and_targets": "reproduced at the production capture boundary. **Classification:** residual original defect. **Targets:** `src/shared/agent-contract.ts::asksToImplementChanges`; `electron/main/services/chat-router.ts`; `electron/main/services/task-resolver.ts`.",
+      "problem_and_evidence": "**Priority/evidence:** P0, reproduced at the production capture boundary. **Classification:** residual original defect. **Targets:** `src/shared/agent-contract.ts::asksToImplementChanges`; `electron/main/services/chat-router.ts`; `electron/main/services/task-resolver.ts`.\n\nQ107 asks, \u201cI want request validation middleware to be easy to reason about. How would you write it?\u201d Current capture selects edit/patch with `authority.edit=true`. Q413, \u201cWrite me a clear implementation of seeding realistic test data in Java?\u201d, also becomes a patch in a JavaScript sample workspace. Neither capture receives invariant findings. The exact desired destination for all 134 discrepant cases needs labeling; these examples demonstrate why conservative artifact handling cannot exist only in the test helper.\n\n",
+      "implementation": "resolve requested destination before an implementation bypass grants edit authority. Distinguish a complete example in chat from a request to apply it to the selected repository. Do not simply downgrade all coding requests: explicit \u201cadd this to src/api.ts\u201d must still edit.",
+      "acceptance": "add production-boundary contrast cases for examples, questions about approaches, named-file changes and new applications. Confirm artifact, destination, authority, worker and compiled prompt agree.",
+      "document_line": 66
+    },
+    {
+      "id": "FR-003",
+      "title": "\u201cDo not run tests\u201d incorrectly prohibits code edits",
+      "priority": "P1",
+      "evidence_and_targets": "reproduced. **Classification:** regression in the artifact/constraint changes. **Targets:** `src/shared/task-interpretation.ts::forbidsMutation`; `electron/main/services/task-intake.ts`; `chat-router.ts::classifyIntentTraced`.",
+      "problem_and_evidence": "**Priority/evidence:** P1, reproduced. **Classification:** regression in the artifact/constraint changes. **Targets:** `src/shared/task-interpretation.ts::forbidsMutation`; `electron/main/services/task-intake.ts`; `chat-router.ts::classifyIntentTraced`.\n\n\u201cFix the bug but do not run tests\u201d resolves to explore with mutation forbidden. `forbidsMutation` treats run/execute prohibitions as edit prohibitions, and intake changes the entire tool policy to read. The response contract also expands the constraint to \u201cDo not change files or run anything.\u201d The user permitted a patch and restricted only execution.\n\n",
+      "implementation": "represent forbidden effects independently: editing, verification execution, arbitrary execution, commits and external actions. Derive capability filters from that record. Use a constraint trace so the UI can explain which phrase denied which effect.",
+      "acceptance": "\u201cedit but don't run\u201d permits a patch and prohibits execution; \u201crun tests without changing files\u201d permits approved verification and prohibits edits; \u201cdon't commit\u201d does not prohibit a local patch. Preserve the existing full read-only behavior for \u201cdo not change anything.\u201d",
+      "document_line": 76
+    },
+    {
+      "id": "FR-004",
+      "title": "Removing inline code erases legitimate command and language operands",
+      "priority": "P1",
+      "evidence_and_targets": "reproduced. **Classification:** introduced interpretation limitation. **Targets:** `src/shared/task-interpretation.ts::requestTextForIntent`, `requestedLanguage`; router and resolver callers.",
+      "problem_and_evidence": "**Priority/evidence:** P1, reproduced. **Classification:** introduced interpretation limitation. **Targets:** `src/shared/task-interpretation.ts::requestTextForIntent`, `requestedLanguage`; router and resolver callers.\n\n`Run \\`npm test\\`` becomes an answer because the command operand is deleted before classification. `Use \\`TypeScript\\` for this example` loses its language. Treating quoted material as non-authoritative is correct, but deleting all quoted operands prevents the surrounding user instruction from referring to them.\n\n",
+      "implementation": "parse spans into instruction and quoted-data segments. Use the unquoted action to determine intent and allow it to bind a quoted argument as data. Never scan a pasted command independently as permission to execute it.",
+      "acceptance": "quoted filenames, shell commands, language names, JSON payloads and error messages remain usable operands. \u201cExplain \\`npm test\\`\u201d stays explanatory; \u201cRun \\`npm test\\`\u201d becomes execution subject to normal command approval.",
+      "document_line": 86
+    },
+    {
+      "id": "FR-005",
+      "title": "Empty sanitized text falls back to the original quoted instructions",
+      "priority": "P1",
+      "evidence_and_targets": "reproduced at classification; downstream mutation not demonstrated. **Targets:** `chat-router.ts::classifyIntentRule`; `task-resolver.ts::resolverBypassRule`; `task-interpretation.ts::requestedArtifact`.",
+      "problem_and_evidence": "**Priority/evidence:** P1, reproduced at classification; downstream mutation not demonstrated. **Targets:** `chat-router.ts::classifyIntentRule`; `task-resolver.ts::resolverBypassRule`; `task-interpretation.ts::requestedArtifact`.\n\nA message consisting only of a fenced \u201cDelete all files\u201d is classified as edit because several callers use `requestTextForIntent(text) || text`. This restores the very material the parser removed. The focused example subsequently lacks a bypass and would take conservative fallback without confident semantic resolution, so this review does not claim deletion occurs. The inconsistent trust boundary still matters.\n\n",
+      "implementation": "return an explicit \u201cno instruction outside quoted content\u201d result. Handle it through an explanatory/clarification path, never by restoring untrusted text as the instruction source.",
+      "acceptance": "quote-only and fence-only inputs cannot gain effects from their contents. Explicit surrounding instructions such as \u201cexplain this\u201d or \u201capply this patch\u201d remain meaningful with the quoted content supplied as data.",
+      "document_line": 96
+    },
+    {
+      "id": "FR-006",
+      "title": "Language selection conflates source language and requested target",
+      "priority": "P2",
+      "evidence_and_targets": "source-confirmed design limitation. **Targets:** `src/shared/task-interpretation.ts::requestedLanguage`, `artifactResponseContract`.",
+      "problem_and_evidence": "**Priority/evidence:** P2, source-confirmed design limitation. **Targets:** `src/shared/task-interpretation.ts::requestedLanguage`, `artifactResponseContract`.\n\nLanguage extraction selects the earliest named language, including a framework-implied language. Requests such as \u201cConvert this Python example to TypeScript\u201d need two roles, not the first language mentioned. The current contract's single language field can then instruct the worker to use the wrong stack. This is outside the narrowly templated corpus families even though it is a common IDE task.\n\n",
+      "implementation": "model source language, target language and requested frameworks separately. Prefer explicit conversion target syntax; use project detection only where the user has not specified a target. Keep ambiguity visible instead of silently choosing the first match.",
+      "acceptance": "cover Python-to-TypeScript, JavaScript-to-TypeScript, a Django backend plus React frontend, and quoted target names. Check the compiled model instruction, not only extraction results.",
+      "document_line": 106
+    },
+    {
+      "id": "FR-007",
+      "title": "Follow-up implementation obligations silently stop at ten recommendations",
+      "priority": "P1",
+      "evidence_and_targets": "source-confirmed. **Targets:** `electron/main/services/task-intake.ts` recommendation obligations; `src/shared/recommendations.ts::extractRecommendations`.",
+      "problem_and_evidence": "**Priority/evidence:** P1, source-confirmed. **Targets:** `electron/main/services/task-intake.ts` recommendation obligations; `src/shared/recommendations.ts::extractRecommendations`.\n\nRecommendation extraction retains at most 30 items, but patch obligations use only `recommendations.slice(0,10)` and truncate each text to 240 characters. A user asking to implement a long review can receive a contract whose explicit acceptance obligations omit most work. The full recommendation objects remain available elsewhere, so this is a completeness/accounting defect rather than proof all later items are always ignored.\n\n",
+      "implementation": "retain the full selected recommendation set durably. Batch execution as needed, but never make a batch limit an implicit scope limit. Give each recommendation a state and dependency list, and retain its complete acceptance requirements outside the prompt budget.",
+      "acceptance": "a 40-item review followed by \u201cimplement all\u201d accounts for all 40 as completed, deferred with a reason, blocked, or pending. No invisible truncation; completion requires accounting for the full authorized set.",
+      "document_line": 116
+    },
+    {
+      "id": "FR-008",
+      "title": "Follow-ups cannot reliably select a subset of prior recommendations",
+      "priority": "P1",
+      "evidence_and_targets": "source-confirmed limitation. **Targets:** `task-intake.ts::refersToPrior` and recommendation selection.",
+      "problem_and_evidence": "**Priority/evidence:** P1, source-confirmed limitation. **Targets:** `task-intake.ts::refersToPrior` and recommendation selection.\n\nWhen a reference phrase matches, intake takes the entire prior offered list; it does not resolve \u201conly items 2 and 4,\u201d \u201call except caching,\u201d or \u201cthe first one.\u201d Numeric selection and exclusion need explicit representation before edits start. Otherwise a broad \u201cthose\u201d detector can attach more work than the current user selected, while other references can fail to attach any.\n\n",
+      "implementation": "resolve references to stable recommendation IDs, including positive selections and exclusions. If a material selection cannot be resolved, request a narrow clarification. Carry selected IDs into obligations, child assignments and completion evidence.",
+      "acceptance": "verify numbered, named and exclusion-based selections through a multi-turn production scenario, with diff assertions proving unselected changes were not applied.",
+      "document_line": 126
+    },
+    {
+      "id": "FR-009",
+      "title": "Recommendation extraction treats ordinary lists as implementation advice",
+      "priority": "P2",
+      "evidence_and_targets": "source-confirmed. **Targets:** `src/shared/recommendations.ts::itemsFrom`, `extractRecommendations`.",
+      "problem_and_evidence": "**Priority/evidence:** P2, source-confirmed. **Targets:** `src/shared/recommendations.ts::itemsFrom`, `extractRecommendations`.\n\nAny bullet/numbered list wins over paragraph advice and is accepted without the `ADVICE` predicate used for paragraphs. Dependency lists, observed failures, examples and quoted lists can become offered recommendations. IDs also incorporate a hash of the entire answer, so unrelated wording changes rename every recommendation.\n\n",
+      "implementation": "store structured recommendations from the review workflow, with a conservative legacy prose importer. Distinguish findings, alternatives, steps and recommendations. Assign IDs from normalized recommendation identity and source location rather than the complete answer text.",
+      "acceptance": "mixed answers containing dependencies, findings and actual recommendations yield only actionable offers. Reformatting the introduction preserves recommendation identity; repeated distinct recommendations remain distinguishable.",
+      "document_line": 136
+    },
+    {
+      "id": "FR-010",
+      "title": "Legitimate JSON examples are removed from final answers",
+      "priority": "P0",
+      "evidence_and_targets": "reproduced. **Classification:** incomplete Stage 6 repair of an existing parser problem. **Targets:** `electron/main/services/agent/tool-parsing.ts::isToolEnvelopeBody`, `stripToolBlocks`, `proseOutsideTools`.",
+      "problem_and_evidence": "**Priority/evidence:** P0, reproduced. **Classification:** incomplete Stage 6 repair of an existing parser problem. **Targets:** `electron/main/services/agent/tool-parsing.ts::isToolEnvelopeBody`, `stripToolBlocks`, `proseOutsideTools`.\n\nA package.json example with `{\"name\":\"demo\",\"scripts\":{\"test\":\"vitest\"}}` is removed, leaving only \u201cHere is package.json:\u201d. A prose object `{\"name\":\"Alice\",\"age\":30}` is also removed. The Stage 6 fence fix identifies any parsed object with a string `name` as a tool envelope; the older prose cleanup is similarly broad. This can make a good model response appear empty or incomplete.\n\n",
+      "implementation": "classify protocol using explicit envelope/native-call metadata and actual emitted call spans. A common domain property such as `name` is insufficient. Keep ordinary fenced examples intact even when they describe a known tool as data.",
+      "acceptance": "package manifests, user records, nested named objects, TypeScript objects, and documentation of tool APIs survive rendering. Actual executed tool envelopes are hidden. Test the complete posted-answer path, not only the parser helper.",
+      "document_line": 148
+    },
+    {
+      "id": "FR-011",
+      "title": "Comment-only code passes implementation grading",
+      "priority": "P1",
+      "evidence_and_targets": "reproduced. **Targets:** `src/shared/code-grading.ts`; topic rubrics; diagnostic oracle.",
+      "problem_and_evidence": "**Priority/evidence:** P1, reproduced. **Targets:** `src/shared/code-grading.ts`; topic rubrics; diagnostic oracle.\n\nThe TypeScript block `// deletedAt filter restore` passes the soft-delete rubric, with every core behavior marked covered. The implementation accurately labels its method as a keyword heuristic, but the verdict is still `pass` and the oracle promotes it to a successful answer check. The distinction between textual hints and implementation evidence is lost at the verdict boundary.\n\n",
+      "implementation": "make keyword hits a review signal. Require syntax/AST evidence for structural checks and executable behavioral fixtures for semantic passes. At minimum, comments, strings and empty declarations must not satisfy implementation obligations.",
+      "acceptance": "comment-only, TODO-only, dead-code and deliberately incorrect examples do not pass implementation quality. Preserve keyword coverage as a separately named diagnostic field rather than deleting useful heuristic information.",
+      "document_line": 158
+    },
+    {
+      "id": "FR-012",
+      "title": "An empty target-language fence can validate code in another language",
+      "priority": "P1",
+      "evidence_and_targets": "reproduced. **Targets:** `src/shared/code-grading.ts::gradeCodeExample`.",
+      "problem_and_evidence": "**Priority/evidence:** P1, reproduced. **Targets:** `src/shared/code-grading.ts::gradeCodeExample`.\n\nAn empty `ts` block followed by a Python `print(1)` block passes when TypeScript is requested. `languageOk` checks whether any fence has the expected tag, while `hasCode` checks whether any block contains content. Core behavior matching combines all blocks, so the same cross-block mismatch can occur with rubrics.\n\n",
+      "implementation": "evaluate content and behaviors within the selected nonempty target-language artifact. Allow supporting configuration/test blocks explicitly without using them to satisfy the implementation language requirement.",
+      "acceptance": "empty target fences, mislabeled syntax and behavior keywords found only in another-language block fail or require review. Multi-file valid examples with JSON configuration and TypeScript source continue to pass the appropriate structural checks.",
+      "document_line": 168
+    },
+    {
+      "id": "FR-013",
+      "title": "Invalid rubric or behavior IDs silently weaken grading",
+      "priority": "P1",
+      "evidence_and_targets": "reproduced for behavior filters; source-confirmed for unknown rubric lookup. **Targets:** `gradeCodeExample`; `debug-runs/oracle.ts` code-example branch; scenario validation.",
+      "problem_and_evidence": "**Priority/evidence:** P1, reproduced for behavior filters; source-confirmed for unknown rubric lookup. **Targets:** `gradeCodeExample`; `debug-runs/oracle.ts` code-example branch; scenario validation.\n\nA behavior filter containing only `typo` removes every rubric behavior and lets arbitrary fenced code pass. An unknown rubric can resolve to undefined and similarly remove expected checks. Configuration mistakes should not turn a difficult case into an easier pass.\n\n",
+      "implementation": "validate rubric IDs and behavior labels when a run is planned. A requested nonempty behavior set must resolve completely. Record a harness/configuration failure rather than an agent defect or pass when evaluation criteria are invalid.",
+      "acceptance": "misspelled IDs, empty resolved filters, duplicate labels and incompatible versions produce actionable setup errors. Valid explicit subsets retain their exact semantics and are recorded in the result provenance.",
+      "document_line": 178
+    },
+    {
+      "id": "FR-014",
+      "title": "One passing verification can support \u201call tests passed\u201d despite a later failure",
+      "priority": "P0",
+      "evidence_and_targets": "reproduced. **Targets:** `electron/main/services/debug-runs/oracle.ts::PASS_CLAIM` check.",
+      "problem_and_evidence": "**Priority/evidence:** P0, reproduced. **Targets:** `electron/main/services/debug-runs/oracle.ts::PASS_CLAIM` check.\n\nThe oracle uses `verifications.some(ok && !skipped)`. The recorded probe supplies a pass followed by a failure and the answer \u201cAll tests passed\u201d; the claim check returns `ok:true`, with actual evidence \u201cpassed, failed.\u201d This is a false positive in a feature intended specifically to stop unsupported completion claims.\n\n",
+      "implementation": "associate claims with named commands and workspace revisions. A broad \u201call tests passed\u201d claim requires the relevant final verification set to pass. A failed check may be superseded only by a successful rerun of that check against the applicable final revision.",
+      "acceptance": "pass-then-fail fails; fail-then-successful-rerun can pass; lint success cannot justify a test success claim; a source edit after the last test invalidates an unqualified final verification claim.",
+      "document_line": 188
+    },
+    {
+      "id": "FR-015",
+      "title": "Any changed file is enough to support a claimed implementation",
+      "priority": "P1",
+      "evidence_and_targets": "source-confirmed. **Targets:** `debug-runs/oracle.ts::CHANGE_CLAIM`; scenario expected paths/checks.",
+      "problem_and_evidence": "**Priority/evidence:** P1, source-confirmed. **Targets:** `debug-runs/oracle.ts::CHANGE_CLAIM`; scenario expected paths/checks.\n\nThe generic claim guard only requires `changedPaths.length > 0`. An unrelated README change can support \u201cI implemented authentication\u201d unless the scenario separately specifies meaningful file/content checks. Existing requiredPaths and evaluateChecks are useful but optional, and their absence must not be interpreted as feature completion.\n\n",
+      "implementation": "link each implementation obligation to relevant diff evidence and behavior checks. Label generic diff presence as \u201ca change occurred,\u201d not \u201cthe requested change is supported.\u201d Prefer scenario-owned expected behavior over exact implementation snapshots.",
+      "acceptance": "unrelated edits, whitespace-only edits and deletion of failing tests cannot substantiate a feature-completion claim. Correct implementations using different internal designs can pass the same observable contract.",
+      "document_line": 198
+    },
+    {
+      "id": "FR-016",
+      "title": "Claim detection is too dependent on exact English wording",
+      "priority": "P2",
+      "evidence_and_targets": "source-confirmed limitation. **Targets:** `debug-runs/oracle.ts` claim expressions.",
+      "problem_and_evidence": "**Priority/evidence:** P2, source-confirmed limitation. **Targets:** `debug-runs/oracle.ts` claim expressions.\n\nClaims such as \u201cAuthentication is now implemented\u201d or \u201cEverything is green\u201d need not match the current subject/verb forms. Conversely, quoted examples or a sentence denying a claim can contain the same tokens. Regexes are useful diagnostics, but should not become the sole truth criterion for final status.\n\n",
+      "implementation": "produce a structured completion record from observed tool/verification state and render the summary from it. Keep free-text claim checking as a secondary consistency check with explicit uncertainty and quoted-span handling.",
+      "acceptance": "cover passive voice, negatives, quotations, partial completion, multiple languages and references to earlier turns. Evaluation should remain correct even when the final prose contains no conventional success phrase.",
+      "document_line": 208
+    },
+    {
+      "id": "FR-017",
+      "title": "Timeouts are automatically classified as environment failures",
+      "priority": "P2",
+      "evidence_and_targets": "source-confirmed. **Targets:** `debug-runs/evaluation.ts::outcomeClass`.",
+      "problem_and_evidence": "**Priority/evidence:** P2, source-confirmed. **Targets:** `debug-runs/evaluation.ts::outcomeClass`.\n\nEvery timed-out result is classified as environment. A model/backend outage can justify that label, but a repeated-tool loop, excessive orchestration, or a deadline that never reaches the next stage can be an agent or harness defect. Automatically removing those from the agent-defect category can conceal the same stuck behavior the user reported historically.\n\n",
+      "implementation": "record the deadline owner, last progress, model wait time, tool wait time and repeated-work evidence. Classify ambiguous timeouts as unknown/mixed, preserving the raw terminal cause.",
+      "acceptance": "a deliberately stalled provider, a repeated agent tool loop, an exhausted step budget and a blocked UI delivery timeout remain distinct in summary metrics. Never infer the root cause solely from the terminal status.",
+      "document_line": 218
+    },
+    {
+      "id": "FR-018",
+      "title": "Coverage counters do not prove the intended stage succeeded",
+      "priority": "P2",
+      "evidence_and_targets": "source-confirmed. **Targets:** `debug-runs/evaluation.ts::coverageOf`.",
+      "problem_and_evidence": "**Priority/evidence:** P2, source-confirmed. **Targets:** `debug-runs/evaluation.ts::coverageOf`.\n\nDelegation coverage is inferred from `/delegat/i` in timeline text, so a \u201cdelegation refused\u201d event can look like exercised specialist work. Model-call presence does not prove a usable response arrived; a verification event may describe failure. The existing \u201cuncovered\u201d reporting is valuable, but counts need precise semantics.\n\n",
+      "implementation": "use typed stage events with attempted, entered, completed and passed counters. Count child creation, child response and parent incorporation independently. Keep scripted and observed execution evidence separate.",
+      "acceptance": "a refused delegation does not satisfy successful specialist coverage. A failed provider call does not establish generated-answer coverage. Reports clearly show both attempts and completed evidence without dropping failures from denominators.",
+      "document_line": 228
+    },
+    {
+      "id": "FR-019",
+      "title": "v1 versus v2 comparisons match zero identical questions",
+      "priority": "P0",
+      "evidence_and_targets": "reproduced. **Targets:** `src/shared/eris-dev.ts::readCaptureRecord`; `src/shared/eris-dev-compare.ts::compareCaptures`.",
+      "problem_and_evidence": "**Priority/evidence:** P0, reproduced. **Targets:** `src/shared/eris-dev.ts::readCaptureRecord`; `src/shared/eris-dev-compare.ts::compareCaptures`.\n\nLegacy records without IDs receive `v1-<index>`, while new imports receive content-hash IDs. An identical question in a v1 and v2 export therefore yields zero matched, one added and one removed. This undermines the explicit feature claim that the original capture can be compared with the corrected run.\n\n",
+      "implementation": "migrate legacy identity using normalized question content plus duplicate occurrence, with a disclosed fallback confidence. Validate alignment against corpus metadata. Do not match by index alone when questions may have been reordered.",
+      "acceptance": "the original 10,000-question capture and a matching v2 run align all unique questions. Reordering preserves alignment, duplicate ambiguity is surfaced, and missing/changed questions are reported accurately.",
+      "document_line": 240
+    },
+    {
+      "id": "FR-020",
+      "title": "Prompt, model and tool-schema regressions are invisible to comparison",
+      "priority": "P1",
+      "evidence_and_targets": "reproduced for prompt changes; source-confirmed for other omitted fields. **Targets:** `eris-dev-compare.ts::comparable`.",
+      "problem_and_evidence": "**Priority/evidence:** P1, reproduced for prompt changes; source-confirmed for other omitted fields. **Targets:** `eris-dev-compare.ts::comparable`.\n\nChanging the system prompt from A to B while preserving intent/tool names produces an unchanged result. The comparison also omits model identity, tool parameter schemas, sampling, acceptance criteria, obligations, execution plan and context truncation. Those are exactly where many agent-quality regressions occur.\n\n",
+      "implementation": "compare canonical prompt blocks and normalized tool schemas using semantic hashes that remove only identified volatile fields. Add separate categories for routing, authority, context, model settings and evaluation policy. Make expanded diffs available without flooding the summary.",
+      "acceptance": "a changed instruction, removed required tool argument, lost obligation or different model configuration produces a visible difference. Task UUIDs and temporary root paths alone do not.",
+      "document_line": 250
+    },
+    {
+      "id": "FR-021",
+      "title": "Comparison ignores run compatibility and evaluation-policy versions",
+      "priority": "P1",
+      "evidence_and_targets": "source-confirmed. **Targets:** `electron/dev/main.ts::dev:compare`; `DevRunHeader`; comparison types.",
+      "problem_and_evidence": "**Priority/evidence:** P1, source-confirmed. **Targets:** `electron/dev/main.ts::dev:compare`; `DevRunHeader`; comparison types.\n\nThe compare handler discards the first JSONL line and compares records without checking headers. Different fixtures, contexts, modes or scripted-intent settings can appear to be code regressions. A changed invariant checker can also create/removes findings even if the request is identical.\n\n",
+      "implementation": "show both run manifests and classify differences as controlled or confounded. Record oracle/rubric/invariant versions. Allow exploratory comparison, but require explicit compatible baselines before reporting improvement rates.",
+      "acceptance": "identical questions run against different projects are flagged as a fixture change. A checker-version change is distinguished from a prompt change. Missing headers and unknown schema versions receive explicit errors or a clearly marked legacy import path.",
+      "document_line": 260
+    },
+    {
+      "id": "FR-022",
+      "title": "Comparison truncation understates the number of changed questions",
+      "priority": "P1",
+      "evidence_and_targets": "source-confirmed. **Targets:** `electron/dev/main.ts` comparison return; `src/eris-dev/main.tsx` comparison summary.",
+      "problem_and_evidence": "**Priority/evidence:** P1, source-confirmed. **Targets:** `electron/dev/main.ts` comparison return; `src/eris-dev/main.tsx` comparison summary.\n\nMain truncates `comparison.changed` to 500. The renderer displays `comparison.changed.length` as the number changed and lists only 20 rows. A 2,000-question change would be described as 500 changed, while by-field counts could show larger numbers. The UI has no explicit total-versus-returned count.\n\n",
+      "implementation": "return totalChanged, returnedCount, pagination and truncation metadata separately. Provide a complete downloadable comparison artifact and filters for severity/family.",
+      "acceptance": "a synthetic 1,200-change comparison displays 1,200 total, with a clearly labeled page size. Pagination/export reaches every changed question and aggregate counts reconcile exactly.",
+      "document_line": 270
+    },
+    {
+      "id": "FR-023",
+      "title": "Duplicate questions and scripted variants do not have stable cross-run identity",
+      "priority": "P2",
+      "evidence_and_targets": "source-confirmed. **Targets:** `electron/dev/questions.ts::identify`; `eris-dev-compare.ts` map construction.",
+      "problem_and_evidence": "**Priority/evidence:** P2, source-confirmed. **Targets:** `electron/dev/questions.ts::identify`; `eris-dev-compare.ts` map construction.\n\nOccurrence counters restart on each import/chunk. The identity includes history but excludes scripted intent replies. The same text under different scripts can share a base identity, and splitting duplicate questions into separate files can create colliding occurrence IDs. Comparison Maps silently retain one record per ID.\n\n",
+      "implementation": "distinguish stable case ID, input-content hash, variant ID and run occurrence. Preserve explicit source IDs when present; reject duplicates or report a multiset rather than overwriting. Include resolver script and configuration in variant provenance.",
+      "acceptance": "duplicate prompts across chunks remain distinct, reordered scripted variants align correctly, and duplicate result IDs cannot silently change the denominator.",
+      "document_line": 280
+    },
+    {
+      "id": "FR-024",
+      "title": "Installed builds cannot reliably identify their source revision",
+      "priority": "P2",
+      "evidence_and_targets": "source-confirmed. **Targets:** `electron/dev/main.ts::buildIdentity`; build configuration; `agent-versions.ts`.",
+      "problem_and_evidence": "**Priority/evidence:** P2, source-confirmed. **Targets:** `electron/dev/main.ts::buildIdentity`; build configuration; `agent-versions.ts`.\n\nBuild identity shells out to Git from `app.getAppPath()`. A packaged app generally has no repository there, so provenance becomes unknown. Resume checks use manually maintained routing/prompt version strings, which cannot detect a forgotten version bump or unrelated harness/schema change.\n\n",
+      "implementation": "inject source commit, dirty-content digest, build ID and policy versions at build time. Include relevant schema and harness fingerprints in resume compatibility. Keep unknown provenance explicit for ad hoc builds.",
+      "acceptance": "a packaged Eris-Dev export identifies the exact source revision without Git installed. Changed harness behavior cannot resume an old run under the same apparent identity unless an explicit compatibility migration exists.",
+      "document_line": 290
+    },
+    {
+      "id": "FR-025",
+      "title": "Resume accepts invalid result objects as completed evidence",
+      "priority": "P1",
+      "evidence_and_targets": "reproduced. **Targets:** `electron/dev/runs.ts::resumePoint`; `readCaptureRecord`; resume handler.",
+      "problem_and_evidence": "**Priority/evidence:** P1, reproduced. **Targets:** `electron/dev/runs.ts::resumePoint`; `readCaptureRecord`; resume handler.\n\nA file containing `{}` is accepted as a completed result; for a one-case run, resumePoint returns next=1. The current qualification test explicitly uses `{}` as an apparently valid existing result. Later summary code assumes fields such as findingsDetail exist and can throw, or invalid evidence can be copied into exports.\n\n",
+      "implementation": "validate persisted records with a runtime schema and verify index, question ID, run identity and required fields against the manifest. Atomically write case records and store a content checksum. Treat invalid records as rerunnable gaps with a recorded reason.",
+      "acceptance": "valid JSON with missing fields, wrong case identity, wrong schema and inconsistent counts is rejected. Recovery preserves valid prior results and regenerates only affected cases under a documented policy.",
+      "document_line": 302
+    },
+    {
+      "id": "FR-026",
+      "title": "Cancelled questions are saved as completed and skipped on resume",
+      "priority": "P1",
+      "evidence_and_targets": "source-confirmed. **Targets:** `electron/dev/main.ts::run`; `runs.ts::resumePoint`.",
+      "problem_and_evidence": "**Priority/evidence:** P1, source-confirmed. **Targets:** `electron/dev/main.ts::run`; `runs.ts::resumePoint`.\n\nWhen cancellation occurs inside captureQuestion, it returns a cancelled record. The loop writes it and increments completed. Resume chooses the first missing/unreadable file, so that interrupted question is treated as done and skipped. File completion and successful case capture are distinct concepts.\n\n",
+      "implementation": "keep attempted, persisted, terminal and retryable states separately. On resume, retry cancelled/incomplete cases by policy while preserving the earlier attempt. Avoid making the progress bar denominator imply success.",
+      "acceptance": "stop during an active question, restart, and resume; the interrupted question receives a new attempt rather than disappearing from coverage. Intentional terminal blocked cases remain distinguishable from interrupted work.",
+      "document_line": 312
+    },
+    {
+      "id": "FR-027",
+      "title": "Resume does not reserve the active-run lock during preparation",
+      "priority": "P1",
+      "evidence_and_targets": "source-confirmed concurrency risk. **Targets:** `electron/dev/main.ts::dev:resume`.",
+      "problem_and_evidence": "**Priority/evidence:** P1, source-confirmed concurrency risk. **Targets:** `electron/dev/main.ts::dev:resume`.\n\nThe handler checks `active`, then awaits workspace preparation and reads/writes result files before setting active. A second resume/start/import request can enter while preparation is underway. Shared global project, corpus, runDirectory and completed state make overlapping operations unsafe even if the UI usually discourages them.\n\n",
+      "implementation": "acquire an operation-state lock before the first await, use an operation-local immutable manifest, and release in finally. Expose preparing/running/stopping states explicitly and keep IPC enforcement independent of button disabling.",
+      "acceptance": "concurrent resume/start IPC calls deterministically allow one operation. Cancellation during snapshot preparation is supported, and failed preparation clears the lock without corrupting existing run metadata.",
+      "document_line": 322
+    },
+    {
+      "id": "FR-028",
+      "title": "Temporary snapshots can leak when preparation fails",
+      "priority": "P2",
+      "evidence_and_targets": "source-confirmed. **Targets:** `electron/dev/main.ts::prepareWorkspace`, `dev:start`, `dev:resume`.",
+      "problem_and_evidence": "**Priority/evidence:** P2, source-confirmed. **Targets:** `electron/dev/main.ts::prepareWorkspace`, `dev:start`, `dev:resume`.\n\nprepareWorkspace creates a temporary directory before copying. If snapshot fails, the caller has not yet received the workspace path and its cleanup variable remains null. Resume also has failure paths after preparation without a comprehensive cleanup owner. Oversized or unreadable projects can leave source copies in temporary storage.\n\n",
+      "implementation": "make snapshot preparation own cleanup until it transfers ownership to the runner. Use try/finally across all resume preparation and JSONL reconstruction. Record cleanup failures without masking the primary error.",
+      "acceptance": "inject size-limit, permission, cancelled-copy and malformed-result failures. No abandoned snapshot remains, and the original project is untouched.",
+      "document_line": 332
+    },
+    {
+      "id": "FR-029",
+      "title": "Completed runs cannot be reopened from the app",
+      "priority": "P2",
+      "evidence_and_targets": "source-confirmed and documented limitation. **Targets:** `src/eris-dev/main.tsx` run list; `electron/dev/main.ts` run-selection API.",
+      "problem_and_evidence": "**Priority/evidence:** P2, source-confirmed and documented limitation. **Targets:** `src/eris-dev/main.tsx` run list; `electron/dev/main.ts` run-selection API.\n\nOnly three stopped/interrupted runs are offered for resume. Completed runs are not selectable, and the resume handler rejects completed state. After restart, reviewing/exporting a finished run requires locating files manually. This is a major friction point for a tool intended to save evidence for later review.\n\n",
+      "implementation": "add a paginated run browser with a read-only open action separate from resume. Include corpus, source revision, state, counts, configuration and disk size. Keep selected run state separate from active execution.",
+      "acceptance": "close and reopen Eris-Dev, open any completed run, inspect a case, filter/export and compare without running it again. More than three historical runs remain accessible.",
+      "document_line": 342
+    },
+    {
+      "id": "FR-030",
+      "title": "Export and comparison rebuild large captures in memory",
+      "priority": "P2",
+      "evidence_and_targets": "source-confirmed scaling risk; no peak-memory benchmark claimed. **Targets:** `electron/dev/main.ts::runRecords`, `dev:export`, `dev:compare`, resume reconstruction.",
+      "problem_and_evidence": "**Priority/evidence:** P2, source-confirmed scaling risk; no peak-memory benchmark claimed. **Targets:** `electron/dev/main.ts::runRecords`, `dev:export`, `dev:compare`, resume reconstruction.\n\nCapture writes results incrementally, but sanitized export loads all records, constructs a second redacted array and joins the entire JSONL string. Comparison reads and splits a whole prior export. Resume reconstructs done records in memory. The historical export was about 75 MB; source-rich captures can be substantially larger.\n\n",
+      "implementation": "stream JSONL input/output with bounded buffers, incremental validation and cancellation. Compare compact summaries or hashes first, loading bodies only for selected differences. Write exports to a temporary destination and atomically finalize.",
+      "acceptance": "benchmark a large capture with measured peak RSS, UI responsiveness and cancellation latency. Malformed lines identify their source line without losing earlier validated records or leaving a misleading complete export.",
+      "document_line": 352
+    },
+    {
+      "id": "FR-031",
+      "title": "Import heuristics discard legitimate chat requests",
+      "priority": "P1",
+      "evidence_and_targets": "reproduced. **Targets:** `electron/dev/questions.ts::prepareQuestions`.",
+      "problem_and_evidence": "**Priority/evidence:** P1, reproduced. **Targets:** `electron/dev/questions.ts::prepareQuestions`.\n\nA file beginning \u201cFix the bug\u201d followed by ten question-mark-ending prompts excludes the first instruction as a heading. In mostly numbered files, all unnumbered lines are dropped. Exclusions are displayed, which is good, but capture can proceed with a materially different corpus and invalid coverage denominator.\n\n",
+      "implementation": "preserve ambiguous lines by default, or require an explicit import normalization choice before removal. Separate known metadata headers from ordinary imperatives. Provide a preview with included/excluded counts and the ability to restore excluded records.",
+      "acceptance": "imperative chat messages, mixed numbering and markdown-looking user text survive by default. Known corpus headers can still be removed with an auditable normalization policy and stable source-line mapping.",
+      "document_line": 362
+    },
+    {
+      "id": "FR-032",
+      "title": "History is silently truncated and scripts are weakly validated at import",
+      "priority": "P2",
+      "evidence_and_targets": "source-confirmed. **Targets:** `electron/dev/questions.ts::historyOf`, `intentReplyOf`.",
+      "problem_and_evidence": "**Priority/evidence:** P2, source-confirmed. **Targets:** `electron/dev/questions.ts::historyOf`, `intentReplyOf`.\n\nHistory messages beyond 32,000 characters are sliced silently, while main questions exceeding the limit are rejected. Intent replies accept arbitrary strings and numeric confidence before the resolver later validates them. Intentional malformed-resolver tests are useful, but should be distinguishable from an accidental invalid corpus entry.\n\n",
+      "implementation": "report or reject history truncation explicitly, include original/effective hashes and budgets, and make invalid-script testing an explicit case mode. Validate ordinary scripted replies against the production intent schema.",
+      "acceptance": "long-history imports show exactly what was omitted, and case identity reflects effective content. Intent typos and out-of-range confidence fail normal import while dedicated malformed-response scenarios remain available.",
+      "document_line": 372
+    },
+    {
+      "id": "FR-033",
+      "title": "Sanitization ignores credential field names in structured objects",
+      "priority": "P1",
+      "evidence_and_targets": "reproduced. **Targets:** `electron/dev/sanitize.ts::CaptureSanitizer.value`.",
+      "problem_and_evidence": "**Priority/evidence:** P1, reproduced. **Targets:** `electron/dev/sanitize.ts::CaptureSanitizer.value`.\n\nSanitizing `{password:'hunter2hunter2', token:'abcdefghijklmnop'}` leaves both values unchanged. The recursive walker retains keys and sanitizes each value without key context; assignment-pattern redaction only works when the key and value appear together inside a string. This matters for nested tool arguments and future structured diagnostic records.\n\n",
+      "implementation": "make traversal key-aware and redact known credential fields regardless of textual assignment syntax. Combine structural rules with provider token patterns. Keep stable linkage only where it is needed for debugging.",
+      "acceptance": "nested objects, arrays of headers, connection strings, short passwords and mixed-case credential keys are redacted. Non-secret fields with similar names have a documented allowlist/review path to avoid destroying useful evidence.",
+      "document_line": 384
+    },
+    {
+      "id": "FR-034",
+      "title": "\u201cSanitized\u201d is broader than the actual redaction coverage",
+      "priority": "P2",
+      "evidence_and_targets": "source-confirmed policy limitation. **Targets:** `sanitize.ts::SECRET_PATTERNS`; snapshot policy; export UX.",
+      "problem_and_evidence": "**Priority/evidence:** P2, source-confirmed policy limitation. **Targets:** `sanitize.ts::SECRET_PATTERNS`; snapshot policy; export UX.\n\nThe current patterns cover selected token formats and assignments, not all credentials or personal/customer data. Custom header names, database URLs, session cookies and nonstandard tokens may survive. Snapshot exclusion is filename-based and does not make ordinary source files or `.vscode` configuration credential-free. This is a coverage concern, not evidence that a real secret was exported in this review.\n\n",
+      "implementation": "define and display a versioned redaction policy with known limitations. Add structural URL/header handling and a local preview/review step. Prefer sanitized export by default while retaining an explicit raw evidence option.",
+      "acceptance": "a synthetic corpus of representative secrets is fully evaluated with expected redactions and known exclusions. The UI describes the result as automated redaction, not a guarantee that all sensitive data was removed.",
+      "document_line": 394
+    },
+    {
+      "id": "FR-035",
+      "title": "Redaction markers expose deterministic short hashes of secrets",
+      "priority": "P2",
+      "evidence_and_targets": "source-confirmed design risk. **Targets:** `CaptureSanitizer.token`.",
+      "problem_and_evidence": "**Priority/evidence:** P2, source-confirmed design risk. **Targets:** `CaptureSanitizer.token`.\n\nMarkers use the first eight hex characters of an unsalted SHA-256 of the value. This preserves linkage, but permits dictionary checks for low-entropy values and creates a 32-bit collision space. Repeated exports also reveal cross-run equality even when that linkage is unnecessary.\n\n",
+      "implementation": "use an export-scoped keyed digest or opaque token mapping, with adequate collision resistance. Make any cross-export linkage an explicit requirement and keep its key private. Preserve idempotence of already-redacted content.",
+      "acceptance": "identical secrets within one export map consistently; unrelated exports need not share markers; low-entropy values cannot be validated from a public deterministic hash alone. Counts and manifests remain reproducible within the chosen scope.",
+      "document_line": 404
+    },
+    {
+      "id": "FR-036",
+      "title": "Retention and artifact storage need lifecycle controls",
+      "priority": "P2",
+      "evidence_and_targets": "source-confirmed design gap. **Targets:** capture directory management; run browser; diagnostic artifact export.",
+      "problem_and_evidence": "**Priority/evidence:** P2, source-confirmed design gap. **Targets:** capture directory management; run browser; diagnostic artifact export.\n\nEach capture retains per-case JSON and a JSONL copy, while manifests preserve questions and configuration. There is no retention policy or completed-run management UI. Large repeated captures accumulate disk usage and potentially sensitive source excerpts. Resume makes durable state more useful, but also makes lifecycle management necessary.\n\n",
+      "implementation": "display storage size, provide export/archive/delete actions, and add configurable retention by age/size without deleting active or pinned runs. Distinguish raw private artifacts from sanitized sharing copies.",
+      "acceptance": "storage accounting matches files on disk; cleanup never removes active evidence; users can archive a complete run and reopen its metadata after cleanup. Deletion failures are visible rather than silently ignored.",
+      "document_line": 414
+    },
+    {
+      "id": "FR-037",
+      "title": "Extend deterministic corpus testing through the actual request boundary",
+      "priority": "P1",
+      "evidence_and_targets": "coverage gap. **Targets:** `tests/agent-regression-suite.test.ts`, `tests/eris-dev.test.ts`, `captureQuestion`.",
+      "problem_and_evidence": "**Priority/evidence:** P1, coverage gap. **Targets:** `tests/agent-regression-suite.test.ts`, `tests/eris-dev.test.ts`, `captureQuestion`.\n\nThe original corpus is valuable for cheap interpretation coverage, but its current full sweep does not compile every prompt or inspect every tool manifest. Named boundary cases catch some integration mistakes; FR-001 shows why helper reconstruction is insufficient for broad claims.\n\n",
+      "implementation": "run the shared production request pipeline over the full corpus under deterministic adapters, in bounded chunks if needed. Persist counts by intent, artifact, authority, invariant, resolver source and context size. Keep this distinct from response-capable evaluation.",
+      "acceptance": "every case has a result or explicit reason for not reaching the boundary; sum totals exactly to 10,000. A production-only change cannot evade the suite simply because helper behavior stayed constant. Timing is labeled pre-inference only.",
+      "document_line": 426
+    },
+    {
+      "id": "FR-038",
+      "title": "Add a genuinely held-out routing and constraint corpus",
+      "priority": "P1",
+      "evidence_and_targets": "coverage/design gap. **Targets:** corpus fixtures, scenario labels, release qualification reports.",
+      "problem_and_evidence": "**Priority/evidence:** P1, coverage/design gap. **Targets:** corpus fixtures, scenario labels, release qualification reports.\n\nThe 10,000 questions are generated from repeated topic/wording families, and the fixes target those families directly. Zero collisions there is useful regression evidence but weak generalization evidence. Real IDE chats include commands in backticks, selective prohibitions, partial references, pasted failures, mixed languages and compound requests.\n\n",
+      "implementation": "maintain a separately labeled holdout set from de-identified real failures and adversarial paraphrases. Split by wording family and topic rather than random rows. Label acceptable artifacts and authority, allowing multiple valid agents.",
+      "acceptance": "evaluation reports development versus holdout results separately, includes disagreements/unknowns, and avoids declaring every heuristic candidate a defect. Add each confirmed production regression as a durable case without repeatedly tuning on the entire holdout.",
+      "document_line": 436
+    },
+    {
+      "id": "FR-039",
+      "title": "Turn topic rubrics into executable behavioral fixtures",
+      "priority": "P1",
+      "evidence_and_targets": "coverage/design gap. **Targets:** `topic-rubrics.ts`, `code-grading.ts`, diagnostic scenario infrastructure.",
+      "problem_and_evidence": "**Priority/evidence:** P1, coverage/design gap. **Targets:** `topic-rubrics.ts`, `code-grading.ts`, diagnostic scenario infrastructure.\n\nForty topic matchers cover the corpus's vocabulary, but keyword presence does not test tenant isolation, restoration, expiry, retry bounds, authorization or concurrency. Existing diagnostic verification is scripted or skipped; it is not execution of generated example code.\n\n",
+      "implementation": "start with a compact high-value set of language-specific isolated fixtures: soft deletes, password reset, rate limiting, idempotency, authorization, pagination, retry/backoff and upload validation. Define inputs and observable outcomes independent of implementation structure. Use disposable environments with bounded resources.",
+      "acceptance": "plausible wrong implementations fail; correct alternative designs pass. Reports distinguish syntax validity, behavioral tests and human/security review requirements. A scripted verifier response cannot be reported as an actual generated-code test.",
+      "document_line": 446
+    },
+    {
+      "id": "FR-040",
+      "title": "Real-model diagnostics need an explicitly bounded verification mode",
+      "priority": "P1",
+      "evidence_and_targets": "source-confirmed coverage gap. **Targets:** `debug-runs/coordinator.ts` diagnostics scope and verification handling.",
+      "problem_and_evidence": "**Priority/evidence:** P1, source-confirmed coverage gap. **Targets:** `debug-runs/coordinator.ts` diagnostics scope and verification handling.\n\nThe coordinator explicitly refuses host commands and supplies scripted verification results in simulations, skipping verification in real-model runs. This is an intentional containment boundary, but means a live model can produce a patch without the harness proving it runs. The current user goal of production-ready agent behavior requires a stronger optional evidence mode.\n\n",
+      "implementation": "add isolated fixture execution with preapproved commands, time/memory/output limits and resettable state. Keep the existing no-execution mode. Attribute every verification result to scripted, replayed or actually executed provenance.",
+      "acceptance": "a broken generated patch fails an executed fixture test, a working one passes, and a verification timeout is reported with the command and resource cause. No arbitrary host command authority is introduced merely to run diagnostics.",
+      "document_line": 456
+    },
+    {
+      "id": "FR-041",
+      "title": "Exercise real child-agent lifecycles and parent integration",
+      "priority": "P1",
+      "evidence_and_targets": "source-confirmed coverage gap. **Targets:** capture and diagnostic `allowDelegate:false`; child task contracts; scheduler and gateway.",
+      "problem_and_evidence": "**Priority/evidence:** P1, source-confirmed coverage gap. **Targets:** capture and diagnostic `allowDelegate:false`; child task contracts; scheduler and gateway.\n\nBoth inspected diagnostic entry paths disable delegation. Unit tests of child authority inheritance are valuable, but they do not demonstrate scheduling, cancellation, stale scope, conflicting edits or incorporation of a specialist's result. Those are central to the user's agent-to-agent concerns.\n\n",
+      "implementation": "add a deterministic multi-agent fixture mode using the production scheduler and scripted model adapters. Give each child a bounded assignment and immutable parent revision. Record parent/child IDs, authority, artifact ownership, result acceptance and merge conflicts.",
+      "acceptance": "cover child failure, timeout, late result, cancellation, overlapping file changes and attempted authority expansion. The parent must not claim a delegated change before inspecting/applying its evidence, and no orphan work continues after cancellation.",
+      "document_line": 466
+    },
+    {
+      "id": "FR-042",
+      "title": "Test desktop chat delivery and visible final artifacts",
+      "priority": "P1",
+      "evidence_and_targets": "explicitly uncovered today. **Targets:** renderer chat components, preload/IPC, stream store, posted-answer pipeline.",
+      "problem_and_evidence": "**Priority/evidence:** P1, explicitly uncovered today. **Targets:** renderer chat components, preload/IPC, stream store, posted-answer pipeline.\n\nCoverage reports correctly list desktop chat UI delivery as uncovered. That means green orchestration tests cannot exclude a sent message being lost, a response rendered in the wrong thread, an empty final bubble, or a Send button staying disabled. FR-010 also shows why preserving model output all the way to the visible artifact matters.\n\n",
+      "implementation": "add a compact Electron UI smoke suite driven by deterministic production transport adapters. Submit actual chats through the composer, observe streamed status and final content, and assert persistence/reload behavior. Include concurrent threads and cancellation.",
+      "acceptance": "submit \u2192 agent routing \u2192 model request \u2192 tool result \u2192 final answer \u2192 reload is exercised with traceable request IDs. JSON/code blocks remain visible, edits match the active project, and every submitted message has a terminal delivery outcome.",
+      "document_line": 476
+    },
+    {
+      "id": "FR-043",
+      "title": "Qualify provider serialization and local model protocol compatibility",
+      "priority": "P1",
+      "evidence_and_targets": "coverage/design gap. **Targets:** common model transport, provider adapters, local worker, tool protocol selection.",
+      "problem_and_evidence": "**Priority/evidence:** P1, coverage/design gap. **Targets:** common model transport, provider adapters, local worker, tool protocol selection.\n\nEris-Dev stops before provider-specific serialization and tokenization. A coherent common request can still become an invalid native-tool message, lose roles or exceed a real model context after adapter processing. This review did not invoke a provider and makes no claim that a particular adapter currently fails.\n\n",
+      "implementation": "add adapter contract tests for tool-call IDs, tool-result ordering, system/user roles, JSON schema, cancellation and streaming fragments. Capture redacted serialized request metadata in an optional diagnostic mode. Exercise text-tool local models separately from native function-calling providers.",
+      "acceptance": "the same canonical task has valid provider-specific messages; malformed/partial tool calls produce recoverable protocol errors; output limits and context accounting reflect the chosen model's capabilities. Live tests remain explicitly configured and budgeted.",
+      "document_line": 486
+    },
+    {
+      "id": "FR-044",
+      "title": "Follow-up scenarios need scope changes, long histories and stale evidence",
+      "priority": "P1",
+      "evidence_and_targets": "coverage/design gap grounded in current intake rules. **Targets:** conversation state, task-intake prior scope, resolver history slicing, context compilation.",
+      "problem_and_evidence": "**Priority/evidence:** P1, coverage/design gap grounded in current intake rules. **Targets:** conversation state, task-intake prior scope, resolver history slicing, context compilation.\n\nCurrent multi-turn scenarios and stable task state are improvements, but references can span more than the resolver's last six messages, which are each truncated to 1,200 characters. Prior project inheritance uses a small vocabulary of reference words and an existing prior scope. Changes to the selected workspace or to recommendations can make old evidence misleading.\n\n",
+      "implementation": "maintain a compact structured conversation state with task/recommendation IDs, user-selected scope, superseded decisions and current obligation status. Feed that state to resolution instead of relying on prose prefixes alone. Revalidate scope and evidence before mutation.",
+      "acceptance": "cover review \u2192 partial implementation \u2192 changed workspace \u2192 \u201cfinish the rest,\u201d explicit project switches, deleted projects, and late child results. A long explanation between turns must not erase the user's selected recommendations or resurrect superseded ones.",
+      "document_line": 496
+    },
+    {
+      "id": "FR-045",
+      "title": "Build and release reports need precise, durable qualification evidence",
+      "priority": "P2",
+      "evidence_and_targets": "source-confirmed maintainability gap. **Targets:** package scripts, `.github/workflows/ci.yml`, release workflow, qualification artifacts.",
+      "problem_and_evidence": "**Priority/evidence:** P2, source-confirmed maintainability gap. **Targets:** package scripts, `.github/workflows/ci.yml`, release workflow, qualification artifacts.\n\nThe test gate is a manually enumerated list. CI runs all tests and then build runs the selected suites again. Green console output does not provide a durable before/after capture report, corpus hash, failure taxonomy, or record of which live checks were not run. The `start:app` shell command also places quit/open operations after a semicolon, so those operations can run after an earlier build failure; this is a pre-existing build workflow risk.\n\n",
+      "implementation": "define named qualification profiles with machine-readable manifests, emit a versioned report artifact, and require successful packaging before replacing/relaunching the local app. Keep lightweight deterministic PR gates separate from scheduled/budgeted live qualification, without implying the latter ran when it did not.",
+      "acceptance": "each build report names commit, corpus, test profile, counts, uncovered stages and artifact links. A failing build cannot relaunch an older binary as apparent success. New suites cannot silently miss the profile, and Windows/macOS behavior is qualified before release rather than discovered only while uploading installers.",
+      "document_line": 506
+    }
+  ]
+}
