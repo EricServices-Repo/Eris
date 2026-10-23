@@ -10,14 +10,30 @@ const sha = (value: string) => createHash('sha256').update(value).digest('hex')
 
 /** Content-derived IDs: the same text keeps its ID across reordered or chunked imports. */
 function identify(
-  records: Array<{ text: string; sourceLine: number; intentReply?: DevQuestion['intentReply'] }>
+  records: Array<{
+    text: string
+    sourceLine: number
+    intentReply?: DevQuestion['intentReply']
+    history?: DevQuestion['history']
+  }>
 ): DevQuestion[] {
   const seen = new Map<string, number>()
   return records.map((record) => {
-    const base = sha(record.text).slice(0, 12)
+    // Prior turns are part of the case's identity: the same follow-up text after a
+    // different conversation is a different question.
+    const base = sha(
+      record.history ? JSON.stringify([record.history, record.text]) : record.text
+    ).slice(0, 12)
     const occurrence = (seen.get(base) ?? 0) + 1
     seen.set(base, occurrence)
-    return { id: `${base}-${occurrence}`, occurrence, ...record }
+    return {
+      id: `${base}-${occurrence}`,
+      occurrence,
+      text: record.text,
+      sourceLine: record.sourceLine,
+      ...(record.intentReply ? { intentReply: record.intentReply } : {}),
+      ...(record.history ? { history: record.history } : {})
+    }
   })
 }
 
@@ -25,6 +41,21 @@ function validText(value: unknown, position: number): string {
   if (typeof value !== 'string' || !value.trim() || value.length > 32000)
     throw new Error(`Question ${position} must be nonempty text of at most 32,000 characters.`)
   return value.trim()
+}
+
+function historyOf(record: unknown, position: number): DevQuestion['history'] {
+  const history = (record as { history?: unknown } | null)?.history
+  if (history === undefined) return undefined
+  if (!Array.isArray(history) || history.length > 40)
+    throw new Error(`Question ${position} history must be an array of at most 40 messages.`)
+  return history.map((message, index) => {
+    const { role, content } = (message ?? {}) as { role?: unknown; content?: unknown }
+    if ((role !== 'user' && role !== 'assistant') || typeof content !== 'string')
+      throw new Error(
+        `Question ${position} history message ${index + 1} needs a user or assistant role and text content.`
+      )
+    return { role, content: content.slice(0, 32000) }
+  })
 }
 
 function intentReplyOf(record: unknown): DevQuestion['intentReply'] {
@@ -48,7 +79,12 @@ export function prepareQuestions(text: string, extension: string, name = ''): De
   const source = text.replace(/^\uFEFF/, '')
   const excluded: DevImportPreview['excluded'] = []
   const normalization: string[] = []
-  let records: Array<{ text: string; sourceLine: number; intentReply?: DevQuestion['intentReply'] }>
+  let records: Array<{
+    text: string
+    sourceLine: number
+    intentReply?: DevQuestion['intentReply']
+    history?: DevQuestion['history']
+  }>
 
   if (extension === '.json' || extension === '.jsonl') {
     const raw: Array<{ value: unknown; sourceLine: number }> =
@@ -72,7 +108,8 @@ export function prepareQuestions(text: string, extension: string, name = ''): De
         index + 1
       ),
       sourceLine,
-      intentReply: intentReplyOf(value)
+      intentReply: intentReplyOf(value),
+      history: historyOf(value, index + 1)
     }))
   } else {
     const lines = source

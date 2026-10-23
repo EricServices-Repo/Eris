@@ -591,11 +591,143 @@ const CORPUS_SCENARIOS: DebugScenarioInput[] = [
   }
 ]
 
+const RETRY_GUARD = {
+  path: 'src/retry.ts',
+  old_string: '  return Math.min(250 * 2 ** attempt, 4_000)',
+  new_string: [
+    '  // Reject attempts outside the policy instead of returning surprising delays.',
+    '  if (!Number.isInteger(attempt) || attempt < 0 || attempt > MAX_RETRIES)',
+    '    throw new RangeError(`attempt must be an integer from 0 to ${MAX_RETRIES}`)',
+    '  return Math.min(250 * 2 ** attempt, 4_000)'
+  ].join('\n')
+}
+
+/** Review → “implement those” → “what changed?”, with the review in a given format. */
+function reviewThenImplement(
+  id: string,
+  format: string,
+  review: string,
+  followUp: string
+): DebugScenarioInput {
+  return {
+    id,
+    title: `Review, then implement the recommendations (${format})`,
+    description: `A ${format} review must stay read-only; “${followUp}” applies its recommendations in the same project; “What did you change?” reports the actual diff.`,
+    tags: ['multi-turn', 'follow-up', 'recommendations'],
+    modes: ['simulated', 'real-model'],
+    request: { text: 'Review src/retry.ts and recommend improvements to the retry logic.' },
+    fixture: FIXTURE,
+    label: {
+      source: 'review-derived',
+      reference: `${REVIEW} · AG-052/AG-053`,
+      rationale:
+        'The recurring product failure: a follow-up that refers to earlier recommendations must apply them without the user repeating them.'
+    },
+    expect: { intent: ['review'], mutation: 'forbidden', terminal: 'complete' },
+    followUps: [
+      {
+        text: followUp,
+        expect: {
+          intent: ['edit'],
+          mutation: 'required',
+          allowedPaths: ['src/'],
+          requiredPaths: ['src/retry.ts'],
+          recommendations: { min: 2, source: 'prior-task' },
+          terminal: 'complete'
+        }
+      },
+      {
+        text: 'What did you change?',
+        expect: {
+          intent: ['explore', 'answer'],
+          mutation: 'forbidden',
+          priorChangedFiles: ['src/retry.ts'],
+          checks: [{ type: 'answer_matches', pattern: 'src/retry\\.ts' }],
+          terminal: 'complete'
+        }
+      }
+    ],
+    script: {
+      agent: [
+        tool('read_file', { path: 'src/retry.ts' }),
+        reply(review),
+        tool('read_file', { path: 'src/retry.ts' }),
+        tool('search_replace', RETRY_GUARD),
+        reply(
+          'DONE: retryDelay in src/retry.ts now rejects negative, fractional and over-limit attempts.'
+        ),
+        tool('read_file', { path: 'src/retry.ts' }),
+        reply(
+          'I changed src/retry.ts: retryDelay now throws a RangeError for attempts outside 0–MAX_RETRIES.'
+        )
+      ],
+      outcome: [
+        verdict('supported', 'Findings cite src/retry.ts.'),
+        verdict('supported', 'The diff applies both recommendations.'),
+        verdict('supported', 'The summary matches the diff.')
+      ],
+      verify: [{ ok: true, command: 'npm test', detail: 'simulated: 2 tests passed' }]
+    }
+  }
+}
+
+const FOLLOW_UP_SCENARIOS: DebugScenarioInput[] = [
+  reviewThenImplement(
+    'follow-up-bullets',
+    'bulleted',
+    'Recommendations for src/retry.ts:\n- Reject negative attempts in retryDelay so callers cannot get sub-250 ms delays.\n- Enforce MAX_RETRIES inside retryDelay.',
+    'Implement those recommendations.'
+  ),
+  reviewThenImplement(
+    'follow-up-paragraphs',
+    'paragraph',
+    'retryDelay in src/retry.ts should reject negative attempts, because they produce delays shorter than 250 ms.\n\nConsider enforcing MAX_RETRIES inside retryDelay as well, so no caller can exceed the policy.',
+    'Apply those.'
+  ),
+  {
+    id: 'unrelated-edit-not-progress',
+    title: 'Editing an unrelated file does not complete a named-file fix',
+    description:
+      'The request names src/divide.ts; a scripted model edits a different file and claims DONE.',
+    tags: ['edit', 'progress', 'injected-failure'],
+    modes: ['simulated'],
+    request: {
+      text: 'Fix safeDivide in src/divide.ts so that dividing by zero returns 0 instead of Infinity.'
+    },
+    fixture: FIXTURE,
+    label: {
+      source: 'review-derived',
+      reference: `${REVIEW} · AG-057`,
+      rationale: 'An unrelated file edit must not count as progress on the requested behavior.'
+    },
+    expect: {
+      intent: ['edit'],
+      terminal: 'incomplete',
+      checks: [
+        { type: 'answer_matches', pattern: 'none of them changed' },
+        { type: 'file_contains', path: 'src/divide.ts', text: '  return left / right' }
+      ]
+    },
+    script: {
+      agent: [
+        tool('read_file', { path: 'src/divide.ts' }),
+        tool('write_file', {
+          path: 'notes/divide.md',
+          content: '# Notes\n\nDivision needs a zero guard.\n'
+        }),
+        reply('DONE: documented the division change.'),
+        reply('DONE: documented the division change.'),
+        reply('DONE: documented the division change.')
+      ]
+    }
+  }
+]
+
 let cache: DebugScenario[] | null = null
 
 /** Parsed built-in scenarios; an invalid definition fails loudly. */
 export function builtinDebugScenarios(): DebugScenario[] {
-  cache ??= [...BUILTIN_SCENARIOS, ...CORPUS_SCENARIOS].map((item) =>
+  cache ??= [...BUILTIN_SCENARIOS, ...CORPUS_SCENARIOS, ...FOLLOW_UP_SCENARIOS].map((item) =>
     DebugScenarioSchema.parse(item)
   )
   return cache

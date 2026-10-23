@@ -11,6 +11,7 @@ import {
   OutcomeEvidence,
   planInitialChatTurn,
   resolveChatTurnContract,
+  completeChatTurnTask,
   type ChatTurnInput
 } from '../services/chat-turn'
 import {
@@ -837,6 +838,23 @@ export function registerChatStreamIpc(): void {
               requestId,
               chunk: `${finalAnswer}\n\nOutcome check: ${verdict.verdict}. ${verdict.reason}`,
               replace: true
+            })
+          }
+        }
+        if (turnPlan.task) {
+          // The next turn in this thread resolves “those” and “what changed?” against this.
+          try {
+            saveTask(
+              completeChatTurnTask(turnPlan.task, {
+                answer: finalAnswer,
+                changedFiles: memoryFiles.length ? memoryFiles : (run?.filesTouched ?? []),
+                terminal: runIncomplete ? 'incomplete' : 'complete'
+              })
+            )
+          } catch (error) {
+            logWarn('Task result was not saved', {
+              requestId,
+              error: error instanceof Error ? error.message : String(error)
             })
           }
         }

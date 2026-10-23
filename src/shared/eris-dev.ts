@@ -20,6 +20,8 @@ export interface DevQuestion {
   occurrence: number
   /** Scripted intent reply supplied by the corpus, never by a model. */
   intentReply?: { intent: string; confidence: number }
+  /** Earlier turns, so a follow-up (“implement those”) is captured as a follow-up. */
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>
 }
 
 export interface DevImportPreview {

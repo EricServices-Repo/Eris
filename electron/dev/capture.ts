@@ -104,8 +104,8 @@ export async function captureQuestion(
     text: question,
     model: SIMULATED_MODEL_REF,
     mode,
-    history: [],
-    threadId: null,
+    history: options.question?.history ?? [],
+    threadId: options.question?.history?.length ? `eris-dev-${requestId}` : null,
     skillIds: [],
     getSecret: () => null,
     signal: controller.signal,
@@ -202,7 +202,7 @@ export async function captureQuestion(
             mode,
             agentId: plan.agentId,
             attachments: [],
-            history: [],
+            history: options.question?.history ?? [],
             skillIds: []
           },
           plan

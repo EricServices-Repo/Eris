@@ -12,8 +12,12 @@ import { isToolLogReply } from '../../../../src/shared/posted-answer'
 import type { AppSettings, TurnPlan } from '../../../../src/shared/settings-schema'
 import { formatAvailableModelsPrompt } from '../model-catalog'
 import {
+  effectiveToolPolicy,
   filterToolsByPolicy,
+  intentNeedsMutation,
+  intentNeedsTools,
   isErisCapabilityQuestion,
+  minCeiling,
   planChatTurn,
   toolAllowedByPolicy
 } from '../chat-router'
@@ -92,7 +96,7 @@ import {
   MAX_BARE_INSTALLS_PER_RUN,
   packageJsonNewerThanModules
 } from './install-guards'
-import { decideMidRunAdapt, shouldConsiderMidRunAdapt } from './mid-run-adapt'
+import { decideMidRunAdapt, MID_RUN_ADAPT_BUDGET, shouldConsiderMidRunAdapt } from './mid-run-adapt'
 import { toolFailureRecovery } from './recovery'
 import { findAgent } from '../agents'
 import {
@@ -105,7 +109,8 @@ import { createTaskContract, childTaskContract } from '../task-intake'
 import {
   interpretationOf,
   intersectToolPolicy,
-  taskContractConflicts
+  taskContractConflicts,
+  type TaskContract
 } from '../../../../src/shared/task-contract'
 import { artifactResponseContract } from '../../../../src/shared/task-interpretation'
 import { compileTaskContext } from './context-compiler'
@@ -405,6 +410,42 @@ export async function* runAgentWithWorkspaceTools(options: {
     yield { type: 'progress', step: 0, actionLog: [], filesTouched: [], incomplete: true }
     yield { type: 'answer', text: plan.error, replace: true }
     return
+  }
+
+  // Specialist outcomes, so the final answer never presents failed, cancelled or
+  // unsupported child work as finished.
+  const delegationOutcomes: Array<{
+    agentId: string
+    goal: string
+    status: 'done' | 'unverified' | 'failed' | 'cancelled'
+  }> = []
+  function recordDelegation(
+    agentId: string,
+    goal: string,
+    status: (typeof delegationOutcomes)[number]['status'],
+    child: TaskContract | undefined
+  ) {
+    delegationOutcomes.push({ agentId, goal, status })
+    appendTaskEvent(task.taskId, 'delegation', {
+      agentId,
+      status,
+      childTaskId: child?.taskId ?? null,
+      childProject: child?.scope.projectRoot ?? null,
+      childAuthority: child?.authority ?? null
+    })
+  }
+  function unresolvedDelegationNote(): string {
+    const open = delegationOutcomes.filter((item) => item.status !== 'done')
+    if (!open.length) return ''
+    const label = {
+      unverified: 'returned claims without tool evidence',
+      failed: 'did not finish',
+      cancelled: 'was cancelled',
+      done: ''
+    }
+    return `Specialist results not confirmed:\n${open
+      .map((item) => `- ${item.agentId} ${label[item.status]}: ${item.goal.slice(0, 160)}`)
+      .join('\n')}`
   }
 
   function applyWorkflowLint(branch: string, can: Parameters<typeof lintExecutionPlan>[1]) {
@@ -1138,7 +1179,14 @@ export async function* runAgentWithWorkspaceTools(options: {
             actionLog,
             filesTouched
           })
+    if ('refused' in decision && decision.refused)
+      appendTaskEvent(task.taskId, 'reroute-refused', {
+        reason: decision.refused,
+        trigger,
+        agentId: plan.agentId
+      })
     if (decision.kind === 'reroute' && decision.nextPlan) {
+      const fromAgent = plan.agentId
       plan = {
         ...decision.nextPlan,
         task,
@@ -1147,6 +1195,20 @@ export async function* runAgentWithWorkspaceTools(options: {
       }
       workerModel = plan.models.tools
       rerouteCount++
+      // The worker changes; the task, its artifact, project and authority do not.
+      appendTaskEvent(task.taskId, 'reroute', {
+        from: fromAgent,
+        to: plan.agentId,
+        trigger,
+        budget: { used: escalateCount + rerouteCount, max: MID_RUN_ADAPT_BUDGET },
+        taskId: task.taskId,
+        intent: task.intent,
+        artifact: interpretationOf(task).artifact,
+        project: task.scope.projectRoot,
+        recommendationIds: task.recommendations.map((item) => item.id),
+        authority: task.authority,
+        toolPolicy: plan.toolPolicy
+      })
       openaiTools.splice(0, openaiTools.length, ...visibleToolDefinitions())
       recordToolManifest('reroute')
       const reason = `${decision.reason} after ${trigger}`
@@ -1919,7 +1981,8 @@ export async function* runAgentWithWorkspaceTools(options: {
         const outcomeCheck = workflow.evaluateOutcome({
           workspaceMutated,
           codeMutated,
-          verifyPassed: verifyPassedOnce
+          verifyPassed: verifyPassedOnce,
+          filesTouched
         })
         const unmetReason = goalCheck.unmet ? goalCheck.reason : outcomeCheck.reason
         if (goalCheck.unmet || !outcomeCheck.ok) {
@@ -1969,14 +2032,17 @@ export async function* runAgentWithWorkspaceTools(options: {
           yield* answerFromWeb()
           return
         }
+        const partial = unresolvedDelegationNote()
         if (prose.length >= 40 && !isToolLogReply(prose)) {
           workflow.complete()
-          yield { type: 'status', text: 'Done' }
+          yield { type: 'status', text: partial ? 'Done · partial specialist results' : 'Done' }
           yield { type: 'answer', text: prose, replace: true }
+          if (partial) yield { type: 'answer', text: `\n\n${partial}` }
           return
         }
         workflow.complete()
         yield* finishChatAnswer(assistantText)
+        if (partial) yield { type: 'answer', text: `\n\n${partial}` }
         return
       }
 
@@ -2977,6 +3043,8 @@ export async function* runAgentWithWorkspaceTools(options: {
               }
             } else if (options.jobId?.startsWith('chat:')) {
               const specialist = findAgent(workspacePath, agentId)
+              // The child is the specialist that was asked for, within its own tool
+              // ceiling. Routing the goal must not swap in an editor or force edits.
               const specialistPlan = await planChatTurn({
                 workspacePath,
                 settings: options.settings,
@@ -2985,11 +3053,25 @@ export async function* runAgentWithWorkspaceTools(options: {
                   selectedModel: workerModel,
                   mode: 'agent',
                   manualAgentId: agentId,
-                  forceRoute: 'tools'
+                  skipModelRouter: true
                 },
                 getSecret: options.getSecret,
                 signal: options.signal
               })
+              const specialistCeiling = specialist?.tools ?? 'read'
+              const specialistCanEdit = ['edit', 'full'].includes(specialistCeiling)
+              if (specialistPlan.agentId !== agentId || !intentNeedsTools(specialistPlan.intent)) {
+                specialistPlan.agentId = agentId
+                specialistPlan.agentName = specialist?.name || agentId
+                if (!specialistCanEdit && intentNeedsMutation(specialistPlan.intent))
+                  specialistPlan.intent = 'review'
+                if (!intentNeedsTools(specialistPlan.intent))
+                  specialistPlan.intent = specialistCanEdit ? 'edit' : 'explore'
+              }
+              specialistPlan.toolPolicy = specialist
+                ? effectiveToolPolicy(specialist, specialistPlan.intent, 'agent')
+                : minCeiling(specialistPlan.toolPolicy, specialistCeiling)
+              specialistPlan.requiresTools = specialistPlan.toolPolicy !== 'none'
               specialistPlan.models = {
                 ...specialistPlan.models,
                 chat: workerModel,
@@ -3080,11 +3162,16 @@ export async function* runAgentWithWorkspaceTools(options: {
                     })
                   }
                 }
+                // A specialist claim with no tool evidence is a lead, not a fact.
+                const unverified = Boolean(answer.trim()) && specTools.length === 0
                 result = {
                   ok: !specialistIncomplete && Boolean(answer.trim()),
                   detail: [
                     specialistIncomplete
                       ? 'Specialist stopped before completing the assignment.'
+                      : '',
+                    unverified
+                      ? 'Unverified: the specialist cited no tool evidence. Check its claims against the source before relying on them.'
                       : '',
                     `Specialist: ${runningDelegation.agentName}. Workspace: current chat workspace.`,
                     `Tool evidence: ${specTools.map((tool) => `${tool.name}${tool.path ? ` ${tool.path}` : ''}: ${tool.status}`).join('; ') || 'none'}`,
@@ -3095,6 +3182,12 @@ export async function* runAgentWithWorkspaceTools(options: {
                     .join('\n'),
                   mutated: specialistMutated
                 }
+                recordDelegation(
+                  agentId,
+                  goal,
+                  !result.ok ? 'failed' : unverified ? 'unverified' : 'done',
+                  specialistPlan.task
+                )
                 yield {
                   type: 'delegation',
                   delegation: {
@@ -3107,6 +3200,12 @@ export async function* runAgentWithWorkspaceTools(options: {
               } catch (err) {
                 const message = err instanceof Error ? err.message : String(err)
                 result = { ok: false, detail: message, mutated: specialistMutated }
+                recordDelegation(
+                  agentId,
+                  goal,
+                  options.signal?.aborted ? 'cancelled' : 'failed',
+                  specialistPlan.task
+                )
                 yield {
                   type: 'delegation',
                   delegation: {

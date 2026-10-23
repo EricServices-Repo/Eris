@@ -5,7 +5,13 @@ import type {
   ChatPromptInput,
   TurnPlan
 } from '../../../src/shared/settings-schema'
-import type { IntentResolution, TaskContract } from '../../../src/shared/task-contract'
+import {
+  interpretationOf,
+  type IntentResolution,
+  type TaskContract,
+  type TaskTurnResult
+} from '../../../src/shared/task-contract'
+import { extractRecommendations, stableHash } from '../../../src/shared/recommendations'
 import type { AgentRunnerEvent } from './agent/types'
 import { buildChatMessages, type BuiltChatMessage } from './chat-prompt'
 import { localComposerFullActive, planChatTurn } from './chat-router'
@@ -38,6 +44,11 @@ export interface ChatTurnInput {
   signal?: AbortSignal
   /** Diagnostics only: a shorter semantic-resolver deadline. */
   resolverTimeoutMs?: number
+  /**
+   * Diagnostics only: the previous turn's task, instead of the thread's stored
+   * task. Null means “no prior task”; undefined reads the store.
+   */
+  priorTask?: TaskContract | null
 }
 
 function previousMessages(history: ChatPromptInput['history'] | undefined) {
@@ -133,7 +144,10 @@ export async function resolveChatTurnContract(
     plan,
     skillIds: input.skillIds,
     history: input.history,
-    priorTask: previousTask(canonicalRoot, input.threadId ?? null),
+    priorTask:
+      input.priorTask !== undefined
+        ? (input.priorTask ?? undefined)
+        : previousTask(canonicalRoot, input.threadId ?? null),
     resolution
   })
   plan.task = task
@@ -152,6 +166,28 @@ export async function resolveChatTurnContract(
     authority: task.authority
   })
   return { plan, task, semanticIntent, resolution }
+}
+
+/**
+ * Record what a turn produced on its task, so the next turn in the thread can
+ * refer to it: recommendations as stable objects and the files actually changed.
+ */
+export function completeChatTurnTask(
+  task: TaskContract,
+  outcome: { answer: string; changedFiles: string[]; terminal: TaskTurnResult['terminal'] }
+): TaskContract {
+  const offersAdvice =
+    ['review', 'plan'].includes(task.deliverable) ||
+    ['review', 'plan', 'design'].includes(interpretationOf(task).artifact)
+  return {
+    ...task,
+    result: {
+      terminal: outcome.terminal,
+      offeredRecommendations: offersAdvice ? extractRecommendations(outcome.answer) : [],
+      changedFiles: [...new Set(outcome.changedFiles)].sort(),
+      answerDigest: stableHash(outcome.answer)
+    }
+  }
 }
 
 /** Role instructions are generated for the resolved route, never the renderer's guess. */

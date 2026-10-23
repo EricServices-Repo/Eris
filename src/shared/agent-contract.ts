@@ -307,6 +307,20 @@ export function mentionsSourcePath(text: string): boolean {
   return DIRECTORY_PATH.test(text) || BARE_FILE.test(text)
 }
 
+/** Workspace source paths named in the text, by the same rules as mentionsSourcePath. */
+export function sourcePathsIn(text: string): string[] {
+  const found = new Set<string>()
+  for (const pattern of [DIRECTORY_PATH, BARE_FILE]) {
+    const global = new RegExp(
+      pattern.source,
+      pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g'
+    )
+    for (const match of text.matchAll(global))
+      found.add(match[0].replace(/^[\s`'"(]/, '').replace(/^\.\//, ''))
+  }
+  return [...found]
+}
+
 /**
  * Drop a leading scope phrase (“In the shop app, …”) so the imperative that
  * follows is read as the request's action. The project name stays in the text

@@ -42,6 +42,7 @@ export function formatHandoffForPrompt(packet: AgentHandoffPacket): string {
   const lines = [
     `[Eris handoff → ${packet.toAgentId}]`,
     `From: ${packet.fromAgentId}`,
+    `You are a specialist working for ${packet.fromAgentId}, not answering the user. Complete only the goal below, within the task's project and tool ceiling, and return the requested evidence to your coordinator: what you inspected or changed, with paths, and anything left unresolved.`,
     packet.parentGoal ? `Parent request: ${packet.parentGoal}` : '',
     `Goal: ${packet.goal}`,
     packet.task

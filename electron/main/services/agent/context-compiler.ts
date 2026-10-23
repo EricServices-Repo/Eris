@@ -49,7 +49,10 @@ export function modelFacingTask(task: TaskContract): Record<string, unknown> {
   const out: Record<string, unknown> = {
     taskId: task.taskId,
     revision: task.revision,
-    ...(task.parentTaskId ? { parentTaskId: task.parentTaskId } : {}),
+    // The top-level worker answers the user; a child returns its result to its coordinator.
+    assignment: task.parentTaskId
+      ? { kind: 'child', parentTaskId: task.parentTaskId, reportTo: 'coordinator' }
+      : { kind: 'top-level', reportTo: 'user' },
     intent: task.intent,
     deliverable: task.deliverable,
     artifact: reading.artifact,
@@ -67,7 +70,16 @@ export function modelFacingTask(task: TaskContract): Record<string, unknown> {
   }
   if (task.skillIds?.length) out.skillIds = task.skillIds
   if (task.recommendations.length)
-    out.recommendations = task.recommendations.map(({ id, text }) => ({ id, text }))
+    out.recommendations = task.recommendations.map(({ id, text, targets }) => ({
+      id,
+      text,
+      ...(targets?.length ? { targets } : {})
+    }))
+  if (task.continuation)
+    out.continuation = {
+      priorTaskId: task.continuation.priorTaskId,
+      priorChangedFiles: task.continuation.changedFiles
+    }
   return out
 }
 

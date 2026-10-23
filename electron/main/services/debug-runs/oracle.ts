@@ -102,6 +102,35 @@ export function evaluateScenario(input: OracleInput): DebugOracleCheck[] {
       )
     )
   }
+  if (expect.recommendations) {
+    const count = input.contract?.recommendations ?? 0
+    const source = input.contract?.recommendationSource ?? 'none'
+    const wanted = expect.recommendations
+    checks.push(
+      check(
+        'route',
+        'referenced recommendations',
+        count >= wanted.min && (!wanted.source || source === wanted.source),
+        `≥ ${wanted.min}${wanted.source ? ` from ${wanted.source}` : ''}`,
+        `${count} from ${source}`,
+        'intent_mismatch'
+      )
+    )
+  }
+  if (expect.priorChangedFiles) {
+    const actual = input.contract?.priorChangedFiles ?? []
+    const missing = expect.priorChangedFiles.filter((path) => !actual.includes(path))
+    checks.push(
+      check(
+        'route',
+        'prior changes carried',
+        missing.length === 0,
+        expect.priorChangedFiles.join(', '),
+        actual.length ? actual.join(', ') : 'none',
+        'check_failed'
+      )
+    )
+  }
   if (expect.agentId) {
     checks.push(
       check(

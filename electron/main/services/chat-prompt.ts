@@ -137,9 +137,11 @@ export function buildChatMessages(
       ? `AGENT CONTRACT — ${contract.name}\nJob: ${contract.job}\nTools: ${contract.tools}. ${contract.doesNot}\nDone when: ${contract.done}`
       : '',
     shared.systemPrompt,
+    // A chat turn's agent owns the user-facing reply. Delegated children get a
+    // hand-off prompt instead (formatHandoffForPrompt) and report to their coordinator.
     agent
-      ? `You are the “${agent.name}” ${isOrchestrator ? 'orchestrator' : 'subagent'}.\n${agent.systemPrompt.slice(0, lean ? 2800 : 8000)}`
-      : `You are the “${input.agentName || input.agentId}” agent.`
+      ? `You are “${agent.name}”${isOrchestrator ? ', the coordinating agent' : ''}, answering the user directly. Your reply is the final response the user reads.\n${agent.systemPrompt.slice(0, lean ? 2800 : 8000)}`
+      : `You are “${input.agentName || input.agentId}”, answering the user directly.`
   ].filter(Boolean)
 
   if (shared.rules) parts.push(shared.rules)

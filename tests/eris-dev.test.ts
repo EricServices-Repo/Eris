@@ -265,3 +265,39 @@ describe('AG-046 snapshot policy', () => {
     expect(snapshotPolicy(path, directory, false)).toBe(expected)
   })
 })
+
+describe('AG-052 conversation captures', () => {
+  const review = [
+    { role: 'user' as const, content: 'Review index.js and recommend improvements.' },
+    {
+      role: 'assistant' as const,
+      content:
+        'Recommendations:\n- Guard divide in index.js against a zero divisor.\n- Add a test for divide.'
+    }
+  ]
+
+  it('imports history and keys the question ID to it', () => {
+    const [plain] = prepareQuestions('{"question":"Implement those"}', '.jsonl').questions
+    const [followUp] = prepareQuestions(
+      JSON.stringify({ question: 'Implement those', history: review }),
+      '.jsonl'
+    ).questions
+    expect(followUp?.history).toEqual(review)
+    expect(followUp?.id).not.toBe(plain?.id)
+    expect(() =>
+      prepareQuestions('{"question":"x","history":[{"role":"system","content":"y"}]}', '.jsonl')
+    ).toThrow(/user or assistant role/)
+  })
+
+  it('captures a follow-up with the referenced recommendations', async () => {
+    const result = await capture('Implement those recommendations.', sampleWorkspace(), {
+      question: { history: review }
+    })
+    expect(result.status, result.detail).toBe('captured')
+    expect(result.intent).toBe('edit')
+    const task = result.task as { recommendations: Array<{ targets?: string[] }> }
+    expect(task.recommendations).toHaveLength(2)
+    expect(task.recommendations[0]?.targets).toEqual(['index.js'])
+    expect(result.findingsDetail.filter((finding) => finding.severity === 'defect')).toEqual([])
+  })
+})

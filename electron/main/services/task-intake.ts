@@ -2,9 +2,11 @@ import { isPathInside } from './workspace-fs'
 import { createHash, randomUUID } from 'crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'fs'
 import { basename, join, relative } from 'path'
+import { extractRecommendations } from '../../../src/shared/recommendations'
 import type {
   IntentResolution,
   ProjectStack,
+  TaskRecommendation,
   ScopeApplicability,
   TaskContract,
   TaskInterpretation
@@ -234,20 +236,25 @@ export function createTaskContract(input: {
   const priorAnswer = [...(input.history ?? [])]
     .reverse()
     .find((message) => message.role === 'assistant')
-  const recommendations =
-    /\b(those|these|them|recommended|suggested)\b/i.test(input.text) && priorAnswer
-      ? priorAnswer.content
-          .split(/\n(?=\s*\d+[.)]\s)/)
-          .filter((line) => /^\s*\d+[.)]\s/.test(line))
-          .map((text) => ({
-            id: createHash('sha256')
-              .update(priorAnswer.content + text)
-              .digest('hex')
-              .slice(0, 16),
-            text,
-            source: createHash('sha256').update(priorAnswer.content).digest('hex').slice(0, 16)
-          }))
-      : []
+  // Follow-ups resolve against the recommendation objects the prior turn recorded;
+  // older threads fall back to reading the prior answer's prose.
+  const refersToPrior =
+    /\b(those|these|them|recommended|suggested|recommendations?|all of (?:it|them))\b/i.test(
+      input.text
+    )
+  const offered = input.priorTask?.result?.offeredRecommendations ?? []
+  const recommendations: TaskRecommendation[] = !refersToPrior
+    ? []
+    : offered.length
+      ? offered
+      : priorAnswer
+        ? extractRecommendations(priorAnswer.content)
+        : []
+  const recommendationSource = !recommendations.length
+    ? 'none'
+    : offered.length
+      ? 'prior-task'
+      : 'prior-answer-prose'
   // An explicit “do not edit / do not run” is a constraint, whatever the route says.
   const forbids = forbidsMutation(input.text)
   const policy =
@@ -277,6 +284,16 @@ export function createTaskContract(input: {
     route: input.plan.routeTrace
   })
   const projectStack = detectProjectStack(selected)
+  // Implementing referenced recommendations makes each one a separate obligation.
+  if (reading.artifact === 'patch' && recommendations.length)
+    reading.obligations = [
+      ...reading.obligations,
+      ...recommendations.slice(0, 10).map((recommendation, index) => ({
+        id: `recommendation-${recommendation.id}`,
+        kind: 'implementation' as const,
+        text: `Apply recommendation ${index + 1}: ${recommendation.text.slice(0, 240)}`
+      }))
+    ]
   const interpretation: TaskInterpretation = {
     ...reading,
     projectStack,
@@ -323,6 +340,15 @@ export function createTaskContract(input: {
     },
     skillIds: input.skillIds ?? input.priorTask?.skillIds,
     recommendations,
+    ...(input.priorTask && input.priorTask.scope.workspaceRoot === root
+      ? {
+          continuation: {
+            priorTaskId: input.priorTask.taskId,
+            changedFiles: input.priorTask.result?.changedFiles ?? [],
+            recommendationSource
+          }
+        }
+      : {}),
     acceptanceCriteria: acceptanceCriteriaFor(input.plan, deliverable, input.text, interpretation),
     interpretation
   }
@@ -399,6 +425,9 @@ export function childTaskContract(
     originalText: goal,
     intent: plan.intent,
     deliverable,
+    // A child owns a bounded assignment; the parent's follow-up state is not its own.
+    continuation: undefined,
+    result: undefined,
     scope: { ...parent.scope, workspaceRoot: root, projectRoot },
     authority: {
       tools,

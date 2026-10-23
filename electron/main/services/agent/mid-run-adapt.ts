@@ -8,7 +8,12 @@ export interface MidRunAdaptDecision {
   reason: string
   nextToolsModel?: string
   nextPlan?: TurnPlan
+  /** Why an available re-route was refused. */
+  refused?: 'would-drop-edit-authority'
 }
+
+/** Escalations and re-routes allowed per turn. */
+export const MID_RUN_ADAPT_BUDGET = 2
 
 export function shouldConsiderMidRunAdapt(options: {
   verifyFailures: number
@@ -17,7 +22,7 @@ export function shouldConsiderMidRunAdapt(options: {
   escalateCount: number
   rerouteCount: number
 }): boolean {
-  if (options.escalateCount + options.rerouteCount >= 2) return false
+  if (options.escalateCount + options.rerouteCount >= MID_RUN_ADAPT_BUDGET) return false
   return (
     options.verifyFailures >= 2 ||
     options.consecutiveToolErrors >= 3 ||
@@ -69,6 +74,10 @@ export async function decideMidRunAdapt(options: {
   const ceiling = target.tools ?? 'read'
   const toolPolicy =
     ranks[Math.min(ranks.indexOf(options.plan.toolPolicy), ranks.indexOf(ceiling))]!
+  // Recovery may change strategy, never the task: a change request cannot become
+  // a read-only review because the replacement worker cannot edit.
+  if (options.plan.task?.authority.edit && ranks.indexOf(toolPolicy) < ranks.indexOf('edit'))
+    return { kind: null, reason: '', refused: 'would-drop-edit-authority' }
   const nextPlan: TurnPlan = {
     ...options.plan,
     agentId: target.id,

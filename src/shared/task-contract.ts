@@ -27,6 +27,25 @@ export interface TaskObligation {
   text: string
 }
 
+/** A recommendation that a later turn can refer to without repeating it. */
+export interface TaskRecommendation {
+  /** Stable for the same text in the same source answer. */
+  id: string
+  text: string
+  /** Digest of the answer that offered it. */
+  source: string
+  /** Workspace paths the recommendation names. */
+  targets?: string[]
+}
+
+export interface TaskTurnResult {
+  terminal: 'complete' | 'incomplete' | 'error' | 'stopped'
+  /** Recommendations offered by this turn's answer. */
+  offeredRecommendations: TaskRecommendation[]
+  changedFiles: string[]
+  answerDigest: string
+}
+
 /** How the resolver reached the final intent. Stable rule IDs, not prose. */
 export interface IntentResolution {
   intent: ChatIntent
@@ -95,8 +114,19 @@ export interface TaskContract {
     externalEffects: boolean
   }
   skillIds?: string[]
-  recommendations: Array<{ id: string; text: string; source: string }>
+  /** Recommendations this follow-up refers to (“implement those”), resolved at intake. */
+  recommendations: TaskRecommendation[]
   acceptanceCriteria: string[]
+  /** Set when this turn continues an earlier task in the same thread and project. */
+  continuation?: {
+    priorTaskId: string
+    /** Files the prior turn actually changed, for “what did you change?”. */
+    changedFiles: string[]
+    /** How referenced recommendations were found. */
+    recommendationSource: 'prior-task' | 'prior-answer-prose' | 'none'
+  }
+  /** What this turn produced; recorded after it ends and read by the next turn. */
+  result?: TaskTurnResult
   /** Absent on contracts saved before interpretations existed; read via interpretationOf. */
   interpretation?: TaskInterpretation
 }

@@ -62,6 +62,54 @@ export const BlockedEffectKindSchema = z.enum([
 ])
 export type BlockedEffectKind = z.infer<typeof BlockedEffectKindSchema>
 
+/** What one turn must do. Labels come from the request and fixture, not from the router. */
+export const DebugExpectSchema = z.object({
+  /** Any of these intents is acceptable. */
+  intent: z.array(ChatIntentSchema).min(1).optional(),
+  agentId: z.string().optional(),
+  mutation: z.enum(['required', 'forbidden', 'any']).default('any'),
+  /** Changes must stay within these paths; a trailing `/` allows a directory. */
+  allowedPaths: z.array(SandboxPathSchema).optional(),
+  requiredPaths: z.array(SandboxPathSchema).default([]),
+  /** Deterministic file/answer checks. Host commands never run in diagnostics. */
+  checks: z
+    .array(EvalCheckSchema)
+    .default([])
+    .refine((checks) => checks.every((check) => check.type !== 'command'), {
+      message: 'Diagnostics scenarios cannot run command checks'
+    }),
+  maxToolErrors: z.number().int().nonnegative().optional(),
+  terminal: z.enum(['complete', 'incomplete', 'error']).optional(),
+  /** Acceptable requested artifacts. Several routes may deliver the same artifact. */
+  artifact: z
+    .array(
+      z.enum([
+        'explanation',
+        'code-example',
+        'design',
+        'plan',
+        'review',
+        'patch',
+        'execution-report'
+      ])
+    )
+    .min(1)
+    .optional(),
+  /** Intents that would change the requested artifact or authority. */
+  forbiddenIntents: z.array(ChatIntentSchema).default([]),
+  /** Effects the scenario expects Eris to refuse. */
+  blockedEffects: z.array(BlockedEffectKindSchema).default([]),
+  /** Follow-ups: the turn must resolve at least this many earlier recommendations. */
+  recommendations: z
+    .object({
+      min: z.number().int().nonnegative(),
+      source: z.enum(['prior-task', 'prior-answer-prose']).optional()
+    })
+    .optional(),
+  /** Follow-ups: the task must carry the files the previous turn actually changed. */
+  priorChangedFiles: z.array(SandboxPathSchema).optional()
+})
+
 export const DebugScenarioSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
   title: z.string().min(1),
@@ -75,43 +123,21 @@ export const DebugScenarioSchema = z.object({
   }),
   /** Disposable project: sandbox-relative path → content. */
   fixture: z.record(SandboxPathSchema, z.string()).default({}),
-  expect: z.object({
-    /** Any of these intents is acceptable. */
-    intent: z.array(ChatIntentSchema).min(1).optional(),
-    agentId: z.string().optional(),
-    mutation: z.enum(['required', 'forbidden', 'any']).default('any'),
-    /** Changes must stay within these paths; a trailing `/` allows a directory. */
-    allowedPaths: z.array(SandboxPathSchema).optional(),
-    requiredPaths: z.array(SandboxPathSchema).default([]),
-    /** Deterministic file/answer checks. Host commands never run in diagnostics. */
-    checks: z
-      .array(EvalCheckSchema)
-      .default([])
-      .refine((checks) => checks.every((check) => check.type !== 'command'), {
-        message: 'Diagnostics scenarios cannot run command checks'
-      }),
-    maxToolErrors: z.number().int().nonnegative().optional(),
-    terminal: z.enum(['complete', 'incomplete', 'error']).optional(),
-    /** Acceptable requested artifacts. Several routes may deliver the same artifact. */
-    artifact: z
-      .array(
-        z.enum([
-          'explanation',
-          'code-example',
-          'design',
-          'plan',
-          'review',
-          'patch',
-          'execution-report'
-        ])
-      )
-      .min(1)
-      .optional(),
-    /** Intents that would change the requested artifact or authority. */
-    forbiddenIntents: z.array(ChatIntentSchema).default([]),
-    /** Effects the scenario expects Eris to refuse. */
-    blockedEffects: z.array(BlockedEffectKindSchema).default([])
-  }),
+  expect: DebugExpectSchema,
+  /**
+   * Later turns in the same thread and sandbox. Each sees the earlier turns as
+   * history and the previous turn's task, as chat does.
+   */
+  followUps: z
+    .array(
+      z.object({
+        text: z.string().min(1),
+        mode: z.enum(['ask', 'agent']).optional(),
+        expect: DebugExpectSchema
+      })
+    )
+    .max(5)
+    .default([]),
   /**
    * Who set the expectation. Labels come from the request and fixture, never from
    * the router under test; uncertain cases stay unlabeled.
@@ -313,6 +339,22 @@ export interface DebugContractRecord {
   artifact?: TaskInterpretation['artifact']
   destination?: TaskInterpretation['destination']
   obligations?: TaskInterpretation['obligations']
+  taskId?: string
+  recommendations?: number
+  recommendationSource?: 'prior-task' | 'prior-answer-prose' | 'none'
+  priorChangedFiles?: string[]
+}
+
+/** One turn of a multi-turn case. The case-level fields describe the last turn. */
+export interface DebugTurnRecord {
+  turn: number
+  text: string
+  route: DebugRouteRecord | null
+  contract: DebugContractRecord | null
+  terminal: DebugTerminalState | null
+  changedPaths: string[]
+  answerChars: number
+  answerHash: string
 }
 
 export interface DebugCaseResult {
@@ -330,6 +372,8 @@ export interface DebugCaseResult {
   route: DebugRouteRecord | null
   contract: DebugContractRecord | null
   terminal: DebugTerminalState | null
+  /** Present for multi-turn cases, in order. */
+  turns?: DebugTurnRecord[]
   changedPaths: string[]
   diffHash: string | null
   outcomeReview: { verdict: string; reason: string } | null

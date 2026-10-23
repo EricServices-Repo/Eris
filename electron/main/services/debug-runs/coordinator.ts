@@ -1,4 +1,4 @@
-import { interpretationOf } from '../../../../src/shared/task-contract'
+import { interpretationOf, type TaskContract } from '../../../../src/shared/task-contract'
 import { randomUUID } from 'crypto'
 import { mkdtempSync, realpathSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -20,6 +20,7 @@ import {
   type DebugFailureCategory,
   type DebugFailureStage,
   type DebugModelCall,
+  type DebugOracleCheck,
   type DebugRecordedResponse,
   type DebugResponseSource,
   type DebugRouteRecord,
@@ -30,6 +31,7 @@ import {
   type DebugScenario,
   type DebugTerminalState,
   type DebugTimelineEvent,
+  type DebugTurnRecord,
   type DebugTimelineKind
 } from '../../../../src/shared/debug-runs'
 import type {
@@ -46,7 +48,8 @@ import {
   OutcomeEvidence,
   planInitialChatTurn,
   resolveChatTurnContract,
-  type ChatTurnInput
+  type ChatTurnInput,
+  completeChatTurnTask
 } from '../chat-turn'
 import { materializeSandboxFiles, snapshotWorkspace } from '../eval-runner'
 import { logError, logInfo } from '../logger'
@@ -541,6 +544,21 @@ async function runCase(
   let checks: DebugCaseResult['checks'] = []
   let agentError = null as string | null
   let before = null as Record<string, string> | null
+  // Multi-turn cases: per-turn records and the oracle checks of every turn but the last.
+  const turns = [
+    { text: scenario.request.text, mode: scenario.request.mode, expect: scenario.expect },
+    ...scenario.followUps.map((turn) => ({
+      text: turn.text,
+      mode: turn.mode ?? scenario.request.mode,
+      expect: turn.expect
+    }))
+  ]
+  const multiTurn = turns.length > 1
+  const turnRecords: DebugTurnRecord[] = []
+  const earlierChecks: DebugOracleCheck[] = []
+  let lastExpect = scenario.expect
+  let turnBefore = null as Record<string, string> | null
+  let turnChanged: string[] = []
   const fail = (stage: DebugFailureStage, category: DebugFailureCategory, detail: string) => {
     failure = { stage, category, detail: redactDiagnostic(detail, sandbox) }
     timeline.add('error', stage, `${category}: ${detail}`)
@@ -566,197 +584,259 @@ async function runCase(
       throw error
     }
     before = snapshotWorkspace(sandbox)
-    const turnInput: ChatTurnInput = {
-      requestId: `diagnostics-${runId}-${index + 1}`,
-      workspacePath: sandbox,
-      settings: plan.settings,
-      text: scenario.request.text,
-      model: spec.model,
-      mode: scenario.request.mode,
-      history: [],
-      threadId: null,
-      skillIds: [],
-      getSecret: deps.getSecret,
-      signal: deadline.signal
-    }
+    const caseSandbox = sandbox
+    const history: ChatPromptInput['history'] = []
+    let priorTask: TaskContract | null = null
     const stopped = await runInDiagnosticsScope(scope, async () => {
-      onStatus('Routing')
-      const initial = await planInitialChatTurn(turnInput)
-      if (initial.error) {
-        fail('route', 'provider_error', initial.error)
-        return null
-      }
-      const {
-        plan: turnPlan,
-        task,
-        semanticIntent,
-        resolution
-      } = await resolveChatTurnContract(turnInput, initial)
-      const interpretation = interpretationOf(task)
-      route = {
-        expectedIntents: (scenario.expect.intent ?? []) as ChatIntent[],
-        initialIntent: initial.intent,
-        semanticIntent,
-        intent: turnPlan.intent,
-        ...(turnPlan.classifiedIntent ? { classifiedIntent: turnPlan.classifiedIntent } : {}),
-        agentId: turnPlan.agentId,
-        agentName: turnPlan.agentName,
-        toolPolicy: turnPlan.toolPolicy,
-        method: turnPlan.method,
-        reason: turnPlan.reason,
-        chatModel: turnPlan.models.chat,
-        toolsModel: turnPlan.models.tools,
-        resolution,
-        ...(turnPlan.routeTrace ? { routeTrace: turnPlan.routeTrace } : {})
-      }
-      contract = {
-        deliverable: task.deliverable,
-        authority: task.authority,
-        scopeState: task.scope.state,
-        acceptanceCriteria: task.acceptanceCriteria,
-        artifact: interpretation.artifact,
-        destination: interpretation.destination,
-        obligations: interpretation.obligations
-      }
-      timeline.add(
-        'route',
-        'route',
-        `${initial.intent}${semanticIntent !== initial.intent ? ` → ${semanticIntent}` : ''} → ${turnPlan.intent} · ${turnPlan.agentName} · tools ${turnPlan.toolPolicy}`,
-        `${turnPlan.reason} · resolver ${resolution.source}:${resolution.rule}${resolution.failure ? ` (${resolution.failure})` : ''}${resolution.downgrade ? ` · ${resolution.downgrade.from} → ${resolution.downgrade.to} by ${resolution.downgrade.rule}` : ''}`
-      )
-      timeline.add(
-        'contract',
-        'route',
-        `artifact ${interpretation.artifact} → ${interpretation.destination} · deliverable ${task.deliverable} · edit ${task.authority.edit ? 'allowed' : 'denied'} · execute ${task.authority.execute}`
-      )
-      const prompt: ChatPromptInput = {
-        text: scenario.request.text,
-        mode: scenario.request.mode,
-        agentId: turnPlan.agentId,
-        agentName: turnPlan.agentName,
-        skillIds: [],
-        attachments: [],
-        history: []
-      }
-      const messages = buildChatTurnMessages(sandbox, plan.settings, prompt, turnPlan, null)
-      const local = localChatTurnModel(
-        turnPlan,
-        turnPlan.models.chat || spec.model || plan.settings.models.defaultModel,
-        plan.settings
-      )
-      const temperature =
-        findAgent(sandbox, local.plan.agentId)?.temperature ?? plan.settings.models.temperature
-      const evidence = new OutcomeEvidence()
-      let incomplete = false
-      onStatus(`${local.plan.agentName} · ${local.plan.intent}`)
-      let ended: Awaited<ReturnType<typeof drainUntilStopped>>
-      try {
-        ended = await drainUntilStopped(
-          runAgentWithWorkspaceTools({
-            workspacePath: sandbox,
-            settings: plan.settings,
-            model: local.model,
-            messages,
-            temperature,
-            signal: deadline.signal,
-            getSecret: deps.getSecret,
-            mode: scenario.request.mode,
-            turnPlan: local.plan,
-            mcp: 'off',
-            allowDelegate: false,
-            // Diagnostics never inherit or grant approvals, including on replay.
-            approveCommand: async (kind, command) => {
-              scope.onBlockedEffect('command', `${kind}: ${command}`)
-              timeline.add(
-                'approval',
-                'tool_execution',
-                `${kind} approval denied (diagnostics)`,
-                command
-              )
-              return false
-            },
-            approveMcpTool: async (toolName) => {
-              scope.onBlockedEffect('mcp', toolName)
-              return false
-            }
-          }),
-          deadline,
-          (evt) => {
-            evidence.observe(evt)
-            if (evt.type === 'answer') answer = evt.replace ? evt.text : answer + evt.text
-            else if (evt.type === 'tool') {
-              if (evt.tool.status === 'running') return
-              toolCalls += 1
-              toolsUsed.add(evt.tool.name)
-              if (evt.tool.status === 'error') {
-                toolErrors += 1
-                if (evt.tool.failure?.code) toolFailureCodes.push(evt.tool.failure.code)
-              }
-              timeline.add(
-                'tool',
-                'tool_execution',
-                `${evt.tool.name}${evt.tool.path ? ` ${evt.tool.path}` : ''} · ${evt.tool.status}${evt.tool.failure ? ` · ${evt.tool.failure.code}` : ''}`,
-                // Successful tool output can contain file contents; keep only errors.
-                evt.tool.status === 'error' ? evt.tool.detail : undefined
-              )
-            } else if (evt.type === 'diff') {
-              timeline.add(
-                'diff',
-                'workspace_effects',
-                `${evt.diff.op} ${evt.diff.path}`,
-                `before ${shortHash(evt.diff.before ?? '')} · after ${shortHash(evt.diff.after)}`
-              )
-            } else if (evt.type === 'progress' || evt.type === 'session-step') {
-              steps = evt.step
-              actionLog = evt.actionLog.slice(-120)
-              if (evt.type === 'progress' && evt.incomplete) incomplete = true
-            } else if (evt.type === 'adapt') {
-              timeline.add(
-                'recovery',
-                'tool_protocol',
-                `${evt.kind}: ${evt.reason}`,
-                [evt.agentId, evt.model].filter(Boolean).join(' · ') || undefined
-              )
-            } else if (evt.type === 'status') {
-              timeline.add('status', 'lifecycle', evt.text)
-            }
-          }
-        )
-      } catch (error) {
-        agentError = error instanceof Error ? error.message : String(error)
-        terminal = 'error'
-        timeline.add('error', 'model', 'agent run failed', agentError)
-        return null
-      }
-      if (ended !== 'completed') return ended
-      terminal = incomplete ? 'incomplete' : 'complete'
-      if (needsOutcomeReview(local.plan, incomplete)) {
-        onStatus('Outcome review')
-        evidence.addActions(actionLog)
-        const verdict = await reviewTaskOutcome({
-          task,
-          answer,
-          evidence: evidence.items,
+      for (const [turnIndex, turn] of turns.entries()) {
+        lastExpect = turn.expect
+        turnBefore = snapshotWorkspace(caseSandbox)
+        answer = ''
+        terminal = null
+        if (multiTurn) timeline.add('status', 'lifecycle', `turn ${turnIndex + 1}: ${turn.text}`)
+        // Follow-ups share the thread, sandbox and the previous turn's task, as chat does.
+        const turnInput: ChatTurnInput = {
+          requestId: `diagnostics-${runId}-${index + 1}${multiTurn ? `-t${turnIndex + 1}` : ''}`,
+          workspacePath: caseSandbox,
           settings: plan.settings,
-          model: local.plan.models.chat,
+          text: turn.text,
+          model: spec.model,
+          mode: turn.mode,
+          history: [...history],
+          threadId: multiTurn ? `diagnostics-${runId}-${index + 1}` : null,
+          skillIds: [],
+          getSecret: deps.getSecret,
           signal: deadline.signal,
-          getSecret: deps.getSecret
-        })
-        outcomeReview = {
-          verdict: verdict.verdict,
-          reason: redactDiagnostic(verdict.reason, sandbox)
+          priorTask
+        }
+        onStatus(multiTurn ? `Routing turn ${turnIndex + 1}` : 'Routing')
+        const initial = await planInitialChatTurn(turnInput)
+        if (initial.error) {
+          fail('route', 'provider_error', initial.error)
+          return null
+        }
+        const {
+          plan: turnPlan,
+          task,
+          semanticIntent,
+          resolution
+        } = await resolveChatTurnContract(turnInput, initial)
+        const interpretation = interpretationOf(task)
+        route = {
+          expectedIntents: (turn.expect.intent ?? []) as ChatIntent[],
+          initialIntent: initial.intent,
+          semanticIntent,
+          intent: turnPlan.intent,
+          ...(turnPlan.classifiedIntent ? { classifiedIntent: turnPlan.classifiedIntent } : {}),
+          agentId: turnPlan.agentId,
+          agentName: turnPlan.agentName,
+          toolPolicy: turnPlan.toolPolicy,
+          method: turnPlan.method,
+          reason: turnPlan.reason,
+          chatModel: turnPlan.models.chat,
+          toolsModel: turnPlan.models.tools,
+          resolution,
+          ...(turnPlan.routeTrace ? { routeTrace: turnPlan.routeTrace } : {})
+        }
+        contract = {
+          deliverable: task.deliverable,
+          authority: task.authority,
+          scopeState: task.scope.state,
+          acceptanceCriteria: task.acceptanceCriteria,
+          artifact: interpretation.artifact,
+          destination: interpretation.destination,
+          obligations: interpretation.obligations,
+          taskId: task.taskId,
+          recommendations: task.recommendations.length,
+          recommendationSource: task.continuation?.recommendationSource ?? 'none',
+          ...(task.continuation ? { priorChangedFiles: task.continuation.changedFiles } : {})
         }
         timeline.add(
-          'outcome_review',
-          'outcome_review',
-          `outcome ${verdict.verdict}`,
-          verdict.reason
+          'route',
+          'route',
+          `${initial.intent}${semanticIntent !== initial.intent ? ` → ${semanticIntent}` : ''} → ${turnPlan.intent} · ${turnPlan.agentName} · tools ${turnPlan.toolPolicy}`,
+          `${turnPlan.reason} · resolver ${resolution.source}:${resolution.rule}${resolution.failure ? ` (${resolution.failure})` : ''}${resolution.downgrade ? ` · ${resolution.downgrade.from} → ${resolution.downgrade.to} by ${resolution.downgrade.rule}` : ''}`
         )
-        // Same rule as chat: an unsupported outcome leaves the turn incomplete.
-        if (verdict.verdict !== 'supported') terminal = 'incomplete'
+        timeline.add(
+          'contract',
+          'route',
+          `artifact ${interpretation.artifact} → ${interpretation.destination} · deliverable ${task.deliverable} · edit ${task.authority.edit ? 'allowed' : 'denied'} · execute ${task.authority.execute}`
+        )
+        const prompt: ChatPromptInput = {
+          text: turn.text,
+          mode: turn.mode,
+          agentId: turnPlan.agentId,
+          agentName: turnPlan.agentName,
+          skillIds: [],
+          attachments: [],
+          history: [...history]
+        }
+        const messages = buildChatTurnMessages(sandbox, plan.settings, prompt, turnPlan, null)
+        const local = localChatTurnModel(
+          turnPlan,
+          turnPlan.models.chat || spec.model || plan.settings.models.defaultModel,
+          plan.settings
+        )
+        const temperature =
+          findAgent(sandbox, local.plan.agentId)?.temperature ?? plan.settings.models.temperature
+        const evidence = new OutcomeEvidence()
+        let incomplete = false
+        onStatus(`${local.plan.agentName} · ${local.plan.intent}`)
+        let ended: Awaited<ReturnType<typeof drainUntilStopped>>
+        try {
+          ended = await drainUntilStopped(
+            runAgentWithWorkspaceTools({
+              workspacePath: sandbox,
+              settings: plan.settings,
+              model: local.model,
+              messages,
+              temperature,
+              signal: deadline.signal,
+              getSecret: deps.getSecret,
+              mode: turn.mode,
+              turnPlan: local.plan,
+              mcp: 'off',
+              allowDelegate: false,
+              // Diagnostics never inherit or grant approvals, including on replay.
+              approveCommand: async (kind, command) => {
+                scope.onBlockedEffect('command', `${kind}: ${command}`)
+                timeline.add(
+                  'approval',
+                  'tool_execution',
+                  `${kind} approval denied (diagnostics)`,
+                  command
+                )
+                return false
+              },
+              approveMcpTool: async (toolName) => {
+                scope.onBlockedEffect('mcp', toolName)
+                return false
+              }
+            }),
+            deadline,
+            (evt) => {
+              evidence.observe(evt)
+              if (evt.type === 'answer') answer = evt.replace ? evt.text : answer + evt.text
+              else if (evt.type === 'tool') {
+                if (evt.tool.status === 'running') return
+                toolCalls += 1
+                toolsUsed.add(evt.tool.name)
+                if (evt.tool.status === 'error') {
+                  toolErrors += 1
+                  if (evt.tool.failure?.code) toolFailureCodes.push(evt.tool.failure.code)
+                }
+                timeline.add(
+                  'tool',
+                  'tool_execution',
+                  `${evt.tool.name}${evt.tool.path ? ` ${evt.tool.path}` : ''} · ${evt.tool.status}${evt.tool.failure ? ` · ${evt.tool.failure.code}` : ''}`,
+                  // Successful tool output can contain file contents; keep only errors.
+                  evt.tool.status === 'error' ? evt.tool.detail : undefined
+                )
+              } else if (evt.type === 'diff') {
+                timeline.add(
+                  'diff',
+                  'workspace_effects',
+                  `${evt.diff.op} ${evt.diff.path}`,
+                  `before ${shortHash(evt.diff.before ?? '')} · after ${shortHash(evt.diff.after)}`
+                )
+              } else if (evt.type === 'progress' || evt.type === 'session-step') {
+                steps = evt.step
+                actionLog = evt.actionLog.slice(-120)
+                if (evt.type === 'progress' && evt.incomplete) incomplete = true
+              } else if (evt.type === 'adapt') {
+                timeline.add(
+                  'recovery',
+                  'tool_protocol',
+                  `${evt.kind}: ${evt.reason}`,
+                  [evt.agentId, evt.model].filter(Boolean).join(' · ') || undefined
+                )
+              } else if (evt.type === 'status') {
+                timeline.add('status', 'lifecycle', evt.text)
+              }
+            }
+          )
+        } catch (error) {
+          agentError = error instanceof Error ? error.message : String(error)
+          terminal = 'error'
+          timeline.add('error', 'model', 'agent run failed', agentError)
+          return null
+        }
+        if (ended !== 'completed') return ended
+        terminal = incomplete ? 'incomplete' : 'complete'
+        if (needsOutcomeReview(local.plan, incomplete)) {
+          onStatus('Outcome review')
+          evidence.addActions(actionLog)
+          const verdict = await reviewTaskOutcome({
+            task,
+            answer,
+            evidence: evidence.items,
+            settings: plan.settings,
+            model: local.plan.models.chat,
+            signal: deadline.signal,
+            getSecret: deps.getSecret
+          })
+          outcomeReview = {
+            verdict: verdict.verdict,
+            reason: redactDiagnostic(verdict.reason, sandbox)
+          }
+          timeline.add(
+            'outcome_review',
+            'outcome_review',
+            `outcome ${verdict.verdict}`,
+            verdict.reason
+          )
+          // Same rule as chat: an unsupported outcome leaves the turn incomplete.
+          if (verdict.verdict !== 'supported') terminal = 'incomplete'
+        }
+        const late = deadline.stopReason()
+        if (late) return late
+        turnChanged = changedFiles(turnBefore, snapshotWorkspace(caseSandbox))
+        priorTask = completeChatTurnTask(task, {
+          answer,
+          changedFiles: turnChanged,
+          terminal: terminal ?? 'error'
+        })
+        turnRecords.push({
+          turn: turnIndex + 1,
+          text: turn.text,
+          route,
+          contract,
+          terminal,
+          changedPaths: turnChanged,
+          answerChars: answer.length,
+          answerHash: shortHash(answer)
+        })
+        history.push(
+          { role: 'user', content: turn.text },
+          {
+            role: 'assistant',
+            content: answer,
+            agentId: local.plan.agentId,
+            agentName: local.plan.agentName
+          }
+        )
+        if (turnIndex < turns.length - 1) {
+          earlierChecks.push(
+            ...evaluateScenario({
+              scenario: { ...scenario, expect: turn.expect },
+              sandbox: caseSandbox,
+              route,
+              contract,
+              terminal,
+              beforeWorkspace: turnBefore,
+              changedPaths: turnChanged,
+              answer,
+              steps,
+              durationMs: Date.now() - started,
+              toolErrors,
+              toolFailureCodes,
+              toolsUsed: [...toolsUsed],
+              blockedEffects: blocked.map((item) => item.kind)
+            }).map((item) => ({ ...item, name: `turn ${turnIndex + 1}: ${item.name}` }))
+          )
+        }
       }
-      const late = deadline.stopReason()
-      return late
+      return null
     })
     captureChanges()
     timeline.add('answer', 'answer', `final answer · ${answer.length} chars · ${shortHash(answer)}`)
@@ -769,14 +849,14 @@ async function runCase(
         stopped === 'timeout' ? `Timed out after ${scenario.timeoutMs}ms` : 'Cancelled by the user'
       )
     } else if (!failure) {
-      checks = evaluateScenario({
-        scenario,
+      const lastChecks = evaluateScenario({
+        scenario: { ...scenario, expect: lastExpect },
         sandbox,
         route,
         contract,
         terminal,
-        beforeWorkspace: before,
-        changedPaths,
+        beforeWorkspace: multiTurn ? (turnBefore ?? before) : before,
+        changedPaths: multiTurn ? turnChanged : changedPaths,
         answer,
         steps,
         durationMs: Date.now() - started,
@@ -785,7 +865,13 @@ async function runCase(
         toolsUsed: [...toolsUsed],
         blockedEffects: blocked.map((item) => item.kind)
       })
-      if (terminal === 'error' && !scenario.expect.terminal) {
+      checks = [
+        ...earlierChecks,
+        ...(multiTurn
+          ? lastChecks.map((item) => ({ ...item, name: `turn ${turns.length}: ${item.name}` }))
+          : lastChecks)
+      ]
+      if (terminal === 'error' && !lastExpect.terminal) {
         const fromModel = calls.some((call) => call.error)
         checks.push({
           stage: fromModel ? 'model' : 'lifecycle',
@@ -863,6 +949,7 @@ async function runCase(
     route,
     contract,
     terminal,
+    ...(multiTurn ? { turns: turnRecords } : {}),
     changedPaths,
     diffHash,
     outcomeReview,
