@@ -12,6 +12,11 @@ Eris-Dev is a separate desktop app for inspecting what Eris agents prepare for a
 4. Choose Agent or Ask mode, the intent reply (fallback with confidence 0, malformed JSON, or timeout) and a context budget. Click **Capture requests**.
 5. Select a question and inspect Messages, Tools, Findings, Context, Contract or Events. Requests from separate stages appear in the request dropdown. The Context tab shows the route decision, retrieval, workflow adjustments, and each request's context manifest and tool capability record. A blocked/error result explains why the model boundary was not reached.
 6. Export completed or stopped runs as JSONL. The first line is the run header, followed by a record for each processed question. The export contains actual prompt text and any source excerpts included by the pipeline; review it before sharing.
+   - **Export sanitized** writes a copy with secrets replaced by `[REDACTED:<kind>:<hash>]` (the same value always gets the same token), the temporary workspace path replaced by `<workspace>` and the home directory by `~`. Question IDs, relative file paths and task IDs are kept, and the header carries a redaction manifest with counts per kind. Sanitizing an already sanitized file changes nothing.
+   - **Export filtered** writes only the questions matching the current filters, sanitized.
+7. Search and filter the question list by text or ID, finding severity, finding ID or intent. Finding families (for example `domain-model-as-capability`) are listed with their question counts; click one to show only its questions. Request bodies load only when a question is opened.
+8. **Compare…** reads an earlier export (v1 or v2) and compares it with the current run by stable question ID: route, agent, artifact, authority, tools, findings and status. Task UUIDs, temporary paths and timings are ignored, so a routing fix shows as, for example, `capability → explore` rather than as thousands of changed IDs.
+9. Runs are resumable. Each run keeps a manifest (header, questions, configuration) and a small progress file. A run still marked running when the app starts is shown as **interrupted**; **Resume** continues at the first missing or unreadable result, rebuilds the JSONL from the per-question files so no line is duplicated, and refuses to resume if the capture settings, routing or prompt version, or project snapshot changed.
 
 ## Statuses
 
@@ -39,6 +44,19 @@ The app calls production `planInitialChatTurn`, `resolveChatTurnContract`, `buil
 This is a **pre-inference request inspection** tool. It uses the simulated model profile and default settings with the chosen context budget. It does not invoke a downloaded model or a remote API. A semantic-intent model request is captured if needed, then receives the selected labelled reply. The resolver's actual decision, including any conservative downgrade and the rule that caused it, is recorded in the route decision and events. Agent responses and subsequent tool cycles are not simulated; use the in-app diagnostics runs (scripted or real-model scenarios) for those. Diagnostics scenarios can have follow-up turns that share the thread, sandbox and previous task, so review → “implement those” → “what did you change?” runs end to end. Capture success means a model request was observed, not that the task would succeed or that routing is correct. This boundary precedes provider-specific message serialization and tokenization.
 
 External effects are guarded by the existing diagnostics scope. Source tools operate on the temporary snapshot. MCP, delegation and command approvals are disabled. The app uses its own data root, with no production credentials or settings loaded.
+
+## Diagnostics qualification
+
+The in-app diagnostics runs (scripted, replay or real-model scenarios) report more than pass/fail:
+
+- Each case has an **evaluation**: its label (source and rationale), verdict (`passed`, `failed` or `ungraded`), the reason, and references to the timeline entries, answer hash and diff hash that support it.
+- Each case has a typed **outcome** (`completed`, `partial`, `blocked`, `failed`, `cancelled`, `timed_out`) and an **outcome class** that separates agent defects from environment and harness limits. Run summaries count every class, so ungraded cases stay in the denominator.
+- Run summaries include **coverage**: which stages any case reached (routing, scripted or live inference, tools, workspace changes, verification, outcome review, follow-ups, delegation) and which none did. Desktop chat UI delivery is never exercised by these runs and is always listed as uncovered.
+- Changed files are kept after the sandbox is removed, with before/after hashes and redacted content, so a later reviewer can reproduce a finding.
+- Answers that claim a change need a diff, and answers that claim a passing check need a verification that actually passed.
+- Code-example answers can be graded against the 40 topic rubrics from the review (`src/shared/topic-rubrics.ts`): fenced code in the requested language that shows the rubric's core behaviors. This is a keyword heuristic for review, not a compile or run.
+
+`npm run test:agents` (run before every build) includes a compact regression suite over the review's named questions and contrast pairs, plus a deterministic sweep of the bundled 10,000-question corpus with exact denominators.
 
 ## Build
 
