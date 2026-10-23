@@ -8,6 +8,8 @@ release
 .env.*
 .eris
 .ericservices-ide
+.agents/skills/
+.cursor/skills/
 *.tsbuildinfo
 # Built-in Eris → Eris-feedback credential (CI injects; never commit)
 resources/eris-feedback-token
