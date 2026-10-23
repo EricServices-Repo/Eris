@@ -541,3 +541,67 @@ export function mcpToolsToOpenAI(
     return definition
   })
 }
+
+const WEB_TOOLS = new Set(['web_search', 'web_open'])
+
+/** Why a built-in tool is or is not in the request, with a stable reason. */
+export type ToolCapabilityStatus = 'available' | 'restricted' | 'deferred' | 'disabled' | 'blocked'
+export interface ToolCapability {
+  name: string
+  status: ToolCapabilityStatus
+  reason: string
+  approval: ToolApproval
+  schemaChars: number
+}
+
+/**
+ * The one capability record for a step. Visible schemas, search_tools candidates
+ * and the exported manifest all come from it, so a request never offers a tool
+ * the runtime will always reject.
+ */
+export function resolveToolCapabilities(input: {
+  /** The effective tool policy check for this route. */
+  allowedByPolicy: (name: string) => boolean
+  toolPolicy: string
+  imagesEnabled: boolean
+  /** Connected MCP tools; search_mcp_tools only helps when some are deferred. */
+  mcpToolCount: number
+  /** run is visible but the gateway limits it to test, typecheck and lint commands. */
+  verificationRun: boolean
+  discovered: ReadonlySet<string>
+  /** The public web is irrelevant to this task: keep web tools discoverable, not inline. */
+  deferWeb?: boolean
+}): ToolCapability[] {
+  return COMPOSER_OPENAI_TOOLS.map((definition) => {
+    const name = definition.function.name
+    const contract = toolContracts.get(name)
+    const base = {
+      name,
+      approval: contract?.approval ?? 'none',
+      schemaChars: JSON.stringify(definition).length
+    }
+    const as = (status: ToolCapabilityStatus, reason: string): ToolCapability => ({
+      ...base,
+      status,
+      reason
+    })
+    if (name === 'generate_image' && !input.imagesEnabled)
+      return as('disabled', 'feature-disabled:images')
+    if (name === 'search_mcp_tools' && input.mcpToolCount <= MAX_INLINE_MCP_TOOLS)
+      return as('disabled', input.mcpToolCount ? 'mcp-catalog-inline' : 'no-mcp-tools')
+    if (!input.allowedByPolicy(name)) {
+      if (name === 'run' && input.verificationRun)
+        return as('restricted', 'verification-commands-only')
+      return as('blocked', `tool-policy:${input.toolPolicy}`)
+    }
+    if (contract?.discovery === 'deferred' && !input.discovered.has(name))
+      return as('deferred', 'search_tools')
+    if (input.deferWeb && WEB_TOOLS.has(name) && !input.discovered.has(name))
+      return as('deferred', 'task-irrelevant:web')
+    return as('available', input.discovered.has(name) ? 'discovered' : 'core')
+  })
+}
+
+export function isVisibleCapability(capability: ToolCapability): boolean {
+  return capability.status === 'available' || capability.status === 'restricted'
+}

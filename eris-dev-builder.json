@@ -1,0 +1,28 @@
+{
+  "extends": null,
+  "appId": "app.eris.dev",
+  "productName": "Eris-Dev",
+  "extraMetadata": { "name": "eris-dev", "main": "./out-dev/main/index.js" },
+  "directories": { "output": "dist-dev" },
+  "files": [
+    "out-dev/**/*",
+    "resources/defaults.json",
+    "resources/agents.json",
+    "resources/models/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "resources",
+      "to": "resources",
+      "filter": ["**/*", "!eris-feedback-token", "!app-update.yml"]
+    }
+  ],
+  "asarUnpack": [
+    "node_modules/node-llama-cpp/**/*",
+    "node_modules/node-pty/**/*",
+    "node_modules/@parcel/watcher*/**/*"
+  ],
+  "mac": { "target": ["dir"], "identity": null, "icon": "resources/icons/icon.icns" },
+  "win": { "target": ["nsis"], "icon": "resources/icons/icon.png" },
+  "publish": null
+}

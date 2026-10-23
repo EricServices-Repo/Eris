@@ -3,10 +3,19 @@ import { appendFile, mkdir } from 'fs/promises'
 import { join } from 'path'
 import { userDataRoot } from './paths'
 import { logWarn } from './logger'
+import { activeDiagnosticsScope } from './model-transport'
 const pending = new Map<string, Promise<void>>()
 const sequence = new Map<string, number>()
 /** Durable metadata ledger. Source content remains in the existing checkpoints. */
 export function appendTaskEvent(taskId: string, type: string, data: unknown): void {
+  const listener = activeDiagnosticsScope()?.onTaskEvent
+  if (listener) {
+    try {
+      listener({ taskId, type, data: structuredClone(data) })
+    } catch {
+      /* a diagnostics listener never affects the ledger */
+    }
+  }
   const next = (sequence.get(taskId) ?? 0) + 1
   sequence.set(taskId, next)
   const body =

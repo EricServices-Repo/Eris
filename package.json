@@ -1,7 +1,7 @@
 {
   "name": "eris",
   "version": "0.4.10",
-  "description": "Eris — AI-first desktop IDE for macOS and Windows",
+  "description": "Eris \u2014 AI-first desktop IDE for macOS and Windows",
   "main": "./out/main/index.js",
   "author": "Eris",
   "license": "MIT",
@@ -26,7 +26,7 @@
     "release:github": "node scripts/release.mjs --no-bump",
     "release:local": "node scripts/release.mjs --local-build",
     "test": "vitest run",
-    "test:agents": "vitest run tests/chat-stream.test.ts tests/chat-stream-diagnostics.test.ts tests/debug-runs.test.ts tests/eval-sandbox.test.ts tests/task-meaning.test.ts tests/agent-v2.test.ts tests/agent-context.test.ts tests/agent-prompts.test.ts tests/local-image-model.test.ts tests/local-image-python.test.ts tests/images-ipc.test.ts tests/image-generation.test.ts tests/image-agent-smoke.test.ts tests/agent-contract.test.ts tests/agent-discussions.test.ts tests/agent-heuristics.test.ts tests/agent-loop.test.ts tests/agent-orchestration.test.ts tests/agent-question-corpus.test.ts tests/agent-sessions.test.ts tests/agent-telemetry.test.ts tests/chat-agent-smoke.test.ts tests/chat-router.test.ts tests/command-approval.test.ts tests/goal-check.test.ts tests/intelligence.test.ts tests/posted-answer.test.ts tests/thinking-summary.test.ts tests/tool-call-schema.test.ts tests/user-question.test.ts tests/web-grounding.test.ts --reporter=verbose --testTimeout=30000",
+    "test:agents": "vitest run tests/chat-stream.test.ts tests/chat-stream-diagnostics.test.ts tests/debug-runs.test.ts tests/eval-sandbox.test.ts tests/task-meaning.test.ts tests/agent-v2.test.ts tests/agent-context.test.ts tests/agent-prompts.test.ts tests/local-image-model.test.ts tests/local-image-python.test.ts tests/images-ipc.test.ts tests/image-generation.test.ts tests/image-agent-smoke.test.ts tests/agent-contract.test.ts tests/agent-improvements.test.ts tests/agent-interpretation.test.ts tests/agent-capabilities.test.ts tests/agent-evidence.test.ts tests/agent-conversation.test.ts tests/eris-dev.test.ts tests/agent-discussions.test.ts tests/agent-heuristics.test.ts tests/agent-loop.test.ts tests/agent-orchestration.test.ts tests/agent-question-corpus.test.ts tests/agent-sessions.test.ts tests/agent-telemetry.test.ts tests/chat-agent-smoke.test.ts tests/chat-router.test.ts tests/command-approval.test.ts tests/goal-check.test.ts tests/intelligence.test.ts tests/posted-answer.test.ts tests/thinking-summary.test.ts tests/tool-call-schema.test.ts tests/user-question.test.ts tests/web-grounding.test.ts --reporter=verbose --testTimeout=30000",
     "test:smoke:chat": "vitest run tests/chat-agent-smoke.test.ts tests/agent-question-corpus.test.ts --reporter=verbose --testTimeout=30000",
     "test:watch": "vitest",
     "lint": "eslint .",
@@ -37,7 +37,13 @@
     "check:client": "npm run typecheck && vitest run tests/chat-database.test.ts tests/document-store.test.ts tests/code-index-patch.test.ts tests/workspace-watcher.test.ts && npm run build && node scripts/check-client-workers.mjs && vite build --config checks/vite.config.ts && electron scripts/check-client-renderer.cjs",
     "cloud-agent:build": "npm run build --prefix cloud-agent",
     "cloud-agent:docker": "docker build -t eris-cloud-agent:latest ./cloud-agent",
-    "cloud-agent:compose": "docker compose -f cloud-agent/docker-compose.yml up -d --build"
+    "cloud-agent:compose": "docker compose -f cloud-agent/docker-compose.yml up -d --build",
+    "build:dev-app": "electron-vite build --config electron.dev.config.ts",
+    "dist:dev-app:mac": "npm run build:dev-app && electron-builder --config eris-dev-builder.json --mac --dir",
+    "dist:dev-app:win": "npm run build:dev-app && electron-builder --config eris-dev-builder.json --win nsis --x64",
+    "start:dev-app": "npm run dist:dev-app:mac && open dist-dev/mac-arm64/Eris-Dev.app",
+    "test:dev-app": "vitest run tests/eris-dev.test.ts",
+    "prebuild:dev-app": "npm run test:dev-app"
   },
   "dependencies": {
     "@parcel/watcher": "^2.6.0",

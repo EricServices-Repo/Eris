@@ -7,7 +7,7 @@ export const WORKSPACE_DIR = '.eris'
 export const LEGACY_WORKSPACE_DIR = '.ericservices-ide'
 
 export function userDataRoot(): string {
-  return join(app.getPath('appData'), APP_DIR_NAME)
+  return join(app.getPath('appData'), app.getName() === 'Eris-Dev' ? 'Eris-Dev' : APP_DIR_NAME)
 }
 
 export function userSettingsPath(): string {

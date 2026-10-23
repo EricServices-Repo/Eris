@@ -2,7 +2,22 @@ import { isPathInside } from './workspace-fs'
 import { createHash, randomUUID } from 'crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'fs'
 import { basename, join, relative } from 'path'
-import type { TaskContract } from '../../../src/shared/task-contract'
+import { extractRecommendations } from '../../../src/shared/recommendations'
+import type {
+  IntentResolution,
+  ProjectStack,
+  TaskRecommendation,
+  ScopeApplicability,
+  TaskContract,
+  TaskInterpretation
+} from '../../../src/shared/task-contract'
+import {
+  forbidsMutation,
+  interpretRequest,
+  requestTextForIntent,
+  stackFit
+} from '../../../src/shared/task-interpretation'
+import { asksWorkspaceQuestion } from '../../../src/shared/agent-contract'
 import type { TurnPlan } from '../../../src/shared/settings-schema'
 import { namedProjectTarget } from './agent/project-target'
 
@@ -95,6 +110,78 @@ export function projectRegistry(
   return [...merged.values()]
 }
 
+/** Languages and frameworks named by the project's own manifests. Unknown is not a match. */
+export function detectProjectStack(root: string | null): ProjectStack | null {
+  if (!root) return null
+  const languages = new Set<string>()
+  const frameworks = new Set<string>()
+  const read = (name: string) => {
+    try {
+      return readFileSync(join(root, name), 'utf8').slice(0, 200_000)
+    } catch {
+      return ''
+    }
+  }
+  const pkg = read('package.json')
+  if (pkg) {
+    languages.add(
+      existsSync(join(root, 'tsconfig.json')) || /"typescript"/.test(pkg)
+        ? 'TypeScript'
+        : 'JavaScript'
+    )
+    for (const [name, pattern] of [
+      ['Next.js', /"next"\s*:/],
+      ['React', /"react"\s*:/],
+      ['Vue', /"vue"\s*:/],
+      ['Express', /"express"\s*:/]
+    ] as const)
+      if (pattern.test(pkg)) frameworks.add(name)
+  }
+  const python = read('pyproject.toml') + read('requirements.txt')
+  if (python || existsSync(join(root, 'manage.py'))) {
+    languages.add('Python')
+    if (/django/i.test(python) || existsSync(join(root, 'manage.py'))) frameworks.add('Django')
+    if (/\bflask\b/i.test(python)) frameworks.add('Flask')
+    if (/fastapi/i.test(python)) frameworks.add('FastAPI')
+  }
+  if (existsSync(join(root, 'Cargo.toml'))) languages.add('Rust')
+  if (existsSync(join(root, 'go.mod'))) languages.add('Go')
+  const composer = read('composer.json')
+  if (composer) {
+    languages.add('PHP')
+    if (/laravel/i.test(composer)) frameworks.add('Laravel')
+  }
+  const jvm = read('pom.xml') + read('build.gradle') + read('build.gradle.kts')
+  if (jvm) {
+    languages.add(/kotlin/i.test(jvm) ? 'Kotlin' : 'Java')
+    if (/spring/i.test(jvm)) frameworks.add('Spring')
+  }
+  const gemfile = read('Gemfile')
+  if (gemfile) {
+    languages.add('Ruby')
+    if (/\brails\b/.test(gemfile)) frameworks.add('Rails')
+  }
+  return languages.size || frameworks.size
+    ? { languages: [...languages], frameworks: [...frameworks] }
+    : null
+}
+
+/** Resolution says the folder exists; applicability says whether it is evidence for this request. */
+function scopeApplicability(
+  text: string,
+  interpretation: TaskInterpretation,
+  namedTarget: boolean,
+  hasProject: boolean
+): ScopeApplicability {
+  if (namedTarget) return 'named-target'
+  if (interpretation.destination !== 'chat') return 'selected-project'
+  if (!hasProject) return 'generic'
+  const generic = ['code-example', 'design', 'explanation'].includes(interpretation.artifact)
+  return generic && !asksWorkspaceQuestion(requestTextForIntent(text) || text)
+    ? 'generic'
+    : 'unverified'
+}
+
 export function createTaskContract(input: {
   taskId?: string
   threadId?: string | null
@@ -104,6 +191,7 @@ export function createTaskContract(input: {
   skillIds?: string[]
   priorTask?: TaskContract
   history?: Array<{ role: string; content: string }>
+  resolution?: IntentResolution
 }): TaskContract {
   const root =
     input.workspacePath && existsSync(input.workspacePath)
@@ -148,22 +236,76 @@ export function createTaskContract(input: {
   const priorAnswer = [...(input.history ?? [])]
     .reverse()
     .find((message) => message.role === 'assistant')
-  const recommendations =
-    /\b(those|these|them|recommended|suggested)\b/i.test(input.text) && priorAnswer
-      ? priorAnswer.content
-          .split(/\n(?=\s*\d+[.)]\s)/)
-          .filter((line) => /^\s*\d+[.)]\s/.test(line))
-          .map((text) => ({
-            id: createHash('sha256')
-              .update(priorAnswer.content + text)
-              .digest('hex')
-              .slice(0, 16),
-            text,
-            source: createHash('sha256').update(priorAnswer.content).digest('hex').slice(0, 16)
-          }))
-      : []
+  // Follow-ups resolve against the recommendation objects the prior turn recorded;
+  // older threads fall back to reading the prior answer's prose.
+  const refersToPrior =
+    /\b(those|these|them|recommended|suggested|recommendations?|all of (?:it|them))\b/i.test(
+      input.text
+    )
+  const offered = input.priorTask?.result?.offeredRecommendations ?? []
+  const recommendations: TaskRecommendation[] = !refersToPrior
+    ? []
+    : offered.length
+      ? offered
+      : priorAnswer
+        ? extractRecommendations(priorAnswer.content)
+        : []
+  const recommendationSource = !recommendations.length
+    ? 'none'
+    : offered.length
+      ? 'prior-task'
+      : 'prior-answer-prose'
+  // An explicit “do not edit / do not run” is a constraint, whatever the route says.
+  const forbids = forbidsMutation(input.text)
   const policy =
-    input.plan.mode === 'ask' && input.plan.toolPolicy !== 'none' ? 'read' : input.plan.toolPolicy
+    (input.plan.mode === 'ask' || forbids) && input.plan.toolPolicy !== 'none'
+      ? 'read'
+      : input.plan.toolPolicy
+  const canEdit = policy === 'edit' || policy === 'full'
+  const deliverable = feasibleDeliverable(
+    input.plan.intent === 'edit'
+      ? input.plan.mode === 'ask'
+        ? 'answer'
+        : 'patch'
+      : input.plan.intent === 'run' || input.plan.intent === 'verify'
+        ? 'execution-report'
+        : input.plan.intent === 'review'
+          ? 'review'
+          : input.plan.intent === 'plan'
+            ? 'plan'
+            : 'answer',
+    canEdit
+  )
+  const reading = interpretRequest({
+    text: input.text,
+    intent: input.plan.intent,
+    canEdit,
+    revision: 1,
+    route: input.plan.routeTrace
+  })
+  const projectStack = detectProjectStack(selected)
+  // Implementing referenced recommendations makes each one a separate obligation.
+  if (reading.artifact === 'patch' && recommendations.length)
+    reading.obligations = [
+      ...reading.obligations,
+      ...recommendations.slice(0, 10).map((recommendation, index) => ({
+        id: `recommendation-${recommendation.id}`,
+        kind: 'implementation' as const,
+        text: `Apply recommendation ${index + 1}: ${recommendation.text.slice(0, 240)}`
+      }))
+    ]
+  const interpretation: TaskInterpretation = {
+    ...reading,
+    projectStack,
+    stackFit: stackFit(reading, projectStack),
+    ...(input.resolution ? { resolution: input.resolution } : {})
+  }
+  const applicability = scopeApplicability(
+    input.text,
+    interpretation,
+    Boolean(target && selected && !inheritedRoot),
+    Boolean(selected)
+  )
   return {
     version: 2,
     taskId: input.taskId ?? randomUUID(),
@@ -171,18 +313,7 @@ export function createTaskContract(input: {
     threadId: input.threadId ?? null,
     originalText: input.text,
     intent: input.plan.intent,
-    deliverable:
-      input.plan.intent === 'edit'
-        ? input.plan.mode === 'ask'
-          ? 'answer'
-          : 'patch'
-        : input.plan.intent === 'run' || input.plan.intent === 'verify'
-          ? 'execution-report'
-          : input.plan.intent === 'review'
-            ? 'review'
-            : input.plan.intent === 'plan'
-              ? 'plan'
-              : 'answer',
+    deliverable,
     scope: {
       workspaceRoot: root,
       projectRoot: selected,
@@ -190,25 +321,63 @@ export function createTaskContract(input: {
       state: selected ? 'resolved' : matches.length > 1 ? 'ambiguous' : 'missing',
       candidates: (selected ? [] : registry)
         .map((project) => (root ? relative(root, project.root) || '.' : project.name))
-        .slice(0, 30)
+        .slice(0, 30),
+      applicability
     },
     authority: {
       tools: policy,
-      edit: policy === 'edit' || policy === 'full',
+      edit: canEdit,
       execute:
         policy === 'full'
           ? 'approved'
-          : ['edit', 'review', 'verify'].includes(input.plan.intent) && input.plan.mode !== 'ask'
+          : policy !== 'none' &&
+              !forbids &&
+              ['edit', 'review', 'verify'].includes(input.plan.intent) &&
+              input.plan.mode !== 'ask'
             ? 'verification'
             : 'none',
       externalEffects: policy === 'full'
     },
     skillIds: input.skillIds ?? input.priorTask?.skillIds,
     recommendations,
-    acceptanceCriteria: input.plan.executionPlan
-      ? [input.plan.executionPlan.doneWhen]
-      : [input.text]
+    ...(input.priorTask && input.priorTask.scope.workspaceRoot === root
+      ? {
+          continuation: {
+            priorTaskId: input.priorTask.taskId,
+            changedFiles: input.priorTask.result?.changedFiles ?? [],
+            recommendationSource
+          }
+        }
+      : {}),
+    acceptanceCriteria: acceptanceCriteriaFor(input.plan, deliverable, input.text, interpretation),
+    interpretation
   }
+}
+
+/** A patch the authority cannot write becomes a described change in chat. */
+function feasibleDeliverable(
+  deliverable: TaskContract['deliverable'],
+  canEdit: boolean
+): TaskContract['deliverable'] {
+  return deliverable === 'patch' && !canEdit ? 'answer' : deliverable
+}
+
+/**
+ * Acceptance follows the deliverable the authority can produce. A mutation plan's
+ * completion rule never applies to an answer that cannot edit or run anything.
+ */
+function acceptanceCriteriaFor(
+  plan: TurnPlan,
+  deliverable: TaskContract['deliverable'],
+  fallback: string,
+  interpretation: NonNullable<TaskContract['interpretation']>
+): string[] {
+  const base =
+    deliverable === 'answer' && (plan.intent === 'edit' || plan.intent === 'run')
+      ? 'The requested change is described or shown in chat without claiming it was applied or verified.'
+      : (plan.executionPlan?.doneWhen ?? fallback)
+  // Each obligation is checked on its own; one satisfied part never completes the task.
+  return [...new Set([base, ...interpretation.obligations.map((obligation) => obligation.text)])]
 }
 
 export function childTaskContract(
@@ -221,6 +390,26 @@ export function childTaskContract(
   const levels = ['none', 'read', 'edit', 'full'] as const
   const tools =
     levels[Math.min(levels.indexOf(parent.authority.tools), levels.indexOf(plan.toolPolicy))]!
+  const edit = parent.authority.edit && ['edit', 'full'].includes(tools)
+  const deliverable = feasibleDeliverable(
+    plan.intent === 'edit'
+      ? 'patch'
+      : plan.intent === 'review'
+        ? 'review'
+        : plan.intent === 'plan'
+          ? 'plan'
+          : plan.intent === 'run' || plan.intent === 'verify'
+            ? 'execution-report'
+            : 'answer',
+    edit
+  )
+  const interpretation = interpretRequest({
+    text: goal,
+    intent: plan.intent,
+    canEdit: edit,
+    revision: parent.revision,
+    route: plan.routeTrace
+  })
   const root = realpathSync(workspacePath)
   const relativeProject =
     parent.scope.workspaceRoot && parent.scope.projectRoot
@@ -235,22 +424,16 @@ export function childTaskContract(
     parentTaskId: parent.taskId,
     originalText: goal,
     intent: plan.intent,
-    deliverable:
-      plan.intent === 'edit'
-        ? 'patch'
-        : plan.intent === 'review'
-          ? 'review'
-          : plan.intent === 'plan'
-            ? 'plan'
-            : plan.intent === 'run' || plan.intent === 'verify'
-              ? 'execution-report'
-              : 'answer',
+    deliverable,
+    // A child owns a bounded assignment; the parent's follow-up state is not its own.
+    continuation: undefined,
+    result: undefined,
     scope: { ...parent.scope, workspaceRoot: root, projectRoot },
     authority: {
       tools,
-      edit: parent.authority.edit && ['edit', 'full'].includes(tools),
+      edit,
       execute:
-        parent.authority.execute === 'none'
+        parent.authority.execute === 'none' || tools === 'none'
           ? 'none'
           : tools === 'full'
             ? parent.authority.execute
@@ -259,6 +442,7 @@ export function childTaskContract(
               : 'none',
       externalEffects: parent.authority.externalEffects && tools === 'full'
     },
-    acceptanceCriteria: plan.executionPlan ? [plan.executionPlan.doneWhen] : [goal]
+    acceptanceCriteria: acceptanceCriteriaFor(plan, deliverable, goal, interpretation),
+    interpretation
   }
 }

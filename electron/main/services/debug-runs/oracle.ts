@@ -4,6 +4,7 @@ import {
   type BlockedEffectKind,
   type DebugFailureCategory,
   type DebugFailureStage,
+  type DebugContractRecord,
   type DebugOracleCheck,
   type DebugRouteRecord,
   type DebugScenario,
@@ -15,6 +16,7 @@ export interface OracleInput {
   scenario: DebugScenario
   sandbox: string
   route: DebugRouteRecord | null
+  contract?: DebugContractRecord | null
   terminal: DebugTerminalState | null
   beforeWorkspace: Record<string, string>
   changedPaths: string[]
@@ -71,6 +73,61 @@ export function evaluateScenario(input: OracleInput): DebugOracleCheck[] {
         expect.intent.join(' | '),
         actual,
         'intent_mismatch'
+      )
+    )
+  }
+  if (expect.forbiddenIntents.length) {
+    const actual = input.route?.intent ?? 'not routed'
+    checks.push(
+      check(
+        'route',
+        'intent not forbidden',
+        Boolean(input.route && !expect.forbiddenIntents.includes(input.route.intent)),
+        `not ${expect.forbiddenIntents.join(' | ')}`,
+        actual,
+        'intent_mismatch'
+      )
+    )
+  }
+  if (expect.artifact) {
+    const actual = input.contract?.artifact ?? 'no interpretation'
+    checks.push(
+      check(
+        'route',
+        'requested artifact',
+        Boolean(input.contract?.artifact && expect.artifact.includes(input.contract.artifact)),
+        expect.artifact.join(' | '),
+        actual,
+        'artifact_mismatch'
+      )
+    )
+  }
+  if (expect.recommendations) {
+    const count = input.contract?.recommendations ?? 0
+    const source = input.contract?.recommendationSource ?? 'none'
+    const wanted = expect.recommendations
+    checks.push(
+      check(
+        'route',
+        'referenced recommendations',
+        count >= wanted.min && (!wanted.source || source === wanted.source),
+        `≥ ${wanted.min}${wanted.source ? ` from ${wanted.source}` : ''}`,
+        `${count} from ${source}`,
+        'intent_mismatch'
+      )
+    )
+  }
+  if (expect.priorChangedFiles) {
+    const actual = input.contract?.priorChangedFiles ?? []
+    const missing = expect.priorChangedFiles.filter((path) => !actual.includes(path))
+    checks.push(
+      check(
+        'route',
+        'prior changes carried',
+        missing.length === 0,
+        expect.priorChangedFiles.join(', '),
+        actual.length ? actual.join(', ') : 'none',
+        'check_failed'
       )
     )
   }

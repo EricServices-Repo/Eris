@@ -12,8 +12,12 @@ import { isToolLogReply } from '../../../../src/shared/posted-answer'
 import type { AppSettings, TurnPlan } from '../../../../src/shared/settings-schema'
 import { formatAvailableModelsPrompt } from '../model-catalog'
 import {
+  effectiveToolPolicy,
   filterToolsByPolicy,
+  intentNeedsMutation,
+  intentNeedsTools,
   isErisCapabilityQuestion,
+  minCeiling,
   planChatTurn,
   toolAllowedByPolicy
 } from '../chat-router'
@@ -33,6 +37,8 @@ import {
   COMPOSER_OPENAI_TOOLS,
   getToolContract,
   MAX_INLINE_MCP_TOOLS,
+  isVisibleCapability,
+  resolveToolCapabilities,
   mcpToolsToOpenAI,
   toolCallJsonSchema
 } from '../tool-registry'
@@ -90,7 +96,7 @@ import {
   MAX_BARE_INSTALLS_PER_RUN,
   packageJsonNewerThanModules
 } from './install-guards'
-import { decideMidRunAdapt, shouldConsiderMidRunAdapt } from './mid-run-adapt'
+import { decideMidRunAdapt, MID_RUN_ADAPT_BUDGET, shouldConsiderMidRunAdapt } from './mid-run-adapt'
 import { toolFailureRecovery } from './recovery'
 import { findAgent } from '../agents'
 import {
@@ -100,7 +106,16 @@ import {
 import { isVerifyCommand } from '../command-approval'
 import { buildPreservedWorkerMessages, isReadOnlyChat, truncateForModel } from './prompts'
 import { createTaskContract, childTaskContract } from '../task-intake'
-import { intersectToolPolicy } from '../../../../src/shared/task-contract'
+import {
+  interpretationOf,
+  intersectToolPolicy,
+  taskContractConflicts,
+  type TaskContract
+} from '../../../../src/shared/task-contract'
+import { artifactResponseContract } from '../../../../src/shared/task-interpretation'
+import { compileTaskContext } from './context-compiler'
+import { lintExecutionPlan } from './workflow-lint'
+import { appendTaskEvent } from '../task-ledger'
 import { TaskToolGateway } from './tool-gateway'
 import {
   firstHttpsResult,
@@ -164,10 +179,10 @@ function answerFromProjectFiles(reads: Array<{ path: string; text: string }>): s
 
 type ToolExecutionResult = { ok: boolean; detail: string; mutated: boolean; path?: string }
 
-function toolFailureMetadata(
+export function toolFailureMetadata(
   detail: string,
   effect: 'read' | 'workspace' | 'external' | 'command' | 'orchestration'
-): { code: string; retryable: boolean } {
+): { code: string; retryable: boolean; cause?: string } {
   const code = /\bdenied\b|\bblocked\b|no approval handler|reviewer can only/i.test(detail)
     ? 'permission_denied'
     : /read required before editing/i.test(detail)
@@ -179,11 +194,25 @@ function toolFailureMetadata(
           : /not found|not connected|no .* available/i.test(detail)
             ? 'unavailable'
             : 'execution_failed'
+  // A refused approval is not a failed check or a wrong agent action; say which layer stopped it.
+  const cause =
+    code !== 'permission_denied'
+      ? undefined
+      : /user denied/i.test(detail)
+        ? 'approval-denied'
+        : /no approval handler/i.test(detail)
+          ? 'approval-unavailable'
+          : /task contract|does not permit|only permits|belongs to (?:another|a different)/i.test(
+                detail
+              )
+            ? 'task-authority'
+            : 'tool-policy'
   return {
     code,
     retryable:
       code === 'precondition_failed' ||
-      (effect === 'read' && !['permission_denied', 'invalid_arguments'].includes(code))
+      (effect === 'read' && !['permission_denied', 'invalid_arguments'].includes(code)),
+    ...(cause ? { cause } : {})
   }
 }
 
@@ -383,6 +412,70 @@ export async function* runAgentWithWorkspaceTools(options: {
     return
   }
 
+  // Specialist outcomes, so the final answer never presents failed, cancelled or
+  // unsupported child work as finished.
+  const delegationOutcomes: Array<{
+    agentId: string
+    goal: string
+    status: 'done' | 'unverified' | 'failed' | 'cancelled'
+  }> = []
+  function recordDelegation(
+    agentId: string,
+    goal: string,
+    status: (typeof delegationOutcomes)[number]['status'],
+    child: TaskContract | undefined
+  ) {
+    delegationOutcomes.push({ agentId, goal, status })
+    appendTaskEvent(task.taskId, 'delegation', {
+      agentId,
+      status,
+      childTaskId: child?.taskId ?? null,
+      childProject: child?.scope.projectRoot ?? null,
+      childAuthority: child?.authority ?? null
+    })
+  }
+  function unresolvedDelegationNote(): string {
+    const open = delegationOutcomes.filter((item) => item.status !== 'done')
+    if (!open.length) return ''
+    const label = {
+      unverified: 'returned claims without tool evidence',
+      failed: 'did not finish',
+      cancelled: 'was cancelled',
+      done: ''
+    }
+    return `Specialist results not confirmed:\n${open
+      .map((item) => `- ${item.agentId} ${label[item.status]}: ${item.goal.slice(0, 160)}`)
+      .join('\n')}`
+  }
+
+  function applyWorkflowLint(branch: string, can: Parameters<typeof lintExecutionPlan>[1]) {
+    const linted = lintExecutionPlan(plan.executionPlan, can)
+    if (linted.conflicts.length === 0) return
+    appendTaskEvent(task.taskId, 'workflow-lint', { branch, conflicts: linted.conflicts })
+    logInfo('Adjusted infeasible workflow steps', {
+      taskId: task.taskId,
+      branch,
+      conflicts: linted.conflicts.map((conflict) => `${conflict.needs}:${conflict.layer}`)
+    })
+    plan = { ...plan, executionPlan: linted.executionPlan }
+  }
+
+  const contractConflicts = taskContractConflicts(task)
+  if (contractConflicts.length > 0) {
+    logWarn('Agent blocked before inference', {
+      taskId: task.taskId,
+      reason: 'contract-conflict',
+      conflicts: contractConflicts
+    })
+    yield { type: 'progress', step: 0, actionLog: [], filesTouched: [], incomplete: true }
+    yield {
+      type: 'answer',
+      text: `This request's task contract is internally inconsistent, so no model was called: ${contractConflicts.join(' ')}`,
+      replace: true
+    }
+    return
+  }
+
   if (options.workspacePath && task.scope.state !== 'resolved') {
     logWarn('Agent blocked before inference', {
       taskId: task.taskId,
@@ -431,6 +524,14 @@ export async function* runAgentWithWorkspaceTools(options: {
 
   if (answerOnly) {
     workflow.transition('answering')
+    // A tool-free reply cannot follow steps that read, edit or run.
+    applyWorkflowLint('answer-only', {
+      tools: false,
+      read: false,
+      edit: false,
+      run: false,
+      editAuthority: task.authority.edit
+    })
     yield {
       type: 'model',
       model: chatModel,
@@ -446,8 +547,9 @@ export async function* runAgentWithWorkspaceTools(options: {
             ? `Ask · ${plan.agentName}…`
             : `${plan.agentName}…`
     }
-    const askMessages = messages.map((m) => ({ ...m }))
-    const tips: string[] = [...(modelsCatalog ? [modelsCatalog] : []), `Routing: ${plan.reason}`]
+    const tips: string[] = [...(modelsCatalog ? [modelsCatalog] : [])]
+    if (plan.intent !== 'capability')
+      tips.push(artifactResponseContract(interpretationOf(task), task.scope.applicability))
     if (plan.executionPlan) {
       tips.push(
         `Task plan:\n${plan.executionPlan.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}\nDone when: ${plan.executionPlan.doneWhen}`
@@ -465,16 +567,28 @@ export async function* runAgentWithWorkspaceTools(options: {
           'Do not retrieve, tree, or search the workspace for “models”.'
       )
     }
-    const tip = tips.join('\n\n')
-    const idx = askMessages.findIndex((m) => m.role === 'system')
-    if (idx >= 0) {
-      askMessages[idx] = {
-        role: 'system',
-        content: `${askMessages[idx].content}\n\n${tip}`
-      }
-    } else {
-      askMessages.unshift({ role: 'system', content: tip })
-    }
+    // Answer-only turns compile the same task contract as tool workers, with a
+    // tool-free protocol, so task identity and permissions agree across branches.
+    const priorSystem = messages.find((m) => m.role === 'system')?.content || ''
+    const compiled = compileTaskContext({
+      task,
+      toolsAvailable: false,
+      guidance: tips.join('\n\n'),
+      project: priorSystem,
+      retrieval: '',
+      maxInputTokens: contextBudgetTokens(options.settings, chatModel)
+    })
+    appendTaskEvent(task.taskId, 'context-compiled', {
+      revision: task.revision,
+      agentId: plan.agentId,
+      model: chatModel,
+      blocks: compiled.blocks,
+      budget: compiled.budget
+    })
+    const askMessages = [
+      compiled.message,
+      ...messages.filter((m) => m.role !== 'system').map((m) => ({ ...m }))
+    ]
     const askSessionKey =
       isNativeGgufRef(chatModel) && options.jobId ? `gguf:${options.jobId}` : undefined
     let full = ''
@@ -555,22 +669,35 @@ export async function* runAgentWithWorkspaceTools(options: {
           })
       : Promise.resolve()
   const retrievalStartedAt = Date.now()
-  const retrieveP =
+  // A generic request gets no retrieved leads: unrelated project files are not evidence.
+  const retrievalSkipped =
     plan.intent === 'run'
-      ? Promise.resolve(null)
+      ? 'run-intent'
       : task.scope.projectRoot !== task.scope.workspaceRoot
-        ? Promise.resolve(null)
-        : inspectWorkspace(workspacePath, originalUserGoal, 6)
-            .catch(() => null)
-            .finally(() => {
-              retrievalMs = Date.now() - retrievalStartedAt
-            })
+        ? 'nested-project'
+        : task.scope.applicability === 'generic'
+          ? 'generic-request'
+          : null
+  const retrieveP = retrievalSkipped
+    ? Promise.resolve(null)
+    : inspectWorkspace(workspacePath, originalUserGoal, 6)
+        .catch(() => null)
+        .finally(() => {
+          retrievalMs = Date.now() - retrievalStartedAt
+        })
 
   const checkpoint = createCheckpoint(workspacePath)
   pruneOldCheckpoints(workspacePath, 20)
   yield { type: 'checkpoint', checkpointId: checkpoint.id }
 
   const [, retrieved] = await Promise.all([mcpSyncP, retrieveP])
+  appendTaskEvent(task.taskId, 'retrieval', {
+    query: originalUserGoal.slice(0, 2000),
+    skipped: retrievalSkipped,
+    applicability: task.scope.applicability ?? null,
+    results: (retrieved?.reasons ?? []).map((item) => ({ path: item.path, signals: item.signals })),
+    detailChars: retrieved?.detail.length ?? 0
+  })
   workflow.transition('executing')
   logInfo('Agent preflight timings', {
     intent: plan.intent,
@@ -593,30 +720,65 @@ export async function* runAgentWithWorkspaceTools(options: {
   )
   const discoveredBuiltinToolNames = new Set<string>()
   const discoveredMcpToolNames = new Set<string>()
-  const visibleComposerToolDefinitions = (): OpenAIToolDef[] =>
-    COMPOSER_OPENAI_TOOLS.filter(
-      (definition) =>
-        getToolContract(definition.function.name)?.discovery === 'core' ||
-        discoveredBuiltinToolNames.has(definition.function.name)
+  // Reviewer and Verification, and edit tasks whose contract grants verification,
+  // see a run tool limited to test/typecheck/lint commands by the gateway.
+  const verificationRunAllowed = (): boolean =>
+    mode !== 'ask' &&
+    (plan.agentId === 'reviewer' ||
+      plan.agentId === 'verifier' ||
+      (task.authority.edit && task.authority.execute === 'verification'))
+  // Role policy, feature settings, MCP catalog and discovery resolve to one record.
+  const toolCapabilities = () =>
+    resolveToolCapabilities({
+      allowedByPolicy: (name) => toolAllowedByPolicy(name, plan.toolPolicy, false),
+      toolPolicy: plan.toolPolicy,
+      imagesEnabled: Boolean(options.settings.images?.enabled),
+      mcpToolCount,
+      verificationRun: verificationRunAllowed(),
+      discovered: discoveredBuiltinToolNames,
+      deferWeb: !webQuestion
+    })
+  const visibleComposerToolDefinitions = (): OpenAIToolDef[] => {
+    const visible = new Set(
+      toolCapabilities()
+        .filter(isVisibleCapability)
+        .map((capability) => capability.name)
     )
+    return COMPOSER_OPENAI_TOOLS.filter((definition) => visible.has(definition.function.name))
+  }
   const visibleMcpToolDefinitions = (): OpenAIToolDef[] =>
     mcpToolCount <= MAX_INLINE_MCP_TOOLS
       ? mcpToolDefinitions
       : mcpToolDefinitions.filter((definition) =>
           discoveredMcpToolNames.has(definition.function.name)
         )
-  const openaiTools: OpenAIToolDef[] = filterToolsByPolicy(
-    [...visibleComposerToolDefinitions(), ...visibleMcpToolDefinitions()],
-    plan.toolPolicy,
-    mcpReadOnlyTools
-  )
-  if (
-    mode !== 'ask' &&
-    (plan.agentId === 'reviewer' || plan.agentId === 'verifier') &&
-    !openaiTools.some((t) => t.function.name === 'run')
-  ) {
-    const runTool = COMPOSER_OPENAI_TOOLS.find((t) => t.function.name === 'run')
-    if (runTool) openaiTools.push(runTool)
+  const visibleToolDefinitions = (): OpenAIToolDef[] => [
+    ...visibleComposerToolDefinitions(),
+    ...filterToolsByPolicy(visibleMcpToolDefinitions(), plan.toolPolicy, mcpReadOnlyTools)
+  ]
+  const openaiTools: OpenAIToolDef[] = visibleToolDefinitions()
+  const recordToolManifest = (reason: string) =>
+    appendTaskEvent(task.taskId, 'tool-manifest', {
+      reason,
+      agentId: plan.agentId,
+      toolPolicy: plan.toolPolicy,
+      tools: toolCapabilities(),
+      mcp: { mode: mcpMode, count: mcpToolCount, inline: mcpToolCount <= MAX_INLINE_MCP_TOOLS },
+      visible: openaiTools.map((tool) => tool.function.name),
+      visibleSchemaChars: JSON.stringify(openaiTools).length
+    })
+  recordToolManifest('initial')
+  {
+    const visible = new Set(openaiTools.map((tool) => tool.function.name))
+    applyWorkflowLint('worker', {
+      tools: openaiTools.length > 0,
+      read: ['read_file', 'grep', 'retrieve', 'tree'].some((name) => visible.has(name)),
+      edit:
+        task.authority.edit &&
+        ['write_file', 'search_replace', 'apply_patch'].some((name) => visible.has(name)),
+      run: visible.has('run'),
+      editAuthority: task.authority.edit
+    })
   }
   let promptBudget =
     contextBudgetTokens(options.settings, workerModel) -
@@ -631,7 +793,7 @@ export async function* runAgentWithWorkspaceTools(options: {
     workspacePath,
     settings: options.settings,
     inputTokenBudget: promptBudget,
-    plan,
+    plan: { ...plan, task },
     originalUserGoal,
     retrievalHint,
     mcpToolCount: plan.toolPolicy === 'read' || plan.toolPolicy === 'none' ? 0 : mcpToolCount
@@ -783,6 +945,22 @@ export async function* runAgentWithWorkspaceTools(options: {
   const localConstrainEnabled = options.settings.agent.constrainLocalToolCalls !== false
   let constrainNextToolCall = false
 
+  // Discovery changes the next request's schemas; record what was added and its size.
+  // The prompt budget is recomputed from openaiTools before every compaction check.
+  function recordToolDiscovery(
+    via: string,
+    query: string,
+    added: Array<{ name: string; kind: string; schemaChars: number }>
+  ) {
+    appendTaskEvent(task.taskId, 'tools-discovered', {
+      step,
+      via,
+      query,
+      added,
+      visibleSchemaChars: JSON.stringify(openaiTools).length
+    })
+  }
+
   function discoverMcpTools(query: string): string {
     const terms = [...new Set(query.toLowerCase().match(/[a-z0-9_-]{2,}/g) || [])]
     if (terms.length === 0) return 'Describe an MCP integration or capability to search for.'
@@ -810,13 +988,20 @@ export async function* runAgentWithWorkspaceTools(options: {
         (definition) => [definition.function.name, definition]
       )
     )
+    const added: Array<{ name: string; kind: string; schemaChars: number }> = []
     for (const { tool } of ranked) {
       discoveredMcpToolNames.add(tool.fqName)
       const definition = eligibleDefinitions.get(tool.fqName)
       if (definition && !openaiTools.some((item) => item.function.name === tool.fqName)) {
         openaiTools.push(definition)
+        added.push({
+          name: tool.fqName,
+          kind: 'MCP',
+          schemaChars: JSON.stringify(definition).length
+        })
       }
     }
+    recordToolDiscovery('search_mcp_tools', query, added)
     return [
       `Found ${ranked.length} MCP tool(s). They are now available for the next step:`,
       ...ranked.map(({ tool }) => `- ${tool.fqName} — ${tool.description || tool.name}`)
@@ -859,10 +1044,15 @@ export async function* runAgentWithWorkspaceTools(options: {
     const mcpByName = new Map(
       mcpDefinitions.map((definition) => [definition.function.name, definition])
     )
+    const deferred = new Set(
+      toolCapabilities()
+        .filter((capability) => capability.status === 'deferred')
+        .map((capability) => capability.name)
+    )
     const ranked = [
       ...COMPOSER_OPENAI_TOOLS.filter(
         (definition) =>
-          getToolContract(definition.function.name)?.discovery === 'deferred' &&
+          deferred.has(definition.function.name) &&
           definition.function.name !== 'search_tools' &&
           builtinByName.has(definition.function.name)
       ).map((definition) => ({
@@ -887,13 +1077,20 @@ export async function* runAgentWithWorkspaceTools(options: {
       .slice(0, 8)
 
     if (ranked.length === 0) return `No available tools matched “${query}”.`
+    const added: Array<{ name: string; kind: string; schemaChars: number }> = []
     for (const candidate of ranked) {
       if (candidate.kind === 'built-in') discoveredBuiltinToolNames.add(candidate.name)
       else discoveredMcpToolNames.add(candidate.name)
       if (!openaiTools.some((item) => item.function.name === candidate.name)) {
         openaiTools.push(candidate.definition)
+        added.push({
+          name: candidate.name,
+          kind: candidate.kind,
+          schemaChars: JSON.stringify(candidate.definition).length
+        })
       }
     }
+    recordToolDiscovery('search_tools', query, added)
     return [
       `Found ${ranked.length} tool(s). They are available on the next step:`,
       ...ranked.map(
@@ -982,7 +1179,14 @@ export async function* runAgentWithWorkspaceTools(options: {
             actionLog,
             filesTouched
           })
+    if ('refused' in decision && decision.refused)
+      appendTaskEvent(task.taskId, 'reroute-refused', {
+        reason: decision.refused,
+        trigger,
+        agentId: plan.agentId
+      })
     if (decision.kind === 'reroute' && decision.nextPlan) {
+      const fromAgent = plan.agentId
       plan = {
         ...decision.nextPlan,
         task,
@@ -991,23 +1195,22 @@ export async function* runAgentWithWorkspaceTools(options: {
       }
       workerModel = plan.models.tools
       rerouteCount++
-      openaiTools.splice(
-        0,
-        openaiTools.length,
-        ...filterToolsByPolicy(
-          [...visibleComposerToolDefinitions(), ...visibleMcpToolDefinitions()],
-          plan.toolPolicy,
-          mcpReadOnlyTools
-        )
-      )
-      if (
-        mode !== 'ask' &&
-        (plan.agentId === 'reviewer' || plan.agentId === 'verifier') &&
-        !openaiTools.some((tool) => tool.function.name === 'run')
-      ) {
-        const runTool = COMPOSER_OPENAI_TOOLS.find((tool) => tool.function.name === 'run')
-        if (runTool) openaiTools.push(runTool)
-      }
+      // The worker changes; the task, its artifact, project and authority do not.
+      appendTaskEvent(task.taskId, 'reroute', {
+        from: fromAgent,
+        to: plan.agentId,
+        trigger,
+        budget: { used: escalateCount + rerouteCount, max: MID_RUN_ADAPT_BUDGET },
+        taskId: task.taskId,
+        intent: task.intent,
+        artifact: interpretationOf(task).artifact,
+        project: task.scope.projectRoot,
+        recommendationIds: task.recommendations.map((item) => item.id),
+        authority: task.authority,
+        toolPolicy: plan.toolPolicy
+      })
+      openaiTools.splice(0, openaiTools.length, ...visibleToolDefinitions())
+      recordToolManifest('reroute')
       const reason = `${decision.reason} after ${trigger}`
       // Install the new agent's actual instructions, not just its display name.
       // Retain execution evidence and the original task's authority ceiling.
@@ -1016,7 +1219,7 @@ export async function* runAgentWithWorkspaceTools(options: {
         workspacePath,
         settings: options.settings,
         inputTokenBudget: promptBudget,
-        plan,
+        plan: { ...plan, task },
         originalUserGoal,
         retrievalHint,
         mcpToolCount: plan.toolPolicy === 'read' || plan.toolPolicy === 'none' ? 0 : mcpToolCount
@@ -1778,7 +1981,8 @@ export async function* runAgentWithWorkspaceTools(options: {
         const outcomeCheck = workflow.evaluateOutcome({
           workspaceMutated,
           codeMutated,
-          verifyPassed: verifyPassedOnce
+          verifyPassed: verifyPassedOnce,
+          filesTouched
         })
         const unmetReason = goalCheck.unmet ? goalCheck.reason : outcomeCheck.reason
         if (goalCheck.unmet || !outcomeCheck.ok) {
@@ -1828,14 +2032,17 @@ export async function* runAgentWithWorkspaceTools(options: {
           yield* answerFromWeb()
           return
         }
+        const partial = unresolvedDelegationNote()
         if (prose.length >= 40 && !isToolLogReply(prose)) {
           workflow.complete()
-          yield { type: 'status', text: 'Done' }
+          yield { type: 'status', text: partial ? 'Done · partial specialist results' : 'Done' }
           yield { type: 'answer', text: prose, replace: true }
+          if (partial) yield { type: 'answer', text: `\n\n${partial}` }
           return
         }
         workflow.complete()
         yield* finishChatAnswer(assistantText)
+        if (partial) yield { type: 'answer', text: `\n\n${partial}` }
         return
       }
 
@@ -2096,10 +2303,7 @@ export async function* runAgentWithWorkspaceTools(options: {
             )
             continue
           }
-          const verificationRun =
-            mode !== 'ask' &&
-            call.name === 'run' &&
-            (plan.agentId === 'reviewer' || plan.agentId === 'verifier')
+          const verificationRun = call.name === 'run' && verificationRunAllowed()
           if (verificationRun && !isVerifyCommand(argString(call.args, 'command'))) {
             yield {
               type: 'tool',
@@ -2111,15 +2315,15 @@ export async function* runAgentWithWorkspaceTools(options: {
                 changedResources: [],
                 durationMs: Date.now() - toolStartedAt,
                 failure: toolFailureMetadata(
-                  'Read-only verification agents can only run tests, typecheck, or lint',
+                  'Verification runs may only use test, typecheck, or lint commands',
                   toolEffect
                 ),
-                detail: 'Read-only verification agents can only run tests, typecheck, or lint'
+                detail: 'Verification runs may only use test, typecheck, or lint commands'
               }
             }
             resultParts.push(
-              'TOOL_RESULT run: blocked. Reviewer and Verification may only run test, typecheck, or lint commands (npm test, npm run typecheck, npx tsc, pytest, cargo test).\n' +
-                `RECOVERY: ${toolFailureRecovery('run', 'Read-only verification agents can only run tests, typecheck, or lint')}`
+              'TOOL_RESULT run: blocked. This task may only run test, typecheck, or lint commands (npm test, npm run typecheck, npx tsc, pytest, cargo test).\n' +
+                `RECOVERY: ${toolFailureRecovery('run', 'Verification runs may only use test, typecheck, or lint commands')}`
             )
             continue
           }
@@ -2839,6 +3043,8 @@ export async function* runAgentWithWorkspaceTools(options: {
               }
             } else if (options.jobId?.startsWith('chat:')) {
               const specialist = findAgent(workspacePath, agentId)
+              // The child is the specialist that was asked for, within its own tool
+              // ceiling. Routing the goal must not swap in an editor or force edits.
               const specialistPlan = await planChatTurn({
                 workspacePath,
                 settings: options.settings,
@@ -2847,11 +3053,25 @@ export async function* runAgentWithWorkspaceTools(options: {
                   selectedModel: workerModel,
                   mode: 'agent',
                   manualAgentId: agentId,
-                  forceRoute: 'tools'
+                  skipModelRouter: true
                 },
                 getSecret: options.getSecret,
                 signal: options.signal
               })
+              const specialistCeiling = specialist?.tools ?? 'read'
+              const specialistCanEdit = ['edit', 'full'].includes(specialistCeiling)
+              if (specialistPlan.agentId !== agentId || !intentNeedsTools(specialistPlan.intent)) {
+                specialistPlan.agentId = agentId
+                specialistPlan.agentName = specialist?.name || agentId
+                if (!specialistCanEdit && intentNeedsMutation(specialistPlan.intent))
+                  specialistPlan.intent = 'review'
+                if (!intentNeedsTools(specialistPlan.intent))
+                  specialistPlan.intent = specialistCanEdit ? 'edit' : 'explore'
+              }
+              specialistPlan.toolPolicy = specialist
+                ? effectiveToolPolicy(specialist, specialistPlan.intent, 'agent')
+                : minCeiling(specialistPlan.toolPolicy, specialistCeiling)
+              specialistPlan.requiresTools = specialistPlan.toolPolicy !== 'none'
               specialistPlan.models = {
                 ...specialistPlan.models,
                 chat: workerModel,
@@ -2942,11 +3162,16 @@ export async function* runAgentWithWorkspaceTools(options: {
                     })
                   }
                 }
+                // A specialist claim with no tool evidence is a lead, not a fact.
+                const unverified = Boolean(answer.trim()) && specTools.length === 0
                 result = {
                   ok: !specialistIncomplete && Boolean(answer.trim()),
                   detail: [
                     specialistIncomplete
                       ? 'Specialist stopped before completing the assignment.'
+                      : '',
+                    unverified
+                      ? 'Unverified: the specialist cited no tool evidence. Check its claims against the source before relying on them.'
                       : '',
                     `Specialist: ${runningDelegation.agentName}. Workspace: current chat workspace.`,
                     `Tool evidence: ${specTools.map((tool) => `${tool.name}${tool.path ? ` ${tool.path}` : ''}: ${tool.status}`).join('; ') || 'none'}`,
@@ -2957,6 +3182,12 @@ export async function* runAgentWithWorkspaceTools(options: {
                     .join('\n'),
                   mutated: specialistMutated
                 }
+                recordDelegation(
+                  agentId,
+                  goal,
+                  !result.ok ? 'failed' : unverified ? 'unverified' : 'done',
+                  specialistPlan.task
+                )
                 yield {
                   type: 'delegation',
                   delegation: {
@@ -2969,6 +3200,12 @@ export async function* runAgentWithWorkspaceTools(options: {
               } catch (err) {
                 const message = err instanceof Error ? err.message : String(err)
                 result = { ok: false, detail: message, mutated: specialistMutated }
+                recordDelegation(
+                  agentId,
+                  goal,
+                  options.signal?.aborted ? 'cancelled' : 'failed',
+                  specialistPlan.task
+                )
                 yield {
                   type: 'delegation',
                   delegation: {

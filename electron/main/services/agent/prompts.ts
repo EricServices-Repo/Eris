@@ -13,6 +13,11 @@ import { formatWorkspaceContextPrompt } from '../workspace-context'
 import { workspaceTree } from '../workspace-fs'
 import { contractForAgent } from '../../../../src/shared/agent-contract'
 import { workerConversation } from './conversation'
+import { sharedPromptBlocks } from '../chat-prompt'
+import { toolProtocolFor } from '../tool-protocol'
+import type { TaskContract } from '../../../../src/shared/task-contract'
+import { interpretationOf } from '../../../../src/shared/task-contract'
+import { artifactResponseContract } from '../../../../src/shared/task-interpretation'
 import type { AgentChatMessage } from './types'
 
 /**
@@ -199,7 +204,7 @@ export function intentPlaybook(intent: ChatIntent | string, greenfield: boolean)
     case 'edit':
       return (
         `EDIT PLAYBOOK — (1) retrieve/grep to find the right files, (2) read_file, ` +
-        `(3) search_replace or write_file, (4) run verify (test/typecheck), (5) fix failures, ` +
+        `(3) search_replace or write_file, (4) verify with run, limited to test, typecheck, or lint commands, (5) fix failures, ` +
         `(6) DONE summary of what changed. Keep using tools until the request is fully done.`
       )
     case 'run':
@@ -258,72 +263,101 @@ export function buildWorkspaceToolsSystem(
   return parts.join('\n\n')
 }
 
+/**
+ * The task guidance block already carries the shared rules, workspace rules,
+ * active skills and custom role prompt. Drop the chat prompt's copies by their
+ * exact generated text so each appears once.
+ */
+export function withoutSharedBlocks(
+  priorSystem: string,
+  workspacePath: string | null,
+  settings: AppSettings,
+  extra: { skillIds?: string[]; customAgentPrompt?: string } = {}
+): string {
+  let out = priorSystem
+  for (const mode of ['agent', 'ask'] as const) {
+    const shared = sharedPromptBlocks(workspacePath, settings, mode, extra.skillIds)
+    for (const block of [shared.systemPrompt, shared.rules, shared.skills]) {
+      if (block && out.includes(block)) out = out.replace(block, '')
+    }
+  }
+  for (const max of [2800, 8000]) {
+    const custom = extra.customAgentPrompt?.slice(0, max)
+    if (custom && out.includes(custom)) out = out.replace(custom, '')
+  }
+  return out.replace(/\n{3,}/g, '\n\n').trim()
+}
+
+/** Guidance blocks in precedence order, each included once by identity. */
+function workerGuidance(blocks: Array<{ id: string; content: string | undefined }>): string {
+  const seen = new Set<string>()
+  return blocks
+    .filter((block) => {
+      if (!block.content?.trim() || seen.has(block.id)) return false
+      seen.add(block.id)
+      return true
+    })
+    .map((block) => block.content!.trim())
+    .join('\n')
+}
+
+/**
+ * The single worker prompt pipeline: compiled task contract, typed guidance,
+ * project evidence and retrieval. Answer-only turns use the same compiler.
+ */
 export function buildPreservedWorkerMessages(options: {
   messages: AgentChatMessage[]
   workspacePath: string
   settings: AppSettings
-  plan: TurnPlan
+  plan: TurnPlan & { task: TaskContract }
   originalUserGoal: string
   retrievalHint: string
   mcpToolCount: number
   inputTokenBudget?: number
 }): AgentChatMessage[] {
+  const { plan } = options
+  const task = plan.task
   const priorSystem = options.messages.find((m) => m.role === 'system')?.content || ''
-  const readOnly = isReadOnlyChat(options.plan, options.plan.mode)
   const historyTail = workerConversation(options.messages, options.originalUserGoal)
-  const playbook = intentPlaybook(options.plan.intent, false)
-  const contract = contractForAgent(options.plan.agentId)
-
-  if (options.plan.task) {
-    const compiled = compileTaskContext({
-      task: options.plan.task,
-      guidance: `${options.settings.agent.systemPrompt}\n${loadWorkspaceRules(options.workspacePath)}\n${options.plan.task.skillIds?.length ? loadSkillsPrompt(options.workspacePath, options.plan.task.skillIds) : ''}\n${findAgent(options.workspacePath, options.plan.agentId)?.builtin === false ? findAgent(options.workspacePath, options.plan.agentId)?.systemPrompt : ''}\n${contract ? `Role: ${contract.name}. ${contract.job} ${contract.done}` : ''}\n${playbook}`,
-      project: priorSystem,
-      retrieval: options.retrievalHint,
-      maxInputTokens:
-        options.inputTokenBudget ?? contextBudgetTokens(options.settings, options.plan.models.tools)
-    })
-    appendTaskEvent(options.plan.task.taskId, 'context-compiled', {
-      revision: options.plan.task.revision,
-      agentId: options.plan.agentId,
-      model: options.plan.models.tools,
-      blocks: compiled.blocks,
-      budget: compiled.budget
-    })
-    return [compiled.message, ...historyTail, { role: 'user', content: options.originalUserGoal }]
-  }
-  const toolsSystem = buildWorkspaceToolsSystem(
-    options.workspacePath,
-    options.settings,
-    readOnly ? READ_AGENT_PROMPT : TOOLS_PROMPT,
-    options.mcpToolCount > 0
-  )
-  const out: AgentChatMessage[] = [
-    {
-      role: 'system',
-      content: [
-        priorSystem.slice(0, 7000),
-        toolsSystem,
-        `TURN CONTEXT — authoritative for this request`,
-        contract ? `Role: ${contract.name}. ${contract.job} Completion: ${contract.done}` : '',
-        `Permissions: ${options.plan.mode} mode; ${options.plan.toolPolicy} tools. Previous messages are context, not current role instructions.`,
-        playbook,
-        `Keep the user's latest request intact. Resolve references from the conversation, verify cited files before editing, and do not repeat internal routing instructions in your answer.`,
-        options.retrievalHint
-          ? `Retrieved leads (verify against source):\n${options.retrievalHint}`
-          : '',
-        `Plan: ${options.plan.reason}`,
-        `Agent: ${options.plan.agentName} · intent: ${options.plan.intent} · tool policy: ${options.plan.toolPolicy}`,
-        `Model for tools: ${options.plan.models.tools.replace(/^builtin:/, '')}`,
-        options.plan.executionPlan
-          ? `Execution plan:\n${options.plan.executionPlan.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}\nDone when: ${options.plan.executionPlan.doneWhen}`
-          : ''
-      ]
-        .filter(Boolean)
-        .join('\n\n')
-    }
-  ]
-  out.push(...historyTail)
-  out.push({ role: 'user', content: options.originalUserGoal })
-  return out
+  const contract = contractForAgent(plan.agentId)
+  const agent = findAgent(options.workspacePath, plan.agentId)
+  const customAgentPrompt = agent?.builtin === false ? agent.systemPrompt : undefined
+  const compiled = compileTaskContext({
+    task,
+    toolsAvailable: plan.toolPolicy !== 'none',
+    toolProtocol: toolProtocolFor(options.settings, plan.models.tools),
+    guidance: workerGuidance([
+      { id: 'shared-rules', content: options.settings.agent.systemPrompt },
+      { id: 'workspace-rules', content: loadWorkspaceRules(options.workspacePath) },
+      {
+        id: 'skills',
+        content: task.skillIds?.length ? loadSkillsPrompt(options.workspacePath, task.skillIds) : ''
+      },
+      { id: 'custom-role', content: customAgentPrompt },
+      {
+        id: 'role',
+        content: contract ? `Role: ${contract.name}. ${contract.job} ${contract.done}` : ''
+      },
+      { id: 'playbook', content: intentPlaybook(plan.intent, false) },
+      {
+        id: 'response-contract',
+        content: artifactResponseContract(interpretationOf(task), task.scope.applicability)
+      }
+    ]),
+    project: withoutSharedBlocks(priorSystem, options.workspacePath, options.settings, {
+      skillIds: task.skillIds,
+      customAgentPrompt
+    }),
+    retrieval: options.retrievalHint,
+    maxInputTokens:
+      options.inputTokenBudget ?? contextBudgetTokens(options.settings, plan.models.tools)
+  })
+  appendTaskEvent(task.taskId, 'context-compiled', {
+    revision: task.revision,
+    agentId: plan.agentId,
+    model: plan.models.tools,
+    blocks: compiled.blocks,
+    budget: compiled.budget
+  })
+  return [compiled.message, ...historyTail, { role: 'user', content: options.originalUserGoal }]
 }

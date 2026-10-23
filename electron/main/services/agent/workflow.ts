@@ -1,5 +1,7 @@
 import type { ChatIntent, TurnPlan } from '../../../../src/shared/settings-schema'
 import { asksToImplementChanges } from '../../../../src/shared/agent-contract'
+import { pathsIn } from '../../../../src/shared/recommendations'
+import { requestTextForIntent } from '../../../../src/shared/task-interpretation'
 
 export type AgentWorkflowPhase =
   'planned' | 'answering' | 'preflight' | 'executing' | 'verifying' | 'completed' | 'blocked'
@@ -9,6 +11,17 @@ export type AgentOutcomeContract = {
   requiresWorkspaceEvidence: boolean
   requiresMutation: boolean
   requiresVerificationAfterMutation: boolean
+  /**
+   * Files the request or its referenced recommendations name. When present, a
+   * mutation counts as progress only if it changes at least one of them.
+   */
+  targetFiles: string[]
+}
+
+function sameFile(changed: string, target: string): boolean {
+  const a = changed.replace(/^\.\//, '')
+  const b = target.replace(/^\.\//, '')
+  return a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`)
 }
 
 export type AgentWorkflowSnapshot = {
@@ -35,12 +48,21 @@ export function outcomeContractFor(plan: TurnPlan, goal = ''): AgentOutcomeContr
   const requiresMutation = plan.task
     ? plan.task.deliverable === 'patch' && plan.task.authority.edit
     : plan.mode !== 'ask' && (plan.intent === 'edit' || asksToImplementChanges(goal))
+  const targetFiles = requiresMutation
+    ? [
+        ...new Set([
+          ...pathsIn(requestTextForIntent(plan.task?.originalText ?? goal) || goal),
+          ...(plan.task?.recommendations ?? []).flatMap((item) => item.targets ?? [])
+        ])
+      ]
+    : []
   return {
     intent: plan.intent,
     requiresWorkspaceEvidence:
       requiresMutation || (plan.requiresTools && !['answer', 'capability'].includes(plan.intent)),
     requiresMutation,
-    requiresVerificationAfterMutation: requiresMutation
+    requiresVerificationAfterMutation: requiresMutation,
+    targetFiles
   }
 }
 
@@ -98,6 +120,8 @@ export class AgentWorkflow {
     workspaceMutated: boolean
     codeMutated: boolean
     verifyPassed: boolean
+    /** Files written this turn; checked against the request's named targets. */
+    filesTouched?: string[]
   }): { ok: boolean; reason?: string } {
     if (
       this.contract.requiresWorkspaceEvidence &&
@@ -118,6 +142,19 @@ export class AgentWorkflow {
     }
     if (this.contract.requiresMutation && !input.workspaceMutated) {
       return { ok: false, reason: 'This edit request did not change the workspace.' }
+    }
+    if (
+      this.contract.requiresMutation &&
+      this.contract.targetFiles.length &&
+      input.filesTouched &&
+      !input.filesTouched.some((changed) =>
+        this.contract.targetFiles.some((target) => sameFile(changed, target))
+      )
+    ) {
+      return {
+        ok: false,
+        reason: `The request names ${this.contract.targetFiles.join(', ')}, but none of them changed. Edits to other files do not satisfy it.`
+      }
     }
     if (
       this.contract.requiresVerificationAfterMutation &&

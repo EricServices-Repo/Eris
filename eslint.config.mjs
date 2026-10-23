@@ -7,6 +7,8 @@ export default tseslint.config(
   {
     ignores: [
       'out/**',
+      'out-dev/**',
+      'dist-dev/**',
       'dist/**',
       '**/dist/**',
       'cloud-agent/**',

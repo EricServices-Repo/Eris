@@ -23,11 +23,14 @@ import {
   asksToImplementChanges,
   asksWhatTheProjectDoes,
   asksWorkspaceQuestion,
+  mentionsSourcePath,
+  withoutLeadingScope,
   isConversationFollowUp,
   needsWebLookup,
   chatAgentForTurn
 } from '../../../src/shared/agent-contract'
 import { CONTEXT_HEADROOM_BYTES, inferenceBudgetBytes } from './vram-fit'
+import { forbidsMutation, requestTextForIntent } from '../../../src/shared/task-interpretation'
 
 /** A custom agent must be at least this sure to replace the roster role. */
 const CUSTOM_AGENT_MIN_CONFIDENCE = 0.75
@@ -143,11 +146,22 @@ export function intentNeedsMutation(intent: ChatIntent): boolean {
 export function isErisCapabilityQuestion(text: string): boolean {
   const t = text.trim()
   if (!t) return false
-  if (
-    /\b(what|which|list|show|name)\b[\s\S]{0,48}\b(ai\s+)?models?\b/i.test(t) ||
-    /\b(ai\s+)?models?\b[\s\S]{0,48}\b(access|available|have|installed|connected|ready|using|use)\b/i.test(
+  const inferenceContext =
+    /\b(ai|llm|llms|language|inference|gguf|local|cloud|ollama|openai|anthropic|claude|gpt|composer|eris|providers?)\b/i.test(
       t
     )
+  // “Design the data model and API” is application design, not the model catalog.
+  const domainModel =
+    /\b(data|domain|database|db|orm|object|entity|schema|view|mental|threat|business|pricing|relational|django|rails|sequelize|prisma|mongoose)\s+models?\b/i.test(
+      t
+    ) || /\bmodels?\s+(?:and|&)\s+(?:an?\s+)?(?:api|apis|schema|endpoints?|routes?)\b/i.test(t)
+  if (domainModel && !inferenceContext) return false
+  if (
+    /\b(what|which|list|show|name)\b[\s\S]{0,48}\b(ai\s+)?models?\b/i.test(t) ||
+    /\b(ai\s+)?models?\b[\s\S]{0,48}\b(access|available|installed|connected|ready)\b/i.test(t) ||
+    // “use/have” is too common in design questions to stand alone.
+    ((inferenceContext || /\byou\b/i.test(t)) &&
+      /\bmodels?\b[\s\S]{0,48}\b(have|using|use)\b/i.test(t))
   ) {
     return true
   }
@@ -161,31 +175,54 @@ export function isErisCapabilityQuestion(text: string): boolean {
   return false
 }
 
+/** Deterministic intent. “Do not edit” keeps any reading of the request read-only. */
 export function classifyIntent(
   text: string,
   mode: 'ask' | 'agent',
   fileNames: string[] = []
 ): ChatIntent {
-  if (isErisCapabilityQuestion(text)) return 'capability'
-  if (needsWebLookup(text)) return 'explore'
+  return classifyIntentTraced(text, mode, fileNames).intent
+}
+
+/** Intent with the stable ID of the rule that produced it. */
+export function classifyIntentTraced(
+  text: string,
+  mode: 'ask' | 'agent',
+  fileNames: string[] = []
+): { intent: ChatIntent; rule: string } {
+  const result = classifyIntentRule(text, mode, fileNames)
+  if ((result.intent === 'edit' || result.intent === 'run') && forbidsMutation(text))
+    return { intent: 'explore', rule: `negated-mutation:${result.rule}` }
+  return result
+}
+
+function classifyIntentRule(
+  rawText: string,
+  mode: 'ask' | 'agent',
+  fileNames: string[] = []
+): { intent: ChatIntent; rule: string } {
+  // Quoted strings and code blocks are content; their verbs are not the request.
+  const text = requestTextForIntent(rawText) || rawText
+  if (isErisCapabilityQuestion(text)) return { intent: 'capability', rule: 'capability-question' }
+  if (needsWebLookup(text)) return { intent: 'explore', rule: 'web-lookup' }
   if (
     mode === 'ask' &&
     !asksWorkspaceQuestion(text, fileNames) &&
     !asksForPlan(text) &&
     !asksForVerification(text)
   ) {
-    return 'answer'
+    return { intent: 'answer', rule: 'ask-general-answer' }
   }
-  if (mode === 'ask') return classifyIntent(text, 'agent', fileNames)
+  if (mode === 'ask') return classifyIntentRule(text, 'agent', fileNames)
 
-  const t = text.trim()
-  if (!t) return 'answer'
+  const t = withoutLeadingScope(text)
+  if (!t) return { intent: 'answer', rule: 'empty' }
   // An explicit implementation request can contain command-like nouns ('make all').
   if (
     asksToImplementChanges(t) ||
     /^(?:please\s+)?(?:edit|fix|implement|refactor|repair|update)\b/i.test(t)
   )
-    return 'edit'
+    return { intent: 'edit', rule: 'implement-changes' }
 
   if (
     /\b(npm (test|run|start|install)|yarn |pnpm |bun |pytest|cargo test|docker )\b/i.test(t) ||
@@ -198,10 +235,10 @@ export function classifyIntent(
     ) ||
     /\b(launch|run|start|open)\b[\s\S]{0,24}\b(the\s+)?(app|application|\.app)\b/i.test(t)
   ) {
-    return 'run'
+    return { intent: 'run', rule: 'command' }
   }
 
-  if (asksForImageGeneration(t)) return 'edit'
+  if (asksForImageGeneration(t)) return { intent: 'edit', rule: 'image-generation' }
   // In Agent mode, natural implementation requests such as “show me how to add”
   // and “I need to implement … how would you approach it?” must reach Composer.
   // Routing them as explore/verify creates an impossible read-only loop because
@@ -211,16 +248,16 @@ export function classifyIntent(
       t
     )
   ) {
-    return 'edit'
+    return { intent: 'edit', rule: 'natural-implementation' }
   }
-  if (asksForPlan(t)) return 'plan'
-  if (asksForVerification(t)) return 'verify'
+  if (asksForPlan(t)) return { intent: 'plan', rule: 'explicit-plan' }
+  if (asksForVerification(t)) return { intent: 'verify', rule: 'explicit-verification' }
 
   // “What does this project do?” is a description, even when the message says “review”.
-  if (asksWhatTheProjectDoes(t)) return 'explore'
+  if (asksWhatTheProjectDoes(t)) return { intent: 'explore', rule: 'project-description' }
 
   // “What improvements should we make?” is a review list, not an edit.
-  if (asksForRecommendations(t)) return 'review'
+  if (asksForRecommendations(t)) return { intent: 'review', rule: 'recommendations' }
 
   // Improvements / polish count as edits even when the user also says "review".
   if (
@@ -228,7 +265,7 @@ export function classifyIntent(
       t
     )
   ) {
-    return 'edit'
+    return { intent: 'edit', rule: 'improvement-wording' }
   }
 
   if (
@@ -247,17 +284,18 @@ export function classifyIntent(
     /\b(get|make)\b[\s\S]{0,24}\b(it|this|the app)\b[\s\S]{0,24}\bwork/i.test(t) ||
     /\b(write|add)\b[\s\S]{0,20}\b(skill|skills)\b/i.test(t)
   ) {
-    return 'edit'
+    return { intent: 'edit', rule: 'edit-wording' }
   }
 
   if (
     /\b(code review|pull request|pr review|security review|risk assessment)\b/i.test(t) ||
     (/\breview\b/i.test(t) &&
-      /\b(pr|diff|patch|commit|regression|smell|project|folder|codebase|workspace|repo|app|code)\b/i.test(
-        t
-      ))
+      (mentionsSourcePath(t) ||
+        /\b(pr|diff|patch|commit|regression|smell|project|folder|codebase|workspace|repo|app|code)\b/i.test(
+          t
+        )))
   ) {
-    return 'review'
+    return { intent: 'review', rule: 'review-wording' }
   }
 
   if (
@@ -266,17 +304,17 @@ export function classifyIntent(
     /\b(explore|inspect|list files|tree)\b/i.test(t) ||
     /\bwhat (files?|does|is in)\b/i.test(t)
   ) {
-    return 'explore'
+    return { intent: 'explore', rule: 'lookup-wording' }
   }
 
   if (/\b(explain|how does|what does|overview|summarize|why)\b/i.test(t)) {
     // Agent mode must read the workspace. Ask mode stays a plain answer.
-    return mode === 'agent' ? 'explore' : 'answer'
+    return { intent: mode === 'agent' ? 'explore' : 'answer', rule: 'explanation-wording' }
   }
 
-  if (mode === 'agent' && needsWebLookup(t)) return 'explore'
+  if (mode === 'agent' && needsWebLookup(t)) return { intent: 'explore', rule: 'agent-web-lookup' }
 
-  return 'answer'
+  return { intent: 'answer', rule: 'default-answer' }
 }
 
 function intentToolFloor(intent: ChatIntent): AgentToolsCeiling {
@@ -611,8 +649,12 @@ export async function planChatTurn(options: {
   const selectedModel =
     pickedModel || options.settings.models.defaultModel || 'builtin:composer-lite'
 
-  const heuristicIntent =
-    options.context.resolvedIntent ?? classifyIntent(text, mode, options.context.fileNames || [])
+  const heuristic = options.context.resolvedIntent
+    ? { intent: options.context.resolvedIntent, rule: 'resolved-intent' }
+    : classifyIntentTraced(text, mode, options.context.fileNames || [])
+  const heuristicIntent = heuristic.intent
+  // Every later change to intent or role is recorded by a stable ID.
+  const overrides: string[] = []
 
   const route: RouteResult = await routeMessage({
     workspacePath: options.workspacePath,
@@ -702,6 +744,7 @@ export async function planChatTurn(options: {
       const llmDowngradesExplicitEdit =
         asksToImplementChanges(text) && heuristicIntent === 'edit' && hint.intent !== 'edit'
       if (!llmStripsTools && !llmDowngradesExplicitEdit) {
+        if (hint.intent !== intent) overrides.push(`llm-intent:${hint.intent}`)
         intent = hint.intent
         method = 'llm'
       }
@@ -719,17 +762,28 @@ export async function planChatTurn(options: {
   }
 
   // Capability always wins over LLM misclassifies
-  if (isErisCapabilityQuestion(text)) intent = 'capability'
+  if (
+    isErisCapabilityQuestion(text) &&
+    !options.context.resolvedIntent &&
+    intent !== 'capability'
+  ) {
+    overrides.push('capability-question')
+    intent = 'capability'
+  }
 
   // Explicit specialist asks outrank router hints and learned corrections.
   // A pinned agent still remains the user's selected role.
-  const explicitSpecialistIntent =
-    !isErisCapabilityQuestion(text) && asksForPlan(text)
+  // A resolved interpretation is final; worker selection must not re-read keywords over it.
+  const explicitSpecialistIntent = options.context.resolvedIntent
+    ? null
+    : !isErisCapabilityQuestion(text) && asksForPlan(text)
       ? 'plan'
       : !isErisCapabilityQuestion(text) && asksForVerification(text)
         ? 'verify'
         : null
   if (explicitSpecialistIntent && !options.context.manualAgentId) {
+    if (explicitSpecialistIntent !== intent)
+      overrides.push(`explicit-specialist:${explicitSpecialistIntent}`)
     intent = explicitSpecialistIntent
     method = 'heuristic'
     llmAgentSelected = false
@@ -752,6 +806,7 @@ export async function planChatTurn(options: {
     intent = 'edit'
   }
   if (correction && intent !== classifiedIntent) {
+    overrides.push(`${forceRoute ? 'forced-route' : 'learned-correction'}:${correction}`)
     method = forceRoute ? 'override' : 'learned'
   }
 
@@ -783,6 +838,7 @@ export async function planChatTurn(options: {
     } else if (followId === 'composer') intent = 'edit'
     else if (followId === 'reviewer') intent = 'review'
     else if (followId === 'explainer' || followId === 'fast') intent = 'explore'
+    overrides.push(`follow-up:${followId}`)
   }
 
   // Auto chat uses the roster contract. A pinned agent, a learned/forced
@@ -853,6 +909,7 @@ export async function planChatTurn(options: {
       )
     if (editor) {
       agent = editor
+      overrides.push('mutation-requires-editor')
       llmAgentSelected = false
       method = 'heuristic'
     }
@@ -914,6 +971,7 @@ export async function planChatTurn(options: {
     })} · model ${modelBasis}`,
     method,
     classifiedIntent,
+    routeTrace: { heuristicRule: heuristic.rule, overrides },
     error: roles.error,
     routingProfile,
     cloudPreferred,
@@ -924,11 +982,24 @@ export async function planChatTurn(options: {
 function executionPlanFor(
   mode: 'ask' | 'agent',
   intent: ChatIntent
-): { steps: string[]; doneWhen: string } {
+): NonNullable<TurnPlan['executionPlan']> {
   if (intent === 'capability') {
     return {
       steps: ['Check Eris model and provider catalog'],
+      needs: ['none'],
       doneWhen: 'Answer from the current catalog.'
+    }
+  }
+  // A tool-free answer cannot inspect, mutate, or verify. Its plan is the reply itself.
+  if (intent === 'answer') {
+    return {
+      steps: [
+        'Identify the requested deliverable, language, and constraints',
+        'Answer directly; when code is requested, include a complete example with its dependencies and limitations'
+      ],
+      needs: ['none', 'none'],
+      doneWhen:
+        'The question is answered in chat. No workspace edits, command runs, or verification are claimed.'
     }
   }
   if (intent === 'plan') {
@@ -938,6 +1009,7 @@ function executionPlanFor(
         'Trace dependencies and integration points',
         'Return ordered steps with files, risks, and completion checks'
       ],
+      needs: ['read', 'read', 'none'],
       doneWhen:
         'The plan is grounded in inspected files and clearly distinguishes decisions from assumptions.'
     }
@@ -950,6 +1022,7 @@ function executionPlanFor(
         'Run relevant approved verification commands',
         'Report observed results and remaining risks'
       ],
+      needs: ['read', 'read', 'run', 'none'],
       doneWhen:
         'Every claimed result is supported by inspection or command output, with no files edited.'
     }
@@ -961,6 +1034,7 @@ function executionPlanFor(
         'Read the matching files',
         'Answer with paths and evidence'
       ],
+      needs: ['read', 'read', 'none'],
       doneWhen: 'The answer is grounded in the files that were read.'
     }
   }
@@ -971,6 +1045,7 @@ function executionPlanFor(
         'Inspect relevant implementation and tests',
         'Rank findings with evidence'
       ],
+      needs: ['read', 'read', 'none'],
       doneWhen: 'Each finding has a path, impact, and actionable fix.'
     }
   }
@@ -981,6 +1056,7 @@ function executionPlanFor(
         'Run it with required approval',
         'Report the result'
       ],
+      needs: ['read', 'run', 'none'],
       doneWhen: 'The command result and any remaining failure are stated accurately.'
     }
   }
@@ -991,6 +1067,7 @@ function executionPlanFor(
       'Run relevant verification',
       'Summarize the diff'
     ],
+    needs: ['read', 'edit', 'run', 'none'],
     doneWhen: 'The requested behavior is implemented and verification results are reported.'
   }
 }

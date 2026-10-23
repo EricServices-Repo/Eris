@@ -1,6 +1,7 @@
 import type { AppSettings } from '../../../../src/shared/settings-schema'
 import { isNativeGgufRef } from '../builtin-model'
 import { streamModelChat, type OpenAIToolDef } from '../chat-runtime'
+import { toolProtocolFor } from '../tool-protocol'
 import { looksLikeDegenerateLoop } from './heuristics'
 import {
   hasExecutableToolCall,
@@ -80,7 +81,9 @@ export async function* streamThinkingText(options: {
     chunk.includes('</tool')
 
   const useNativeTools =
-    Boolean(options.tools?.length) && options.stopOnToolCall && !isNativeGgufRef(options.model)
+    Boolean(options.tools?.length) &&
+    options.stopOnToolCall &&
+    toolProtocolFor(options.settings, options.model) === 'native-tools'
 
   try {
     rethrowIfUserStop()
