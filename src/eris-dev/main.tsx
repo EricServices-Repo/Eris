@@ -1,8 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import type {
   DevApi,
+  DevComparison,
   DevImportPreview,
+  DevRunListing,
   DevQuestion,
   DevResult,
   DevSummary,
@@ -34,6 +36,13 @@ function App() {
     'messages' | 'tools' | 'findings' | 'context' | 'contract' | 'events'
   >('messages')
   const [callIndex, setCallIndex] = useState(0)
+  const [runs, setRuns] = useState<DevRunListing[]>([])
+  const [comparison, setComparison] = useState<DevComparison | null>(null)
+  // Filters over loaded summaries; request bodies stay on disk until a case is opened.
+  const [search, setSearch] = useState('')
+  const [severity, setSeverity] = useState<'all' | 'defects' | 'review' | 'clean'>('all')
+  const [findingFilter, setFindingFilter] = useState('')
+  const [intentFilter, setIntentFilter] = useState('')
   const generation = useRef(0)
   const attempt = async (fn: () => Promise<void>) => {
     try {
@@ -54,6 +63,13 @@ function App() {
       }),
     []
   )
+  useEffect(() => {
+    if (!running)
+      void window.erisDev
+        .listRuns()
+        .then(setRuns)
+        .catch(() => setRuns([]))
+  }, [running])
   const available = Boolean(results[selected])
   useEffect(() => {
     const current = ++generation.current
@@ -73,12 +89,42 @@ function App() {
         })
   }, [selected, available])
   const call = detail?.requests[callIndex]
-  const summaries = Object.values(results)
+  const summaries = useMemo(() => Object.values(results), [results])
   const captures = summaries.filter((item) => item.status === 'captured').length
   const withDefects = summaries.filter((item) => item.findings.defect > 0).length
   const forReview = summaries.filter(
     (item) => !item.findings.defect && item.findings.review > 0
   ).length
+  // Root-cause families: how many questions each finding ID affects.
+  const families = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const item of summaries)
+      for (const id of item.findingIds ?? []) counts.set(id, (counts.get(id) ?? 0) + 1)
+    return [...counts].sort((a, b) => b[1] - a[1])
+  }, [summaries])
+  const intents = useMemo(
+    () => [...new Set(summaries.map((item) => item.intent).filter(Boolean))].sort() as string[],
+    [summaries]
+  )
+  const filtering = Boolean(search.trim() || severity !== 'all' || findingFilter || intentFilter)
+  const visible = useMemo(() => {
+    const needle = search.trim().toLowerCase()
+    return questions
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry, index }) => {
+        if (!filtering) return true
+        const result = results[index]
+        if (needle && !`${entry.text} ${entry.id}`.toLowerCase().includes(needle)) return false
+        if (!result) return !(severity !== 'all' || findingFilter || intentFilter)
+        if (severity === 'defects' && !result.findings.defect) return false
+        if (severity === 'review' && !result.findings.review) return false
+        if (severity === 'clean' && (result.findings.defect || result.findings.review)) return false
+        if (findingFilter && !(result.findingIds ?? []).includes(findingFilter)) return false
+        if (intentFilter && result.intent !== intentFilter) return false
+        return true
+      })
+  }, [questions, results, search, severity, findingFilter, intentFilter, filtering])
+  const pageCount = Math.max(1, Math.ceil(visible.length / 100))
   return (
     <div className="app">
       <header>
@@ -231,12 +277,57 @@ function App() {
             disabled={running || !completed}
             onClick={() =>
               void attempt(async () => {
-                const path = await window.erisDev.exportRun()
-                if (path) setNotice(`Exported to ${path}`)
+                const saved = await window.erisDev.exportRun()
+                if (saved)
+                  setNotice(`Exported ${saved.records.toLocaleString()} records to ${saved.path}`)
               })
             }
           >
             Export JSONL
+          </button>
+          <button
+            disabled={running || !completed}
+            title="Redact secrets and absolute paths; question IDs, relative paths and traces are kept"
+            onClick={() =>
+              void attempt(async () => {
+                const saved = await window.erisDev.exportRun({ sanitized: true })
+                if (saved)
+                  setNotice(
+                    `Exported a sanitized copy to ${saved.path}. Redactions: ${
+                      Object.entries(saved.redaction?.replacements ?? {})
+                        .map(([kind, count]) => `${kind} ${count}`)
+                        .join(', ') || 'none needed'
+                    }.`
+                  )
+              })
+            }
+          >
+            Export sanitized
+          </button>
+          <button
+            disabled={running || !completed || !filtering}
+            title="Export only the questions matching the current filters, sanitized"
+            onClick={() =>
+              void attempt(async () => {
+                const indices = visible.map(({ index }) => index).filter((index) => results[index])
+                const saved = await window.erisDev.exportRun({ sanitized: true, indices })
+                if (saved) setNotice(`Exported ${saved.records} filtered records to ${saved.path}`)
+              })
+            }
+          >
+            Export filtered
+          </button>
+          <button
+            disabled={running || !completed}
+            title="Compare this run with an earlier export by stable question ID"
+            onClick={() =>
+              void attempt(async () => {
+                const result = await window.erisDev.compareWith()
+                if (result) setComparison(result)
+              })
+            }
+          >
+            Compare…
           </button>
           <span className="muted" aria-live="polite">
             {completed.toLocaleString()} / {questions.length.toLocaleString()}{' '}
@@ -254,6 +345,68 @@ function App() {
             </span>
             <span>{forReview.toLocaleString()} for review</span>
           </p>
+        )}
+        {!running &&
+          runs
+            .filter((item) => item.state === 'interrupted' || item.state === 'stopped')
+            .slice(0, 3)
+            .map((item) => (
+              <div className="notice" key={item.runId}>
+                {item.state === 'interrupted' ? 'Interrupted' : 'Stopped'} run of {item.corpus}:{' '}
+                {item.completed.toLocaleString()} / {item.total.toLocaleString()} questions.{' '}
+                <button
+                  onClick={() =>
+                    void attempt(async () => {
+                      const resumed = await window.erisDev.resumeRun(item.runId)
+                      setQuestions(resumed.corpus.questions)
+                      setPreview(null)
+                      setName(`${resumed.corpus.name} · resumed at question ${resumed.next + 1}`)
+                      setResults(Object.fromEntries(resumed.results.map((r) => [r.index, r])))
+                      setCompleted(resumed.next)
+                      setRunning(true)
+                    })
+                  }
+                >
+                  Resume
+                </button>
+              </div>
+            ))}
+        {comparison && (
+          <details className="hint" open>
+            <summary>
+              Compared with {comparison.file}: {comparison.matched.toLocaleString()} matched ·{' '}
+              {comparison.changed.length.toLocaleString()} changed · {comparison.added.length} new ·{' '}
+              {comparison.removed.length} missing. Task IDs, paths and timings are ignored.
+            </summary>
+            <p>
+              Changed fields:{' '}
+              {Object.entries(comparison.byField)
+                .map(([field, count]) => `${field} ${count}`)
+                .join(' · ') || 'none'}
+              <br />
+              Route transitions:{' '}
+              {Object.entries(comparison.transitions)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 8)
+                .map(([transition, count]) => `${transition} (${count})`)
+                .join(' · ') || 'none'}
+            </p>
+            <ul>
+              {comparison.changed.slice(0, 20).map((item) => (
+                <li key={item.questionId}>
+                  Line {item.sourceLine}: {item.question.slice(0, 90)} —{' '}
+                  {Object.entries(item.changes)
+                    .map(
+                      ([field, change]) =>
+                        `${field}: ${JSON.stringify(change.before)} → ${JSON.stringify(change.after)}`
+                    )
+                    .join('; ')
+                    .slice(0, 240)}
+                </li>
+              ))}
+            </ul>
+            <button onClick={() => setComparison(null)}>Close comparison</button>
+          </details>
         )}
         {preview && (preview.excluded.length > 0 || preview.normalization.length > 0) && (
           <details className="hint">
@@ -287,11 +440,68 @@ function App() {
       <main>
         <aside>
           <div className="list-title">
-            Questions <span>{questions.length.toLocaleString()}</span>
+            Questions{' '}
+            <span>
+              {filtering
+                ? `${visible.length.toLocaleString()} of ${questions.length.toLocaleString()}`
+                : questions.length.toLocaleString()}
+            </span>
           </div>
+          <div className="filters">
+            <input
+              type="search"
+              placeholder="Search text or ID"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setPage(0)
+              }}
+            />
+            <select
+              value={severity}
+              onChange={(e) => {
+                setSeverity(e.target.value as typeof severity)
+                setPage(0)
+              }}
+            >
+              <option value="all">All findings</option>
+              <option value="defects">With defects</option>
+              <option value="review">For review</option>
+              <option value="clean">No findings</option>
+            </select>
+            <select
+              value={intentFilter}
+              onChange={(e) => {
+                setIntentFilter(e.target.value)
+                setPage(0)
+              }}
+            >
+              <option value="">Any intent</option>
+              {intents.map((intent) => (
+                <option key={intent} value={intent}>
+                  {intent}
+                </option>
+              ))}
+            </select>
+          </div>
+          {families.length > 0 && (
+            <div className="families">
+              {families.slice(0, 8).map(([id, count]) => (
+                <button
+                  key={id}
+                  className={findingFilter === id ? 'active' : ''}
+                  onClick={() => {
+                    setFindingFilter(findingFilter === id ? '' : id)
+                    setPage(0)
+                  }}
+                >
+                  {id} · {count.toLocaleString()}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="list">
-            {questions.slice(page * 100, page * 100 + 100).map((entry, offset) => {
-              const index = page * 100 + offset
+            {visible.slice(page * 100, page * 100 + 100).map(({ entry, index }) => {
               const result = results[index]
               return (
                 <button
@@ -324,12 +534,9 @@ function App() {
               Previous
             </button>
             <span>
-              {page + 1} / {Math.max(1, Math.ceil(questions.length / 100))}
+              {page + 1} / {pageCount}
             </span>
-            <button
-              disabled={(page + 1) * 100 >= questions.length}
-              onClick={() => setPage(page + 1)}
-            >
+            <button disabled={(page + 1) * 100 >= visible.length} onClick={() => setPage(page + 1)}>
               Next
             </button>
           </div>

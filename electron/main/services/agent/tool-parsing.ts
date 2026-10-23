@@ -181,10 +181,17 @@ export function hasExecutableToolCall(text: string): boolean {
   return parseToolCalls(text).length > 0
 }
 
+/** A fenced block's body is a tool-call envelope ({"name": …}), not code to show. */
+function isToolEnvelopeBody(body: string): boolean {
+  const parsed = parseJsonObject(body)
+  return Boolean(parsed && typeof parsed.name === 'string')
+}
+
 export function stripToolBlocks(text: string): string {
   return text
     .replace(TOOL_BLOCK_RE, '')
-    .replace(FENCE_JSON_RE, '')
+    // Only tool-call fences are protocol; a ```ts example is part of the answer.
+    .replace(FENCE_JSON_RE, (block, body: string) => (isToolEnvelopeBody(body) ? '' : block))
     .replace(TOOL_XML_RE, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()

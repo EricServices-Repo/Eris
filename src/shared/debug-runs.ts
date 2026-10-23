@@ -107,7 +107,18 @@ export const DebugExpectSchema = z.object({
     })
     .optional(),
   /** Follow-ups: the task must carry the files the previous turn actually changed. */
-  priorChangedFiles: z.array(SandboxPathSchema).optional()
+  priorChangedFiles: z.array(SandboxPathSchema).optional(),
+  /**
+   * Grade a code-example answer: fenced code in the language, covering the topic
+   * rubric's core behaviors (or the listed subset). A keyword heuristic, not a run.
+   */
+  codeExample: z
+    .object({
+      language: z.string().optional(),
+      rubric: z.string().optional(),
+      behaviors: z.array(z.string()).optional()
+    })
+    .optional()
 })
 
 export const DebugScenarioSchema = z.object({
@@ -234,6 +245,8 @@ export type DebugFailureCategory =
   | 'fixture_invalid'
   | 'intent_mismatch'
   | 'artifact_mismatch'
+  | 'unsupported_claim'
+  | 'answer_incomplete'
   | 'agent_mismatch'
   | 'provider_error'
   | 'script_exhausted'
@@ -345,6 +358,45 @@ export interface DebugContractRecord {
   priorChangedFiles?: string[]
 }
 
+/**
+ * What a failure says about the product. agent_defect is ours to fix; environment
+ * and harness failures are limits of where or how the case ran; ungraded cases
+ * have no expectations and never count as passes.
+ */
+export type DebugOutcomeClass = 'passed' | 'agent_defect' | 'environment' | 'harness' | 'ungraded'
+
+/** How the case ended, typed so incomplete work never reads as success. */
+export type DebugCaseOutcome =
+  | 'completed'
+  | 'partial'
+  | 'blocked'
+  | 'failed'
+  | 'cancelled'
+  | 'timed_out'
+
+/** Why the case passed, failed or is ungraded, with references into its evidence. */
+export interface DebugEvaluation {
+  label: { source: string; reference?: string; rationale: string } | null
+  verdict: 'passed' | 'failed' | 'ungraded'
+  rationale: string
+  evidence: {
+    answerHash: string
+    diffHash: string | null
+    /** Timeline entries for routes, tools, diffs, verification and failures. */
+    timelineSeqs: number[]
+    failedChecks: string[]
+  }
+}
+
+/** Which execution stages a run actually exercised, and which it did not. */
+export interface DebugCoverage {
+  cases: number
+  stages: Record<string, number>
+  uncovered: string[]
+  byArtifact: Record<string, number>
+  byTag: Record<string, number>
+}
+
 /** One turn of a multi-turn case. The case-level fields describe the last turn. */
 export interface DebugTurnRecord {
   turn: number
@@ -374,6 +426,9 @@ export interface DebugCaseResult {
   terminal: DebugTerminalState | null
   /** Present for multi-turn cases, in order. */
   turns?: DebugTurnRecord[]
+  outcome?: DebugCaseOutcome
+  outcomeClass?: DebugOutcomeClass
+  evaluation?: DebugEvaluation
   changedPaths: string[]
   diffHash: string | null
   outcomeReview: { verdict: string; reason: string } | null
@@ -406,6 +461,16 @@ export type DebugRecordedResponse =
       hang?: boolean
     }
   | { caseId: string; kind: 'answer'; text: string }
+  /** A changed file after the case, so findings survive the sandbox's removal. */
+  | {
+      caseId: string
+      kind: 'artifact'
+      path: string
+      beforeHash: string | null
+      afterHash: string | null
+      after: string | null
+      truncated: boolean
+    }
 
 export type DebugRunStatus = 'running' | 'completed' | 'cancelled' | 'error'
 export type DebugRunVerdict = 'PASS' | 'FAIL' | 'CANCELLED' | 'INCOMPLETE'
@@ -439,6 +504,9 @@ export interface DebugRunSummary {
   errored: number
   byCategory: Partial<Record<DebugFailureCategory, number>>
   byStage: Partial<Record<DebugFailureStage, number>>
+  /** Pass/defect/environment/harness/ungraded counts; their sum is the denominator. */
+  outcomes?: Partial<Record<DebugOutcomeClass, number>>
+  coverage?: DebugCoverage
   captureResponses: boolean
   app: { version: string; platform: string; arch: string }
   limitations: string[]

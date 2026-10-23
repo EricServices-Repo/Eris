@@ -67,6 +67,8 @@ export interface DevSummary {
   artifact?: string
   calls: number
   findings: { defect: number; review: number }
+  /** Stable finding IDs, for filtering and grouping without loading request bodies. */
+  findingIds: string[]
   detail?: string
 }
 
@@ -122,7 +124,28 @@ export interface DevRunHeader {
   intentReplyMode: IntentReplyMode
   responses: 'none'
   answerQuality: 'not-evaluated'
+  /** What a capture run exercises and what it cannot, stated in every export. */
+  coverage: typeof CAPTURE_COVERAGE
 }
+
+export const CAPTURE_COVERAGE = {
+  exercised: [
+    'question import',
+    'routing and intent resolution',
+    'task contract and interpretation',
+    'prompt compilation',
+    'tool exposure'
+  ],
+  notExercised: [
+    'model inference',
+    'tool execution',
+    'workspace changes',
+    'verification',
+    'answer quality',
+    'agent coordination',
+    'desktop chat UI delivery'
+  ]
+} as const
 
 export interface DevProgress {
   running: boolean
@@ -134,6 +157,11 @@ export interface DevProgress {
 
 export interface DevApi {
   importQuestions(): Promise<DevImportPreview | null>
+  listRuns(): Promise<DevRunListing[]>
+  resumeRun(
+    runId: string
+  ): Promise<{ corpus: DevImportPreview; next: number; results: DevSummary[] }>
+  compareWith(): Promise<DevComparison | null>
   chooseProject(): Promise<string | null>
   setProjectKind(kind: 'sample' | 'none'): Promise<void>
   start(input: {
@@ -143,8 +171,39 @@ export interface DevApi {
   }): Promise<void>
   stop(): Promise<void>
   result(index: number): Promise<DevResult>
-  exportRun(): Promise<string | null>
+  exportRun(options?: {
+    sanitized?: boolean
+    indices?: number[]
+  }): Promise<{
+    path: string
+    records: number
+    redaction?: { replacements: Record<string, number> }
+  } | null>
   onProgress(listener: (event: DevProgress) => void): () => void
+}
+
+export interface DevRunListing {
+  runId: string
+  created: string
+  corpus: string
+  total: number
+  completed: number
+  state: 'running' | 'completed' | 'stopped' | 'interrupted'
+}
+
+export interface DevComparison {
+  file: string
+  matched: number
+  added: string[]
+  removed: string[]
+  changed: Array<{
+    questionId: string
+    sourceLine: number
+    question: string
+    changes: Record<string, { before: unknown; after: unknown }>
+  }>
+  byField: Record<string, number>
+  transitions: Record<string, number>
 }
 
 const ZERO_PHASES = { routeMs: 0, resolveMs: 0, promptMs: 0, toBoundaryMs: 0 }
@@ -172,6 +231,7 @@ export function readCaptureRecord(record: Record<string, unknown>): DevResult {
     intent: record.intent as string | undefined,
     calls: Number(record.calls ?? 0),
     findings: { defect: 0, review: 0 },
+    findingIds: [],
     detail: record.detail as string | undefined,
     task: record.task,
     requests: (record.requests as DevCapture[]) ?? [],

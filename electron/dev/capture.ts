@@ -84,6 +84,7 @@ export async function captureQuestion(
     },
     calls: 0,
     findings: { defect: 0, review: 0 },
+    findingIds: [],
     requests: [],
     response: null,
     responseReason: 'not-generated',
@@ -255,6 +256,7 @@ export async function captureQuestion(
       defect: result.findingsDetail.filter((finding) => finding.severity === 'defect').length,
       review: result.findingsDetail.filter((finding) => finding.severity === 'review').length
     }
+    result.findingIds = result.findingsDetail.map((finding) => finding.id)
     result.stages.requestValidity = result.findings.defect
       ? 'defects'
       : result.findings.review

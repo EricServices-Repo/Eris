@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.11 — 2026-10-23
+
+- Desktop rebuild with updated agent diagnostics.
+
 ## 0.4.10 — 2026-10-23
 
 - Rebuild the macOS desktop app with the latest agent architecture safeguards.

@@ -288,3 +288,27 @@ small.review,
   padding-left: 18px;
   line-height: 1.6;
 }
+
+.filters {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  flex-wrap: wrap;
+}
+.filters input {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+.families {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 12px 8px;
+}
+.families button {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+.families button.active {
+  outline: 1px solid #f0a35e;
+}
