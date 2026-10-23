@@ -79,7 +79,7 @@ describe('AG-043/AG-045 resolved scope is not relevant scope', () => {
         text: 'How does division work in this project?',
         plan: plan({ intent: 'explore', toolPolicy: 'read' })
       }).scope.applicability
-    ).toBe('unverified')
+    ).toBe('selected-project')
   })
 })
 
@@ -94,11 +94,27 @@ describe('AG-051 requested stack against the project stack', () => {
     const django = project({ 'manage.py': '', 'requirements.txt': 'Django==5.0\n' })
     expect(detectProjectStack(django)).toEqual({ languages: ['Python'], frameworks: ['Django'] })
 
-    const task = createTaskContract({
+    // LR-011: a generic request is not compared with the unrelated open project.
+    const generic = createTaskContract({
       workspacePath: js,
       text: 'Can you write a clear Java version of generating image thumbnails on the fly?',
       plan: plan({})
     })
+    expect(interpretationOf(generic).stackFit).toBe('not-applicable')
+    expect(interpretationOf(generic).projectStack).toEqual({
+      languages: ['TypeScript'],
+      frameworks: ['React']
+    })
+    expect(
+      artifactResponseContract(interpretationOf(generic), generic.scope.applicability)
+    ).not.toContain('open project uses')
+    // A request about this project still exposes the mismatch.
+    const task = createTaskContract({
+      workspacePath: js,
+      text: 'Can you write a Java version of the thumbnail code in this project?',
+      plan: plan({})
+    })
+    expect(task.scope.applicability).toBe('selected-project')
     expect(interpretationOf(task).stackFit).toBe('mismatch')
     expect(artifactResponseContract(interpretationOf(task), task.scope.applicability)).toContain(
       'answer in Java as requested'

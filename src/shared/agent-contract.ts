@@ -187,11 +187,73 @@ export function asksForCodeExample(text: string): boolean {
   const t = text.trim()
   if (!t || asksToImplementChanges(t) || asksForPlan(t)) return false
   if (asksForCodeDestination(t)) return false
+  // “Show me where the limiter is” locates existing code; it does not ask for new code.
+  if (asksToLocateCode(t)) return false
+  // “Explain why this example fails” and “review this example” make the example an operand.
+  if (/^(?:please\s+)?(?:explain|review|debug|why|what(?:'s| is)\s+wrong)\b/i.test(t)) return false
+  if (requestsExampleByForm(t) || writesBehavior(t)) return true
   const artifact =
     /\b(?:example|sample|snippet|demo|function|implementation|version|code|class|module|middleware|endpoint|script|component|logic|algorithm|handler|helper|hook|parser|query)\b/i
   const producing =
     /\b(?:write|generate|show|give|create|build|implement|draft|sketch|provide|turn)\b/i
   return producing.test(t) && artifact.test(t)
+}
+
+/** “Show me where X is”, “which file has X”: repository lookup, not generation. */
+export function asksToLocateCode(text: string): boolean {
+  return /^(?:please\s+)?(?:(?:can|could)\s+you\s+)?(?:show|tell)\s+(?:me\s+)?(?:where|which\s+(?:file|module|function|class)|what\s+file)\b|\bwhere\s+(?:is|are|do|does)\s+(?:the|our|my|this)\b|\b(?:which|what)\s+file\b/i.test(
+    text
+  )
+}
+
+/**
+ * The request form alone names an example: “I need a practical example of X”,
+ * “could I get a sample of Y”. No producing verb is needed.
+ */
+function requestsExampleByForm(text: string): boolean {
+  return /^(?:please\s+)?(?:i\s+(?:need|want|would\s+like|'d\s+like)|i(?:'d| would)\s+(?:like|love)|(?:can|could|may)\s+i\s+(?:get|have|see)|(?:can|could|would)\s+you\s+(?:show|give|provide)\s+(?:me\s+)?|(?:show|give)\s+me|looking\s+for)\s+(?:(?:an?|some|the|one|two|both)\s+)?(?:[\w-]+\s+){0,3}?(?:examples?|samples?|snippets?|demos?|implementations?|versions?|code)\s+(?:of|for|showing|that|which|to|in)\b/i.test(
+    text
+  )
+}
+
+const PROSE_ARTIFACT =
+  /^(?:an?\s+|the\s+|some\s+|me\s+)*(?:(?:short|brief|quick|detailed|clear|concise|good)\s+)?(?:summary|essay|blog|post|article|email|e-mail|letter|doc|docs|documentation|readme|description|paragraph|report|overview|comparison|explanation|story|poem|message|note|notes|changelog|commit\s+message|proposal|spec|specification|tutorial|guide|faq|cover\s+letter|bio|tweet|outline|review|list)\b/i
+
+/**
+ * “Can you write per-user rate limiting so errors are explicit?” asks for code even
+ * without an artifact noun. “Write a summary of rate limiting” stays prose.
+ */
+function writesBehavior(text: string): boolean {
+  const match = text.match(
+    /^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:write|code\s+up|implement)\s+(.+)$/i
+  )
+  if (!match) return false
+  const object = match[1]!
+  return (
+    !PROSE_ARTIFACT.test(object) && !/^(?:about|on|up\s+(?:a|an|the)\s+summary)\b/i.test(object)
+  )
+}
+
+/**
+ * Schema, architecture or code-structure design: an answer with interfaces, state
+ * ownership and tradeoffs. “How should I structure the code for X” is design;
+ * “how should I structure this struct/JSON” is a data-shape question.
+ */
+export function asksForDesignAnswer(text: string): boolean {
+  if (
+    /\b(?:design|architect|model)\s+(?:the\s+|a\s+|an\s+)?(?:data\s+model|schema|api|architecture|system)\b|\bwhat(?:'s| is)\s+the\s+best\s+way\b/i.test(
+      text
+    )
+  )
+    return true
+  const structural = text.match(
+    /\bhow\s+(?:would|should|could|can|do|might)\s+(?:you|i|we|one)\s+(?:best\s+)?(?:design|structure|architect|approach|organi[sz]e|lay\s+out)\b(.{0,60})/i
+  )
+  if (!structural) return false
+  // A language data shape is not an architecture deliverable.
+  return !/^\s+(?:a|an|the|my|this)?\s*(?:struct|structs|data\s+structure|json|dict(?:ionary)?|array|list|tuple|enum|object\s+literal|type|interface|regex|sql\s+query)\b/i.test(
+    structural[1] ?? ''
+  )
 }
 
 /** The request names where code should land: a file path, the open project, or “here”. */
@@ -436,8 +498,18 @@ export function chatAgentForTurn(options: {
   if (options.intent === 'edit' || options.intent === 'run') return 'composer'
   if (options.intent === 'explore') return shortLookup ? 'fast' : 'explainer'
   if (explains) return 'explainer'
-  // A requested code artifact needs room for the implementation, however short the ask.
-  if (asksForCodeExample(text)) return 'explainer'
-  if (text.length > 0 && text.length < 80) return 'fast'
+  // Deliverable complexity, not message length, picks the worker: a short ask for code
+  // or a design still needs room for the whole artifact.
+  if (asksForCodeExample(text) || asksForDesignAnswer(text)) return 'explainer'
+  // Fast is for short lookups. A short question about how to design or build something
+  // still asks for a structured answer that a one-to-three-sentence contract cannot hold.
+  if (
+    text.length > 0 &&
+    text.length < 80 &&
+    !/\b(?:design|approach|pattern|architect\w*|structure|walk\s+me\s+through|way\s+to|implement\w*|build\w*|add|handle|help)\b/i.test(
+      text
+    )
+  )
+    return 'fast'
   return 'explainer'
 }

@@ -120,7 +120,8 @@ export function sharedPromptBlocks(
 export function buildChatMessages(
   workspacePath: string | null,
   settings: AppSettings,
-  input: ChatPromptInput
+  input: ChatPromptInput,
+  options: { genericScope?: boolean } = {}
 ): BuiltChatMessage[] {
   // Agent turns are leaner so builtin 4k/8k windows keep room for tool output.
   const lean = input.mode === 'agent'
@@ -132,15 +133,19 @@ export function buildChatMessages(
   const agent = findAgent(workspacePath, input.agentId)
   const isOrchestrator = getProjectAgents(workspacePath).orchestrator.id === input.agentId
   const contract = contractForAgent(input.agentId)
+  // A builtin role's job and steps describe reading the workspace. For a request the
+  // project is not evidence for, they would reintroduce the grounding the task omits;
+  // the compiled task and response contract already say what to deliver.
+  const roleSteps = !(options.genericScope && agent?.builtin !== false)
   const parts: string[] = [
-    contract
+    contract && roleSteps
       ? `AGENT CONTRACT — ${contract.name}\nJob: ${contract.job}\nTools: ${contract.tools}. ${contract.doesNot}\nDone when: ${contract.done}`
       : '',
     shared.systemPrompt,
     // A chat turn's agent owns the user-facing reply. Delegated children get a
     // hand-off prompt instead (formatHandoffForPrompt) and report to their coordinator.
     agent
-      ? `You are “${agent.name}”${isOrchestrator ? ', the coordinating agent' : ''}, answering the user directly. Your reply is the final response the user reads.\n${agent.systemPrompt.slice(0, lean ? 2800 : 8000)}`
+      ? `You are “${agent.name}”${isOrchestrator ? ', the coordinating agent' : ''}, answering the user directly. Your reply is the final response the user reads.${roleSteps ? `\n${agent.systemPrompt.slice(0, lean ? 2800 : 8000)}` : ''}`
       : `You are “${input.agentName || input.agentId}”, answering the user directly.`
   ].filter(Boolean)
 

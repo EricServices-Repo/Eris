@@ -11,6 +11,22 @@ export type RequestedArtifact =
  */
 export type ScopeApplicability = 'generic' | 'selected-project' | 'named-target' | 'unverified'
 
+/**
+ * Whether the reply must cite inspected project sources. Derived from applicability,
+ * never from the folder merely existing: required for project work, optional when the
+ * project may be relevant, none when the request is answerable without it.
+ */
+export type EvidenceRequirement = 'required' | 'optional' | 'none'
+
+export function evidenceRequirementFor(
+  applicability: ScopeApplicability | undefined
+): EvidenceRequirement {
+  if (applicability === 'generic') return 'none'
+  if (applicability === 'unverified') return 'optional'
+  // Contracts saved before applicability existed keep their prior, grounded behavior.
+  return 'required'
+}
+
 /** Languages and frameworks observed in the selected project's manifests. */
 export interface ProjectStack {
   languages: string[]
@@ -23,8 +39,23 @@ export type ArtifactDestination = 'chat' | 'workspace' | 'new-project'
 /** One separately checkable part of the request, in the order the user gave it. */
 export interface TaskObligation {
   id: string
-  kind: 'answer' | 'implementation' | 'tests' | 'verification' | 'design' | 'plan' | 'review'
+  kind:
+    | 'answer'
+    | 'implementation'
+    | 'tests'
+    | 'verification'
+    | 'design'
+    | 'plan'
+    | 'review'
+    | 'constraint'
   text: string
+  /**
+   * A named part of a multi-part deliverable (“simple”, “robust”, “comparison”). Each
+   * component is satisfied on its own; one version never completes another.
+   */
+  component?: string
+  /** The user's exact phrase this obligation came from, in the request text. */
+  source?: { text: string; start: number; end: number }
 }
 
 /** A recommendation that a later turn can refer to without repeating it. */
@@ -114,6 +145,18 @@ export interface TaskInterpretation {
   conceptFit?: { concept: string; ecosystem: string; requestedLanguage: string } | null
   route: { heuristicRule: string; overrides: string[] }
   resolution?: IntentResolution
+  /**
+   * Structured provenance for the artifact and scope decisions: the rule that chose
+   * each and the alternatives it rejected. Program provenance, not model reasoning.
+   */
+  trace?: {
+    version: 1
+    artifactRule: string
+    rejected: string[]
+    scopeRule?: string
+    /** Explicit clauses past the extraction bound; they remain only in the request text. */
+    unparsedRequirements?: number
+  }
 }
 
 export interface TaskContract {

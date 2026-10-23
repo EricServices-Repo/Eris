@@ -6,6 +6,7 @@ import { createTaskDeadline } from './task-deadline'
 import {
   asksForCodeDestination,
   asksForCodeExample,
+  asksForDesignAnswer,
   asksForRecommendations,
   asksForPlan,
   asksForVerification,
@@ -256,18 +257,50 @@ export async function resolveTaskDecision(input: ResolveTaskInput): Promise<Inte
 }
 
 function fallbackRule(text: string, fallback: ChatIntent): string {
-  if (fallback === 'edit')
-    return asksForCodeExample(text) ? 'edit-to-code-example-answer' : 'edit-to-plan'
+  if (fallback === 'edit') return editFallback(text).rule
   if (fallback === 'run') return 'run-to-explore'
   return 'retain-heuristic'
 }
 
 /**
- * Without a confident semantic decision, mutation fallbacks lose their effects.
- * A requested code example stays a chat answer rather than becoming a plan of future work.
+ * The safe reading of an unconfirmed edit request: drop the mutation, keep the
+ * deliverable. A code example stays chat code, “explain how to …” stays an
+ * explanation, a design question stays a design answer, and an explicit plan stays a
+ * plan. Only an imperative with nothing else to go on becomes a plan, and its rule
+ * records that the edit was ambiguous rather than claiming a plan was asked for.
+ */
+function editFallback(text: string): { intent: ChatIntent; rule: string } {
+  const t = requestTextForIntent(text)
+  // “How would you write it?” after a described behavior asks for the code itself.
+  if (
+    asksForCodeExample(t) ||
+    /\bhow\s+(?:would|should|could)\s+you\s+(?:write|code|implement)\s+(?:it|this|that)\b/i.test(t)
+  )
+    return { intent: 'answer', rule: 'edit-to-code-example-answer' }
+  if (asksForPlan(t)) return { intent: 'plan', rule: 'edit-to-explicit-plan' }
+  const explains =
+    /^(?:please\s+)?(?:explain|describe|walk\s+me\s+through|teach\s+me)\b/i.test(t) ||
+    // “Show me how to implement X” asks to be shown, not for the agent to change code.
+    /^(?:please\s+)?(?:(?:can|could)\s+you\s+)?show\s+me\s+how\b/i.test(t) ||
+    /^(?:how|what|why|when|which|is|are|should|does|do)\b/i.test(t)
+  const designs = asksForDesignAnswer(t)
+  if (explains || designs) {
+    // A question about the open project still needs to read it; a general one does not.
+    const intent: ChatIntent = asksWorkspaceQuestion(t) ? 'explore' : 'answer'
+    return {
+      intent,
+      rule: designs ? `edit-to-design-${intent}` : `edit-to-explanation-${intent}`
+    }
+  }
+  return { intent: 'plan', rule: 'edit-to-plan' }
+}
+
+/**
+ * Without a confident semantic decision, mutation fallbacks lose their effects but
+ * keep the requested deliverable. No fallback grants write or run authority.
  */
 export function conservativeFallback(text: string, fallback: ChatIntent): ChatIntent {
-  if (fallback === 'edit') return asksForCodeExample(text) ? 'answer' : 'plan'
+  if (fallback === 'edit') return editFallback(text).intent
   if (fallback === 'run') return 'explore'
   return fallback
 }

@@ -114,6 +114,7 @@ import {
 } from '../../../../src/shared/task-contract'
 import { artifactResponseContract } from '../../../../src/shared/task-interpretation'
 import { compileTaskContext } from './context-compiler'
+import { executionPlanFor } from '../execution-plan'
 import { lintExecutionPlan } from './workflow-lint'
 import { appendTaskEvent } from '../task-ledger'
 import { TaskToolGateway } from './tool-gateway'
@@ -399,7 +400,16 @@ export async function* runAgentWithWorkspaceTools(options: {
       plan,
       history: messages.slice(0, -1)
     })
-  plan = { ...plan, task, toolPolicy: intersectToolPolicy(plan.toolPolicy, task) }
+  plan = {
+    ...plan,
+    task,
+    toolPolicy: intersectToolPolicy(plan.toolPolicy, task),
+    // Workflow steps and completion follow the task's scope, not the intent alone.
+    // A turn plan that arrives with its task was already scoped by the chat turn.
+    ...(plan.executionPlan && !options.turnPlan?.task
+      ? { executionPlan: executionPlanFor(plan.mode, plan.intent, task.scope.applicability) }
+      : {})
+  }
   const gateway = new TaskToolGateway(task)
   const executionRoot = task.scope.projectRoot ?? options.workspacePath
   const workflow = new AgentWorkflow(plan, originalUserGoal)
@@ -736,7 +746,8 @@ export async function* runAgentWithWorkspaceTools(options: {
       mcpToolCount,
       verificationRun: verificationRunAllowed(),
       discovered: discoveredBuiltinToolNames,
-      deferWeb: !webQuestion
+      deferWeb: !webQuestion,
+      deferProjectOrientation: task.scope.applicability === 'generic'
     })
   const visibleComposerToolDefinitions = (): OpenAIToolDef[] => {
     const visible = new Set(

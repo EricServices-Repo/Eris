@@ -17,9 +17,14 @@ import {
   requestTextForIntent,
   stackFit
 } from '../../../src/shared/task-interpretation'
-import { asksWorkspaceQuestion } from '../../../src/shared/agent-contract'
+import {
+  asksToLocateCode,
+  asksWorkspaceQuestion,
+  mentionsSourcePath
+} from '../../../src/shared/agent-contract'
 import type { TurnPlan } from '../../../src/shared/settings-schema'
 import { namedProjectTarget } from './agent/project-target'
+import { executionPlanFor } from './execution-plan'
 
 const skip = new Set([
   'node_modules',
@@ -166,18 +171,65 @@ export function detectProjectStack(root: string | null): ProjectStack | null {
     : null
 }
 
-/** Resolution says the folder exists; applicability says whether it is evidence for this request. */
-function scopeApplicability(
+/**
+ * A positive reference to the open project: a source path, “this project”, “our
+ * codebase”, “which file”. “How should I structure the code for X” names no project.
+ */
+function referencesOpenProject(text: string): boolean {
+  return (
+    mentionsSourcePath(text) ||
+    /\b(?:this|my|our|the)\s+(?:project|repo|repository|workspace|codebase)\b|\b(?:this|my|our)\s+(?:app|application|code|component|function|service|api|file|folder|module|tests?)\b|\b(?:where is|which file|what file|in the (?:repo|project|workspace))\b/i.test(
+      text
+    )
+  )
+}
+
+/**
+ * Resolution says the folder exists; applicability says whether it is evidence for
+ * this request. It is decided from references (named files, the open project, a
+ * named sibling, a follow-up), the destination and the kind of work — never from the
+ * folder existing, and never differently for equivalent design and plan phrasing.
+ */
+export function scopeApplicability(
   text: string,
-  interpretation: TaskInterpretation,
+  interpretation: Pick<TaskInterpretation, 'artifact' | 'destination'>,
   namedTarget: boolean,
-  hasProject: boolean
-): ScopeApplicability {
-  if (namedTarget) return 'named-target'
-  if (interpretation.destination !== 'chat') return 'selected-project'
-  if (!hasProject) return 'generic'
-  const generic = ['code-example', 'design', 'explanation'].includes(interpretation.artifact)
-  return generic && !asksWorkspaceQuestion(requestTextForIntent(text)) ? 'generic' : 'unverified'
+  hasProject: boolean,
+  intent?: TurnPlan['intent'],
+  continuation = false
+): { applicability: ScopeApplicability; rule: string } {
+  if (namedTarget) return { applicability: 'named-target', rule: 'named-target' }
+  if (interpretation.destination !== 'chat')
+    return { applicability: 'selected-project', rule: 'workspace-destination' }
+  if (!hasProject) return { applicability: 'generic', rule: 'no-project' }
+  const t = requestTextForIntent(text)
+  if (referencesOpenProject(t))
+    return { applicability: 'selected-project', rule: 'workspace-reference' }
+  if (continuation) return { applicability: 'unverified', rule: 'continuation' }
+  // “The code”, “a bug”, “fails” may or may not mean this project. A tool-free answer
+  // cannot inspect it either way, so only a worker that can read keeps the ambiguity.
+  if (asksWorkspaceQuestion(t) && intent !== 'answer')
+    return { applicability: 'unverified', rule: 'possible-reference' }
+  // Reviews, checks and commands act on existing code by definition.
+  if (['review', 'execution-report'].includes(interpretation.artifact))
+    return { applicability: 'unverified', rule: 'operates-on-existing-code' }
+  // “In an existing Next.js project” describes a hypothetical, not the open folder.
+  if (
+    /\b(?:an?|some|any)\s+(?:existing\s+|typical\s+|large\s+|small\s+)?(?:[\w.-]+\s+){0,2}(?:project|app|application|codebase|repo|service)\b|\bin\s+general\b|\bgenerally\b/i.test(
+      t
+    )
+  )
+    return { applicability: 'generic', rule: 'hypothetical-project' }
+  // A lookup (“where is the limiter”), a check or a command may concern the open
+  // project; keep that ambiguity instead of binding or discarding it. “Explain how JWT
+  // works” is explore wording too, but names nothing to look up.
+  if (asksToLocateCode(t) || /\b(?:find|locate|grep|search\s+for)\b/i.test(t))
+    return { applicability: 'unverified', rule: 'lookup' }
+  if (intent === 'run' || intent === 'verify')
+    return { applicability: 'unverified', rule: `intent-${intent}` }
+  if (intent === 'plan' && interpretation.artifact === 'plan')
+    return { applicability: 'unverified', rule: 'unreferenced-plan' }
+  return { applicability: 'generic', rule: 'no-project-reference' }
 }
 
 export function createTaskContract(input: {
@@ -325,18 +377,26 @@ export function createTaskContract(input: {
         text: `Before editing, ask which earlier recommendations to apply: ${selection.unresolved}`
       }
     ]
+  const scope = scopeApplicability(
+    input.text,
+    reading,
+    Boolean(target && selected && !inheritedRoot),
+    Boolean(selected),
+    input.plan.intent,
+    Boolean(inheritedRoot || recommendations.length)
+  )
+  const applicability = scope.applicability
   const interpretation: TaskInterpretation = {
     ...reading,
+    // The project stack stays as a diagnostic; it is only compared when the project is in scope.
     projectStack,
-    stackFit: stackFit(reading, projectStack),
-    ...(input.resolution ? { resolution: input.resolution } : {})
+    stackFit: applicability === 'generic' ? 'not-applicable' : stackFit(reading, projectStack),
+    ...(input.resolution ? { resolution: input.resolution } : {}),
+    trace: {
+      ...(reading.trace ?? { version: 1, artifactRule: 'unknown', rejected: [] }),
+      scopeRule: scope.rule
+    }
   }
-  const applicability = scopeApplicability(
-    input.text,
-    interpretation,
-    Boolean(target && selected && !inheritedRoot),
-    Boolean(selected)
-  )
   return {
     version: 2,
     taskId: input.taskId ?? randomUUID(),
@@ -391,7 +451,13 @@ export function createTaskContract(input: {
           }
         }
       : {}),
-    acceptanceCriteria: acceptanceCriteriaFor(input.plan, deliverable, input.text, interpretation),
+    acceptanceCriteria: acceptanceCriteriaFor(
+      input.plan,
+      deliverable,
+      input.text,
+      interpretation,
+      applicability
+    ),
     interpretation
   }
 }
@@ -412,12 +478,17 @@ function acceptanceCriteriaFor(
   plan: TurnPlan,
   deliverable: TaskContract['deliverable'],
   fallback: string,
-  interpretation: NonNullable<TaskContract['interpretation']>
+  interpretation: NonNullable<TaskContract['interpretation']>,
+  applicability?: ScopeApplicability
 ): string[] {
+  // The completion rule is built for the scope, not patched afterwards: a generic
+  // request never carries a file-grounding criterion that a later line contradicts.
   const base =
     deliverable === 'answer' && (plan.intent === 'edit' || plan.intent === 'run')
       ? 'The requested change is described or shown in chat without claiming it was applied or verified.'
-      : (plan.executionPlan?.doneWhen ?? fallback)
+      : plan.executionPlan
+        ? executionPlanFor(plan.mode, plan.intent, applicability).doneWhen
+        : fallback
   // Each obligation is checked on its own; one satisfied part never completes the task.
   return [...new Set([base, ...interpretation.obligations.map((obligation) => obligation.text)])]
 }
@@ -484,7 +555,13 @@ export function childTaskContract(
               : 'none',
       externalEffects: parent.authority.externalEffects && tools === 'full'
     },
-    acceptanceCriteria: acceptanceCriteriaFor(plan, deliverable, goal, interpretation),
+    acceptanceCriteria: acceptanceCriteriaFor(
+      plan,
+      deliverable,
+      goal,
+      interpretation,
+      parent.scope.applicability
+    ),
     interpretation
   }
 }
