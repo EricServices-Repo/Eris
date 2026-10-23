@@ -301,11 +301,303 @@ const BUILTIN_SCENARIOS: DebugScenarioInput[] = [
   }
 ]
 
+const REVIEW = 'docs/reviews/eris-dev-10000-2026-10-23/AGENT-IMPROVEMENTS.md'
+
+/** A disposable project for authentication questions, with an intentional missing-expiry defect. */
+const PASSWORD_RESET_FIXTURE: Record<string, string> = {
+  'package.json': JSON.stringify({ name: 'accounts', version: '1.0.0', type: 'module' }, null, 2),
+  'tsconfig.json': JSON.stringify({ compilerOptions: { strict: true } }),
+  'src/auth/reset.ts': [
+    "import { randomBytes } from 'crypto'",
+    '',
+    'const tokens = new Map<string, string>()',
+    '',
+    'export function issueResetToken(userId: string): string {',
+    "  const token = randomBytes(32).toString('hex')",
+    '  tokens.set(token, userId)',
+    '  return token',
+    '}',
+    '',
+    'export function consumeResetToken(token: string): string | null {',
+    '  return tokens.get(token) ?? null',
+    '}',
+    ''
+  ].join('\n'),
+  'tests/reset.test.ts': [
+    "import { issueResetToken, consumeResetToken } from '../src/auth/reset'",
+    '',
+    "test('a token resolves to its user', () => {",
+    "  expect(consumeResetToken(issueResetToken('u1'))).toBe('u1')",
+    '})',
+    ''
+  ].join('\n')
+}
+
+/** A small React project, so component questions have real components to read. */
+const REACT_FIXTURE: Record<string, string> = {
+  'package.json': JSON.stringify(
+    { name: 'dashboard', dependencies: { react: '^18.3.1', 'react-dom': '^18.3.1' } },
+    null,
+    2
+  ),
+  'tsconfig.json': JSON.stringify({ compilerOptions: { jsx: 'react-jsx', strict: true } }),
+  'src/components/UserList.tsx': [
+    "import { useEffect, useState } from 'react'",
+    '',
+    'export function UserList({ load }: { load: () => Promise<string[]> }) {',
+    '  const [users, setUsers] = useState<string[] | null>(null)',
+    '  const [error, setError] = useState<string | null>(null)',
+    '  useEffect(() => {',
+    '    load().then(setUsers, (reason) => setError(String(reason)))',
+    '  }, [load])',
+    '  if (error) return <p role="alert">{error}</p>',
+    '  if (!users) return <p>Loading…</p>',
+    '  return <ul>{users.map((user) => <li key={user}>{user}</li>)}</ul>',
+    '}',
+    ''
+  ].join('\n')
+}
+
+/** Two projects; only the named one may change. */
+const MULTI_PROJECT_FIXTURE: Record<string, string> = {
+  'apps/shop/package.json': JSON.stringify({ name: 'shop', version: '1.0.0' }),
+  'apps/shop/src/cart.ts': [
+    'export const TAX_RATE = 0.08',
+    '',
+    'export interface CartLine {',
+    '  sku: string',
+    '  quantity: number',
+    '}',
+    '',
+    'export function lineCount(lines: CartLine[]): number {',
+    '  return lines.reduce((count, line) => count + line.quantity, 0)',
+    '}',
+    '',
+    'export function cartTotal(prices: number[]): number {',
+    '  return prices.reduce((sum, price) => sum + price, 0)',
+    '}',
+    ''
+  ].join('\n'),
+  'apps/blog/package.json': JSON.stringify({ name: 'blog', version: '1.0.0' }),
+  'apps/blog/src/cart.ts': [
+    '// Unrelated sibling: a reading-list "cart" with no prices.',
+    'export function cartTotal(posts: string[]): number {',
+    '  return posts.length',
+    '}',
+    ''
+  ].join('\n')
+}
+
+const SOFT_DELETE_EXAMPLE = [
+  '```ts',
+  'interface Row { id: string; deletedAt: Date | null }',
+  'export class SoftDeleteStore<T extends Row> {',
+  '  private rows = new Map<string, T>()',
+  '  save(row: T) { this.rows.set(row.id, row) }',
+  '  softDelete(id: string) { const row = this.rows.get(id); if (row) row.deletedAt = new Date() }',
+  '  restore(id: string) { const row = this.rows.get(id); if (row) row.deletedAt = null }',
+  '  list(): T[] { return [...this.rows.values()].filter((row) => row.deletedAt === null) }',
+  '}',
+  '```',
+  'softDelete marks a row; restore clears the mark; list hides deleted rows.'
+].join('\n')
+
+const DATA_MODEL_QUESTIONS: Array<{ id: string; topic: string; q: string }> = [
+  {
+    id: 'data-model-infinite-scroll',
+    topic: 'infinite scroll using cursor pagination',
+    q: 'Q2813'
+  },
+  {
+    id: 'data-model-transactional-email',
+    topic: 'transactional emails using templates',
+    q: 'Q8123'
+  },
+  { id: 'data-model-rbac', topic: 'role-based access control', q: 'Q8882' }
+]
+
+/**
+ * Labeled regressions from the 10,000-question review. Expectations come from the
+ * request wording, not from the router; several intents are acceptable when they
+ * deliver the same artifact under the same authority.
+ */
+const CORPUS_SCENARIOS: DebugScenarioInput[] = [
+  {
+    id: 'complete-example-soft-delete',
+    title: 'A complete example request gets code, not a plan',
+    description: 'Q2: a minimal but complete TypeScript example of soft delete with restore.',
+    tags: ['answer', 'code-example', 'corpus-regression'],
+    modes: ['simulated', 'real-model'],
+    request: {
+      text: 'Can you generate a minimal but complete example of soft deletes with the ability to restore in TypeScript?'
+    },
+    fixture: FIXTURE,
+    label: {
+      source: 'review-derived',
+      reference: `${REVIEW} · Q2`,
+      rationale:
+        'The requested artifact is a working example in chat. A plan of future steps or a workspace edit changes it.'
+    },
+    expect: {
+      intent: ['answer', 'explore'],
+      artifact: ['code-example'],
+      forbiddenIntents: ['plan', 'edit', 'verify', 'capability'],
+      mutation: 'forbidden',
+      checks: [{ type: 'answer_matches', pattern: 'restore' }],
+      terminal: 'complete'
+    },
+    script: { agent: [reply(SOFT_DELETE_EXAMPLE)] }
+  },
+  {
+    id: 'seed-data-not-verification',
+    title: '“Test data” is a feature, not a verification request',
+    description: 'Q524: an implementation of seeding realistic test data.',
+    tags: ['answer', 'code-example', 'corpus-regression'],
+    modes: ['simulated', 'real-model'],
+    request: {
+      text: 'Write a TypeScript implementation of seeding realistic test data that prioritizes clarity?'
+    },
+    fixture: FIXTURE,
+    label: {
+      source: 'review-derived',
+      reference: `${REVIEW} · Q524`,
+      rationale: '“Test data” describes data to create; nothing existing is to be verified.'
+    },
+    expect: {
+      artifact: ['code-example', 'patch'],
+      forbiddenIntents: ['verify', 'capability'],
+      terminal: 'complete'
+    },
+    script: {
+      agent: [
+        reply(
+          [
+            '```ts',
+            'export function seedUsers(count: number) {',
+            '  return Array.from({ length: count }, (_, i) => ({ id: i + 1, name: `User ${i + 1}` }))',
+            '}',
+            '```'
+          ].join('\n')
+        )
+      ]
+    }
+  },
+  ...DATA_MODEL_QUESTIONS.map(({ id, topic, q }): DebugScenarioInput => ({
+    id,
+    title: `Data model and API design for ${topic}`,
+    description: `${q}: an application data model, not the Eris model catalog.`,
+    tags: ['design', 'corpus-regression'],
+    modes: ['simulated', 'real-model'],
+    request: { text: `How would you design the data model and API for ${topic}?` },
+    fixture: FIXTURE,
+    label: {
+      source: 'review-derived',
+      reference: `${REVIEW} · ${q}`,
+      rationale:
+        '“Data model and API” refers to application design; the AI-model catalog cannot answer it.'
+    },
+    expect: {
+      artifact: ['design'],
+      forbiddenIntents: ['capability', 'edit', 'run'],
+      mutation: 'forbidden',
+      terminal: 'complete'
+    },
+    script: {
+      agent: [
+        reply(
+          'Data model: a table keyed by id with created_at. API: GET /items?cursor=…&limit=…. Tradeoff: cursors are stable under inserts; offsets are not.'
+        )
+      ]
+    }
+  })),
+  {
+    id: 'password-reset-review-grounded',
+    title: 'An authentication review reads the real reset flow',
+    description: 'A representative fixture with an intentional missing-expiry defect.',
+    tags: ['review', 'read-only', 'representative-fixture'],
+    modes: ['simulated', 'real-model'],
+    request: {
+      text: 'Review the password reset flow in src/auth/reset.ts for security problems.'
+    },
+    fixture: PASSWORD_RESET_FIXTURE,
+    expect: {
+      intent: ['review', 'explore'],
+      mutation: 'forbidden',
+      checks: [{ type: 'answer_matches', pattern: 'expir|single.use|one.time|reuse' }],
+      terminal: 'complete'
+    },
+    script: {
+      agent: [
+        tool('read_file', { path: 'src/auth/reset.ts' }),
+        reply(
+          'Findings for src/auth/reset.ts:\n1. Tokens never expire.\n2. consumeResetToken does not delete the token, so it can be reused.\n3. Tokens are stored in plain text in memory.'
+        )
+      ],
+      outcome: [verdict('supported', 'Findings cite the inspected reset flow.')]
+    }
+  },
+  {
+    id: 'react-component-explained',
+    title: 'A component question reads the React component',
+    description: 'A representative React fixture: the answer must come from the component.',
+    tags: ['explore', 'read-only', 'representative-fixture'],
+    modes: ['simulated', 'real-model'],
+    request: { text: 'Explain how UserList handles loading and errors in this project.' },
+    fixture: REACT_FIXTURE,
+    expect: {
+      intent: ['explore', 'answer'],
+      mutation: 'forbidden',
+      checks: [{ type: 'answer_matches', pattern: 'UserList' }],
+      terminal: 'complete'
+    },
+    script: {
+      agent: [
+        tool('read_file', { path: 'src/components/UserList.tsx' }),
+        reply(
+          'src/components/UserList.tsx: UserList shows “Loading…” until load() resolves and renders the error in a role="alert" paragraph when it rejects.'
+        )
+      ],
+      intent: [intentReply('explore')]
+    }
+  },
+  {
+    id: 'multi-project-named-target',
+    title: 'An edit to the named project leaves its sibling alone',
+    description: 'Two projects define cart.ts; only the shop app may change.',
+    tags: ['edit', 'scope', 'representative-fixture'],
+    modes: ['simulated', 'real-model'],
+    request: { text: 'In the shop app, fix cartTotal so it includes TAX_RATE.' },
+    fixture: MULTI_PROJECT_FIXTURE,
+    expect: {
+      intent: ['edit'],
+      mutation: 'required',
+      allowedPaths: ['apps/shop/'],
+      requiredPaths: ['apps/shop/src/cart.ts'],
+      terminal: 'complete'
+    },
+    script: {
+      agent: [
+        tool('read_file', { path: 'apps/shop/src/cart.ts' }),
+        tool('search_replace', {
+          path: 'apps/shop/src/cart.ts',
+          old_string: '  return prices.reduce((sum, price) => sum + price, 0)',
+          new_string: '  return prices.reduce((sum, price) => sum + price, 0) * (1 + TAX_RATE)'
+        }),
+        reply('DONE: apps/shop/src/cart.ts now applies TAX_RATE; verification passed.')
+      ],
+      outcome: [verdict('supported', 'The diff applies TAX_RATE in the shop project only.')],
+      verify: [{ ok: true, command: 'npm test', detail: 'simulated: 1 test passed' }]
+    }
+  }
+]
+
 let cache: DebugScenario[] | null = null
 
 /** Parsed built-in scenarios; an invalid definition fails loudly. */
 export function builtinDebugScenarios(): DebugScenario[] {
-  cache ??= BUILTIN_SCENARIOS.map((item) => DebugScenarioSchema.parse(item))
+  cache ??= [...BUILTIN_SCENARIOS, ...CORPUS_SCENARIOS].map((item) =>
+    DebugScenarioSchema.parse(item)
+  )
   return cache
 }
 

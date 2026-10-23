@@ -290,11 +290,43 @@ export function needsWebLookup(text: string): boolean {
   )
 }
 
+const SOURCE_EXTENSIONS =
+  '(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|swift|php|cs|cpp|c|h|vue|svelte|css|scss|html|json|ya?ml|toml|sql|md)'
+/** A path with a directory: src/auth/reset.ts, ./lib/x.py. */
+const DIRECTORY_PATH = new RegExp(
+  `(?:^|[\\s\`'"(])(?:\\.{0,2}\\/)?[\\w@-]+(?:\\/[\\w.@-]+)+\\.${SOURCE_EXTENSIONS}\\b`,
+  'i'
+)
+/** A bare lowercase file name: reset.ts, api.ts. Technology names such as Node.js are not files. */
+const BARE_FILE = new RegExp(
+  `(?:^|[\\s\`'"(])(?!(?:node|next|nuxt|vue|express|three|d3|react|angular|ember|backbone|deno|chart|moment|socket)\\.js\\b)[a-z0-9_][\\w-]*\\.${SOURCE_EXTENSIONS}\\b`
+)
+
+/** The text names a workspace source file. */
+export function mentionsSourcePath(text: string): boolean {
+  return DIRECTORY_PATH.test(text) || BARE_FILE.test(text)
+}
+
+/**
+ * Drop a leading scope phrase (“In the shop app, …”) so the imperative that
+ * follows is read as the request's action. The project name stays in the text
+ * used for scope resolution.
+ */
+export function withoutLeadingScope(text: string): string {
+  return text
+    .trim()
+    .replace(
+      /^(?:in|for|on|inside)\s+(?:the\s+)?[\w-]+(?:\s+[\w-]+){0,2}\s+(?:app|application|project|website|site|repo|package|service)\s*,\s*/i,
+      ''
+    )
+}
+
 /** Questions whose answer should be grounded in the open workspace. */
 export function asksWorkspaceQuestion(text: string, fileNames: string[] = []): boolean {
   const t = text.trim()
   if (!t) return false
   if (
+    mentionsSourcePath(t) ||
     /\b(this|that|the|my|our)\s+(project|repo|repository|workspace|codebase|app|application|folder|file|code|component|function|service|api)\b/i.test(
       t
     ) ||

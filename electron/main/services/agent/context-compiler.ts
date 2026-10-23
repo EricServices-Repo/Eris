@@ -97,6 +97,29 @@ No tools are available for this reply. Do not emit tool calls, and treat any wor
 ${calls} ${effects} Inspect the selected project, not an unrelated sibling. Report missing evidence, failed verification, and incomplete work honestly. Specialist assignments must retain the project and permission ceiling.`
 }
 
+/**
+ * Budget accounting for one compiled system message. Counts are character
+ * estimates (3 characters per token), not tokenizer output; the method and its
+ * uncertainty are recorded so no report presents them as real token counts.
+ */
+export interface ContextBudget {
+  method: 'characters'
+  tokenizer: 'none'
+  charsPerToken: 3
+  uncertainty: string
+  /** Input tokens available to this request after tool schemas were subtracted by the caller. */
+  inputTokens: number
+  /** Share of the input reserved for the compiled system message. */
+  systemShare: number
+  /** Tokens left for conversation history, tool calls and tool results. */
+  reservedForConversationTokens: number
+  maxChars: number
+  usedChars: number
+  estimatedTokens: number
+}
+
+export const SYSTEM_CONTEXT_SHARE = 0.55
+
 export function compileTaskContext(input: {
   task: TaskContract
   guidance: string
@@ -109,7 +132,7 @@ export function compileTaskContext(input: {
 }): {
   message: AgentChatMessage
   blocks: ContextManifestBlock[]
-  budget: { method: 'characters'; maxChars: number; usedChars: number; estimatedTokens: number }
+  budget: ContextBudget
 } {
   const taskText = JSON.stringify(modelFacingTask(input.task))
   const protocol = taskProtocol(input.task, input.toolsAvailable !== false, input.toolProtocol)
@@ -134,7 +157,7 @@ export function compileTaskContext(input: {
   // Leave the remaining input window for conversation, tools and source evidence.
   if (!Number.isFinite(input.maxInputTokens) || input.maxInputTokens <= 0)
     throw new Error('The model input context budget must be a positive finite number.')
-  const maxChars = Math.floor(input.maxInputTokens * 3 * 0.55)
+  const maxChars = Math.floor(input.maxInputTokens * 3 * SYSTEM_CONTEXT_SHARE)
   let remaining = maxChars
   const chosen: ContextBlock[] = []
   const manifest: ContextManifestBlock[] = []
@@ -178,6 +201,13 @@ export function compileTaskContext(input: {
     blocks: manifest,
     budget: {
       method: 'characters',
+      tokenizer: 'none',
+      charsPerToken: 3,
+      uncertainty:
+        'Character estimate; actual tokenizer counts vary with language and code density.',
+      inputTokens: input.maxInputTokens,
+      systemShare: SYSTEM_CONTEXT_SHARE,
+      reservedForConversationTokens: input.maxInputTokens - Math.ceil(content.length / 3),
       maxChars,
       usedChars: content.length,
       estimatedTokens: Math.ceil(content.length / 3)

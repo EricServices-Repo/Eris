@@ -339,7 +339,10 @@ export function buildPreservedWorkerMessages(options: {
         content: contract ? `Role: ${contract.name}. ${contract.job} ${contract.done}` : ''
       },
       { id: 'playbook', content: intentPlaybook(plan.intent, false) },
-      { id: 'response-contract', content: artifactResponseContract(interpretationOf(task)) }
+      {
+        id: 'response-contract',
+        content: artifactResponseContract(interpretationOf(task), task.scope.applicability)
+      }
     ]),
     project: withoutSharedBlocks(priorSystem, options.workspacePath, options.settings, {
       skillIds: task.skillIds,

@@ -39,6 +39,11 @@ export interface DiagnosticsScope {
   onBlockedEffect: (kind: BlockedEffectKind, detail: string) => void
   /** Scripted verification result; absent = verification is reported as skipped. */
   verify?: (request: { root: string; preferTypecheck: boolean }) => VerifyStubResult
+  /**
+   * Receives each task-ledger event raised inside this scope (context manifests,
+   * tool manifests, route decisions), so captures can export them per request.
+   */
+  onTaskEvent?: (event: { taskId: string; type: string; data: unknown }) => void
 }
 
 const scopes = new AsyncLocalStorage<DiagnosticsScope>()

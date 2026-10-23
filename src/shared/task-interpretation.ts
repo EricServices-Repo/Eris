@@ -1,6 +1,7 @@
 import type { ChatIntent } from './settings-schema'
 import type {
   ArtifactDestination,
+  ScopeApplicability,
   RequestedArtifact,
   TaskInterpretation,
   TaskObligation
@@ -185,6 +186,7 @@ export function interpretRequest(input: {
     language,
     frameworks: requestedFrameworks(input.text),
     forbidsMutation: forbidsMutation(input.text),
+    conceptFit: conceptFit(requestTextForIntent(input.text), language),
     route: input.route ?? { heuristicRule: 'unknown', overrides: [] }
   }
 }
@@ -193,7 +195,10 @@ export function interpretRequest(input: {
  * What the reply must contain for the requested artifact. This outranks worker
  * style defaults such as Fast's sentence limit or Plan's ordered-steps format.
  */
-export function artifactResponseContract(interpretation: TaskInterpretation): string {
+export function artifactResponseContract(
+  interpretation: TaskInterpretation,
+  applicability?: ScopeApplicability
+): string {
   const stack = [interpretation.language, ...interpretation.frameworks].filter(Boolean).join(', ')
   const inStack = stack
     ? ` Use ${stack} as requested, even if the open project uses another stack.`
@@ -215,5 +220,92 @@ export function artifactResponseContract(interpretation: TaskInterpretation): st
   const forbids = interpretation.forbidsMutation
     ? '\nThe user asked for no edits or commands. Do not change files or run anything.'
     : ''
-  return lines[interpretation.artifact] + obligations + forbids
+  const scope = scopeAndStackGuidance(interpretation, applicability)
+  return lines[interpretation.artifact] + obligations + forbids + (scope ? `\n${scope}` : '')
+}
+
+const FRAMEWORK_LANGUAGES: Record<string, string[]> = {
+  Django: ['Python'],
+  Flask: ['Python'],
+  FastAPI: ['Python'],
+  Rails: ['Ruby'],
+  Laravel: ['PHP'],
+  'Next.js': ['TypeScript', 'JavaScript'],
+  React: ['TypeScript', 'JavaScript'],
+  Vue: ['TypeScript', 'JavaScript'],
+  Express: ['TypeScript', 'JavaScript'],
+  Spring: ['Java', 'Kotlin'],
+  'ASP.NET': ['C#']
+}
+/** Concepts tied to one ecosystem, so a request in another language needs an analogue. */
+const ECOSYSTEM_CONCEPTS: Array<{ concept: string; pattern: RegExp; ecosystem: string }> = [
+  { concept: 'error boundaries', pattern: /\berror\s+boundar(?:y|ies)\b/i, ecosystem: 'React' },
+  {
+    concept: 'React hooks',
+    pattern: /\breact\s+hooks?\b|\buse(?:Effect|State|Memo)\b/,
+    ecosystem: 'React'
+  },
+  { concept: 'Django migrations', pattern: /\bdjango\s+migrations?\b/i, ecosystem: 'Django' }
+]
+
+/** A requested ecosystem-specific concept in a language that ecosystem does not use. */
+export function conceptFit(
+  text: string,
+  language: string | null
+): TaskInterpretation['conceptFit'] {
+  if (!language) return null
+  for (const item of ECOSYSTEM_CONCEPTS) {
+    if (!item.pattern.test(text)) continue
+    if (!FRAMEWORK_LANGUAGES[item.ecosystem]?.includes(language))
+      return { concept: item.concept, ecosystem: item.ecosystem, requestedLanguage: language }
+  }
+  return null
+}
+
+/** Requested stack against the observed project stack, for chat artifacts and patches alike. */
+export function stackFit(
+  interpretation: Pick<TaskInterpretation, 'language' | 'frameworks'>,
+  project: TaskInterpretation['projectStack']
+): NonNullable<TaskInterpretation['stackFit']> {
+  if (!interpretation.language && !interpretation.frameworks.length) return 'not-applicable'
+  if (!project || (!project.languages.length && !project.frameworks.length)) return 'unknown'
+  const languageOk =
+    !interpretation.language ||
+    project.languages.includes(interpretation.language) ||
+    // TypeScript projects run JavaScript and the reverse is a small step.
+    (['TypeScript', 'JavaScript'].includes(interpretation.language) &&
+      project.languages.some((item) => ['TypeScript', 'JavaScript'].includes(item)))
+  const frameworksOk = interpretation.frameworks.every((item) => project.frameworks.includes(item))
+  return languageOk && frameworksOk ? 'match' : 'mismatch'
+}
+
+/** Guidance that keeps an unrelated project and mismatched stacks from shaping the answer. */
+export function scopeAndStackGuidance(
+  interpretation: TaskInterpretation,
+  applicability: ScopeApplicability | undefined
+): string {
+  const lines: string[] = []
+  if (applicability === 'generic')
+    lines.push(
+      'This request does not depend on the open project. Do not cite its files as implementing the request or as evidence for it.'
+    )
+  if (interpretation.stackFit === 'mismatch' && interpretation.projectStack) {
+    const project = [
+      ...interpretation.projectStack.languages,
+      ...interpretation.projectStack.frameworks
+    ]
+    const requested = [interpretation.language, ...interpretation.frameworks].filter(Boolean)
+    lines.push(
+      interpretation.destination === 'chat'
+        ? `The open project uses ${project.join(', ') || 'another stack'}; answer in ${requested.join(', ')} as requested.`
+        : `The request names ${requested.join(', ')} but the project uses ${project.join(', ')}. State the assumption or ask which stack to use before editing.`
+    )
+  }
+  if (interpretation.conceptFit) {
+    const fit = interpretation.conceptFit
+    lines.push(
+      `${fit.concept} are a ${fit.ecosystem} concept. In ${fit.requestedLanguage}, implement the closest idiomatic analogue and state its limits; do not invent ${fit.ecosystem} APIs in ${fit.requestedLanguage}.`
+    )
+  }
+  return lines.join('\n')
 }

@@ -507,7 +507,8 @@ export async function* runAgentWithWorkspaceTools(options: {
             : `${plan.agentName}…`
     }
     const tips: string[] = [...(modelsCatalog ? [modelsCatalog] : [])]
-    if (plan.intent !== 'capability') tips.push(artifactResponseContract(interpretationOf(task)))
+    if (plan.intent !== 'capability')
+      tips.push(artifactResponseContract(interpretationOf(task), task.scope.applicability))
     if (plan.executionPlan) {
       tips.push(
         `Task plan:\n${plan.executionPlan.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}\nDone when: ${plan.executionPlan.doneWhen}`
@@ -627,22 +628,35 @@ export async function* runAgentWithWorkspaceTools(options: {
           })
       : Promise.resolve()
   const retrievalStartedAt = Date.now()
-  const retrieveP =
+  // A generic request gets no retrieved leads: unrelated project files are not evidence.
+  const retrievalSkipped =
     plan.intent === 'run'
-      ? Promise.resolve(null)
+      ? 'run-intent'
       : task.scope.projectRoot !== task.scope.workspaceRoot
-        ? Promise.resolve(null)
-        : inspectWorkspace(workspacePath, originalUserGoal, 6)
-            .catch(() => null)
-            .finally(() => {
-              retrievalMs = Date.now() - retrievalStartedAt
-            })
+        ? 'nested-project'
+        : task.scope.applicability === 'generic'
+          ? 'generic-request'
+          : null
+  const retrieveP = retrievalSkipped
+    ? Promise.resolve(null)
+    : inspectWorkspace(workspacePath, originalUserGoal, 6)
+        .catch(() => null)
+        .finally(() => {
+          retrievalMs = Date.now() - retrievalStartedAt
+        })
 
   const checkpoint = createCheckpoint(workspacePath)
   pruneOldCheckpoints(workspacePath, 20)
   yield { type: 'checkpoint', checkpointId: checkpoint.id }
 
   const [, retrieved] = await Promise.all([mcpSyncP, retrieveP])
+  appendTaskEvent(task.taskId, 'retrieval', {
+    query: originalUserGoal.slice(0, 2000),
+    skipped: retrievalSkipped,
+    applicability: task.scope.applicability ?? null,
+    results: (retrieved?.reasons ?? []).map((item) => ({ path: item.path, signals: item.signals })),
+    detailChars: retrieved?.detail.length ?? 0
+  })
   workflow.transition('executing')
   logInfo('Agent preflight timings', {
     intent: plan.intent,

@@ -4,6 +4,19 @@ import type { AgentToolsCeiling, ChatIntent } from './settings-schema'
 export type RequestedArtifact =
   'explanation' | 'code-example' | 'design' | 'plan' | 'review' | 'patch' | 'execution-report'
 
+/**
+ * generic: answerable without the project; selected-project: the work lands in
+ * the open project; named-target: the user named a project; unverified: the
+ * project may be relevant, but nothing has shown that it is.
+ */
+export type ScopeApplicability = 'generic' | 'selected-project' | 'named-target' | 'unverified'
+
+/** Languages and frameworks observed in the selected project's manifests. */
+export interface ProjectStack {
+  languages: string[]
+  frameworks: string[]
+}
+
 /** Where the artifact lands. Only workspace and new-project destinations imply edits. */
 export type ArtifactDestination = 'chat' | 'workspace' | 'new-project'
 
@@ -45,6 +58,11 @@ export interface TaskInterpretation {
   frameworks: string[]
   /** Request explicitly forbids workspace edits or commands ("do not edit"). */
   forbidsMutation: boolean
+  /** Observed project stack, compared with the requested one. */
+  projectStack?: ProjectStack | null
+  stackFit?: 'match' | 'mismatch' | 'unknown' | 'not-applicable'
+  /** A requested concept that belongs to another ecosystem, e.g. React error boundaries in Rust. */
+  conceptFit?: { concept: string; ecosystem: string; requestedLanguage: string } | null
   route: { heuristicRule: string; overrides: string[] }
   resolution?: IntentResolution
 }
@@ -64,6 +82,11 @@ export interface TaskContract {
     projectId: string | null
     state: 'resolved' | 'ambiguous' | 'missing'
     candidates: string[]
+    /**
+     * Whether the resolved project is evidence for this request. A resolved root
+     * only means the folder exists; it does not mean it implements the topic.
+     */
+    applicability?: ScopeApplicability
   }
   authority: {
     tools: AgentToolsCeiling

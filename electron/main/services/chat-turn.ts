@@ -36,6 +36,8 @@ export interface ChatTurnInput {
   skillIds?: string[]
   getSecret: (key: string) => string | null
   signal?: AbortSignal
+  /** Diagnostics only: a shorter semantic-resolver deadline. */
+  resolverTimeoutMs?: number
 }
 
 function previousMessages(history: ChatPromptInput['history'] | undefined) {
@@ -96,7 +98,8 @@ export async function resolveChatTurnContract(
         mode: input.mode ?? 'agent',
         history: input.history,
         signal: input.signal,
-        getSecret: input.getSecret
+        getSecret: input.getSecret,
+        timeoutMs: input.resolverTimeoutMs
       })
   const semanticIntent = resolution.intent
   if (semanticIntent !== plan.intent) {

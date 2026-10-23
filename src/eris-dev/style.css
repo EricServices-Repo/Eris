@@ -265,3 +265,26 @@ pre {
   color: #8998b4;
   line-height: 1.7;
 }
+
+.stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #8693ac;
+}
+.stages .defects,
+small.defects,
+.findings .defect {
+  color: #f0a35e;
+}
+small.review,
+.findings .review {
+  color: #c7b65a;
+}
+.findings {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.6;
+}

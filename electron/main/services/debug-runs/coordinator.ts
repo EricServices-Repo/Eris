@@ -773,6 +773,7 @@ async function runCase(
         scenario,
         sandbox,
         route,
+        contract,
         terminal,
         beforeWorkspace: before,
         changedPaths,

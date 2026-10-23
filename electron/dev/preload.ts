@@ -3,6 +3,7 @@ import type { DevApi, DevProgress } from '../../src/shared/eris-dev'
 const api: DevApi = {
   importQuestions: () => ipcRenderer.invoke('dev:import'),
   chooseProject: () => ipcRenderer.invoke('dev:project'),
+  setProjectKind: (kind) => ipcRenderer.invoke('dev:project-kind', kind),
   start: (input) => ipcRenderer.invoke('dev:start', input),
   stop: () => ipcRenderer.invoke('dev:stop'),
   result: (index) => ipcRenderer.invoke('dev:result', index),

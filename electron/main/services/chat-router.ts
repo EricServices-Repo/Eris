@@ -23,6 +23,8 @@ import {
   asksToImplementChanges,
   asksWhatTheProjectDoes,
   asksWorkspaceQuestion,
+  mentionsSourcePath,
+  withoutLeadingScope,
   isConversationFollowUp,
   needsWebLookup,
   chatAgentForTurn
@@ -213,7 +215,7 @@ function classifyIntentRule(
   }
   if (mode === 'ask') return classifyIntentRule(text, 'agent', fileNames)
 
-  const t = text.trim()
+  const t = withoutLeadingScope(text)
   if (!t) return { intent: 'answer', rule: 'empty' }
   // An explicit implementation request can contain command-like nouns ('make all').
   if (
@@ -288,9 +290,10 @@ function classifyIntentRule(
   if (
     /\b(code review|pull request|pr review|security review|risk assessment)\b/i.test(t) ||
     (/\breview\b/i.test(t) &&
-      /\b(pr|diff|patch|commit|regression|smell|project|folder|codebase|workspace|repo|app|code)\b/i.test(
-        t
-      ))
+      (mentionsSourcePath(t) ||
+        /\b(pr|diff|patch|commit|regression|smell|project|folder|codebase|workspace|repo|app|code)\b/i.test(
+          t
+        )))
   ) {
     return { intent: 'review', rule: 'review-wording' }
   }

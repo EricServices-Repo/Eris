@@ -2,8 +2,20 @@ import { isPathInside } from './workspace-fs'
 import { createHash, randomUUID } from 'crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'fs'
 import { basename, join, relative } from 'path'
-import type { IntentResolution, TaskContract } from '../../../src/shared/task-contract'
-import { forbidsMutation, interpretRequest } from '../../../src/shared/task-interpretation'
+import type {
+  IntentResolution,
+  ProjectStack,
+  ScopeApplicability,
+  TaskContract,
+  TaskInterpretation
+} from '../../../src/shared/task-contract'
+import {
+  forbidsMutation,
+  interpretRequest,
+  requestTextForIntent,
+  stackFit
+} from '../../../src/shared/task-interpretation'
+import { asksWorkspaceQuestion } from '../../../src/shared/agent-contract'
 import type { TurnPlan } from '../../../src/shared/settings-schema'
 import { namedProjectTarget } from './agent/project-target'
 
@@ -96,6 +108,78 @@ export function projectRegistry(
   return [...merged.values()]
 }
 
+/** Languages and frameworks named by the project's own manifests. Unknown is not a match. */
+export function detectProjectStack(root: string | null): ProjectStack | null {
+  if (!root) return null
+  const languages = new Set<string>()
+  const frameworks = new Set<string>()
+  const read = (name: string) => {
+    try {
+      return readFileSync(join(root, name), 'utf8').slice(0, 200_000)
+    } catch {
+      return ''
+    }
+  }
+  const pkg = read('package.json')
+  if (pkg) {
+    languages.add(
+      existsSync(join(root, 'tsconfig.json')) || /"typescript"/.test(pkg)
+        ? 'TypeScript'
+        : 'JavaScript'
+    )
+    for (const [name, pattern] of [
+      ['Next.js', /"next"\s*:/],
+      ['React', /"react"\s*:/],
+      ['Vue', /"vue"\s*:/],
+      ['Express', /"express"\s*:/]
+    ] as const)
+      if (pattern.test(pkg)) frameworks.add(name)
+  }
+  const python = read('pyproject.toml') + read('requirements.txt')
+  if (python || existsSync(join(root, 'manage.py'))) {
+    languages.add('Python')
+    if (/django/i.test(python) || existsSync(join(root, 'manage.py'))) frameworks.add('Django')
+    if (/\bflask\b/i.test(python)) frameworks.add('Flask')
+    if (/fastapi/i.test(python)) frameworks.add('FastAPI')
+  }
+  if (existsSync(join(root, 'Cargo.toml'))) languages.add('Rust')
+  if (existsSync(join(root, 'go.mod'))) languages.add('Go')
+  const composer = read('composer.json')
+  if (composer) {
+    languages.add('PHP')
+    if (/laravel/i.test(composer)) frameworks.add('Laravel')
+  }
+  const jvm = read('pom.xml') + read('build.gradle') + read('build.gradle.kts')
+  if (jvm) {
+    languages.add(/kotlin/i.test(jvm) ? 'Kotlin' : 'Java')
+    if (/spring/i.test(jvm)) frameworks.add('Spring')
+  }
+  const gemfile = read('Gemfile')
+  if (gemfile) {
+    languages.add('Ruby')
+    if (/\brails\b/.test(gemfile)) frameworks.add('Rails')
+  }
+  return languages.size || frameworks.size
+    ? { languages: [...languages], frameworks: [...frameworks] }
+    : null
+}
+
+/** Resolution says the folder exists; applicability says whether it is evidence for this request. */
+function scopeApplicability(
+  text: string,
+  interpretation: TaskInterpretation,
+  namedTarget: boolean,
+  hasProject: boolean
+): ScopeApplicability {
+  if (namedTarget) return 'named-target'
+  if (interpretation.destination !== 'chat') return 'selected-project'
+  if (!hasProject) return 'generic'
+  const generic = ['code-example', 'design', 'explanation'].includes(interpretation.artifact)
+  return generic && !asksWorkspaceQuestion(requestTextForIntent(text) || text)
+    ? 'generic'
+    : 'unverified'
+}
+
 export function createTaskContract(input: {
   taskId?: string
   threadId?: string | null
@@ -185,16 +269,26 @@ export function createTaskContract(input: {
             : 'answer',
     canEdit
   )
-  const interpretation = {
-    ...interpretRequest({
-      text: input.text,
-      intent: input.plan.intent,
-      canEdit,
-      revision: 1,
-      route: input.plan.routeTrace
-    }),
+  const reading = interpretRequest({
+    text: input.text,
+    intent: input.plan.intent,
+    canEdit,
+    revision: 1,
+    route: input.plan.routeTrace
+  })
+  const projectStack = detectProjectStack(selected)
+  const interpretation: TaskInterpretation = {
+    ...reading,
+    projectStack,
+    stackFit: stackFit(reading, projectStack),
     ...(input.resolution ? { resolution: input.resolution } : {})
   }
+  const applicability = scopeApplicability(
+    input.text,
+    interpretation,
+    Boolean(target && selected && !inheritedRoot),
+    Boolean(selected)
+  )
   return {
     version: 2,
     taskId: input.taskId ?? randomUUID(),
@@ -210,7 +304,8 @@ export function createTaskContract(input: {
       state: selected ? 'resolved' : matches.length > 1 ? 'ambiguous' : 'missing',
       candidates: (selected ? [] : registry)
         .map((project) => (root ? relative(root, project.root) || '.' : project.name))
-        .slice(0, 30)
+        .slice(0, 30),
+      applicability
     },
     authority: {
       tools: policy,

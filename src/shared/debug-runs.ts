@@ -92,9 +92,37 @@ export const DebugScenarioSchema = z.object({
       }),
     maxToolErrors: z.number().int().nonnegative().optional(),
     terminal: z.enum(['complete', 'incomplete', 'error']).optional(),
+    /** Acceptable requested artifacts. Several routes may deliver the same artifact. */
+    artifact: z
+      .array(
+        z.enum([
+          'explanation',
+          'code-example',
+          'design',
+          'plan',
+          'review',
+          'patch',
+          'execution-report'
+        ])
+      )
+      .min(1)
+      .optional(),
+    /** Intents that would change the requested artifact or authority. */
+    forbiddenIntents: z.array(ChatIntentSchema).default([]),
     /** Effects the scenario expects Eris to refuse. */
     blockedEffects: z.array(BlockedEffectKindSchema).default([])
   }),
+  /**
+   * Who set the expectation. Labels come from the request and fixture, never from
+   * the router under test; uncertain cases stay unlabeled.
+   */
+  label: z
+    .object({
+      source: z.enum(['human-reviewed', 'review-derived']),
+      reference: z.string().optional(),
+      rationale: z.string().min(1)
+    })
+    .optional(),
   script: z
     .object({
       agent: z.array(ScriptedModelTurnSchema).default([]),
@@ -179,6 +207,7 @@ export type DebugFailureStage = (typeof DEBUG_FAILURE_STAGES)[number]
 export type DebugFailureCategory =
   | 'fixture_invalid'
   | 'intent_mismatch'
+  | 'artifact_mismatch'
   | 'agent_mismatch'
   | 'provider_error'
   | 'script_exhausted'

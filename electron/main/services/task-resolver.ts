@@ -9,7 +9,8 @@ import {
   asksForPlan,
   asksForVerification,
   asksToImplementChanges,
-  needsWebLookup
+  needsWebLookup,
+  withoutLeadingScope
 } from '../../../src/shared/agent-contract'
 import { forbidsMutation, requestTextForIntent } from '../../../src/shared/task-interpretation'
 
@@ -53,7 +54,7 @@ export interface ResolveTaskInput {
  * Feature nouns (“test data”, “checks that verify”) are excluded by the helpers themselves.
  */
 export function resolverBypassRule(text: string, fallback: ChatIntent): string | null {
-  const t = requestTextForIntent(text) || text
+  const t = withoutLeadingScope(requestTextForIntent(text) || text)
   if (fallback === 'capability') return 'capability-question'
   if (needsWebLookup(t)) return 'web-lookup'
   if (/^(?:please\s+)?review\b/i.test(t) && ['review', 'explore'].includes(fallback))
@@ -125,12 +126,10 @@ export async function resolveTaskDecision(input: ResolveTaskInput): Promise<Inte
           {
             role: 'user',
             content: JSON.stringify({
-              history: input.history
-                ?.slice(-6)
-                .map((message) => ({
-                  role: message.role,
-                  content: message.content.slice(0, 1200)
-                })),
+              history: input.history?.slice(-6).map((message) => ({
+                role: message.role,
+                content: message.content.slice(0, 1200)
+              })),
               request: input.text
             })
           }
