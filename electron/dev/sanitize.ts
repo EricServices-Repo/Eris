@@ -47,11 +47,20 @@ export class CaptureSanitizer {
   text(value: string): string {
     let out = value
     for (const { kind, pattern } of SECRET_PATTERNS) {
-      out = out.replace(pattern, (match: string, prefix?: string, secret?: string) =>
-        kind === 'assigned-secret' && prefix !== undefined && secret !== undefined
-          ? `${prefix}${this.token(kind, secret)}`
-          : this.token(kind, match)
-      )
+      // Later patterns must not reinterpret earlier redaction tokens as secrets.
+      // Keep tokens intact, including when sanitizing an already-clean export.
+      out = out
+        .split(/(\[REDACTED:[a-z-]+:[0-9a-f]{8}\])/g)
+        .map((part, index) =>
+          index % 2
+            ? part
+            : part.replace(pattern, (match: string, prefix?: string, secret?: string) =>
+                kind === 'assigned-secret' && prefix !== undefined && secret !== undefined
+                  ? `${prefix}${this.token(kind, secret)}`
+                  : this.token(kind, match)
+              )
+        )
+        .join('')
     }
     for (const root of [...(this.options.workspaceRoots ?? [])].sort(
       (a, b) => b.length - a.length

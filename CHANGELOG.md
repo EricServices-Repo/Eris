@@ -2,7 +2,8 @@
 
 ## 0.4.12 — 2026-10-23
 
-- Desktop rebuild.
+- Upgrade the build and test toolchain, patch the cloud worker's Git dependency chain, and audit both dependency trees in CI.
+- Fix diagnostic export redaction and artifact comparisons found during release validation.
 
 ## 0.4.11 — 2026-10-23
 

@@ -229,6 +229,7 @@ export function readCaptureRecord(record: Record<string, unknown>): DevResult {
     },
     agent: record.agent as string | undefined,
     intent: record.intent as string | undefined,
+    artifact: typeof record.artifact === 'string' ? record.artifact : undefined,
     calls: Number(record.calls ?? 0),
     findings: { defect: 0, review: 0 },
     findingIds: [],

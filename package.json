@@ -34,6 +34,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "npm run typecheck && npm run lint && npm test",
+    "audit:security": "npm audit --audit-level=low && npm audit --prefix cloud-agent --audit-level=low",
     "check:client": "npm run typecheck && vitest run tests/chat-database.test.ts tests/document-store.test.ts tests/code-index-patch.test.ts tests/workspace-watcher.test.ts && npm run build && node scripts/check-client-workers.mjs && vite build --config checks/vite.config.ts && electron scripts/check-client-renderer.cjs",
     "cloud-agent:build": "npm run build --prefix cloud-agent",
     "cloud-agent:docker": "docker build -t eris-cloud-agent:latest ./cloud-agent",
@@ -65,7 +66,7 @@
     "@xterm/xterm": "^6.0.0",
     "electron": "^44.7.0",
     "electron-builder": "^26.17.0",
-    "electron-vite": "^2.3.0",
+    "electron-vite": "^3.1.0",
     "eslint": "^9.39.5",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.13.0",
@@ -77,8 +78,8 @@
     "tree-sitter-wasms": "^0.1.13",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.71.1",
-    "vite": "^5.4.11",
-    "vitest": "^3.2.7"
+    "vite": "^6.4.5",
+    "vitest": "^4.1.12"
   },
   "build": {
     "appId": "app.eris.ide",

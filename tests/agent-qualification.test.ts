@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -11,7 +11,7 @@ import { join } from 'path'
 
 import { gradeCodeExample } from '../src/shared/code-grading'
 import { rubricForTopic, TOPIC_RUBRICS } from '../src/shared/topic-rubrics'
-import { evaluateScenario } from '../electron/main/services/debug-runs/oracle'
+import { evaluateScenario, type OracleInput } from '../electron/main/services/debug-runs/oracle'
 import {
   caseOutcome,
   coverageOf,
@@ -104,7 +104,7 @@ describe('AG-072 claims need observed evidence', () => {
         ...expect
       }
     }) as DebugScenario
-  const input = (answer: string, changedPaths: string[], verifications?: Array<{ ok: boolean; skipped: boolean }>) => ({
+  const input = (answer: string, changedPaths: string[], verifications?: Array<{ ok: boolean; skipped: boolean }>): OracleInput => ({
     scenario: scenario(),
     sandbox: tmpdir(),
     route: {
@@ -119,7 +119,7 @@ describe('AG-072 claims need observed evidence', () => {
       reason: '',
       chatModel: '',
       toolsModel: ''
-    } as const,
+    },
     terminal: 'complete' as const,
     beforeWorkspace: {},
     changedPaths,
@@ -282,6 +282,7 @@ describe('AG-075 sanitized exports', () => {
     expect(tokens).toHaveLength(2)
     expect(new Set(tokens).size).toBe(1)
     expect(sanitizer.manifest().replacements).toMatchObject({ 'api-key': 2, 'home-path': 1 })
+    expect(sanitizer.value(clean)).toEqual(clean)
   })
 })
 
@@ -321,7 +322,7 @@ describe('AG-076 resumable runs', () => {
     const captures = tempDir()
     const runId = '00000000-0000-4000-8000-000000000001'
     const dir = join(captures, runId)
-    require('fs').mkdirSync(dir)
+    mkdirSync(dir)
     writeManifest(dir, manifest(runId))
     writeProgress(dir, { state: 'running', completed: 1, updatedAt: '', rewritten: [], resumedAt: [] })
     expect(markInterruptedRuns(captures)).toBe(1)
