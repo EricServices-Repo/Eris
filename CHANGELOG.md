@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.13 — 2026-10-23
+
+- Desktop rebuild with patched dependencies and diagnostic fixes.
+
 ## 0.4.12 — 2026-10-23
 
 - Upgrade the build and test toolchain, patch the cloud worker's Git dependency chain, and audit both dependency trees in CI.
