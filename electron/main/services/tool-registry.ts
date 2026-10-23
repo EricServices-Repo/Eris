@@ -543,6 +543,8 @@ export function mcpToolsToOpenAI(
 }
 
 const WEB_TOOLS = new Set(['web_search', 'web_open'])
+/** Whole-project orientation and repository-state tools; a generic request does not need them. */
+const PROJECT_ORIENTATION_TOOLS = new Set(['tree', 'list_dir', 'git_status', 'git_diff'])
 
 /** Why a built-in tool is or is not in the request, with a stable reason. */
 export type ToolCapabilityStatus = 'available' | 'restricted' | 'deferred' | 'disabled' | 'blocked'
@@ -571,6 +573,11 @@ export function resolveToolCapabilities(input: {
   discovered: ReadonlySet<string>
   /** The public web is irrelevant to this task: keep web tools discoverable, not inline. */
   deferWeb?: boolean
+  /**
+   * The open project is not evidence for this task. Policy is the upper bound;
+   * relevance picks the subset, so orientation tools stay discoverable, not inline.
+   */
+  deferProjectOrientation?: boolean
 }): ToolCapability[] {
   return COMPOSER_OPENAI_TOOLS.map((definition) => {
     const name = definition.function.name
@@ -598,6 +605,12 @@ export function resolveToolCapabilities(input: {
       return as('deferred', 'search_tools')
     if (input.deferWeb && WEB_TOOLS.has(name) && !input.discovered.has(name))
       return as('deferred', 'task-irrelevant:web')
+    if (
+      input.deferProjectOrientation &&
+      PROJECT_ORIENTATION_TOOLS.has(name) &&
+      !input.discovered.has(name)
+    )
+      return as('deferred', 'task-irrelevant:generic-scope')
     return as('available', input.discovered.has(name) ? 'discovered' : 'core')
   })
 }

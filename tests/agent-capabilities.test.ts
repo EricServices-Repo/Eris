@@ -448,6 +448,7 @@ describe('agent loop capability behavior', () => {
       (model.requests.at(-1)?.messages as Array<{ content: string }>)[0]?.content
     )
     expect(system).not.toContain('Read the matching files')
-    expect(system).toContain('workspace files cannot be read in this turn')
+    // LR-001: the workflow is built for the generic scope, not linted after the fact.
+    expect(system).toContain('without citing the open project')
   })
 })

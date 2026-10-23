@@ -9,6 +9,7 @@ import type {
 import {
   asksForCodeDestination,
   asksForCodeExample,
+  asksForDesignAnswer,
   asksForPlan,
   asksForRecommendations
 } from './agent-contract'
@@ -312,9 +313,7 @@ export function asksForTests(text: string): boolean {
 
 /** Schema, architecture or API design — an answer with structure and tradeoffs. */
 export function asksForDesign(text: string): boolean {
-  return /\b(?:design|architect|model)\s+(?:the\s+|a\s+|an\s+)?(?:data\s+model|schema|api|architecture|system)\b|\bhow\s+would\s+you\s+(?:design|structure|architect|approach)\b|\bwhat(?:'s| is)\s+the\s+best\s+way\b/i.test(
-    requestTextForIntent(text)
-  )
+  return asksForDesignAnswer(requestTextForIntent(text))
 }
 
 /** Greenfield: “build a new app here”, “scaffold a project”. */
@@ -333,17 +332,141 @@ export function requestedArtifact(
   intent: ChatIntent,
   canEdit: boolean
 ): { artifact: RequestedArtifact; destination: ArtifactDestination } {
+  const { artifact, destination } = artifactDecision(text, intent, canEdit)
+  return { artifact, destination }
+}
+
+/** The artifact decision with the rule that made it and the readings it rejected. */
+export function artifactDecision(
+  text: string,
+  intent: ChatIntent,
+  canEdit: boolean
+): {
+  artifact: RequestedArtifact
+  destination: ArtifactDestination
+  rule: string
+  rejected: string[]
+} {
   const t = requestTextForIntent(text)
-  const chat = (artifact: RequestedArtifact) => ({ artifact, destination: 'chat' as const })
-  if (intent === 'review') return chat('review')
-  if (intent === 'verify' || intent === 'run') return chat('execution-report')
+  const rejected: string[] = []
+  const chat = (artifact: RequestedArtifact, rule: string) => ({
+    artifact,
+    destination: 'chat' as const,
+    rule,
+    rejected
+  })
+  if (intent === 'review') return chat('review', 'intent-review')
+  if (intent === 'verify' || intent === 'run') return chat('execution-report', `intent-${intent}`)
   if (intent === 'edit' && canEdit)
-    return { artifact: 'patch', destination: asksForNewProject(t) ? 'new-project' : 'workspace' }
-  if (asksForCodeExample(t) && !asksForCodeDestination(t)) return chat('code-example')
-  if (intent === 'plan') return chat(asksForPlan(t) || !asksForDesign(t) ? 'plan' : 'design')
-  if (asksForRecommendations(t)) return chat('review')
-  if (asksForDesign(t)) return chat('design')
-  return chat('explanation')
+    return {
+      artifact: 'patch',
+      destination: asksForNewProject(t) ? 'new-project' : 'workspace',
+      rule: 'intent-edit-with-authority',
+      rejected
+    }
+  if (intent === 'edit') rejected.push('patch:no-edit-authority')
+  if (asksForCodeExample(t)) return chat('code-example', 'code-example-request')
+  rejected.push(
+    asksForCodeDestination(t) ? 'code-example:named-destination' : 'code-example:no-example-request'
+  )
+  if (intent === 'plan') {
+    if (asksForPlan(t)) return chat('plan', 'explicit-plan')
+    if (asksForDesign(t)) return chat('design', 'plan-intent-design-wording')
+    return chat('plan', 'intent-plan')
+  }
+  if (asksForRecommendations(t)) return chat('review', 'recommendations')
+  if (asksForDesign(t)) return chat('design', 'design-wording')
+  rejected.push('design:no-design-wording')
+  return chat('explanation', 'default-explanation')
+}
+
+/** Where a requirement phrase sits in the original request, for evidence-linked obligations. */
+function sourceOf(text: string, phrase: string): TaskObligation['source'] {
+  const start = text.toLowerCase().indexOf(phrase.toLowerCase())
+  return start >= 0
+    ? { text: text.slice(start, start + phrase.length), start, end: start + phrase.length }
+    : { text: phrase, start: -1, end: -1 }
+}
+
+/**
+ * Several requested versions of one deliverable: “both a simple and a more robust
+ * version”, “two approaches”. Each becomes its own component.
+ */
+export function requestedComponents(
+  text: string
+): Array<{ component: string; label: string; phrase: string }> {
+  const t = requestTextForIntent(text)
+  const pair = t.match(
+    /\b(?:both\s+)?(?:an?\s+)?(simple|basic|minimal|naive|quick)\s+(?:one\s+|version\s+|implementation\s+)?(?:and|vs\.?|versus|or)\s+(?:an?\s+)?(?:more\s+)?(robust|production(?:-ready|\s+ready)?|advanced|complete|full|hardened)\b(?:\s+(?:versions?|implementations?|ones?|variants?))?/i
+  )
+  if (pair) {
+    const out = [
+      { component: 'simple', label: `${pair[1]!.toLowerCase()} version`, phrase: pair[0] },
+      { component: 'robust', label: `${pair[2]!.toLowerCase()} version`, phrase: pair[0] }
+    ]
+    const compare = t.match(
+      /\b(?:compare|comparison|difference|differences|tradeoffs?|trade-offs?|when\s+to\s+use|which\s+(?:one\s+)?to\s+(?:use|choose|pick))\b/i
+    )
+    if (compare)
+      out.push({
+        component: 'comparison',
+        label: 'comparison and selection guidance',
+        phrase: compare[0]
+      })
+    return out
+  }
+  const count = t.match(
+    /\b(two|three|2|3)\s+(?:different\s+|alternative\s+)?(approaches|alternatives|ways|versions|options|implementations|variants)\b/i
+  )
+  if (count) {
+    const n = { two: 2, three: 3, '2': 2, '3': 3 }[count[1]!.toLowerCase() as 'two']
+    return Array.from({ length: n }, (_, index) => ({
+      component: `alternative-${index + 1}`,
+      label: `alternative ${index + 1} of ${n}`,
+      phrase: count[0]
+    }))
+  }
+  return []
+}
+
+/** Testing is discussed for a coverage request, and written only when code is produced. */
+function asksForCoverageDiscussion(text: string): boolean {
+  return /\b(?:test\s+coverage|well[\s-]tested|testable|testing\s+strategy|how\s+(?:to|would\s+you|should\s+i)\s+test)\b/i.test(
+    requestTextForIntent(text)
+  )
+}
+
+const MAX_CONSTRAINTS = 3
+/** Effects already handled by effectConstraints; “without running tests” is not a feature. */
+const EFFECT_VERB =
+  /^(?:edit|chang|modif|touch|writ|apply|delet|renam|commit|push|deploy|publish|run|execut|launch|start|test|build)/i
+
+/**
+ * Explicit behavior and quality clauses (“so errors are explicit”, “that support
+ * retry”, “without downtime”), kept as the user's exact phrase. Topic names never
+ * become requirements. Clauses past the bound are counted, not dropped silently.
+ */
+export function requestConstraints(text: string): { phrases: string[]; unparsed: number } {
+  const t = requestTextForIntent(text)
+  const found: string[] = []
+  const pattern =
+    /\b(?:so\s+(?:that\s+)?|such\s+that\s+|that\s+(?:supports?|handles?|works?\s+with|scales?\s+to|survives?)\s+|which\s+(?:supports?|handles?)\s+|following\s+|without\s+|while\s+(?:keeping|maintaining|avoiding)\s+|ensuring\s+|making\s+sure\s+)([^.?!;,]{3,120})/gi
+  for (const match of t.matchAll(pattern)) {
+    const lead = match[0].slice(0, match[0].length - match[1]!.length).trim()
+    if (/^without$/i.test(lead) && EFFECT_VERB.test(match[1]!.trim())) continue
+    // A subordinate “so” that asks a question (“so what is X?”) is not a requirement.
+    if (/^so$/i.test(lead) && /^(?:what|how|why|which|is|are|do|does)\b/i.test(match[1]!.trim()))
+      continue
+    // “without downtime with Redis” — the requirement ends where the topic resumes.
+    const phrase = /^(?:without|following)$/i.test(lead)
+      ? match[0].replace(/\s+(?:with|using|in|for|on|via)\s[\s\S]*$/i, '')
+      : match[0]
+    found.push(phrase.trim())
+  }
+  return {
+    phrases: found.slice(0, MAX_CONSTRAINTS),
+    unparsed: Math.max(0, found.length - MAX_CONSTRAINTS)
+  }
 }
 
 /** Ordered, separately checkable obligations. Unstated features are never added. */
@@ -354,17 +477,48 @@ export function requestObligations(
 ): TaskObligation[] {
   const stack = language ? `${language} ` : ''
   const out: TaskObligation[] = []
-  const add = (kind: TaskObligation['kind'], value: string) =>
-    out.push({ id: `${kind}-${out.length + 1}`, kind, text: value })
+  const add = (
+    kind: TaskObligation['kind'],
+    value: string,
+    extra: Pick<TaskObligation, 'component' | 'source'> = {}
+  ) =>
+    out.push({
+      id: `${extra.component ? `${kind}-${extra.component}` : kind}-${out.length + 1}`,
+      kind,
+      text: value,
+      ...extra
+    })
+  const components =
+    artifact === 'code-example' || artifact === 'patch' ? requestedComponents(text) : []
+  const raw = text
   switch (artifact) {
     case 'code-example':
-      add(
-        'implementation',
-        `Include a complete ${stack}example of the requested behavior in the reply.`
-      )
+      if (components.length) {
+        for (const part of components)
+          add(
+            part.component === 'comparison' ? 'answer' : 'implementation',
+            part.component === 'comparison'
+              ? 'Compare the versions and say when to choose each.'
+              : `Include a complete ${stack}${part.label} of the requested behavior, distinct from the other versions.`,
+            { component: part.component, source: sourceOf(raw, part.phrase) }
+          )
+      } else
+        add(
+          'implementation',
+          `Include a complete ${stack}example of the requested behavior in the reply.`
+        )
       break
     case 'patch':
-      add('implementation', 'Apply the requested behavior to the workspace files.')
+      if (components.length) {
+        for (const part of components)
+          add(
+            part.component === 'comparison' ? 'answer' : 'implementation',
+            part.component === 'comparison'
+              ? 'Compare the versions and say when to choose each.'
+              : `Apply the ${part.label} of the requested behavior to the workspace files.`,
+            { component: part.component, source: sourceOf(raw, part.phrase) }
+          )
+      } else add('implementation', 'Apply the requested behavior to the workspace files.')
       break
     case 'design':
       add('design', 'Describe the design with its data structures, interfaces, and tradeoffs.')
@@ -381,12 +535,32 @@ export function requestObligations(
     default:
       add('answer', 'Answer the question directly.')
   }
+  if (artifact !== 'review' && artifact !== 'execution-report') {
+    const stated = requestConstraints(text)
+    for (const phrase of stated.phrases)
+      add('constraint', `Honor the stated requirement “${phrase}”.`, {
+        source: sourceOf(raw, phrase)
+      })
+    if (stated.unparsed)
+      add(
+        'constraint',
+        `The request states ${stated.unparsed} further requirement(s) beyond these; honor them as written.`
+      )
+  }
   if (asksForTests(text) && (artifact === 'code-example' || artifact === 'patch'))
     add(
       'tests',
       artifact === 'patch'
         ? 'Add tests for the requested behavior and report their run result.'
         : 'Include tests for the requested behavior in the reply.'
+    )
+  else if (
+    (asksForTests(text) || asksForCoverageDiscussion(text)) &&
+    (artifact === 'plan' || artifact === 'design' || artifact === 'explanation')
+  )
+    add(
+      'tests',
+      'Describe the testing strategy: test boundaries, fixtures, and failure modes. Do not claim any test was written or run.'
     )
   return out
 }
@@ -398,10 +572,12 @@ export function interpretRequest(input: {
   revision: number
   route?: TaskInterpretation['route']
 }): TaskInterpretation {
-  const { artifact, destination } = requestedArtifact(input.text, input.intent, input.canEdit)
+  const decision = artifactDecision(input.text, input.intent, input.canEdit)
+  const { artifact, destination } = decision
   const roles = languageRoles(input.text)
   const language = roles.target
   const constraints = effectConstraints(input.text)
+  const unparsed = requestConstraints(input.text).unparsed
   return {
     revision: input.revision,
     artifact,
@@ -414,7 +590,13 @@ export function interpretRequest(input: {
     forbidsMutation: constraints.edit,
     ...(constraints.trace.length ? { constraints } : {}),
     conceptFit: conceptFit(requestTextForIntent(input.text), language),
-    route: input.route ?? { heuristicRule: 'unknown', overrides: [] }
+    route: input.route ?? { heuristicRule: 'unknown', overrides: [] },
+    trace: {
+      version: 1,
+      artifactRule: decision.rule,
+      rejected: decision.rejected,
+      ...(unparsed ? { unparsedRequirements: unparsed } : {})
+    }
   }
 }
 
@@ -427,8 +609,13 @@ export function artifactResponseContract(
   applicability?: ScopeApplicability
 ): string {
   const stack = [interpretation.language, ...interpretation.frameworks].filter(Boolean).join(', ')
+  // A generic request is not about the open project, so its stack is not mentioned at all.
   const inStack =
-    (stack ? ` Use ${stack} as requested, even if the open project uses another stack.` : '') +
+    (stack
+      ? applicability === 'generic'
+        ? ` Use ${stack} as requested.`
+        : ` Use ${stack} as requested, even if the open project uses another stack.`
+      : '') +
     (interpretation.sourceLanguage && interpretation.language
       ? ` Convert from ${interpretation.sourceLanguage} to ${interpretation.language}; the result is ${interpretation.language}, not ${interpretation.sourceLanguage}.`
       : '') +
@@ -446,9 +633,11 @@ export function artifactResponseContract(
       'RESPONSE CONTRACT — execution report. State each check or command run and its observed result; never report an unobserved pass.',
     explanation: `RESPONSE CONTRACT — explanation. Answer the question directly at the depth it asks for.${inStack}`
   }
-  const obligations = interpretation.obligations.length
-    ? `\nObligations, each checked separately:\n${interpretation.obligations.map((o, i) => `${i + 1}. ${o.text}`).join('\n')}`
-    : ''
+  // One base obligation restates the contract line above; list them only when there are several.
+  const obligations =
+    interpretation.obligations.length > 1
+      ? `\nObligations, each checked separately:\n${interpretation.obligations.map((o, i) => `${i + 1}. ${o.text}`).join('\n')}`
+      : ''
   const forbids = constraintLines(interpretation)
   const scope = scopeAndStackGuidance(interpretation, applicability)
   return lines[interpretation.artifact] + obligations + forbids + (scope ? `\n${scope}` : '')
@@ -542,9 +731,18 @@ export function scopeAndStackGuidance(
   const lines: string[] = []
   if (applicability === 'generic')
     lines.push(
-      'This request does not depend on the open project. Do not cite its files as implementing the request or as evidence for it.'
+      'This request does not depend on the open project. Answer from the conversation and state any assumptions. Do not cite its files as evidence for it.'
     )
-  if (interpretation.stackFit === 'mismatch' && interpretation.projectStack) {
+  else if (applicability === 'unverified')
+    lines.push(
+      'The open project may or may not be relevant. Inspect it only if the answer depends on it; otherwise answer generally and state assumptions.'
+    )
+  // The open project's stack only matters when the project is part of the task.
+  if (
+    applicability !== 'generic' &&
+    interpretation.stackFit === 'mismatch' &&
+    interpretation.projectStack
+  ) {
     const project = [
       ...interpretation.projectStack.languages,
       ...interpretation.projectStack.frameworks
