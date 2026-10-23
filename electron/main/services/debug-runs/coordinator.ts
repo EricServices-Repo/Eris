@@ -1,4 +1,5 @@
 import { interpretationOf, type TaskContract } from '../../../../src/shared/task-contract'
+import { caseOutcome, coverageOf, evaluationOf, outcomeClass } from './evaluation'
 import { randomUUID } from 'crypto'
 import { mkdtempSync, realpathSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -358,6 +359,7 @@ async function executeRun(plan: RunPlan, deps: DebugRunDeps): Promise<DebugRunSu
     throw error
   }
   emit({ type: 'start', seq: ++seq, summary: { ...summary } })
+  const results: DebugCaseResult[] = []
   try {
     for (const [index, spec] of plan.cases.entries()) {
       if (controller.signal.aborted) break
@@ -373,6 +375,13 @@ async function executeRun(plan: RunPlan, deps: DebugRunDeps): Promise<DebugRunSu
       )
       appendCaseResult(result)
       if (plan.captureResponses) appendRecordedResponses(runId, responses)
+      results.push(result)
+      const outcome = result.outcomeClass ?? 'ungraded'
+      summary.outcomes = { ...summary.outcomes, [outcome]: (summary.outcomes?.[outcome] ?? 0) + 1 }
+      summary.coverage = coverageOf(
+        plan.cases.map((item) => item.scenario),
+        results
+      )
       summary.completed += 1
       if (result.status === 'passed') summary.passed += 1
       else if (result.status === 'failed') summary.failed += 1
@@ -473,6 +482,10 @@ async function runCase(
   const blocked: Array<{ kind: BlockedEffectKind; detail: string }> = []
   const warnings: string[] = []
   const verifyQueue = [...spec.verify]
+  // Every verification result the harness returned, so pass claims can be checked.
+  const verifications: Array<{ ok: boolean; skipped: boolean }> = []
+  // Changed files after the case, kept after the sandbox is removed.
+  const artifacts: DebugRecordedResponse[] = []
   const sink = (call: DebugModelCall, reply: RecordedReply) => {
     calls.push(call)
     replies.push(reply)
@@ -505,6 +518,7 @@ async function runCase(
     },
     verify: ({ preferTypecheck }) => {
       const next = verifyQueue.shift()
+      verifications.push({ ok: next?.ok ?? true, skipped: !next })
       if (!next) {
         scope.onBlockedEffect('verify', 'No scripted verification result; verify was skipped')
         return {
@@ -521,6 +535,22 @@ async function runCase(
         `${next.command}\n${next.detail}`
       )
       return { ok: next.ok, command: next.command, detail: next.detail }
+    },
+    // Delegation and recovery decisions are evidence; keep them in the timeline.
+    onTaskEvent: (event) => {
+      if (event.type === 'delegation') {
+        const data = event.data as { agentId?: string; status?: string }
+        timeline.add('status', 'tool_execution', `delegation ${data.agentId}: ${data.status}`)
+      } else if (event.type === 'reroute' || event.type === 'reroute-refused') {
+        const data = event.data as { from?: string; to?: string; reason?: string }
+        timeline.add(
+          'recovery',
+          'tool_protocol',
+          event.type === 'reroute'
+            ? `re-route ${data.from} → ${data.to}; task, project and authority kept`
+            : `re-route refused: ${data.reason}`
+        )
+      }
     }
   }
   const deadline = createTaskDeadline(runSignal, scenario.timeoutMs)
@@ -559,6 +589,7 @@ async function runCase(
   let lastExpect = scenario.expect
   let turnBefore = null as Record<string, string> | null
   let turnChanged: string[] = []
+  let turnVerificationStart = 0
   const fail = (stage: DebugFailureStage, category: DebugFailureCategory, detail: string) => {
     failure = { stage, category, detail: redactDiagnostic(detail, sandbox) }
     timeline.add('error', stage, `${category}: ${detail}`)
@@ -568,6 +599,23 @@ async function runCase(
     if (!sandbox || !before) return
     const after = snapshotWorkspace(sandbox)
     changedPaths = changedFiles(before, after)
+    const prior = before
+    artifacts.splice(
+      0,
+      artifacts.length,
+      ...changedPaths.map((path): DebugRecordedResponse => {
+        const content = after[path]
+        return {
+          caseId,
+          kind: 'artifact',
+          path,
+          beforeHash: prior[path] === undefined ? null : shortHash(prior[path]!),
+          afterHash: content === undefined ? null : shortHash(content),
+          after: content === undefined ? null : redactDiagnostic(content, sandbox, 20_000),
+          truncated: content !== undefined && content.length > 20_000
+        }
+      })
+    )
     diffHash = changedPaths.length
       ? shortHash(changedPaths.map((path) => `${path}:${shortHash(after[path] ?? '')}`).join('\n'))
       : null
@@ -590,6 +638,7 @@ async function runCase(
     const stopped = await runInDiagnosticsScope(scope, async () => {
       for (const [turnIndex, turn] of turns.entries()) {
         lastExpect = turn.expect
+        turnVerificationStart = verifications.length
         turnBefore = snapshotWorkspace(caseSandbox)
         answer = ''
         terminal = null
@@ -831,7 +880,8 @@ async function runCase(
               toolErrors,
               toolFailureCodes,
               toolsUsed: [...toolsUsed],
-              blockedEffects: blocked.map((item) => item.kind)
+              blockedEffects: blocked.map((item) => item.kind),
+              verifications: verifications.slice(turnVerificationStart)
             }).map((item) => ({ ...item, name: `turn ${turnIndex + 1}: ${item.name}` }))
           )
         }
@@ -863,7 +913,8 @@ async function runCase(
         toolErrors,
         toolFailureCodes,
         toolsUsed: [...toolsUsed],
-        blockedEffects: blocked.map((item) => item.kind)
+        blockedEffects: blocked.map((item) => item.kind),
+        verifications: verifications.slice(multiTurn ? turnVerificationStart : 0)
       })
       checks = [
         ...earlierChecks,
@@ -968,9 +1019,13 @@ async function runCase(
     startedAt: new Date(started).toISOString(),
     finishedAt: new Date(finished).toISOString()
   }
+  result.outcome = caseOutcome(result)
+  result.outcomeClass = outcomeClass(result)
+  result.evaluation = evaluationOf(scenario, result)
   const responses: DebugRecordedResponse[] = [
     ...replies.map((reply) => ({ caseId, kind: 'model' as const, ...reply })),
-    { caseId, kind: 'answer', text: answer }
+    { caseId, kind: 'answer', text: answer },
+    ...artifacts
   ]
   return { result, responses }
 }

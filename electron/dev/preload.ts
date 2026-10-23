@@ -7,7 +7,10 @@ const api: DevApi = {
   start: (input) => ipcRenderer.invoke('dev:start', input),
   stop: () => ipcRenderer.invoke('dev:stop'),
   result: (index) => ipcRenderer.invoke('dev:result', index),
-  exportRun: () => ipcRenderer.invoke('dev:export'),
+  exportRun: (options) => ipcRenderer.invoke('dev:export', options),
+  listRuns: () => ipcRenderer.invoke('dev:runs'),
+  resumeRun: (runId) => ipcRenderer.invoke('dev:resume', runId),
+  compareWith: () => ipcRenderer.invoke('dev:compare'),
   onProgress: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: DevProgress) => listener(progress)
     ipcRenderer.on('dev:progress', handler)

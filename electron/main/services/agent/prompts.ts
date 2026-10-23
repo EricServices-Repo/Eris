@@ -154,7 +154,8 @@ export function isReadOnlyChat(
   mode?: 'ask' | 'agent'
 ): boolean {
   if (plan.intent === 'verify') return mode === 'ask'
-  if (plan.intent === 'edit' || plan.intent === 'run') return false
+  // Ask mode cannot mutate: an edit or run request there is answered by describing it.
+  if (plan.intent === 'edit' || plan.intent === 'run') return mode === 'ask'
   return plan.toolPolicy === 'read' || plan.intent === 'explore' || plan.intent === 'review'
 }
 export function intentPlaybook(intent: ChatIntent | string, greenfield: boolean): string {
