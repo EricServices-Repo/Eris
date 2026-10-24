@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.16 — 2026-10-24
+
+- Desktop rebuild with task lifecycle, credential storage, cloud isolation, and release validation fixes.
+
 ## 0.4.15 — 2026-10-24
 
 - Desktop rebuild with patched dependencies and main branch workflow fixes.
