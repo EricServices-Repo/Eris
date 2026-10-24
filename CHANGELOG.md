@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.15 — 2026-10-24
+
+- Desktop rebuild with patched dependencies and main branch workflow fixes.
+
 ## 0.4.14 — 2026-10-24
 
 - Desktop rebuild.
