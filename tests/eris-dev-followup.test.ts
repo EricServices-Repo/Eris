@@ -1,5 +1,4 @@
 import {
-  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -33,10 +32,22 @@ const h = vi.hoisted(() => ({
   save: [] as string[],
   sent: [] as DevProgress[],
   drained: null as null | (() => void),
+  failSnapshotCopy: false,
   /** Called for every captured question; replace per test. */
   capture: null as
     null | ((index: number, question: DevQuestion, signal: AbortSignal) => Promise<DevResult>)
 }))
+
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>()
+  return {
+    ...actual,
+    copyFile: (...args: Parameters<typeof actual.copyFile>) => {
+      if (h.failSnapshotCopy) return Promise.reject(new Error('Synthetic snapshot copy failure'))
+      return actual.copyFile(...args)
+    }
+  }
+})
 
 vi.mock('electron', () => ({
   app: {
@@ -250,16 +261,15 @@ describe('Eris-Dev main process', () => {
     const project = join(root, 'project')
     mkdirSync(project, { recursive: true })
     writeFileSync(join(project, 'index.js'), 'export const a = 1\n')
-    writeFileSync(join(project, 'secret.txt'), 'x')
-    chmodSync(join(project, 'secret.txt'), 0o000)
     h.open.push([project])
     await invoke('dev:project')
+    h.failSnapshotCopy = true
     try {
       await expect(
         invoke('dev:start', { context: 8192, mode: 'agent', intentReplyMode: 'fallback' })
       ).rejects.toThrow()
     } finally {
-      chmodSync(join(project, 'secret.txt'), 0o600)
+      h.failSnapshotCopy = false
     }
     expect(snapshots()).toEqual([])
     await invoke('dev:project-kind', 'sample')
