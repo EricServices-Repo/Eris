@@ -129,14 +129,7 @@ function ensureReleaseSource(version, noBump) {
     )
   }
   const branch = runCapture('git branch --show-current')
-  const [major, minor, patch] = version.split('.').map(Number)
-  const beforePromotion = major < 1 || (major === 1 && (minor < 0 || (minor === 0 && patch < 1)))
-  const required = version === '1.0.1' ? 'main' : beforePromotion ? 'dev' : null
-  if (!required) {
-    die(
-      `The branch model for releases after v1.0.1 is not defined. Update docs/GITHUB-WORKFLOW.md and release policy before publishing v${version}.`
-    )
-  }
+  const required = 'main'
   if (branch !== required) {
     die(`v${version} must be tagged from integrated ${required}; current branch is ${branch || '(detached HEAD)'}.`)
   }

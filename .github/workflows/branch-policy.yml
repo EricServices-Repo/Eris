@@ -2,7 +2,7 @@ name: Branch policy
 
 on:
   pull_request:
-    branches: [dev, main]
+    branches: [main]
 
 permissions:
   contents: read
@@ -17,31 +17,20 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: '22'
-      - name: Validate target and release version
+      - name: Validate target branch
         env:
           BASE_REF: ${{ github.base_ref }}
           HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
-          if [ "$BASE_REF" = "dev" ]; then
-            if [ "$HEAD_REF" = "main" ]; then
-              echo "The main-to-dev direction is not allowed. Work branches merge into dev."
-              exit 1
-            fi
-            echo "Work branch pull request into dev is allowed."
-            exit 0
-          fi
-
-          if [ "$BASE_REF" = "main" ] && [ "$HEAD_REF" = "dev" ]; then
-            VERSION="$(node -p "require('./package.json').version")"
-            if [ "$VERSION" = "1.0.1" ]; then
-              echo "The planned v1.0.1 dev-to-main promotion is allowed."
-              exit 0
-            fi
-            echo "dev may be promoted to main only for v1.0.1 (PR version is $VERSION)."
+          if [ "$BASE_REF" != "main" ]; then
+            echo "Pull requests must target main (received base=$BASE_REF)."
             exit 1
           fi
 
-          echo "Pull requests into main are reserved for the dev-to-main v1.0.1 promotion."
-          echo "Received head=$HEAD_REF base=$BASE_REF."
-          exit 1
+          if [ "$HEAD_REF" = "main" ]; then
+            echo "A pull request cannot use main as its own head branch."
+            exit 1
+          fi
+
+          echo "Pull request into main is allowed from $HEAD_REF."
