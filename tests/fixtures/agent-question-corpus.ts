@@ -126,7 +126,7 @@ function buildCase(category: CorpusCategory, categoryIndex: number, intent: Corp
       toolResponse = JSON.stringify({ name: 'read_file', path: 'README.md' })
       break
     case 'plan':
-      question = `Create a plan for ${topic} in the ${context} scenario ${ordinal}.`
+      question = `Create a plan for ${topic} in this project's ${context} scenario ${ordinal}.`
       simulatedAnswer = `Plan complete ${id}: inspect the current flow, implement ${topic}, add regression coverage, and verify the ${context} result.`
       toolResponse = JSON.stringify({ name: 'read_file', path: 'README.md' })
       break

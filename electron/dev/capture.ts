@@ -1,7 +1,14 @@
 import { randomUUID } from 'crypto'
 import { streamProviderChat } from '../main/services/chat-runtime'
 import type { PreparedLiveModel } from './models'
-import type { DevCapture, DevQuestion, DevResult, IntentReplyMode } from '../../src/shared/eris-dev'
+import type {
+  DevCapture,
+  DevQuestion,
+  DevResult,
+  DevTerminationCause,
+  IntentReplyMode
+} from '../../src/shared/eris-dev'
+import { assessDeliverable } from '../../src/shared/deliverable-checks'
 import type { AppSettings } from '../../src/shared/settings-schema'
 import type { IntentResolution, TaskContract } from '../../src/shared/task-contract'
 import { interpretationOf } from '../../src/shared/task-contract'
@@ -44,6 +51,15 @@ export function captureSettings(context: number): AppSettings {
   return settings
 }
 
+/** A native worker that exited or failed, as opposed to a provider or transport error. */
+function isWorkerFailure(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    ((error as { code?: unknown }).code === 'LOCAL_MODEL_WORKER_FAILED' ||
+      error.name === 'LocalModelWorkerError')
+  )
+}
+
 function describeResolution(resolution: IntentResolution): string {
   const failure = resolution.failure ? ` (${resolution.failure})` : ''
   const change = resolution.downgrade
@@ -69,10 +85,20 @@ export async function captureQuestion(
 ): Promise<DevResult> {
   const started = Date.now()
   const controller = new AbortController()
-  const cancel = () => controller.abort()
+  // The first cause wins: cleanup after a worker crash must not relabel it a timeout.
+  let cause: DevTerminationCause | null = null
+  let lastProgressAt: number | null = null
+  const stop = (reason: DevTerminationCause) => {
+    cause ??= reason
+    controller.abort(reason)
+  }
+  const cancel = () => stop('user-cancelled')
   signal.addEventListener('abort', cancel, { once: true })
   if (signal.aborted) cancel()
-  const timeout = setTimeout(cancel, options.live ? (options.timeoutMs ?? 180000) : 30000)
+  const timeout = setTimeout(
+    () => stop('deadline-exceeded'),
+    options.live ? (options.timeoutMs ?? 180000) : 30000
+  )
   const intentReplyMode = options.intentReplyMode ?? 'fallback'
   const scriptedIntent = options.question?.intentReply
   const result: DevResult = {
@@ -137,6 +163,7 @@ export async function captureQuestion(
     kind: live ? 'live' : 'scripted',
     async *stream(request) {
       if (live && result.requests.length >= (options.maxCalls ?? 12)) {
+        cause ??= 'call-limit'
         result.inference!.error = 'Question reached its model-call limit.'
         throw new Error(result.inference!.error)
       }
@@ -161,13 +188,20 @@ export async function captureQuestion(
         const callStarted = Date.now()
         call.response = ''
         try {
-          for await (const chunk of streamProviderChat(request)) {
+          for await (const chunk of streamProviderChat({
+            ...request,
+            onTermination: (termination) => {
+              call.termination = termination
+              request.onTermination?.(termination)
+            }
+          })) {
             call.response += chunk
+            lastProgressAt = Date.now() - started
             if (request.purpose === 'agent' && result.inference!.firstTokenMs === null)
               result.inference!.firstTokenMs = Date.now() - started
             result.inference!.outputChars += chunk.length
             if (result.inference!.outputChars > 250000) {
-              controller.abort()
+              stop('output-limit')
               throw new Error('Question exceeded its output character limit.')
             }
             yield chunk
@@ -175,6 +209,8 @@ export async function captureQuestion(
         } catch (error) {
           result.inference!.error = error instanceof Error ? error.message : String(error)
           call.error = result.inference!.error
+          if (!controller.signal.aborted)
+            cause ??= isWorkerFailure(error) ? 'worker-exited' : 'provider-error'
           throw error
         } finally {
           call.durationMs = Date.now() - callStarted
@@ -282,8 +318,11 @@ export async function captureQuestion(
         })) {
           if (event.type === 'progress' && event.incomplete) incomplete = true
           if (event.type === 'answer') {
-            result.detail = event.text
-            if (live) result.response = event.text
+            // Answer events are deltas unless they explicitly replace the answer so far.
+            const answer =
+              event.replace || result.response === null ? event.text : result.response + event.text
+            result.detail = answer
+            if (live) result.response = answer
           }
           if (event.type === 'status' && result.events.length < 50) result.events.push(event.text)
           if ((!live && captured) || controller.signal.aborted) break
@@ -322,11 +361,16 @@ export async function captureQuestion(
         result.inference!.error ??= result.detail || 'No final answer was produced.'
     }
   } catch (error) {
-    if (live && !result.response) {
-      result.response =
-        [...result.requests].reverse().find((r) => r.purpose === 'agent' && r.response)?.response ??
-        null
+    // The streamed answer so far stays partial output; the last raw agent draft is
+    // separate evidence, never promoted to a final answer.
+    if (live) {
+      const draft = [...result.requests]
+        .reverse()
+        .find((r) => r.purpose === 'agent' && r.response)?.response
+      if (draft && draft !== result.response) result.draft = draft
     }
+    if (live && !controller.signal.aborted)
+      cause ??= isWorkerFailure(error) ? 'worker-exited' : 'provider-error'
     result.status = !live && captured ? 'captured' : signal.aborted ? 'cancelled' : 'error'
     if (live || !captured) result.detail = error instanceof Error ? error.message : String(error)
     if (live) {
@@ -340,12 +384,35 @@ export async function captureQuestion(
     signal.removeEventListener('abort', cancel)
     await flushTaskLedger(requestId)
   }
+  // Set from abort and stream callbacks, which control-flow narrowing cannot see.
+  const firstCause = cause as DevTerminationCause | null
   if (!live && captured)
     result.detail = 'Stopped at the model transport boundary. No agent response was generated.'
-  else if (controller.signal.aborted && !signal.aborted && !result.inference?.error)
+  else if (firstCause === 'deadline-exceeded')
     result.detail = live
       ? 'Live question exceeded its configured deadline.'
       : 'Capture exceeded the 30 second deadline.'
+  if (live) {
+    result.termination = {
+      cause:
+        firstCause ??
+        (result.completion?.status === 'incomplete'
+          ? 'agent-incomplete'
+          : result.completion?.status === 'completed'
+            ? 'completed'
+            : 'no-answer'),
+      elapsedMs: Date.now() - started,
+      lastProgressAt
+    }
+    if (firstCause === 'deadline-exceeded' && result.inference) {
+      result.inference.error = 'Live question exceeded its configured deadline.'
+      if (result.completion) result.completion.reason = result.inference.error
+    }
+    // Runtime completion is not deliverable validity: a completed transport can
+    // still return protocol framing, truncated code or a refusal.
+    if (result.response !== null || result.completion?.status === 'completed')
+      result.deliverable = assessDeliverable(result.response)
+  }
   if (result.task) {
     result.findingsDetail = requestInvariantFindings({
       task: result.task as TaskContract,

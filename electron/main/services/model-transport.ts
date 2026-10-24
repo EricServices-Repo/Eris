@@ -8,9 +8,32 @@ import type { StreamModelChatOptions } from './chat-runtime'
  * review, and the agent loop. Production calls reach providers; diagnostics
  * runs install a scoped adapter here instead of mocking the code under test.
  */
-export type ModelPurpose = 'agent' | 'route' | 'intent' | 'outcome' | 'inline'
+/** compaction: a working-memory summary, judged by its own invariants, not the task contract. */
+export type ModelPurpose = 'agent' | 'route' | 'intent' | 'outcome' | 'inline' | 'compaction'
 
 export type ModelTransportRequest = StreamModelChatOptions & { purpose: ModelPurpose }
+
+/**
+ * How one provider generation ended, reported by native and API adapters. Raw and
+ * final output can then be compared against a known stop instead of guessed from text.
+ */
+export interface ModelTermination {
+  reason:
+    | 'eos'
+    | 'output-limit'
+    | 'stop-trigger'
+    | 'tool-call'
+    | 'content-filter'
+    | 'connection-closed'
+    | 'cancelled'
+    | 'unknown'
+  /** The provider's own value (finish_reason, node-llama-cpp stopReason). */
+  raw?: string
+  maxOutputTokens?: number
+  promptTokens?: number
+  outputTokens?: number
+  contextTokens?: number
+}
 
 export interface ModelAdapter {
   /** scripted adapters never reach a provider; live adapters always do. */

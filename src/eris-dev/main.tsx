@@ -25,7 +25,19 @@ const attention = (r: DevSummary) =>
   r.status === 'blocked' ||
   r.status === 'cancelled' ||
   r.stages.inference === 'error' ||
+  r.deliverable?.status === 'fail' ||
   r.findings.defect > 0
+/** Deterministic answer checks flagged something; a review candidate, not a grade. */
+const needsReview = (r: DevSummary) =>
+  r.deliverable?.status === 'fail' || r.deliverable?.status === 'needs-review'
+/** Completed transport whose answer did not fail the deliverable checks. */
+const answered = (r?: DevSummary) =>
+  Boolean(
+    r &&
+    r.stages.inference === 'completed' &&
+    (!r.completion || r.completion.status === 'completed') &&
+    r.deliverable?.status !== 'fail'
+  )
 const statusOf = (r?: DevSummary) =>
   !r
     ? 'Pending'
@@ -33,13 +45,17 @@ const statusOf = (r?: DevSummary) =>
       ? 'Incomplete'
       : r.completion?.status === 'failed'
         ? 'Needs attention'
-        : r.stages.inference === 'completed'
-          ? 'Answered'
-          : attention(r)
-            ? 'Needs attention'
-            : r.status === 'captured'
-              ? 'Request captured'
-              : r.status
+        : r.stages.inference === 'completed' && r.deliverable?.status === 'fail'
+          ? 'Answer failed checks'
+          : r.stages.inference === 'completed'
+            ? r.deliverable?.status === 'needs-review'
+              ? 'Answered · review'
+              : 'Answered'
+            : attention(r)
+              ? 'Needs attention'
+              : r.status === 'captured'
+                ? 'Request captured'
+                : r.status
 
 /** Plain text and code blocks; model output is never interpreted as HTML. */
 function Answer({ text }: { text: string }) {
@@ -103,7 +119,9 @@ function App() {
   const [runPage, setRunPage] = useState(0)
   const [comparison, setComparison] = useState<DevComparison | null>(null)
   const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState<'all' | 'answers' | 'attention' | 'pending'>('all')
+  const [filter, setFilter] = useState<'all' | 'answers' | 'review' | 'attention' | 'pending'>(
+    'all'
+  )
   const [panel, setPanel] = useState<'settings' | 'history' | 'export' | 'comparison' | null>(null)
   const dialog = useRef<HTMLDialogElement>(null)
   const generation = useRef(0)
@@ -167,10 +185,7 @@ function App() {
         })
   }, [selected, selectedResult])
   const summaries = useMemo(() => Object.values(results), [results])
-  const generated = summaries.filter(
-    (r) =>
-      r.stages.inference === 'completed' && (!r.completion || r.completion.status === 'completed')
-  ).length
+  const generated = summaries.filter(answered).length
   const issues = summaries.filter(attention).length
   const visible = useMemo(
     () =>
@@ -183,9 +198,8 @@ function App() {
           return (
             filter === 'all' ||
             (filter === 'pending' && !r) ||
-            (filter === 'answers' &&
-              r?.stages.inference === 'completed' &&
-              (!r.completion || r.completion.status === 'completed')) ||
+            (filter === 'answers' && answered(r)) ||
+            (filter === 'review' && r && needsReview(r)) ||
             (filter === 'attention' && r && attention(r))
           )
         }),
@@ -437,6 +451,7 @@ function App() {
             >
               <option value="all">All questions</option>
               <option value="answers">Answered</option>
+              <option value="review">Answer checks flagged</option>
               <option value="attention">Needs attention</option>
               <option value="pending">Pending</option>
             </select>
@@ -523,6 +538,23 @@ function App() {
                         {detail.inference?.error && (
                           <div className="inline-error">{detail.inference.error}</div>
                         )}
+                        {detail.deliverable && detail.deliverable.status !== 'pass' && (
+                          <div
+                            className={
+                              detail.deliverable.status === 'fail' ? 'inline-error' : 'notice'
+                            }
+                          >
+                            <strong>
+                              Answer checks{' '}
+                              {detail.deliverable.status === 'fail' ? 'failed' : 'need review'}
+                            </strong>
+                            <ul>
+                              {detail.deliverable.checks.map((check) => (
+                                <li key={check.id}>{check.detail}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                         {detail.response ? (
                           <Answer text={detail.response} />
                         ) : (
@@ -541,6 +573,15 @@ function App() {
                               <button onClick={() => setTab('request')}>View model request</button>
                             )}
                           </div>
+                        )}
+                        {detail.draft && (
+                          <details className="draft">
+                            <summary>
+                              Last model draft ({detail.draft.length.toLocaleString()} characters) ·
+                              not a final answer
+                            </summary>
+                            <pre>{detail.draft}</pre>
+                          </details>
                         )}
                         <p className="answer-note">
                           {detail.response
@@ -580,7 +621,10 @@ function App() {
                             )}
                             {call.response && (
                               <section className="message">
-                                <h3>Model output</h3>
+                                <h3>
+                                  Model output
+                                  {call.termination ? ` · stopped: ${call.termination.reason}` : ''}
+                                </h3>
                                 <pre>{call.response}</pre>
                               </section>
                             )}
@@ -612,6 +656,8 @@ function App() {
                               ? {
                                   stages: detail.stages,
                                   completion: detail.completion,
+                                  termination: detail.termination,
+                                  deliverable: detail.deliverable,
                                   inference: detail.inference,
                                   phases: detail.phases,
                                   questionId: detail.questionId,

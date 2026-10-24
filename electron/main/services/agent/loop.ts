@@ -69,6 +69,7 @@ import { invalidateDiagnosticsCache } from '../diagnostics'
 import { formatSkillsListForAgent, getSkill, slugifySkillId, upsertSkill } from '../skills'
 import { userSkillsDir } from '../paths'
 import {
+  boundRuntimeInstructions,
   buildWorkSummary,
   compactAgentMessages,
   contextBudgetTokens,
@@ -76,7 +77,8 @@ import {
   needsContextCompaction
 } from './compaction'
 import { executeTool } from './execute-tool'
-import { validateToolArguments } from './tool-validation'
+import { toolArgumentRepair, validateToolArguments } from './tool-validation'
+import { finalizeAnswer } from './final-answer'
 import {
   assessGoalCompletion,
   isReviewOnlyGoal,
@@ -151,6 +153,11 @@ import { AgentWorkflow } from './workflow'
 
 /** Consecutive rounds with zero mutation → stronger finish nudge (never stops the run). */
 const MAX_NO_PROGRESS = 8
+/**
+ * Steps a run may take without new evidence or effects. Unlike noProgressStreak,
+ * this is never reset by a reroute or recovery nudge: changing roles is not progress.
+ */
+const MAX_STEPS_WITHOUT_EVIDENCE = 6
 /** Stop after this many failed verify rounds (mid-loop + final). */
 const MAX_VERIFY_FAILURES = 3
 /** Mid-loop verify cadence (final verify still runs once before DONE). */
@@ -619,8 +626,26 @@ export async function* runAgentWithWorkspaceTools(options: {
     } finally {
       if (askSessionKey) releaseLocalChatSession(askSessionKey)
     }
-    const answer = stripToolBlocks(full) || full
-    if (answer) yield { type: 'answer', text: answer, replace: true }
+    const draft = stripToolBlocks(full) || full
+    const final = draft
+      ? await finalizeAnswer(draft, {
+          settings: options.settings,
+          model: chatModel,
+          temperature: options.temperature,
+          signal: options.signal,
+          getSecret: options.getSecret,
+          goal: originalUserGoal,
+          messages: askMessages
+        })
+      : { text: '', incomplete: false, repaired: [] }
+    if (final.repaired.length)
+      appendTaskEvent(task.taskId, 'final-answer-repaired', { repairs: final.repaired })
+    if (final.text) yield { type: 'answer', text: final.text, replace: true }
+    if (final.incomplete) {
+      workflow.block('The final answer was incomplete after a bounded repair.')
+      yield { type: 'progress', step: 0, actionLog: [], filesTouched: [], incomplete: true }
+      return
+    }
     workflow.complete()
     return
   }
@@ -850,6 +875,16 @@ export async function* runAgentWithWorkspaceTools(options: {
       workerMessages: workerMessages.map((m) => ({ ...m }))
     }
   }
+  /**
+   * Distinct successful evidence plus every workspace mutation (filesTouched gains an
+   * entry per mutation). Repeated reads, listings and failures add nothing.
+   */
+  const progressFingerprint = () =>
+    `${new Set(actionLog.filter((entry) => !/^(?:Failed|Stopped|Verify failed)\b/.test(entry))).size}|${filesTouched.length}|${verifyPassedOnce}`
+  let lastProgressKey = ''
+  let lastProgressStep = 0
+  /** Invalid calls already rejected in this run, by name and exact arguments. */
+  const rejectedCallSignatures = new Set<string>()
   let mutationsSinceVerify = 0
   let consecutiveToolErrors = 0
   let goalRejectCount = 0
@@ -1554,8 +1589,7 @@ export async function* runAgentWithWorkspaceTools(options: {
     }
     const existing = proseOutsideTools(latest)
     if (existing.length >= 40 && !isToolLogReply(existing)) {
-      yield { type: 'status', text: 'Done' }
-      yield { type: 'answer', text: existing, replace: true }
+      yield* postFinalAnswer(existing)
       return
     }
     const changed = [...new Set(filesTouched)].filter((file) => {
@@ -1595,8 +1629,35 @@ export async function* runAgentWithWorkspaceTools(options: {
       ? `Changed ${changed.slice(0, 8).join(', ')}.`
       : searched || answerFromProjectFiles(sourceReads)
     const answer = postedAnswer(reply, fallback) || clean || 'Done.'
-    yield { type: 'status', text: 'Done' }
-    yield { type: 'answer', text: answer, replace: true }
+    yield* postFinalAnswer(answer)
+  }
+
+  /** Internal framing and truncated code never reach the user as a finished answer. */
+  async function* postFinalAnswer(draft: string): AsyncGenerator<AgentRunnerEvent, void, unknown> {
+    const final = await finalizeAnswer(draft, {
+      settings: options.settings,
+      model: workerModel,
+      temperature: options.temperature,
+      signal: options.signal,
+      getSecret: options.getSecret,
+      goal: originalUserGoal,
+      messages: workerMessages,
+      evidence: sourceReads.map((read) => `${read.path}:\n${read.text}`).join('\n\n')
+    })
+    if (final.repaired.length)
+      appendTaskEvent(task.taskId, 'final-answer-repaired', { repairs: final.repaired })
+    if (final.incomplete) {
+      workflow.block('The final answer was incomplete after a bounded repair.')
+      yield {
+        type: 'progress',
+        step,
+        actionLog: [...actionLog],
+        filesTouched: [...filesTouched],
+        incomplete: true
+      }
+      yield { type: 'status', text: 'Incomplete · answer needs review' }
+    } else yield { type: 'status', text: 'Done' }
+    yield { type: 'answer', text: final.text, replace: true }
   }
 
   try {
@@ -1624,7 +1685,48 @@ export async function* runAgentWithWorkspaceTools(options: {
         return
       }
 
+      const progressKey = progressFingerprint()
+      if (progressKey !== lastProgressKey) {
+        lastProgressKey = progressKey
+        lastProgressStep = step
+      } else if (step - lastProgressStep >= MAX_STEPS_WITHOUT_EVIDENCE) {
+        const stopNote = `Stopped after ${step - lastProgressStep} steps without new evidence or changes.`
+        actionLog.push(stopNote)
+        appendTaskEvent(task.taskId, 'no-progress-stop', {
+          steps: step - lastProgressStep,
+          rerouteCount,
+          agentId: plan.agentId
+        })
+        // A read-only task can still answer from what it has (or say what is missing);
+        // more retries of the same failing step would only spend the budget.
+        if (!task.authority.edit && task.authority.execute === 'none') {
+          yield {
+            type: 'thinking',
+            text: '\n\n— No new evidence after several steps; answering from what is known…\n'
+          }
+          yield* finishChatAnswer(latestAssistant)
+          return
+        }
+        workflow.block(stopNote)
+        yield {
+          type: 'progress',
+          step,
+          actionLog: [...actionLog],
+          filesTouched: [...filesTouched],
+          incomplete: true
+        }
+        yield emitSessionStep(stopNote)
+        yield { type: 'status', text: 'Incomplete · no progress' }
+        yield {
+          type: 'answer',
+          text: `${buildWorkSummary(originalUserGoal, actionLog, latestAssistant)}\n\n${stopNote} This run is incomplete.`,
+          replace: true
+        }
+        return
+      }
+
       for await (const evt of compactWorkerContext()) yield evt
+      boundRuntimeInstructions(workerMessages)
 
       if (
         shouldConsiderMidRunAdapt({
@@ -2313,9 +2415,19 @@ export async function* runAgentWithWorkspaceTools(options: {
                 detail
               }
             }
+            const schema = mcpTool ? mcpTool.inputSchema : toolContract?.schema
+            const repair = toolArgumentRepair(call.name, call.args, schema, originalUserGoal)
+            // The same rejected call again means textual correction is not working.
+            const signature = `${call.name}:${JSON.stringify(call.args)}`
+            const repeated = rejectedCallSignatures.has(signature)
+            rejectedCallSignatures.add(signature)
+            appendTaskEvent(task.taskId, 'tool-arguments-rejected', { repair, repeated })
             resultParts.push(
               `TOOL_RESULT ${call.name}: ${detail}\nRECOVERY: ${toolFailureRecovery(call.name, detail)}\n` +
-                `Expected arguments object: ${JSON.stringify(mcpTool ? mcpTool.inputSchema : toolContract?.schema)}\n` +
+                `REPAIR: ${JSON.stringify(repair)}\n` +
+                (repeated
+                  ? 'This exact call was already rejected. Do not send it again: use REPAIR.validCall, or answer the request from the evidence you have.\n'
+                  : `Expected arguments object: ${JSON.stringify(schema)}\n`) +
                 'A validation failure does not mean the file is missing. No filesystem operation was executed.'
             )
             continue

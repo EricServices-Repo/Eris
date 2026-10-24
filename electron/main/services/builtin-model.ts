@@ -45,7 +45,14 @@ import {
   modelLoadOptions
 } from './vram-fit'
 import { appState } from '../app-state'
-import { messagesToLlamaHistory, splitSessionPrompt } from '../../../src/shared/llama-session'
+import {
+  messagesToLlamaHistory,
+  nativeStopReason,
+  oneShotPrompt,
+  replyTokenAllowance,
+  splitSessionPrompt
+} from '../../../src/shared/llama-session'
+import type { ModelTermination } from './model-transport'
 import { acquireInferenceLease } from './inference-governor'
 
 type LlamaModule = typeof import('node-llama-cpp')
@@ -643,6 +650,7 @@ type WorkerMsg = {
   sessionKey?: string
   text?: string
   error?: string
+  termination?: ModelTermination
 }
 
 function workerScriptPath(): string {
@@ -988,6 +996,54 @@ async function ensureWorkerModel(
   workerModelPath = modelPath
 }
 
+type InProcessBudget = Required<
+  Pick<ModelTermination, 'maxOutputTokens' | 'promptTokens' | 'contextTokens'>
+>
+
+/** Reply tokens that fit beside this prompt in the loaded context. */
+function inProcessReplyBudget(
+  state: RuntimeState,
+  messages: Array<{ content: string }>
+): InProcessBudget {
+  const text = messages.map((message) => message.content).join('\n')
+  let promptTokens = Math.ceil(text.length / 3)
+  try {
+    const tokens = state.model?.tokenize?.(text)
+    if (tokens && typeof tokens.length === 'number') promptTokens = tokens.length
+  } catch {
+    // keep the estimate
+  }
+  promptTokens += messages.length * 8
+  const contextTokens = Number(state.context?.contextSize) || REPLY_MAX_TOKENS
+  return {
+    promptTokens,
+    contextTokens,
+    maxOutputTokens: replyTokenAllowance({
+      requested: REPLY_MAX_TOKENS,
+      contextSize: contextTokens,
+      promptTokens
+    })
+  }
+}
+
+function inProcessTermination(raw: unknown, budget: InProcessBudget): ModelTermination {
+  return {
+    reason: nativeStopReason(raw),
+    ...(typeof raw === 'string' ? { raw } : {}),
+    ...budget
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function promptWithStopReason(session: any, text: string, opts: any): Promise<unknown> {
+  if (typeof session.promptWithMeta === 'function') {
+    const meta = await session.promptWithMeta(text, opts)
+    return meta?.stopReason
+  }
+  await session.prompt(text, opts)
+  return undefined
+}
+
 async function* streamBuiltinChatInProcess(options: {
   modelRef: string
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
@@ -997,11 +1053,14 @@ async function* streamBuiltinChatInProcess(options: {
   path: string
   jsonSchema?: Record<string, unknown>
   sessionKey?: string
+  onTermination?: (termination: ModelTermination) => void
 }): AsyncGenerator<string, void, unknown> {
   const llamaCpp = await loadLlamaModule()
   const { LlamaChatSession } = llamaCpp
   const state = await ensureRuntimeInProcess(options.path, options.entry)
-  const maxTokens = REPLY_MAX_TOKENS
+  const budget = inProcessReplyBudget(state, options.messages)
+  const maxTokens = budget.maxOutputTokens
+  let stopReason: unknown
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let grammar: any = undefined
@@ -1063,9 +1122,9 @@ async function* streamBuiltinChatInProcess(options: {
         wake()
       }
     }
-    const run = entry.session
-      .prompt(split.userMessage, promptOpts)
-      .then(() => {
+    const run = promptWithStopReason(entry.session, split.userMessage, promptOpts)
+      .then((reason) => {
+        stopReason = reason
         done = true
         wake()
       })
@@ -1100,6 +1159,7 @@ async function* streamBuiltinChatInProcess(options: {
         }
         throw caughtError instanceof Error ? caughtError : new Error(message)
       }
+      options.onTermination?.(inProcessTermination(stopReason, budget))
     } finally {
       options.signal?.removeEventListener('abort', onAbortWake)
     }
@@ -1112,18 +1172,9 @@ async function* streamBuiltinChatInProcess(options: {
   try {
     sequence = state.context.getSequence()
     const session = new LlamaChatSession({ contextSequence: sequence })
-    const system = options.messages
-      .filter((m) => m.role === 'system')
-      .map((m) => m.content)
-      .join('\n\n')
-    const transcript = options.messages
-      .filter((m) => m.role !== 'system')
-      .map((m) => `${m.role.toUpperCase()}:\n${m.content}`)
-      .join('\n\n')
-      .slice(-24_000)
-    const prompt = [system && `SYSTEM:\n${system.slice(0, 8000)}`, transcript, 'ASSISTANT:']
-      .filter(Boolean)
-      .join('\n\n')
+    // The same structured history as a session turn; budgeting already happened upstream.
+    const { history, userMessage } = oneShotPrompt(options.messages)
+    session.setChatHistory(messagesToLlamaHistory(history) as never)
 
     const queue: string[] = []
     let done = false
@@ -1153,9 +1204,9 @@ async function* streamBuiltinChatInProcess(options: {
         wake()
       }
     }
-    const run = session
-      .prompt(prompt, inProcPromptOpts)
-      .then(() => {
+    const run = promptWithStopReason(session, userMessage, inProcPromptOpts)
+      .then((reason) => {
+        stopReason = reason
         done = true
         wake()
       })
@@ -1190,6 +1241,7 @@ async function* streamBuiltinChatInProcess(options: {
         }
         throw caughtError instanceof Error ? caughtError : new Error(message)
       }
+      options.onTermination?.(inProcessTermination(stopReason, budget))
     } finally {
       options.signal?.removeEventListener('abort', onAbortWake)
     }
@@ -1211,6 +1263,7 @@ async function* streamBuiltinChatViaWorker(options: {
   path: string
   jsonSchema?: Record<string, unknown>
   sessionKey?: string
+  onTermination?: (termination: ModelTermination) => void
 }): AsyncGenerator<string, void, unknown> {
   await ensureWorkerModel(options.path, options.entry, options.signal)
   const child = llamaChild
@@ -1219,6 +1272,7 @@ async function* streamBuiltinChatViaWorker(options: {
   const id = `chat-${++chatSeq}`
   const queue: string[] = []
   let done = false
+  let termination: ModelTermination | undefined
   let caughtError: string | null = null
   let notify: (() => void) | null = null
 
@@ -1243,6 +1297,7 @@ async function* streamBuiltinChatViaWorker(options: {
       wake()
     } else if (msg.type === 'done') {
       if (options.sessionKey) activeChatSessions.add(options.sessionKey)
+      termination = msg.termination
       done = true
       wake()
     } else if (msg.type === 'error') {
@@ -1317,9 +1372,10 @@ async function* streamBuiltinChatViaWorker(options: {
     }
     if (caughtError) {
       if (String(caughtError).startsWith('Local model worker exited'))
-        throw new LocalModelWorkerError(caughtError)
+        throw new LocalModelWorkerError(String(caughtError).replace(/^Local model worker\s+/, ''))
       throw new Error(caughtError)
     }
+    if (termination) options.onTermination?.(termination)
   } finally {
     options.signal?.removeEventListener('abort', onAbort)
     try {
@@ -1434,6 +1490,8 @@ export async function* streamBuiltinChat(options: {
    * Pass the same key for the whole chat run; call releaseLocalChatSession when done.
    */
   sessionKey?: string
+  /** Called once with how generation ended (stop reason, limits, prompt size). */
+  onTermination?: (termination: ModelTermination) => void
 }): AsyncGenerator<string, void, unknown> {
   let entry: BuiltinModelManifestEntry
   let path: string

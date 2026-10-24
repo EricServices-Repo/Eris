@@ -4,6 +4,12 @@
  */
 
 import { contextCreateOptions, isMemoryError, modelLoadOptions } from './services/vram-fit'
+import {
+  messagesToLlamaHistory,
+  nativeStopReason,
+  oneShotPrompt,
+  replyTokenAllowance
+} from '../../src/shared/llama-session'
 
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
 
@@ -70,16 +76,6 @@ function enqueue(fn: () => Promise<void>): void {
     () => undefined,
     () => undefined
   )
-}
-
-function messagesToHistory(messages: ChatMessage[]): Array<Record<string, unknown>> {
-  const out: Array<Record<string, unknown>> = []
-  for (const m of messages) {
-    if (m.role === 'system') out.push({ type: 'system', text: m.content })
-    else if (m.role === 'user') out.push({ type: 'user', text: m.content })
-    else out.push({ type: 'model', response: [m.content] })
-  }
-  return out
 }
 
 function releaseSession(sessionKey: string): void {
@@ -225,7 +221,50 @@ async function buildGrammar(jsonSchema?: Record<string, unknown>): Promise<unkno
   return await llama.createGrammarForJsonSchema(jsonSchema)
 }
 
-/** Legacy oneshot: flatten full transcript, dispose sequence after. */
+function countTokens(text: string): number {
+  try {
+    const tokens = model?.tokenize?.(text)
+    if (Array.isArray(tokens) || ArrayBuffer.isView(tokens))
+      return (tokens as ArrayLike<number>).length
+  } catch {
+    // fall back to the estimate below
+  }
+  return Math.ceil(text.length / 3)
+}
+
+/** Effective reply limit and prompt size for one request; reported with its stop reason. */
+function replyBudget(
+  requested: number,
+  messages: ChatMessage[]
+): { maxTokens: number; promptTokens: number } {
+  // Template framing adds a few tokens per message beyond the text itself.
+  const promptTokens =
+    countTokens(messages.map((message) => message.content).join('\n')) + messages.length * 8
+  return {
+    promptTokens,
+    maxTokens: replyTokenAllowance({ requested, contextSize: loadedContextSize, promptTokens })
+  }
+}
+
+export interface WorkerTermination {
+  reason: ReturnType<typeof nativeStopReason>
+  raw?: string
+  maxOutputTokens: number
+  promptTokens: number
+  contextTokens: number
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function promptWithStopReason(session: any, text: string, opts: any): Promise<unknown> {
+  if (typeof session.promptWithMeta === 'function') {
+    const meta = await session.promptWithMeta(text, opts)
+    return meta?.stopReason
+  }
+  await session.prompt(text, opts)
+  return undefined
+}
+
+/** One-shot: the same structured history as a session turn, sequence disposed after. */
 async function runPromptOneshot(options: {
   messages: ChatMessage[]
   temperature: number
@@ -233,7 +272,7 @@ async function runPromptOneshot(options: {
   signal: AbortSignal
   jsonSchema?: Record<string, unknown>
   onChunk: (text: string) => void
-}): Promise<void> {
+}): Promise<WorkerTermination> {
   const llamaCpp = await import('node-llama-cpp')
   const { LlamaChatSession } = llamaCpp
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -246,32 +285,30 @@ async function runPromptOneshot(options: {
     }
     sequence = context.getSequence()
     const session = new LlamaChatSession({ contextSequence: sequence })
-
-    const system = options.messages
-      .filter((m) => m.role === 'system')
-      .map((m) => m.content)
-      .join('\n\n')
-    const transcript = options.messages
-      .filter((m) => m.role !== 'system')
-      .map((m) => `${m.role.toUpperCase()}:\n${m.content}`)
-      .join('\n\n')
-      .slice(-24_000)
-    const prompt = [system && `SYSTEM:\n${system.slice(0, 8000)}`, transcript, 'ASSISTANT:']
-      .filter(Boolean)
-      .join('\n\n')
+    // Budgeting happened once, upstream; no independent character slicing here.
+    const { history, userMessage } = oneShotPrompt(options.messages)
+    session.setChatHistory(messagesToLlamaHistory(history) as never)
+    const budget = replyBudget(options.maxTokens, options.messages)
 
     const grammar = await buildGrammar(options.jsonSchema)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const promptOpts: any = {
       temperature: options.temperature,
       signal: options.signal,
-      maxTokens: options.maxTokens,
+      maxTokens: budget.maxTokens,
       ...(grammar ? { grammar } : {}),
       onTextChunk(chunk: string) {
         options.onChunk(chunk)
       }
     }
-    await session.prompt(prompt, promptOpts)
+    const raw = await promptWithStopReason(session, userMessage, promptOpts)
+    return {
+      reason: nativeStopReason(raw),
+      ...(typeof raw === 'string' ? { raw } : {}),
+      maxOutputTokens: budget.maxTokens,
+      promptTokens: budget.promptTokens,
+      contextTokens: loadedContextSize
+    }
   } finally {
     try {
       await sequence?.dispose?.()
@@ -291,7 +328,7 @@ async function runSessionTurn(options: {
   signal: AbortSignal
   jsonSchema?: Record<string, unknown>
   onChunk: (text: string) => void
-}): Promise<void> {
+}): Promise<WorkerTermination> {
   const existing = jobSessions.get(options.sessionKey)
   const isNew = !existing || existing.session.disposed
 
@@ -309,21 +346,32 @@ async function runSessionTurn(options: {
   const { session } = await getOrCreateSession(options.sessionKey)
   if (options.seedMessages !== undefined) {
     // Synchronization failure must not silently generate against stale history.
-    session.setChatHistory(messagesToHistory(options.seedMessages))
+    session.setChatHistory(messagesToLlamaHistory(options.seedMessages))
   }
+  const budget = replyBudget(options.maxTokens, [
+    ...(options.seedMessages ?? []),
+    { role: 'user', content: options.userMessage }
+  ])
   const grammar = await buildGrammar(options.jsonSchema)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const promptOpts: any = {
     temperature: options.temperature,
     signal: options.signal,
-    maxTokens: options.maxTokens,
+    maxTokens: budget.maxTokens,
     stopOnAbortSignal: true,
     ...(grammar ? { grammar } : {}),
     onTextChunk(chunk: string) {
       options.onChunk(chunk)
     }
   }
-  await session.prompt(options.userMessage, promptOpts)
+  const raw = await promptWithStopReason(session, options.userMessage, promptOpts)
+  return {
+    reason: nativeStopReason(raw),
+    ...(typeof raw === 'string' ? { raw } : {}),
+    maxOutputTokens: budget.maxTokens,
+    promptTokens: budget.promptTokens,
+    contextTokens: loadedContextSize
+  }
 }
 
 async function handleChat(msg: {
@@ -352,14 +400,15 @@ async function handleChat(msg: {
         onChunk: (text) => post({ type: 'chunk', id: msg.id, text })
       })
 
+    let termination: WorkerTermination | undefined
     try {
-      await run()
+      termination = await run()
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       if (/no sequences left/i.test(message) && !ac.signal.aborted) {
         await disposeContextOnly()
         await ensureContext()
-        await run()
+        termination = await run()
       } else {
         throw err
       }
@@ -368,7 +417,7 @@ async function handleChat(msg: {
     if (ac.signal.aborted) {
       post({ type: 'error', id: msg.id, error: 'Aborted' })
     } else {
-      post({ type: 'done', id: msg.id })
+      post({ type: 'done', id: msg.id, termination })
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -415,8 +464,9 @@ async function handleChatTurn(msg: {
         onChunk: (text) => post({ type: 'chunk', id: msg.id, text })
       })
 
+    let termination: WorkerTermination | undefined
     try {
-      await run()
+      termination = await run()
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       // Context overflow / sequence issues → drop session and retry once with full seed.
@@ -430,7 +480,7 @@ async function handleChatTurn(msg: {
           await disposeContextOnly()
           await ensureContext()
         }
-        await run()
+        termination = await run()
       } else {
         throw err
       }
@@ -439,7 +489,7 @@ async function handleChatTurn(msg: {
     if (ac.signal.aborted) {
       post({ type: 'error', id: msg.id, error: 'Aborted' })
     } else {
-      post({ type: 'done', id: msg.id, sessionKey: msg.sessionKey })
+      post({ type: 'done', id: msg.id, sessionKey: msg.sessionKey, termination })
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

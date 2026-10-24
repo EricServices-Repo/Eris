@@ -610,3 +610,21 @@ summary {
     grid-template-columns: 1fr;
   }
 }
+.inline-error ul,
+.notice ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+.notice {
+  padding: 14px;
+  border-radius: 8px;
+  margin-bottom: 18px;
+}
+.draft {
+  margin-top: 24px;
+}
+.draft summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}

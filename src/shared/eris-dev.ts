@@ -1,3 +1,5 @@
+import type { DeliverableAssessment } from './deliverable-checks'
+
 /** Export formats. v1 files remain readable through readCaptureRecord. */
 export const CAPTURE_FORMAT = 'eris-dev-capture-v2'
 export const LEGACY_CAPTURE_FORMAT = 'eris-dev-capture-v1'
@@ -77,6 +79,11 @@ export interface DevSummary {
   stages: DevStages
   /** Model transport completion is separate from whether the agent finished its task. */
   completion?: { status: 'completed' | 'incomplete' | 'failed' | 'cancelled'; reason?: string }
+  /**
+   * Deterministic checks on the final answer (protocol leaks, truncated code,
+   * refusals). Independent of completion, and never an answer-quality grade.
+   */
+  deliverable?: DeliverableAssessment
   agent?: string
   intent?: string
   artifact?: string
@@ -92,6 +99,15 @@ export interface DevCapture {
   response?: string
   error?: string
   durationMs?: number
+  /** How the provider ended this generation (eos, output-limit, …), when it said. */
+  termination?: {
+    reason: string
+    raw?: string
+    maxOutputTokens?: number
+    promptTokens?: number
+    outputTokens?: number
+    contextTokens?: number
+  }
   purpose: string
   model: string
   messages: unknown[]
@@ -105,11 +121,32 @@ export interface DevCapture {
   toolManifest?: unknown
 }
 
+/**
+ * Why a live question stopped. The first cause is kept: a worker crash followed by
+ * cleanup stays worker-exited, and a configured deadline is never reported as a stop.
+ */
+export type DevTerminationCause =
+  | 'completed'
+  | 'agent-incomplete'
+  | 'no-answer'
+  | 'deadline-exceeded'
+  | 'user-cancelled'
+  | 'call-limit'
+  | 'output-limit'
+  | 'provider-error'
+  | 'worker-exited'
+
 export interface DevResult extends DevSummary {
   task?: unknown
   requests: DevCapture[]
-  /** Model output. Capture never generates one; responseReason says why it is absent. */
+  /**
+   * Model output. Capture never generates one; responseReason says why it is absent.
+   * On failure it holds only the answer streamed so far (partial output).
+   */
   response: string | null
+  /** The last raw agent draft when the question failed; evidence, not a final answer. */
+  draft?: string
+  termination?: { cause: DevTerminationCause; elapsedMs: number; lastProgressAt: number | null }
   inference?: {
     model: string
     calls: number
@@ -173,6 +210,59 @@ export interface DevRunHeader {
   answerQuality: 'not-evaluated'
   /** What a capture run exercises and what it cannot, stated in every export. */
   coverage: { exercised: readonly string[]; notExercised: readonly string[] }
+  /** Added at export time: how much of the corpus this file holds. */
+  export?: DevExportCoverage
+}
+
+/** Exported results against the corpus, so a partial file is never read as a full benchmark. */
+export interface DevExportCoverage {
+  scope: 'full' | 'partial' | 'selection'
+  runState: 'running' | 'completed' | 'stopped' | 'interrupted' | 'unknown'
+  corpusTotal: number
+  completedCount: number
+  pendingCount: number
+  exportedCount: number
+  /** Inclusive zero-based index ranges, e.g. [[0, 131]]. */
+  exportedIndexRanges: Array<[number, number]>
+  /** exportedCount / corpusTotal as a percentage, two decimals. */
+  exportedPercent: number
+  models: string[]
+}
+
+export function exportCoverage(input: {
+  indices: number[]
+  completed: number
+  corpusTotal: number
+  runState?: DevExportCoverage['runState']
+  selection: boolean
+  models: string[]
+}): DevExportCoverage {
+  const exported = [...new Set(input.indices)]
+    .filter((index) => Number.isInteger(index) && index >= 0 && index < input.completed)
+    .sort((a, b) => a - b)
+  const ranges: Array<[number, number]> = []
+  for (const index of exported) {
+    const last = ranges[ranges.length - 1]
+    if (last && index === last[1] + 1) last[1] = index
+    else ranges.push([index, index])
+  }
+  return {
+    scope: input.selection
+      ? 'selection'
+      : exported.length === input.corpusTotal
+        ? 'full'
+        : 'partial',
+    runState: input.runState ?? 'unknown',
+    corpusTotal: input.corpusTotal,
+    completedCount: input.completed,
+    pendingCount: Math.max(0, input.corpusTotal - input.completed),
+    exportedCount: exported.length,
+    exportedIndexRanges: ranges,
+    exportedPercent: input.corpusTotal
+      ? Math.round((exported.length / input.corpusTotal) * 10000) / 100
+      : 0,
+    models: [...new Set(input.models)]
+  }
 }
 
 export const CAPTURE_COVERAGE = {

@@ -54,6 +54,7 @@ import {
   type IntentReplyMode,
   type DevStartInput,
   CAPTURE_COVERAGE,
+  exportCoverage,
   readCaptureRecord
 } from '../../src/shared/eris-dev'
 import {
@@ -246,6 +247,7 @@ function summaryOf(result: DevResult): DevSummary {
     status: result.status,
     stages: result.stages,
     completion: result.completion,
+    ...(result.deliverable ? { deliverable: result.deliverable } : {}),
     agent: result.agent,
     intent: result.intent,
     artifact: result.artifact,
@@ -712,6 +714,16 @@ app.whenReady().then(() => {
       })
       if (result.canceled || !result.filePath) return null
       const header = readManifest(runDirectory)?.header
+      const coverage = header
+        ? exportCoverage({
+            indices: selection ?? Array.from({ length: completed }, (_, index) => index),
+            completed,
+            corpusTotal: header.corpus.total,
+            runState: readProgress(runDirectory)?.state,
+            selection: Boolean(selection),
+            models: header.live ? [header.live.model] : []
+          })
+        : undefined
       // A fresh linkage key per export: markers match within this file only.
       const sanitizer = new CaptureSanitizer({
         homeDir: homedir(),
@@ -723,6 +735,7 @@ app.whenReady().then(() => {
         (async function* () {
           yield {
             ...header,
+            ...(coverage ? { export: coverage } : {}),
             ...(selection ? { selection: selection.length } : {}),
             // The manifest is written up front; counts arrive in the summary below.
             ...(sanitized

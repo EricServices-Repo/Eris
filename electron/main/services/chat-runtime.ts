@@ -15,7 +15,8 @@ import { estimateMessagesTokens, estimateTokens, recordModelUsage } from './usag
 import {
   activeDiagnosticsScope,
   assertProviderCallAllowed,
-  type ModelPurpose
+  type ModelPurpose,
+  type ModelTermination
 } from './model-transport'
 
 export type { NativeToolCall, OpenAIToolDef }
@@ -36,6 +37,8 @@ export type StreamModelChatOptions = {
   sessionKey?: string
   /** Which pipeline stage asked; lets diagnostics adapters answer each stage separately. */
   purpose?: ModelPurpose
+  /** Called once when the provider reports how generation ended. */
+  onTermination?: (termination: ModelTermination) => void
 }
 
 /**
@@ -52,6 +55,23 @@ export async function* streamModelChat(
     return
   }
   yield* streamProviderChat(options)
+}
+
+/** OpenAI-style finish_reason of a stream that ended normally. */
+function apiFinishReason(finishReason: string | null): ModelTermination['reason'] {
+  switch (finishReason) {
+    case 'stop':
+      return 'eos'
+    case 'length':
+      return 'output-limit'
+    case 'tool_calls':
+    case 'function_call':
+      return 'tool-call'
+    case 'content_filter':
+      return 'content-filter'
+    default:
+      return 'unknown'
+  }
 }
 
 /** Provider transport only. Diagnostics live adapters call this directly. */
@@ -140,7 +160,8 @@ export async function* streamProviderChat(
         temperature: options.temperature,
         signal: options.signal,
         jsonSchema: options.builtinJsonSchema,
-        sessionKey: options.sessionKey
+        sessionKey: options.sessionKey,
+        onTermination: options.onTermination
       })) {
         outputText += chunk
         yield chunk
@@ -174,7 +195,16 @@ export async function* streamProviderChat(
       onUsage: (usage) => {
         reportedPrompt = usage.promptTokens
         reportedCompletion = usage.completionTokens
-      }
+      },
+      onFinish: options.onTermination
+        ? (finishReason, complete) =>
+            options.onTermination!({
+              reason: complete ? apiFinishReason(finishReason) : 'connection-closed',
+              ...(finishReason ? { raw: finishReason } : {}),
+              ...(reportedPrompt !== null ? { promptTokens: reportedPrompt } : {}),
+              ...(reportedCompletion !== null ? { outputTokens: reportedCompletion } : {})
+            })
+        : undefined
     })) {
       outputText += chunk
       yield chunk
