@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.14 — 2026-10-24
+
+- Desktop rebuild.
+
 ## 0.4.13 — 2026-10-23
 
 - Desktop rebuild with patched dependencies and diagnostic fixes.
