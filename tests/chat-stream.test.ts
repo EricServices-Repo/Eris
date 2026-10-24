@@ -165,16 +165,17 @@ describe('chat:stream command approval', () => {
 
   it('chat:stop denies a pending approval and ends the stream as aborted', async () => {
     reply = null
+    const requestId = randomUUID()
     const results: boolean[] = []
     runner.script = async function* (opts) {
       const pending = opts.approveCommand('run', 'rm -rf build')
-      queueMicrotask(() => void handlers['chat:stop']!(null))
+      queueMicrotask(() => void handlers['chat:stop']!({ sender }, requestId))
       results.push(await pending)
       const err = new Error('aborted')
       err.name = 'AbortError'
       throw err
     }
-    expect(await stream()).toBe(false)
+    expect(await stream(undefined, requestId)).toBe(false)
     expect(results).toEqual([false])
     const done = sent.find((s) => s.channel === 'chat:done')
     expect(done?.payload.aborted).toBe(true)

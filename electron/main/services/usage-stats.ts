@@ -9,9 +9,7 @@ function notifyProfileUsageDelta(delta: {
   cloudJobs?: number
 }): void {
   // Dynamic import avoids a circular dependency with usage-sync.ts
-  void import('./usage-sync')
-    .then((m) => m.queueUsageDelta(delta))
-    .catch(() => undefined)
+  void import('./usage-sync').then((m) => m.queueUsageDelta(delta)).catch(() => undefined)
 }
 
 export type ModelUsageKind = 'builtin' | 'openai-compatible' | 'other'
@@ -24,6 +22,10 @@ export type ModelUsageEntry = {
   requests: number
   inputTokens: number
   outputTokens: number
+  measuredInputTokens?: number
+  measuredOutputTokens?: number
+  estimatedInputTokens?: number
+  estimatedOutputTokens?: number
 }
 
 export type DayUsage = {
@@ -116,9 +118,7 @@ export function estimateTokens(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4))
 }
 
-export function estimateMessagesTokens(
-  messages: Array<{ role: string; content: string }>
-): number {
+export function estimateMessagesTokens(messages: Array<{ role: string; content: string }>): number {
   let total = 0
   for (const m of messages) {
     total += estimateTokens(m.content || '') + 4
@@ -144,6 +144,8 @@ export function classifyModel(
 }
 
 export function recordModelUsage(options: {
+  inputSource?: 'measured' | 'estimated'
+  outputSource?: 'measured' | 'estimated'
   model: string
   provider?: string | null
   inputTokens: number
@@ -170,6 +172,12 @@ export function recordModelUsage(options: {
   existing.requests += 1
   existing.inputTokens += inputTokens
   existing.outputTokens += outputTokens
+  const inputField =
+    options.inputSource === 'measured' ? 'measuredInputTokens' : 'estimatedInputTokens'
+  const outputField =
+    options.outputSource === 'measured' ? 'measuredOutputTokens' : 'estimatedOutputTokens'
+  existing[inputField] = (existing[inputField] ?? 0) + inputTokens
+  existing[outputField] = (existing[outputField] ?? 0) + outputTokens
   day.models[key] = existing
   day.totalRequests += 1
   day.totalInputTokens += inputTokens

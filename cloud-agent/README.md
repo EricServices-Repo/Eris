@@ -168,3 +168,35 @@ Health includes `ready`, `inference: "local"`, `gpuMode`, and `localModel: { sta
 Jobs persist across restarts; running jobs re-queue and resume from checkpoints when possible. Shell `run` tools are sandboxed. Private repos use a short-lived `githubToken`; `openPr: true` pushes a branch and opens a PR.
 
 When a job finishes, Eris can **Apply changes** to download `/artifacts` and open Diff Review in the desktop app.
+
+## Required command isolation
+
+The shell tool now fails closed unless Linux provides bubblewrap, unprivileged
+user/mount/PID/network namespaces, and a writable delegated cgroup v2 subtree at
+`ERIS_CLOUD_CGROUP_ROOT` under `/sys/fs/cgroup/`. The service must be permitted to
+create child cgroups with memory, swap, PID and CPU controllers and `cgroup.kill`.
+Each command joins its own group before executing untrusted code. Limits are 4 GiB
+aggregate memory, zero swap, 128 tasks, one CPU quota, 180 seconds wall time,
+64 MiB per file/temporary filesystem and bounded output. Cancellation kills all
+descendants, including processes that change session/group.
+
+The Docker image installs the tools. The sample Compose files do not automatically
+grant host cgroup delegation or namespace permissions. Until ops configures and
+validates those boundaries, `run` returns an explicit isolation error; there is no
+service-shell fallback. Do not solve this by broadly mounting service credentials
+or the host filesystem. Validate peer-file denial, synthetic environment-secret
+denial, network denial, aggregate resource exhaustion and descendant cancellation
+on the actual deployment before accepting untrusted tenants.
+
+Only the job/project root and read-only system runtime directories enter the
+namespace; service data, peer workspaces and credentials are absent. Verification
+contracts receive a read-only workspace. Git metadata is hidden from shell/file
+tools, and publishing uses a separate authority check. Paths reject symlinks,
+traversal and absolute/drive variants; reads are bounded before allocation.
+
+Health `ready` describes inference readiness, not certification of command
+isolation. `taskContractVersion` remains 1: v2 scope/tool/resume enforcement is
+implemented, but command-artifact baseline and obligation-result conformance still
+need qualification before advertising version 2. Desktop v2 tasks fall back locally
+with the same permissions and an explanation. No deployment changes or Linux
+isolation certification were made by this desktop implementation pass.

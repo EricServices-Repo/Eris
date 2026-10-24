@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 
 /**
  * AG-078: a compact regression suite for the root causes found in
- * docs/reviews/eris-dev-10000-2026-10-23/AGENT-IMPROVEMENTS.md, plus a
+ * docs/reviews/eris-dev-10000-2026-10-23/improvements.json, plus a
  * deterministic sweep of the full corpus with exact denominators. The sweep
  * checks routing families only; it never grades answers.
  */
@@ -100,18 +100,24 @@ describe('named regressions', () => {
   it('Q2: a complete example is code, not a plan', async () => {
     expect(await fallbackRoute(Q(2))).toMatchObject({ intent: 'answer', artifact: 'code-example' })
   })
-  it.each([6, 7, 34])('Q%i: writing code in chat is not a mutation or a three-sentence lookup', async (n) => {
-    const route = await fallbackRoute(Q(n))
-    expect(['answer', 'explore']).toContain(route.intent)
-    expect(route.agent).not.toBe('fast')
-  })
+  it.each([6, 7, 34])(
+    'Q%i: writing code in chat is not a mutation or a three-sentence lookup',
+    async (n) => {
+      const route = await fallbackRoute(Q(n))
+      expect(['answer', 'explore']).toContain(route.intent)
+      expect(route.agent).not.toBe('fast')
+    }
+  )
   it.each([42, 111, 524])('Q%i: feature nouns are not a verification request', async (n) => {
     expect((await fallbackRoute(Q(n))).intent).not.toBe('verify')
   })
-  it.each([2813, 8123, 8882])('Q%i: an application data model is not the model catalog', async (n) => {
-    expect(isErisCapabilityQuestion(Q(n))).toBe(false)
-    expect(await fallbackRoute(Q(n))).toMatchObject({ artifact: 'design' })
-  })
+  it.each([2813, 8123, 8882])(
+    'Q%i: an application data model is not the model catalog',
+    async (n) => {
+      expect(isErisCapabilityQuestion(Q(n))).toBe(false)
+      expect(await fallbackRoute(Q(n))).toMatchObject({ artifact: 'design' })
+    }
+  )
 })
 
 describe('contrast pairs', () => {
@@ -134,8 +140,12 @@ describe('contrast pairs', () => {
   })
   it('a named file makes a patch; a shown function stays in chat', async () => {
     expect(
-      interpretRequest({ text: 'Add the function to src/api.ts', intent: 'edit', canEdit: true, revision: 1 })
-        .destination
+      interpretRequest({
+        text: 'Add the function to src/api.ts',
+        intent: 'edit',
+        canEdit: true,
+        revision: 1
+      }).destination
     ).toBe('workspace')
     expect((await fallbackRoute('Show a function that slugifies titles')).artifact).toBe(
       'code-example'

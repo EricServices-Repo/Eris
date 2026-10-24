@@ -1,11 +1,14 @@
+import {
+  parseCloudTask,
+  taskWorkspace,
+  assertTaskTool,
+  assertExternal,
+  canEdit,
+  artifactPath
+} from './task-policy.js'
 import { existsSync } from 'fs'
 import { JobStore } from './job-store.js'
-import {
-  chatTurn,
-  releaseChatSession,
-  seedChatSession,
-  type ChatMessage
-} from './llm.js'
+import { chatTurn, releaseChatSession, seedChatSession, type ChatMessage } from './llm.js'
 import {
   listTree,
   maybeOpenPullRequest,
@@ -22,11 +25,7 @@ import { config } from './config.js'
 /** Minimum characters kept when a cloud job hands text to the next step. */
 const HANDOFF_CHARS = 8_000
 import { getLocalModelStatus } from './local-model.js'
-import {
-  buildJobArtifacts,
-  saveSeedBaseline,
-  snapshotWorkspaceBaseline
-} from './artifacts.js'
+import { buildJobArtifacts, saveSeedBaseline, snapshotWorkspaceBaseline } from './artifacts.js'
 import {
   clearJobSecrets,
   loadCheckpoint,
@@ -53,6 +52,8 @@ export class WorkerPool {
   }
 
   async enqueue(req: CloudJobCreateRequest, auth: AuthContext): Promise<CloudJob> {
+    if (req.task) req = { ...req, task: parseCloudTask(req.task) }
+    if (req.openPr) assertExternal(req.task)
     const local = getLocalModelStatus()
     if (!config.llmBase && local.status === 'error') {
       throw new Error(local.error || 'Local cloud model failed to load')
@@ -79,7 +80,9 @@ export class WorkerPool {
       saveSeedBaseline(
         job.id,
         req.files.map((f) => ({
-          path: String(f.path || '').replace(/\\/g, '/').replace(/^\/+/, ''),
+          path: String(f.path || '')
+            .replace(/\\/g, '/')
+            .replace(/^\/+/, ''),
           content: String(f.content ?? '')
         }))
       )
@@ -100,22 +103,25 @@ export class WorkerPool {
     return job
   }
 
-  private async enqueueResume(
-    req: CloudJobCreateRequest,
-    auth: AuthContext
-  ): Promise<CloudJob> {
+  private async enqueueResume(req: CloudJobCreateRequest, auth: AuthContext): Promise<CloudJob> {
     const prev = this.store.get(String(req.resumeFromJobId))
     if (!prev) throw new Error('resumeFromJobId not found')
     if (prev.ownerId && prev.ownerId !== auth.owner && auth.owner !== 'anonymous') {
-      throw new Error('Cannot resume another user\'s job')
+      throw new Error("Cannot resume another user's job")
     }
     if (!prev.resumable && prev.status !== 'failed' && prev.status !== 'stopped') {
       throw new Error('Job is not resumable')
     }
 
+    if (req.task && JSON.stringify(req.task) !== JSON.stringify(prev.task))
+      throw new Error('Resume cannot replace task authority')
+    if (req.openPr ?? prev.openPr) assertExternal(prev.task)
+    if (req.repoUrl && req.repoUrl !== prev.repoUrl)
+      throw new Error('Resume cannot replace its repository')
     const job = this.store.create(
       {
         goal: req.goal || prev.goal,
+        task: prev.task,
         agentId: req.agentId || prev.agentId,
         model: req.model || prev.model,
         repoUrl: req.repoUrl ?? prev.repoUrl,
@@ -139,7 +145,9 @@ export class WorkerPool {
       saveSeedBaseline(
         job.id,
         req.files.map((f) => ({
-          path: String(f.path || '').replace(/\\/g, '/').replace(/^\/+/, ''),
+          path: String(f.path || '')
+            .replace(/\\/g, '/')
+            .replace(/^\/+/, ''),
           content: String(f.content ?? '')
         }))
       )
@@ -253,9 +261,7 @@ export class WorkerPool {
             .list(200)
             .filter(
               (j) =>
-                j.ownerId === owner &&
-                j.status === 'running' &&
-                !batch.some((b) => b.id === j.id)
+                j.ownerId === owner && j.status === 'running' && !batch.some((b) => b.id === j.id)
             ).length
           if (activeForOwner + storeRunning >= maxForOwner) continue
           batch.push(job)
@@ -269,10 +275,7 @@ export class WorkerPool {
           this.ownerActive.set(owner, (this.ownerActive.get(owner) || 0) + 1)
           void this.runJob(job.id).finally(() => {
             this.active.delete(job.id)
-            this.ownerActive.set(
-              owner,
-              Math.max(0, (this.ownerActive.get(owner) || 1) - 1)
-            )
+            this.ownerActive.set(owner, Math.max(0, (this.ownerActive.get(owner) || 1) - 1))
             void this.pump()
           })
         }
@@ -313,12 +316,21 @@ export class WorkerPool {
         reuse
       })
 
+      const toolWorkspace = taskWorkspace(workspace, job.task)
+      const systemPrompt =
+        SYSTEM_PROMPT +
+        (job.task
+          ? '\nTask contract (enforced by tools; report unmet obligations explicitly):\n' +
+            JSON.stringify(job.task)
+          : '')
       // For git clones without seed overlay, snapshot touched-empty baseline later on first writes
       if (!reuse && seed?.length) {
         saveSeedBaseline(
           id,
           seed.map((f) => ({
-            path: String(f.path || '').replace(/\\/g, '/').replace(/^\/+/, ''),
+            path: String(f.path || '')
+              .replace(/\\/g, '/')
+              .replace(/^\/+/, ''),
             content: String(f.content ?? '')
           }))
         )
@@ -352,7 +364,7 @@ export class WorkerPool {
           step: checkpoint.step
         }))
       } else {
-        messages = [{ role: 'system', content: SYSTEM_PROMPT }]
+        messages = [{ role: 'system', content: systemPrompt }]
         nextUser = `Agent: ${job.agentName} (${job.agentId})\nGoal:\n${job.goal}`
       }
 
@@ -360,6 +372,7 @@ export class WorkerPool {
 
       try {
         for (let step = startStep; ; step++) {
+          if (step > config.maxSteps) throw new Error('Cloud job exceeded its step limit')
           if (ac.signal.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
           this.store.patch(id, (j) => ({
             ...j,
@@ -379,7 +392,7 @@ export class WorkerPool {
             assistant = await chatTurn({
               sessionKey: id,
               userMessage: nextUser,
-              systemPrompt: needsSystem ? SYSTEM_PROMPT : undefined,
+              systemPrompt: needsSystem ? systemPrompt : undefined,
               messagesForRemote: [...messages, { role: 'user', content: nextUser }],
               model: job.model,
               maxTokens: toolMaxTokens,
@@ -405,6 +418,7 @@ export class WorkerPool {
             let prUrl: string | null = null
             if (job.openPr && job.repoUrl && githubToken) {
               this.store.patch(id, (j) => ({ ...j, liveStatus: 'Opening pull request…' }))
+              assertExternal(job.task)
               const prResult = await maybeOpenPullRequest({
                 workspace,
                 repoUrl: job.repoUrl,
@@ -464,29 +478,37 @@ export class WorkerPool {
             let detail = ''
             let touched: string | undefined
             try {
+              assertTaskTool(job.task, call.name, call.args)
               if (call.name === 'tree') {
                 detail = listTree(
-                  workspace,
+                  toolWorkspace,
                   typeof call.args.path === 'string' ? call.args.path : '.',
                   typeof call.args.maxDepth === 'number' ? call.args.maxDepth : 3
                 )
               } else if (call.name === 'read_file') {
                 const p = String(call.args.path || '')
-                detail = readText(workspace, p)
-                touched = p
+                detail = readText(toolWorkspace, p)
               } else if (call.name === 'write_file') {
                 const p = String(call.args.path || '')
                 try {
-                  snapshotWorkspaceBaseline(id, [p])
+                  snapshotWorkspaceBaseline(id, [artifactPath(job.task, p)])
                 } catch {
                   // ignore
                 }
                 const content = String(call.args.content ?? '')
-                touched = writeText(workspace, p, content)
+                touched = artifactPath(job.task, writeText(toolWorkspace, p, content))
                 detail = `Wrote ${touched} (${Buffer.byteLength(content, 'utf8')} bytes)`
               } else if (call.name === 'run') {
                 const command = String(call.args.command || '')
-                const r = await runShell(workspace, command, ac.signal)
+                const r = await runShell(
+                  toolWorkspace,
+                  command,
+                  ac.signal,
+                  Boolean(
+                    job.task &&
+                    (!canEdit(job.task) || job.task.authority.execute === 'verification')
+                  )
+                )
                 ok = r.ok
                 detail = r.detail
               } else {
@@ -507,9 +529,7 @@ export class WorkerPool {
             this.store.patch(id, (j) => ({
               ...j,
               recentTools: [...j.recentTools.filter((t) => t.id !== toolId), done].slice(-40),
-              filesTouched: touched
-                ? [...new Set([...j.filesTouched, touched])]
-                : j.filesTouched,
+              filesTouched: touched ? [...new Set([...j.filesTouched, touched])] : j.filesTouched,
               liveStatus: `${call.name}: ${ok ? 'ok' : 'error'}`
             }))
             // Keep model context lean — UI still has fuller detail in recentTools

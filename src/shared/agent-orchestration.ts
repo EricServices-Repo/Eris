@@ -96,17 +96,16 @@ export function formatJobResultForChat(options: {
 export function deriveBlackboardStatus(job: {
   status: string
   liveStatus?: string | null
+  waitReason?: 'children' | 'approval' | 'question' | null
 }): BlackboardStatus {
-  const live = (job.liveStatus || '').toLowerCase()
   if (job.status === 'queued') return 'queued'
   if (job.status === 'merged') return 'merged'
   if (job.status === 'discarded') return 'discarded'
   if (job.status === 'stopped') return 'stopped'
   if (job.status === 'failed') return 'failed'
   if (job.status === 'done') return 'ready-to-merge'
-  if (live.includes('waiting for approval')) return 'needs-approval'
-  if (live.includes('waiting for children') || live.includes('blocked')) return 'blocked'
-  if (live.includes('planning')) return 'planning'
+  if (job.waitReason === 'approval') return 'needs-approval'
+  if (job.waitReason === 'children' || job.waitReason === 'question') return 'blocked'
   if (job.status === 'running') return 'running'
   return 'queued'
 }

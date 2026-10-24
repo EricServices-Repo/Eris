@@ -32,10 +32,18 @@ describe('agent orchestration', () => {
     expect(deriveBlackboardStatus({ status: 'queued' })).toBe('queued')
     expect(deriveBlackboardStatus({ status: 'done' })).toBe('ready-to-merge')
     expect(
-      deriveBlackboardStatus({ status: 'running', liveStatus: 'Waiting for approval: npm test' })
+      deriveBlackboardStatus({
+        status: 'running',
+        waitReason: 'approval',
+        liveStatus: 'Any translated approval text'
+      })
     ).toBe('needs-approval')
     expect(
-      deriveBlackboardStatus({ status: 'running', liveStatus: 'Waiting for children…' })
+      deriveBlackboardStatus({
+        status: 'running',
+        waitReason: 'children',
+        liveStatus: 'Localized text'
+      })
     ).toBe('blocked')
   })
 

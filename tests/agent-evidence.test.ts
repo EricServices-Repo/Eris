@@ -4,7 +4,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 
 /**
- * Stage 4 of docs/reviews/eris-dev-10000-2026-10-23/AGENT-IMPROVEMENTS.md:
+ * Stage 4 of docs/reviews/eris-dev-10000-2026-10-23/improvements.json:
  * scope relevance, stack fit, context accounting and labeled cases (AG-043–051, AG-067).
  */
 

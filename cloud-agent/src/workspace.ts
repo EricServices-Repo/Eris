@@ -6,46 +6,48 @@ import {
   readFileSync,
   writeFileSync,
   readdirSync,
-  statSync,
+  lstatSync,
   rmSync
 } from 'fs'
-import { dirname, join, normalize, relative, resolve, sep } from 'path'
+import { dirname, join, normalize, relative } from 'path'
 import { config } from './config.js'
 import { assertShellAllowed } from './sandbox.js'
+import { confinedPath, readBoundedText } from './workspace-paths.js'
+import { runIsolatedCommand } from './job-sandbox.js'
 import { bumpMetric } from './observe.js'
 import type { CloudJobFile } from './types.js'
 
 const execFileAsync = promisify(execFile)
 
 export function jobWorkspace(jobId: string): string {
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(jobId)) throw new Error('Invalid job ID')
   return join(config.dataDir, 'workspaces', jobId)
 }
 
 export function assertInWorkspace(workspace: string, relPath: string): string {
-  const cleaned = relPath.replace(/\\/g, '/').replace(/^\/+/, '')
-  if (!cleaned || cleaned.includes('..')) {
-    throw new Error('Invalid path')
-  }
-  const abs = resolve(workspace, cleaned)
-  const root = resolve(workspace) + sep
-  if (abs !== resolve(workspace) && !abs.startsWith(root)) {
-    throw new Error('Path escapes workspace')
-  }
-  return abs
+  if (relPath.replace(/\\/g, '/').split('/').includes('.git'))
+    throw new Error('Git metadata is not an agent file')
+  return confinedPath(workspace, relPath)
 }
 
-function authenticatedCloneUrl(repoUrl: string, githubToken?: string | null): string {
-  const trimmed = repoUrl.trim()
-  if (!githubToken?.trim()) return trimmed
-  try {
-    const u = new URL(trimmed)
-    if (u.protocol !== 'https:') return trimmed
-    // GitHub HTTPS with PAT: https://x-access-token:TOKEN@host/owner/repo.git
-    u.username = 'x-access-token'
-    u.password = githubToken.trim()
-    return u.toString()
-  } catch {
-    return trimmed
+function gitEnvironment(repoUrl: string, githubToken?: string | null): NodeJS.ProcessEnv {
+  const remote = new URL(repoUrl)
+  if (remote.protocol !== 'https:' || remote.username || remote.password)
+    throw new Error('Repository must be an HTTPS URL without embedded credentials')
+  return {
+    PATH: process.env.PATH,
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    ...(githubToken?.trim()
+      ? {
+          GIT_CONFIG_COUNT: '1',
+          GIT_CONFIG_KEY_0: `http.${remote.origin}/.extraheader`,
+          GIT_CONFIG_VALUE_0:
+            'AUTHORIZATION: basic ' +
+            Buffer.from('x-access-token:' + githubToken.trim()).toString('base64')
+        }
+      : {})
   }
 }
 
@@ -66,21 +68,22 @@ export async function prepareWorkspace(options: {
     mkdirSync(root, { recursive: true })
 
     if (options.repoUrl?.trim()) {
-      const cloneUrl = authenticatedCloneUrl(options.repoUrl, options.githubToken)
+      const remote = new URL(options.repoUrl)
+      if (remote.protocol !== 'https:' || remote.username || remote.password)
+        throw new Error('Repository must be an HTTPS URL without embedded credentials')
+      const cloneUrl = options.repoUrl.trim()
       const args = ['clone', '--depth', '1']
       if (options.branch?.trim()) args.push('--branch', options.branch.trim())
-      args.push(cloneUrl, root)
-      await execFileAsync('git', args, {
-        timeout: 180_000,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
-      })
-      // Strip credentials from remote URL so they aren't persisted in .git/config
+      args.push('--', cloneUrl, root)
       try {
-        await execFileAsync('git', ['-C', root, 'remote', 'set-url', 'origin', options.repoUrl.trim()], {
-          timeout: 10_000
+        await execFileAsync('git', args, {
+          timeout: 180000,
+          env: gitEnvironment(cloneUrl, options.githubToken)
         })
       } catch {
-        // ignore
+        // Git exceptions may contain remote credentials; return a fixed message only.
+        rmSync(root, { recursive: true, force: true })
+        throw new Error('Repository clone failed. Check its HTTPS URL, branch and authorization.')
       }
     }
   } else {
@@ -91,13 +94,12 @@ export async function prepareWorkspace(options: {
   let written = 0
   for (const f of files) {
     if (written >= config.maxFiles) break
-    const path = String(f.path || '').replace(/\\/g, '/').replace(/^\/+/, '')
-    if (!path || path.includes('..')) continue
+    const path = String(f.path || '')
     const content = String(f.content ?? '')
     if (Buffer.byteLength(content, 'utf8') > config.maxFileBytes) continue
     const abs = assertInWorkspace(root, path)
     mkdirSync(dirname(abs), { recursive: true })
-    writeFileSync(abs, content, 'utf8')
+    writeFileSync(assertInWorkspace(root, path), content, 'utf8')
     written++
   }
 
@@ -114,9 +116,10 @@ export async function prepareWorkspace(options: {
 
 export function listTree(workspace: string, rel = '.', maxDepth = 3): string {
   const start = assertInWorkspace(workspace, rel === '.' ? '.' : rel)
+  maxDepth = Number.isFinite(maxDepth) ? Math.max(0, Math.min(8, Math.floor(maxDepth))) : 3
   const lines: string[] = []
   const walk = (dir: string, depth: number) => {
-    if (depth > maxDepth) return
+    if (depth > maxDepth || lines.length >= 400) return
     let entries: string[]
     try {
       entries = readdirSync(dir).sort()
@@ -124,11 +127,13 @@ export function listTree(workspace: string, rel = '.', maxDepth = 3): string {
       return
     }
     for (const name of entries) {
+      if (lines.length >= 400) return
       if (name === '.git' || name === 'node_modules' || name === '.eris-cloud') continue
       const abs = join(dir, name)
       let st
       try {
-        st = statSync(abs)
+        st = lstatSync(abs)
+        if (st.isSymbolicLink()) continue
       } catch {
         continue
       }
@@ -144,56 +149,30 @@ export function listTree(workspace: string, rel = '.', maxDepth = 3): string {
 
 export function readText(workspace: string, relPath: string): string {
   const abs = assertInWorkspace(workspace, relPath)
-  const st = statSync(abs)
-  if (!st.isFile()) throw new Error('Not a file')
-  if (st.size > config.maxFileBytes) {
-    const buf = readFileSync(abs, 'utf8')
-    return `${buf.slice(0, config.maxFileBytes)}\n\n[truncated]`
-  }
-  return readFileSync(abs, 'utf8')
+  return readBoundedText(abs, config.maxFileBytes)
 }
 
 export function writeText(workspace: string, relPath: string, content: string): string {
   const abs = assertInWorkspace(workspace, relPath)
+  if (Buffer.byteLength(content, 'utf8') > config.maxFileBytes)
+    throw new Error('File exceeds workspace write limit')
   mkdirSync(dirname(abs), { recursive: true })
-  writeFileSync(abs, content, 'utf8')
+  writeFileSync(assertInWorkspace(workspace, relPath), content, { encoding: 'utf8', flag: 'w' })
   return relative(workspace, abs) || relPath
 }
 
 export async function runShell(
   workspace: string,
   command: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  readOnly = false
 ): Promise<{ ok: boolean; detail: string }> {
   const policy = assertShellAllowed(command)
   if (!policy.ok) {
     bumpMetric('toolDenied')
     return { ok: false, detail: policy.error }
   }
-  const trimmed = command.trim()
-  try {
-    const { stdout, stderr } = await execFileAsync(
-      'bash',
-      ['-lc', trimmed],
-      {
-        cwd: workspace,
-        timeout: 180_000,
-        maxBuffer: 2_000_000,
-        signal,
-        env: {
-          ...process.env,
-          HOME: workspace,
-          GIT_TERMINAL_PROMPT: '0'
-        }
-      }
-    )
-    const detail = `${stdout || ''}${stderr ? `\n${stderr}` : ''}`.trim() || '(no output)'
-    return { ok: true, detail: detail.slice(0, 12_000) }
-  } catch (err) {
-    const e = err as { stdout?: string; stderr?: string; message?: string }
-    const detail = `${e.stdout || ''}${e.stderr || e.message || String(err)}`.trim()
-    return { ok: false, detail: detail.slice(0, 12_000) }
-  }
+  return runIsolatedCommand(workspace, command.trim(), signal, readOnly)
 }
 
 /** After a successful job: commit, push branch, open a GitHub PR when possible. */
@@ -221,9 +200,13 @@ export async function maybeOpenPullRequest(options: {
   ].join('\n')
 
   try {
-    await execFileAsync('git', ['-C', workspace, 'config', 'user.email', 'cloud-agent@eris.local'], {
-      timeout: 10_000
-    })
+    await execFileAsync(
+      'git',
+      ['-C', workspace, 'config', 'user.email', 'cloud-agent@eris.local'],
+      {
+        timeout: 10_000
+      }
+    )
     await execFileAsync('git', ['-C', workspace, 'config', 'user.name', 'Eris Cloud Agent'], {
       timeout: 10_000
     })
@@ -239,10 +222,10 @@ export async function maybeOpenPullRequest(options: {
       timeout: 60_000
     })
 
-    const pushUrl = authenticatedCloneUrl(repoUrl, githubToken)
+    const pushUrl = repoUrl
     await execFileAsync('git', ['-C', workspace, 'push', '-u', pushUrl, `HEAD:${branch}`], {
       timeout: 180_000,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+      env: gitEnvironment(repoUrl, githubToken)
     })
 
     // Parse owner/repo from URL
@@ -261,7 +244,9 @@ export async function maybeOpenPullRequest(options: {
     const apiHost = (() => {
       try {
         const u = new URL(repoUrl)
-        return u.hostname === 'github.com' ? 'https://api.github.com' : `https://${u.hostname}/api/v3`
+        return u.hostname === 'github.com'
+          ? 'https://api.github.com'
+          : `https://${u.hostname}/api/v3`
       } catch {
         return 'https://api.github.com'
       }
@@ -282,9 +267,8 @@ export async function maybeOpenPullRequest(options: {
     const data = (await res.json().catch(() => ({}))) as { html_url?: string; message?: string }
     if (res.ok && data.html_url) return data.html_url
     return `branch ${branch} pushed; PR API: ${data.message || res.status}`
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return `PR attempt failed: ${msg.slice(0, 200)}`
+  } catch {
+    return 'PR attempt failed. Check repository authorization and branch access.'
   }
 }
 

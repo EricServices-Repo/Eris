@@ -187,6 +187,13 @@ export function AgentsInboxPanel({ onOpenPath, onOpenChat }: Props) {
                 )}
                 {job.routeReason && <p className="agents-inbox-live">{job.routeReason}</p>}
                 {job.liveStatus && <div className="agents-inbox-live">{job.liveStatus}</div>}
+                {job.integration && (
+                  <div className="agents-inbox-live">
+                    {job.integration.state === 'shared-parent'
+                      ? 'Applied to parent worktree · awaiting parent integration'
+                      : `Integrated into ${job.destinationBranch ?? 'destination'}${job.integration.commit ? ' · ' + job.integration.commit.slice(0, 8) : ''}`}
+                  </div>
+                )}
                 {job.error && <div className="agents-inbox-error">{job.error}</div>}
                 {job.prUrl && (
                   <a className="agents-inbox-pr" href={job.prUrl} target="_blank" rel="noreferrer">

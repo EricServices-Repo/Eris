@@ -4,7 +4,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 
 /**
- * Stage 6 of docs/reviews/eris-dev-10000-2026-10-23/AGENT-IMPROVEMENTS.md:
+ * Stage 6 of docs/reviews/eris-dev-10000-2026-10-23/improvements.json:
  * grading, evidence for claims, outcome taxonomy, coverage, export redaction,
  * resumable runs and run comparison (AG-069–085).
  */
@@ -75,15 +75,25 @@ describe('AG-071 code examples are graded against the topic rubric', () => {
   it('does not count prose for core behavior, wrong languages or missing code', () => {
     const prose = `${SOFT_DELETE.replace(/export function restore[^\n]*\n/, '')}\nYou can restore rows later.`
     expect(gradeCodeExample(prose, { rubric }).missingCore).toEqual(['restore'])
-    expect(gradeCodeExample(SOFT_DELETE.replace('```ts', '```python'), { language: 'TypeScript' }).verdict).toBe('fail')
-    expect(gradeCodeExample('Use a deletedAt column and restore it later.', { rubric }).hasCode).toBe(false)
+    expect(
+      gradeCodeExample(SOFT_DELETE.replace('```ts', '```python'), { language: 'TypeScript' })
+        .verdict
+    ).toBe('fail')
+    expect(
+      gradeCodeExample('Use a deletedAt column and restore it later.', { rubric }).hasCode
+    ).toBe(false)
   })
 
   it('covers all 40 topics, and every corpus question matches one', () => {
     expect(TOPIC_RUBRICS).toHaveLength(40)
-    expect(TOPIC_RUBRICS.every((item) => item.behaviors.some((behavior) => behavior.core))).toBe(true)
+    expect(TOPIC_RUBRICS.every((item) => item.behaviors.some((behavior) => behavior.core))).toBe(
+      true
+    )
     const corpus = prepareQuestions(
-      readFileSync(join(__dirname, 'fixtures', '10000-natural-diverse-coding-questions.txt'), 'utf8'),
+      readFileSync(
+        join(__dirname, 'fixtures', '10000-natural-diverse-coding-questions.txt'),
+        'utf8'
+      ),
       '.txt'
     )
     const unmatched = corpus.questions.filter((question) => !rubricForTopic(question.text))
@@ -104,7 +114,11 @@ describe('AG-072 claims need observed evidence', () => {
         ...expect
       }
     }) as DebugScenario
-  const input = (answer: string, changedPaths: string[], verifications?: Array<{ ok: boolean; skipped: boolean }>): OracleInput => ({
+  const input = (
+    answer: string,
+    changedPaths: string[],
+    verifications?: Array<{ ok: boolean; skipped: boolean }>
+  ): OracleInput => ({
     scenario: scenario(),
     sandbox: tmpdir(),
     route: {
@@ -139,18 +153,28 @@ describe('AG-072 claims need observed evidence', () => {
     expect(failures(evaluateScenario(input('I have implemented the zero guard.', [])))).toEqual([
       'unsupported_claim'
     ])
-    expect(failures(evaluateScenario(input('I have implemented the zero guard.', ['src/divide.ts'])))).toEqual([])
+    expect(
+      failures(evaluateScenario(input('I have implemented the zero guard.', ['src/divide.ts'])))
+    ).toEqual([])
   })
 
   it('fails a pass claim when verification failed or never ran', () => {
     expect(
-      failures(evaluateScenario(input('DONE: fixed; all tests pass.', ['src/divide.ts'], [{ ok: false, skipped: false }])))
+      failures(
+        evaluateScenario(
+          input('DONE: fixed; all tests pass.', ['src/divide.ts'], [{ ok: false, skipped: false }])
+        )
+      )
     ).toEqual(['unsupported_claim'])
     expect(
       failures(evaluateScenario(input('Verification passed.', ['src/divide.ts'], [])))
     ).toEqual(['unsupported_claim'])
     expect(
-      failures(evaluateScenario(input('Verification passed.', ['src/divide.ts'], [{ ok: true, skipped: false }])))
+      failures(
+        evaluateScenario(
+          input('Verification passed.', ['src/divide.ts'], [{ ok: true, skipped: false }])
+        )
+      )
     ).toEqual([])
   })
 })
@@ -192,7 +216,10 @@ describe('AG-069/AG-083/AG-085 evaluation, taxonomy and typed outcomes', () => {
 
   it('separates agent defects from environment and harness limits', () => {
     const fail = (category: string) =>
-      base({ status: 'failed', failure: { stage: 'route', category: category as never, detail: '' } })
+      base({
+        status: 'failed',
+        failure: { stage: 'route', category: category as never, detail: '' }
+      })
     expect(outcomeClass(base({}))).toBe('passed')
     expect(outcomeClass(fail('intent_mismatch'))).toBe('agent_defect')
     expect(outcomeClass(fail('unsupported_claim'))).toBe('agent_defect')
@@ -209,7 +236,9 @@ describe('AG-069/AG-083/AG-085 evaluation, taxonomy and typed outcomes', () => {
   })
 
   it('states why each case passed, failed or is ungraded', () => {
-    const scenario = builtinDebugScenarios().find((item) => item.id === 'complete-example-soft-delete')!
+    const scenario = builtinDebugScenarios().find(
+      (item) => item.id === 'complete-example-soft-delete'
+    )!
     const passed = evaluationOf(scenario, base({}))
     expect(passed).toMatchObject({ verdict: 'passed', label: { source: 'review-derived' } })
     const failed = evaluationOf(
@@ -217,7 +246,15 @@ describe('AG-069/AG-083/AG-085 evaluation, taxonomy and typed outcomes', () => {
       base({
         status: 'failed',
         failure: { stage: 'answer', category: 'answer_incomplete', detail: 'missing: restore' },
-        checks: [{ stage: 'answer', name: 'code example', ok: false, expected: 'x', actual: 'missing: restore' }]
+        checks: [
+          {
+            stage: 'answer',
+            name: 'code example',
+            ok: false,
+            expected: 'x',
+            actual: 'missing: restore'
+          }
+        ]
       })
     )
     expect(failed.rationale).toContain('answer_incomplete')
@@ -252,7 +289,10 @@ describe('AG-070 coverage states what a run did not exercise', () => {
 
 describe('AG-075 sanitized exports', () => {
   it('removes a credential consistently while keeping identity and relative paths', () => {
-    const sanitizer = new CaptureSanitizer({ homeDir: '/Users/dev', tmpRoots: ['/var/folders/x/T'] })
+    const sanitizer = new CaptureSanitizer({
+      homeDir: '/Users/dev',
+      tmpRoots: ['/var/folders/x/T']
+    })
     const record = {
       questionId: '3f2a9c1b04de-1',
       sourceLine: 12,
@@ -299,7 +339,13 @@ describe('AG-076 resumable runs', () => {
     runId,
     header,
     questions: prepareQuestions('a?\nb?\nc?', '.txt').questions,
-    config: { context: 8192, mode: 'agent', intentReplyMode: 'fallback', projectKind: 'sample', project: null }
+    config: {
+      context: 8192,
+      mode: 'agent',
+      intentReplyMode: 'fallback',
+      projectKind: 'sample',
+      project: null
+    }
   })
 
   it('resumes at the first missing, unreadable or invalid case', () => {
@@ -346,7 +392,13 @@ describe('AG-076 resumable runs', () => {
     const dir = join(captures, runId)
     mkdirSync(dir)
     writeManifest(dir, manifest(runId))
-    writeProgress(dir, { state: 'running', completed: 1, updatedAt: '', rewritten: [], resumedAt: [] })
+    writeProgress(dir, {
+      state: 'running',
+      completed: 1,
+      updatedAt: '',
+      rewritten: [],
+      resumedAt: []
+    })
     expect(markInterruptedRuns(captures)).toBe(1)
     expect(readProgress(dir)?.state).toBe('interrupted')
     expect(listRuns(captures)).toEqual([
@@ -383,21 +435,33 @@ describe('AG-077 run comparison by stable question ID', () => {
     const before = record({
       intent: 'capability',
       agent: 'Explainer',
-      task: { taskId: 'a', scope: { workspaceRoot: '/tmp/one' }, authority: { tools: 'none', edit: false, execute: 'none' } }
+      task: {
+        taskId: 'a',
+        scope: { workspaceRoot: '/tmp/one' },
+        authority: { tools: 'none', edit: false, execute: 'none' }
+      }
     } as Partial<DevResult>)
     const after = record({
       intent: 'explore',
       agent: 'Explainer',
       artifact: 'design',
       durationMs: 99,
-      task: { taskId: 'b', scope: { workspaceRoot: '/tmp/two' }, authority: { tools: 'none', edit: false, execute: 'none' } }
+      task: {
+        taskId: 'b',
+        scope: { workspaceRoot: '/tmp/two' },
+        authority: { tools: 'none', edit: false, execute: 'none' }
+      }
     } as Partial<DevResult>)
     const unchanged = record({
       questionId: 'other-1',
       intent: 'answer',
       task: { taskId: 'c', authority: { tools: 'none', edit: false, execute: 'none' } }
     } as Partial<DevResult>)
-    const renamed = { ...unchanged, task: { ...(unchanged.task as object), taskId: 'd' }, durationMs: 50 }
+    const renamed = {
+      ...unchanged,
+      task: { ...(unchanged.task as object), taskId: 'd' },
+      durationMs: 50
+    }
     const comparison = compareCaptures([before, unchanged], [after, renamed as DevResult])
     expect(comparison.matched).toBe(2)
     expect(comparison.changed.map((item) => item.questionId)).toEqual(['q2813-1'])
@@ -410,7 +474,8 @@ describe('defects found while qualifying', () => {
   it('keeps code fences in answers and strips only tool-call fences', () => {
     // FR-010: a fence is protocol only when the runtime would execute it — a reply of
     // nothing but envelope fences. Beside prose it documents a call and stays visible.
-    const answer = 'Here:\n```ts\nexport const x = 1\n```\n```json\n{"name":"read_file","path":"a.ts"}\n```'
+    const answer =
+      'Here:\n```ts\nexport const x = 1\n```\n```json\n{"name":"read_file","path":"a.ts"}\n```'
     const out = stripToolBlocks(answer)
     expect(out).toContain('```ts\nexport const x = 1\n```')
     expect(out).toContain('read_file')

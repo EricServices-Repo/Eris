@@ -27,7 +27,7 @@ Feed config lives in `package.json` → `build.publish` and `resources/app-updat
 Quit and reopen Eris after a local rebuild — macOS `open` focuses an already-running
 instance and will not reload a new `app.asar`.
 
-CI publishes installers to the public `EricServices-Repo/Eris` release. Branch integration and the release source are governed by [GitHub workflow rules](./GITHUB-WORKFLOW.md): before v1.0.1, release candidates come from `dev`; v1.0.1 is promoted to `main` by pull request.
+CI publishes installers to the public `EricServices-Repo/Eris` release. Branch integration and the release source are governed by [GitHub workflow rules](./GITHUB-WORKFLOW.md): `main` is the integration/release branch. Tags must identify an integrated commit whose package and lock versions match.
 
 ### Required release assets (CI already uploads these)
 
@@ -143,3 +143,9 @@ npm run dist:dmg   # or dist:release:mac / dist:win
 ```
 
 Dev (`electron-vite`) reports updates as **disabled** (packaged only).
+
+## Immutable build and repair
+
+Release CI resolves the tag once and checks out the same SHA on both platforms. Each platform uploads `release-provenance-{platform}.json` with source/tag/lock hashes, signing state, workflow identity and installer checksums. Normal uploads reject asset replacement. Manual `repair_existing` is only for replacing artifacts from the same immutable source after a failed upload; source changes need a new version/tag. Historical tags lacking the new scripts cannot be repaired by silently substituting current main.
+
+Packaged smoke tests use temporary profiles and exercise the renderer/preload and invalid chat rejection without updater or model warmup. This is launch validation; signed update installation still requires certificates and platform acceptance.

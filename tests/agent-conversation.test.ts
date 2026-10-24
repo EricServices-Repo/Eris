@@ -4,7 +4,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 
 /**
- * Stage 5 of docs/reviews/eris-dev-10000-2026-10-23/AGENT-IMPROVEMENTS.md:
+ * Stage 5 of docs/reviews/eris-dev-10000-2026-10-23/improvements.json:
  * follow-ups, recommendations, top-level vs child agents, delegation outcomes
  * and recovery that keeps the task fixed (AG-052–058).
  */

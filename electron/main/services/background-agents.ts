@@ -28,6 +28,7 @@ import {
   workspaceKey
 } from './workspace-trust'
 import { addAgentWorktree, diffWorktree, mergeAgentBranch, removeAgentWorktree } from './worktrees'
+import { acquireProjectWrite } from './agent/task-scheduler'
 import { logError, logInfo } from './logger'
 import { activeDiagnosticsScope } from './model-transport'
 import {
@@ -182,6 +183,8 @@ export function enqueueBackgroundJob(
     sourceThreadId: request.sourceThreadId ?? parent?.sourceThreadId ?? null,
     parentId: request.parentId ?? null,
     childIds: [],
+    destinationBranch: parent?.destinationBranch,
+    baseSha: parent?.baseSha,
     handoff: request.handoff ?? null,
     claim: request.claim ?? null,
     routeHistory: [],
@@ -260,38 +263,46 @@ export async function awaitChildJobs(
 
   patch(parentId, (j) => ({
     ...j,
+    waitReason: 'children',
     liveStatus: 'Waiting for children…'
   }))
   // A waiting parent releases its slot; immediately wake queued specialists.
   void pumpQueue()
 
-  const deadline = Date.now() + Math.max(5_000, Math.min(timeoutMs, 30 * 60_000))
-  const terminal = new Set(['done', 'failed', 'stopped', 'merged', 'discarded'])
+  try {
+    const deadline = Date.now() + Math.max(5_000, Math.min(timeoutMs, 30 * 60_000))
+    const terminal = new Set(['done', 'failed', 'stopped', 'merged', 'discarded'])
 
-  while (Date.now() < deadline) {
-    if (aborts.get(parentId)?.signal.aborted) {
-      return { ok: false, detail: 'Parent aborted while waiting for children' }
+    while (Date.now() < deadline) {
+      if (aborts.get(parentId)?.signal.aborted) {
+        return { ok: false, detail: 'Parent aborted while waiting for children' }
+      }
+      const children = childIds.map((id) => jobs.get(id)).filter(Boolean) as BackgroundJob[]
+      const pending = children.filter((c) => !terminal.has(c.status))
+      if (pending.length === 0) {
+        patch(parentId, (j) => ({
+          ...j,
+          liveStatus: 'Children finished',
+          filesTouched: [
+            ...new Set([...j.filesTouched, ...children.flatMap((c) => c.filesTouched)])
+          ]
+        }))
+        return summarizeAgentResults(childIds.map((id) => jobs.get(id)))
+      }
+      await new Promise((r) => setTimeout(r, 500))
     }
-    const children = childIds.map((id) => jobs.get(id)).filter(Boolean) as BackgroundJob[]
-    const pending = children.filter((c) => !terminal.has(c.status))
-    if (pending.length === 0) {
-      patch(parentId, (j) => ({
-        ...j,
-        liveStatus: 'Children finished',
-        filesTouched: [...new Set([...j.filesTouched, ...children.flatMap((c) => c.filesTouched)])]
-      }))
-      return summarizeAgentResults(childIds.map((id) => jobs.get(id)))
-    }
-    await new Promise((r) => setTimeout(r, 500))
-  }
 
-  const still = childIds
-    .map((id) => jobs.get(id))
-    .filter((c) => c && !terminal.has(c.status))
-    .map((c) => `${c!.id.slice(0, 8)}:${c!.status}`)
-  return {
-    ok: false,
-    detail: `Timed out waiting for children: ${still.join(', ') || 'unknown'}`
+    const still = childIds
+      .map((id) => jobs.get(id))
+      .filter((c) => c && !terminal.has(c.status))
+      .map((c) => `${c!.id.slice(0, 8)}:${c!.status}`)
+    return {
+      ok: false,
+      detail: `Timed out waiting for children: ${still.join(', ') || 'unknown'}`
+    }
+  } finally {
+    patch(parentId, (j) => ({ ...j, waitReason: null }))
+    void pumpQueue()
   }
 }
 
@@ -345,11 +356,23 @@ export async function mergeBackgroundJob(id: string): Promise<BackgroundJob> {
     return upsert({
       ...job,
       status: 'merged',
-      liveStatus: 'Merged (shared branch with parent)',
+      integration: { state: 'shared-parent', at: new Date().toISOString() },
+      liveStatus: 'Applied to parent worktree; parent integration is pending',
       actionLog: [...job.actionLog, 'Marked merged — edits already on parent worktree'].slice(-80)
     })
   }
-  const merged = await mergeAgentBranch(job.workspacePath, job.branch)
+  if (!job.destinationBranch || !job.baseSha)
+    throw new Error('This job has no integration baseline. Recreate the job before merging.')
+  const release = await acquireProjectWrite(job.workspacePath)
+  let merged
+  try {
+    merged = await mergeAgentBranch(job.workspacePath, job.branch, {
+      branch: job.destinationBranch,
+      baseSha: job.baseSha
+    })
+  } finally {
+    release()
+  }
   if (!merged.ok) throw new Error(merged.error || 'Merge failed')
   try {
     await removeAgentWorktree(job.workspacePath, { path: job.worktreePath, branch: job.branch })
@@ -359,6 +382,7 @@ export async function mergeBackgroundJob(id: string): Promise<BackgroundJob> {
   return upsert({
     ...job,
     status: 'merged',
+    integration: { state: 'integrated', commit: merged.commit, at: new Date().toISOString() },
     liveStatus: 'Merged',
     actionLog: [...job.actionLog, 'Merged into current branch']
   })
@@ -437,8 +461,7 @@ async function pumpQueue(): Promise<void> {
         if (j.status !== 'running') return false
         if (workspaceKey(j.workspacePath) !== workspaceKey(first.workspacePath)) return false
         // Parents blocked on children free a slot so specialists can run.
-        const live = (j.liveStatus || '').toLowerCase()
-        if (live.includes('waiting for children')) return false
+        if (j.waitReason === 'children') return false
         return true
       }).length
       const slots = Math.max(0, settings.backgroundAgents.maxParallel - running)
@@ -554,6 +577,8 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
         ...j,
         worktreePath: tree.path,
         branch: tree.branch,
+        destinationBranch: tree.destinationBranch,
+        baseSha: tree.baseSha,
         status: 'running',
         liveStatus: `Running · ${turnPlan.agentName}`
       }))
@@ -655,6 +680,7 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
         if (!sender || sender.isDestroyed()) return false
         patch(job.id, (j) => ({
           ...j,
+          waitReason: 'approval',
           liveStatus: `Waiting for approval: ${command.slice(0, 80)}`
         }))
         const decision = await requestCommandApproval(sender, job.id, kind, command, ac.signal)
@@ -663,6 +689,7 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
         }
         patch(job.id, (j) => ({
           ...j,
+          waitReason: null,
           liveStatus: decision === 'deny' ? 'Command denied' : 'Running…',
           actionLog: [...j.actionLog, `${decision}: ${command.slice(0, 100)}`].slice(-80)
         }))
@@ -672,6 +699,7 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
         if (!sender || sender.isDestroyed()) return false
         patch(job.id, (j) => ({
           ...j,
+          waitReason: 'approval',
           liveStatus: `Waiting for MCP approval: ${toolName}`
         }))
         const decision = await requestCommandApproval(
@@ -684,6 +712,7 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
         )
         patch(job.id, (j) => ({
           ...j,
+          waitReason: null,
           liveStatus: decision === 'deny' ? 'MCP call denied' : 'Running…',
           actionLog: [...j.actionLog, `${decision}: MCP ${toolName}`].slice(-80)
         }))
@@ -768,6 +797,10 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
     }
     await flushTaskLedger(job.id)
     flushThinking(true)
+    if (getBackgroundJob(job.id)?.childIds?.length && !ac.signal.aborted) {
+      const children = await awaitChildJobs(job.id)
+      if (!children.ok) incomplete = true
+    }
     const done = getBackgroundJob(job.id)
     if (done && done.status === 'running') {
       upsert({

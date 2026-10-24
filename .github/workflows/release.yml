@@ -12,6 +12,10 @@ on:
         description: 'Existing git tag to build and publish (e.g. v0.2.3). Leave empty to use package.json version.'
         required: false
         default: ''
+      repair_existing:
+        description: 'Replace assets of the same immutable tag after a failed upload.'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -23,51 +27,20 @@ jobs:
       tag: ${{ steps.ver.outputs.tag }}
       version: ${{ steps.ver.outputs.version }}
       build_ref: ${{ steps.ver.outputs.build_ref }}
+      source_sha: ${{ steps.ver.outputs.source_sha }}
+      tag_sha: ${{ steps.ver.outputs.tag_sha }}
+      lock_sha: ${{ steps.ver.outputs.lock_sha }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Resolve version
+      - name: Resolve immutable release source
         id: ver
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
-            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
-              echo "Manual release rebuilds must run from main."
-              exit 1
-            fi
-            TAG="${{ inputs.tag }}"
-            TAG="${TAG#v}"
-            echo "tag=v${TAG}" >> "$GITHUB_OUTPUT"
-            echo "version=${TAG}" >> "$GITHUB_OUTPUT"
-            echo "build_ref=main" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-            echo "build_ref=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          else
-            VERSION="$(node -p "require('./package.json').version")"
-            echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "build_ref=v${VERSION}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Confirm tag is integrated into the approved release line
         env:
-          RELEASE_TAG: ${{ steps.ver.outputs.tag }}
-          RELEASE_VERSION: ${{ steps.ver.outputs.version }}
-        run: |
-          set -euo pipefail
-          git fetch origin main --no-tags
-          TAG_COMMIT="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
-          SOURCE_REF="origin/main"
-          if ! git merge-base --is-ancestor "$TAG_COMMIT" "$SOURCE_REF"; then
-            echo "${RELEASE_TAG} is not integrated into ${SOURCE_REF}."
-            exit 1
-          fi
-          echo "${RELEASE_TAG} is integrated into ${SOURCE_REF}."
+          RELEASE_TAG_INPUT: ${{ inputs.tag }}
+        run: node scripts/release-source.cjs
 
   build:
     needs: resolve-version
@@ -82,51 +55,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ needs.resolve-version.outputs.build_ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm
 
       - name: Install
         run: npm ci
-
-      - name: Sync package version from tag
-        shell: bash
-        run: |
-          VERSION="${{ needs.resolve-version.outputs.version }}"
-          node -e "
-            const fs = require('fs');
-            const version = process.env.VERSION;
-            const pkg = JSON.parse(fs.readFileSync('package.json','utf8'));
-            pkg.version = version;
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-            const lock = JSON.parse(fs.readFileSync('package-lock.json','utf8'));
-            lock.version = version;
-            if (lock.packages && lock.packages['']) lock.packages[''].version = version;
-            fs.writeFileSync('package-lock.json', JSON.stringify(lock, null, 2) + '\n');
-          "
-        env:
-          VERSION: ${{ needs.resolve-version.outputs.version }}
-
-      # Optional fallback when EricServic.es /api/eris/v1/feedback.php is down.
-      # Prefer the website relay (server-side token). Same secret can power both.
-      - name: Inject feedback credential
-        shell: bash
-        env:
-          ERIS_FEEDBACK_GITHUB_TOKEN: ${{ secrets.ERIS_FEEDBACK_GITHUB_TOKEN }}
-        run: |
-          if [ -n "${ERIS_FEEDBACK_GITHUB_TOKEN:-}" ]; then
-            printf '%s' "$ERIS_FEEDBACK_GITHUB_TOKEN" > resources/eris-feedback-token
-            echo "Wrote resources/eris-feedback-token for packaged fallback"
-          else
-            echo "ERIS_FEEDBACK_GITHUB_TOKEN secret unset — builds rely on EricServic.es feedback relay only"
-          fi
 
       - name: Build macOS (dmg + zip)
         if: matrix.platform == 'mac'
@@ -185,6 +126,9 @@ jobs:
             exit 1
           fi
 
+      - name: Smoke packaged production app
+        run: node scripts/check-packaged-app.cjs --auto
+
       - name: Collect dist artifacts
         shell: bash
         run: |
@@ -211,13 +155,23 @@ jobs:
             exit 1
           fi
 
-      # Attach installers to the GitHub Release directly. Actions artifact
-      # storage is a separate quota and has blocked these builds before.
-      - name: Upload installers to the Eris release
+      - name: Record artifact provenance
+        shell: bash
+        env:
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+          RELEASE_TAG: ${{ needs.resolve-version.outputs.tag }}
+          RELEASE_SOURCE_SHA: ${{ needs.resolve-version.outputs.source_sha }}
+          RELEASE_TAG_SHA: ${{ needs.resolve-version.outputs.tag_sha }}
+          RELEASE_LOCK_SHA: ${{ needs.resolve-version.outputs.lock_sha }}
+        run: node scripts/release-source.cjs manifest release-assets
+
+      - name: Upload installers and provenance
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.resolve-version.outputs.tag }}
+          REPAIR_EXISTING: ${{ inputs.repair_existing }}
         run: |
-          gh release upload "${{ needs.resolve-version.outputs.tag }}" release-assets/* \
-            --repo "${{ github.repository }}" \
-            --clobber
+          args=()
+          if [ "$REPAIR_EXISTING" = "true" ]; then args+=(--clobber); fi
+          gh release upload "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" "${args[@]}"

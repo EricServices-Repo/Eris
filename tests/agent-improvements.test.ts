@@ -4,7 +4,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 
 /**
- * Regression cases from docs/reviews/eris-dev-10000-2026-10-23/AGENT-IMPROVEMENTS.md.
+ * Regression cases from docs/reviews/eris-dev-10000-2026-10-23/improvements.json.
  * Each block names the backlog item whose acceptance behavior it checks.
  */
 

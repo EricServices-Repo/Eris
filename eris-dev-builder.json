@@ -2,19 +2,25 @@
   "extends": null,
   "appId": "app.eris.dev",
   "productName": "Eris-Dev",
-  "extraMetadata": { "name": "eris-dev", "main": "./out-dev/main/index.js" },
-  "directories": { "output": "dist-dev" },
+  "extraMetadata": {
+    "name": "eris-dev",
+    "main": "./out-dev/main/index.js"
+  },
+  "directories": {
+    "output": "dist-dev"
+  },
   "files": [
     "out-dev/**/*",
     "resources/defaults.json",
     "resources/agents.json",
-    "resources/models/**/*"
+    "resources/models/**/*",
+    "!resources/eris-feedback-token*"
   ],
   "extraResources": [
     {
       "from": "resources",
       "to": "resources",
-      "filter": ["**/*", "!eris-feedback-token", "!app-update.yml"]
+      "filter": ["**/*", "!eris-feedback-token", "!app-update.yml", "!eris-feedback-token*"]
     }
   ],
   "asarUnpack": [
@@ -22,9 +28,18 @@
     "node_modules/node-pty/**/*",
     "node_modules/@parcel/watcher*/**/*"
   ],
-  "mac": { "target": ["dir"], "identity": null, "icon": "resources/icons/icon.icns" },
+  "mac": {
+    "target": ["dir"],
+    "identity": null,
+    "icon": "resources/icons/icon.icns"
+  },
   "win": {
-    "target": [{ "target": "nsis", "arch": ["x64"] }],
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
     "icon": "resources/icons/icon.png"
   },
   "nsis": {
@@ -32,5 +47,6 @@
     "allowToChangeInstallationDirectory": true,
     "artifactName": "${productName}-${version}-win-${arch}-setup.${ext}"
   },
-  "publish": null
+  "publish": null,
+  "afterPack": "scripts/check-packaged-secrets.cjs"
 }

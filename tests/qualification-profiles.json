@@ -101,7 +101,13 @@
       "tests/workspace-fs.test.ts",
       "tests/workspace-ignore.test.ts",
       "tests/workspace-trust.test.ts",
-      "tests/workspace-watcher.test.ts"
+      "tests/workspace-watcher.test.ts",
+      "tests/recommendation-security.test.ts",
+      "tests/recommendation-runtime.test.ts",
+      "tests/cloud-task-policy.test.ts",
+      "tests/chat-admission.test.ts",
+      "tests/feedback-relay.test.ts",
+      "tests/worktree-integration.test.ts"
     ]
   }
 }

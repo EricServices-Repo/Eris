@@ -1,5 +1,5 @@
 /**
- * The 40 topic rubrics from docs/reviews/eris-dev-10000-2026-10-23/AGENT-IMPROVEMENTS.md,
+ * The 40 topic rubrics from docs/reviews/eris-dev-10000-2026-10-23/improvements.json,
  * as data. Each required behavior has a keyword pattern; `core` behaviors are what a
  * minimal but complete example must show, the rest are reported as gaps. Keyword
  * coverage is a heuristic for review, not proof that the code is correct.
@@ -29,7 +29,11 @@ export const TOPIC_RUBRICS: TopicRubric[] = [
     topic: 'API key generation and rotation',
     match: /api key generation and rotation/i,
     behaviors: [
-      b('cryptographically random keys', /randomBytes|crypto\.getRandomValues|secrets\.token|SecureRandom|crypto\/rand/i, true),
+      b(
+        'cryptographically random keys',
+        /randomBytes|crypto\.getRandomValues|secrets\.token|SecureRandom|crypto\/rand/i,
+        true
+      ),
       b('stored hash, not the raw key', /hash|sha-?256|digest|bcrypt|argon/i, true),
       b('one-time display', /once|one-time|only shown|never (?:shown|returned) again/i),
       b('scopes or tenant binding', /scope|tenant|owner/i),
@@ -99,7 +103,10 @@ export const TOPIC_RUBRICS: TopicRubric[] = [
       b('redaction', /redact|mask|omit/i),
       b('durable append', /append|insert|immutable|write.?once/i, true),
       b('transaction or outbox', /transaction|outbox/i),
-      b('tamper evidence or access control', /tamper|hash chain|signature|access control|permission/i)
+      b(
+        'tamper evidence or access control',
+        /tamper|hash chain|signature|access control|permission/i
+      )
     ]
   },
   {
@@ -290,7 +297,11 @@ export const TOPIC_RUBRICS: TopicRubric[] = [
       b('idempotency key', /idempotency.?key|Idempotency-Key/i, true),
       b('request hash', /hash|fingerprint|body/i),
       b('atomic ownership', /atomic|unique|lock|insert.*conflict|transaction/i, true),
-      b('response replay', /replay|stored response|cached response|return.*(?:saved|previous)/i, true),
+      b(
+        'response replay',
+        /replay|stored response|cached response|return.*(?:saved|previous)/i,
+        true
+      ),
       b('expiry', /expir|ttl/i)
     ]
   },
@@ -431,7 +442,11 @@ export const TOPIC_RUBRICS: TopicRubric[] = [
     match: /soft deletes?/i,
     behaviors: [
       b('deletion marker', /deleted_?at|is_?deleted|deleted\b/i, true),
-      b('default queries exclude deleted rows', /filter|where|IS NULL|=== null|== None|exclude/i, true),
+      b(
+        'default queries exclude deleted rows',
+        /filter|where|IS NULL|=== null|== None|exclude/i,
+        true
+      ),
       b('restore', /restore|undelete|recover/i, true),
       b('uniqueness collisions', /unique|collision|conflict/i),
       b('authorization and related records', /authori|related|cascade|owner/i)
@@ -494,7 +509,11 @@ export const TOPIC_RUBRICS: TopicRubric[] = [
     behaviors: [
       b('raw request bytes', /raw|Buffer|bytes|body/i, true),
       b('HMAC signature', /hmac|createHmac|sha256/i, true),
-      b('constant-time comparison', /timingSafeEqual|compare_digest|constant.?time|ConstantTimeCompare/i, true),
+      b(
+        'constant-time comparison',
+        /timingSafeEqual|compare_digest|constant.?time|ConstantTimeCompare/i,
+        true
+      ),
       b('timestamp replay window', /timestamp|replay|tolerance|window/i),
       b('key rotation', /rotat|secrets\b|keys\b/i)
     ]

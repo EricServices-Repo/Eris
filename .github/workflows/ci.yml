@@ -31,6 +31,14 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
+      - name: Build production Windows smoke app
+        run: npm run build && npx electron-builder --win --dir --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Windows worker recovery and packaged preload smoke
+        run: npm run check:recovery && node scripts/check-packaged-app.cjs --auto
+
       - name: Upload Eris-Dev Windows installer
         uses: actions/upload-artifact@v4
         with:
@@ -63,8 +71,25 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Build
-        run: npm run build
+      - name: Desktop client smoke (scripted, no provider calls)
+        run: npm run check:client
+
+      - name: Typecheck cloud worker
+        run: npm ci --prefix cloud-agent --ignore-scripts && npm run typecheck --prefix cloud-agent
+
+      - name: Quality harness invariants
+        run: npm run check:quality
+
+      - name: Real worker process recovery probe
+        run: npm run check:recovery
+
+      - name: Package macOS smoke app
+        run: npx electron-builder --mac --dir -c.mac.identity=null --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Smoke packaged renderer and preload
+        run: node scripts/check-packaged-app.cjs --auto
 
       - name: Audit desktop, tooling, and cloud worker dependencies
         run: npm run audit:security

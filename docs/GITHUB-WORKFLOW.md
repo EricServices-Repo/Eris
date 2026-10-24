@@ -24,3 +24,5 @@
 - `.github/workflows/ci.yml` runs on pull requests and pushes to `main`.
 - `.github/workflows/release.yml` accepts release tags only when their commit is an ancestor of `main`.
 - GitHub branch protection and rulesets are configured separately from repository files. The current `main` branch has no protection or ruleset preventing direct pushes.
+
+Release matrix jobs use the resolved tag commit SHA, never moving main. Source changes require a new version/tag. Per-platform provenance records dependency/asset digests and signing status; replacing existing assets requires explicit `repair_existing`.
