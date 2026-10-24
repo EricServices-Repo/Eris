@@ -1,4 +1,4 @@
-export type ChatJobStatus = 'running' | 'done' | 'stopped' | 'failed' | 'incomplete'
+export type ChatJobStatus = 'queued' | 'running' | 'done' | 'stopped' | 'failed' | 'incomplete'
 
 export type ChatJobEvent = {
   sequence: number
@@ -9,6 +9,9 @@ export type ChatJobEvent = {
 
 export type ChatJobSnapshot = {
   id: string
+  submissionDigest?: string
+  cursor?: number
+  persistenceError?: string
   workspacePath: string | null
   threadId: string | null
   goal: string

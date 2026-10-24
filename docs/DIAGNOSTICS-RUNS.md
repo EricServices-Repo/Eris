@@ -1,6 +1,6 @@
 # Build & Agent Diagnostics — first increment
 
-Implementation notes for the first release of the smoke-test/debug mode described in `docs/SMOKE-TEST-DEBUG-MODE.md`. That document remains the product spec; this file records what exists, where, and what is deferred.
+Implementation guide for the diagnostics runtime. The current system map is in [ARCHITECTURE.md](ARCHITECTURE.md); remaining work and acceptance criteria are in [RECOMMENDATIONS.md](RECOMMENDATIONS.md). Reviewed against version 0.4.15 on 2026-10-24.
 
 ## What ships
 
@@ -43,20 +43,10 @@ Implementation notes for the first release of the smoke-test/debug mode describe
 - **Terminal states are distinct.** `task-deadline.ts` links run cancellation and a per-task timer and records which fired first. `drainUntilStopped` abandons a producer that ignores its signal.
 - **Paths stay in the sandbox.** `SandboxPathSchema` rejects absolute, drive-qualified, traversal, and NUL paths. `sandbox-paths.ts` re-checks through real paths, which catches symlink escapes, and fixtures are validated in full before the first write.
 
-## Findings surfaced while building the scenarios
+## Regression coverage and remaining work
 
-These are current product behaviors (also present with the uncommitted agent changes in the working tree). They were not changed here:
+Earlier routing observations from the first diagnostics implementation are historical. Current task interpretation separates artifact, project applicability, obligations and effect constraints; the follow-up and live-review regression suites cover corrections added since that implementation. Do not reuse the removed review findings as current bugs without reproducing them against the checked-out source.
 
-1. `classifyIntent` routes “Review src/retry.ts and point out problems…” to tool-less `answer`, because a review needs a keyword such as `code` or `project` (`chat-router.ts:248-256`).
-2. “Fix safeDivide in src/divide.ts so dividing by zero returns 0.” routes to `answer`. `asksToImplementChanges` is false and the `fix … (file|code|bug|function…)` pattern does not match.
-3. “Update … and run the tests” matches the `run` regex first. When the semantic resolver gives no usable reply, its fallback turns `run` into read-only `explore`, so the edit cannot happen.
-4. A `run`-intent turn that changes no files cannot finish with `DONE`: `shouldKeepWorking` returns true when `!mutated && !reviewOnly`, and `run` is not review-only. After a refused command the loop runs to its step cap and ends incomplete. The `command-refused` scenario characterizes this.
+For the next work, use [RECOMMENDATIONS.md](RECOMMENDATIONS.md), especially REC-09 (desktop interaction coverage), REC-10 (independent quality evaluation), and REC-12 (model capabilities and context budgets). Eris-Dev's [live-model guide](ERIS-DEV-LIVE-MODELS.md) describes its separate opted-in inference path.
 
-## Follow-on work
-
-- Phase 3 build console: run the exact `prebuild` gate and the Quick, Full check, and Package profiles through command approval and workspace trust, with per-stage logs and retry.
-- Real-model smoke: 15–50 labeled cases, repeats, baselines, token/cost display, and a JSON-schema `outcome` expectation per scenario.
-- An in-app runner for the scripted `chat:stream` path, with oracle checks and exported bundles like coordinator runs. It also needs coverage of renderer streaming, reload/reconnect, task persistence, and the approvals UI.
-- Context manifests (retrieved paths and excerpt hashes) in case results.
-- Scenario authoring from `.eris/diagnostics/*.json`, using the same schema and path checks.
-- Corpus labels per question, so corpus pass rates measure routing accuracy.
+The simulated diagnostics suite, real-model smoke runs, request-boundary corpus captures, Eris-Dev deliverable checks, and actual desktop installation tests establish different properties. Preserve their labels and exclusions in every report. A successful runtime or request-invariant result is not an answer-quality score.

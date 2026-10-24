@@ -18,6 +18,9 @@ export type ModelTransportRequest = StreamModelChatOptions & { purpose: ModelPur
  * final output can then be compared against a known stop instead of guessed from text.
  */
 export interface ModelTermination {
+  capabilities?: import('./model-capabilities').ModelCapabilities
+  inputTokenSource?: 'measured' | 'estimated' | 'unavailable'
+  outputTokenSource?: 'measured' | 'estimated' | 'unavailable'
   reason:
     | 'eos'
     | 'output-limit'

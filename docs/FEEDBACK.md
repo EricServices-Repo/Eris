@@ -1,47 +1,11 @@
-# Eris in-app bug reports → GitHub Issues
+# Eris feedback
 
-End users submit bugs from **Help → Report a Bug** (or Settings → General).
-Reports land as issues on
-[`EricServices-Repo/Eris`](https://github.com/EricServices-Repo/Eris/issues).
-No GitHub App, no user PAT, no browser draft.
+Help → Report a Bug submits to the EricServic.es feedback relay, which creates issues in EricServices-Repo/Eris. The desktop never receives a shared GitHub issue-creation credential. User GitHub credentials are not used for feedback.
 
-## How a report is filed
+The client posts the redacted title/body and fixed repository to `/api/eris/v1/feedback.php`; an optional EricServic.es bearer token identifies the account. Requests time out after 20 seconds. Only an exact GitHub issue URL in EricServices-Repo/Eris is accepted as success. Relay errors explain that the report could not be submitted and can be retried; no report is recorded as submitted without a valid issue URL.
 
-1. If this build has a feedback credential, the client creates the issue directly on
-   [`EricServices-Repo/Eris`](https://github.com/EricServices-Repo/Eris/issues).
-2. Otherwise the client `POST`s `{ title, body, owner, repo }` to
-   `https://www.ericservic.es/api/eris/v1/feedback.php`.
-   Optional `Authorization: Bearer eseris_…` attaches the EricServic.es username.
-3. The relay must create the issue on `EricServices-Repo/Eris`. A response whose
-   issue URL is not under `https://github.com/EricServices-Repo/Eris/issues` is rejected.
-4. Rate limit on the relay: 8 submissions / hour / IP.
+The relay must keep its issue-creation credential on the server, limited to Issues access on the intended repository. Its deployment is owned by the website repository; desktop builds do not configure it.
 
-Website files (EricServices site repo):
+Both desktop builders exclude `resources/eris-feedback-token*`. The shared after-pack hook rejects legacy credential filenames and GitHub-token-shaped bytes, including ASAR payloads, without printing values. CI no longer injects a feedback secret. Synthetic regression fixtures exercise filenames and tokens crossing scan chunk boundaries.
 
-- `api/eris/v1/feedback.php`
-- `config.php` + `config.local.php` → `$ERIS_FEEDBACK_GITHUB_TOKEN`
-
-Token scope: fine-grained PAT limited to **EricServices-Repo/Eris** → **Issues: Read and write**.
-Deploy the updated `feedback.php` (`$repo = 'Eris'`) before relying on the website relay.
-
-## Fallback: EricServic.es relay
-
-If this build has no feedback credential, the packaged app uses the relay above.
-`feedback.php` in the EricServices site must keep `$repo = 'Eris'`.
-
-| Source | When |
-|--------|------|
-| `ERIS_FEEDBACK_GITHUB_TOKEN` env | Dev / CI |
-| `resources/eris-feedback-token` | Packaged via electron-builder `extraResources` |
-
-CI (`release.yml`) writes that file from secret `ERIS_FEEDBACK_GITHUB_TOKEN` before
-`electron-builder`. The file is gitignored.
-
-Same PAT scope as the server token (Issues on `EricServices-Repo/Eris`). Rotate if leaked;
-prefer keeping the relay live so clients do not need a shipped token long-term.
-
-## What is not used
-
-- GitHub Apps / OAuth device flow for feedback
-- Settings → GitHub user token
-- Opening a prefilled Issues “new” URL in the browser
+If an older release distributed a shared token, revoke/rotate it server-side and inspect/remove affected release assets. This implementation did not inspect real secret values or establish historical exposure.

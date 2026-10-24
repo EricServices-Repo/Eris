@@ -4,7 +4,7 @@ import { join } from 'path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 /**
- * docs/reviews/eris-dev-followup-2026-10-23/FOLLOW-UP-REVIEW.md, Batch A:
+ * docs/reviews/eris-dev-followup-2026-10-23/backlog.json, Batch A:
  * production routing at the request boundary (FR-002), separate effect
  * prohibitions (FR-003), quoted operands (FR-004/005) and language roles (FR-006).
  */

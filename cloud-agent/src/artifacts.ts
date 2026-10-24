@@ -4,6 +4,7 @@ import {
   readFileSync,
   readdirSync,
   statSync,
+  lstatSync,
   writeFileSync
 } from 'fs'
 import { dirname, join, relative } from 'path'
@@ -100,11 +101,7 @@ export function snapshotWorkspaceBaseline(jobId: string, relPaths: string[]): vo
   }
   if (changed) {
     mkdirSync(artifactsDir(), { recursive: true })
-    writeFileSync(
-      seedPath(jobId),
-      JSON.stringify({ jobId, files: existing }, null, 2),
-      'utf8'
-    )
+    writeFileSync(seedPath(jobId), JSON.stringify({ jobId, files: existing }, null, 2), 'utf8')
   }
 }
 
@@ -124,10 +121,7 @@ function isProbablyText(buf: Buffer): boolean {
  * Build a patch bundle from filesTouched (preferred) plus any seed diffs.
  * Caps files/bytes for safe transfer back to Eris.
  */
-export function buildJobArtifacts(
-  jobId: string,
-  filesTouched: string[]
-): JobArtifacts {
+export function buildJobArtifacts(jobId: string, filesTouched: string[]): JobArtifacts {
   const workspace = jobWorkspace(jobId)
   const seed = loadSeedBaseline(jobId)
   const maxFiles = Math.min(config.maxFiles, 120)
@@ -205,7 +199,8 @@ export function buildJobArtifacts(
         const abs = join(dir, name)
         let st
         try {
-          st = statSync(abs)
+          st = lstatSync(abs)
+          if (st.isSymbolicLink()) continue
         } catch {
           continue
         }

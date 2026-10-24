@@ -98,6 +98,7 @@ function healthBody(): Record<string, unknown> {
   const health: CloudHealth = {
     ok: true,
     service: 'eris-cloud-agent',
+    taskContractVersion: 1, // v2 enforcement is under conformance qualification; never advertise ahead of validation.
     version: config.version,
     llmConfigured: llmConfigured(),
     ready,
@@ -204,10 +205,7 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
     return
   }
 
-  if (
-    (req.method === 'PUT' || req.method === 'POST') &&
-    path === '/v1/fleet/config'
-  ) {
+  if ((req.method === 'PUT' || req.method === 'POST') && path === '/v1/fleet/config') {
     if (!verifyAgentSecret(req) && !verifyAdminToken(req)) {
       bumpMetric('authFailures')
       send(res, 401, {
@@ -356,10 +354,7 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
     return
   }
 
-  if (
-    req.method === 'POST' &&
-    (path === '/v1/admin/kill-all' || path === '/admin/kill-all')
-  ) {
+  if (req.method === 'POST' && (path === '/v1/admin/kill-all' || path === '/admin/kill-all')) {
     if (!adminKillConfigured()) {
       send(res, 503, {
         ok: false,
@@ -408,6 +403,7 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
       const job = await workers.enqueue(
         {
           goal: body.goal || prev.goal,
+          task: body.task ?? prev.task,
           agentId: body.agentId || prev.agentId,
           model: body.model || prev.model,
           repoUrl: body.repoUrl ?? prev.repoUrl,
@@ -519,8 +515,7 @@ server.listen(config.port, config.host, () => {
       version: config.version,
       adminKillAll: adminKillConfigured(),
       adminTokenSource: getAdminTokenSource(),
-      adminTokenFile:
-        getAdminTokenSource() === 'file' ? adminTokenFilePath() : undefined,
+      adminTokenFile: getAdminTokenSource() === 'file' ? adminTokenFilePath() : undefined,
       statusUrls: [
         `http://0.0.0.0:${config.port}/status`,
         config.statusEnabled ? `http://0.0.0.0:${config.statusPort}/` : null

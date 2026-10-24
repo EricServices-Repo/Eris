@@ -19,7 +19,7 @@ import { caseRecordProblem, resumeConflicts } from '../electron/dev/runs'
 import { CaptureSanitizer } from '../electron/dev/sanitize'
 
 /**
- * docs/reviews/eris-dev-followup-2026-10-23/FOLLOW-UP-REVIEW.md, Batch B: the
+ * docs/reviews/eris-dev-followup-2026-10-23/backlog.json, Batch B: the
  * Eris-Dev main process through its real IPC handlers (FR-021/022/026–030), plus
  * comparison identity (FR-019/020/023), resume validation (FR-025), import
  * (FR-031/032) and export redaction (FR-033–035). Electron and the capture step

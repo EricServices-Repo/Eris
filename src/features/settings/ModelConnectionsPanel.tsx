@@ -165,7 +165,7 @@ export function ModelConnectionsPanel({
   const beginEdit = async (conn: ModelConnection) => {
     setError(null)
     setInfo(null)
-    const key = conn.apiKeyRef ? await window.ide.getSecret(conn.apiKeyRef) : null
+    const key = conn.apiKeyRef ? await window.ide.hasSecret(conn.apiKeyRef) : null
     setDraft(toDraft(conn, Boolean(key)))
   }
 

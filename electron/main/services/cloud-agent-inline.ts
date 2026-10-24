@@ -127,6 +127,14 @@ export async function cloudInlineAvailable(
   if (!syncAuth(settings, getSecret)) return false
   try {
     const health = await refreshInlineHealth(false)
+    if (requiredTaskVersion > 1 && (health?.taskContractVersion ?? 1) < requiredTaskVersion) {
+      logInfo('Cloud task fallback', {
+        reason: 'Server does not enforce the required task contract',
+        requiredTaskVersion,
+        supportedTaskVersion: health?.taskContractVersion ?? 1
+      })
+      return false
+    }
     return (
       shouldUseCloudAgents(health) &&
       (requiredTaskVersion === 1 || (health?.taskContractVersion ?? 1) >= requiredTaskVersion)
@@ -374,7 +382,7 @@ export async function* runCloudAgentInline(options: {
         }
       } else if (applied.error) {
         logWarn('Cloud inline apply artifacts', { error: applied.error })
-        yield { type: 'status', text: `Artifacts: ${applied.error}` }
+        throw new Error(`Cloud result could not be applied: ${applied.error}`)
       }
     }
 

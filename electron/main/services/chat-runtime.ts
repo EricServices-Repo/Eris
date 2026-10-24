@@ -1,4 +1,4 @@
-import { contextBudgetTokens } from './agent/context-budget'
+import { resolveModelCapabilities } from './model-capabilities'
 import { compileModelMessages, budgetModelMessages, type ModelMessage } from './model-protocol'
 import type { AppSettings } from '../../../src/shared/settings-schema'
 import { isNativeGgufRef, resolveExactBuiltinRef, streamBuiltinChat } from './builtin-model'
@@ -10,7 +10,6 @@ import {
   type OpenAIToolDef
 } from './openai-compatible'
 import { resolveConnectionForModel } from './model-catalog'
-import { toolProtocolFor } from './tool-protocol'
 import { estimateMessagesTokens, estimateTokens, recordModelUsage } from './usage-stats'
 import {
   activeDiagnosticsScope,
@@ -80,7 +79,8 @@ export async function* streamProviderChat(
 ): AsyncGenerator<string, void, unknown> {
   let model = options.model || options.settings.models.defaultModel || 'builtin:composer-lite'
   assertProviderCallAllowed(options.settings, model)
-  const protocol = toolProtocolFor(options.settings, model)
+  const capabilities = resolveModelCapabilities(options.settings, model)
+  const protocol = capabilities.tools
   const inputMessages = options.messages.map((message) => ({
     ...message,
     content: message.content ?? ''
@@ -96,12 +96,12 @@ export async function* streamProviderChat(
     protocol === 'text-tools' ? 0 : Math.ceil(JSON.stringify(options.tools ?? []).length / 3)
   const budgeted = budgetModelMessages(
     inputMessages,
-    Math.max(512, contextBudgetTokens(options.settings, model) - schemaTokens)
+    Math.max(512, capabilities.promptBudget - schemaTokens)
   )
   const compiled = compileModelMessages(budgeted.messages, {
     protocol,
-    contextWindow: options.settings.models.contextWindow || 8192,
-    outputReserve: 1024
+    contextWindow: capabilities.contextCeiling,
+    outputReserve: capabilities.outputReserve
   })
   const inputEstimate =
     estimateMessagesTokens(
@@ -121,7 +121,9 @@ export async function* streamProviderChat(
         model,
         provider,
         inputTokens: reportedPrompt ?? inputEstimate,
-        outputTokens: reportedCompletion ?? estimateTokens(outputText)
+        outputTokens: reportedCompletion ?? estimateTokens(outputText),
+        inputSource: reportedPrompt === null ? 'estimated' : 'measured',
+        outputSource: reportedCompletion === null ? 'estimated' : 'measured'
       })
     } catch {
       /* never break chat on usage accounting */
@@ -161,7 +163,16 @@ export async function* streamProviderChat(
         signal: options.signal,
         jsonSchema: options.builtinJsonSchema,
         sessionKey: options.sessionKey,
-        onTermination: options.onTermination
+        onTermination: (termination) => {
+          reportedPrompt = termination.promptTokens ?? null
+          reportedCompletion = termination.outputTokens ?? null
+          options.onTermination?.({
+            ...termination,
+            capabilities,
+            inputTokenSource: reportedPrompt === null ? 'unavailable' : 'measured',
+            outputTokenSource: reportedCompletion === null ? 'unavailable' : 'measured'
+          })
+        }
       })) {
         outputText += chunk
         yield chunk
@@ -188,6 +199,7 @@ export async function* streamProviderChat(
       model,
       messages: compiled,
       temperature: options.temperature,
+      maxOutputTokens: capabilities.outputCap,
       signal: options.signal,
       tools: protocol === 'native-tools' ? options.tools : undefined,
       toolChoice: options.toolChoice,
@@ -200,6 +212,10 @@ export async function* streamProviderChat(
         ? (finishReason, complete) =>
             options.onTermination!({
               reason: complete ? apiFinishReason(finishReason) : 'connection-closed',
+              capabilities,
+              maxOutputTokens: capabilities.outputCap,
+              inputTokenSource: reportedPrompt === null ? 'unavailable' : 'measured',
+              outputTokenSource: reportedCompletion === null ? 'unavailable' : 'measured',
               ...(finishReason ? { raw: finishReason } : {}),
               ...(reportedPrompt !== null ? { promptTokens: reportedPrompt } : {}),
               ...(reportedCompletion !== null ? { outputTokens: reportedCompletion } : {})

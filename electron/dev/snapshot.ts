@@ -31,7 +31,7 @@ const BUILD_OUTPUT = new Set([
 const KEPT_HIDDEN = new Set(['.eris', '.github', '.vscode', '.editorconfig', '.gitignore'])
 
 const SECRET_NAME =
-  /^\.env(?:\..*)?$|\.(?:pem|key|p12|pfx|keystore|jks)$|^id_(?:rsa|dsa|ecdsa|ed25519)|^\.npmrc$|^\.netrc$|^\.pypirc$|credentials|secrets?\.(?:json|ya?ml|toml)$/i
+  /^\.env(?:\..*)?$|\.(?:pem|key|p12|pfx|keystore|jks)$|^id_(?:rsa|dsa|ecdsa|ed25519)|^\.npmrc$|^\.netrc$|^\.pypirc$|credentials|secrets?\.(?:json|bin|ya?ml|toml)(?:\.|$)/i
 
 /** Workspace-local Eris state that is not configuration. */
 const ERIS_STATE = /^\.eris\/(?:checkpoints|cache|sessions|index|tmp)(?:\/|$)/

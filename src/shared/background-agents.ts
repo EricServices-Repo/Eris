@@ -47,6 +47,10 @@ export interface BackgroundJob {
   routeHistory?: AgentRouteStep[]
   escalateCount?: number
   rerouteCount?: number
+  waitReason?: 'children' | 'approval' | 'question' | null
+  destinationBranch?: string
+  baseSha?: string
+  integration?: { state: 'shared-parent' | 'integrated'; commit?: string; at: string }
   status: BackgroundJobStatus
   step: number
   actionLog: string[]

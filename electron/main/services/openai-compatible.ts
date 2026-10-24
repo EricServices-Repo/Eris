@@ -37,6 +37,7 @@ export async function* streamOpenAICompatible(options: {
   model: string
   messages: ChatRequestMessage[]
   temperature: number
+  maxOutputTokens?: number
   signal?: AbortSignal
   onUsage?: (usage: OpenAIStreamUsage) => void
   /** The stream's finish_reason (if any) and whether it ended with a finish signal or [DONE]. */
@@ -62,6 +63,8 @@ export async function* streamOpenAICompatible(options: {
     temperature: options.temperature,
     stream: true
   }
+  if (options.maxOutputTokens !== undefined)
+    body.max_tokens = Math.max(1, Math.floor(options.maxOutputTokens))
   if (supportsUsageHint) body.stream_options = { include_usage: true }
   if (options.tools?.length) {
     body.tools = options.tools

@@ -19,7 +19,7 @@ import { captureQuestion, captureSettings } from '../electron/dev/capture'
 import type { PreparedLiveModel } from '../electron/dev/models'
 
 /*
- * Regression checks derived from docs/reviews/eris-dev-multi-2026-10-24/RECOMMENDATIONS.md.
+ * Regression checks derived from docs/reviews/eris-dev-multi-2026-10-24/backlog.json.
  * Case numbers are the review's zero-based export indices.
  */
 

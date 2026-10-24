@@ -42,9 +42,16 @@ const pickedFiles = new Set<string>()
 /** Renderer file access is limited to the open workspace and Eris's own data folder. */
 function assertRendererPathAllowed(path: string, mode: 'read' | 'write'): void {
   if (typeof path !== 'string' || !path) throw new Error('Invalid path')
+  const canonical = realpathAllowMissing(path)
+  const privateRoot = realpathAllowMissing(userDataRoot())
+  if (
+    isPathInside(privateRoot, canonical) &&
+    /(?:^|[\\/])(?:credentials\.json|secrets\.(?:json|bin))(?:\.|$)/.test(canonical)
+  )
+    throw new Error('Credential files are private to the main process')
   const ws = appState.currentWorkspace
-  if (ws && isPathInside(ws, path)) return
-  if (isPathInside(userDataRoot(), path)) return
+  if (ws && isPathInside(realpathAllowMissing(ws), canonical)) return
+  if (isPathInside(privateRoot, canonical)) return
   if (mode === 'read' && pickedFiles.has(realpathAllowMissing(path))) return
   logWarn('Blocked renderer file access', { path, mode })
   throw new Error(`Access outside the workspace is not allowed: ${path}`)
@@ -166,7 +173,11 @@ export function registerWorkspaceIpc(): void {
 
   ipcMain.handle('fs:listTree', (_e, root: string, maxDepth = 0) => {
     assertRendererPathAllowed(root, 'read')
-    return workspaceRequest({ type: 'tree', root, maxDepth: Number.isFinite(maxDepth) ? Math.max(0, Math.min(8, Math.floor(maxDepth))) : 0 })
+    return workspaceRequest({
+      type: 'tree',
+      root,
+      maxDepth: Number.isFinite(maxDepth) ? Math.max(0, Math.min(8, Math.floor(maxDepth))) : 0
+    })
   })
   ipcMain.handle('fs:read', async (_e, path: string) => {
     assertRendererPathAllowed(path, 'read')

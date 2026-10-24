@@ -49,27 +49,36 @@ export function registerAppIpc(): void {
     if (result.canceled || !result.filePaths[0]) return null
     return result.filePaths[0]
   })
-  ipcMain.handle(
-    'logs:write',
-    (_e, level: LogLevel, message: string, meta?: unknown) => {
-      log(level, message, meta)
-      return true
-    }
-  )
+  ipcMain.handle('logs:write', (_e, level: LogLevel, message: string, meta?: unknown) => {
+    log(level, message, meta)
+    return true
+  })
 
-  ipcMain.handle('secrets:set', (_e, key: string, value: string) => {
+  ipcMain.handle('secrets:set', (event, key: string, value: string) => {
+    if (appState.mainWindow && event.sender !== appState.mainWindow.webContents)
+      throw new Error('Unauthorized sender')
+    if (typeof key !== 'string' || typeof value !== 'string')
+      throw new Error('Invalid credential update')
     storeSecret(key, value)
     return true
   })
-  ipcMain.handle('secrets:get', (_e, key: string) => getSecret(key))
-
-  ipcMain.handle('telemetry:recordDiffDecision', async (_e, payload?: { kept?: number; undone?: number }) => {
-    const settings = getResolvedSettings(appState.currentWorkspace)
-    if (settings.general.telemetry?.agentOutcomes !== true) return false
-    const { recordDiffDecision } = await import('../services/agent-telemetry')
-    recordDiffDecision({ kept: payload?.kept, undone: payload?.undone })
-    return true
+  ipcMain.handle('secrets:has', (event, key: string) => {
+    if (appState.mainWindow && event.sender !== appState.mainWindow.webContents)
+      throw new Error('Unauthorized sender')
+    if (typeof key !== 'string' || key.length > 256) throw new Error('Invalid credential key')
+    return Boolean(getSecret(key))
   })
+
+  ipcMain.handle(
+    'telemetry:recordDiffDecision',
+    async (_e, payload?: { kept?: number; undone?: number }) => {
+      const settings = getResolvedSettings(appState.currentWorkspace)
+      if (settings.general.telemetry?.agentOutcomes !== true) return false
+      const { recordDiffDecision } = await import('../services/agent-telemetry')
+      recordDiffDecision({ kept: payload?.kept, undone: payload?.undone })
+      return true
+    }
+  )
   ipcMain.handle('telemetry:get', async () => {
     const { getTelemetrySummaries } = await import('../services/agent-telemetry')
     return getTelemetrySummaries()
@@ -85,9 +94,8 @@ export function registerAppIpc(): void {
       getEffectiveWindowTotals,
       getRemoteWindowTotals
     } = await import('../services/usage-sync')
-    const { getLocalDayTotals, getLocalWindowTotals, USAGE_WINDOW_DAYS } = await import(
-      '../services/usage-stats'
-    )
+    const { getLocalDayTotals, getLocalWindowTotals, USAGE_WINDOW_DAYS } =
+      await import('../services/usage-stats')
     if (opts?.refresh !== false) {
       try {
         await pullUsageFromProfile()

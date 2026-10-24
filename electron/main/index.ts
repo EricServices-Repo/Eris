@@ -1,9 +1,14 @@
+import { foregroundTasks } from './services/foreground-tasks'
+import { flushChatJobs } from './services/chat-job-controller'
+import { mkdirSync, writeFileSync } from 'fs'
 import { stopLocalImageProcesses } from './services/local-image-model'
 import { setDefaultResultOrder } from 'dns'
 import { app, BrowserWindow, protocol } from 'electron'
 import { registerImageProtocol } from './ipc/images'
 
-protocol.registerSchemesAsPrivileged([{ scheme: 'eris-media', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'eris-media', privileges: { standard: true, secure: true, supportFetchAPI: true } }
+])
 
 // Windows/Node undici: prefer IPv4 so HTTPS downloads do not die with opaque "fetch failed".
 try {
@@ -33,18 +38,22 @@ import { createWindow, resolveAppIcon } from './window'
 import { buildMenu } from './menu'
 import { registerIpc } from './ipc'
 
-// Never touch the OS Keychain — secrets live in userData/secrets.json only.
-// Must run before ready; Chromium otherwise uses Keychain for cookie/OSCrypt.
+// Chromium cookie storage stays local. Provider vault access is explicit in credential-store.
 app.commandLine.appendSwitch('password-store', 'basic')
-if (process.platform === 'darwin') {
-  app.commandLine.appendSwitch('use-mock-keychain')
-}
 
 // macOS may deliver files dropped on the Dock/icon; never load them into the shell.
 app.on('open-file', (event) => {
   event.preventDefault()
 })
 
+const smokeTest =
+  process.argv.includes('--eris-smoke-test') &&
+  Boolean(process.env.ERIS_SMOKE_ROOT && process.env.ERIS_SMOKE_OUTPUT)
+if (smokeTest) {
+  mkdirSync(process.env.ERIS_SMOKE_ROOT!, { recursive: true })
+  app.setPath('appData', process.env.ERIS_SMOKE_ROOT!)
+  app.setPath('userData', process.env.ERIS_SMOKE_ROOT!)
+}
 app.whenReady().then(() => {
   if (process.platform === 'win32') {
     app.setAppUserModelId('app.eris.ide')
@@ -76,6 +85,50 @@ app.whenReady().then(() => {
   registerIpc()
   buildMenu()
   createWindow()
+  if (smokeTest) {
+    const win = appState.mainWindow!
+    const timeout = setTimeout(() => app.exit(1), 45000)
+    win.webContents.once('did-finish-load', () => {
+      void win.webContents
+        .executeJavaScript(
+          `(async()=>{
+        const version=await window.ide.getAppVersion()
+        const credentials=await window.ide.getCredentialStatus()
+        const invalid=await window.ide.streamChat({requestId:'smoke-invalid',model:'invalid',unexpected:true})
+        return {version,credentials,invalid,rendererMounted:Boolean(document.getElementById('root')?.childElementCount),nodeIsolated:typeof window.require==='undefined'}
+      })()`
+        )
+        .then((result) => {
+          const ok =
+            result.rendererMounted &&
+            result.nodeIsolated &&
+            result.invalid === false &&
+            result.credentials.policy === 'local'
+          writeFileSync(
+            process.env.ERIS_SMOKE_OUTPUT!,
+            JSON.stringify({
+              ok,
+              packaged: app.isPackaged,
+              platform: process.platform,
+              arch: process.arch,
+              ...result
+            }),
+            { mode: 0o600 }
+          )
+          clearTimeout(timeout)
+          app.exit(ok ? 0 : 1)
+        })
+        .catch((error) => {
+          writeFileSync(
+            process.env.ERIS_SMOKE_OUTPUT!,
+            JSON.stringify({ ok: false, error: String(error) })
+          )
+          clearTimeout(timeout)
+          app.exit(1)
+        })
+    })
+    return // No updater, shell warmup or model warmup in the isolated smoke profile.
+  }
   startAutoUpdates(() => appState.mainWindow)
 
   // Warm login-shell PATH in the background (never block IPC — zsh -ilc can take seconds).
@@ -108,6 +161,7 @@ app.on('before-quit', (event) => {
   if (isQuitting) return
   event.preventDefault()
   isQuitting = true
+  foregroundTasks.close()
   appState.chatAbort?.abort()
   appState.chatAbort = null
   cancelEvalRun()
@@ -120,7 +174,8 @@ app.on('before-quit', (event) => {
   void disposeMcpRuntime().catch(() => undefined)
   void Promise.all([disposeRuntime(), disposeWorkspaceWorkers()])
     .catch(() => undefined)
-    .finally(() => {
+    .finally(async () => {
+      await flushChatJobs()
       app.exit(0)
     })
 })
