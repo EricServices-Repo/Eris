@@ -15,8 +15,8 @@ import { contractForAgent } from '../../../../src/shared/agent-contract'
 import { workerConversation } from './conversation'
 import { sharedPromptBlocks } from '../chat-prompt'
 import { toolProtocolFor } from '../tool-protocol'
-import type { TaskContract } from '../../../../src/shared/task-contract'
-import { interpretationOf } from '../../../../src/shared/task-contract'
+import type { ScopeApplicability, TaskContract } from '../../../../src/shared/task-contract'
+import { evidenceRequirementFor, interpretationOf } from '../../../../src/shared/task-contract'
 import { artifactResponseContract } from '../../../../src/shared/task-interpretation'
 import type { AgentChatMessage } from './types'
 
@@ -158,7 +158,26 @@ export function isReadOnlyChat(
   if (plan.intent === 'edit' || plan.intent === 'run') return mode === 'ask'
   return plan.toolPolicy === 'read' || plan.intent === 'explore' || plan.intent === 'review'
 }
-export function intentPlaybook(intent: ChatIntent | string, greenfield: boolean): string {
+export function intentPlaybook(
+  intent: ChatIntent | string,
+  greenfield: boolean,
+  applicability?: ScopeApplicability
+): string {
+  const evidence = evidenceRequirementFor(applicability)
+  // A generic request is answered from the conversation; the project is not its evidence.
+  if (evidence === 'none' && (intent === 'plan' || intent === 'explore')) {
+    return intent === 'plan'
+      ? `PLAN PLAYBOOK — Plan from the request itself. State the assumptions you make about stack, ` +
+          `scale and constraints. Do not edit files or claim the plan was implemented.`
+      : `ANSWER PLAYBOOK — Answer from the request itself and state your assumptions. Do not edit.`
+  }
+  if (intent === 'plan' && evidence === 'optional') {
+    return (
+      `PLAN PLAYBOOK — If the plan depends on the open project, inspect the relevant files first and ` +
+      `name the files each step affects; otherwise plan from the request and state assumptions. ` +
+      `Separate observed facts from assumptions. Do not edit files or claim the plan was implemented.`
+    )
+  }
   if (intent === 'plan') {
     return (
       `PLAN PLAYBOOK — Inspect the relevant files, tests, conventions, and dependencies before planning. ` +
@@ -337,9 +356,15 @@ export function buildPreservedWorkerMessages(options: {
       { id: 'custom-role', content: customAgentPrompt },
       {
         id: 'role',
-        content: contract ? `Role: ${contract.name}. ${contract.job} ${contract.done}` : ''
+        // Role identity once. Its job text describes workspace reading, which a generic
+        // request must not reintroduce; the playbook and response contract cover the rest.
+        content: contract
+          ? evidenceRequirementFor(task.scope.applicability) === 'none'
+            ? `Role: ${contract.name}.`
+            : `Role: ${contract.name}. ${contract.job} ${contract.done}`
+          : ''
       },
-      { id: 'playbook', content: intentPlaybook(plan.intent, false) },
+      { id: 'playbook', content: intentPlaybook(plan.intent, false, task.scope.applicability) },
       {
         id: 'response-contract',
         content: artifactResponseContract(interpretationOf(task), task.scope.applicability)

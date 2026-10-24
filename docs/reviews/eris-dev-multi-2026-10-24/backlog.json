@@ -1,0 +1,747 @@
+{
+  "schema": "eris-review-backlog/1",
+  "sourceSha256": "089a7f9722d83532c696758225d4eab45965ee3e04d28afab5f12cecf6eca505",
+  "status": "recommendations-not-implemented",
+  "items": [
+    {
+      "id": "MR-001",
+      "priority": "P1",
+      "title": "Separate runtime completion from deliverable validity",
+      "evidenceIndices": [
+        14,
+        31,
+        68,
+        72,
+        79,
+        85,
+        117,
+        129
+      ],
+      "paths": [
+        "electron/dev/capture.ts",
+        "src/shared/eris-dev.ts",
+        "src/eris-dev/main.tsx",
+        "electron/main/services/task-outcome.ts"
+      ],
+      "diagnosis": "129 records are marked completed, although several contain tool-error commentary, refusal, or internal instructions. captureQuestion currently accepts a nonempty final response without inference error as completed. That is a runtime result, not evidence that the question was answered.",
+      "recommendation": "Keep execution status immutable, and add independently versioned deliverableStatus and qualityStatus. Use pass/fail/needs-review/not-evaluated with explicit check IDs. Show separate Answer produced and Deliverable checks badges. Never rename a model refusal into a provider error.",
+      "acceptanceCriteria": "Cases 68 and 72 retain successful transport status but fail protocol-leak checks; 129 is flagged for refusal review; ungraded ordinary answers remain not-evaluated rather than green quality passes."
+    },
+    {
+      "id": "MR-002",
+      "priority": "P1",
+      "title": "Carry model termination metadata through the complete transport",
+      "evidenceIndices": [
+        0,
+        3,
+        17,
+        23,
+        77,
+        93
+      ],
+      "paths": [
+        "electron/main/services/model-transport.ts",
+        "electron/main/services/chat-runtime.ts",
+        "electron/main/services/builtin-model.ts",
+        "electron/main/llama-worker.ts",
+        "src/shared/eris-dev.ts"
+      ],
+      "diagnosis": "25 final responses have an odd number of Markdown fence markers. Several raw agent responses already end mid-block, so the final renderer alone cannot explain the damage. The export has no finish reason, generated token count, or native stop trigger. A particular token limit or EOS bug cannot be established from this evidence. There is also a confirmed capture-state problem: answer events assign result.response = event.text without honoring event.replace. The exception fallback loads the last raw draft only when result.response is empty. Case 55 therefore retains a tiny last streamed fragment instead of its 16856-character agent draft.",
+      "recommendation": "Introduce a typed terminal event carrying stopReason, input/output token counts, configured limits, effective context and provider request ID. Emit from native and API adapters, retain through runtime and capture. Keep partial output separate from final output. In captureQuestion, accumulate delta events and replace only when event.replace is true; snapshot draft and final fields separately, including on failure. Preserve the raw call response as independent evidence rather than guessing it is a finalized answer.",
+      "acceptanceCriteria": "Fixtures for EOS, output limit, context exhaustion, cancellation, error and connection close have distinct persisted reasons. Raw/final response digests can be compared without reconstructing the UI. A stream of two deltas followed by an error exports both deltas as partial output; an explicit replacement replaces them. Case 55 preserves the complete available draft and marks it failed, not final."
+    },
+    {
+      "id": "MR-003",
+      "priority": "P1",
+      "title": "Recognize incomplete code before reporting a finished answer",
+      "evidenceIndices": [
+        3,
+        23,
+        56,
+        71,
+        77,
+        80,
+        93
+      ],
+      "paths": [
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/task-outcome.ts",
+        "electron/dev/capture.ts"
+      ],
+      "diagnosis": "Case 77 stops immediately after an opening C# conditional; case 93 stops at the opening fence for the promised reset implementation. These are visible incomplete deliverables even though transport completed.",
+      "recommendation": "Add a lightweight finalization pass for unclosed fences, promised-but-empty code sections and parser diagnostics when available. Distinguish a formatting candidate from a confirmed incomplete program. Permit one bounded repair of an identified defect, then surface incomplete with the original draft preserved.",
+      "acceptanceCriteria": "An unclosed explanatory fence alone creates needs-review; an implementation ending at an unfinished method fails completeness. Repair attempts are capped, logged and forbidden from editing workspace files for chat-only requests."
+    },
+    {
+      "id": "MR-004",
+      "priority": "P1",
+      "title": "Replace flattened one-shot native prompts with structured chat history",
+      "evidenceIndices": [
+        68,
+        72
+      ],
+      "paths": [
+        "electron/main/llama-worker.ts",
+        "electron/main/services/builtin-model.ts",
+        "src/shared/llama-session.ts"
+      ],
+      "diagnosis": "Final output contains USER:, ASSISTANT:, <<<END>>> and tool-result framing. runPromptOneshot constructs a plain SYSTEM/USER/ASSISTANT transcript and passes it to session.prompt, while the session-turn path uses structured history. This is a concrete transport inconsistency and plausible contributor, not proof of the sole cause.",
+      "recommendation": "Use the same model chat wrapper and messagesToHistory representation for one-shot and session requests. Supply system text as systemPrompt and history as structured turns; avoid nesting an entire chat transcript inside a user prompt. Remove independent 8000/24000-character slicing in favor of shared budgeting.",
+      "acceptanceCriteria": "One-shot and session tests for identical exchanges produce equivalent role/history structures. Literal role labels in quoted user data remain data. A live replay of 68/72 contains no synthetic conversation continuation."
+    },
+    {
+      "id": "MR-005",
+      "priority": "P1",
+      "title": "Resolve project applicability independently of semantic intent",
+      "evidenceIndices": [
+        14,
+        20,
+        31,
+        37,
+        54,
+        117
+      ],
+      "paths": [
+        "electron/main/services/task-resolver.ts",
+        "electron/main/services/task-intake.ts",
+        "src/shared/task-interpretation.ts"
+      ],
+      "diagnosis": "36 tasks receive unverified scope and workspace tools. Some genuinely refer to current code, but many only name a language/framework or ask a general approach. Scope logic makes review artifacts and unreferenced plans unverified; generic semantic advice can therefore become a project inspection.",
+      "recommendation": "Compute destination, applicability and evidence need directly from request/history before selecting role. A framework name is not a reference to the open project. Preserve explicit our/current/this-repository references and unresolved genuine continuations. Give uncertainty its own disposition rather than silently requiring file evidence.",
+      "acceptanceCriteria": "Generic Kotlin limiter advice and Laravel scheduling design work with no folder and with an unrelated JS folder, producing equivalent scope. Case 39, which says our current implementation, can retain evidence requirements."
+    },
+    {
+      "id": "MR-006",
+      "priority": "P1",
+      "title": "Remove incidental-pronoun vetoes from advice recognition",
+      "evidenceIndices": [
+        14,
+        19,
+        31,
+        54
+      ],
+      "paths": [
+        "electron/main/services/task-resolver.ts"
+      ],
+      "diagnosis": "The semantic advice guard currently rejects any request containing this/that/it/those/these/them. How would you solve it can refer to the problem named in the same sentence. That word alone must not bind the task to disk.",
+      "recommendation": "Use a referent-resolution result with referent kind, source turn and confidence. Distinguish problem-anaphora from project-anaphora. Extend advice coverage to how do you usually, looking for a clean way and structure the code without treating every such utterance as a mutation.",
+      "acceptanceCriteria": "Minimal pairs keep solve it in Kotlin generic while fix it after a grounded file finding preserves its workspace target. Quoted pronouns have no routing effect."
+    },
+    {
+      "id": "MR-007",
+      "priority": "P1",
+      "title": "Require progress evidence before retrying or switching roles",
+      "evidenceIndices": [
+        31,
+        37,
+        54
+      ],
+      "paths": [
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/agent/workflow.ts"
+      ],
+      "diagnosis": "Case 31 repeats essentially the same plan before eventually returning acceptance-criteria prose after seven calls. Case 37 repeats nonexistent shutdown.log tool requests until the step limit. Case 54 loops refusals, compacts and exhausts context.",
+      "recommendation": "Create a progress fingerprint from successful evidence reads, validated tool effects, obligation changes and error class. After repeated no-progress events, choose an explicit recovery action: fix schema, reduce scope, request real missing input, or terminate incomplete. Do not reset counters solely because the role changed.",
+      "acceptanceCriteria": "A repeated invalid retrieve call cannot consume ten steps. Identical prose under unchanged evidence triggers a bounded recovery. Rerouting alone is never recorded as substantive progress."
+    },
+    {
+      "id": "MR-008",
+      "priority": "P1",
+      "title": "Prevent recovery from increasing task authority",
+      "evidenceIndices": [
+        37,
+        54
+      ],
+      "paths": [
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/agent/tool-gateway.ts"
+      ],
+      "diagnosis": "Both traces move Plan/Reviewer to Composer while the original contract remains read-only. The captured requests retain read-oriented tools; this does not demonstrate an actual unauthorized edit, but role changes can introduce contradictory prompts and increase risk.",
+      "recommendation": "Freeze the top-level authority envelope and intersect every recovery role/tool policy with it. Select recovery skill separately from role identity. Recompile recovery instructions from the task rather than appending generic coding nudges.",
+      "acceptanceCriteria": "Read-only advice cannot gain write/run/delegate authority through recovery. A requested patch retains its granted rights. Assert the intersection at every tool gateway call, not just in the prompt."
+    },
+    {
+      "id": "MR-009",
+      "priority": "P1",
+      "title": "Keep tool protocol and repair instructions out of final answers",
+      "evidenceIndices": [
+        14,
+        20,
+        68,
+        72,
+        85,
+        86,
+        117
+      ],
+      "paths": [
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/agent/tool-parsing.ts",
+        "electron/main/services/task-outcome.ts"
+      ],
+      "diagnosis": "Cases 14/20/117 explain how to repair Eris retrieve calls instead of solving the user task; 68/72 leak protocol framing. Case 86 needs adjudication because mentioning tool calls is only a heuristic signal.",
+      "recommendation": "Separate assistant content, tool proposals, tool results and recovery notes in typed events. Apply a final-answer guard for internal framing and user-unrequested tool-schema explanations. Re-answer from the original goal after a tool failure, with a bounded retry and a clear blocker if necessary.",
+      "acceptanceCriteria": "Final answers to 14/20/117 contain task content or a truthful blocker, never a request for the user to repair internal tools. Do not strip JSON the user explicitly requested as the deliverable."
+    },
+    {
+      "id": "MR-010",
+      "priority": "P1",
+      "title": "Make tool schema repair deterministic",
+      "evidenceIndices": [
+        14,
+        20,
+        37,
+        117
+      ],
+      "paths": [
+        "electron/main/services/tool-registry.ts",
+        "electron/main/services/agent/tool-validation.ts",
+        "electron/main/services/agent/tool-gateway.ts"
+      ],
+      "diagnosis": "The model uses retrieve with path rather than query and then invents replacement schemas. Case 117 even describes a schema object as call arguments. Textual correction loops are not reliably teaching the tool contract.",
+      "recommendation": "Return machine-readable validation errors with actual schema version, allowed keys, missing required fields and one valid call using the current goal. Prefer read_file for exact known paths; retrieval is query-based. Allow only unambiguous argument normalization and record it; never invent query/path intent silently.",
+      "acceptanceCriteria": "Test retrieve(path), nested arguments, unknown keys and wrong types. Invalid calls never execute. One repair either yields a valid call or ends that branch with a specific actionable error."
+    },
+    {
+      "id": "MR-011",
+      "priority": "P1",
+      "title": "Do not turn an empty search into an answer about the search",
+      "evidenceIndices": [
+        54,
+        85
+      ],
+      "paths": [
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/agent/workflow.ts",
+        "electron/main/services/task-outcome.ts"
+      ],
+      "diagnosis": "Case 85 ends by declaring the retrieve call correct and no files found. Case 54 searches a two-file fixture for a Next.js feature. Tool success and user-task completion are different propositions.",
+      "recommendation": "Persist retrieval coverage and relevance separately from tool execution success. On empty evidence, reconsider applicability. Answer generic guidance if the request permits it; for actual project changes, report the missing relevant project and stop without fabricated findings.",
+      "acceptanceCriteria": "An empty sample fixture does not cause a generic bulk-progress question to fail acceptance. A genuine review of missing sources cannot produce invented path-specific findings."
+    },
+    {
+      "id": "MR-012",
+      "priority": "P1",
+      "title": "Classify deadline, cancellation and worker failure separately",
+      "evidenceIndices": [
+        55
+      ],
+      "paths": [
+        "electron/dev/capture.ts",
+        "electron/main/services/builtin-model.ts",
+        "electron/main/services/llama-worker-channel.ts",
+        "src/shared/eris-dev.ts"
+      ],
+      "diagnosis": "Case 55 takes 180002ms against a 180000ms configured deadline and ends Aborted. Timing strongly supports deadline expiration, but no structured cause is persisted, so it is not definitive proof of user cancellation versus timeout.",
+      "recommendation": "Use AbortController.abort with a typed reason and preserve the first termination cause. Store errorCode, abortOrigin, elapsedMs and lastProgressAt. Keep provider failure, worker exit, user stop, question timeout and run cancellation distinct.",
+      "acceptanceCriteria": "A configured timeout exports deadline-exceeded. Stop exports user-cancelled. A native crash exports worker-exited and cannot be relabeled timeout by later cleanup."
+    },
+    {
+      "id": "MR-013",
+      "priority": "P1",
+      "title": "Bound repetitive generation before a full question timeout",
+      "evidenceIndices": [
+        55,
+        95,
+        104
+      ],
+      "paths": [
+        "electron/main/services/chat-runtime.ts",
+        "electron/main/services/vram-fit.ts",
+        "electron/main/llama-worker.ts"
+      ],
+      "diagnosis": "Case 55 spends its output budget enumerating hundreds of Item N rows; 95 repeats deeper test-data directory patterns; 104 produces proliferating trait/interface names. These are different from healthy long answers. The native reply ceiling is globally 16384 tokens, while this run requests an 8192 context.",
+      "recommendation": "Compute per-purpose generation allowances from effective model context, input usage and reserve. Add a repetition detector for low-novelty token windows or structural cycles. Emit a degeneracy stop cause and permit one bounded regeneration requesting a compact data generator rather than literal data expansion.",
+      "acceptanceCriteria": "A pagination example uses generated fixture data instead of hundreds of literals. Long nonrepetitive code is not stopped solely for being long. Output reserve never exceeds effective available context."
+    },
+    {
+      "id": "MR-014",
+      "priority": "P1",
+      "title": "Define an independent answer-quality evaluation layer",
+      "evidenceIndices": [
+        1,
+        6,
+        7,
+        9,
+        42,
+        60,
+        128,
+        130,
+        131
+      ],
+      "paths": [
+        "electron/dev/capture.ts",
+        "src/shared/eris-dev.ts",
+        "electron/main/services/task-outcome.ts"
+      ],
+      "diagnosis": "The header explicitly says answerQuality not-evaluated. Existing invariants detect request coherence and cannot detect a missing Java import, fake error boundary, broken TOTP or nonexistent optimistic rollback. This run cannot provide a semantic pass percentage.",
+      "recommendation": "Add independent rubric results with evaluator identity/version, expected behaviors, evidence snippets, uncertainty and human adjudication. Combine deterministic assertions, optional isolated compilation and bounded model judges. Never make the same routing helper both implementation and oracle.",
+      "acceptanceCriteria": "The listed examples receive explicit behavior checks. Request-validity and answer-quality remain separate. Evaluator disagreements surface for review; no ungraded sample counts as a semantic pass."
+    },
+    {
+      "id": "MR-015",
+      "priority": "P1",
+      "title": "Test security-sensitive answers against explicit behavioral requirements",
+      "evidenceIndices": [
+        7,
+        17,
+        47,
+        67,
+        80,
+        91,
+        105,
+        107,
+        131
+      ],
+      "paths": [
+        "electron/main/services/task-outcome.ts",
+        "src/shared/task-interpretation.ts",
+        "electron/dev/capture.ts"
+      ],
+      "diagnosis": "Examples labeled secure omit core mechanisms. Case 105 returns server-generated OTPs and uses one shared secret. Case 131 computes seconds modulo 30 and compares different HMAC inputs rather than implementing TOTP. Case 47 appends a timestamp to the existing API key. These are content defects, not proof that routing caused them.",
+      "recommendation": "Build security-domain rubrics for credential recovery, TOTP, magic links, RBAC and key rotation. Require threat model and explicit distinction between runnable demo and production controls. Use independent test vectors/behavior checks and trusted library documentation when available; avoid hand-written crypto templates.",
+      "acceptanceCriteria": "TOTP vectors, per-user secret isolation, enrollment verification, expiry/replay tests and reset-token authorization are checked. Unsafe examples cannot receive production-ready quality status merely because they contain security terminology."
+    },
+    {
+      "id": "MR-016",
+      "priority": "P2",
+      "title": "Make complete-example checks understand missing dependencies",
+      "evidenceIndices": [
+        1,
+        6,
+        81,
+        107
+      ],
+      "paths": [
+        "electron/main/services/task-outcome.ts",
+        "src/shared/task-interpretation.ts"
+      ],
+      "diagnosis": "Case 1 imports ./entity without providing it; 6 uses Graphics2D without its import; 81 uses os without importing it. Case 107 imports a user model while also declaring an interface and relies on unprovided Express request augmentation.",
+      "recommendation": "Extract files and dependency declarations from examples into an explicit artifact manifest. Check unresolved local imports, missing standard imports and required scaffolding. If a snippet is intentionally partial, label it and explain the omitted contract instead of claiming minimal but complete.",
+      "acceptanceCriteria": "Each minimal-complete fixture can be assembled from the response without guessing local files. Compilation checks use explicit language versions and report environment/setup failures separately from generated-code defects."
+    },
+    {
+      "id": "MR-017",
+      "priority": "P2",
+      "title": "Evaluate core concept behavior rather than topic word overlap",
+      "evidenceIndices": [
+        5,
+        9,
+        42,
+        60,
+        127,
+        128,
+        130
+      ],
+      "paths": [
+        "electron/main/services/task-outcome.ts",
+        "electron/dev/capture.ts"
+      ],
+      "diagnosis": "Case 5 uses a single counter rather than per-user state; 127 creates a fresh limiter for each request; 128 only updates an array without server failure/rollback; 130 sleeps then starts a print-only shutdown thread. Case 42 retries division by a constant zero forever.",
+      "recommendation": "For each concept, record minimal observable properties. Rate limiting must isolate users and persist state across requests; optimistic updates need request outcome reconciliation; shutdown needs a trigger, drain and bounded termination; retry needs termination and failure policy.",
+      "acceptanceCriteria": "Behavioral fixtures fail the current flawed examples and accept multiple correct implementations. Avoid exact-string golden answers or one-library-only grading."
+    },
+    {
+      "id": "MR-018",
+      "priority": "P2",
+      "title": "Ground package/API claims when external tools are available",
+      "evidenceIndices": [
+        2,
+        32,
+        126
+      ],
+      "paths": [
+        "electron/main/services/chat-runtime.ts",
+        "electron/main/services/tool-registry.ts",
+        "electron/main/services/agent/context-compiler.ts"
+      ],
+      "diagnosis": "Answers confidently name specific adapters, constructors and decorators without documentation evidence. Their exact package validity was not independently checked in this review. This capture intentionally blocks external tool effects, so it cannot establish current package compatibility.",
+      "recommendation": "Add optional documentation retrieval with source URL, package/version and retrieval date. Prefer repository lockfiles for actual project work. In an offline run, mark unverified API assumptions and grade them as unknown until checked; do not fabricate citations.",
+      "acceptanceCriteria": "An integration example records the dependency/version assumptions and sources if checked. Offline tests never claim external verification. Enabling docs retrieval is recorded as a changed experiment configuration."
+    },
+    {
+      "id": "MR-019",
+      "priority": "P2",
+      "title": "Replace role boilerplate with task-specific response requirements",
+      "evidenceIndices": [
+        8,
+        31,
+        70,
+        87,
+        109,
+        122,
+        125
+      ],
+      "paths": [
+        "electron/main/services/agent/context-compiler.ts",
+        "electron/main/services/execution-plan.ts",
+        "electron/main/services/agent/loop.ts"
+      ],
+      "diagnosis": "Outputs recite Inspect the relevant source or Done when rather than provide design decisions. Case 31 returns the acceptance criterion itself. Repeating internal playbooks is especially costly on smaller local models.",
+      "recommendation": "Compile a compact contract and a small task-specific response schema. Keep operational workflow outside the requested content. Remove irrelevant shared rules for generic chat-only turns; for example, file citations and change-the-project guidance are unnecessary when no workspace evidence is relevant.",
+      "acceptanceCriteria": "Plan answers describe concrete scheduling/configuration choices rather than restating the playbook. Prompt snapshots show no mandatory workspace actions in generic no-tool tasks. Preserve required safety/authority rules."
+    },
+    {
+      "id": "MR-020",
+      "priority": "P2",
+      "title": "Treat unjustified benign refusals as quality review candidates",
+      "evidenceIndices": [
+        38,
+        40,
+        62,
+        79,
+        129
+      ],
+      "paths": [
+        "electron/main/services/task-outcome.ts",
+        "electron/dev/capture.ts",
+        "src/eris-dev/main.tsx"
+      ],
+      "diagnosis": "Five answers begin with an apology: 40/79/129 refuse ordinary development requests; 38/62 ask for context. Those two clarification cases must not automatically be treated as the same failure as blanket refusals.",
+      "recommendation": "Detect refusal and clarification as separate response dispositions. Assess whether missing context is necessary for the requested artifact. Permit a bounded re-answer that states reasonable assumptions for generic examples; preserve genuine safety restrictions and necessary clarification.",
+      "acceptanceCriteria": "Ordinary transactional-email and upload questions get useful guidance or a concrete missing-input explanation. Legitimate refusals are not automatically overridden."
+    },
+    {
+      "id": "MR-021",
+      "priority": "P2",
+      "title": "Preserve test obligations across all intent/artifact combinations",
+      "evidenceIndices": [
+        41,
+        61,
+        65,
+        70,
+        81,
+        85
+      ],
+      "paths": [
+        "src/shared/task-interpretation.ts",
+        "electron/main/services/task-intake.ts",
+        "electron/main/services/agent/request-invariants.ts"
+      ],
+      "diagnosis": "Case 85 records coverage-without-tests-obligation and ends on retrieval commentary. Other good-test-coverage questions show that naming tests in prose is not the same as supplying tests when code plus tests is requested.",
+      "recommendation": "Extract testing requirements before intent selection. Distinguish requested test code, test design, and permission to execute tests. Attach each test obligation to the feature behavior and preserve explicit do-not-run constraints.",
+      "acceptanceCriteria": "Core logic and tests requires both artifacts. Good coverage in a design answer requires concrete cases, including failure paths. Requesting test content alone never grants host execution authority."
+    },
+    {
+      "id": "MR-022",
+      "priority": "P2",
+      "title": "Model requested answer variants as separate obligations",
+      "evidenceIndices": [
+        42
+      ],
+      "paths": [
+        "src/shared/task-interpretation.ts",
+        "electron/main/services/task-outcome.ts"
+      ],
+      "diagnosis": "Case 42 supplies two labeled versions but neither satisfies the intended retry/error-boundary behavior. Cardinality alone cannot establish completion.",
+      "recommendation": "Track each variant with shared concept requirements and distinct requested properties. Validate simple and robust variants separately, including bounded retry and reset semantics where relevant. Keep concept ambiguity explicit if no framework was specified.",
+      "acceptanceCriteria": "Two headings with copied or conceptually unrelated code fail. Both versions satisfy the shared concept and the robust variant demonstrates the additional requested properties."
+    },
+    {
+      "id": "MR-023",
+      "priority": "P2",
+      "title": "Check feasibility boundaries between frontend, backend and infrastructure",
+      "evidenceIndices": [
+        3,
+        67,
+        94,
+        105
+      ],
+      "paths": [
+        "src/shared/task-interpretation.ts",
+        "electron/main/services/agent/context-compiler.ts",
+        "electron/main/services/task-outcome.ts"
+      ],
+      "diagnosis": "Case 94 treats two React request components as idempotent API endpoints without server deduplication. Case 67 calls password-change UI a secure reset. Case 3 focuses on a database Docker image rather than expand/contract migration coordination.",
+      "recommendation": "Add a concept-fit assessment with required execution layer and missing counterpart responsibilities. State which guarantees can be provided in the requested stack and which require backend/database coordination. Make this advisory rather than silently changing the user goal.",
+      "acceptanceCriteria": "Frontend idempotency guidance includes stable keys and server-side atomic deduplication responsibilities. Reset UI distinguishes account recovery from authenticated password change. Zero-downtime migration design addresses old/new application coexistence."
+    },
+    {
+      "id": "MR-024",
+      "priority": "P2",
+      "title": "Prevent invented project paths from becoming evidence",
+      "evidenceIndices": [
+        8,
+        31,
+        87,
+        118,
+        123
+      ],
+      "paths": [
+        "electron/main/services/agent/context-compiler.ts",
+        "electron/main/services/task-outcome.ts",
+        "electron/main/services/task-intake.ts"
+      ],
+      "diagnosis": "Plans invent plausible filenames for hypothetical applications while receiving a two-file JS fixture. Some generic proposed paths are legitimate suggestions; the defect is presenting them as inspected existing sources.",
+      "recommendation": "Tag path references as observed, proposed or assumed. Render proposed paths clearly and require successful read evidence for observed claims. Keep the same distinction in follow-up task resolution so a hypothetical path cannot become an existing-file assumption.",
+      "acceptanceCriteria": "No existing-file claim is supported only by model prose. A generic design may suggest report_generator.py while explicitly labeling it proposed. Follow-up edits validate target existence and scope first."
+    },
+    {
+      "id": "MR-025",
+      "priority": "P2",
+      "title": "Use purpose-specific accounting for compaction calls",
+      "evidenceIndices": [
+        37,
+        54,
+        79
+      ],
+      "paths": [
+        "electron/main/services/agent/compaction.ts",
+        "electron/main/services/model-transport.ts",
+        "electron/main/services/agent/request-invariants.ts",
+        "electron/dev/capture.ts"
+      ],
+      "diagnosis": "missing-task-contract findings occur on cases that invoke compaction. In 37 and 54, no-contract requests are progress-summary prompts captured as purpose agent. This makes some findings about an internal summarizer rather than the task-execution request; case 79 needs its post-compaction prompt checked separately.",
+      "recommendation": "Add purposes such as intent, agent-step, compaction and finalization plus parentCallId. Apply purpose-specific invariants. Summarizers need an explicit memory contract, while resumed agent-step requests must retain task identity, scope and authority.",
+      "acceptanceCriteria": "A valid compaction call does not trigger missing execution contract. A resumed worker that actually loses its contract still fails. Metrics separate summary cost from substantive model work."
+    },
+    {
+      "id": "MR-026",
+      "priority": "P1",
+      "title": "Keep generated summaries from laundering unexecuted work",
+      "evidenceIndices": [
+        54
+      ],
+      "paths": [
+        "electron/main/services/agent/compaction.ts",
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/task-outcome.ts"
+      ],
+      "diagnosis": "Case 54 compaction claims next-feature-flag was installed, even though the diagnostic run forbids host commands and the final brief says no files written. Generated memory can convert earlier suggestions into asserted actions.",
+      "recommendation": "Build action facts from the tool ledger, with execution ID, result and affected files. Ask summarization to compress interpretations only; attach immutable verified actions separately. Validate completion claims against executed effects before memory is reused or displayed.",
+      "acceptanceCriteria": "A proposed npm install can never appear in verified actions without a successful permitted command event. Summarized findings preserve evidence IDs. Conflicting generated action claims are rejected or explicitly unverified."
+    },
+    {
+      "id": "MR-027",
+      "priority": "P2",
+      "title": "Bound system-message accumulation during recovery",
+      "evidenceIndices": [
+        37,
+        54
+      ],
+      "paths": [
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/model-protocol.ts",
+        "electron/main/services/agent/compaction.ts"
+      ],
+      "diagnosis": "Case 54 repeatedly compacts yet exceeds context after evidence cleanup. Recovery appends system messages, and model-protocol pins system messages during budgeting. Repeated authoritative nudges can consume the budget that tool-output cleanup cannot recover.",
+      "recommendation": "Keep one canonical task/authority block and a replaceable recovery-state block. Budget tool schemas, conversation, output reserve and system text jointly using the effective tokenizer when available. Stop repeated compaction when it does not reduce usage meaningfully.",
+      "acceptanceCriteria": "Repeated recovery cannot grow pinned system tokens without bound. An 8192-context replay reports used/reserved tokens and exits with an actionable context error before sending an oversized request."
+    },
+    {
+      "id": "MR-028",
+      "priority": "P2",
+      "title": "Identify effective runtime settings rather than only requested settings",
+      "evidenceIndices": [
+        55
+      ],
+      "paths": [
+        "electron/dev/models.ts",
+        "electron/dev/main.ts",
+        "electron/main/services/builtin-model.ts",
+        "electron/main/services/vram-fit.ts"
+      ],
+      "diagnosis": "The manifest requests context 8192 but does not record actual native context allocation, resolved model file digest, tokenizer/template or output cap. Model alias and requested settings alone cannot reproduce native behavior.",
+      "recommendation": "Capture resolved model identity, weight checksum or stable manifest fingerprint, quantization, runtime/backend, effective context, generation limits, chat-template identifier and hardware summary. Exclude credentials and sensitive paths from shareable metadata.",
+      "acceptanceCriteria": "Two captures with the same alias but different weights/templates are flagged non-equivalent. Requested versus effective context differences are visible in the run details."
+    },
+    {
+      "id": "MR-029",
+      "priority": "P2",
+      "title": "Unify invariant-version provenance",
+      "evidenceIndices": [
+        37,
+        54,
+        79,
+        85
+      ],
+      "paths": [
+        "src/shared/agent-versions.ts",
+        "electron/main/services/agent/request-invariants.ts",
+        "electron/dev/main.ts"
+      ],
+      "diagnosis": "The export reports invariants 2026-10-23.2; the current request-invariants module declares INVARIANT_RULES_VERSION 2026-10-23.3 while the shared constant remains .2. Even if behavior is unchanged, duplicate version sources undermine attribution.",
+      "recommendation": "Export one authoritative ruleset version from the evaluator module, or derive a schema/rules digest during build. Store per-check versions if checks evolve independently. Record both capture-time checks and later offline re-evaluation.",
+      "acceptanceCriteria": "Build metadata and evaluator cannot disagree silently. Re-evaluating an old trace appends a new evaluation record rather than rewriting its original result."
+    },
+    {
+      "id": "MR-030",
+      "priority": "P2",
+      "title": "Show exported result count and run coverage explicitly",
+      "evidenceIndices": [],
+      "paths": [
+        "electron/dev/main.ts",
+        "electron/dev/runs.ts",
+        "src/shared/eris-dev.ts",
+        "src/eris-dev/main.tsx"
+      ],
+      "diagnosis": "The header names a 10000-question corpus, but this file contains 132 unique question records. It provides no exported range/completeness statement. The filename multi does not establish multiple models or conversation turns.",
+      "recommendation": "Add exportedCount, completedCount, pendingCount, exportedIndexRanges, runState and exportScope to the header. Include model/run identities per record for future merged exports. Display corpus size separately from evaluated result count.",
+      "acceptanceCriteria": "This file would visibly say 132/10000 results, 1.32% exported coverage, one selected model. Partial exports cannot be mistaken for a full benchmark."
+    },
+    {
+      "id": "MR-031",
+      "priority": "P2",
+      "title": "Build stratified suites instead of treating the first slice as representative",
+      "evidenceIndices": [],
+      "paths": [
+        "electron/dev/runs.ts",
+        "electron/dev/batches.ts",
+        "src/shared/eris-dev.ts"
+      ],
+      "diagnosis": "The 132 indices are 0 through 131 from one corpus. Questions reuse topics and wording patterns. There is no randomization, topic weighting or independent holdout evidence in this export.",
+      "recommendation": "Add deterministic seeded sampling by task type, language, framework, scope and difficulty. Keep a fast curated regression suite, a broader stratified suite and an optional full-corpus soak. Store selected IDs and seed in the manifest.",
+      "acceptanceCriteria": "Results report strata and omissions, never extrapolate a prefix pass rate to 10000. The same seed/config reproduces selection. Regression examples remain stable while holdout wording varies."
+    },
+    {
+      "id": "MR-032",
+      "priority": "P2",
+      "title": "Add stateful review-to-implementation conversations",
+      "evidenceIndices": [],
+      "paths": [
+        "electron/dev/runs.ts",
+        "electron/dev/capture.ts",
+        "src/shared/eris-dev.ts"
+      ],
+      "diagnosis": "Every captured intent request inspected here has an empty history; the run does not test the earlier user complaint that add those improvements should continue a review and edit the correct project.",
+      "recommendation": "Add conversation scenarios with shared fixture lineage and turn IDs: review, select recommendations, implement, explain diff, revise, and cancel/resume. Preserve task/recommendation IDs across turns rather than copying arbitrary assistant prose into authority.",
+      "acceptanceCriteria": "Add those improvements edits the selected fixture after a review when authorized; explain what changed is read-only; generic examples do not become edits merely because a folder is open."
+    },
+    {
+      "id": "MR-033",
+      "priority": "P2",
+      "title": "Add explicit multi-model and model-comparison experiments",
+      "evidenceIndices": [],
+      "paths": [
+        "electron/dev/models.ts",
+        "electron/dev/runs.ts",
+        "src/shared/eris-dev.ts",
+        "src/shared/eris-dev-compare.ts"
+      ],
+      "diagnosis": "This export uses builtin:composer-lite for both 120 intent calls and 183 agent calls. It cannot isolate classifier quality from answer generation quality or support a claim about multiple models.",
+      "recommendation": "Allow a comparison matrix with classifier model and worker model separately selected, or bypass intent using a fixed independently reviewed contract. Replay identical cases/settings/fixtures and attach paired outcomes. Keep the simple one-model UI default.",
+      "acceptanceCriteria": "A comparison identifies exactly which dimension changed and preserves per-model outputs. Equal aliases do not conceal different weight versions. No automatic paid run starts without the user invoking it."
+    },
+    {
+      "id": "MR-034",
+      "priority": "P2",
+      "title": "Measure useful latency and wasted inference separately",
+      "evidenceIndices": [
+        31,
+        37,
+        54,
+        55
+      ],
+      "paths": [
+        "electron/dev/capture.ts",
+        "src/shared/eris-dev.ts",
+        "src/eris-dev/main.tsx"
+      ],
+      "diagnosis": "Total recorded question duration is 2216807ms, approximately 36m57s, with median 12226ms and nearest-rank p95 49435ms. firstTokenMs measures the first agent chunk from question start, not provider decode-only TTFT. Twelve cases exceed two calls.",
+      "recommendation": "Record queue, load, resolver, prefill, first-agent-chunk, generation, tool, compaction and finalization spans. Add useful-output completion latency and no-progress call cost. Derive totals from monotonic spans, and publish the percentile definition.",
+      "acceptanceCriteria": "UI labels distinguish time to first answer chunk from provider TTFT. Intent, summary and recovery overhead are attributable; overlapping spans are not double-counted."
+    },
+    {
+      "id": "MR-035",
+      "priority": "P2",
+      "title": "Use bounded routing fast paths only where independently supported",
+      "evidenceIndices": [
+        0,
+        5,
+        6,
+        17
+      ],
+      "paths": [
+        "electron/main/services/task-resolver.ts",
+        "electron/dev/capture.ts"
+      ],
+      "diagnosis": "120 of 132 questions pay for a live intent call; 65 finish through the semantic-deliverable guard. The guard correcting the classifier is valuable, but repeated classifier work may add cost without changing clear destination/authority decisions.",
+      "recommendation": "Benchmark deterministic fast paths for explicit chat examples and unambiguous advice against a labeled holdout suite. Retain semantic resolution for true ambiguity and continuations. Cache only with history, settings and behavior-version fingerprints; never use text-only routing cache for context-sensitive follow-ups.",
+      "acceptanceCriteria": "Reduced routing calls preserve labeled route/destination accuracy and safety boundaries. Report both latency improvement and semantic regressions before changing defaults."
+    },
+    {
+      "id": "MR-036",
+      "priority": "P2",
+      "title": "Add artifact-specific fixture packs and independent oracles",
+      "evidenceIndices": [],
+      "paths": [
+        "electron/dev/runs.ts",
+        "electron/dev/main.ts",
+        "src/shared/eris-dev.ts"
+      ],
+      "diagnosis": "This run uses a two-file sample for every task. It exercises generic inference but cannot validate Laravel edits, React error-boundary behavior, migration rollout or cross-service coordination in a real application.",
+      "recommendation": "Offer small pinned fixtures for supported stacks, with seeded defects, expected files and executable acceptance checks. Keep generic chat cases fixture-free. Provide explicit oracle types: syntax, behavior, patch effects, grounding and manual review.",
+      "acceptanceCriteria": "A Kotlin workspace task uses a Kotlin fixture; a generic Kotlin question does not need one. Fixture digest and oracle version are stored with each result. A fixture mismatch is reported separately from a bad answer."
+    },
+    {
+      "id": "MR-037",
+      "priority": "P2",
+      "title": "Make verification opt-in, isolated and resource-bounded",
+      "evidenceIndices": [],
+      "paths": [
+        "electron/dev/main.ts",
+        "electron/dev/capture.ts",
+        "electron/main/services/model-transport.ts"
+      ],
+      "diagnosis": "The header explicitly excludes host command execution and external effects. These are useful safeguards; adding executable answer checks must not bypass them or run generated code against the real workspace.",
+      "recommendation": "Create a separate verification capability with disposable directories, allowlisted runners, no secrets, blocked network by default, CPU/memory/output/time limits and explicit cleanup. Record denied checks as not-exercised. Keep production agent authority separate from harness validation rights.",
+      "acceptanceCriteria": "Generated code cannot access the actual user project or credentials through verification. Missing compiler reports unsupported environment rather than code failure. Verification can be disabled without hiding coverage gaps."
+    },
+    {
+      "id": "MR-038",
+      "priority": "P2",
+      "title": "Create release gates around regression behaviors, not green counts",
+      "evidenceIndices": [
+        37,
+        54,
+        55,
+        68,
+        72,
+        85
+      ],
+      "paths": [
+        "electron/dev/runs.ts",
+        "src/shared/eris-dev.ts",
+        ".github/workflows/ci.yml"
+      ],
+      "diagnosis": "128 records have no request finding, yet clear output failures exist. A gate based on captured or completed counts would miss these regressions and could be inflated by generic answers that never satisfy the task.",
+      "recommendation": "Use deterministic contract/protocol suites in every build and a bounded live replay with a fixed configuration when requested. Gate on invariant regressions, protocol leaks, incomplete artifacts and behavior-oracle failures. Keep latency thresholds hardware-aware and model-judge results advisory until calibrated.",
+      "acceptanceCriteria": "A build cannot pass merely by returning nonempty responses. Reports include new, fixed and unchanged failures, plus explicit ungraded categories. Full 10000 live inference is a soak, not a mandatory per-edit build step."
+    },
+    {
+      "id": "MR-039",
+      "priority": "P2",
+      "title": "Make exported evidence independently reviewable and safe to share",
+      "evidenceIndices": [],
+      "paths": [
+        "electron/dev/main.ts",
+        "electron/dev/runs.ts",
+        "src/shared/eris-dev.ts"
+      ],
+      "diagnosis": "This file contains full prompts and temporary workspace paths. Future real-project exports could contain source code or secrets. Dirty true and a dirty digest identify a changed checkout but do not let another reviewer reconstruct the exact code.",
+      "recommendation": "Offer a shareable export with configurable redaction, redaction counts and preserved structural digests. Include build/config manifests and an optional reviewed source patch fingerprint. Keep raw local traces separate; do not claim a redacted trace is byte-identical replay input.",
+      "acceptanceCriteria": "Credentials and user-specified sensitive fields are absent from the shareable artifact. Provenance identifies a dirty build without publishing unrelated changes. A reviewer can map every recommendation to stable question/call IDs."
+    },
+    {
+      "id": "MR-040",
+      "priority": "P2",
+      "title": "Build a focused failure-review workflow in Eris-Dev",
+      "evidenceIndices": [
+        14,
+        37,
+        54,
+        55,
+        68,
+        79,
+        85
+      ],
+      "paths": [
+        "src/eris-dev/main.tsx",
+        "src/eris-dev/style.css",
+        "src/shared/eris-dev.ts"
+      ],
+      "diagnosis": "The main review difficulty is moving from a green completion label to the question, contract, failed tool call, raw draft and final answer. One undifferentiated needs-attention filter will mix timeout, invariant and semantic issues.",
+      "recommendation": "Keep the simplified UI and add focused filters for execution failure, contract issue, incomplete code, refusal and protocol leak. A case detail should show question, final answer, concise route/authority, then expandable call timeline and raw data. Add adjudication notes and export selected failures for replay.",
+      "acceptanceCriteria": "A user can select 68, see the leaked protocol and its source call, mark it confirmed, then export just that regression. Advanced metadata remains collapsed by default and long outputs do not freeze the list."
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { DevApi, DevProgress } from '../../src/shared/eris-dev'
 const api: DevApi = {
+  models: () => ipcRenderer.invoke('dev:models'),
+  connect: (input) => ipcRenderer.invoke('dev:connect', input),
   importQuestions: () => ipcRenderer.invoke('dev:import'),
   chooseProject: () => ipcRenderer.invoke('dev:project'),
   setProjectKind: (kind) => ipcRenderer.invoke('dev:project-kind', kind),

@@ -120,7 +120,12 @@ describe('full corpus at the production request boundary', () => {
           'tool-free-mutation-plan',
           'recommendations-truncated',
           'forbidden-edit-granted',
-          'forbidden-run-granted'
+          'forbidden-run-granted',
+          // LR-017: scope and artifact loss found by the 2026-10-23 review.
+          'generic-requires-project-evidence',
+          'explicit-example-without-implementation',
+          'output-cardinality-loss',
+          'read-only-findings-format'
         ].includes(id)
       )
     )

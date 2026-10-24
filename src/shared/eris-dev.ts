@@ -1,3 +1,5 @@
+import type { DeliverableAssessment } from './deliverable-checks'
+
 /** Export formats. v1 files remain readable through readCaptureRecord. */
 export const CAPTURE_FORMAT = 'eris-dev-capture-v2'
 export const LEGACY_CAPTURE_FORMAT = 'eris-dev-capture-v1'
@@ -56,7 +58,7 @@ export interface DevStages {
   reachability: 'captured' | 'blocked' | 'error' | 'cancelled'
   /** Deterministic invariants over the task, prompt and tools. */
   requestValidity: 'no-findings' | 'review' | 'defects' | 'not-assessed'
-  inference: 'not-run'
+  inference: 'not-run' | 'completed' | 'error' | 'cancelled'
   answerQuality: 'not-evaluated'
 }
 
@@ -75,6 +77,13 @@ export interface DevSummary {
   question: string
   status: DevStages['reachability']
   stages: DevStages
+  /** Model transport completion is separate from whether the agent finished its task. */
+  completion?: { status: 'completed' | 'incomplete' | 'failed' | 'cancelled'; reason?: string }
+  /**
+   * Deterministic checks on the final answer (protocol leaks, truncated code,
+   * refusals). Independent of completion, and never an answer-quality grade.
+   */
+  deliverable?: DeliverableAssessment
   agent?: string
   intent?: string
   artifact?: string
@@ -86,6 +95,19 @@ export interface DevSummary {
 }
 
 export interface DevCapture {
+  /** Raw live output for this transport call, including intent replies and partial failures. */
+  response?: string
+  error?: string
+  durationMs?: number
+  /** How the provider ended this generation (eos, output-limit, …), when it said. */
+  termination?: {
+    reason: string
+    raw?: string
+    maxOutputTokens?: number
+    promptTokens?: number
+    outputTokens?: number
+    contextTokens?: number
+  }
   purpose: string
   model: string
   messages: unknown[]
@@ -99,14 +121,42 @@ export interface DevCapture {
   toolManifest?: unknown
 }
 
+/**
+ * Why a live question stopped. The first cause is kept: a worker crash followed by
+ * cleanup stays worker-exited, and a configured deadline is never reported as a stop.
+ */
+export type DevTerminationCause =
+  | 'completed'
+  | 'agent-incomplete'
+  | 'no-answer'
+  | 'deadline-exceeded'
+  | 'user-cancelled'
+  | 'call-limit'
+  | 'output-limit'
+  | 'provider-error'
+  | 'worker-exited'
+
 export interface DevResult extends DevSummary {
   task?: unknown
   requests: DevCapture[]
-  /** Model output. Capture never generates one; responseReason says why it is absent. */
-  response: null
-  responseReason: 'not-generated' | 'not-observed-v1'
-  sourceMode: 'capture'
-  intentReplySource: 'fallback' | 'malformed' | 'timeout' | 'question-script' | 'none'
+  /**
+   * Model output. Capture never generates one; responseReason says why it is absent.
+   * On failure it holds only the answer streamed so far (partial output).
+   */
+  response: string | null
+  /** The last raw agent draft when the question failed; evidence, not a final answer. */
+  draft?: string
+  termination?: { cause: DevTerminationCause; elapsedMs: number; lastProgressAt: number | null }
+  inference?: {
+    model: string
+    calls: number
+    firstTokenMs: number | null
+    outputChars: number
+    error?: string
+  }
+  responseReason: 'not-generated' | 'not-observed-v1' | 'generated' | 'inference-failed'
+  sourceMode: 'capture' | 'live'
+  intentReplySource: 'fallback' | 'malformed' | 'timeout' | 'question-script' | 'none' | 'live'
   routeDecision?: unknown
   retrieval?: unknown
   workflowLint?: unknown
@@ -114,7 +164,7 @@ export interface DevResult extends DevSummary {
   events: string[]
   /** Local pre-inference phases. Not model latency and not generation speed. */
   phases: { routeMs: number; resolveMs: number; promptMs: number; toBoundaryMs: number }
-  timing: 'pre-inference'
+  timing: 'pre-inference' | 'end-to-end'
   durationMs: number
 }
 
@@ -155,10 +205,64 @@ export interface DevRunHeader {
   context: number
   mode: 'ask' | 'agent'
   intentReplyMode: IntentReplyMode
-  responses: 'none'
+  responses: 'none' | 'live'
+  live?: DevLiveConfig
   answerQuality: 'not-evaluated'
   /** What a capture run exercises and what it cannot, stated in every export. */
-  coverage: typeof CAPTURE_COVERAGE
+  coverage: { exercised: readonly string[]; notExercised: readonly string[] }
+  /** Added at export time: how much of the corpus this file holds. */
+  export?: DevExportCoverage
+}
+
+/** Exported results against the corpus, so a partial file is never read as a full benchmark. */
+export interface DevExportCoverage {
+  scope: 'full' | 'partial' | 'selection'
+  runState: 'running' | 'completed' | 'stopped' | 'interrupted' | 'unknown'
+  corpusTotal: number
+  completedCount: number
+  pendingCount: number
+  exportedCount: number
+  /** Inclusive zero-based index ranges, e.g. [[0, 131]]. */
+  exportedIndexRanges: Array<[number, number]>
+  /** exportedCount / corpusTotal as a percentage, two decimals. */
+  exportedPercent: number
+  models: string[]
+}
+
+export function exportCoverage(input: {
+  indices: number[]
+  completed: number
+  corpusTotal: number
+  runState?: DevExportCoverage['runState']
+  selection: boolean
+  models: string[]
+}): DevExportCoverage {
+  const exported = [...new Set(input.indices)]
+    .filter((index) => Number.isInteger(index) && index >= 0 && index < input.completed)
+    .sort((a, b) => a - b)
+  const ranges: Array<[number, number]> = []
+  for (const index of exported) {
+    const last = ranges[ranges.length - 1]
+    if (last && index === last[1] + 1) last[1] = index
+    else ranges.push([index, index])
+  }
+  return {
+    scope: input.selection
+      ? 'selection'
+      : exported.length === input.corpusTotal
+        ? 'full'
+        : 'partial',
+    runState: input.runState ?? 'unknown',
+    corpusTotal: input.corpusTotal,
+    completedCount: input.completed,
+    pendingCount: Math.max(0, input.corpusTotal - input.completed),
+    exportedCount: exported.length,
+    exportedIndexRanges: ranges,
+    exportedPercent: input.corpusTotal
+      ? Math.round((exported.length / input.corpusTotal) * 10000) / 100
+      : 0,
+    models: [...new Set(input.models)]
+  }
 }
 
 export const CAPTURE_COVERAGE = {
@@ -185,10 +289,31 @@ export interface DevProgress {
   completed: number
   total: number
   result?: DevSummary
+  batch?: { number: number; total: number; size: 10 }
   error?: string
 }
 
+export interface DevModelOption {
+  id: string
+  label: string
+}
+export interface DevLiveConfig {
+  model: string
+  batchSize: 10
+  timeoutMs: number
+  maxCalls: number
+}
+export interface DevStartInput {
+  context: number
+  mode: 'ask' | 'agent'
+  intentReplyMode: IntentReplyMode
+  live?: DevLiveConfig
+}
+
 export interface DevApi {
+  models(): Promise<DevModelOption[]>
+  connect(input: { baseUrl: string; apiKey?: string }): Promise<DevModelOption[]>
+
   importQuestions(): Promise<DevImportPreview | null>
   listRuns(): Promise<DevRunListing[]>
   resumeRun(runId: string): Promise<{
@@ -215,17 +340,10 @@ export interface DevApi {
   }>
   chooseProject(): Promise<string | null>
   setProjectKind(kind: 'sample' | 'none'): Promise<void>
-  start(input: {
-    context: number
-    mode: 'ask' | 'agent'
-    intentReplyMode: IntentReplyMode
-  }): Promise<void>
+  start(input: DevStartInput): Promise<void>
   stop(): Promise<void>
   result(index: number): Promise<DevResult>
-  exportRun(options?: {
-    sanitized?: boolean
-    indices?: number[]
-  }): Promise<{
+  exportRun(options?: { sanitized?: boolean; indices?: number[] }): Promise<{
     path: string
     records: number
     redaction?: { replacements: Record<string, number>; limitations: readonly string[] }
@@ -284,7 +402,27 @@ const ZERO_PHASES = { routeMs: 0, resolveMs: 0, promptMs: 0, toBoundaryMs: 0 }
  * response: its detail was the capture-stop message, not model output.
  */
 export function readCaptureRecord(record: Record<string, unknown>): DevResult {
-  if (record.responseReason) return record as unknown as DevResult
+  if (record.responseReason) {
+    const result = record as unknown as DevResult
+    // Earlier live builds saved internal stop statuses but labeled their final
+    // summaries as answered. Recover the outcome from those runtime events only.
+    if (
+      !result.completion &&
+      result.sourceMode === 'live' &&
+      Array.isArray(result.events) &&
+      result.events.some(
+        (event) => event === 'Incomplete' || event === 'Paused · run step budget reached'
+      )
+    )
+      return {
+        ...result,
+        completion: {
+          status: 'incomplete',
+          reason: 'This earlier run stopped before the agent completed its task.'
+        }
+      }
+    return result
+  }
   const status = (record.status as DevStages['reachability']) ?? 'error'
   return {
     index: Number(record.index ?? 0),

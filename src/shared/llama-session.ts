@@ -49,3 +49,57 @@ export function messagesToLlamaHistory(
   }
   return out
 }
+
+/**
+ * A one-shot request uses the same structured history as a session turn. Nesting a
+ * SYSTEM/USER/ASSISTANT transcript inside one user prompt invites the model to
+ * continue that transcript, role labels and tool framing included.
+ */
+export function oneShotPrompt(messages: SessionChatMessage[]): {
+  history: SessionChatMessage[]
+  userMessage: string
+} {
+  const split = splitSessionPrompt(messages)
+  if (split) return { history: split.seed, userMessage: split.userMessage }
+  return {
+    history: messages.map((message) => ({ ...message })),
+    userMessage: 'Continue the active request using the latest runtime instructions above.'
+  }
+}
+
+/**
+ * Reply tokens that fit beside the prompt in the effective context. A fixed 16k
+ * ceiling in an 8k context lets a degenerate reply run until the question deadline.
+ */
+export function replyTokenAllowance(input: {
+  requested: number
+  contextSize: number
+  promptTokens: number
+  reserve?: number
+  minimum?: number
+}): number {
+  const available = input.contextSize - input.promptTokens - (input.reserve ?? 64)
+  return Math.max(input.minimum ?? 256, Math.min(input.requested, available))
+}
+
+/** Map node-llama-cpp stop reasons onto transport termination reasons. */
+export function nativeStopReason(
+  raw: unknown
+): 'eos' | 'output-limit' | 'stop-trigger' | 'tool-call' | 'cancelled' | 'unknown' {
+  switch (raw) {
+    case 'eogToken':
+    case 'eosToken':
+      return 'eos'
+    case 'maxTokens':
+      return 'output-limit'
+    case 'stopGenerationTrigger':
+    case 'customStopTrigger':
+      return 'stop-trigger'
+    case 'functionCalls':
+      return 'tool-call'
+    case 'abort':
+      return 'cancelled'
+    default:
+      return 'unknown'
+  }
+}

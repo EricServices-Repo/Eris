@@ -32,6 +32,7 @@ const h = vi.hoisted(() => ({
   open: [] as string[][],
   save: [] as string[],
   sent: [] as DevProgress[],
+  drained: null as null | (() => void),
   /** Called for every captured question; replace per test. */
   capture: null as
     null | ((index: number, question: DevQuestion, signal: AbortSignal) => Promise<DevResult>)
@@ -58,7 +59,10 @@ vi.mock('electron', () => ({
   },
   BrowserWindow: class {
     webContents = {
-      send: (_channel: string, payload: DevProgress) => h.sent.push(payload),
+      send: (_channel: string, payload: DevProgress) => {
+        h.sent.push(payload)
+        if (!payload.running) h.drained?.()
+      },
       isDestroyed: () => false,
       setWindowOpenHandler: () => undefined,
       on: () => undefined
@@ -67,6 +71,12 @@ vi.mock('electron', () => ({
     loadURL = () => undefined
     loadFile = () => undefined
   }
+}))
+
+vi.mock('../electron/dev/models', () => ({
+  devModels: async () => [{ id: 'fixture-model', label: 'Fixture model' }],
+  connectDevModel: async () => [{ id: 'fixture-model', label: 'Fixture model' }],
+  prepareLiveModel: async () => ({ digest: 'live-fixture', model: 'fixture-model' })
 }))
 
 vi.mock('../electron/dev/capture', async () => {
@@ -131,12 +141,20 @@ let root = ''
 const priorTmp = process.env.TMPDIR
 const invoke = (channel: string, ...args: unknown[]) => h.handlers[channel]!({}, ...args)
 const idle = async () => {
-  for (let i = 0; i < 400; i++) {
-    const last = h.sent.at(-1)
-    if (last && !last.running) return last
-    await new Promise((resolve) => setTimeout(resolve, 10))
-  }
-  throw new Error('run did not finish')
+  const last = h.sent.at(-1)
+  if (last && !last.running) return last
+  await new Promise<void>((resolve, reject) => {
+    const deadline = setTimeout(() => {
+      h.drained = null
+      reject(new Error('run did not drain within 30 seconds'))
+    }, 30000)
+    h.drained = () => {
+      clearTimeout(deadline)
+      h.drained = null
+      resolve()
+    }
+  })
+  return h.sent.at(-1)!
 }
 const runDirs = () => readdirSync(join(h.userData, 'captures'))
 const snapshots = () =>
@@ -158,7 +176,11 @@ beforeAll(async () => {
   await import('../electron/dev/main')
   await new Promise((resolve) => setTimeout(resolve, 0))
 })
-afterAll(() => {
+afterAll(async () => {
+  if (h.sent.at(-1)?.running) {
+    await invoke('dev:stop')
+    await idle()
+  }
   process.env.TMPDIR = priorTmp
   rmSync(root, { recursive: true, force: true })
 })
@@ -277,7 +299,7 @@ describe('Eris-Dev main process', () => {
 
     h.open.push([questionsFile(['not a header line'])])
     await expect(invoke('dev:compare')).rejects.toThrow(/not valid JSON|no run header/)
-  })
+  }, 35000)
 
   it('FR-030: streams an export into place with no partial file left', async () => {
     const out = join(root, 'export.jsonl')
@@ -574,5 +596,48 @@ describe('FR-033/035 key-aware, export-scoped redaction', () => {
       policy: 'eris-dev-redaction-v2'
     })
     expect(a.value(a.value({ password: 'x' }))).toEqual(a.value({ password: 'x' }))
+  })
+})
+
+describe('live batches through the main-process scheduler', () => {
+  it('persists 23 answers in three batch reports, with the model and limits in the manifest', async () => {
+    h.open.push([questionsFile(Array.from({ length: 23 }, (_, i) => `Live question ${i}?`))])
+    await invoke('dev:import')
+    h.capture = async (index, question) =>
+      result(index, question, {
+        sourceMode: 'live',
+        response: `Answer ${index}`,
+        responseReason: 'generated',
+        stages: {
+          reachability: 'captured',
+          requestValidity: 'no-findings',
+          inference: 'completed',
+          answerQuality: 'not-evaluated'
+        }
+      })
+    h.sent.length = 0
+    await invoke('dev:start', {
+      context: 8192,
+      mode: 'ask',
+      intentReplyMode: 'fallback',
+      live: { model: 'fixture-model', batchSize: 10, timeoutMs: 180000, maxCalls: 12 }
+    })
+    expect(await idle()).toMatchObject({ completed: 23 })
+    const dir = runDirs()
+      .map((id) => join(h.userData, 'captures', id))
+      .find(
+        (path) =>
+          JSON.parse(readFileSync(join(path, 'run.json'), 'utf8')).header.responses === 'live'
+      )!
+    const manifest = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8'))
+    expect(manifest.header.live).toMatchObject({ model: 'fixture-model', batchSize: 10 })
+    expect(manifest.header.coverage.exercised).toContain('model inference')
+    expect(
+      [1, 2, 3].map(
+        (n) => JSON.parse(readFileSync(join(dir, `batch-${n}.json`), 'utf8')).results.length
+      )
+    ).toEqual([10, 10, 3])
+    expect(JSON.parse(readFileSync(join(dir, '22.json'), 'utf8')).response).toBe('Answer 22')
+    expect(JSON.stringify(manifest)).not.toContain('apiKey')
   })
 })

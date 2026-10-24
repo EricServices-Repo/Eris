@@ -229,7 +229,8 @@ describe('FR-002 production-boundary contrast cases', () => {
     ['Build a new todo app here from scratch', 'edit', 'patch'],
     ['Write a TypeScript example of a debounce function', 'answer', 'code-example'],
     ['How would you approach caching for this API?', 'answer', 'design'],
-    ['Can you write feature flags so errors are explicit?', 'plan', 'plan'],
+    // LR-004: “write” binds to the behavior; no artifact noun is needed.
+    ['Can you write feature flags so errors are explicit?', 'answer', 'code-example'],
     ['Can you fix the failing login test?', 'edit', 'patch']
   ] as const)('“%s” → %s / %s', async (text, intent, artifact) => {
     expect(await productionRoute(text)).toMatchObject({ intent, artifact })

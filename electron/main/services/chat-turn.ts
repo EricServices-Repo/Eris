@@ -21,6 +21,7 @@ import { buildChatMessages, type BuiltChatMessage } from './chat-prompt'
 import { localComposerFullActive, planChatTurn } from './chat-router'
 import { createTaskContract } from './task-intake'
 import { resolveTaskDecision } from './task-resolver'
+import { executionPlanFor } from './execution-plan'
 import { appendTaskEvent } from './task-ledger'
 import { previousTask } from './task-store'
 
@@ -155,6 +156,9 @@ export async function resolveChatTurnContract(
     resolution
   })
   plan.task = task
+  // The workflow follows the resolved scope: a generic request has no inspection step.
+  if (plan.executionPlan)
+    plan.executionPlan = executionPlanFor(plan.mode, plan.intent, task.scope.applicability)
   // One decision record: initial route, resolver outcome, final route and resulting effects.
   appendTaskEvent(task.taskId, 'route-decision', {
     revision: task.revision,
@@ -205,13 +209,18 @@ export function buildChatTurnMessages(
   plan: TurnPlan,
   threadId?: string | null
 ): BuiltChatMessage[] {
-  return buildChatMessages(workspacePath, settings, {
-    ...prompt,
-    mode: plan.mode,
-    agentId: plan.agentId,
-    agentName: plan.agentName,
-    threadId: threadId ?? prompt.threadId
-  })
+  return buildChatMessages(
+    workspacePath,
+    settings,
+    {
+      ...prompt,
+      mode: plan.mode,
+      agentId: plan.agentId,
+      agentName: plan.agentName,
+      threadId: threadId ?? prompt.threadId
+    },
+    { genericScope: plan.task?.scope.applicability === 'generic' }
+  )
 }
 
 /** Composer Full runs locally only when its local runtime is active; otherwise Lite. */

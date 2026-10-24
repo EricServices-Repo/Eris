@@ -18,6 +18,7 @@ import { learnedRouteFor, readRoutingCorrections, routingExamples } from './rout
 import {
   agentForFollowUp,
   asksForCodeDestination,
+  asksForCodeExample,
   asksForRecommendations,
   asksForPlan,
   asksForVerification,
@@ -31,6 +32,7 @@ import {
   chatAgentForTurn
 } from '../../../src/shared/agent-contract'
 import { CONTEXT_HEADROOM_BYTES, inferenceBudgetBytes } from './vram-fit'
+import { executionPlanFor } from './execution-plan'
 import {
   COMMAND_OPERAND,
   effectConstraints,
@@ -333,6 +335,11 @@ function classifyIntentRule(
   ) {
     return { intent: 'review', rule: 'review-wording' }
   }
+
+  // “Show me an example of X” asks for generated code; “show me where X is” is a lookup.
+  // The object decides, so the example check runs before the lookup wording.
+  if (asksForCodeExample(t) && !asksWorkspaceQuestion(t, fileNames))
+    return { intent: 'answer', rule: 'code-example-request' }
 
   if (
     /\b(where is|which file|what file|find|locate|grep|look (at|for)|show me|open)\b/i.test(t) ||
@@ -1012,99 +1019,6 @@ export async function planChatTurn(options: {
     routingProfile,
     cloudPreferred,
     executionPlan: executionPlanFor(mode, intent)
-  }
-}
-
-function executionPlanFor(
-  mode: 'ask' | 'agent',
-  intent: ChatIntent
-): NonNullable<TurnPlan['executionPlan']> {
-  if (intent === 'capability') {
-    return {
-      steps: ['Check Eris model and provider catalog'],
-      needs: ['none'],
-      doneWhen: 'Answer from the current catalog.'
-    }
-  }
-  // A tool-free answer cannot inspect, mutate, or verify. Its plan is the reply itself.
-  if (intent === 'answer') {
-    return {
-      steps: [
-        'Identify the requested deliverable, language, and constraints',
-        'Answer directly; when code is requested, include a complete example with its dependencies and limitations'
-      ],
-      needs: ['none', 'none'],
-      doneWhen:
-        'The question is answered in chat. No workspace edits, command runs, or verification are claimed.'
-    }
-  }
-  if (intent === 'plan') {
-    return {
-      steps: [
-        'Inspect the relevant sources and project conventions',
-        'Trace dependencies and integration points',
-        'Return ordered steps with files, risks, and completion checks'
-      ],
-      needs: ['read', 'read', 'none'],
-      doneWhen:
-        'The plan is grounded in inspected files and clearly distinguishes decisions from assumptions.'
-    }
-  }
-  if (intent === 'verify') {
-    return {
-      steps: [
-        'Inspect the implementation and relevant tests',
-        'Probe likely edge cases and failure paths',
-        'Run relevant approved verification commands',
-        'Report observed results and remaining risks'
-      ],
-      needs: ['read', 'read', 'run', 'none'],
-      doneWhen:
-        'Every claimed result is supported by inspection or command output, with no files edited.'
-    }
-  }
-  if (mode === 'ask' || intent === 'explore') {
-    return {
-      steps: [
-        'Find relevant workspace sources',
-        'Read the matching files',
-        'Answer with paths and evidence'
-      ],
-      needs: ['read', 'read', 'none'],
-      doneWhen: 'The answer is grounded in the files that were read.'
-    }
-  }
-  if (intent === 'review') {
-    return {
-      steps: [
-        'Map the requested scope',
-        'Inspect relevant implementation and tests',
-        'Rank findings with evidence'
-      ],
-      needs: ['read', 'read', 'none'],
-      doneWhen: 'Each finding has a path, impact, and actionable fix.'
-    }
-  }
-  if (intent === 'run') {
-    return {
-      steps: [
-        'Inspect the requested run target if needed',
-        'Run it with required approval',
-        'Report the result'
-      ],
-      needs: ['read', 'run', 'none'],
-      doneWhen: 'The command result and any remaining failure are stated accurately.'
-    }
-  }
-  return {
-    steps: [
-      'Inspect affected code and project rules',
-      'Make the requested changes',
-      'Run relevant verification',
-      'Summarize the diff'
-    ],
-    needs: ['read', 'edit', 'run', 'none'],
-    doneWhen: 'The requested behavior is implemented and verification results are reported.'
   }
 }
 

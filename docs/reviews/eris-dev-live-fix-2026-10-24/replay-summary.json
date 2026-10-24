@@ -1,0 +1,70 @@
+{
+  "sourceSha256": "50b4534cdfac61b23dcf07a1dd9c0def9a2208189793384655e0fe6c8a0ff9d4",
+  "model": "builtin:composer-lite",
+  "context": 8192,
+  "mode": "agent",
+  "limitations": [
+    "Third native replay used a fresh worker after an earlier native addon crash.",
+    "Answers were generated, not behaviorally graded.",
+    "This is a three-question regression replay, not the full 10000-question run."
+  ],
+  "cases": [
+    {
+      "index": 0,
+      "question": "I'm trying to add database connection pooling for an internal admin dashboard. What's the best way?",
+      "before": {
+        "intent": "review",
+        "calls": 11,
+        "durationMs": 62804,
+        "reportedInference": "completed"
+      },
+      "after": {
+        "intent": "answer",
+        "artifact": "design",
+        "calls": 2,
+        "durationMs": 51215,
+        "completion": {
+          "status": "completed"
+        }
+      }
+    },
+    {
+      "index": 1,
+      "question": "Can you generate a minimal but complete example of soft deletes with the ability to restore in TypeScript?",
+      "before": {
+        "intent": "edit",
+        "calls": 12,
+        "durationMs": 60799,
+        "reportedInference": "error"
+      },
+      "after": {
+        "intent": "answer",
+        "artifact": "code-example",
+        "calls": 2,
+        "durationMs": 12425,
+        "completion": {
+          "status": "completed"
+        }
+      }
+    },
+    {
+      "index": 2,
+      "question": "I need to introduce user authentication with magic links into an existing Next.js project. What's the safest approach?",
+      "before": {
+        "intent": "review",
+        "calls": 6,
+        "durationMs": 26518,
+        "reportedInference": "completed"
+      },
+      "after": {
+        "intent": "answer",
+        "artifact": "explanation",
+        "calls": 2,
+        "durationMs": 15186,
+        "completion": {
+          "status": "completed"
+        }
+      }
+    }
+  ]
+}

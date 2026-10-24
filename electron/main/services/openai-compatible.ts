@@ -39,6 +39,8 @@ export async function* streamOpenAICompatible(options: {
   temperature: number
   signal?: AbortSignal
   onUsage?: (usage: OpenAIStreamUsage) => void
+  /** The stream's finish_reason (if any) and whether it ended with a finish signal or [DONE]. */
+  onFinish?: (finishReason: string | null, complete: boolean) => void
   tools?: OpenAIToolDef[]
   toolChoice?: 'auto' | 'none' | 'required'
   /** Filled when the stream ends with native function tool calls. */
@@ -97,6 +99,7 @@ export async function* streamOpenAICompatible(options: {
       const data = trimmed.slice(5).trim()
       if (data === '[DONE]') {
         complete = true
+        options.onFinish?.(finishReason, true)
         finishNativeTools()
         return
       }
@@ -154,6 +157,7 @@ export async function* streamOpenAICompatible(options: {
     }
   }
 
+  options.onFinish?.(finishReason, complete)
   finishNativeTools()
 
   function finishNativeTools(): void {

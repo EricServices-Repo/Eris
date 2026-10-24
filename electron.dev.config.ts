@@ -38,7 +38,13 @@ export default defineConfig(({ command }) => ({
     define: command === 'build' ? { __ERIS_DEV_BUILD__: JSON.stringify(buildStamp()) } : undefined,
     build: {
       outDir: 'out-dev/main',
-      rollupOptions: { input: { index: resolve('electron/dev/main.ts') } }
+      rollupOptions: {
+        input: {
+          index: resolve('electron/dev/main.ts'),
+          'llama-worker': resolve('electron/main/llama-worker.ts'),
+          'workspace-worker': resolve('electron/main/workspace-worker.ts')
+        }
+      }
     }
   },
   preload: {

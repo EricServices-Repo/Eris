@@ -5,6 +5,7 @@ import {
 } from '../../../../src/shared/task-contract'
 import { asksForVerification } from '../../../../src/shared/agent-contract'
 import { requestTextForIntent } from '../../../../src/shared/task-interpretation'
+import { INVARIANT_VERSION } from '../../../../src/shared/agent-versions'
 
 /**
  * Deterministic request-level invariants from the 10,000-question review. They
@@ -26,6 +27,27 @@ export interface CapturedRequestShape {
 }
 
 const SHARED_RULES_HEADER = 'Shared rules (every role inherits these)'
+
+/**
+ * Bumped (in agent-versions) when a check is added or changed, so exports say which rules
+ * judged them. Re-exported rather than redeclared so the two can never disagree.
+ */
+export const INVARIANT_RULES_VERSION = INVARIANT_VERSION
+
+/*
+ * Expectations below are written independently of the routing helpers that build the
+ * contract (asksForCodeExample, requestedComponents, …). If those helpers regress, these
+ * patterns still fire; reusing the helpers would make every check agree with the bug.
+ */
+/** An explicit request for a code example or implementation shown in chat. */
+const EXPLICIT_EXAMPLE =
+  /^(?:please\s+)?(?:i\s+(?:need|want|would\s+like)\s+(?:an?\s+|some\s+)?(?:[\w-]+\s+){0,2}(?:example|sample|snippet|implementation)s?\s+(?:of|for)\b|(?:can\s+you\s+)?(?:show|give)\s+me\s+(?:an?\s+|some\s+|both\s+)?(?:[\w-]+\s+){0,4}(?:example|sample|snippet|implementation|version)s?\b)/i
+/** Two requested versions of one deliverable. */
+const TWO_VERSIONS =
+  /\bboth\s+(?:an?\s+)?\w+\s+and\s+(?:an?\s+)?(?:more\s+)?\w+\s+(?:version|implementation)s?\b|\bsimple\b[\s\S]{0,30}\b(?:and|vs\.?|versus)\b[\s\S]{0,30}\brobust\b/i
+/** Completion rules and instructions that require inspected project sources. */
+const FILE_GROUNDING =
+  /grounded in (?:the )?(?:inspected files|files that were read)|Inspect the relevant (?:files|sources)|Return findings with file paths|Answer with paths and evidence|real file paths and symbols it read|Read the matching source files/i
 
 function systemText(request: CapturedRequestShape): string {
   return request.messages
@@ -122,9 +144,67 @@ export function requestInvariantFindings(input: {
       'The request forbids running commands, but execution was granted.'
     )
 
+  // LR-001/LR-017: a generic request must not be made to ground its answer in the project.
+  const generic = task.scope.applicability === 'generic'
+  if (generic && task.acceptanceCriteria.some((criterion) => FILE_GROUNDING.test(criterion)))
+    add(
+      'generic-requires-project-evidence',
+      'defect',
+      'The request does not depend on the open project, but acceptance requires project files.'
+    )
+  const implementations = reading.obligations.filter((item) => item.kind === 'implementation')
+  if (EXPLICIT_EXAMPLE.test(text) && !implementations.length && reading.artifact !== 'review')
+    add(
+      'explicit-example-without-implementation',
+      'defect',
+      `The request asks for an example, but the ${reading.artifact} contract has no implementation obligation.`
+    )
+  if (
+    TWO_VERSIONS.test(text) &&
+    implementations.length > 0 &&
+    new Set(implementations.map((item) => item.component ?? item.id)).size < 2
+  )
+    add(
+      'output-cardinality-loss',
+      'defect',
+      'The request asks for two versions, but only one implementation obligation exists.'
+    )
+  if (
+    /\bwith\s+good\s+test\s+coverage\b/i.test(text) &&
+    !reading.obligations.some((item) => item.kind === 'tests') &&
+    !reading.constraints?.verification
+  )
+    add(
+      'coverage-without-tests-obligation',
+      'review',
+      'The request asks for good test coverage, but no testing obligation was recorded.'
+    )
+
   for (const request of input.requests.filter((item) => item.purpose === 'agent')) {
     const system = systemText(request)
     const tools = toolNames(request)
+    if (generic && FILE_GROUNDING.test(system))
+      add(
+        'generic-requires-project-evidence',
+        'defect',
+        'The compiled prompt asks a generic request to ground itself in project files.'
+      )
+    if (
+      !task.authority.edit &&
+      ['code-example', 'design', 'explanation', 'plan'].includes(reading.artifact) &&
+      /Return findings with file paths/.test(system)
+    )
+      add(
+        'read-only-findings-format',
+        'defect',
+        `A read-only ${reading.artifact} request is told to return a findings report.`
+      )
+    if (generic && tools.some((name) => ['tree', 'git_status', 'git_diff'].includes(name)))
+      add(
+        'generic-scope-workspace-tools',
+        'review',
+        'A generic request is offered workspace inspection tools.'
+      )
     if (!system.includes('TASK CONTRACT'))
       add('missing-task-contract', 'defect', 'An agent request has no compiled task contract.')
     if (tools.length === 0 && /Make the requested changes|Run relevant verification/.test(system))

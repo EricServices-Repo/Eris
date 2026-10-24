@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import type {
   DevApi,
+  DevModelOption,
   DevComparison,
   DevImportPreview,
   DevRunListing,
@@ -16,56 +17,136 @@ declare global {
     erisDev: DevApi
   }
 }
-const RUN_PAGE = 10
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+const attention = (r: DevSummary) =>
+  r.completion?.status === 'incomplete' ||
+  r.completion?.status === 'failed' ||
+  r.status === 'error' ||
+  r.status === 'blocked' ||
+  r.status === 'cancelled' ||
+  r.stages.inference === 'error' ||
+  r.deliverable?.status === 'fail' ||
+  r.findings.defect > 0
+/** Deterministic answer checks flagged something; a review candidate, not a grade. */
+const needsReview = (r: DevSummary) =>
+  r.deliverable?.status === 'fail' || r.deliverable?.status === 'needs-review'
+/** Completed transport whose answer did not fail the deliverable checks. */
+const answered = (r?: DevSummary) =>
+  Boolean(
+    r &&
+    r.stages.inference === 'completed' &&
+    (!r.completion || r.completion.status === 'completed') &&
+    r.deliverable?.status !== 'fail'
+  )
+const statusOf = (r?: DevSummary) =>
+  !r
+    ? 'Pending'
+    : r.completion?.status === 'incomplete'
+      ? 'Incomplete'
+      : r.completion?.status === 'failed'
+        ? 'Needs attention'
+        : r.stages.inference === 'completed' && r.deliverable?.status === 'fail'
+          ? 'Answer failed checks'
+          : r.stages.inference === 'completed'
+            ? r.deliverable?.status === 'needs-review'
+              ? 'Answered · review'
+              : 'Answered'
+            : attention(r)
+              ? 'Needs attention'
+              : r.status === 'captured'
+                ? 'Request captured'
+                : r.status
+
+/** Plain text and code blocks; model output is never interpreted as HTML. */
+function Answer({ text }: { text: string }) {
+  const parts: React.ReactNode[] = []
+  let offset = 0
+  for (const match of text.matchAll(/```([^\n`]*)\n([\s\S]*?)(?:```|$)/g)) {
+    if (match.index! > offset)
+      parts.push(
+        <div className="answer-prose" key={offset}>
+          {text.slice(offset, match.index)}
+        </div>
+      )
+    parts.push(
+      <div className="code-block" key={`code-${match.index}`}>
+        <small>{match[1] || 'Code'}</small>
+        <pre>
+          <code>{match[2]}</code>
+        </pre>
+      </div>
+    )
+    offset = match.index! + match[0].length
+  }
+  if (offset < text.length)
+    parts.push(
+      <div className="answer-prose" key={offset}>
+        {text.slice(offset)}
+      </div>
+    )
+  return <>{parts}</>
 }
 
 function App() {
+  const [execution, setExecution] = useState<'capture' | 'live'>('live')
+  const [models, setModels] = useState<DevModelOption[]>([])
+  const [model, setModel] = useState('')
+  const [endpoint, setEndpoint] = useState('http://localhost:11434/v1')
+  const [apiKey, setApiKey] = useState('')
+  const [connecting, setConnecting] = useState(false)
   const [questions, setQuestions] = useState<DevQuestion[]>([])
   const [preview, setPreview] = useState<DevImportPreview | null>(null)
-  const [intentReplyMode, setIntentReplyMode] = useState<IntentReplyMode>('fallback')
-  const [name, setName] = useState('No question file selected')
-  const [project, setProject] = useState('Sample project · divide(a, b)')
+  const [name, setName] = useState('No file selected')
+  const [project, setProject] = useState('Sample project')
   const [running, setRunning] = useState(false)
+  const [busy, setBusy] = useState(false)
   const [completed, setCompleted] = useState(0)
+  const [batch, setBatch] = useState<{ number: number; total: number } | null>(null)
   const [results, setResults] = useState<Record<number, DevSummary>>({})
   const [selected, setSelected] = useState(0)
   const [detail, setDetail] = useState<DevResult | null>(null)
   const [context, setContext] = useState(8192)
   const [mode, setMode] = useState<'ask' | 'agent'>('agent')
+  const [deadline, setDeadline] = useState(180000)
+  const [intentReplyMode, setIntentReplyMode] = useState<IntentReplyMode>('fallback')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [page, setPage] = useState(0)
-  const [tab, setTab] = useState<
-    'messages' | 'tools' | 'findings' | 'context' | 'contract' | 'events'
-  >('messages')
+  const [tab, setTab] = useState<'answer' | 'request' | 'diagnostics'>('answer')
+  const [diagnostic, setDiagnostic] = useState('overview')
   const [callIndex, setCallIndex] = useState(0)
   const [runs, setRuns] = useState<DevRunListing[]>([])
   const [runPage, setRunPage] = useState(0)
   const [comparison, setComparison] = useState<DevComparison | null>(null)
-  // Filters over loaded summaries; request bodies stay on disk until a case is opened.
   const [search, setSearch] = useState('')
-  const [severity, setSeverity] = useState<'all' | 'defects' | 'review' | 'clean'>('all')
-  const [findingFilter, setFindingFilter] = useState('')
-  const [intentFilter, setIntentFilter] = useState('')
+  const [filter, setFilter] = useState<'all' | 'answers' | 'review' | 'attention' | 'pending'>(
+    'all'
+  )
+  const [panel, setPanel] = useState<'settings' | 'history' | 'export' | 'comparison' | null>(null)
+  const dialog = useRef<HTMLDialogElement>(null)
   const generation = useRef(0)
+  const locked = running || busy
   const attempt = async (fn: () => Promise<void>) => {
+    setBusy(true)
+    setError('')
     try {
-      setError('')
       await fn()
     } catch (err) {
       setError(String(err))
+    } finally {
+      setBusy(false)
     }
   }
+  useEffect(() => {
+    if (panel) dialog.current?.showModal()
+    else dialog.current?.close()
+  }, [panel])
   useEffect(
     () =>
       window.erisDev.onProgress((event) => {
         setRunning(event.running)
         setCompleted(event.completed)
+        if (event.batch) setBatch(event.batch)
         if (event.result)
           setResults((previous) => ({ ...previous, [event.result!.index]: event.result! }))
         if (event.error) setError(event.error)
@@ -77,14 +158,20 @@ function App() {
       void window.erisDev
         .listRuns()
         .then(setRuns)
-        .catch(() => setRuns([]))
+        .catch((err) => setError(String(err)))
   }, [running])
-  const available = Boolean(results[selected])
+  useEffect(() => {
+    void window.erisDev
+      .models()
+      .then(setModels)
+      .catch((err) => setError(String(err)))
+  }, [])
+  const selectedResult = results[selected]
   useEffect(() => {
     const current = ++generation.current
     setDetail(null)
     setCallIndex(0)
-    if (available)
+    if (selectedResult)
       void window.erisDev
         .result(selected)
         .then((value) => {
@@ -96,495 +183,258 @@ function App() {
         .catch((err) => {
           if (current === generation.current) setError(String(err))
         })
-  }, [selected, available])
-  const call = detail?.requests[callIndex]
+  }, [selected, selectedResult])
   const summaries = useMemo(() => Object.values(results), [results])
-  const captures = summaries.filter((item) => item.status === 'captured').length
-  const withDefects = summaries.filter((item) => item.findings.defect > 0).length
-  const forReview = summaries.filter(
-    (item) => !item.findings.defect && item.findings.review > 0
-  ).length
-  // Root-cause families: how many questions each finding ID affects.
-  const families = useMemo(() => {
-    const counts = new Map<string, number>()
-    for (const item of summaries)
-      for (const id of item.findingIds ?? []) counts.set(id, (counts.get(id) ?? 0) + 1)
-    return [...counts].sort((a, b) => b[1] - a[1])
-  }, [summaries])
-  const intents = useMemo(
-    () => [...new Set(summaries.map((item) => item.intent).filter(Boolean))].sort() as string[],
-    [summaries]
+  const generated = summaries.filter(answered).length
+  const issues = summaries.filter(attention).length
+  const visible = useMemo(
+    () =>
+      questions
+        .map((entry, index) => ({ entry, index }))
+        .filter(({ entry, index }) => {
+          if (search && !`${entry.text} ${entry.id}`.toLowerCase().includes(search.toLowerCase()))
+            return false
+          const r = results[index]
+          return (
+            filter === 'all' ||
+            (filter === 'pending' && !r) ||
+            (filter === 'answers' && answered(r)) ||
+            (filter === 'review' && r && needsReview(r)) ||
+            (filter === 'attention' && r && attention(r))
+          )
+        }),
+    [questions, results, search, filter]
   )
-  const filtering = Boolean(search.trim() || severity !== 'all' || findingFilter || intentFilter)
-  const visible = useMemo(() => {
-    const needle = search.trim().toLowerCase()
-    return questions
-      .map((entry, index) => ({ entry, index }))
-      .filter(({ entry, index }) => {
-        if (!filtering) return true
-        const result = results[index]
-        if (needle && !`${entry.text} ${entry.id}`.toLowerCase().includes(needle)) return false
-        if (!result) return !(severity !== 'all' || findingFilter || intentFilter)
-        if (severity === 'defects' && !result.findings.defect) return false
-        if (severity === 'review' && !result.findings.review) return false
-        if (severity === 'clean' && (result.findings.defect || result.findings.review)) return false
-        if (findingFilter && !(result.findingIds ?? []).includes(findingFilter)) return false
-        if (intentFilter && result.intent !== intentFilter) return false
-        return true
-      })
-  }, [questions, results, search, severity, findingFilter, intentFilter, filtering])
   const pageCount = Math.max(1, Math.ceil(visible.length / 100))
+  useEffect(() => setPage((p) => Math.min(p, pageCount - 1)), [pageCount])
+  const call = detail?.requests[callIndex]
+  const resetView = () => {
+    setSelected(0)
+    setPage(0)
+    setSearch('')
+    setFilter('all')
+    setDetail(null)
+    setComparison(null)
+    setBatch(null)
+    setNotice('')
+  }
+  const importFile = () =>
+    attempt(async () => {
+      const file = await window.erisDev.importQuestions()
+      if (!file) return
+      setQuestions(file.questions)
+      setPreview(file)
+      setName(file.name)
+      setResults({})
+      setCompleted(0)
+      resetView()
+    })
+  const start = () =>
+    attempt(async () => {
+      const previous = { results, completed }
+      resetView()
+      setResults({})
+      setCompleted(0)
+      setRunning(true)
+      setTab(execution === 'live' ? 'answer' : 'request')
+      try {
+        await window.erisDev.start({
+          context,
+          mode,
+          intentReplyMode,
+          ...(execution === 'live'
+            ? { live: { model, batchSize: 10, timeoutMs: deadline, maxCalls: 12 } }
+            : {})
+        })
+      } catch (err) {
+        setRunning(false)
+        setResults(previous.results)
+        setCompleted(previous.completed)
+        throw err
+      }
+    })
+  const exportResults = (sanitized: boolean, filtered = false) =>
+    attempt(async () => {
+      const saved = await window.erisDev.exportRun({
+        sanitized,
+        ...(filtered
+          ? { indices: visible.filter((v) => results[v.index]).map((v) => v.index) }
+          : {})
+      })
+      if (saved) {
+        setPanel(null)
+        setNotice(`Saved ${saved.records.toLocaleString()} results to ${saved.path}`)
+      }
+    })
+  const openRun = (item: DevRunListing, resume: boolean) =>
+    attempt(async () => {
+      const opened = await window.erisDev.openRun(item.runId)
+      resetView()
+      setQuestions(opened.corpus.questions)
+      setName(opened.corpus.name)
+      setResults(Object.fromEntries(opened.results.map((r) => [r.index, r])))
+      setCompleted(opened.results.length)
+      setExecution(opened.header.responses === 'live' ? 'live' : 'capture')
+      if (opened.header.live) {
+        setModel(opened.header.live.model)
+        setDeadline(opened.header.live.timeoutMs)
+      }
+      setContext(opened.header.context)
+      setMode(opened.header.mode)
+      setIntentReplyMode(opened.header.intentReplyMode)
+      setPreview(null)
+      setTab(opened.header.responses === 'live' ? 'answer' : 'request')
+      setPanel(null)
+      if (resume) {
+        setRunning(true)
+        try {
+          const resumed = await window.erisDev.resumeRun(item.runId)
+          setResults((previous) => ({
+            ...Object.fromEntries(resumed.results.map((r) => [r.index, r])),
+            ...previous
+          }))
+          setCompleted((previous) => Math.max(previous, resumed.next))
+        } catch (err) {
+          setRunning(false)
+          throw err
+        }
+      }
+      if (opened.invalid.length)
+        setNotice(`${opened.invalid.length} saved results need to be recaptured.`)
+    })
   return (
     <div className="app">
-      <header>
-        <div>
-          <span className="logo">E</span>
+      <header className="app-header">
+        <div className="brand">
+          <span className="brand-mark">E</span>
           <strong>Eris-Dev</strong>
-          <span className="badge">Agent request inspector</span>
+          <span className="muted">Agent testing</span>
         </div>
-        <span className="muted">Local capture · no model inference · answers not evaluated</span>
+        <div className="header-actions">
+          <button disabled={locked} onClick={() => setPanel('history')}>
+            Past runs
+          </button>
+          <button disabled={locked} onClick={() => setPanel('settings')}>
+            Settings
+          </button>
+        </div>
       </header>
-      <section className="controls">
-        <div className="intro">
-          <h1>See what the agents send.</h1>
-          <p>
-            Import up to 10,000 questions. Inspect routing, permissions, messages and tool schemas
-            at the production model transport boundary.
-          </p>
+      <section className="run-bar" aria-label="Run questions">
+        <div className="file-control">
+          <button disabled={locked} onClick={() => void importFile()}>
+            {questions.length ? 'Change file' : 'Import questions'}
+          </button>
+          <div className="file-info">
+            <strong title={name}>{name}</strong>
+            <span>
+              {questions.length
+                ? `${questions.length.toLocaleString()} questions · batches of 10`
+                : 'TXT, JSON or JSONL · up to 10,000 questions'}
+            </span>
+          </div>
         </div>
-        <div className="row">
-          <button
-            disabled={running}
-            onClick={() =>
-              void attempt(async () => {
-                const file = await window.erisDev.importQuestions()
-                if (file) {
-                  setQuestions(file.questions)
-                  setPreview(file)
-                  setName(
-                    `${file.name} · ${file.questions.length.toLocaleString()} questions` +
-                      (file.excluded.length ? ` · ${file.excluded.length} lines excluded` : '')
-                  )
-                  setResults({})
-                  setCompleted(0)
-                  setSelected(0)
-                  setPage(0)
-                  setDetail(null)
-                }
-              })
-            }
+        <label className="model-control">
+          <span>Model</span>
+          <select
+            aria-label="Model"
+            disabled={locked || connecting}
+            value={execution === 'capture' ? '__capture__' : model}
+            onChange={(e) => {
+              if (e.target.value === '__capture__') setExecution('capture')
+              else {
+                setExecution('live')
+                setModel(e.target.value)
+              }
+            }}
           >
-            Import questions
-          </button>
-          <span className="filename">{name}</span>
+            <option value="">Choose a model…</option>
+            {models.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+            {model && !models.some((m) => m.id === model) && (
+              <option value={model}>Saved model · reconnect in Settings</option>
+            )}
+            <option value="__capture__">Capture requests only (no model)</option>
+          </select>
+        </label>
+        {running ? (
           <button
-            disabled={running}
-            onClick={() =>
-              void attempt(async () => {
-                const value = await window.erisDev.chooseProject()
-                if (value) setProject(value)
-              })
-            }
+            className="stop"
+            disabled={busy}
+            onClick={() => void attempt(() => window.erisDev.stop())}
           >
-            Choose project
+            Stop run
           </button>
-          <button
-            disabled={running}
-            onClick={() =>
-              void attempt(async () => {
-                await window.erisDev.setProjectKind('sample')
-                setProject('Sample project · divide(a, b)')
-              })
-            }
-          >
-            Sample
-          </button>
-          <button
-            disabled={running}
-            onClick={() =>
-              void attempt(async () => {
-                await window.erisDev.setProjectKind('none')
-                setProject('No project · workspace-independent questions')
-              })
-            }
-          >
-            No project
-          </button>
-          <span className="filename" title={project}>
-            {project}
-          </span>
-        </div>
-        <div className="row">
-          <label>
-            Mode{' '}
-            <select
-              disabled={running}
-              value={mode}
-              onChange={(e) => setMode(e.target.value as 'ask' | 'agent')}
-            >
-              <option value="agent">Agent</option>
-              <option value="ask">Ask</option>
-            </select>
-          </label>
-          <label>
-            Intent reply{' '}
-            <select
-              disabled={running}
-              value={intentReplyMode}
-              onChange={(e) => setIntentReplyMode(e.target.value as IntentReplyMode)}
-            >
-              <option value="fallback">Fallback (confidence 0)</option>
-              <option value="malformed">Malformed JSON</option>
-              <option value="timeout">Timeout</option>
-            </select>
-          </label>
-          <label>
-            Context budget{' '}
-            <select
-              disabled={running}
-              value={context}
-              onChange={(e) => setContext(Number(e.target.value))}
-            >
-              {[4096, 8192, 16384, 32768].map((value) => (
-                <option key={value} value={value}>
-                  {value.toLocaleString()}
-                </option>
-              ))}
-            </select>
-          </label>
+        ) : (
           <button
             className="primary"
-            disabled={running || !questions.length}
-            onClick={() =>
-              void attempt(async () => {
-                setResults({})
-                setDetail(null)
-                setCompleted(0)
-                setRunning(true)
-                try {
-                  await window.erisDev.start({ context, mode, intentReplyMode })
-                } catch (err) {
-                  setRunning(false)
-                  throw err
-                }
-              })
-            }
+            disabled={locked || connecting || !questions.length || (execution === 'live' && !model)}
+            onClick={() => void start()}
           >
-            Capture requests
+            {busy ? 'Preparing…' : 'Run questions'}
           </button>
-          <button
-            disabled={!running}
-            onClick={() =>
-              void attempt(async () => {
-                await window.erisDev.stop()
-              })
-            }
-          >
-            Stop
-          </button>
-          <button
-            disabled={running || !completed}
-            onClick={() =>
-              void attempt(async () => {
-                const saved = await window.erisDev.exportRun()
-                if (saved)
-                  setNotice(`Exported ${saved.records.toLocaleString()} records to ${saved.path}`)
-              })
-            }
-          >
-            Export JSONL
-          </button>
-          <button
-            disabled={running || !completed}
-            title="Automated redaction of known secret formats, credential fields and absolute paths; question IDs, relative paths and traces are kept. Not a guarantee that all sensitive data is removed."
-            onClick={() =>
-              void attempt(async () => {
-                const saved = await window.erisDev.exportRun({ sanitized: true })
-                if (saved)
-                  setNotice(
-                    `Exported a copy with automated redaction to ${saved.path}. Redactions: ${
-                      Object.entries(saved.redaction?.replacements ?? {})
-                        .map(([kind, count]) => `${kind} ${count}`)
-                        .join(', ') || 'none found'
-                    }. Automated redaction is not a guarantee: ${(saved.redaction?.limitations ?? []).join(' ')}`
-                  )
-              })
-            }
-          >
-            Export sanitized
-          </button>
-          <button
-            disabled={running || !completed || !filtering}
-            title="Export only the questions matching the current filters, sanitized"
-            onClick={() =>
-              void attempt(async () => {
-                const indices = visible.map(({ index }) => index).filter((index) => results[index])
-                const saved = await window.erisDev.exportRun({ sanitized: true, indices })
-                if (saved) setNotice(`Exported ${saved.records} filtered records to ${saved.path}`)
-              })
-            }
-          >
-            Export filtered
-          </button>
-          <button
-            disabled={running || !completed}
-            title="Compare this run with an earlier export by stable question ID"
-            onClick={() =>
-              void attempt(async () => {
-                const result = await window.erisDev.compareWith()
-                if (result) setComparison(result)
-              })
-            }
-          >
-            Compare…
-          </button>
-          <span className="muted" aria-live="polite">
-            {completed.toLocaleString()} / {questions.length.toLocaleString()}{' '}
-            {running ? '· running' : '· idle'}
-          </span>
-        </div>
-        <progress value={completed} max={questions.length || 1} />
-        {completed > 0 && (
-          <p className="stages" aria-live="polite">
-            <span>{captures.toLocaleString()} request captures</span>
-            <span>0 generated answers</span>
-            <span>answer quality not evaluated</span>
-            <span className={withDefects ? 'defects' : ''}>
-              {withDefects.toLocaleString()} with request defects
-            </span>
-            <span>{forReview.toLocaleString()} for review</span>
-          </p>
         )}
-        {!running && runs.length > 0 && (
-          <details className="hint">
-            <summary>
-              Saved runs ({runs.length.toLocaleString()}) ·{' '}
-              {formatBytes(runs.reduce((sum, item) => sum + (item.bytes ?? 0), 0))} on disk
-            </summary>
-            <ul>
-              {runs.slice(runPage * RUN_PAGE, (runPage + 1) * RUN_PAGE).map((item) => (
-                <li key={item.runId}>
-                  {new Date(item.created).toLocaleString()} · {item.corpus} · {item.state} ·{' '}
-                  {item.completed.toLocaleString()} / {item.total.toLocaleString()} ·{' '}
-                  {item.mode ?? '—'} · {item.context ?? '—'} tokens · {item.fixture ?? '—'} ·{' '}
-                  {item.gitSha ? item.gitSha.slice(0, 8) : 'source unknown'} ·{' '}
-                  {formatBytes(item.bytes ?? 0)}{' '}
-                  <button
-                    title="Open this run's saved results without running anything"
-                    onClick={() =>
-                      void attempt(async () => {
-                        const opened = await window.erisDev.openRun(item.runId)
-                        setQuestions(opened.corpus.questions)
-                        setPreview(null)
-                        setName(`${opened.corpus.name} · ${opened.state} run (read-only)`)
-                        setResults(Object.fromEntries(opened.results.map((r) => [r.index, r])))
-                        setCompleted(opened.results.length)
-                        setComparison(null)
-                        if (opened.invalid.length)
-                          setNotice(
-                            `Stopped at case ${opened.invalid[0]!.index + 1}: ${opened.invalid[0]!.reason}.`
-                          )
-                      })
-                    }
-                  >
-                    Open
-                  </button>
-                  {(item.state === 'interrupted' || item.state === 'stopped') && (
-                    <button
-                      onClick={() =>
-                        void attempt(async () => {
-                          const resumed = await window.erisDev.resumeRun(item.runId)
-                          setQuestions(resumed.corpus.questions)
-                          setPreview(null)
-                          setName(
-                            `${resumed.corpus.name} · resumed at question ${resumed.next + 1}`
-                          )
-                          setResults(Object.fromEntries(resumed.results.map((r) => [r.index, r])))
-                          setCompleted(resumed.next)
-                          setRunning(true)
-                          if (resumed.invalid.length)
-                            setNotice(
-                              `Recapturing ${resumed.invalid.length} saved case(s): ${resumed.invalid
-                                .map((entry) => `${entry.index + 1} (${entry.reason})`)
-                                .join(', ')}.`
-                            )
-                        })
-                      }
-                    >
-                      Resume
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-            {runs.length > RUN_PAGE && (
-              <p>
-                <button disabled={runPage === 0} onClick={() => setRunPage(runPage - 1)}>
-                  Newer
-                </button>{' '}
-                Page {runPage + 1} of {Math.ceil(runs.length / RUN_PAGE)}{' '}
-                <button
-                  disabled={(runPage + 1) * RUN_PAGE >= runs.length}
-                  onClick={() => setRunPage(runPage + 1)}
-                >
-                  Older
-                </button>
-              </p>
-            )}
-          </details>
-        )}
-        {comparison && (
-          <details className="hint" open>
-            <summary>
-              Compared with {comparison.file}: {comparison.matched.toLocaleString()} matched ·{' '}
-              {comparison.totalChanged.toLocaleString()} changed · {comparison.added.length} new ·{' '}
-              {comparison.removed.length} missing. Task IDs, paths and timings are ignored.
-            </summary>
-            <p className={comparison.compatibility.status === 'controlled' ? '' : 'defects'}>
-              {comparison.compatibility.status === 'controlled'
-                ? 'Controlled comparison: the runs differ only in the code under test'
-                : comparison.compatibility.status === 'legacy'
-                  ? 'Legacy export: its settings and fixture are unknown, so differences may not be regressions'
-                  : 'Confounded comparison: differences may come from the run setup, not the code'}
-              {comparison.compatibility.confounders.length
-                ? ` — ${comparison.compatibility.confounders.join('; ')}`
-                : ''}
-              {comparison.compatibility.controlled.length
-                ? `. Code under test: ${comparison.compatibility.controlled.join('; ')}`
-                : ''}
-              .
-              {comparison.identity.legacyMigrated > 0 && (
-                <>
-                  <br />
-                  {comparison.identity.legacyMigrated.toLocaleString()} legacy records were matched
-                  by question text
-                  {comparison.identity.ambiguous.length
-                    ? `; ${comparison.identity.ambiguous.length} duplicated question(s) are paired by order and may be ambiguous`
-                    : ''}
-                  .
-                </>
-              )}
-              {comparison.duplicates.before.length + comparison.duplicates.after.length > 0 && (
-                <>
-                  <br />
-                  Duplicate IDs left out of the comparison:{' '}
-                  {[...comparison.duplicates.before, ...comparison.duplicates.after].join(', ')}
-                </>
-              )}
-            </p>
-            <p>
-              Changed categories:{' '}
-              {Object.entries(comparison.byCategory)
-                .map(([category, count]) => `${category} ${count}`)
-                .join(' · ') || 'none'}
-              <br />
-              Changed fields:{' '}
-              {Object.entries(comparison.byField)
-                .map(([field, count]) => `${field} ${count}`)
-                .join(' · ') || 'none'}
-              <br />
-              Route transitions:{' '}
-              {Object.entries(comparison.transitions)
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 8)
-                .map(([transition, count]) => `${transition} (${count})`)
-                .join(' · ') || 'none'}
-            </p>
-            <ul>
-              {comparison.changed.map((item) => (
-                <li key={item.questionId}>
-                  Line {item.sourceLine}: {item.question.slice(0, 90)} —{' '}
-                  {Object.entries(item.changes)
-                    .map(([field, change]) =>
-                      change.detail
-                        ? `${field}: ${change.detail}`
-                        : `${field}: ${JSON.stringify(change.before)} → ${JSON.stringify(change.after)}`
-                    )
-                    .join('; ')
-                    .slice(0, 400)}
-                </li>
-              ))}
-            </ul>
-            <p className="muted">
-              Showing {comparison.totalChanged ? comparison.page.offset + 1 : 0}–
-              {comparison.page.offset + comparison.page.returned} of{' '}
-              {comparison.totalChanged.toLocaleString()} changed questions (page size{' '}
-              {comparison.page.size}). The full comparison is saved to {comparison.savedTo}.
-            </p>
-            <button
-              disabled={comparison.page.offset === 0}
-              onClick={() =>
-                void attempt(async () => {
-                  const page = await window.erisDev.comparePage(
-                    Math.max(0, comparison.page.offset - comparison.page.size)
-                  )
-                  setComparison({ ...comparison, changed: page.changed, page: page.page })
-                })
-              }
-            >
-              Previous page
-            </button>{' '}
-            <button
-              disabled={
-                comparison.page.offset + comparison.page.returned >= comparison.totalChanged
-              }
-              onClick={() =>
-                void attempt(async () => {
-                  const page = await window.erisDev.comparePage(
-                    comparison.page.offset + comparison.page.size
-                  )
-                  setComparison({ ...comparison, changed: page.changed, page: page.page })
-                })
-              }
-            >
-              Next page
-            </button>{' '}
-            <button onClick={() => setComparison(null)}>Close comparison</button>
-          </details>
-        )}
-        {preview && (preview.excluded.length > 0 || preview.normalization.length > 0) && (
-          <details className="hint">
-            <summary>
-              Import: {preview.normalization.join(' ') || 'No normalization.'} Corpus{' '}
-              {preview.corpusId}
-            </summary>
-            <ul>
-              {preview.excluded.slice(0, 50).map((line) => (
-                <li key={line.sourceLine}>
-                  Line {line.sourceLine}: {line.reason} — “{line.text.slice(0, 120)}”
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
-        <p className="hint">
-          Each question is an independent turn. A selected project is copied into a temporary
-          workspace; secrets, build output and most hidden entries are excluded, and each omission
-          is listed in the export header. Intent-model requests receive the selected labelled reply.
-          Agent capture stops before inference or tool execution, so no answer is generated or
-          graded. Exports include prompt/source text.
-        </p>
-        {error && (
-          <div role="alert" className="error">
-            {error}
-          </div>
-        )}
-        {notice && <div className="notice">{notice}</div>}
+        <button disabled={locked || !completed} onClick={() => setPanel('export')}>
+          Export results
+        </button>
       </section>
+      <section className="progress-bar" aria-label="Run progress">
+        <span className={`status-dot ${running ? 'running' : ''}`} />
+        <strong>{running ? 'Running' : completed ? 'Run saved' : 'Ready'}</strong>
+        <span>
+          {completed.toLocaleString()} / {questions.length.toLocaleString()}
+        </span>
+        <progress aria-label="Questions completed" value={completed} max={questions.length || 1} />
+        {running && batch && (
+          <span>
+            Batch {batch.number} / {batch.total}
+          </span>
+        )}
+        {generated > 0 && <span>{generated.toLocaleString()} answers</span>}
+        {issues > 0 && (
+          <button
+            className="text-button warning"
+            onClick={() => {
+              setFilter('attention')
+              setPage(0)
+            }}
+          >
+            {issues.toLocaleString()} need attention
+          </button>
+        )}
+        <span className="muted">
+          {execution === 'capture' ? 'Requests only' : 'Answers saved automatically'}
+        </span>
+      </section>
+      {error && !panel && (
+        <div role="alert" className="banner error">
+          <span>{error}</span>
+          <button aria-label="Dismiss error" onClick={() => setError('')}>
+            Dismiss
+          </button>
+        </div>
+      )}
+      {notice && (
+        <div role="status" className="banner notice">
+          <span>{notice}</span>
+          <button aria-label="Dismiss notice" onClick={() => setNotice('')}>
+            Dismiss
+          </button>
+        </div>
+      )}
       <main>
-        <aside>
-          <div className="list-title">
-            Questions{' '}
-            <span>
-              {filtering
-                ? `${visible.length.toLocaleString()} of ${questions.length.toLocaleString()}`
-                : questions.length.toLocaleString()}
-            </span>
+        <aside aria-label="Questions">
+          <div className="list-heading">
+            <strong>Questions</strong>
+            <span className="muted">{visible.length.toLocaleString()}</span>
           </div>
           <div className="filters">
             <input
+              aria-label="Search questions"
               type="search"
-              placeholder="Search text or ID"
+              placeholder="Search questions…"
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value)
@@ -592,211 +442,651 @@ function App() {
               }}
             />
             <select
-              value={severity}
+              aria-label="Filter results"
+              value={filter}
               onChange={(e) => {
-                setSeverity(e.target.value as typeof severity)
+                setFilter(e.target.value as typeof filter)
                 setPage(0)
               }}
             >
-              <option value="all">All findings</option>
-              <option value="defects">With defects</option>
-              <option value="review">For review</option>
-              <option value="clean">No findings</option>
-            </select>
-            <select
-              value={intentFilter}
-              onChange={(e) => {
-                setIntentFilter(e.target.value)
-                setPage(0)
-              }}
-            >
-              <option value="">Any intent</option>
-              {intents.map((intent) => (
-                <option key={intent} value={intent}>
-                  {intent}
-                </option>
-              ))}
+              <option value="all">All questions</option>
+              <option value="answers">Answered</option>
+              <option value="review">Answer checks flagged</option>
+              <option value="attention">Needs attention</option>
+              <option value="pending">Pending</option>
             </select>
           </div>
-          {families.length > 0 && (
-            <div className="families">
-              {families.slice(0, 8).map(([id, count]) => (
-                <button
-                  key={id}
-                  className={findingFilter === id ? 'active' : ''}
-                  onClick={() => {
-                    setFindingFilter(findingFilter === id ? '' : id)
-                    setPage(0)
-                  }}
-                >
-                  {id} · {count.toLocaleString()}
-                </button>
-              ))}
+          <div className="question-list">
+            {visible.slice(page * 100, (page + 1) * 100).map(({ entry, index }) => (
+              <button
+                key={entry.id}
+                className={`question ${selected === index ? 'selected' : ''}`}
+                aria-pressed={selected === index}
+                onClick={() => setSelected(index)}
+              >
+                <span className="question-number">{index + 1}</span>
+                <span className="question-copy">
+                  <span className="question-text">{entry.text}</span>
+                  <small className={results[index] && attention(results[index]!) ? 'warning' : ''}>
+                    {statusOf(results[index])}
+                  </small>
+                </span>
+              </button>
+            ))}
+            {!visible.length && (
+              <p className="list-empty">
+                {questions.length
+                  ? 'No matching questions.'
+                  : 'Import a question file to get started.'}
+              </p>
+            )}
+          </div>
+          {pageCount > 1 && (
+            <div className="pagination">
+              <button disabled={!page} onClick={() => setPage(page - 1)}>
+                Previous
+              </button>
+              <span>
+                {page + 1} / {pageCount}
+              </span>
+              <button disabled={page >= pageCount - 1} onClick={() => setPage(page + 1)}>
+                Next
+              </button>
             </div>
           )}
-          <div className="list">
-            {visible.slice(page * 100, page * 100 + 100).map(({ entry, index }) => {
-              const result = results[index]
-              return (
-                <button
-                  key={entry.id}
-                  className={`question ${selected === index ? 'selected' : ''}`}
-                  onClick={() => setSelected(index)}
-                  title={`${entry.id} · source line ${entry.sourceLine}`}
-                >
-                  <span className="number">{index + 1}</span>
-                  <span>
-                    <span className="question-text">{entry.text}</span>
-                    <small className={result ? result.stages.requestValidity : undefined}>
-                      {result
-                        ? `${result.status === 'captured' ? 'reached boundary' : result.status} · ${result.agent ?? 'no agent'} · ${result.intent ?? 'unresolved'}${result.artifact ? ` → ${result.artifact}` : ''}${result.findings.defect ? ` · ${result.findings.defect} defect(s)` : result.findings.review ? ` · ${result.findings.review} for review` : ''}`
-                        : 'Pending'}
-                    </small>
-                  </span>
-                </button>
-              )
-            })}
-            {!questions.length && (
-              <p className="empty">
-                Import a TXT file with one question per line, a JSON array, or JSONL records
-                containing “question” or “text”.
-              </p>
-            )}
-          </div>
-          <div className="pagination">
-            <button disabled={!page} onClick={() => setPage(page - 1)}>
-              Previous
-            </button>
-            <span>
-              {page + 1} / {pageCount}
-            </span>
-            <button disabled={(page + 1) * 100 >= visible.length} onClick={() => setPage(page + 1)}>
-              Next
-            </button>
-          </div>
         </aside>
-        <article>
-          <div className="detail-title">
-            <h2>{questions[selected]?.text ?? 'Model request preview'}</h2>
-            {detail && (
-              <p>
-                Reachability {detail.stages.reachability} · request validity{' '}
-                {detail.stages.requestValidity} · inference not run · answer quality not evaluated
-                <br />
-                Pre-inference duration {detail.durationMs} ms (route {detail.phases.routeMs},
-                resolve {detail.phases.resolveMs}, prompt {detail.phases.promptMs}, to boundary{' '}
-                {detail.phases.toBoundaryMs}) · {detail.calls} requests · intent reply{' '}
-                {detail.intentReplySource} · {detail.questionId}, source line {detail.sourceLine}
-              </p>
-            )}
-          </div>
-          <nav>
-            {(['messages', 'tools', 'findings', 'context', 'contract', 'events'] as const).map(
-              (value) => (
-                <button
-                  key={value}
-                  className={tab === value ? 'active' : ''}
-                  onClick={() => setTab(value)}
-                >
-                  {value}
-                </button>
-              )
-            )}
-          </nav>
-          <div className="content">
-            {detail ? (
-              <>
-                <p className="hint">{detail.detail}</p>
-                {(tab === 'messages' || tab === 'tools') && (
+        <article aria-label="Selected question">
+          {questions.length ? (
+            <>
+              <div className="detail-heading">
+                <span className="eyebrow">Question {selected + 1}</span>
+                <h1>{questions[selected]?.text}</h1>
+                {detail && (
+                  <p className="muted">
+                    {statusOf(detail)} · {(detail.durationMs / 1000).toFixed(1)}s
+                    {detail.agent ? ` · ${detail.agent}` : ''}
+                  </p>
+                )}
+              </div>
+              <nav aria-label="Result views">
+                {(['answer', 'request', 'diagnostics'] as const).map((value) => (
+                  <button
+                    key={value}
+                    className={tab === value ? 'active' : ''}
+                    aria-pressed={tab === value}
+                    onClick={() => setTab(value)}
+                  >
+                    {value === 'answer'
+                      ? 'Answer'
+                      : value === 'request'
+                        ? 'Model request'
+                        : 'Debug details'}
+                  </button>
+                ))}
+              </nav>
+              <div className="result-content">
+                {detail ? (
                   <>
-                    <label>
-                      Captured request{' '}
-                      <select
-                        value={callIndex}
-                        onChange={(e) => setCallIndex(Number(e.target.value))}
-                      >
-                        {detail.requests.map((request, index) => (
-                          <option key={index} value={index}>
-                            {index + 1} · {request.purpose} · {request.model}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {call ? (
+                    {tab === 'answer' && (
                       <>
-                        <p className="muted">
-                          Temperature {call.temperature} · {call.tools.length} tool definitions
+                        {detail.completion?.status === 'incomplete' && (
+                          <div className="inline-error">
+                            This agent run did not finish. Review the model requests and debug
+                            details before retrying.
+                          </div>
+                        )}
+                        {detail.inference?.error && (
+                          <div className="inline-error">{detail.inference.error}</div>
+                        )}
+                        {detail.deliverable && detail.deliverable.status !== 'pass' && (
+                          <div
+                            className={
+                              detail.deliverable.status === 'fail' ? 'inline-error' : 'notice'
+                            }
+                          >
+                            <strong>
+                              Answer checks{' '}
+                              {detail.deliverable.status === 'fail' ? 'failed' : 'need review'}
+                            </strong>
+                            <ul>
+                              {detail.deliverable.checks.map((check) => (
+                                <li key={check.id}>{check.detail}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {detail.response ? (
+                          <Answer text={detail.response} />
+                        ) : (
+                          <div className="empty-state">
+                            <h2>
+                              {detail.sourceMode === 'capture'
+                                ? 'Request captured'
+                                : 'No answer returned'}
+                            </h2>
+                            <p>
+                              {detail.sourceMode === 'capture'
+                                ? 'This run saved the request without calling a model. Select Model request to inspect it, or choose a model for your next run.'
+                                : detail.detail}
+                            </p>
+                            {detail.sourceMode === 'capture' && (
+                              <button onClick={() => setTab('request')}>View model request</button>
+                            )}
+                          </div>
+                        )}
+                        {detail.draft && (
+                          <details className="draft">
+                            <summary>
+                              Last model draft ({detail.draft.length.toLocaleString()} characters) ·
+                              not a final answer
+                            </summary>
+                            <pre>{detail.draft}</pre>
+                          </details>
+                        )}
+                        <p className="answer-note">
+                          {detail.response
+                            ? 'Generated by the model. Answer quality has not been evaluated.'
+                            : ''}
                         </p>
+                      </>
+                    )}
+                    {tab === 'request' && (
+                      <>
+                        <label className="request-picker">
+                          Request
+                          <select
+                            value={callIndex}
+                            onChange={(e) => setCallIndex(Number(e.target.value))}
+                          >
+                            {detail.requests.map((r, index) => (
+                              <option key={index} value={index}>
+                                {index + 1} · {r.purpose} · {r.model}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        {call ? (
+                          <>
+                            {(call.messages as Array<{ role?: string; content?: unknown }>).map(
+                              (message, i) => (
+                                <section className="message" key={i}>
+                                  <h3>{message.role ?? 'Message'}</h3>
+                                  <pre>
+                                    {typeof message.content === 'string'
+                                      ? message.content
+                                      : JSON.stringify(message.content, null, 2)}
+                                  </pre>
+                                </section>
+                              )
+                            )}
+                            {call.response && (
+                              <section className="message">
+                                <h3>
+                                  Model output
+                                  {call.termination ? ` · stopped: ${call.termination.reason}` : ''}
+                                </h3>
+                                <pre>{call.response}</pre>
+                              </section>
+                            )}
+                          </>
+                        ) : (
+                          <p>No model request was reached.</p>
+                        )}
+                      </>
+                    )}
+                    {tab === 'diagnostics' && (
+                      <>
+                        <label className="request-picker">
+                          Inspect
+                          <select
+                            value={diagnostic}
+                            onChange={(e) => setDiagnostic(e.target.value)}
+                          >
+                            <option value="overview">Run details</option>
+                            <option value="findings">Request findings</option>
+                            <option value="tools">Tool definitions</option>
+                            <option value="contract">Task contract</option>
+                            <option value="context">Routing and context</option>
+                            <option value="events">Events</option>
+                          </select>
+                        </label>
                         <pre>
                           {JSON.stringify(
-                            tab === 'messages'
-                              ? call.messages
-                              : {
-                                  tools: call.tools,
-                                  toolChoice: call.toolChoice,
-                                  schema: call.schema
-                                },
+                            diagnostic === 'overview'
+                              ? {
+                                  stages: detail.stages,
+                                  completion: detail.completion,
+                                  termination: detail.termination,
+                                  deliverable: detail.deliverable,
+                                  inference: detail.inference,
+                                  phases: detail.phases,
+                                  questionId: detail.questionId,
+                                  sourceLine: detail.sourceLine,
+                                  detail: detail.detail
+                                }
+                              : diagnostic === 'findings'
+                                ? detail.findingsDetail
+                                : diagnostic === 'tools'
+                                  ? detail.requests.map((r) => ({
+                                      purpose: r.purpose,
+                                      tools: r.tools,
+                                      toolChoice: r.toolChoice,
+                                      schema: r.schema
+                                    }))
+                                  : diagnostic === 'contract'
+                                    ? detail.task
+                                    : diagnostic === 'context'
+                                      ? {
+                                          routeDecision: detail.routeDecision,
+                                          retrieval: detail.retrieval,
+                                          workflowLint: detail.workflowLint,
+                                          requests: detail.requests.map((r) => ({
+                                            context: r.context,
+                                            toolManifest: r.toolManifest
+                                          }))
+                                        }
+                                      : detail.events,
                             null,
                             2
                           )}
                         </pre>
                       </>
-                    ) : (
-                      <p>
-                        No model request was reached. Inspect the contract and events for the
-                        blocking reason.
-                      </p>
                     )}
                   </>
-                )}
-                {tab === 'findings' &&
-                  (detail.findingsDetail.length ? (
-                    <ul className="findings">
-                      {detail.findingsDetail.map((finding) => (
-                        <li key={finding.id} className={finding.severity}>
-                          <strong>{finding.id}</strong> · {finding.severity} · {finding.detail}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
+                ) : (
+                  <div className="empty-state">
+                    <span className="empty-symbol">…</span>
+                    <h2>
+                      {selectedResult
+                        ? 'Loading result…'
+                        : running
+                          ? 'Waiting for this answer'
+                          : 'Ready to run'}
+                    </h2>
                     <p>
-                      No request-level findings. This checks request coherence only; it is not an
-                      answer quality pass.
+                      {running
+                        ? 'Questions run one at a time, in batches of 10. Answers appear here as they finish.'
+                        : 'Choose a model and click Run questions. Select any completed question to review its answer.'}
                     </p>
-                  ))}
-                {tab === 'context' && (
-                  <pre>
-                    {JSON.stringify(
-                      {
-                        routeDecision: detail.routeDecision ?? null,
-                        retrieval: detail.retrieval ?? null,
-                        workflowLint: detail.workflowLint ?? null,
-                        requests: detail.requests.map((request) => ({
-                          purpose: request.purpose,
-                          context: request.context ?? null,
-                          toolManifest: request.toolManifest ?? null
-                        }))
-                      },
-                      null,
-                      2
-                    )}
-                  </pre>
+                  </div>
                 )}
-                {tab === 'contract' && <pre>{JSON.stringify(detail.task ?? null, null, 2)}</pre>}
-                {tab === 'events' && (
-                  <pre>{detail.events.join('\n\n') || 'No events recorded.'}</pre>
-                )}
-              </>
-            ) : (
-              <div className="empty">
-                {running
-                  ? 'Waiting for this question to reach the model boundary…'
-                  : 'Run a capture, then select a question to inspect its model request.'}
               </div>
-            )}
-          </div>
+            </>
+          ) : (
+            <div className="welcome">
+              <span className="eyebrow">A simpler way to test your agents</span>
+              <h1>
+                Questions in.
+                <br />
+                Answers to inspect.
+              </h1>
+              <p>
+                Import your questions, choose a model, and run.
+                <br />
+                Results are saved in batches of 10.
+              </p>
+              <button className="primary" disabled={locked} onClick={() => void importFile()}>
+                Import questions
+              </button>
+              <span className="muted">You can also reopen a previous run.</span>
+            </div>
+          )}
         </article>
       </main>
+      <dialog
+        ref={dialog}
+        onCancel={() => setPanel(null)}
+        aria-label={
+          panel === 'settings'
+            ? 'Settings'
+            : panel === 'history'
+              ? 'Past runs'
+              : panel === 'export'
+                ? 'Export results'
+                : 'Run comparison'
+        }
+      >
+        <div className="dialog-heading">
+          <h2>
+            {panel === 'settings'
+              ? 'Settings'
+              : panel === 'history'
+                ? 'Past runs'
+                : panel === 'export'
+                  ? 'Export results'
+                  : 'Run comparison'}
+          </h2>
+          <button onClick={() => setPanel(null)} aria-label="Close dialog">
+            Close
+          </button>
+        </div>
+        <div className="dialog-content">
+          {panel === 'settings' && (
+            <>
+              <h3>Model connection</h3>
+              <p className="muted">
+                Downloaded Eris models and saved connections appear in the model picker.
+              </p>
+              <div className="setting-actions">
+                <button
+                  disabled={locked || connecting}
+                  onClick={() => void attempt(async () => setModels(await window.erisDev.models()))}
+                >
+                  Refresh models
+                </button>
+              </div>
+              <details>
+                <summary>Connect a model server</summary>
+                <p className="muted">
+                  Ollama, LM Studio or an OpenAI-compatible API. API requests go to the selected
+                  provider.
+                </p>
+                <label>
+                  API URL
+                  <input
+                    disabled={locked || connecting}
+                    value={endpoint}
+                    onChange={(e) => setEndpoint(e.target.value)}
+                  />
+                </label>
+                <label>
+                  API key · optional, session only
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    disabled={locked || connecting}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                  />
+                </label>
+                <button
+                  disabled={locked || connecting}
+                  onClick={() =>
+                    void attempt(async () => {
+                      setConnecting(true)
+                      try {
+                        const options = await window.erisDev.connect({ baseUrl: endpoint, apiKey })
+                        setModels(options)
+                        setModel(options.find((m) => m.label.startsWith('Dev endpoint'))?.id ?? '')
+                        setExecution('live')
+                        setApiKey('')
+                        setNotice('Connected. Choose a model and run your questions.')
+                        setPanel(null)
+                      } finally {
+                        setConnecting(false)
+                      }
+                    })
+                  }
+                >
+                  {connecting ? 'Connecting…' : 'Connect'}
+                </button>
+              </details>
+              <h3>Workspace</h3>
+              <p className="muted">{project}. Each question uses a disposable copy.</p>
+              <div className="setting-actions">
+                <button
+                  disabled={locked}
+                  onClick={() =>
+                    void attempt(async () => {
+                      const value = await window.erisDev.chooseProject()
+                      if (value) setProject(value)
+                    })
+                  }
+                >
+                  Choose folder
+                </button>
+                <button
+                  disabled={locked}
+                  onClick={() =>
+                    void attempt(async () => {
+                      await window.erisDev.setProjectKind('sample')
+                      setProject('Sample project')
+                    })
+                  }
+                >
+                  Use sample
+                </button>
+                <button
+                  disabled={locked}
+                  onClick={() =>
+                    void attempt(async () => {
+                      await window.erisDev.setProjectKind('none')
+                      setProject('No project')
+                    })
+                  }
+                >
+                  No project
+                </button>
+              </div>
+              <details>
+                <summary>Advanced run settings</summary>
+                <div className="settings-grid">
+                  <label>
+                    Agent mode
+                    <select
+                      disabled={locked}
+                      value={mode}
+                      onChange={(e) => setMode(e.target.value as typeof mode)}
+                    >
+                      <option value="agent">Agent · workspace tools</option>
+                      <option value="ask">Ask · answer only</option>
+                    </select>
+                  </label>
+                  <label>
+                    Context window
+                    <select
+                      disabled={locked}
+                      value={context}
+                      onChange={(e) => setContext(Number(e.target.value))}
+                    >
+                      {[4096, 8192, 16384, 32768].map((v) => (
+                        <option key={v} value={v}>
+                          {v.toLocaleString()} tokens
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Time per question
+                    <select
+                      disabled={locked}
+                      value={deadline}
+                      onChange={(e) => setDeadline(Number(e.target.value))}
+                    >
+                      {[60000, 180000, 300000, 600000].map((v) => (
+                        <option key={v} value={v}>
+                          {v / 60000} minutes
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {execution === 'capture' && (
+                    <label>
+                      Simulated intent reply
+                      <select
+                        disabled={locked}
+                        value={intentReplyMode}
+                        onChange={(e) => setIntentReplyMode(e.target.value as IntentReplyMode)}
+                      >
+                        <option value="fallback">Fallback</option>
+                        <option value="malformed">Malformed JSON</option>
+                        <option value="timeout">Timeout</option>
+                      </select>
+                    </label>
+                  )}
+                </div>
+                <p className="muted">
+                  Batches of 10, one question at a time. Host commands and external tool effects are
+                  blocked. Answers are not automatically graded.
+                </p>
+              </details>
+              {preview && (
+                <details>
+                  <summary>Import details · {preview.excluded.length} excluded lines</summary>
+                  <p>{preview.normalization.join(' ')}</p>
+                  <pre>{JSON.stringify(preview.excluded, null, 2)}</pre>
+                </details>
+              )}
+            </>
+          )}
+          {panel === 'history' && (
+            <>
+              {runs.length ? (
+                runs.slice(runPage * 10, (runPage + 1) * 10).map((item) => (
+                  <div className="saved-run" key={item.runId}>
+                    <div>
+                      <strong>{item.corpus}</strong>
+                      <p>
+                        {new Date(item.created).toLocaleString()} ·{' '}
+                        {item.completed.toLocaleString()} / {item.total.toLocaleString()} ·{' '}
+                        {item.state}
+                      </p>
+                    </div>
+                    <div className="setting-actions">
+                      <button disabled={locked} onClick={() => void openRun(item, false)}>
+                        Open
+                      </button>
+                      {['stopped', 'interrupted'].includes(item.state) && (
+                        <button disabled={locked} onClick={() => void openRun(item, true)}>
+                          Resume
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="muted">Your saved runs will appear here.</p>
+              )}
+              {runs.length > 10 && (
+                <div className="pagination">
+                  <button disabled={!runPage} onClick={() => setRunPage(runPage - 1)}>
+                    Newer
+                  </button>
+                  <span>
+                    {runPage + 1} / {Math.ceil(runs.length / 10)}
+                  </span>
+                  <button
+                    disabled={(runPage + 1) * 10 >= runs.length}
+                    onClick={() => setRunPage(runPage + 1)}
+                  >
+                    Older
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+          {panel === 'export' && (
+            <>
+              <p>
+                Save {completed.toLocaleString()} results, including questions, answers and model
+                requests.
+              </p>
+              <button
+                className="primary wide"
+                disabled={locked}
+                onClick={() => void exportResults(true)}
+              >
+                Export with sensitive data redacted
+              </button>
+              <p className="muted">
+                Automated redaction may not remove every sensitive value. Review before sharing.
+              </p>
+              <details>
+                <summary>More options</summary>
+                <div className="stack">
+                  <button disabled={locked} onClick={() => void exportResults(false)}>
+                    Export original JSONL
+                  </button>
+                  <button
+                    disabled={locked || !visible.some((v) => results[v.index])}
+                    onClick={() => void exportResults(true, true)}
+                  >
+                    Export filtered results
+                  </button>
+                  <button
+                    disabled={locked}
+                    onClick={() =>
+                      void attempt(async () => {
+                        const value = await window.erisDev.compareWith()
+                        if (value) {
+                          setComparison(value)
+                          setPanel('comparison')
+                        }
+                      })
+                    }
+                  >
+                    Compare with another run
+                  </button>
+                </div>
+              </details>
+            </>
+          )}
+          {panel === 'comparison' && comparison && (
+            <>
+              <p>
+                {comparison.matched.toLocaleString()} matched ·{' '}
+                {comparison.totalChanged.toLocaleString()} changed · {comparison.added.length} new ·{' '}
+                {comparison.removed.length} missing
+              </p>
+              <p className="muted">
+                {comparison.compatibility.status} comparison.{' '}
+                {comparison.compatibility.confounders.join('; ')}
+              </p>
+              <pre>
+                {JSON.stringify(
+                  {
+                    byCategory: comparison.byCategory,
+                    byField: comparison.byField,
+                    changes: comparison.changed
+                  },
+                  null,
+                  2
+                )}
+              </pre>
+              <div className="pagination">
+                <button
+                  disabled={busy || !comparison.page.offset}
+                  onClick={() =>
+                    void attempt(async () => {
+                      const next = await window.erisDev.comparePage(
+                        Math.max(0, comparison.page.offset - comparison.page.size)
+                      )
+                      setComparison({ ...comparison, ...next })
+                    })
+                  }
+                >
+                  Previous
+                </button>
+                <span>
+                  {comparison.page.offset + 1}–{comparison.page.offset + comparison.page.returned}
+                </span>
+                <button
+                  disabled={
+                    busy ||
+                    comparison.page.offset + comparison.page.returned >= comparison.totalChanged
+                  }
+                  onClick={() =>
+                    void attempt(async () => {
+                      const next = await window.erisDev.comparePage(
+                        comparison.page.offset + comparison.page.size
+                      )
+                      setComparison({ ...comparison, ...next })
+                    })
+                  }
+                >
+                  Next
+                </button>
+              </div>
+              <p className="muted">Full report: {comparison.savedTo}</p>
+            </>
+          )}
+        </div>
+        {error && (
+          <div role="alert" className="banner error">
+            {error}
+          </div>
+        )}
+      </dialog>
     </div>
   )
 }

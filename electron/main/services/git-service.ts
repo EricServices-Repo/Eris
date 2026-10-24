@@ -1,6 +1,7 @@
 import { spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { join } from 'path'
+import { activeDiagnosticsScope } from './model-transport'
 
 export interface GitStatusEntry {
   path: string
@@ -23,6 +24,15 @@ export function runGit(
   args: string[],
   timeoutMs = 20_000
 ): Promise<{ code: number; stdout: string; stderr: string }> {
+  const diagnostics = activeDiagnosticsScope()
+  if (diagnostics) {
+    diagnostics.onBlockedEffect('command', `git ${args.join(' ')}`)
+    return Promise.resolve({
+      code: 1,
+      stdout: '',
+      stderr: 'Host Git commands are disabled in diagnostics runs'
+    })
+  }
   return new Promise((resolve) => {
     const child = spawn('git', args, {
       cwd: workspacePath,
@@ -75,15 +85,16 @@ export async function gitStatus(workspacePath: string): Promise<GitStatusResult>
     }
   }
   const lines = statusRes.stdout.split('\n').filter(Boolean)
-  let branch: string | null =
-    branchRes.code === 0 ? branchRes.stdout.trim() : null
+  let branch: string | null = branchRes.code === 0 ? branchRes.stdout.trim() : null
   let ahead = 0
   let behind = 0
   const entries: GitStatusEntry[] = []
   for (const line of lines) {
     if (line.startsWith('## ')) {
       const head = line.slice(3)
-      const m = head.match(/^([^\s.]+)(?:\.\.\.[^\s]+)?(?:\s+\[(?:ahead\s+(\d+))?(?:,\s*)?(?:behind\s+(\d+))?\])?/)
+      const m = head.match(
+        /^([^\s.]+)(?:\.\.\.[^\s]+)?(?:\s+\[(?:ahead\s+(\d+))?(?:,\s*)?(?:behind\s+(\d+))?\])?/
+      )
       if (m) {
         branch = m[1] || branch
         ahead = m[2] ? Number(m[2]) : 0
@@ -96,11 +107,7 @@ export async function gitStatus(workspacePath: string): Promise<GitStatusResult>
     const path = line.slice(3).trim()
     if (!path) continue
     const status =
-      index !== ' ' && worktree !== ' '
-        ? `${index}${worktree}`
-        : index !== ' '
-          ? index
-          : worktree
+      index !== ' ' && worktree !== ' ' ? `${index}${worktree}` : index !== ' ' ? index : worktree
     entries.push({ path, index, worktree, status })
   }
   return { ok: true, branch, ahead, behind, entries }
@@ -135,7 +142,8 @@ export async function gitCommit(
   const msg = message.trim()
   if (!msg) return { ok: false, error: 'Commit message required' }
   const res = await runGit(workspacePath, ['commit', '-m', msg])
-  if (res.code !== 0) return { ok: false, error: res.stderr.trim() || res.stdout.trim() || 'commit failed' }
+  if (res.code !== 0)
+    return { ok: false, error: res.stderr.trim() || res.stdout.trim() || 'commit failed' }
   return { ok: true }
 }
 
@@ -147,7 +155,12 @@ export async function gitBranches(
   }
   const res = await runGit(workspacePath, ['branch', '--list', '--format=%(refname:short)'])
   if (res.code !== 0) {
-    return { ok: false, current: null, branches: [], error: res.stderr.trim() || 'git branch failed' }
+    return {
+      ok: false,
+      current: null,
+      branches: [],
+      error: res.stderr.trim() || 'git branch failed'
+    }
   }
   const branches = res.stdout
     .split('\n')

@@ -1,5 +1,14 @@
 import { randomUUID } from 'crypto'
-import type { DevCapture, DevQuestion, DevResult, IntentReplyMode } from '../../src/shared/eris-dev'
+import { streamProviderChat } from '../main/services/chat-runtime'
+import type { PreparedLiveModel } from './models'
+import type {
+  DevCapture,
+  DevQuestion,
+  DevResult,
+  DevTerminationCause,
+  IntentReplyMode
+} from '../../src/shared/eris-dev'
+import { assessDeliverable } from '../../src/shared/deliverable-checks'
 import type { AppSettings } from '../../src/shared/settings-schema'
 import type { IntentResolution, TaskContract } from '../../src/shared/task-contract'
 import { interpretationOf } from '../../src/shared/task-contract'
@@ -20,6 +29,9 @@ import { flushTaskLedger } from '../main/services/task-ledger'
 import { requestInvariantFindings } from '../main/services/agent/request-invariants'
 
 export interface CaptureOptions {
+  live?: PreparedLiveModel
+  timeoutMs?: number
+  maxCalls?: number
   question?: Partial<DevQuestion>
   intentReplyMode?: IntentReplyMode
 }
@@ -37,6 +49,15 @@ export function captureSettings(context: number): AppSettings {
   settings.agent.allowedCommands = []
   settings.evals.useScoresForRouting = false
   return settings
+}
+
+/** A native worker that exited or failed, as opposed to a provider or transport error. */
+function isWorkerFailure(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    ((error as { code?: unknown }).code === 'LOCAL_MODEL_WORKER_FAILED' ||
+      error.name === 'LocalModelWorkerError')
+  )
 }
 
 function describeResolution(resolution: IntentResolution): string {
@@ -64,10 +85,20 @@ export async function captureQuestion(
 ): Promise<DevResult> {
   const started = Date.now()
   const controller = new AbortController()
-  const cancel = () => controller.abort()
+  // The first cause wins: cleanup after a worker crash must not relabel it a timeout.
+  let cause: DevTerminationCause | null = null
+  let lastProgressAt: number | null = null
+  const stop = (reason: DevTerminationCause) => {
+    cause ??= reason
+    controller.abort(reason)
+  }
+  const cancel = () => stop('user-cancelled')
   signal.addEventListener('abort', cancel, { once: true })
   if (signal.aborted) cancel()
-  const timeout = setTimeout(cancel, 30000)
+  const timeout = setTimeout(
+    () => stop('deadline-exceeded'),
+    options.live ? (options.timeoutMs ?? 180000) : 30000
+  )
   const intentReplyMode = options.intentReplyMode ?? 'fallback'
   const scriptedIntent = options.question?.intentReply
   const result: DevResult = {
@@ -97,31 +128,46 @@ export async function captureQuestion(
     timing: 'pre-inference',
     durationMs: 0
   }
-  const settings = captureSettings(context)
+  const live = options.live
+  const settings = live?.settings ?? captureSettings(context)
+  if (live) {
+    result.sourceMode = 'live'
+    result.timing = 'end-to-end'
+    result.intentReplySource = 'live'
+    result.inference = { model: live.model, calls: 0, firstTokenMs: null, outputChars: 0 }
+  }
   const requestId = randomUUID()
   const input = {
     requestId,
     workspacePath: workspace,
     settings,
     text: question,
-    model: SIMULATED_MODEL_REF,
+    model: live?.model ?? SIMULATED_MODEL_REF,
     mode,
     history: options.question?.history ?? [],
     threadId: options.question?.history?.length ? `eris-dev-${requestId}` : null,
     skillIds: [],
-    getSecret: () => null,
+    getSecret: live?.getSecret ?? (() => null),
     signal: controller.signal,
+    ...(live ? { resolverTimeoutMs: Math.min(options.timeoutMs ?? 180000, 120000) } : {}),
     // Timeout captures need the resolver's deadline to fire, not to wait 10 s per question.
-    ...(intentReplyMode === 'timeout' ? { resolverTimeoutMs: 250 } : {})
+    ...(!live && intentReplyMode === 'timeout' ? { resolverTimeoutMs: 250 } : {})
   }
   let fallback = 'answer'
   let captured = false
+  let incomplete = false
   // Ledger events arrive before the request they describe; attach them to it.
   let pendingContext: unknown
   let pendingToolManifest: unknown
   const adapter: ModelAdapter = {
-    kind: 'scripted',
+    kind: live ? 'live' : 'scripted',
     async *stream(request) {
+      if (live && result.requests.length >= (options.maxCalls ?? 12)) {
+        cause ??= 'call-limit'
+        result.inference!.error = 'Question reached its model-call limit.'
+        throw new Error(result.inference!.error)
+      }
+      if (live) request = { ...request, settings, model: live.model, getSecret: live.getSecret }
       const call: DevCapture = {
         purpose: request.purpose,
         model: request.model,
@@ -136,6 +182,41 @@ export async function captureQuestion(
           : {})
       }
       result.requests.push(call)
+      if (live) {
+        if (request.purpose === 'agent') captured = true
+        result.inference!.calls++
+        const callStarted = Date.now()
+        call.response = ''
+        try {
+          for await (const chunk of streamProviderChat({
+            ...request,
+            onTermination: (termination) => {
+              call.termination = termination
+              request.onTermination?.(termination)
+            }
+          })) {
+            call.response += chunk
+            lastProgressAt = Date.now() - started
+            if (request.purpose === 'agent' && result.inference!.firstTokenMs === null)
+              result.inference!.firstTokenMs = Date.now() - started
+            result.inference!.outputChars += chunk.length
+            if (result.inference!.outputChars > 250000) {
+              stop('output-limit')
+              throw new Error('Question exceeded its output character limit.')
+            }
+            yield chunk
+          }
+        } catch (error) {
+          result.inference!.error = error instanceof Error ? error.message : String(error)
+          call.error = result.inference!.error
+          if (!controller.signal.aborted)
+            cause ??= isWorkerFailure(error) ? 'worker-exited' : 'provider-error'
+          throw error
+        } finally {
+          call.durationMs = Date.now() - callStarted
+        }
+        return
+      }
       if (request.purpose === 'intent') {
         if (scriptedIntent) {
           result.intentReplySource = 'question-script'
@@ -167,7 +248,7 @@ export async function captureQuestion(
     await runInDiagnosticsScope(
       {
         runId: requestId,
-        mode: 'simulated',
+        mode: live ? 'real-model' : 'simulated',
         adapter,
         onBlockedEffect: (kind, detail) => result.events.push(`Blocked ${kind}: ${detail}`),
         onTaskEvent: (event) => {
@@ -190,7 +271,16 @@ export async function captureQuestion(
         phaseStarted = Date.now()
         const { plan, task, resolution } = await resolveChatTurnContract(input, initial)
         result.phases.resolveMs = Date.now() - phaseStarted
-        result.events.push(describeResolution(resolution))
+        result.events.push(
+          live
+            ? `Intent resolver · ${resolution.source}:${resolution.rule} · live model ${live.model}`
+            : describeResolution(resolution)
+        )
+        if (live) {
+          plan.models = { chat: live.model, tools: live.model, router: live.model }
+          plan.cloudPreferred = false
+          plan.error = undefined
+        }
         result.task = task
         result.agent = plan.agentName
         result.intent = plan.intent
@@ -218,7 +308,7 @@ export async function captureQuestion(
           messages,
           temperature: settings.models.temperature,
           signal: controller.signal,
-          getSecret: () => null,
+          getSecret: live?.getSecret ?? (() => null),
           mode,
           turnPlan: plan,
           mcp: 'off',
@@ -226,26 +316,103 @@ export async function captureQuestion(
           approveCommand: async () => false,
           approveMcpTool: async () => false
         })) {
-          if (event.type === 'answer') result.detail = event.text
+          if (event.type === 'progress' && event.incomplete) incomplete = true
+          if (event.type === 'answer') {
+            // Answer events are deltas unless they explicitly replace the answer so far.
+            const answer =
+              event.replace || result.response === null ? event.text : result.response + event.text
+            result.detail = answer
+            if (live) result.response = answer
+          }
           if (event.type === 'status' && result.events.length < 50) result.events.push(event.text)
-          if (captured || controller.signal.aborted) break
+          if ((!live && captured) || controller.signal.aborted) break
         }
         result.phases.toBoundaryMs = Date.now() - phaseStarted
       }
     )
-    result.status = captured ? 'captured' : signal.aborted ? 'cancelled' : 'blocked'
+    result.status = signal.aborted
+      ? 'cancelled'
+      : controller.signal.aborted
+        ? 'error'
+        : captured
+          ? 'captured'
+          : 'blocked'
+    if (live) {
+      result.completion = {
+        status: signal.aborted
+          ? 'cancelled'
+          : incomplete
+            ? 'incomplete'
+            : result.status === 'captured' && result.response && !result.inference!.error
+              ? 'completed'
+              : 'failed',
+        ...(incomplete
+          ? { reason: result.detail || 'Agent stopped before completing the task.' }
+          : {})
+      }
+      result.stages.inference = signal.aborted
+        ? 'cancelled'
+        : result.status === 'captured' && result.response && !result.inference!.error
+          ? 'completed'
+          : 'error'
+      result.responseReason =
+        result.stages.inference === 'completed' ? 'generated' : 'inference-failed'
+      if (result.stages.inference === 'error')
+        result.inference!.error ??= result.detail || 'No final answer was produced.'
+    }
   } catch (error) {
-    result.status = captured ? 'captured' : signal.aborted ? 'cancelled' : 'error'
-    if (!captured) result.detail = error instanceof Error ? error.message : String(error)
+    // The streamed answer so far stays partial output; the last raw agent draft is
+    // separate evidence, never promoted to a final answer.
+    if (live) {
+      const draft = [...result.requests]
+        .reverse()
+        .find((r) => r.purpose === 'agent' && r.response)?.response
+      if (draft && draft !== result.response) result.draft = draft
+    }
+    if (live && !controller.signal.aborted)
+      cause ??= isWorkerFailure(error) ? 'worker-exited' : 'provider-error'
+    result.status = !live && captured ? 'captured' : signal.aborted ? 'cancelled' : 'error'
+    if (live || !captured) result.detail = error instanceof Error ? error.message : String(error)
+    if (live) {
+      result.completion = { status: signal.aborted ? 'cancelled' : 'failed', reason: result.detail }
+      result.stages.inference = signal.aborted ? 'cancelled' : 'error'
+      result.responseReason = 'inference-failed'
+      result.inference!.error = result.detail
+    }
   } finally {
     clearTimeout(timeout)
     signal.removeEventListener('abort', cancel)
     await flushTaskLedger(requestId)
   }
-  if (captured)
+  // Set from abort and stream callbacks, which control-flow narrowing cannot see.
+  const firstCause = cause as DevTerminationCause | null
+  if (!live && captured)
     result.detail = 'Stopped at the model transport boundary. No agent response was generated.'
-  else if (controller.signal.aborted && !signal.aborted)
-    result.detail = 'Capture exceeded the 30 second deadline.'
+  else if (firstCause === 'deadline-exceeded')
+    result.detail = live
+      ? 'Live question exceeded its configured deadline.'
+      : 'Capture exceeded the 30 second deadline.'
+  if (live) {
+    result.termination = {
+      cause:
+        firstCause ??
+        (result.completion?.status === 'incomplete'
+          ? 'agent-incomplete'
+          : result.completion?.status === 'completed'
+            ? 'completed'
+            : 'no-answer'),
+      elapsedMs: Date.now() - started,
+      lastProgressAt
+    }
+    if (firstCause === 'deadline-exceeded' && result.inference) {
+      result.inference.error = 'Live question exceeded its configured deadline.'
+      if (result.completion) result.completion.reason = result.inference.error
+    }
+    // Runtime completion is not deliverable validity: a completed transport can
+    // still return protocol framing, truncated code or a refusal.
+    if (result.response !== null || result.completion?.status === 'completed')
+      result.deliverable = assessDeliverable(result.response)
+  }
   if (result.task) {
     result.findingsDetail = requestInvariantFindings({
       task: result.task as TaskContract,

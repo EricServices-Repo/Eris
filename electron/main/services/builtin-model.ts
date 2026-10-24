@@ -1,3 +1,4 @@
+import { LocalModelWorkerError, waitForWorkerMessage } from './llama-worker-channel'
 import { createHash } from 'crypto'
 import {
   closeSync,
@@ -44,7 +45,14 @@ import {
   modelLoadOptions
 } from './vram-fit'
 import { appState } from '../app-state'
-import { messagesToLlamaHistory, splitSessionPrompt } from '../../../src/shared/llama-session'
+import {
+  messagesToLlamaHistory,
+  nativeStopReason,
+  oneShotPrompt,
+  replyTokenAllowance,
+  splitSessionPrompt
+} from '../../../src/shared/llama-session'
+import type { ModelTermination } from './model-transport'
 import { acquireInferenceLease } from './inference-governor'
 
 type LlamaModule = typeof import('node-llama-cpp')
@@ -642,6 +650,7 @@ type WorkerMsg = {
   sessionKey?: string
   text?: string
   error?: string
+  termination?: ModelTermination
 }
 
 function workerScriptPath(): string {
@@ -707,10 +716,14 @@ function ensureLlamaChild(): Promise<void> {
           }
         }
         child.on('message', onReady)
-        child.on('exit', () => {
-          llamaChild = null
-          llamaChildReady = null
-          workerModelPath = null
+        child.on('exit', (code) => {
+          settle(new LocalModelWorkerError(`exited during startup (${String(code)})`))
+          if (llamaChild === child) {
+            llamaChild = null
+            llamaChildReady = null
+            workerModelPath = null
+            activeChatSessions.clear()
+          }
         })
         setTimeout(() => {
           if (llamaChild === child) settle()
@@ -735,41 +748,9 @@ function onceWorkerMessage(
   predicate: (msg: WorkerMsg) => boolean,
   signal?: AbortSignal
 ): Promise<WorkerMsg> {
-  return new Promise((resolve, reject) => {
-    if (!llamaChild) {
-      reject(new Error('No llama worker'))
-      return
-    }
-    const onMsg = (raw: unknown) => {
-      const msg = (
-        raw && typeof raw === 'object' && 'data' in (raw as object)
-          ? (raw as { data: WorkerMsg }).data
-          : raw
-      ) as WorkerMsg
-      if (!predicate(msg)) return
-      cleanup()
-      resolve(msg)
-    }
-    const onAbort = () => {
-      cleanup()
-      const err = new Error('Aborted')
-      err.name = 'AbortError'
-      reject(err)
-    }
-    const cleanup = () => {
-      llamaChild?.off?.('message', onMsg)
-      // electron UtilityProcess uses EventEmitter-style; also try removeListener
-      try {
-        llamaChild?.removeListener?.('message', onMsg)
-      } catch {
-        // ignore
-      }
-      signal?.removeEventListener('abort', onAbort)
-    }
-    llamaChild.on('message', onMsg)
-    if (signal?.aborted) onAbort()
-    else signal?.addEventListener('abort', onAbort)
-  })
+  const child = llamaChild
+  if (!child) return Promise.reject(new LocalModelWorkerError('is unavailable'))
+  return waitForWorkerMessage(child, predicate, signal)
 }
 
 function releaseInProcessSession(sessionKey: string): void {
@@ -964,8 +945,14 @@ async function ensureRuntimeInProcess(
 
 async function ensureWorkerModel(
   modelPath: string,
-  entry: BuiltinModelManifestEntry
+  entry: BuiltinModelManifestEntry,
+  signal?: AbortSignal
 ): Promise<void> {
+  if (signal?.aborted) {
+    const error = new Error('Aborted')
+    error.name = 'AbortError'
+    throw error
+  }
   await ensureLlamaChild()
   if (workerModelPath === modelPath) return
   // Model swap drops all KV sessions in the worker.
@@ -988,6 +975,11 @@ async function ensureWorkerModel(
     contextMin: plan.min,
     contextMax: plan.max
   })
+  const loaded = onceWorkerMessage(
+    (m) => (m.type === 'loaded' || m.type === 'load-error') && m.requestId === requestId,
+    signal
+  )
+  void loaded.catch(() => undefined) // The awaited branch below still reports failures.
   postToWorker({
     type: 'load',
     modelPath,
@@ -997,13 +989,59 @@ async function ensureWorkerModel(
     preferEgpu,
     gpu: 'auto'
   })
-  const result = await onceWorkerMessage(
-    (m) => (m.type === 'loaded' || m.type === 'load-error') && m.requestId === requestId
-  )
+  const result = await loaded
   if (result.type === 'load-error') {
     throw new Error(result.error || 'Failed to load model in worker')
   }
   workerModelPath = modelPath
+}
+
+type InProcessBudget = Required<
+  Pick<ModelTermination, 'maxOutputTokens' | 'promptTokens' | 'contextTokens'>
+>
+
+/** Reply tokens that fit beside this prompt in the loaded context. */
+function inProcessReplyBudget(
+  state: RuntimeState,
+  messages: Array<{ content: string }>
+): InProcessBudget {
+  const text = messages.map((message) => message.content).join('\n')
+  let promptTokens = Math.ceil(text.length / 3)
+  try {
+    const tokens = state.model?.tokenize?.(text)
+    if (tokens && typeof tokens.length === 'number') promptTokens = tokens.length
+  } catch {
+    // keep the estimate
+  }
+  promptTokens += messages.length * 8
+  const contextTokens = Number(state.context?.contextSize) || REPLY_MAX_TOKENS
+  return {
+    promptTokens,
+    contextTokens,
+    maxOutputTokens: replyTokenAllowance({
+      requested: REPLY_MAX_TOKENS,
+      contextSize: contextTokens,
+      promptTokens
+    })
+  }
+}
+
+function inProcessTermination(raw: unknown, budget: InProcessBudget): ModelTermination {
+  return {
+    reason: nativeStopReason(raw),
+    ...(typeof raw === 'string' ? { raw } : {}),
+    ...budget
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function promptWithStopReason(session: any, text: string, opts: any): Promise<unknown> {
+  if (typeof session.promptWithMeta === 'function') {
+    const meta = await session.promptWithMeta(text, opts)
+    return meta?.stopReason
+  }
+  await session.prompt(text, opts)
+  return undefined
 }
 
 async function* streamBuiltinChatInProcess(options: {
@@ -1015,11 +1053,14 @@ async function* streamBuiltinChatInProcess(options: {
   path: string
   jsonSchema?: Record<string, unknown>
   sessionKey?: string
+  onTermination?: (termination: ModelTermination) => void
 }): AsyncGenerator<string, void, unknown> {
   const llamaCpp = await loadLlamaModule()
   const { LlamaChatSession } = llamaCpp
   const state = await ensureRuntimeInProcess(options.path, options.entry)
-  const maxTokens = REPLY_MAX_TOKENS
+  const budget = inProcessReplyBudget(state, options.messages)
+  const maxTokens = budget.maxOutputTokens
+  let stopReason: unknown
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let grammar: any = undefined
@@ -1081,9 +1122,9 @@ async function* streamBuiltinChatInProcess(options: {
         wake()
       }
     }
-    const run = entry.session
-      .prompt(split.userMessage, promptOpts)
-      .then(() => {
+    const run = promptWithStopReason(entry.session, split.userMessage, promptOpts)
+      .then((reason) => {
+        stopReason = reason
         done = true
         wake()
       })
@@ -1118,6 +1159,7 @@ async function* streamBuiltinChatInProcess(options: {
         }
         throw caughtError instanceof Error ? caughtError : new Error(message)
       }
+      options.onTermination?.(inProcessTermination(stopReason, budget))
     } finally {
       options.signal?.removeEventListener('abort', onAbortWake)
     }
@@ -1130,18 +1172,9 @@ async function* streamBuiltinChatInProcess(options: {
   try {
     sequence = state.context.getSequence()
     const session = new LlamaChatSession({ contextSequence: sequence })
-    const system = options.messages
-      .filter((m) => m.role === 'system')
-      .map((m) => m.content)
-      .join('\n\n')
-    const transcript = options.messages
-      .filter((m) => m.role !== 'system')
-      .map((m) => `${m.role.toUpperCase()}:\n${m.content}`)
-      .join('\n\n')
-      .slice(-24_000)
-    const prompt = [system && `SYSTEM:\n${system.slice(0, 8000)}`, transcript, 'ASSISTANT:']
-      .filter(Boolean)
-      .join('\n\n')
+    // The same structured history as a session turn; budgeting already happened upstream.
+    const { history, userMessage } = oneShotPrompt(options.messages)
+    session.setChatHistory(messagesToLlamaHistory(history) as never)
 
     const queue: string[] = []
     let done = false
@@ -1171,9 +1204,9 @@ async function* streamBuiltinChatInProcess(options: {
         wake()
       }
     }
-    const run = session
-      .prompt(prompt, inProcPromptOpts)
-      .then(() => {
+    const run = promptWithStopReason(session, userMessage, inProcPromptOpts)
+      .then((reason) => {
+        stopReason = reason
         done = true
         wake()
       })
@@ -1208,6 +1241,7 @@ async function* streamBuiltinChatInProcess(options: {
         }
         throw caughtError instanceof Error ? caughtError : new Error(message)
       }
+      options.onTermination?.(inProcessTermination(stopReason, budget))
     } finally {
       options.signal?.removeEventListener('abort', onAbortWake)
     }
@@ -1229,12 +1263,16 @@ async function* streamBuiltinChatViaWorker(options: {
   path: string
   jsonSchema?: Record<string, unknown>
   sessionKey?: string
+  onTermination?: (termination: ModelTermination) => void
 }): AsyncGenerator<string, void, unknown> {
-  await ensureWorkerModel(options.path, options.entry)
+  await ensureWorkerModel(options.path, options.entry, options.signal)
+  const child = llamaChild
+  if (!child) throw new LocalModelWorkerError('is unavailable')
 
   const id = `chat-${++chatSeq}`
   const queue: string[] = []
   let done = false
+  let termination: ModelTermination | undefined
   let caughtError: string | null = null
   let notify: (() => void) | null = null
 
@@ -1259,6 +1297,7 @@ async function* streamBuiltinChatViaWorker(options: {
       wake()
     } else if (msg.type === 'done') {
       if (options.sessionKey) activeChatSessions.add(options.sessionKey)
+      termination = msg.termination
       done = true
       wake()
     } else if (msg.type === 'error') {
@@ -1268,16 +1307,31 @@ async function* streamBuiltinChatViaWorker(options: {
     }
   }
 
-  llamaChild.on('message', onMsg)
+  const onFailure = (detail: unknown) => {
+    if (done) return
+    caughtError = `Local model worker exited or failed (${String(detail ?? 'unknown')})`
+    done = true
+    wake()
+  }
+  child.on('message', onMsg)
+  child.on('exit', onFailure)
+  child.on('error', onFailure)
   const onAbort = () => {
-    postToWorker({ type: 'abort', id })
+    try {
+      child.postMessage({ type: 'abort', id })
+    } catch {
+      /* the worker may already have exited */
+    }
     done = true
     wake()
   }
   options.signal?.addEventListener('abort', onAbort)
+  if (options.signal?.aborted) onAbort()
 
   const split = options.sessionKey ? splitSessionPrompt(options.messages) : null
-  if (options.sessionKey && split) {
+  if (options.signal?.aborted) {
+    // No job is posted after cancellation during loading.
+  } else if (options.sessionKey && split) {
     postToWorker({
       type: 'chat-turn',
       id,
@@ -1316,12 +1370,18 @@ async function* streamBuiltinChatViaWorker(options: {
       err.name = 'AbortError'
       throw err
     }
-    if (caughtError) throw new Error(caughtError)
+    if (caughtError) {
+      if (String(caughtError).startsWith('Local model worker exited'))
+        throw new LocalModelWorkerError(String(caughtError).replace(/^Local model worker\s+/, ''))
+      throw new Error(caughtError)
+    }
+    if (termination) options.onTermination?.(termination)
   } finally {
     options.signal?.removeEventListener('abort', onAbort)
     try {
-      llamaChild?.removeListener?.('message', onMsg)
-      llamaChild?.off?.('message', onMsg)
+      child.removeListener?.('message', onMsg)
+      child.removeListener?.('exit', onFailure)
+      child.removeListener?.('error', onFailure)
     } catch {
       // ignore
     }
@@ -1430,6 +1490,8 @@ export async function* streamBuiltinChat(options: {
    * Pass the same key for the whole chat run; call releaseLocalChatSession when done.
    */
   sessionKey?: string
+  /** Called once with how generation ended (stop reason, limits, prompt size). */
+  onTermination?: (termination: ModelTermination) => void
 }): AsyncGenerator<string, void, unknown> {
   let entry: BuiltinModelManifestEntry
   let path: string
@@ -1481,8 +1543,15 @@ export async function* streamBuiltinChat(options: {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         const name = err instanceof Error ? err.name : ''
-        if (name === 'AbortError' || /abort/i.test(message)) throw err
-        logWarn('llama utilityProcess failed; falling back in-process', { error: message })
+        if (name === 'AbortError' || /abort/i.test(message) || err instanceof LocalModelWorkerError)
+          throw err
+        // Runtime failures belong to the isolated worker. Loading the same GGUF
+        // in Electron's main process after a native failure can freeze or crash UI.
+        if (!preferInProcess) {
+          await disposeRuntime().catch(() => undefined)
+          throw new LocalModelWorkerError(message)
+        }
+        logWarn('llama utilityProcess unavailable; using compatibility runtime', { error: message })
         // Kill broken worker so the next attempt can retry isolation later
         try {
           await disposeRuntime()
