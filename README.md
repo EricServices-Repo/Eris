@@ -147,10 +147,12 @@ npm run check
 Build each platform on that platform, or let GitHub Actions do both. A `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which uploads the macOS and Windows installers to [this repository’s releases](https://github.com/EricServices-Repo/Eris/releases).
 
 ```bash
-npm run release          # bump, tag, push; CI builds both platforms
-npm run release:github   # tag the version already in package.json
+npm run release          # do not use; prepare release changes by PR as described in docs/GITHUB-WORKFLOW.md
+npm run release:github   # tag the integrated version from the approved release source
 npm run release:dry      # print the plan only
 ```
+
+See [GitHub integration workflow](docs/GITHUB-WORKFLOW.md) for branch and release rules. Work lands on task branches and enters `dev` through pull requests. The planned `dev` → `main` promotion is the v1.0.1 release; the branch model after that promotion must be documented before further integration.
 
 ## License
 

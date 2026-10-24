@@ -178,7 +178,7 @@ export function detectProjectStack(root: string | null): ProjectStack | null {
 function referencesOpenProject(text: string): boolean {
   return (
     mentionsSourcePath(text) ||
-    /\b(?:this|my|our|the)\s+(?:project|repo|repository|workspace|codebase)\b|\b(?:this|my|our)\s+(?:app|application|code|component|function|service|api|file|folder|module|tests?)\b|\b(?:where is|which file|what file|in the (?:repo|project|workspace))\b/i.test(
+    /\b(?:our|my)\s+(?:current|existing)\b|\b(?:this|my|our|the)\s+(?:project|repo|repository|workspace|codebase)\b|\b(?:this|my|our)\s+(?:app|application|code|component|function|service|api|file|folder|module|tests?)\b|\b(?:where is|which file|what file|in the (?:repo|project|workspace))\b/i.test(
       text
     )
   )
@@ -208,8 +208,11 @@ export function scopeApplicability(
   if (continuation) return { applicability: 'unverified', rule: 'continuation' }
   // “The code”, “a bug”, “fails” may or may not mean this project. A tool-free answer
   // cannot inspect it either way, so only a worker that can read keeps the ambiguity.
-  if (asksWorkspaceQuestion(t) && intent !== 'answer')
+  if (asksWorkspaceQuestion(t) && intent !== 'answer' && !structuresNewCode(t))
     return { applicability: 'unverified', rule: 'possible-reference' }
+  // “How are feature flags usually done in Next.js?” asks about practice, not this
+  // folder. A framework name is not a reference, whatever worker the classifier chose.
+  if (asksGeneralPractice(t)) return { applicability: 'generic', rule: 'general-practice' }
   // Reviews, checks and commands act on existing code by definition.
   if (['review', 'execution-report'].includes(interpretation.artifact))
     return { applicability: 'unverified', rule: 'operates-on-existing-code' }
@@ -225,11 +228,37 @@ export function scopeApplicability(
   // works” is explore wording too, but names nothing to look up.
   if (asksToLocateCode(t) || /\b(?:find|locate|grep|search\s+for)\b/i.test(t))
     return { applicability: 'unverified', rule: 'lookup' }
+  // A plan or sketch that names no project is design advice: “sketch graceful shutdown
+  // for an admin dashboard” must not search an unrelated folder for a shutdown log.
   if (intent === 'run' || intent === 'verify')
     return { applicability: 'unverified', rule: `intent-${intent}` }
-  if (intent === 'plan' && interpretation.artifact === 'plan')
-    return { applicability: 'unverified', rule: 'unreferenced-plan' }
   return { applicability: 'generic', rule: 'no-project-reference' }
+}
+
+/**
+ * Questions about usual or recommended practice, which no folder can answer. Checked
+ * after explicit project references and ambiguous existing-code wording.
+ */
+export function asksGeneralPractice(text: string): boolean {
+  return (
+    /\b(?:usually|typically|commonly|normally|conventionally|idiomatic(?:ally)?|in\s+practice|best\s+practices?|common\s+(?:patterns?|approach(?:es)?|ways?))\b/i.test(
+      text
+    ) ||
+    /^(?:so\s+)?how\s+(?:do|would|should|could|might)\s+(?:you|people|teams|one)\s+(?:usually\s+|typically\s+|normally\s+)?(?:implement|handle|structure|design|approach|build|do)\b/i.test(
+      text
+    ) ||
+    /\b(?:looking\s+for|what(?:'s|\s+is))\s+(?:a|the)\s+(?:clean|good|simple|solid|sensible|common|standard|best|right|recommended|safest)\s+(?:way|approach|pattern)\b/i.test(
+      text
+    ) ||
+    structuresNewCode(text)
+  )
+}
+
+/** “How should I structure the code for X” describes code still to be written. */
+function structuresNewCode(text: string): boolean {
+  return /\bhow\s+(?:should|would|do|can)\s+(?:i|we|you)\s+(?:structure|organi[sz]e|lay\s+out)\s+(?:the\s+)?code\s+for\b/i.test(
+    text
+  )
 }
 
 export function createTaskContract(input: {

@@ -90,6 +90,31 @@ export function microCompactAgentMessages(
 
 export { contextBudgetTokens } from './context-budget'
 
+/** Runtime instructions kept after the canonical system prompt. */
+const RUNTIME_INSTRUCTIONS_KEPT = 2
+
+/**
+ * Recovery and nudge messages are system messages, and budgeting pins every system
+ * message, so repeated recovery can fill the context that tool-output cleanup frees.
+ * Keep the leading task/authority prompt plus only the latest runtime instructions;
+ * older nudges describe states the run has already left. Mutates in place.
+ */
+export function boundRuntimeInstructions(
+  messages: AgentChatMessage[],
+  keep = RUNTIME_INSTRUCTIONS_KEPT
+): boolean {
+  const runtime = messages
+    .map((message, index) => ({ message, index }))
+    .filter(({ message, index }) => index > 0 && message.role === 'system')
+  const drop = new Set(
+    runtime.slice(0, Math.max(0, runtime.length - keep)).map(({ index }) => index)
+  )
+  if (!drop.size) return false
+  const kept = messages.filter((_, index) => !drop.has(index))
+  messages.splice(0, messages.length, ...kept)
+  return true
+}
+
 export function needsContextCompaction(
   messages: AgentChatMessage[],
   budgetTokens: number,
@@ -105,6 +130,52 @@ export function formatActionLogForResume(actionLog: string[], limit = 40): strin
   const slice = unique.slice(-limit)
   const omitted = unique.length - slice.length
   return (omitted > 0 ? `(…${omitted} earlier)\n` : '') + slice.map((a) => `• ${a}`).join('\n')
+}
+
+const EXECUTION_CLAIM = /\b(?:installed|ran|executed|deployed|committed|pushed|migrated)\b/i
+const CLAIM_STOPWORDS = new Set([
+  'installed',
+  'executed',
+  'deployed',
+  'committed',
+  'pushed',
+  'migrated',
+  'the',
+  'and',
+  'with',
+  'from',
+  'into',
+  'that',
+  'this',
+  'package',
+  'command',
+  'successfully'
+])
+
+/**
+ * Generated memory can turn a suggestion into an asserted action (“installed
+ * next-feature-flag” when no command ran). Execution claims must name something a
+ * successful action-log entry also names; otherwise they are marked unverified.
+ */
+export function markUnverifiedExecutionClaims(summary: string, actionLog: string[]): string {
+  const executed = actionLog
+    .filter((entry) => !/^Failed\b/.test(entry))
+    .join('\n')
+    .toLowerCase()
+  return summary
+    .split('\n')
+    .map((line) => {
+      if (!EXECUTION_CLAIM.test(line) || /\bunverified\b|\bnot done\b|\bproposed\b/i.test(line))
+        return line
+      const objects = line
+        .slice(line.search(EXECUTION_CLAIM))
+        .toLowerCase()
+        .split(/[^a-z0-9@/._-]+/)
+        .filter((token) => token.length >= 4 && !CLAIM_STOPWORDS.has(token))
+      const verified = objects.some((token) => executed.includes(token))
+      return verified ? line : `${line} [unverified: no matching executed action]`
+    })
+    .join('\n')
 }
 
 function buildFallbackProgressSummary(
@@ -144,7 +215,7 @@ function buildResumeMessage(options: {
       `Original request:\n${options.goal.slice(0, AGENT_HANDOFF_CHARS)}\n\n` +
       `Progress summary (fallible execution memory; the task contract remains authoritative):\n` +
       `${options.progressSummary.slice(0, AGENT_HANDOFF_CHARS * 3)}\n\n` +
-      `Action log:\n${formatActionLogForResume(options.actionLog)}\n\n` +
+      `Action log (the only record of executed actions; a summary claim missing here did not happen):\n${formatActionLogForResume(options.actionLog)}\n\n` +
       `${files}${treeBit}\n` +
       `Continue until the request is fully satisfied. ` +
       `Do not redo completed actions unless fixing a failure. ` +
@@ -184,8 +255,10 @@ async function summarizeMiddleWithLite(options: {
       content:
         'You compress agent working memory for an Eris coding worker that will continue the same task.\n' +
         'Write a dense progress brief (max ~20 short bullets or 250 words) the next model turn can trust.\n' +
-        'Include: goal restated in one line; what was done; key findings; files changed; ' +
-        'failures/blockers; exact next actions remaining.\n' +
+        'Include: goal restated in one line; key findings; failures/blockers; exact next actions remaining.\n' +
+        'Executed actions and changed files come only from the Action log and Files touched lists. ' +
+        'Never state that a command ran, a package was installed or a file changed unless it is listed there; ' +
+        'anything the transcript only proposed or suggested is "proposed, not done".\n' +
         'Be concrete (paths, commands, error phrases). Drop chatter and repeated tool dumps.\n' +
         'No tools. No CALL_FULL. No markdown fences. Plain text only.'
     },
@@ -214,9 +287,11 @@ async function summarizeMiddleWithLite(options: {
       messages,
       temperature: Math.min(options.temperature, 0.3),
       signal: options.signal,
-      getSecret: options.getSecret
+      getSecret: options.getSecret,
+      purpose: 'compaction'
     })
-    if (summary.length >= 40) return summary.slice(0, AGENT_HANDOFF_CHARS)
+    if (summary.length >= 40)
+      return markUnverifiedExecutionClaims(summary, options.actionLog).slice(0, AGENT_HANDOFF_CHARS)
   } catch {
     // fall through
   }

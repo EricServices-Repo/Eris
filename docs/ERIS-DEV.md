@@ -67,3 +67,26 @@ The in-app diagnostics runs (scripted, replay or real-model scenarios) report mo
 - `npm run test:dev-app` — import validation and normalization, stable IDs, cancellation, production-boundary capture checks that assert no network call and unchanged source files, and a release gate: the review's named questions must reach the boundary with no request-level defects.
 
 The dev app has a separate Vite config, preload API and Electron Builder config. Production Eris builds and release feeds are independent. Neither dev-app build command publishes a GitHub release.
+
+### Windows distribution
+
+On a Windows x64 machine with Node.js 22 and the repository checked out:
+
+```powershell
+npm ci
+npm run dist:dev-app:win -- --publish never
+```
+
+This runs the Eris-Dev qualification checks, builds its main process, preload,
+renderer and local-model/workspace workers, then creates
+`dist-dev/Eris-Dev-<version>-win-x64-setup.exe`. Run the installer to choose an
+installation directory. Eris-Dev has its own application ID and application-data
+directory, so it can be installed alongside Eris.
+
+Pull-request CI builds this installer on `windows-latest` and saves it as the
+`Eris-Dev-windows-x64` Actions artifact for seven days. The release workflow also
+builds it on Windows and attaches the installer to the matching Eris GitHub Release.
+Eris-Dev does not use the production updater feed. Release signing uses the same
+configured Windows certificate secrets as Eris; without them the installer is
+unsigned. CI artifact creation or release publication happens when those workflows
+run; changing this configuration does not publish an installer by itself.

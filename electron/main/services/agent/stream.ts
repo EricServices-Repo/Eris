@@ -1,6 +1,7 @@
 import type { AppSettings } from '../../../../src/shared/settings-schema'
 import { isNativeGgufRef } from '../builtin-model'
 import { streamModelChat, type OpenAIToolDef } from '../chat-runtime'
+import type { ModelPurpose } from '../model-transport'
 import { toolProtocolFor } from '../tool-protocol'
 import { looksLikeDegenerateLoop } from './heuristics'
 import {
@@ -19,6 +20,7 @@ export async function collectModelText(options: {
   temperature: number
   signal?: AbortSignal
   getSecret: (key: string) => string | null
+  purpose?: ModelPurpose
 }): Promise<string> {
   let full = ''
   for await (const evt of streamThinkingText({
@@ -46,6 +48,8 @@ export async function* streamThinkingText(options: {
   builtinJsonSchema?: Record<string, unknown>
   /** Reuse local GGUF KV across steps (native GGUF only). */
   sessionKey?: string
+  /** Pipeline stage for transport accounting; defaults to agent. */
+  purpose?: ModelPurpose
 }): AsyncGenerator<
   | { kind: 'thinking'; text: string }
   | {
@@ -94,7 +98,7 @@ export async function* streamThinkingText(options: {
       temperature: options.temperature,
       signal: localAbort.signal,
       getSecret: options.getSecret,
-      purpose: 'agent',
+      purpose: options.purpose ?? 'agent',
       builtinJsonSchema: options.builtinJsonSchema,
       sessionKey: isNativeGgufRef(options.model) ? options.sessionKey : undefined,
       tools: options.stopOnToolCall ? options.tools : undefined,

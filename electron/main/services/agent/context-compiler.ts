@@ -97,10 +97,9 @@ export function modelFacingTask(task: TaskContract): Record<string, unknown> {
   return out
 }
 
-const TEXT_TOOL_EXAMPLE = (edit: boolean) =>
-  edit
-    ? '<<<TOOL>>>\n{"name":"search_replace","arguments":{"path":"src/index.ts","old_string":"a","new_string":"b"}}\n<<<END>>>'
-    : '<<<TOOL>>>\n{"name":"read_file","arguments":{"path":"src/index.ts"}}\n<<<END>>>'
+// A non-mutating orientation call demonstrates the grammar without seeding a
+// fabricated edit (models previously copied the old a→b search_replace example).
+const TEXT_TOOL_EXAMPLE = '<<<TOOL>>>\n{"name":"tree","arguments":{"path":"."}}\n<<<END>>>'
 
 /** Workflow guidance generated from the effects this request can actually perform. */
 export function taskProtocol(
@@ -115,7 +114,7 @@ No tools are available for this reply. Do not emit tool calls, and treat any wor
   const calls =
     toolProtocol === 'native-tools'
       ? 'Call tools only through native function calling. Do not write tool calls as text or JSON in the reply.'
-      : `Call a tool by emitting exactly one envelope, with the arguments as a JSON object:\n${TEXT_TOOL_EXAMPLE(task.authority.edit)}\nNever put a path string directly in arguments.`
+      : `Call a tool by emitting exactly one envelope, with the arguments as a JSON object:\n${TEXT_TOOL_EXAMPLE}\nNever put a path string directly in arguments.`
   // Permissions only. What the reply contains comes from the response contract, so a
   // read-only code example is never told to return a findings report.
   const effects = task.authority.edit

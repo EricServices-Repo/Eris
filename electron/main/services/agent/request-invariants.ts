@@ -5,6 +5,7 @@ import {
 } from '../../../../src/shared/task-contract'
 import { asksForVerification } from '../../../../src/shared/agent-contract'
 import { requestTextForIntent } from '../../../../src/shared/task-interpretation'
+import { INVARIANT_VERSION } from '../../../../src/shared/agent-versions'
 
 /**
  * Deterministic request-level invariants from the 10,000-question review. They
@@ -27,8 +28,11 @@ export interface CapturedRequestShape {
 
 const SHARED_RULES_HEADER = 'Shared rules (every role inherits these)'
 
-/** Bumped when a check is added or changed, so exports say which rules judged them. */
-export const INVARIANT_RULES_VERSION = '2026-10-23.3'
+/**
+ * Bumped (in agent-versions) when a check is added or changed, so exports say which rules
+ * judged them. Re-exported rather than redeclared so the two can never disagree.
+ */
+export const INVARIANT_RULES_VERSION = INVARIANT_VERSION
 
 /*
  * Expectations below are written independently of the routing helpers that build the

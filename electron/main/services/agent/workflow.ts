@@ -1,5 +1,6 @@
 import type { ChatIntent, TurnPlan } from '../../../../src/shared/settings-schema'
 import { asksToImplementChanges } from '../../../../src/shared/agent-contract'
+import { evidenceRequirementFor } from '../../../../src/shared/task-contract'
 import { pathsIn } from '../../../../src/shared/recommendations'
 import { requestTextForIntent } from '../../../../src/shared/task-interpretation'
 
@@ -59,7 +60,12 @@ export function outcomeContractFor(plan: TurnPlan, goal = ''): AgentOutcomeContr
   return {
     intent: plan.intent,
     requiresWorkspaceEvidence:
-      requiresMutation || (plan.requiresTools && !['answer', 'capability'].includes(plan.intent)),
+      requiresMutation ||
+      (plan.requiresTools &&
+        !['answer', 'capability'].includes(plan.intent) &&
+        (!plan.task ||
+          evidenceRequirementFor(plan.task.scope.applicability) === 'required' ||
+          ['run', 'verify'].includes(plan.intent))),
     requiresMutation,
     requiresVerificationAfterMutation: requiresMutation,
     targetFiles

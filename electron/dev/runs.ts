@@ -1,6 +1,11 @@
 import { existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import type { DevQuestion, DevRunHeader, IntentReplyMode } from '../../src/shared/eris-dev'
+import type {
+  DevQuestion,
+  DevRunHeader,
+  IntentReplyMode,
+  DevLiveConfig
+} from '../../src/shared/eris-dev'
 
 /**
  * Durable run state so a long capture can resume. The manifest is written once
@@ -12,6 +17,7 @@ export interface RunManifest {
   header: DevRunHeader
   questions: DevQuestion[]
   config: {
+    live?: DevLiveConfig
     context: number
     mode: 'ask' | 'agent'
     intentReplyMode: IntentReplyMode

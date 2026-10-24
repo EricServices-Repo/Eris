@@ -272,7 +272,9 @@ describe('AG-023/AG-027 prompt protocol matches tools and authority', () => {
       retrieval: '',
       maxInputTokens: 8192
     }).message.content
-    expect(edit).toContain('search_replace')
+    expect(edit).toContain('Read existing files before editing')
+    expect(edit).toContain('"name":"tree"')
+    expect(edit).not.toContain('old_string')
   })
 })
 

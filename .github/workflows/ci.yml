@@ -3,13 +3,42 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [dev, main]
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  eris-dev-windows:
+    name: Eris-Dev Windows installer
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build Eris-Dev Windows x64 installer
+        run: npm run dist:dev-app:win -- --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Upload Eris-Dev Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Eris-Dev-windows-x64
+          path: dist-dev/Eris-Dev-*-win-x64-setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
   check:
     runs-on: macos-latest
     steps:

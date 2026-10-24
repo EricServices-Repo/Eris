@@ -31,7 +31,14 @@ export function debugRunLabel(mode: DebugRunMode, source: DebugResponseSource): 
   return DEBUG_RUN_MODE_LABEL[mode]
 }
 
-export const DebugModelPurposeSchema = z.enum(['agent', 'route', 'intent', 'outcome', 'inline'])
+export const DebugModelPurposeSchema = z.enum([
+  'agent',
+  'route',
+  'intent',
+  'outcome',
+  'inline',
+  'compaction'
+])
 export type DebugModelPurpose = z.infer<typeof DebugModelPurposeSchema>
 
 export const ScriptedModelTurnSchema = z.object({

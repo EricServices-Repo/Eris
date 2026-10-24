@@ -104,3 +104,34 @@ describe('checkpoint through-rewind', () => {
     expect(() => readFileSync(join(ws, 'src', 'b.ts'), 'utf8')).toThrow()
   })
 })
+
+import { EventEmitter } from 'events'
+import { waitForWorkerMessage } from '../electron/main/services/llama-worker-channel'
+describe('native model worker response lifecycle', () => {
+  it('rejects on exit and removes listeners from the original worker', async () => {
+    const worker = new EventEmitter()
+    const waiting = waitForWorkerMessage<{ type: string }>(worker, (m) => m.type === 'loaded')
+    worker.emit('exit', 1)
+    await expect(waiting).rejects.toMatchObject({ code: 'LOCAL_MODEL_WORKER_FAILED' })
+    expect(worker.eventNames()).toEqual([])
+  })
+  it('honors cancellation during load, including a signal already cancelled', async () => {
+    for (const before of [true, false]) {
+      const worker = new EventEmitter()
+      const controller = new AbortController()
+      if (before) controller.abort()
+      const waiting = waitForWorkerMessage(worker, () => true, controller.signal)
+      if (!before) controller.abort()
+      await expect(waiting).rejects.toMatchObject({ name: 'AbortError' })
+      expect(worker.eventNames()).toEqual([])
+    }
+  })
+  it('accepts only the matching message and clears its finite deadline', async () => {
+    const worker = new EventEmitter()
+    const waiting = waitForWorkerMessage<{ id: string }>(worker, (m) => m.id === 'matching')
+    worker.emit('message', { id: 'other' })
+    worker.emit('message', { data: { id: 'matching' } })
+    await expect(waiting).resolves.toEqual({ id: 'matching' })
+    expect(worker.eventNames()).toEqual([])
+  })
+})

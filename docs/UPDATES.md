@@ -27,7 +27,7 @@ Feed config lives in `package.json` → `build.publish` and `resources/app-updat
 Quit and reopen Eris after a local rebuild — macOS `open` focuses an already-running
 instance and will not reload a new `app.asar`.
 
-CI publishes installers to the public `EricServices-Repo/Eris` release.
+CI publishes installers to the public `EricServices-Repo/Eris` release. Branch integration and the release source are governed by [GitHub workflow rules](./GITHUB-WORKFLOW.md): before v1.0.1, release candidates come from `dev`; v1.0.1 is promoted to `main` by pull request.
 
 ### Required release assets (CI already uploads these)
 

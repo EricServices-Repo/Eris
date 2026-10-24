@@ -32,6 +32,7 @@
         "tests/command-approval.test.ts",
         "tests/debug-runs.test.ts",
         "tests/eris-dev-followup.test.ts",
+        "tests/eris-dev-live-review.test.ts",
         "tests/eris-dev.test.ts",
         "tests/eval-sandbox.test.ts",
         "tests/goal-check.test.ts",
@@ -60,7 +61,11 @@
     },
     "dev-app": {
       "description": "Eris-Dev capture app. Gates npm run build:dev-app.",
-      "files": ["tests/eris-dev.test.ts", "tests/eris-dev-followup.test.ts"],
+      "files": [
+        "tests/eris-dev.test.ts",
+        "tests/eris-dev-followup.test.ts",
+        "tests/eris-dev-live-review.test.ts"
+      ],
       "notRun": ["model inference", "answer quality"]
     }
   },
