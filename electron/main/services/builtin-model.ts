@@ -1,3 +1,4 @@
+import { LocalModelWorkerError, waitForWorkerMessage } from './llama-worker-channel'
 import { createHash } from 'crypto'
 import {
   closeSync,
@@ -707,10 +708,14 @@ function ensureLlamaChild(): Promise<void> {
           }
         }
         child.on('message', onReady)
-        child.on('exit', () => {
-          llamaChild = null
-          llamaChildReady = null
-          workerModelPath = null
+        child.on('exit', (code) => {
+          settle(new LocalModelWorkerError(`exited during startup (${String(code)})`))
+          if (llamaChild === child) {
+            llamaChild = null
+            llamaChildReady = null
+            workerModelPath = null
+            activeChatSessions.clear()
+          }
         })
         setTimeout(() => {
           if (llamaChild === child) settle()
@@ -735,41 +740,9 @@ function onceWorkerMessage(
   predicate: (msg: WorkerMsg) => boolean,
   signal?: AbortSignal
 ): Promise<WorkerMsg> {
-  return new Promise((resolve, reject) => {
-    if (!llamaChild) {
-      reject(new Error('No llama worker'))
-      return
-    }
-    const onMsg = (raw: unknown) => {
-      const msg = (
-        raw && typeof raw === 'object' && 'data' in (raw as object)
-          ? (raw as { data: WorkerMsg }).data
-          : raw
-      ) as WorkerMsg
-      if (!predicate(msg)) return
-      cleanup()
-      resolve(msg)
-    }
-    const onAbort = () => {
-      cleanup()
-      const err = new Error('Aborted')
-      err.name = 'AbortError'
-      reject(err)
-    }
-    const cleanup = () => {
-      llamaChild?.off?.('message', onMsg)
-      // electron UtilityProcess uses EventEmitter-style; also try removeListener
-      try {
-        llamaChild?.removeListener?.('message', onMsg)
-      } catch {
-        // ignore
-      }
-      signal?.removeEventListener('abort', onAbort)
-    }
-    llamaChild.on('message', onMsg)
-    if (signal?.aborted) onAbort()
-    else signal?.addEventListener('abort', onAbort)
-  })
+  const child = llamaChild
+  if (!child) return Promise.reject(new LocalModelWorkerError('is unavailable'))
+  return waitForWorkerMessage(child, predicate, signal)
 }
 
 function releaseInProcessSession(sessionKey: string): void {
@@ -964,8 +937,14 @@ async function ensureRuntimeInProcess(
 
 async function ensureWorkerModel(
   modelPath: string,
-  entry: BuiltinModelManifestEntry
+  entry: BuiltinModelManifestEntry,
+  signal?: AbortSignal
 ): Promise<void> {
+  if (signal?.aborted) {
+    const error = new Error('Aborted')
+    error.name = 'AbortError'
+    throw error
+  }
   await ensureLlamaChild()
   if (workerModelPath === modelPath) return
   // Model swap drops all KV sessions in the worker.
@@ -988,6 +967,11 @@ async function ensureWorkerModel(
     contextMin: plan.min,
     contextMax: plan.max
   })
+  const loaded = onceWorkerMessage(
+    (m) => (m.type === 'loaded' || m.type === 'load-error') && m.requestId === requestId,
+    signal
+  )
+  void loaded.catch(() => undefined) // The awaited branch below still reports failures.
   postToWorker({
     type: 'load',
     modelPath,
@@ -997,9 +981,7 @@ async function ensureWorkerModel(
     preferEgpu,
     gpu: 'auto'
   })
-  const result = await onceWorkerMessage(
-    (m) => (m.type === 'loaded' || m.type === 'load-error') && m.requestId === requestId
-  )
+  const result = await loaded
   if (result.type === 'load-error') {
     throw new Error(result.error || 'Failed to load model in worker')
   }
@@ -1230,7 +1212,9 @@ async function* streamBuiltinChatViaWorker(options: {
   jsonSchema?: Record<string, unknown>
   sessionKey?: string
 }): AsyncGenerator<string, void, unknown> {
-  await ensureWorkerModel(options.path, options.entry)
+  await ensureWorkerModel(options.path, options.entry, options.signal)
+  const child = llamaChild
+  if (!child) throw new LocalModelWorkerError('is unavailable')
 
   const id = `chat-${++chatSeq}`
   const queue: string[] = []
@@ -1268,16 +1252,31 @@ async function* streamBuiltinChatViaWorker(options: {
     }
   }
 
-  llamaChild.on('message', onMsg)
+  const onFailure = (detail: unknown) => {
+    if (done) return
+    caughtError = `Local model worker exited or failed (${String(detail ?? 'unknown')})`
+    done = true
+    wake()
+  }
+  child.on('message', onMsg)
+  child.on('exit', onFailure)
+  child.on('error', onFailure)
   const onAbort = () => {
-    postToWorker({ type: 'abort', id })
+    try {
+      child.postMessage({ type: 'abort', id })
+    } catch {
+      /* the worker may already have exited */
+    }
     done = true
     wake()
   }
   options.signal?.addEventListener('abort', onAbort)
+  if (options.signal?.aborted) onAbort()
 
   const split = options.sessionKey ? splitSessionPrompt(options.messages) : null
-  if (options.sessionKey && split) {
+  if (options.signal?.aborted) {
+    // No job is posted after cancellation during loading.
+  } else if (options.sessionKey && split) {
     postToWorker({
       type: 'chat-turn',
       id,
@@ -1316,12 +1315,17 @@ async function* streamBuiltinChatViaWorker(options: {
       err.name = 'AbortError'
       throw err
     }
-    if (caughtError) throw new Error(caughtError)
+    if (caughtError) {
+      if (String(caughtError).startsWith('Local model worker exited'))
+        throw new LocalModelWorkerError(caughtError)
+      throw new Error(caughtError)
+    }
   } finally {
     options.signal?.removeEventListener('abort', onAbort)
     try {
-      llamaChild?.removeListener?.('message', onMsg)
-      llamaChild?.off?.('message', onMsg)
+      child.removeListener?.('message', onMsg)
+      child.removeListener?.('exit', onFailure)
+      child.removeListener?.('error', onFailure)
     } catch {
       // ignore
     }
@@ -1481,8 +1485,15 @@ export async function* streamBuiltinChat(options: {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         const name = err instanceof Error ? err.name : ''
-        if (name === 'AbortError' || /abort/i.test(message)) throw err
-        logWarn('llama utilityProcess failed; falling back in-process', { error: message })
+        if (name === 'AbortError' || /abort/i.test(message) || err instanceof LocalModelWorkerError)
+          throw err
+        // Runtime failures belong to the isolated worker. Loading the same GGUF
+        // in Electron's main process after a native failure can freeze or crash UI.
+        if (!preferInProcess) {
+          await disposeRuntime().catch(() => undefined)
+          throw new LocalModelWorkerError(message)
+        }
+        logWarn('llama utilityProcess unavailable; using compatibility runtime', { error: message })
         // Kill broken worker so the next attempt can retry isolation later
         try {
           await disposeRuntime()

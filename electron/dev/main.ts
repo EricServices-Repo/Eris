@@ -19,6 +19,8 @@ import { createHash, randomUUID } from 'crypto'
 import { execFileSync } from 'child_process'
 import { migrateLegacyIdentity, prepareQuestions } from './questions'
 import { captureQuestion, captureSettings } from './capture'
+import { devModels, connectDevModel, prepareLiveModel, type PreparedLiveModel } from './models'
+import { questionBatches } from './batches'
 import { snapshotPolicy, type SnapshotManifest } from './snapshot'
 import { CaptureSanitizer, REDACTION_LIMITATIONS } from './sanitize'
 import {
@@ -50,6 +52,7 @@ import {
   type DevRunHeader,
   type DevSummary,
   type IntentReplyMode,
+  type DevStartInput,
   CAPTURE_COVERAGE,
   readCaptureRecord
 } from '../../src/shared/eris-dev'
@@ -234,6 +237,7 @@ const COMPARISON_PAGE = 200
 
 /** What the renderer list needs; full bodies stay on disk until a case is opened. */
 function summaryOf(result: DevResult): DevSummary {
+  result = readCaptureRecord(result as unknown as Record<string, unknown>)
   return {
     index: result.index,
     questionId: result.questionId,
@@ -241,6 +245,7 @@ function summaryOf(result: DevResult): DevSummary {
     question: result.question,
     status: result.status,
     stages: result.stages,
+    completion: result.completion,
     agent: result.agent,
     intent: result.intent,
     artifact: result.artifact,
@@ -297,7 +302,8 @@ async function run(
   manifest: RunManifest,
   startIndex: number,
   workspace: string | null,
-  controller: AbortController
+  controller: AbortController,
+  live?: PreparedLiveModel
 ) {
   const { questions, config } = manifest
   completed = startIndex
@@ -309,34 +315,60 @@ async function run(
   }
   writeProgress(dir, progress)
   try {
-    for (let index = startIndex; index < questions.length && !controller.signal.aborted; index++) {
-      const question = questions[index]!
-      const result = await captureQuestion(
-        index,
-        question.text,
-        workspace,
-        config.context,
-        config.mode,
-        controller.signal,
-        { question, intentReplyMode: config.intentReplyMode }
-      )
-      // A question stopped mid-capture is not completed evidence. Keep the attempt
-      // beside the case and leave the case itself missing, so resume runs it again.
-      if (result.status === 'cancelled') {
-        const attempt = preserveAttempt(dir, index, result)
-        progress = {
-          ...progress,
-          interruptedAttempts: [...(progress.interruptedAttempts ?? []), attempt]
+    for await (const batch of questionBatches(questions.length, startIndex, controller.signal)) {
+      emit({ running: true, completed, total: questions.length, batch })
+      const batchResults: DevSummary[] = []
+      for (const index of batch.indices) {
+        if (controller.signal.aborted) break
+        const question = questions[index]!
+        // Every live question gets a fresh fixture, so one answer cannot contaminate the next.
+        const caseWorkspace = live ? (await prepareWorkspace()).workspace : workspace
+        let result: DevResult
+        try {
+          result = await captureQuestion(
+            index,
+            question.text,
+            caseWorkspace,
+            config.context,
+            config.mode,
+            controller.signal,
+            {
+              question,
+              intentReplyMode: config.intentReplyMode,
+              live,
+              timeoutMs: config.live?.timeoutMs,
+              maxCalls: config.live?.maxCalls
+            }
+          )
+        } finally {
+          if (live && caseWorkspace)
+            await rm(caseWorkspace, { recursive: true, force: true }).catch(() => {})
         }
-        break
+        // A question stopped mid-capture is not completed evidence. Keep the attempt
+        // beside the case and leave the case itself missing, so resume runs it again.
+        if (result.status === 'cancelled') {
+          const attempt = preserveAttempt(dir, index, result)
+          progress = {
+            ...progress,
+            interruptedAttempts: [...(progress.interruptedAttempts ?? []), attempt]
+          }
+          break
+        }
+        batchResults.push(summaryOf(result))
+        writeCaseRecord(dir, index, result)
+        await appendFile(join(dir, 'requests.jsonl'), JSON.stringify(result) + '\n')
+        completed++
+        progress = { ...progress, completed, updatedAt: new Date().toISOString() }
+        writeProgress(dir, progress)
+        emit({ running: true, completed, total: questions.length, result: summaryOf(result) })
+        await new Promise((resolve) => setTimeout(resolve, 0))
       }
-      writeCaseRecord(dir, index, result)
-      await appendFile(join(dir, 'requests.jsonl'), JSON.stringify(result) + '\n')
-      completed++
-      progress = { ...progress, completed, updatedAt: new Date().toISOString() }
-      writeProgress(dir, progress)
-      emit({ running: true, completed, total: questions.length, result: summaryOf(result) })
-      await new Promise((resolve) => setTimeout(resolve, 0))
+      if (live) {
+        const report = { ...batch, completedAt: new Date().toISOString(), results: batchResults }
+        const path = join(dir, `batch-${batch.number}.json`)
+        await writeFile(`${path}.tmp`, JSON.stringify(report))
+        await rename(`${path}.tmp`, path)
+      }
     }
     progress = {
       ...progress,
@@ -358,7 +390,9 @@ async function* eachRunRecord(indices?: number[]): AsyncGenerator<DevResult> {
   const wanted = indices ?? Array.from({ length: completed }, (_, index) => index)
   for (const index of wanted) {
     if (!Number.isInteger(index) || index < 0 || index >= completed) continue
-    yield JSON.parse(await readFile(join(runDirectory!, `${index}.json`), 'utf8')) as DevResult
+    yield readCaptureRecord(
+      JSON.parse(await readFile(join(runDirectory!, `${index}.json`), 'utf8'))
+    )
   }
 }
 
@@ -425,6 +459,17 @@ let lastComparison: (CaptureComparison & { path: string }) | null = null
 app.whenReady().then(() => {
   // A run still marked running belongs to a process that did not finish it.
   markInterruptedRuns(capturesDir())
+  ipcMain.handle('dev:models', () => devModels())
+  ipcMain.handle('dev:connect', (_event, input: { baseUrl: string; apiKey?: string }) => {
+    if (active) throw new Error('Stop the current run before changing models.')
+    if (
+      typeof input?.baseUrl !== 'string' ||
+      input.baseUrl.length > 2048 ||
+      (input.apiKey !== undefined && typeof input.apiKey !== 'string')
+    )
+      throw new Error('Invalid endpoint settings.')
+    return connectDevModel(input)
+  })
   ipcMain.handle('dev:import', async () => {
     if (active) throw new Error('Stop the current run before importing.')
     const selected = await dialog.showOpenDialog({
@@ -454,55 +499,90 @@ app.whenReady().then(() => {
     projectKind = 'project'
     return project
   })
-  ipcMain.handle(
-    'dev:start',
-    async (_event, input: { context?: number; mode?: string; intentReplyMode?: string }) => {
-      if (active || !corpus?.questions.length)
-        throw new Error('Import questions and finish the current run first.')
-      if (
-        ![4096, 8192, 16384, 32768].includes(input?.context ?? 0) ||
-        !['ask', 'agent'].includes(input?.mode ?? '') ||
-        !['fallback', 'malformed', 'timeout'].includes(input?.intentReplyMode ?? 'fallback')
-      )
-        throw new Error('Invalid run settings.')
-      const controller = new AbortController()
-      active = controller
-      let workspace: string | null = null
-      // The selected run, its directory and count change only once this run exists,
-      // so a failed preparation leaves the previously open run intact.
-      const runId = randomUUID()
-      const dir = join(capturesDir(), runId)
-      try {
-        await mkdir(dir, { recursive: true })
-        const prepared = await prepareWorkspace()
-        workspace = prepared.workspace
-        const config: RunManifest['config'] = {
-          context: input.context!,
-          mode: input.mode as 'ask' | 'agent',
-          intentReplyMode: (input.intentReplyMode ?? 'fallback') as IntentReplyMode,
-          projectKind,
-          project
-        }
-        const manifest: RunManifest = {
-          runId,
-          header: headerFor(config.context, config.mode, config.intentReplyMode, prepared.fixture),
-          questions: corpus.questions,
-          config
-        }
-        writeManifest(dir, manifest)
-        await writeFile(join(dir, 'requests.jsonl'), JSON.stringify(manifest.header) + '\n')
-        runDirectory = dir
-        completed = 0
-        emit({ running: true, completed, total: corpus.questions.length })
-        void run(dir, manifest, 0, workspace, controller)
-      } catch (error) {
-        if (workspace) await rm(workspace, { recursive: true, force: true }).catch(() => {})
-        await rm(dir, { recursive: true, force: true }).catch(() => {})
-        active = null
-        throw error
+  ipcMain.handle('dev:start', async (_event, input: DevStartInput) => {
+    if (active || !corpus?.questions.length)
+      throw new Error('Import questions and finish the current run first.')
+    if (
+      ![4096, 8192, 16384, 32768].includes(input?.context ?? 0) ||
+      !['ask', 'agent'].includes(input?.mode ?? '') ||
+      !['fallback', 'malformed', 'timeout'].includes(input?.intentReplyMode ?? 'fallback')
+    )
+      throw new Error('Invalid run settings.')
+    if (
+      input.live &&
+      (typeof input.live.model !== 'string' ||
+        input.live.batchSize !== 10 ||
+        !Number.isInteger(input.live.timeoutMs) ||
+        input.live.timeoutMs < 30000 ||
+        input.live.timeoutMs > 600000 ||
+        !Number.isInteger(input.live.maxCalls) ||
+        input.live.maxCalls < 1 ||
+        input.live.maxCalls > 20)
+    )
+      throw new Error('Invalid live model limits.')
+    const controller = new AbortController()
+    active = controller
+    let workspace: string | null = null
+    // The selected run, its directory and count change only once this run exists,
+    // so a failed preparation leaves the previously open run intact.
+    const runId = randomUUID()
+    const dir = join(capturesDir(), runId)
+    try {
+      await mkdir(dir, { recursive: true })
+      const live = input.live ? await prepareLiveModel(input.live.model, input.context) : undefined
+      const prepared = await prepareWorkspace()
+      workspace = prepared.workspace
+      const config: RunManifest['config'] = {
+        ...(input.live
+          ? {
+              live: {
+                model: input.live.model,
+                batchSize: 10 as const,
+                timeoutMs: input.live.timeoutMs,
+                maxCalls: input.live.maxCalls
+              }
+            }
+          : {}),
+        context: input.context!,
+        mode: input.mode as 'ask' | 'agent',
+        intentReplyMode: (input.intentReplyMode ?? 'fallback') as IntentReplyMode,
+        projectKind,
+        project
       }
+      const manifest: RunManifest = {
+        runId,
+        header: headerFor(config.context, config.mode, config.intentReplyMode, prepared.fixture),
+        questions: corpus.questions,
+        config
+      }
+      if (live) {
+        manifest.header.settingsDigest = live.digest
+        manifest.header.responses = 'live'
+        manifest.header.live = config.live
+        manifest.header.coverage = {
+          exercised: [...CAPTURE_COVERAGE.exercised, 'model inference', 'sandbox workspace tools'],
+          notExercised: [
+            'answer quality',
+            'host command execution',
+            'external tool effects',
+            'agent coordination',
+            'desktop chat UI delivery'
+          ]
+        }
+      }
+      writeManifest(dir, manifest)
+      await writeFile(join(dir, 'requests.jsonl'), JSON.stringify(manifest.header) + '\n')
+      runDirectory = dir
+      completed = 0
+      emit({ running: true, completed, total: corpus.questions.length })
+      void run(dir, manifest, 0, workspace, controller, live)
+    } catch (error) {
+      if (workspace) await rm(workspace, { recursive: true, force: true }).catch(() => {})
+      await rm(dir, { recursive: true, force: true }).catch(() => {})
+      active = null
+      throw error
     }
-  )
+  })
   ipcMain.handle('dev:runs', () => listRuns(capturesDir()))
   ipcMain.handle('dev:resume', async (_event, runId: unknown) => {
     if (active) throw new Error('Stop the current run first.')
@@ -520,6 +600,9 @@ app.whenReady().then(() => {
       const progress = readProgress(dir)
       if (!manifest || !progress) throw new Error('This run has no resumable manifest.')
       if (progress.state === 'completed') throw new Error('This run already completed.')
+      const live = manifest.config.live
+        ? await prepareLiveModel(manifest.config.live.model, manifest.config.context)
+        : undefined
       projectKind = manifest.config.projectKind
       project = manifest.config.project
       const prepared = await prepareWorkspace()
@@ -527,7 +610,7 @@ app.whenReady().then(() => {
       if (controller.signal.aborted) throw new Error('Resume cancelled during preparation.')
       // Resuming with other settings, versions, harness or source would mix two runs.
       const conflicts = resumeConflicts(manifest.header, {
-        settingsDigest: settingsDigest(manifest.config.context),
+        settingsDigest: live?.digest ?? settingsDigest(manifest.config.context),
         routing: ROUTING_VERSION,
         prompt: PROMPT_VERSION,
         fixtureDigest: prepared.fixture.digest,
@@ -564,7 +647,7 @@ app.whenReady().then(() => {
       }
       runDirectory = dir
       started = true
-      void run(dir, manifest, next, workspace, controller)
+      void run(dir, manifest, next, workspace, controller, live)
       return { corpus, next, results: done, invalid }
     } finally {
       // Until run() takes the workspace and the lock, this handler owns both.
@@ -614,7 +697,9 @@ app.whenReady().then(() => {
   ipcMain.handle('dev:result', async (_event, index: number): Promise<DevResult> => {
     if (!Number.isInteger(index) || index < 0 || index >= completed || !runDirectory)
       throw new Error('Unknown capture.')
-    return JSON.parse(await readFile(join(runDirectory, `${index}.json`), 'utf8'))
+    return readCaptureRecord(
+      JSON.parse(await readFile(join(runDirectory, `${index}.json`), 'utf8'))
+    )
   })
   ipcMain.handle(
     'dev:export',

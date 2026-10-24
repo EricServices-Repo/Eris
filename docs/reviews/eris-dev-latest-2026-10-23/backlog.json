@@ -1,0 +1,439 @@
+{
+  "schema": "eris-agent-review-backlog-v1",
+  "sourceSha256": "1bb3a86eb400c464b9c9da49db54d1cbf08a38cfb1cf89d368e72d86c109c7ca",
+  "items": [
+    {
+      "id": "LR-001",
+      "title": "Compile generic tasks without mandatory workspace grounding",
+      "priority": "P1",
+      "evidenceClass": "Confirmed contract contradiction",
+      "evidence": "837 records are marked generic but acceptance requires an answer or plan grounded in inspected files. Q1 (index 0) and Q28 (index 27) also explicitly prohibit citing the open project as evidence.",
+      "paths": [
+        "electron/main/services/chat-router.ts",
+        "electron/main/services/agent/prompts.ts",
+        "electron/main/services/agent/context-compiler.ts"
+      ],
+      "implementation": "Make executionPlanFor, intentPlaybook and taskProtocol consume scope applicability and artifact, rather than intent alone. A generic design or code example needs conversation evidence and explicit assumptions, not a mandatory source inspection. Remove the contradictory acceptance criterion at construction time; adding another overriding sentence leaves the contradiction in place. Preserve source inspection for actual repository questions.",
+      "acceptance": "At captureQuestion, Q1 and Q28 must contain no mandatory file-grounding criterion or instruction. A paired \u201cExplain the implementation in src/auth.ts\u201d must still require inspected-source evidence. Assert the compiled request as well as the internal task."
+    },
+    {
+      "id": "LR-002",
+      "title": "Serialize applicability into the authoritative model contract",
+      "priority": "P1",
+      "evidenceClass": "Confirmed information loss",
+      "evidence": "All 10,000 model-facing scope objects omit applicability although the internal task records generic or unverified. They present project \u201c.\u201d and state \u201cresolved\u201d.",
+      "paths": [
+        "electron/main/services/agent/context-compiler.ts",
+        "src/shared/task-contract.ts"
+      ],
+      "implementation": "Extend modelFacingTask.scope with applicability and an evidence requirement enum. Keep filesystem resolution distinct from semantic relevance. For a generic task, emit a nullable evidence project or a clear non-evidence binding while retaining the internal root for safety. Do not drop named-target constraints. Version the model-facing contract and compare it independently of prose.",
+      "acceptance": "Round-trip fixtures for generic, unverified, selected-project and named-target preserve applicability. A resolved directory must never by itself imply task relevance. Preserve project roots internally for any permitted tool call."
+    },
+    {
+      "id": "LR-003",
+      "title": "Recognize practical-example requests without a production verb",
+      "priority": "P1",
+      "evidenceClass": "Confirmed artifact omission",
+      "evidence": "243 requests starting \u201cI need a practical example of\u201d are explanations; Q14 asks for database connection pooling in Python and receives only Answer the question directly.",
+      "paths": [
+        "src/shared/agent-contract.ts",
+        "src/shared/task-interpretation.ts"
+      ],
+      "implementation": "asksForCodeExample currently requires both a producing verb and an artifact noun. Add a request-form parser that recognizes need/want/request plus an example noun phrase. Extract deliverable independently of mutation authority. An example in Python remains chat code unless an explicit workspace destination exists. Keep quoted examples as operands rather than imperative instructions.",
+      "acceptance": "Every adjudicated practical-example case gets code-example and an implementation obligation. Contrasts \u201cExplain why this example fails\u201d and \u201cReview this example\u201d remain explanation/review. No new write authority is granted."
+    },
+    {
+      "id": "LR-004",
+      "title": "Recognize writing behavior without an artifact keyword",
+      "priority": "P1",
+      "evidenceClass": "Confirmed artifact omission",
+      "evidence": "35 \u201cCan you write \u2026 so the happy path is obvious and errors are explicit?\u201d cases become explanations. Q6 asks for per-user rate limiting.",
+      "paths": [
+        "src/shared/agent-contract.ts",
+        "electron/main/services/task-resolver.ts",
+        "src/shared/task-interpretation.ts"
+      ],
+      "implementation": "The verb write can request code without containing example/function/module. Bind the verb to the behavior clause and quality constraints. Retain prose-writing negatives such as \u201cwrite a summary\u201d. Resolve destination separately: a generic implementation belongs in chat; an explicit file destination may authorize a patch under the existing permission ceiling. Audit modal-imperative bypass so it does not freeze an incomplete artifact interpretation.",
+      "acceptance": "Q6 receives code-example, explicit-error handling and clarity obligations. \u201cWrite a summary of rate limiting\u201d stays prose. \u201cWrite the limiter into src/limit.ts\u201d retains patch behavior in Agent mode."
+    },
+    {
+      "id": "LR-005",
+      "title": "Prevent lookup wording from turning examples into repository exploration",
+      "priority": "P1",
+      "evidenceClass": "Confirmed route/contract mismatch",
+      "evidence": "320 code-example requests route explore; Q28 and Q43 show the phrase \u201cShow me\u201d and get read tools plus file-grounded acceptance.",
+      "paths": [
+        "electron/main/services/chat-router.ts",
+        "src/shared/agent-contract.ts",
+        "electron/main/services/task-resolver.ts"
+      ],
+      "implementation": "Evaluate object and destination before the lookup-wording rule. \u201cShow an example of X\u201d is a generation request; \u201cshow where X is implemented\u201d is repository exploration. Keep the artifact authoritative when a fallback retains the heuristic. Route a generic example to an answer-capable worker with a code contract and no mandatory local inspection.",
+      "acceptance": "Boundary tests distinguish both forms and assert tool policy, artifact and final prompt. Label all 320 candidates before imposing an exact intent-count gate; generic example requests must not require unrelated project evidence."
+    },
+    {
+      "id": "LR-006",
+      "title": "Replace edit-to-plan as the universal non-mutating fallback",
+      "priority": "P1",
+      "evidenceClass": "Confirmed fallback behavior; semantic adjudication required",
+      "evidence": "All 2,811 plan outcomes come from edit-to-plan. This includes 277 \u201cExplain how to implement \u2026\u201d questions, such as Q5 about rotating secrets.",
+      "paths": [
+        "electron/main/services/task-resolver.ts",
+        "electron/main/services/chat-router.ts",
+        "src/shared/task-interpretation.ts"
+      ],
+      "implementation": "conservativeFallback should remove unauthorized effects while preserving the requested deliverable. Compute a provisional artifact before choosing a safe fallback: explanation\u2192answer, code-example\u2192answer, ordered steps\u2192plan, design\u2192answer or scope-aware planner. Explicit edit intent with unresolved authority should produce a recorded ambiguity, not pretend that the user asked for a plan. Avoid weakening effect guards.",
+      "acceptance": "Q5 has an explanation contract; explicit \u201cgive me a migration plan\u201d remains plan. An ambiguous edit request cannot acquire write/run authority after timeout or malformed intent JSON. Test malformed, timeout and low-confidence independently."
+    },
+    {
+      "id": "LR-007",
+      "title": "Extract architecture intent from structural phrasing",
+      "priority": "P2",
+      "evidenceClass": "Semantic review candidate",
+      "evidence": "295 \u201cHow should I structure the code for \u2026\u201d requests become explanations. Q13 asks about logout across devices using Express and TypeScript.",
+      "paths": [
+        "src/shared/task-interpretation.ts"
+      ],
+      "implementation": "asksForDesign matches \u201chow would you structure\u201d but misses common equivalent forms. Represent architecture deliverables with interfaces, state ownership, dependencies and tradeoffs. Add paraphrases through a labeled fixture set rather than blindly matching every use of structure. Preserve a concise explanation when the user only asks about a syntax structure.",
+      "acceptance": "Reviewed structural-design cases retain design obligations across would/should/can formulations. Include negative fixtures for a language data structure and an explanation of existing source. Report precision and recall on held-out wording."
+    },
+    {
+      "id": "LR-008",
+      "title": "Preserve requested output multiplicity",
+      "priority": "P1",
+      "evidenceClass": "Confirmed obligation under-specification",
+      "evidence": "40 questions request both a simple and a more robust version. Each has one generic implementation obligation; Q43 is error boundaries with retry. The original user text survives, but structured completeness checks cannot enforce both versions.",
+      "paths": [
+        "src/shared/task-interpretation.ts",
+        "src/shared/task-contract.ts"
+      ],
+      "implementation": "Add artifact components with stable IDs, roles and cardinality: simple implementation, robust implementation, comparison/selection guidance where requested. Do not represent multiple deliverables as a single free-text sentence. Carry each component through handoffs and completion reporting. This generalizes to alternatives, migration stages and backend/frontend pairs.",
+      "acceptance": "A response containing only one version leaves the second pending. A response with two headings but identical/incomplete bodies does not automatically satisfy both. Ordering changes preserve component identity."
+    },
+    {
+      "id": "LR-009",
+      "title": "Retain testing requirements in plans and design replies",
+      "priority": "P1",
+      "evidenceClass": "Confirmed obligation under-specification",
+      "evidence": "249 questions containing \u201cwith good test coverage\u201d have no tests obligation. Q42 requests a transactional-email approach with good test coverage. The broader 532 test-word matches include test-data topics and are not a defect count.",
+      "paths": [
+        "src/shared/task-interpretation.ts"
+      ],
+      "implementation": "requestObligations adds tests only for code-example and patch. Introduce testing-strategy obligations for plan/design/explanation when coverage is requested; actual test-code obligations remain appropriate to code generation. Separate discussing coverage, writing tests, and executing tests. Keep \u201ctest data\u201d as a domain noun rather than an execution request.",
+      "acceptance": "Q42 must address test boundaries, fixtures and failure modes without claiming execution. \u201cSeed realistic test data\u201d alone must not require writing or running a test suite. Explicit no-run constraints survive."
+    },
+    {
+      "id": "LR-010",
+      "title": "Record behavior and quality constraints as evidence-linked obligations",
+      "priority": "P2",
+      "evidenceClass": "Observed weak obligation representation",
+      "evidence": "Q6 requests explicit errors; Q43 requests robust and simple variants. Most obligations contain only an artifact template, leaving detailed requirements solely in raw user text.",
+      "paths": [
+        "src/shared/task-interpretation.ts",
+        "src/shared/task-contract.ts"
+      ],
+      "implementation": "Introduce source spans and requirement kinds for behavior, failure handling, performance, compatibility and presentation. Preserve the exact user phrase beside normalized meaning and extraction confidence. Never invent requirements from a topic name. Bounded extraction should retain an unparsed-requirements marker instead of silently discarding excess clauses.",
+      "acceptance": "A lossless trace maps each explicit constraint to an obligation or a deliberate non-requirement classification. Counterexamples cover quoted instructions, negated effects and merely descriptive requirements."
+    },
+    {
+      "id": "LR-011",
+      "title": "Remove unrelated workspace mismatch guidance from generic answers",
+      "priority": "P2",
+      "evidenceClass": "Confirmed irrelevant-context injection",
+      "evidence": "3,444 generic tasks have stackFit=mismatch against the sample JavaScript fixture. The fixture has only two files and is unrelated to most questions.",
+      "paths": [
+        "electron/main/services/task-intake.ts",
+        "src/shared/task-interpretation.ts",
+        "electron/main/services/agent/prompts.ts"
+      ],
+      "implementation": "When applicability is generic, use the requested language/framework directly; retain project stack only in diagnostics if needed. Do not tell a Python example request that the unrelated open project uses JavaScript. For actual workspace patches, retain mismatch analysis and the requirement to resolve the target.",
+      "acceptance": "The same generic Python request compiled with unrelated JavaScript and PHP fixtures has the same semantic contract and equivalent prompt after volatile fields are removed. Actual project migration requests continue to expose stack mismatch."
+    },
+    {
+      "id": "LR-012",
+      "title": "Determine scope relevance independently of artifact category",
+      "priority": "P1",
+      "evidenceClass": "Confirmed architectural coupling",
+      "evidence": "scopeApplicability treats only code-example/design/explanation as generic candidates. The export contains 2,629 unverified scopes; plan selection can therefore force a generic request into project-oriented handling.",
+      "paths": [
+        "electron/main/services/task-intake.ts"
+      ],
+      "implementation": "Compute applicability from references, selected context, supplied attachments and destination before plan/answer worker selection. Model explicit, inferred and absent workspace binding. Distinguish a hypothetical \u201cexisting Next.js project\u201d from a positively identified current project; preserve ambiguity rather than silently binding the sample fixture.",
+      "acceptance": "Equivalent design and plan phrasing does not change scope without evidence. Paired tests cover generic architecture, selected-file questions, named sibling projects and a hypothetical project of a different stack."
+    },
+    {
+      "id": "LR-013",
+      "title": "Make generic tool exposure capability-driven",
+      "priority": "P2",
+      "evidenceClass": "Confirmed avoidable exposure; latency benefit unmeasured",
+      "evidence": "837 generic requests expose 11 workspace tools; 3,131 total requests carry that same tool set. Each tool-bearing request has 3,331 serialized schema characters in this capture.",
+      "paths": [
+        "electron/main/services/tool-registry.ts",
+        "electron/main/services/agent/loop.ts"
+      ],
+      "implementation": "Derive required capabilities from scope and evidence needs. Generic code generation should not need tree, git_status or git_diff. Permit targeted public documentation retrieval when appropriate instead of treating all non-mutating tasks as workspace readers. Tool-policy permission is an upper bound; relevance selects the subset. Do not grant deferred tools beyond authority.",
+      "acceptance": "A generic code example has no local-file tools unless the user references local evidence. A repository explanation retains needed reads. Measure real provider prefill and tool-call counts before claiming a speedup."
+    },
+    {
+      "id": "LR-014",
+      "title": "Separate read permission from a findings response format",
+      "priority": "P1",
+      "evidenceClass": "Confirmed prompt overreach",
+      "evidence": "taskProtocol emits \u201cReturn findings with file paths\u201d whenever tools exist and edit is false, including generic code examples and designs.",
+      "paths": [
+        "electron/main/services/agent/context-compiler.ts",
+        "electron/main/services/agent/prompts.ts"
+      ],
+      "implementation": "Make the effects paragraph describe permissions only. Render output requirements from artifactResponseContract. Review tasks may require findings; an example requires code; a plan requires steps. Keep observed-source citations conditional on actual evidence and project relevance. Avoid fixing this by appending a second format instruction.",
+      "acceptance": "Compile all intent/artifact pairs in the supported matrix. Read-only code-example and design prompts must not require a review report. Review and verification formats continue to demand evidence for claims."
+    },
+    {
+      "id": "LR-015",
+      "title": "Deduplicate semantic instructions across role, plan and context blocks",
+      "priority": "P2",
+      "evidenceClass": "Observed prompt repetition",
+      "evidence": "Q1 repeats planner duties in role guidance, PLAN PLAYBOOK, AGENT CONTRACT and PLAN STEPS. The invariant detects duplicate shared-rule headers, not semantic repetition. Median system text is 3,661 characters.",
+      "paths": [
+        "electron/main/services/agent/prompts.ts",
+        "electron/main/services/chat-prompt.ts",
+        "src/shared/agent-contract.ts"
+      ],
+      "implementation": "Build typed prompt blocks with identity, purpose and applicability; render role identity once, workflow once and acceptance once. Avoid exact-string subtraction as the primary deduplication mechanism. Role descriptions should not reintroduce obligations already omitted by task scope. Track block contribution to request size.",
+      "acceptance": "Snapshot block IDs and generated clauses. Each task has one workflow and one response contract; instructions required by authority remain present at 4k and 8k contexts. Measure size reductions without setting an arbitrary quality-blind compression target."
+    },
+    {
+      "id": "LR-016",
+      "title": "Route by deliverable complexity rather than message length",
+      "priority": "P2",
+      "evidenceClass": "Observed suspect assignment",
+      "evidence": "792 cases use Fast. Q14, a Python connection-pooling example misclassified as explanation, uses Fast; its role contract describes one to three sentences. No correctly classified code-example case uses Fast in this export.",
+      "paths": [
+        "src/shared/agent-contract.ts",
+        "electron/main/services/chat-router.ts"
+      ],
+      "implementation": "Fix artifact recognition first, then assign workers using deliverable complexity and evidence requirements. Short text can request concurrency, security or multi-file examples. A fast worker must honor the same artifact contract; response brevity may not suppress required code or tests. Keep low-cost handling for actual lookup questions.",
+      "acceptance": "Short practical-example requests cannot receive a sentence-only completion contract. Short factual lookups still use Fast. Compare worker assignments and artifact completeness on held-out concise prompts."
+    },
+    {
+      "id": "LR-017",
+      "title": "Extend invariants to independently detect scope and artifact loss",
+      "priority": "P1",
+      "evidenceClass": "Confirmed detection gap",
+      "evidence": "Every record reports zero defect/review findings, including all 837 conflicting generic requests. Current checks focus on authority, a few artifact combinations and textual markers.",
+      "paths": [
+        "electron/main/services/agent/request-invariants.ts",
+        "tests/agent-corpus-boundary.test.ts"
+      ],
+      "implementation": "Add generic-requires-project-evidence, explicit-example-without-implementation and output-cardinality-loss checks. Use independently authored fixtures or expected labels rather than the same helper that creates the contract. Keep deterministic contradictions as defects and semantic uncertainty as review candidates. Export evidence snippets and rule versions.",
+      "acceptance": "Known failing captures trigger the new invariant IDs. Correct paired captures do not. A mutation test removing a required artifact obligation must fail qualification even if all existing routing helpers agree."
+    },
+    {
+      "id": "LR-018",
+      "title": "Add independently labeled gold expectations",
+      "priority": "P1",
+      "evidenceClass": "Coverage gap",
+      "evidence": "The corpus is 10,000 unique questions with zero actual answers. Distribution and no-findings assertions cannot establish whether the requested deliverable was preserved.",
+      "paths": [
+        "tests/agent-corpus-boundary.test.ts",
+        "tests/qualification-profiles.json",
+        "src/shared/eris-dev.ts"
+      ],
+      "implementation": "Create a separate annotation file keyed by content ID with expected artifact set, destination, permission ceiling, evidence scope and mandatory obligations. Allow multiple acceptable intents when the final behavior is equivalent. Track adjudication, rationale and disagreement. Prioritize the confirmed cohorts, then stratify the rest; do not auto-label using production routing.",
+      "acceptance": "Release reports distinguish labeled from unlabeled coverage and show per-class confusion matrices. No overall semantic accuracy is reported for unlabeled records. All high-risk authority cases have reviewed expectations."
+    },
+    {
+      "id": "LR-019",
+      "title": "Split paraphrase families across development and held-out suites",
+      "priority": "P1",
+      "evidenceClass": "Evaluation design gap",
+      "evidence": "The data is lexically unique but repeatedly uses templates such as \u201cI need a practical example of\u201d and \u201cHow should I structure the code for\u201d. Unique text count is not independent scenario coverage.",
+      "paths": [
+        "tests/fixtures/10000-natural-diverse-coding-questions.txt",
+        "tests/qualification-profiles.json"
+      ],
+      "implementation": "Assign template-family and topic IDs; split by both family and topic when building holdouts. Include naturally authored follow-ups, typos and mixed instructions. Reserve a hidden evaluation subset from route-rule development. Report cluster-weighted results so hundreds of near-identical examples do not dominate the score.",
+      "acceptance": "New rule changes pass a holdout with unseen phrasing. Reports show topic, family and permission coverage. No production helper generates the expected holdout labels."
+    },
+    {
+      "id": "LR-020",
+      "title": "Exercise resolver outcomes beyond forced zero confidence",
+      "priority": "P1",
+      "evidenceClass": "Coverage gap",
+      "evidence": "9,061 records use fallback and 939 bypass. The header explicitly selects intentReplyMode=fallback; this is not a measured 90.61% live classifier failure rate.",
+      "paths": [
+        "electron/dev/capture.ts",
+        "electron/dev/questions.ts",
+        "electron/main/services/task-resolver.ts"
+      ],
+      "implementation": "Add variants for valid high confidence, below-threshold, malformed JSON, timeout, abort, forbidden edit escalation and semantically wrong but confident replies. Keep expected effects independently specified. Record the scripted reply, accepted/rejected decision and reason. A validated live resolver sample can be a separate budgeted suite.",
+      "acceptance": "Every resolution branch is exercised and counted. Confident unsafe replies cannot override explicit constraints. Reports never mix simulated confidence distributions with observed provider confidence."
+    },
+    {
+      "id": "LR-021",
+      "title": "Add an opt-in bounded real-answer evaluation stage",
+      "priority": "P1",
+      "evidenceClass": "Coverage gap",
+      "evidence": "All 10,000 response values are null; inference is not-run and answerQuality is not-evaluated. No statement about generated-answer correctness can be made.",
+      "paths": [
+        "electron/dev/capture.ts",
+        "src/shared/debug-runs.ts",
+        "electron/main/services/model-transport.ts"
+      ],
+      "implementation": "Keep request capture as a cheap tier. Add a separately selected live tier using configured model references, bounded cases/tokens/time/concurrency and explicit cancellation. Persist actual messages, provider metadata, first-token latency, completion and errors. Sandbox execution separately from inference. Begin with a stratified labeled subset rather than sending all 10,000 blindly.",
+      "acceptance": "A run manifest states model revision and budget, distinguishes skipped from failed, and resumes without recharging completed cases. Stopping prevents new dispatches and drains or aborts active requests. No simulated answer is labeled live."
+    },
+    {
+      "id": "LR-022",
+      "title": "Use executable code-quality fixtures for representative topics",
+      "priority": "P1",
+      "evidenceClass": "Coverage gap, previously acknowledged",
+      "evidence": "This capture has no responses. Existing implementation-status documentation also notes token-level grading cannot reject incorrect code that uses expected keywords.",
+      "paths": [
+        "src/shared/code-grading.ts",
+        "src/shared/topic-rubrics.ts",
+        "src/shared/debug-runs.ts"
+      ],
+      "implementation": "For selected languages/topics, extract code into isolated fixtures and compile/run behavioral tests under resource and network limits. Use topic-specific failure cases: limiter boundaries, duplicate idempotency keys, pool exhaustion, cancellation and retries. Separate compilation, behavioral correctness, security expectations and presentation. Treat keyword evidence only as diagnostic.",
+      "acceptance": "An intentionally incorrect implementation with all expected keywords fails. A correct idiomatic alternate passes. Environment/toolchain failure is evaluation-invalid, not a model failure; test execution cannot access production secrets or the user workspace."
+    },
+    {
+      "id": "LR-023",
+      "title": "Test review-to-implementation conversations end to end",
+      "priority": "P1",
+      "evidenceClass": "Coverage gap central to prior user failures",
+      "evidence": "The header excludes tool execution, workspace changes and agent coordination. These single-question captures cannot reproduce \u201crecommend changes\u201d followed by \u201cadd those changes\u201d.",
+      "paths": [
+        "electron/main/services/chat-turn.ts",
+        "electron/main/services/task-intake.ts",
+        "src/shared/recommendations.ts",
+        "src/shared/debug-runs.ts"
+      ],
+      "implementation": "Create multi-turn scenarios with a reviewer answer, selection of recommendations, explicit implementation follow-up and a verified workspace diff. Include subset selection, negation, cancellation, model switch and conflicting earlier role guidance. Assert that current authorization determines tools while prior assistant content supplies references only.",
+      "acceptance": "\u201cAdd those improvements\u201d creates the intended patch with all selected obligations accounted for. \u201cExplain those improvements\u201d remains read-only. Reviewer-to-coder handoff cannot retain \u201cdo not edit\u201d after a valid edit contract is created, or inherit ungranted effects."
+    },
+    {
+      "id": "LR-024",
+      "title": "Verify actual child-agent lifecycle and permission ceilings",
+      "priority": "P1",
+      "evidenceClass": "Coverage gap",
+      "evidence": "The export explicitly does not exercise agent coordination; delegation tools are blocked by the captured read policy. Their absence here does not prove a delegation defect.",
+      "paths": [
+        "electron/main/services/agent/loop.ts",
+        "src/shared/background-agents.ts",
+        "src/shared/agent-orchestration.ts"
+      ],
+      "implementation": "Add coordinator scenarios that create real child tasks in an isolated workspace, transmit immutable task revision and permission ceilings, await completion, handle failure/cancellation and reconcile evidence. Require structured result references and changed-file ownership. Test sequential and background paths separately, including an absent recovery agent.",
+      "acceptance": "A queued child is never marked completed; cancelled children cannot continue edits; parent conclusions cite child evidence. A read-only parent cannot obtain writes by delegation. Recovery terminates with an explicit blocked reason rather than repeating tools indefinitely."
+    },
+    {
+      "id": "LR-025",
+      "title": "Validate provider serialization and local tool grammar",
+      "priority": "P1",
+      "evidenceClass": "Coverage gap",
+      "evidence": "All requests target simulated:scripted and show native function calling. No local GGUF chat template or remote provider wire format is exercised.",
+      "paths": [
+        "electron/main/services/model-transport.ts",
+        "electron/main/services/tool-protocol.ts",
+        "electron/main/services/agent/tool-validation.ts"
+      ],
+      "implementation": "Replay canonical requests through each supported adapter using deterministic transport fixtures. Assert role ordering, system handling, tool schema conversion, IDs, tool results, stop sequences and text-tool fallback grammar. Follow with a small real local-model canary where available. Record provider/model capabilities in provenance.",
+      "acceptance": "A complete read\u2192tool-result\u2192answer cycle survives each adapter. Unsupported native tools switch through an explicit capability decision. A malformed call becomes a bounded correction opportunity and cannot silently disappear from chat."
+    },
+    {
+      "id": "LR-026",
+      "title": "Measure whole-request tokens using the selected model tokenizer",
+      "priority": "P2",
+      "evidenceClass": "Design improvement; no truncation observed",
+      "evidence": "All 10,000 context manifests use character estimates; none records truncation. context-compiler uses three characters per token and a 55% system share.",
+      "paths": [
+        "electron/main/services/agent/context-compiler.ts",
+        "electron/main/services/agent/context-budget.ts",
+        "electron/main/services/model-transport.ts"
+      ],
+      "implementation": "Add a tokenizer/capability adapter and account for system, history, tool schemas, provider framing and reserved output together. Retain a conservative documented fallback when exact tokenization is unavailable. Test small local context windows, code-dense and multilingual messages. Do not describe captured millisecond routing times as model performance.",
+      "acceptance": "For known tokenizers, request estimates match serialized inputs within a defined tolerance. Mandatory instructions never truncate silently. Budget failure has an actionable UI error, and reports distinguish estimated from measured counts."
+    },
+    {
+      "id": "LR-027",
+      "title": "Use fixtures that expose scope and retrieval failures",
+      "priority": "P1",
+      "evidenceClass": "Coverage gap",
+      "evidence": "The only project is a two-file sample fixture. All records have no retrieval result evidence, including 3,131 tasks requiring file-grounded answers; reads could occur after capture, so this count is not a fabricated-answer count.",
+      "paths": [
+        "electron/dev/snapshot.ts",
+        "electron/dev/capture.ts",
+        "tests/agent-corpus-boundary.test.ts"
+      ],
+      "implementation": "Add realistic small fixtures for React, PHP, Python, mixed monorepos, empty projects and unrelated projects. Include named files that exist, missing files, sibling projects and conflicting stack clues. Maintain fixture hashes and expected evidence IDs. Exercise retrieval and subsequent tool reads in a separate tier.",
+      "acceptance": "Generic questions remain stable across unrelated fixtures; repository questions retrieve the intended file and exclude siblings. Missing-target cases report absence rather than using a similarly named unrelated file."
+    },
+    {
+      "id": "LR-028",
+      "title": "Persist a reproducible interpretation trace",
+      "priority": "P2",
+      "evidenceClass": "Observed diagnostic limitation",
+      "evidence": "Route decisions record heuristicRule and fallback, but artifact=explanation does not explain which requested-code clause was rejected. Q14 is easy to inspect manually but expensive to diagnose in bulk.",
+      "paths": [
+        "src/shared/task-contract.ts",
+        "src/shared/task-interpretation.ts",
+        "src/shared/eris-dev.ts"
+      ],
+      "implementation": "Emit versioned evidence for artifact, destination, scope, worker and each obligation: matched spans, rule IDs, rejected alternatives and confidence source. Record a deterministic decision digest. Avoid exposing hidden chain-of-thought; this is structured program provenance, not model private reasoning. Surface trace differences in comparisons.",
+      "acceptance": "An engineer can identify why Q14 lacked a producing verb from the record alone. Trace schema changes have migrations; missing trace is explicit. Redaction preserves structure without retaining secret input spans."
+    },
+    {
+      "id": "LR-029",
+      "title": "Make qualification UI distinguish reachability, coherence and correctness",
+      "priority": "P1",
+      "evidenceClass": "Observed misleading success risk",
+      "evidence": "The export correctly says no-findings and not-evaluated, but zero defects can still appear conclusive while confirmed contract contradictions exist.",
+      "paths": [
+        "src/eris-dev/main.tsx",
+        "src/shared/eris-dev.ts",
+        "electron/dev/main.ts"
+      ],
+      "implementation": "Show distinct counters for reached boundary, structurally valid, invariant findings, gold-label disagreements, inference completed and behavior verified. Include denominators and not-run states. Link each failure to the exact request and expectation. Do not turn missing labels or absent answers into green checks.",
+      "acceptance": "A capture-only run displays answer quality as not evaluated even when every request succeeds. Injected gold disagreements are visible and exportable. Overall release status is policy-derived from required tiers, not raw captured count."
+    },
+    {
+      "id": "LR-030",
+      "title": "Compare semantic outcomes with controlled provenance",
+      "priority": "P2",
+      "evidenceClass": "Evidence limitation",
+      "evidence": "This file identifies commit 363ddf0, dirtyDigest b8a30555e614d5f1 and routing/prompt .5. It matches the previously reported route distribution, but a distribution match does not prove identical prompts or a newly introduced regression.",
+      "paths": [
+        "src/shared/eris-dev-compare.ts",
+        "electron/dev/runs.ts",
+        "electron.dev.config.ts"
+      ],
+      "implementation": "Compare by stable question identity and variant, then classify changes in artifact, scope, obligations, authority, prompt and tool schemas. Require compatible fixture/settings/harness metadata for causal attribution. Store a patch/build manifest so a dirty digest can be resolved to actual source changes. Preserve baseline artifacts without claiming mismatched runs are controlled experiments.",
+      "acceptance": "A scope-only or obligation-only regression is visible despite unchanged intent. Confounded comparisons are labeled. Exact build reproduction requires more than a hash that cannot be resolved to source."
+    },
+    {
+      "id": "LR-031",
+      "title": "Scale audit artifacts without duplicating full prompts",
+      "priority": "P2",
+      "evidenceClass": "Measured size; optimization proposal",
+      "evidence": "The export is 126,446,112 bytes for 10,000 records, with repeated prompts, schemas and full tool manifests. This review analyzer loads records and is an offline utility, not a production streaming-memory benchmark.",
+      "paths": [
+        "electron/dev/main.ts",
+        "electron/dev/runs.ts",
+        "src/shared/eris-dev-compare.ts"
+      ],
+      "implementation": "Introduce versioned content-addressed dictionaries for repeated immutable prompt blocks and schemas, plus per-case references and hashes. Offer streaming JSONL and compressed export while preserving a self-contained expanded form for debugging. Compare incrementally with indexed content IDs and bounded pages; benchmark peak memory on realistic runs.",
+      "acceptance": "Expanded and compact exports normalize to identical canonical requests. Interrupted export never replaces the previous valid file. Memory limits and corrupted/missing dictionary references have deterministic errors."
+    },
+    {
+      "id": "LR-032",
+      "title": "Make CI run completion and cleanup deterministic",
+      "priority": "P1",
+      "evidenceClass": "Previously observed harness issue; not caused by this export",
+      "evidence": "The earlier CI review identified a 1,200-case test polling roughly four seconds, followed by export while work remained and cleanup removing the active run directory. This is separate evidence, not a new JSONL finding.",
+      "paths": [
+        "tests/eris-dev-followup.test.ts",
+        "electron/dev/main.ts"
+      ],
+      "implementation": "Await a run-completed/drained condition with a meaningful overall deadline instead of a fixed short polling count. In teardown cancel and await all background work before deleting fixtures. Give export tests independent completed fixtures. Preserve failure artifacts when cleanup cannot safely finish.",
+      "acceptance": "The test remains stable on slow filesystem runners; no background progress writes happen after teardown. Timeout produces a diagnostic result and clean drain. Repeat only the affected harness tests under controlled delay before widening CI."
+    }
+  ]
+}

@@ -4,11 +4,7 @@
  * uploads them to the GitHub Release for that tag.
  *
  * Usage:
- *   node scripts/release.mjs                 # bump patch, changelog, tag, push (CI builds)
- *   node scripts/release.mjs --bump minor
- *   node scripts/release.mjs --bump major
- *   node scripts/release.mjs --version 0.3.0  # set exact version
- *   node scripts/release.mjs --no-bump        # use package.json as-is
+ *   node scripts/release.mjs --no-bump        # tag the integrated version already in package.json
  *   node scripts/release.mjs --local-build    # also build installers on this machine into dist/
  *   node scripts/release.mjs --dry-run
  *
@@ -114,7 +110,7 @@ function ensureCleanGit() {
   const status = runCapture('git status --porcelain')
   if (status) {
     die(
-      'Working tree is not clean. Commit or stash changes before releasing.\n' + status
+      'Release source must be clean. Prepare changes on a release branch and integrate them by PR first.\n' + status
     )
   }
 }
@@ -123,6 +119,32 @@ function ensureGh() {
   const r = spawnSync('gh', ['auth', 'status'], { encoding: 'utf8' })
   if (r.status !== 0) {
     die('gh is not authenticated. Run: gh auth login')
+  }
+}
+
+function ensureReleaseSource(version, noBump) {
+  if (!noBump) {
+    die(
+      'Prepare and commit the version/changelog on a release branch, then integrate it by pull request before tagging. Run this script with --no-bump from the integrated release source.'
+    )
+  }
+  const branch = runCapture('git branch --show-current')
+  const [major, minor, patch] = version.split('.').map(Number)
+  const beforePromotion = major < 1 || (major === 1 && (minor < 0 || (minor === 0 && patch < 1)))
+  const required = version === '1.0.1' ? 'main' : beforePromotion ? 'dev' : null
+  if (!required) {
+    die(
+      `The branch model for releases after v1.0.1 is not defined. Update docs/GITHUB-WORKFLOW.md and release policy before publishing v${version}.`
+    )
+  }
+  if (branch !== required) {
+    die(`v${version} must be tagged from integrated ${required}; current branch is ${branch || '(detached HEAD)'}.`)
+  }
+  ensureCleanGit()
+  const head = runCapture('git rev-parse HEAD')
+  const remote = runCapture(`git rev-parse refs/remotes/origin/${required}`)
+  if (head !== remote) {
+    die(`Release HEAD must equal origin/${required}; use the integrated GitHub branch tip before tagging.`)
   }
 }
 
@@ -235,6 +257,8 @@ function main() {
     return
   }
 
+  ensureReleaseSource(nextVersion, args.noBump)
+
   if (!args.noBump || args.version) {
     ensureCleanGit()
     if (pkg.version !== nextVersion) {
@@ -251,6 +275,10 @@ function main() {
   }
 
   const notes = notesFromGit(prevTag && prevTag !== tag ? prevTag : '', nextVersion)
+  const changelog = existsSync(changelogPath) ? readFileSync(changelogPath, 'utf8') : ''
+  if (!new RegExp(`^## ${nextVersion.replace(/\./g, '\\.')}(?:\\s|$)`, 'm').test(changelog)) {
+    die(`CHANGELOG.md must already contain v${nextVersion}; prepare it on a release branch and integrate it by PR before tagging.`)
+  }
   prependChangelog(nextVersion, notes)
 
   if (args.localBuild) {
@@ -264,17 +292,13 @@ function main() {
   }
 
   const dirty = runCapture('git status --porcelain')
-  if (dirty) {
-    run('git add package.json package-lock.json CHANGELOG.md')
-    run(`git commit -m "Release ${tag}"`)
-  }
+  if (dirty) die('Release preparation changed files. Integrate the version/changelog by pull request, then rerun from the release source.')
 
   const existingTag = spawnSync('git', ['rev-parse', tag], { cwd: root, encoding: 'utf8' })
   if (existingTag.status === 0) {
     die(`Tag ${tag} already exists. Bump version or delete the tag first.`)
   }
   run(`git tag -a ${tag} -m "Eris ${tag}"`)
-  run('git push origin HEAD')
   run(`git push origin ${tag}`)
 
   // Create/update the GitHub Release shell; CI attaches mac + win assets.

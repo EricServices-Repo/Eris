@@ -217,10 +217,11 @@ describe('AG-045 workspace-independent captures', () => {
     expect(reading(none).applicability).toBe('generic')
   })
 
-  it('skips retrieval for a generic explanation that uses tools', async () => {
+  it('answers a generic explanation without forcing workspace tools or retrieval', async () => {
     const result = await capture('Explain how JWT refresh tokens work', sampleWorkspace())
     expect(result.intent).toBe('explore')
-    expect((result.retrieval as { skipped: string | null }).skipped).toBe('generic-request')
+    expect(result.requests.find((r) => r.purpose === 'agent')?.tools).toEqual([])
+    expect(result.retrieval).toBeUndefined()
   })
 })
 
@@ -300,4 +301,288 @@ describe('AG-052 conversation captures', () => {
     expect(task.recommendations[0]?.targets).toEqual(['index.js'])
     expect(result.findingsDetail.filter((finding) => finding.severity === 'defect')).toEqual([])
   })
+})
+
+import { questionBatches } from '../electron/dev/batches'
+import { captureSettings } from '../electron/dev/capture'
+import type { PreparedLiveModel } from '../electron/dev/models'
+
+describe('Eris-Dev live model runs', () => {
+  const liveModel = (): PreparedLiveModel => {
+    // structuredClone deliberately drops the capture-only symbol: this is a live transport fixture.
+    const settings = structuredClone(captureSettings(8192))
+    settings.models.defaultModel = 'test-selected-model'
+    settings.models.connections = [
+      {
+        id: 'fixture',
+        name: 'Test provider',
+        type: 'openai-compatible',
+        provider: 'custom',
+        enabled: true,
+        baseUrl: 'http://fixture.invalid/v1',
+        apiKeyRef: 'fixture-key',
+        models: ['test-selected-model']
+      }
+    ]
+    settings.agent.routing.preferCloudComposer = false
+    settings.agent.routing.useLlmRouter = false
+    settings.agent.routing.profile = 'local'
+    return {
+      settings,
+      model: 'test-selected-model',
+      getSecret: () => 'private-fixture-key',
+      digest: 'fixture'
+    }
+  }
+  const sse = (content: string) =>
+    new Response(
+      `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`,
+      { headers: { 'Content-Type': 'text/event-stream' } }
+    )
+  it('chunks into ten sequential cases and preserves the correct boundary on resume', async () => {
+    const batches = []
+    for await (const batch of questionBatches(23, 7, new AbortController().signal))
+      batches.push(batch)
+    expect(batches.map((b) => b.indices)).toEqual([
+      [7, 8, 9],
+      [10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+      [20, 21, 22]
+    ])
+    const controller = new AbortController()
+    const iterator = questionBatches(23, 0, controller.signal)
+    expect((await iterator.next()).value?.number).toBe(1)
+    controller.abort()
+    expect((await iterator.next()).done).toBe(true)
+  })
+  it('runs production intent and answer transports with the selected model and saves the actual answer', async () => {
+    const bodies: Array<{ model: string; messages: Array<{ role: string; content: string }> }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body))
+        bodies.push(body)
+        return sse(
+          body.messages.some((m: { content: string }) =>
+            m.content.includes('Interpret the latest request')
+          )
+            ? '{"intent":"answer","confidence":0.95}'
+            : '```python\nprint("hello")\n```'
+        )
+      })
+    )
+    const result = await captureQuestion(
+      0,
+      'I need a practical example of connection pooling in Python?',
+      null,
+      8192,
+      'ask',
+      new AbortController().signal,
+      { live: liveModel() }
+    )
+    expect(result.stages.inference, result.detail).toBe('completed')
+    expect(result.response).toContain('print("hello")')
+    expect(result.sourceMode).toBe('live')
+    expect(result.responseReason).toBe('generated')
+    expect(result.intentReplySource).toBe('live')
+    expect(result.inference?.calls).toBeGreaterThanOrEqual(2)
+    expect(bodies.every((b) => b.model === 'test-selected-model')).toBe(true)
+    expect(result.requests.every((r) => r.model === 'test-selected-model')).toBe(true)
+    expect(JSON.stringify(result)).not.toContain('private-fixture-key')
+    expect(result.stages.answerQuality).toBe('not-evaluated')
+  })
+  it('continues the real agent loop through a native read tool and saves its final answer', async () => {
+    const root = sampleWorkspace()
+    let sawSource = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body))
+        if (
+          body.messages.some((m: { content?: string }) =>
+            m.content?.includes('Interpret the latest request')
+          )
+        )
+          return sse('{"intent":"review","confidence":0.95}')
+        const toolResult = body.messages.find((m: { role: string }) => m.role === 'tool')
+        if (toolResult) {
+          sawSource = JSON.stringify(toolResult).includes('return a / b')
+          return sse('The divide function has no zero-divisor guard.')
+        }
+        return new Response(
+          `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'read-1', type: 'function', function: { name: 'read_file', arguments: '{"path":"index.js"}' } }] }, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`
+        )
+      })
+    )
+    const result = await captureQuestion(
+      0,
+      'Review the function in index.js for bugs.',
+      root,
+      8192,
+      'agent',
+      new AbortController().signal,
+      { live: liveModel() }
+    )
+    expect(result.stages.inference, result.detail).toBe('completed')
+    expect(sawSource).toBe(true)
+    expect(result.response).toContain('zero-divisor')
+    expect(readFileSync(join(root, 'index.js'), 'utf8')).toContain('return a / b')
+    expect(result.requests.filter((r) => r.purpose === 'agent').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it.each([
+    [
+      "I'm trying to add database connection pooling for an internal admin dashboard. What's the best way?",
+      'review',
+      'design'
+    ],
+    [
+      'Can you generate a minimal but complete example of soft deletes with the ability to restore in TypeScript?',
+      'edit',
+      'code-example'
+    ],
+    [
+      "I need to introduce user authentication with magic links into an existing Next.js project. What's the safest approach?",
+      'review',
+      'explanation'
+    ]
+  ])(
+    'keeps the requested chat deliverable when a confident resolver misroutes %s',
+    async (question, proposed, artifact) => {
+      const root = sampleWorkspace()
+      const original = readFileSync(join(root, 'index.js'), 'utf8')
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_url: string, init: RequestInit) => {
+          const body = JSON.parse(String(init.body))
+          return sse(
+            body.messages.some((m: { content?: string }) =>
+              m.content?.includes('Interpret the latest request')
+            )
+              ? JSON.stringify({ intent: proposed, confidence: 0.9 })
+              : 'Here is the requested answer. ```typescript\nconst example = true;\n```'
+          )
+        })
+      )
+      const result = await captureQuestion(
+        0,
+        question,
+        root,
+        8192,
+        'agent',
+        new AbortController().signal,
+        { live: liveModel() }
+      )
+      expect(result.intent).toBe('answer')
+      expect(result.artifact).toBe(artifact)
+      expect(result.completion).toMatchObject({ status: 'completed' })
+      expect(result.response).toContain('requested answer')
+      expect(result.calls).toBe(2)
+      expect(result.requests.filter((r) => r.purpose === 'agent')[0]?.tools).toEqual([])
+      expect(readFileSync(join(root, 'index.js'), 'utf8')).toBe(original)
+      expect(result.events.join(' ')).not.toMatch(/re-route|budget reached/)
+    }
+  )
+
+  it('marks a step-budget stop incomplete rather than treating the summary as a finished answer', async () => {
+    const live = liveModel()
+    live.settings.agent.maxStepsPerRun = 10
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => sse('I will fix the code after inspecting it.'))
+    )
+    const result = await captureQuestion(
+      0,
+      'Fix the division by zero bug in index.js.',
+      sampleWorkspace(),
+      8192,
+      'agent',
+      new AbortController().signal,
+      { live, maxCalls: 20 }
+    )
+    expect(result.completion).toMatchObject({ status: 'incomplete' })
+    expect(result.completion?.reason).toMatch(/incomplete|stopped/i)
+    expect(result.response).toMatch(/incomplete|stopped/i)
+  })
+
+  it('records provider failures without presenting an error message as a generated answer', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('Unavailable', { status: 503 }))
+    )
+    const result = await captureQuestion(
+      0,
+      'Explain connection pooling?',
+      null,
+      8192,
+      'ask',
+      new AbortController().signal,
+      { live: liveModel() }
+    )
+    expect(result.stages.inference).toBe('error')
+    expect(result.responseReason).toBe('inference-failed')
+    expect(result.inference?.error).toContain('503')
+  })
+  it('cancels an in-flight live transport and preserves an interrupted attempt', async () => {
+    const controller = new AbortController()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        controller.abort()
+        throw new DOMException(init.signal?.aborted ? 'Aborted' : 'Cancelled', 'AbortError')
+      })
+    )
+    const result = await captureQuestion(
+      0,
+      'Explain connection pooling?',
+      null,
+      8192,
+      'ask',
+      controller.signal,
+      { live: liveModel() }
+    )
+    expect(result.status).toBe('cancelled')
+    expect(result.stages.inference).toBe('cancelled')
+    expect(result.responseReason).toBe('inference-failed')
+  })
+})
+
+import { runGit } from '../electron/main/services/git-service'
+import { runInDiagnosticsScope } from '../electron/main/services/model-transport'
+it('blocks direct Git subprocesses in live diagnostics as well as ordinary shell commands', async () => {
+  const blocked: string[] = []
+  const result = await runInDiagnosticsScope(
+    {
+      runId: 'git-boundary',
+      mode: 'real-model',
+      adapter: {
+        kind: 'live',
+        async *stream() {
+          yield ''
+        }
+      },
+      onBlockedEffect: (kind, detail) => blocked.push(`${kind}: ${detail}`)
+    },
+    () => runGit(process.cwd(), ['--version'])
+  )
+  expect(result.code).toBe(1)
+  expect(result.stdout).toBe('')
+  expect(result.stderr).toContain('disabled in diagnostics')
+  expect(blocked).toEqual(['command: git --version'])
+})
+
+it('recovers incomplete outcomes in earlier live exports without treating ordinary prose as a stop signal', () => {
+  const record = {
+    sourceMode: 'live',
+    responseReason: 'generated',
+    response: 'Stopped after 10 steps.',
+    events: ['Paused · run step budget reached']
+  }
+  expect(readCaptureRecord(record).completion?.status).toBe('incomplete')
+  expect(
+    readCaptureRecord({
+      ...record,
+      events: ['Done'],
+      response: 'An incomplete transaction should roll back.'
+    }).completion
+  ).toBeUndefined()
 })

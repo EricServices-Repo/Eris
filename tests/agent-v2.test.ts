@@ -185,6 +185,33 @@ describe('agent v2 task boundary', () => {
       gateway.authorize(root, { name: 'search_replace', args: { path: 'large.ts' }, raw: '' })
     ).toBeNull()
   })
+  it.each(['generic', 'unverified'] as const)(
+    'does not require workspace activity for %s advice',
+    (applicability) => {
+      const readPlan: TurnPlan = {
+        ...plan,
+        intent: 'plan',
+        toolPolicy: 'read',
+        requiresTools: true
+      }
+      const task = createTaskContract({
+        workspacePath: fixture(),
+        text: 'Give me an approach to connection pooling.',
+        plan: readPlan
+      })
+      task.scope.applicability = applicability
+      const workflow = new AgentWorkflow({ ...readPlan, task })
+      expect(workflow.contract.requiresWorkspaceEvidence).toBe(false)
+      expect(
+        workflow.evaluateOutcome({
+          workspaceMutated: false,
+          codeMutated: false,
+          verifyPassed: false
+        }).ok
+      ).toBe(true)
+    }
+  )
+
   it('does not count a directory listing as review evidence', () => {
     const workflow = new AgentWorkflow({ ...plan, intent: 'review', toolPolicy: 'read' })
     workflow.noteTool({ name: 'tree', path: '.', ok: true, mutated: false })

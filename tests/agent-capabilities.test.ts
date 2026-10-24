@@ -193,8 +193,9 @@ describe('AG-027/AG-028/AG-031 protocol guidance', () => {
       const text = taskProtocol(task(edit ? 'edit' : 'plan', edit ? 'edit' : 'read'), true)
       const envelope = text.slice(text.indexOf('<<<TOOL>>>'), text.indexOf('<<<END>>>') + 9)
       const [call] = parseToolCalls(envelope)
-      expect(call?.name).toBe(edit ? 'search_replace' : 'read_file')
-      expect(call?.args.path).toBe('src/index.ts')
+      expect(call?.name).toBe('tree')
+      expect(call?.args.path).toBe('.')
+      expect(text).not.toContain('old_string')
     }
   })
 

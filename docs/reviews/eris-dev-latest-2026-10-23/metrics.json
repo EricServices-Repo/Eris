@@ -1,0 +1,159 @@
+{
+  "source": "/Users/ericembling/Desktop/eris-dev-requests-1.jsonl",
+  "sha256": "1bb3a86eb400c464b9c9da49db54d1cbf08a38cfb1cf89d368e72d86c109c7ca",
+  "bytes": 126446112,
+  "header": {
+    "format": "eris-dev-capture-v2",
+    "created": "2026-10-23T22:46:09.366Z",
+    "app": {
+      "name": "Eris-Dev",
+      "version": "0.4.13",
+      "gitSha": "363ddf039ce28d44037b7facae571afea7fad356",
+      "dirty": true,
+      "dirtyDigest": "b8a30555e614d5f1",
+      "buildId": "2026-10-23T22:45:18.872Z-8df1c50b",
+      "provenance": "injected"
+    },
+    "versions": {
+      "routing": "2026-10-23.5",
+      "prompt": "2026-10-23.5",
+      "schema": "eris-dev-capture-v2",
+      "invariants": "2026-10-23.2",
+      "evaluation": "2026-10-23.2",
+      "harness": "d070ff4d59e0a6cd"
+    },
+    "settingsDigest": "c1b0af6d49953f14c0ec08ac94178d408b14b8d1db08771c2cb3352c49ee4617",
+    "corpus": {
+      "id": "aae2466b194274b0",
+      "name": "10000_natural_diverse_coding_questions.txt",
+      "total": 10000,
+      "excluded": 0
+    },
+    "fixture": {
+      "kind": "sample",
+      "digest": "739e1220ac6dcfa5df4313b922184f9c77d5de87689b02b6d0d153eee565907a",
+      "files": 2,
+      "omitted": []
+    },
+    "context": 8192,
+    "mode": "agent",
+    "intentReplyMode": "fallback",
+    "responses": "none",
+    "answerQuality": "not-evaluated",
+    "coverage": {
+      "exercised": [
+        "question import",
+        "routing and intent resolution",
+        "task contract and interpretation",
+        "prompt compilation",
+        "tool exposure"
+      ],
+      "notExercised": [
+        "model inference",
+        "tool execution",
+        "workspace changes",
+        "verification",
+        "answer quality",
+        "agent coordination",
+        "desktop chat UI delivery"
+      ]
+    }
+  },
+  "records": 10000,
+  "uniqueIds": 10000,
+  "uniqueQuestions": 10000,
+  "consecutiveIndices": true,
+  "reportedDefects": 0,
+  "reportedReviews": 0,
+  "counts": {
+    "intent": {
+      "plan": 2811,
+      "answer": 6869,
+      "explore": 320
+    },
+    "artifact": {
+      "design": 602,
+      "code-example": 2810,
+      "plan": 2294,
+      "explanation": 4294
+    },
+    "agent": {
+      "Plan": 2811,
+      "Explainer": 6397,
+      "Fast": 792
+    },
+    "scope": {
+      "generic": 7371,
+      "unverified": 2629
+    },
+    "resolution": {
+      "fallback": 9061,
+      "bypass": 939
+    },
+    "rule": {
+      "edit-to-plan": 2811,
+      "edit-to-code-example-answer": 1305,
+      "modal-imperative": 248,
+      "retain-heuristic": 4945,
+      "imperative": 691
+    },
+    "stackFit": {
+      "not-applicable": 5073,
+      "match": 425,
+      "mismatch": 4502
+    },
+    "status": {
+      "captured": 10000
+    },
+    "tools": {
+      "11": 3131,
+      "0": 6869
+    },
+    "retrieval": {
+      "generic-request": 837,
+      "None": 9163
+    },
+    "response": {
+      "None": 10000
+    },
+    "contextTruncated": {
+      "False": 10000
+    }
+  },
+  "candidateCounts": {
+    "generic_requires_files": 837,
+    "generic_has_tools": 837,
+    "scope_applicability_omitted": 10000,
+    "no_retrieval_evidence_requires_files": 3131,
+    "generic_stack_mismatch": 3444,
+    "explain_as_plan": 277,
+    "write_happy_path_explanation": 35,
+    "concept_missing_language": 146,
+    "design_wording_explanation": 295,
+    "practical_example_explanation": 243,
+    "show_example_explore": 320,
+    "tests_not_obligation": 532,
+    "good_coverage_missing": 249,
+    "two_versions_single_obligation": 40
+  },
+  "sizes": {
+    "systemChars": {
+      "min": 3036,
+      "median": 3661.0,
+      "p95": 3995,
+      "max": 4741
+    },
+    "toolSchemaChars": {
+      "min": 2,
+      "median": 2.0,
+      "p95": 3331,
+      "max": 3331
+    },
+    "durationMs": {
+      "min": 0,
+      "median": 1.0,
+      "p95": 18,
+      "max": 45
+    }
+  }
+}

@@ -108,6 +108,7 @@ import { buildPreservedWorkerMessages, isReadOnlyChat, truncateForModel } from '
 import { createTaskContract, childTaskContract } from '../task-intake'
 import {
   interpretationOf,
+  evidenceRequirementFor,
   intersectToolPolicy,
   taskContractConflicts,
   type TaskContract
@@ -507,6 +508,7 @@ export async function* runAgentWithWorkspaceTools(options: {
   // Safety net: "review/improve the project folder" must never go answer-only just
   // because a weak router labeled the turn as answer.
   const forceWorkspaceTools =
+    evidenceRequirementFor(task.scope.applicability) !== 'none' &&
     Boolean(options.workspacePath) &&
     mode === 'agent' &&
     plan.intent !== 'capability' &&
@@ -530,7 +532,8 @@ export async function* runAgentWithWorkspaceTools(options: {
         (!plan.requiresTools ||
           plan.toolPolicy === 'none' ||
           !options.workspacePath ||
-          plan.intent === 'answer')))
+          plan.intent === 'answer' ||
+          task.scope.applicability === 'generic')))
 
   if (answerOnly) {
     workflow.transition('answering')
@@ -1839,7 +1842,8 @@ export async function* runAgentWithWorkspaceTools(options: {
 
         const keepGoing =
           shouldKeepWorking({
-            needsTools: plan.requiresTools,
+            needsTools:
+              workflow.contract.requiresWorkspaceEvidence || workflow.contract.requiresMutation,
             mutated: workspaceMutated,
             assistantText,
             reviewOnly,
@@ -2028,8 +2032,10 @@ export async function* runAgentWithWorkspaceTools(options: {
             role: 'system',
             content:
               `OUTCOME_CHECK_FAILED:\n${unmetReason}\n\n` +
-              `You are NOT finished. Continue with tools (write_file / search_replace / run / verify) ` +
-              `until the original request is truly satisfied. Do not claim DONE yet.\n` +
+              (task.authority.edit
+                ? 'Continue with permitted edits and verification until the request is satisfied. '
+                : 'Use only permitted read tools to gather missing evidence, or explain what is blocked. Do not edit files. ') +
+              `Do not claim DONE yet.\n` +
               `User request:\n${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}`
           })
           yield { type: 'status', text: `${plan.agentName} · goal unmet — continuing…` }

@@ -110,6 +110,8 @@ export function unresolvedCodeDestination(text: string): boolean {
 export function asksAboutApproach(text: string): boolean {
   const t = requestTextForIntent(text)
   if (/^\s*(?:how|what|why|can we|could we|should we)\b/i.test(t)) return true
+  if (/\bwhat(?:'s| is)\s+(?:the|a)\s+(?:safest|best|right|cleanest)\s+(?:way|approach)\b/i.test(t))
+    return true
   // “I want X to be easy to reason about. How would you write it?”
   return t
     .split(/(?<=[.?!;])\s+/)
@@ -202,6 +204,31 @@ export async function resolveTaskDecision(input: ResolveTaskInput): Promise<Inte
         } else {
           confidence = parsed.data.confidence
           const proposed = parsed.data.intent
+          const text = requestTextForIntent(input.text)
+          // A classifier may choose the workflow, but cannot change the requested
+          // deliverable or invent a workspace destination from its confidence score.
+          const chatExample = asksForCodeExample(text) && !asksForCodeDestination(text)
+          const genericAdvice =
+            asksAboutApproach(text) &&
+            !asksWorkspaceQuestion(text) &&
+            !/\b(?:this|that|it|those|these|them)\b/i.test(text) &&
+            !asksForCodeDestination(text) &&
+            !asksForPlan(text) &&
+            !asksForRecommendations(text) &&
+            !/^(?:please\s+)?(?:review|audit|assess|critique|evaluate)\b/i.test(text)
+          if ((chatExample || genericAdvice) && proposed !== 'answer') {
+            return done({
+              intent: 'answer',
+              source: 'semantic',
+              rule: 'semantic-deliverable-guard',
+              confidence,
+              downgrade: {
+                from: proposed,
+                to: 'answer',
+                rule: chatExample ? 'chat-example-keeps-destination' : 'advice-keeps-deliverable'
+              }
+            })
+          }
           // Ask mode never becomes an execution contract. Ambiguous mutation proposals,
           // and requests that forbid changes, need explicit wording.
           const forbidden = effectConstraints(input.text)
