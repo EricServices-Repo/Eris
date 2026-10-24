@@ -4,7 +4,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 
 /**
- * Stage 3 of docs/reviews/eris-dev-10000-2026-10-23/AGENT-IMPROVEMENTS.md:
+ * Stage 3 of docs/reviews/eris-dev-10000-2026-10-23/improvements.json:
  * one prompt pipeline and capability record (AG-024–042).
  */
 

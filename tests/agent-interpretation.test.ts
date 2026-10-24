@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
- * Stage 2 of docs/reviews/eris-dev-10000-2026-10-23/AGENT-IMPROVEMENTS.md:
+ * Stage 2 of docs/reviews/eris-dev-10000-2026-10-23/improvements.json:
  * requested artifacts separate from effects (AG-003–012) and resolver
  * tracing, validation and precedence (AG-013–022).
  */

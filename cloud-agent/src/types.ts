@@ -1,9 +1,5 @@
-export type CloudJobStatus =
-  | 'queued'
-  | 'running'
-  | 'done'
-  | 'failed'
-  | 'stopped'
+import type { CloudTask } from './task-policy.js'
+export type CloudJobStatus = 'queued' | 'running' | 'done' | 'failed' | 'stopped'
 
 export interface CloudJobToolEvent {
   id: string
@@ -20,6 +16,7 @@ export interface CloudJobFile {
 }
 
 export interface CloudJobCreateRequest {
+  task?: CloudTask
   goal: string
   agentId?: string | null
   model?: string | null
@@ -40,6 +37,7 @@ export interface CloudJobCreateRequest {
 }
 
 export interface CloudJob {
+  task?: CloudTask
   id: string
   goal: string
   agentId: string
@@ -71,6 +69,7 @@ export interface CloudJob {
 }
 
 export interface CloudHealth {
+  taskContractVersion?: number
   ok: boolean
   service: 'eris-cloud-agent'
   version: string

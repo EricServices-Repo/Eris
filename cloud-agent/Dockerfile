@@ -46,7 +46,7 @@ SHELL ["/bin/bash", "-c"]
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-    tini git ca-certificates bash curl cmake clang libgomp1 \
+    tini git ca-certificates bash curl cmake clang libgomp1 bubblewrap util-linux \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

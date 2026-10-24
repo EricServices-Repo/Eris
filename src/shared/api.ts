@@ -244,8 +244,16 @@ export interface IdeApi {
   getResolvedSettings: () => Promise<AppSettings>
   setSettings: (scope: SettingsScope, patch: SettingsPatch) => Promise<AppSettings>
   resetSettingKey: (scope: SettingsScope, pathKeys: string[]) => Promise<AppSettings>
+  getCredentialStatus: () => Promise<{
+    policy: 'local' | 'vault'
+    legacyPending: boolean
+    plaintextRemaining: boolean
+  }>
+  setCredentialPolicy: (
+    policy: 'local' | 'vault'
+  ) => Promise<{ policy: 'local' | 'vault'; legacyPending: boolean; plaintextRemaining: boolean }>
   setSecret: (key: string, value: string) => Promise<boolean>
-  getSecret: (key: string) => Promise<string | null>
+  hasSecret: (key: string) => Promise<boolean>
   listTree: (root: string, maxDepth?: number) => Promise<FileEntry[]>
   readFile: (
     path: string
@@ -358,8 +366,8 @@ export interface IdeApi {
     threadId?: string | null
     planningDurationMs?: number
   }) => Promise<boolean>
-  getLatestChatJob: () => Promise<ChatJobSnapshot | null>
-  stopChat: () => Promise<boolean>
+  getLatestChatJob: (threadId?: string | null) => Promise<ChatJobSnapshot | null>
+  stopChat: (requestId?: string) => Promise<boolean>
   /** Absolute path of a dropped File ('' when it has none) */
   getPathForFile: (file: File) => string
   respondCommandApproval: (

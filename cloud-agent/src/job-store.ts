@@ -123,10 +123,7 @@ export class JobStore {
     return { running, queued }
   }
 
-  create(
-    req: CloudJobCreateRequest,
-    meta?: { ownerId?: string; plan?: 'free' | 'pro' }
-  ): CloudJob {
+  create(req: CloudJobCreateRequest, meta?: { ownerId?: string; plan?: 'free' | 'pro' }): CloudJob {
     const goal = String(req.goal || '').trim()
     if (!goal) throw new Error('goal is required')
     const agentId = (req.agentId || 'composer').trim() || 'composer'
@@ -134,6 +131,7 @@ export class JobStore {
     const job: CloudJob = {
       id: randomUUID(),
       goal,
+      task: req.task,
       agentId,
       agentName: AGENT_NAMES[agentId] || agentId,
       model: (req.model || config.llmModel).trim() || config.llmModel,

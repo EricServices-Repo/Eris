@@ -1,3 +1,4 @@
+import { CredentialStore, electronVault } from '../main/services/credential-store'
 /** Model selection is main-process only. Credentials never cross IPC or enter run manifests. */
 import { app } from 'electron'
 import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync } from 'fs'
@@ -117,7 +118,7 @@ export async function prepareLiveModel(id: string, context: number) {
   selected.agent.routing.useLlmRouter = false
   selected.agent.maxStepsPerRun = 10
   selected.evals.useScoresForRouting = false
-  const secrets = read(join(erisRoot(), 'secrets.json'))
+  const secrets = new CredentialStore(erisRoot, electronVault).readAll()
   // Snapshot credentials for this run; never persist them or return them to the renderer.
   const sessionKey = custom?.apiKey ?? null
   const getSecret = (key: string) =>

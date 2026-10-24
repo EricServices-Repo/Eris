@@ -301,7 +301,7 @@ const BUILTIN_SCENARIOS: DebugScenarioInput[] = [
   }
 ]
 
-const REVIEW = 'docs/reviews/eris-dev-10000-2026-10-23/AGENT-IMPROVEMENTS.md'
+const REVIEW = 'docs/reviews/eris-dev-10000-2026-10-23/improvements.json'
 
 /** A disposable project for authentication questions, with an intentional missing-expiry defect. */
 const PASSWORD_RESET_FIXTURE: Record<string, string> = {

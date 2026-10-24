@@ -136,6 +136,7 @@ export function useChatSession({
   const pendingDiffsRef = useRef(pendingDiffs)
   pendingDiffsRef.current = pendingDiffs
   const [activeCheckpointId, setActiveCheckpointId] = useState<string | null>(null)
+  const completedRequestsRef = useRef(new Set<string>())
   const requestIdRef = useRef<string | null>(null)
   /** Survives Stop so late chat:done/error still match the turn we aborted. */
   const lastRequestIdRef = useRef<string | null>(null)
@@ -159,12 +160,70 @@ export function useChatSession({
   // presenting a manual recovery banner or silently losing its progress.
   useEffect(() => {
     let cancelled = false
+    const selectedThread = activeThread?.id ?? null
+    if (requestThreadIdRef.current !== selectedThread) {
+      requestIdRef.current = null
+      lastRequestIdRef.current = null
+      answerAcc.current = ''
+      thinkingAcc.current = ''
+      setAnswerBuffer('')
+      setThinkingBuffer('')
+      setStreaming(false)
+    }
     void window.ide
-      .getLatestChatJob()
-      .then((job) => {
-        if (cancelled || !job || job.status !== 'running' || job.workspacePath !== workspacePath)
+      .getLatestChatJob(selectedThread)
+      .then(async (job) => {
+        if (
+          cancelled ||
+          activeThreadRef.current?.id !== selectedThread ||
+          !job ||
+          job.workspacePath !== workspacePath
+        )
+          return
+        if (job.persistenceError) setChatError(job.persistenceError)
+        if (job.status !== 'running' && job.status !== 'queued') {
+          if (
+            job.threadId &&
+            job.answer &&
+            !activeThreadRef.current?.messages.some(
+              (message) => message.id === `${job.id}:assistant`
+            )
+          ) {
+            const saved = await window.ide.appendChatMessage(
+              job.threadId,
+              {
+                id: `${job.id}:assistant`,
+                role: 'assistant',
+                content:
+                  job.answer +
+                  (job.status === 'stopped'
+                    ? '\n\n_(stopped)_'
+                    : job.status === 'incomplete'
+                      ? '\n\n_(incomplete)_'
+                      : ''),
+                createdAt: Date.parse(job.updatedAt),
+                model: job.model ?? undefined
+              },
+              job.model ?? undefined,
+              job.workspacePath
+            )
+            if (!cancelled && activeThreadRef.current?.id === saved.id) {
+              const merged = mergeChatTail(activeThreadRef.current, saved)
+              activeThreadRef.current = merged
+              setActiveThread(merged)
+            }
+          }
+          return
+        }
+        if (
+          cancelled ||
+          !job ||
+          (job.status !== 'running' && job.status !== 'queued') ||
+          job.workspacePath !== workspacePath
+        )
           return
         requestIdRef.current = job.id
+        lastRequestIdRef.current = job.id
         requestThreadIdRef.current = job.threadId
         requestWorkspacePathRef.current = job.workspacePath
         answerAcc.current = job.answer
@@ -225,7 +284,7 @@ export function useChatSession({
     return () => {
       cancelled = true
     }
-  }, [settingsRef, workspacePath])
+  }, [activeThread?.id, activeThreadRef, setActiveThread, settingsRef, workspacePath])
 
   useEffect(() => {
     if (streaming || !selectedLocalModelReady) return
@@ -245,7 +304,7 @@ export function useChatSession({
     // Keep thinking/answer buffers visible until done flushes the partial reply.
     if (directImageRequestRef.current)
       void window.ide.cancelImageGeneration(directImageRequestRef.current)
-    void window.ide.stopChat()
+    void window.ide.stopChat(lastRequestIdRef.current ?? undefined)
   }, [])
 
   const schedulePaint = useCallback(() => {
@@ -833,7 +892,10 @@ export function useChatSession({
     })
     const offDone = window.ide.onChatDone(async ({ requestId, aborted }) => {
       const matches = requestId === requestIdRef.current || requestId === lastRequestIdRef.current
-      if (!matches) return
+      if (!matches || completedRequestsRef.current.has(requestId)) return
+      completedRequestsRef.current.add(requestId)
+      if (completedRequestsRef.current.size > 200)
+        completedRequestsRef.current.delete(completedRequestsRef.current.values().next().value!)
       if (paintRaf.current) {
         cancelAnimationFrame(paintRaf.current)
         paintRaf.current = 0
