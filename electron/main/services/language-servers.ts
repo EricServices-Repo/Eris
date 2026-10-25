@@ -1,16 +1,13 @@
-import { ChildProcessWithoutNullStreams, spawn } from 'child_process'
 import { pathToFileURL } from 'url'
-import {
-  createMessageConnection,
-  StreamMessageReader,
-  StreamMessageWriter
-} from 'vscode-jsonrpc/node'
-import type { MessageConnection } from 'vscode-jsonrpc/node'
+import { createHash } from 'crypto'
+import { LspSession } from './lsp-session'
+import { realpathAllowMissing } from './workspace-fs'
 import type { AppSettings, LanguageServerConfig } from '../../../src/shared/settings-schema'
-import { logError, logInfo, logWarn } from './logger'
+import { logError, logInfo } from './logger'
 import { languageServerFilePath, languageServerLaunch } from './lsp-paths'
 import {
   disposeTsLsp,
+  configureTsLspRoot,
   isTsLike,
   lspCompletion as tsCompletion,
   lspDefinition as tsDefinition,
@@ -26,11 +23,17 @@ import {
 
 type ExtraSession = {
   id: string
-  proc: ChildProcessWithoutNullStreams
-  connection: MessageConnection
+  root: string
+  key: string
+  server: LspSession
   languageId: string
 }
-
+function keyFor(root: string, spec: LanguageServerConfig): string {
+  return `${realpathAllowMissing(root)}:${createHash('sha256').update(JSON.stringify(spec)).digest('hex')}`
+}
+function sessionFor(root: string, spec: LanguageServerConfig) {
+  return extras.get(keyFor(root, spec))
+}
 const extras = new Map<string, ExtraSession>()
 const starting = new Map<string, Promise<boolean>>()
 const openDocs = new Map<string, { version: number; languageId: string; serverId: string }>()
@@ -40,8 +43,13 @@ let workspaceRoot: string | null = null
 export { onLspDiagnostics, type LspDiagnostic }
 
 export function configureLanguageServers(settings: AppSettings, root: string | null): void {
-  servers = settings.intelligence.languageServers.filter((s) => s.enabled && s.command)
-  workspaceRoot = root
+  const nextRoot = root === null ? null : realpathAllowMissing(root)
+  const next = settings.intelligence.languageServers.filter((s) => s.enabled && s.command)
+  workspaceRoot = nextRoot
+  servers = next
+  configureTsLspRoot(nextRoot)
+  const keep = new Set(nextRoot ? next.map((spec) => keyFor(nextRoot, spec)) : [])
+  for (const key of extras.keys()) if (!keep.has(key)) void disposeExtra(key)
 }
 
 function uriFor(filePath: string): string {
@@ -71,93 +79,132 @@ function matchServer(language: string, filePath: string): LanguageServerConfig |
 }
 
 async function ensureExtra(root: string, spec: LanguageServerConfig): Promise<boolean> {
-  const existing = extras.get(spec.id)
-  if (existing && workspaceRoot === root) return true
-  const inflight = starting.get(spec.id)
+  root = realpathAllowMissing(root)
+  if (workspaceRoot !== root || !servers.some((item) => keyFor(root, item) === keyFor(root, spec)))
+    return false
+  const key = keyFor(root, spec)
+  const existing = extras.get(key)
+  const inflight = starting.get(key)
   if (inflight) return inflight
-  const p = (async () => {
-    await disposeExtra(spec.id)
-    try {
-      const launch = languageServerLaunch(spec.command, spec.args, root)
-      const proc = spawn(launch.command, launch.args, {
-        cwd: root,
-        env: launch.env,
-        windowsHide: true,
-        stdio: ['pipe', 'pipe', 'pipe']
-      })
-      proc.stderr?.on('data', (buf: Buffer) => {
-        const text = buf.toString('utf8').trim()
-        if (text) logWarn(`${spec.id} lsp stderr`, { text: text.slice(0, 400) })
-      })
-      proc.on('exit', () => {
-        extras.delete(spec.id)
-      })
-      const conn = createMessageConnection(
-        new StreamMessageReader(proc.stdout),
-        new StreamMessageWriter(proc.stdin)
-      )
-      conn.onNotification(
-        'textDocument/publishDiagnostics',
-        (params: {
-          uri: string
-          diagnostics: Array<{
-            range: {
-              start: { line: number; character: number }
-              end: { line: number; character: number }
-            }
-            severity?: number
-            message: string
-            source?: string
-          }>
-        }) => {
-          const items: LspDiagnostic[] = (params.diagnostics || []).map((d) => ({
-            path: pathFromUri(params.uri),
-            line: (d.range?.start?.line ?? 0) + 1,
-            column: (d.range?.start?.character ?? 0) + 1,
-            endLine: (d.range?.end?.line ?? 0) + 1,
-            endColumn: (d.range?.end?.character ?? 0) + 1,
-            severity: severityFromLsp(d.severity),
-            message: d.message,
-            source: d.source || spec.id
-          }))
-          notifyDiagnostics(items)
+  if (existing?.server.active) return true
+  let session: ExtraSession
+  try {
+    const server = new LspSession(
+      root,
+      key,
+      languageServerLaunch(spec.command, spec.args, root),
+      () => extras.get(key) === session && workspaceRoot === root,
+      () => {
+        if (extras.get(key) === session) {
+          extras.delete(key)
+          clearDocs(key)
         }
+      }
+    )
+    session = { id: spec.id, root, key, server, languageId: spec.languageId }
+  } catch (error) {
+    logError('Language server launch failed', { id: spec.id, error: String(error) })
+    return false
+  }
+  extras.set(key, session)
+  session.server.connection.onNotification(
+    'textDocument/publishDiagnostics',
+    (params: {
+      uri: string
+      version?: number
+      diagnostics: Array<{
+        range: {
+          start: { line: number; character: number }
+          end: { line: number; character: number }
+        }
+        severity?: number
+        message: string
+        source?: string
+      }>
+    }) => {
+      if (!session.server.active) return
+      const path = pathFromUri(params.uri),
+        doc = openDocs.get(path)
+      if (
+        !doc ||
+        doc.serverId !== key ||
+        (params.version !== undefined && params.version !== doc.version)
       )
-      conn.listen()
-      await conn.sendRequest('initialize', {
-        processId: process.pid,
-        rootUri: uriFor(root),
-        rootPath: root,
-        capabilities: {
-          textDocument: {
-            hover: { contentFormat: ['markdown', 'plaintext'] },
-            definition: { linkSupport: true },
-            references: {},
-            completion: { completionItem: { snippetSupport: false } },
-            publishDiagnostics: {}
+        return
+      const items: LspDiagnostic[] = (params.diagnostics || []).map((d) => ({
+        path,
+        line: (d.range?.start?.line ?? 0) + 1,
+        column: (d.range?.start?.character ?? 0) + 1,
+        endLine: (d.range?.end?.line ?? 0) + 1,
+        endColumn: (d.range?.end?.character ?? 0) + 1,
+        severity: severityFromLsp(d.severity),
+        message: d.message,
+        source: d.source || spec.id
+      }))
+      notifyDiagnostics(items)
+    }
+  )
+  session.server.listen()
+  const promise = (async () => {
+    try {
+      await session.server.request(
+        'initialize',
+        {
+          processId: process.pid,
+          rootUri: uriFor(root),
+          rootPath: root,
+          capabilities: {
+            textDocument: {
+              hover: { contentFormat: ['markdown', 'plaintext'] },
+              definition: { linkSupport: true },
+              references: {},
+              completion: { completionItem: { snippetSupport: false } },
+              publishDiagnostics: {}
+            },
+            workspace: { workspaceFolders: true }
           },
-          workspace: { workspaceFolders: true }
+          workspaceFolders: [{ uri: uriFor(root), name: 'workspace' }]
         },
-        workspaceFolders: [{ uri: uriFor(root), name: 'workspace' }]
-      })
-      conn.sendNotification('initialized', {})
-      extras.set(spec.id, { id: spec.id, proc, connection: conn, languageId: spec.languageId })
-      logInfo('Language server ready', { id: spec.id, command: launch.command })
+        15000
+      )
+      if (!session.server.active) return false
+      session.server.notify('initialized', {})
+      logInfo('Language server ready', { id: spec.id, root, key })
       return true
-    } catch (err) {
-      logError('Language server failed', {
-        id: spec.id,
-        error: err instanceof Error ? err.message : String(err)
-      })
+    } catch (error) {
+      if (extras.get(key) === session) {
+        extras.delete(key)
+        clearDocs(key)
+      }
+      await session.server.dispose(false)
+      logError('Language server initialization failed', { id: spec.id, error: String(error) })
       return false
     }
   })()
-  starting.set(spec.id, p)
+  starting.set(key, promise)
   try {
-    return await p
+    return await promise
   } finally {
-    starting.delete(spec.id)
+    if (starting.get(key) === promise) starting.delete(key)
   }
+}
+
+async function requestDocument(
+  session: ExtraSession,
+  filePath: string,
+  method: string,
+  params: unknown
+): Promise<unknown> {
+  const doc = openDocs.get(filePath)
+  const result = await session.server.request(method, params)
+  const latest = openDocs.get(filePath)
+  if (
+    !session.server.active ||
+    latest?.version !== doc?.version ||
+    latest?.serverId !== doc?.serverId
+  )
+    throw new Error('Stale document response')
+  return result
 }
 
 const extraDiagHandlers = new Set<(items: LspDiagnostic[]) => void>()
@@ -177,31 +224,21 @@ export function onExtraLspDiagnostics(handler: (items: LspDiagnostic[]) => void)
   return () => extraDiagHandlers.delete(handler)
 }
 
-async function disposeExtra(id: string): Promise<void> {
-  const session = extras.get(id)
-  extras.delete(id)
+function clearDocs(key: string) {
+  for (const [path, doc] of openDocs) if (doc.serverId === key) openDocs.delete(path)
+}
+async function disposeExtra(key: string): Promise<void> {
+  const session = extras.get(key)
   if (!session) return
-  try {
-    await session.connection.sendRequest('shutdown', null)
-  } catch {
-    // ignore
-  }
-  try {
-    session.connection.sendNotification('exit')
-    session.connection.dispose()
-  } catch {
-    // ignore
-  }
-  if (!session.proc.killed) {
-    try {
-      session.proc.kill()
-    } catch {
-      // ignore
-    }
-  }
+  extras.delete(key)
+  starting.delete(key)
+  clearDocs(key)
+  await session.server.dispose()
 }
 
 export async function disposeLanguageServers(): Promise<void> {
+  workspaceRoot = null
+  configureTsLspRoot(null)
   await Promise.all([...extras.keys()].map((id) => disposeExtra(id)))
   await disposeTsLsp()
   openDocs.clear()
@@ -213,18 +250,21 @@ export async function lspDidOpen(
   language: string,
   text: string
 ): Promise<void> {
-  workspaceRoot = root
   if (isTsLike(language, filePath)) {
     await tsDidOpen(root, filePath, language, text)
     return
   }
   const spec = matchServer(language, filePath)
   if (!spec || !(await ensureExtra(root, spec))) return
-  const session = extras.get(spec.id)
-  if (!session) return
+  const session = sessionFor(root, spec)
+  if (!session || !session.server.active || session.root !== realpathAllowMissing(root)) return
+  if (openDocs.get(filePath)?.serverId === session.key) {
+    await lspDidChange(root, filePath, language, text)
+    return
+  }
   const version = 1
-  openDocs.set(filePath, { version, languageId: spec.languageId, serverId: spec.id })
-  session.connection.sendNotification('textDocument/didOpen', {
+  openDocs.set(filePath, { version, languageId: spec.languageId, serverId: session.key })
+  session.server.notify('textDocument/didOpen', {
     textDocument: { uri: uriFor(filePath), languageId: spec.languageId, version, text }
   })
 }
@@ -236,20 +276,25 @@ export async function lspEnsureOpen(
   language: string,
   text: string
 ): Promise<boolean> {
-  workspaceRoot = root
   if (isTsLike(language, filePath)) return tsEnsureOpen(root, filePath, language, text)
   const existing = openDocs.get(filePath)
-  if (existing && extras.has(existing.serverId)) return true
+  if (
+    existing &&
+    extras.get(existing.serverId)?.root === realpathAllowMissing(root) &&
+    extras.get(existing.serverId)?.server.active
+  )
+    return true
   const spec = matchServer(language, filePath)
   if (!spec || !(await ensureExtra(root, spec))) return false
-  const session = extras.get(spec.id)
-  if (!session) return false
+  const session = sessionFor(root, spec)
+  if (!session || !session.server.active || session.root !== realpathAllowMissing(root))
+    return false
   if (openDocs.has(filePath)) {
     await lspDidChange(root, filePath, language, text)
     return true
   }
-  openDocs.set(filePath, { version: 1, languageId: spec.languageId, serverId: spec.id })
-  session.connection.sendNotification('textDocument/didOpen', {
+  openDocs.set(filePath, { version: 1, languageId: spec.languageId, serverId: session.key })
+  session.server.notify('textDocument/didOpen', {
     textDocument: {
       uri: uriFor(filePath),
       languageId: spec.languageId,
@@ -276,10 +321,10 @@ export async function lspDidChange(
     return
   }
   const session = extras.get(prev.serverId)
-  if (!session) return
+  if (!session || !session.server.active || session.root !== realpathAllowMissing(root)) return
   const version = prev.version + 1
   openDocs.set(filePath, { ...prev, version })
-  session.connection.sendNotification('textDocument/didChange', {
+  session.server.notify('textDocument/didChange', {
     textDocument: { uri: uriFor(filePath), version },
     contentChanges: [{ text }]
   })
@@ -288,7 +333,7 @@ export async function lspDidChange(
 export async function lspDidClose(filePath: string): Promise<void> {
   const prev = openDocs.get(filePath)
   if (prev) {
-    extras.get(prev.serverId)?.connection.sendNotification('textDocument/didClose', {
+    extras.get(prev.serverId)?.server.notify('textDocument/didClose', {
       textDocument: { uri: uriFor(filePath) }
     })
     openDocs.delete(filePath)
@@ -305,10 +350,11 @@ export async function lspHover(
   if (isTsLike('', filePath)) return tsHover(root, filePath, line, character)
   const spec = matchServer('', filePath)
   if (!spec || !(await ensureExtra(root, spec))) return { ok: false, contents: '' }
-  const session = extras.get(spec.id)
-  if (!session) return { ok: false, contents: '' }
+  const session = sessionFor(root, spec)
+  if (!session || !session.server.active || session.root !== realpathAllowMissing(root))
+    return { ok: false, contents: '' }
   try {
-    const result = (await session.connection.sendRequest('textDocument/hover', {
+    const result = (await requestDocument(session, filePath, 'textDocument/hover', {
       textDocument: { uri: uriFor(filePath) },
       position: { line: Math.max(0, line - 1), character: Math.max(0, character - 1) }
     })) as { contents?: unknown } | null
@@ -330,10 +376,11 @@ export async function lspDefinition(
   if (isTsLike('', filePath)) return tsDefinition(root, filePath, line, character)
   const spec = matchServer('', filePath)
   if (!spec || !(await ensureExtra(root, spec))) return { ok: false, locations: [] }
-  const session = extras.get(spec.id)
-  if (!session) return { ok: false, locations: [] }
+  const session = sessionFor(root, spec)
+  if (!session || !session.server.active || session.root !== realpathAllowMissing(root))
+    return { ok: false, locations: [] }
   try {
-    const result = (await session.connection.sendRequest('textDocument/definition', {
+    const result = (await requestDocument(session, filePath, 'textDocument/definition', {
       textDocument: { uri: uriFor(filePath) },
       position: { line: Math.max(0, line - 1), character: Math.max(0, character - 1) }
     })) as
@@ -364,10 +411,11 @@ export async function lspReferences(
   if (isTsLike('', filePath)) return tsReferences(root, filePath, line, character)
   const spec = matchServer('', filePath)
   if (!spec || !(await ensureExtra(root, spec))) return { ok: false, locations: [] }
-  const session = extras.get(spec.id)
-  if (!session) return { ok: false, locations: [] }
+  const session = sessionFor(root, spec)
+  if (!session || !session.server.active || session.root !== realpathAllowMissing(root))
+    return { ok: false, locations: [] }
   try {
-    const result = (await session.connection.sendRequest('textDocument/references', {
+    const result = (await requestDocument(session, filePath, 'textDocument/references', {
       textDocument: { uri: uriFor(filePath) },
       position: { line: Math.max(0, line - 1), character: Math.max(0, character - 1) },
       context: { includeDeclaration: true }
@@ -393,10 +441,11 @@ export async function lspCompletion(
   if (isTsLike('', filePath)) return tsCompletion(root, filePath, line, character)
   const spec = matchServer('', filePath)
   if (!spec || !(await ensureExtra(root, spec))) return { ok: false, items: [] }
-  const session = extras.get(spec.id)
-  if (!session) return { ok: false, items: [] }
+  const session = sessionFor(root, spec)
+  if (!session || !session.server.active || session.root !== realpathAllowMissing(root))
+    return { ok: false, items: [] }
   try {
-    const result = (await session.connection.sendRequest('textDocument/completion', {
+    const result = (await requestDocument(session, filePath, 'textDocument/completion', {
       textDocument: { uri: uriFor(filePath) },
       position: { line: Math.max(0, line - 1), character: Math.max(0, character - 1) }
     })) as
