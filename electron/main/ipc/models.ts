@@ -46,7 +46,8 @@ export function registerModelsIpc(): void {
   ipcMain.handle(
     'models:status',
     async (_e, options?: { probe?: boolean; includeGpu?: boolean }) => {
-      const settings = getResolvedSettings(appState.currentWorkspace)
+      const root = appState.currentWorkspace
+      const settings = getResolvedSettings(root)
       const probe = options?.probe === true
       const includeGpu = options?.includeGpu === true || probe
       const status = await getModelsStatus(settings, getSecret, {
@@ -54,10 +55,10 @@ export function registerModelsIpc(): void {
         includeGpu
       })
       // Persist live /v1/models lists only when we actually probed.
-      if (probe) {
+      if (probe && appState.currentWorkspace === root) {
         const { connections, changed } = connectionsWithDiscoveredModels(settings, status)
         if (changed) {
-          setSettings('user', { models: { connections } }, appState.currentWorkspace)
+          setSettings('user', { models: { connections } }, root)
           return {
             ...status,
             connections: status.connections.map((c) => {

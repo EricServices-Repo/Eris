@@ -1,6 +1,50 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
 import type { IdeApi } from '../../src/shared/api'
 
+import { privilegedChannel } from '../../src/shared/privileged-ipc'
+
+// Preserve the public API while every privileged channel gets an explicit root envelope.
+const originalInvoke = ipcRenderer.invoke.bind(ipcRenderer)
+let workspaceIdentity: string | null = null
+let workspaceRevision = 0
+const initialWorkspace = originalInvoke('workspace:getCurrent').then((root: string | null) => {
+  if (workspaceRevision === 0) workspaceIdentity = root
+})
+ipcRenderer.invoke = async (channel: string, ...args: unknown[]) => {
+  if (privilegedChannel(channel)) {
+    await initialWorkspace
+    return originalInvoke(channel, { version: 1, root: workspaceIdentity, args })
+  }
+  const result = await originalInvoke(channel, ...args)
+  if (
+    [
+      'workspace:getCurrent',
+      'workspace:setCurrent',
+      'workspace:open',
+      'workspace:openPath'
+    ].includes(channel)
+  ) {
+    if (
+      result !== null ||
+      channel === 'workspace:setCurrent' ||
+      channel === 'workspace:getCurrent'
+    ) {
+      workspaceRevision++
+      workspaceIdentity = result
+    }
+  } else if (
+    ['workspace:create', 'workspace:link', 'workspace:openById'].includes(channel) &&
+    result?.path
+  ) {
+    workspaceRevision++
+    workspaceIdentity = result.path
+  } else if (channel === 'workspace:remove') {
+    workspaceRevision++
+    workspaceIdentity = await originalInvoke('workspace:getCurrent')
+  }
+  return result
+}
+
 function subscribe<T>(channel: string, cb: (data: T) => void): () => void {
   const listener = (_event: IpcRendererEvent, data: T) => cb(data)
   ipcRenderer.on(channel, listener)
