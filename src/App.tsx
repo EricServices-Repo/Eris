@@ -370,26 +370,6 @@ export default function App() {
     appendTerminal
   })
 
-  const commitKept = async (message: string, action: 'stage' | 'commit' = 'commit') => {
-    const root = workspacePath
-    if (!root) throw new Error('No workspace open')
-    const changes = pendingDiffs
-      .filter((d) => d.status === 'kept')
-      .map((d) => ({ checkpointId: d.checkpointId, opIndex: d.opIndex }))
-    const status = await window.ide.gitStatus()
-    const head = await window.ide.gitHead()
-    if (!status.ok || !status.branch || windowWorkspaceRef.current !== root)
-      throw new Error('Repository changed')
-    return window.ide.gitCommitReviewed({
-      root,
-      branch: status.branch,
-      head,
-      message,
-      changes,
-      action
-    })
-  }
-
   useEffect(() => {
     let cancelled = false
     const BOOT_TIMEOUT_MS = 8_000
@@ -707,6 +687,26 @@ export default function App() {
         </button>
       </div>
     )
+  }
+
+  const commitKept = async (message: string, action: 'stage' | 'commit' = 'commit') => {
+    const root = workspacePath
+    if (!root) throw new Error('No workspace open')
+    const changes = pendingDiffs
+      .filter((d) => d.status === 'kept')
+      .map((d) => ({ checkpointId: d.checkpointId, opIndex: d.opIndex }))
+    const status = await window.ide.gitStatus()
+    const head = await window.ide.gitHead()
+    if (!status.ok || !status.branch || windowWorkspaceRef.current !== root)
+      throw new Error('Repository changed')
+    return window.ide.gitCommitReviewed({
+      root,
+      branch: status.branch,
+      head,
+      message,
+      changes,
+      action
+    })
   }
 
   return (
