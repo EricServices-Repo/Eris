@@ -370,6 +370,26 @@ export default function App() {
     appendTerminal
   })
 
+  const commitKept = async (message: string, action: 'stage' | 'commit' = 'commit') => {
+    const root = workspacePath
+    if (!root) throw new Error('No workspace open')
+    const changes = pendingDiffs
+      .filter((d) => d.status === 'kept')
+      .map((d) => ({ checkpointId: d.checkpointId, opIndex: d.opIndex }))
+    const status = await window.ide.gitStatus()
+    const head = await window.ide.gitHead()
+    if (!status.ok || !status.branch || windowWorkspaceRef.current !== root)
+      throw new Error('Repository changed')
+    return window.ide.gitCommitReviewed({
+      root,
+      branch: status.branch,
+      head,
+      message,
+      changes,
+      action
+    })
+  }
+
   useEffect(() => {
     let cancelled = false
     const BOOT_TIMEOUT_MS = 8_000
@@ -1309,11 +1329,11 @@ export default function App() {
                   void (async () => {
                     const paths = pendingDiffs
                       .filter((d) => d.status === 'kept')
-                      .map((d) => d.path.split(' → ')[0] || d.path)
+                      .flatMap((d) => d.path.split(' → '))
                     if (!paths.length) return
                     setDiffGitBusy(true)
                     try {
-                      const res = await window.ide.gitStage(paths)
+                      const res = await commitKept('Stage reviewed changes', 'stage')
                       if (!res.ok) setChatError(res.error || 'Stage failed')
                       else setAgentStatus(`Staged ${paths.length} file(s)`)
                     } finally {
@@ -1325,19 +1345,14 @@ export default function App() {
                   void (async () => {
                     const paths = pendingDiffs
                       .filter((d) => d.status === 'kept')
-                      .map((d) => d.path.split(' → ')[0] || d.path)
+                      .flatMap((d) => d.path.split(' → '))
                     if (!paths.length) return
                     const message =
                       window.prompt('Commit message', `Agent: update ${paths.length} file(s)`) || ''
                     if (!message.trim()) return
                     setDiffGitBusy(true)
                     try {
-                      const staged = await window.ide.gitStage(paths)
-                      if (!staged.ok) {
-                        setChatError(staged.error || 'Stage failed')
-                        return
-                      }
-                      const committed = await window.ide.gitCommit(message.trim())
+                      const committed = await commitKept(message.trim())
                       if (!committed.ok) setChatError(committed.error || 'Commit failed')
                       else setAgentStatus('Committed kept changes')
                     } finally {
@@ -1349,23 +1364,23 @@ export default function App() {
                   void (async () => {
                     const paths = pendingDiffs
                       .filter((d) => d.status === 'kept')
-                      .map((d) => d.path.split(' → ')[0] || d.path)
+                      .flatMap((d) => d.path.split(' → '))
                     if (!paths.length) return
                     const defaultMsg = `Agent: update ${paths.length} file(s)`
                     const message = window.prompt('Commit message', defaultMsg) || ''
                     if (!message.trim()) return
                     setDiffGitBusy(true)
                     try {
-                      const staged = await window.ide.gitStage(paths)
-                      if (!staged.ok) {
-                        setChatError(staged.error || 'Stage failed')
-                        return
-                      }
-                      const committed = await window.ide.gitCommit(message.trim())
+                      const committed = await commitKept(message.trim())
                       if (!committed.ok) {
                         setChatError(committed.error || 'Commit failed')
                         return
                       }
+                      if (
+                        windowWorkspaceRef.current !== committed.root ||
+                        (await window.ide.gitStatus()).branch !== committed.branch
+                      )
+                        throw new Error('Repository changed before push')
                       const pushed = await window.ide.githubSync('push')
                       if (!pushed.ok) {
                         setChatError(pushed.error || 'Push failed')
@@ -1382,7 +1397,7 @@ export default function App() {
                   void (async () => {
                     const paths = pendingDiffs
                       .filter((d) => d.status === 'kept')
-                      .map((d) => d.path.split(' → ')[0] || d.path)
+                      .flatMap((d) => d.path.split(' → '))
                     if (!paths.length) return
                     const title =
                       window.prompt(
@@ -1392,16 +1407,16 @@ export default function App() {
                     if (!title.trim()) return
                     setDiffGitBusy(true)
                     try {
-                      const staged = await window.ide.gitStage(paths)
-                      if (!staged.ok) {
-                        setChatError(staged.error || 'Stage failed')
-                        return
-                      }
-                      const committed = await window.ide.gitCommit(title.trim())
+                      const committed = await commitKept(title.trim())
                       if (!committed.ok) {
                         setChatError(committed.error || 'Commit failed')
                         return
                       }
+                      if (
+                        windowWorkspaceRef.current !== committed.root ||
+                        (await window.ide.gitStatus()).branch !== committed.branch
+                      )
+                        throw new Error('Repository changed before PR')
                       const pr = await window.ide.githubCreatePullRequest({ title: title.trim() })
                       if (!pr.ok) setChatError(pr.error || 'Could not create pull request')
                       else {

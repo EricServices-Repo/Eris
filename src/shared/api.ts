@@ -512,6 +512,15 @@ export interface IdeApi {
   }>
   gitDiff: (path?: string) => Promise<{ ok: boolean; diff: string; error?: string }>
   gitStage: (paths: string[]) => Promise<{ ok: boolean; error?: string }>
+  gitCommitReviewed: (input: {
+    root: string
+    branch: string
+    head: string
+    message: string
+    action?: 'stage' | 'commit'
+    changes: { checkpointId: string; opIndex: number }[]
+  }) => Promise<{ ok: boolean; error?: string; root?: string; branch?: string; commit?: string }>
+  gitHead: () => Promise<string>
   gitCommit: (message: string) => Promise<{ ok: boolean; error?: string }>
   gitBranches: () => Promise<{
     ok: boolean
