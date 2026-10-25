@@ -271,9 +271,25 @@ export function useChatSession({
           }
         }
         setToolActivity([...restoredTools.values()])
-        if (!settingsRef.current?.agent.autoKeepDiffs) {
-          setPendingDiffs([...restoredDiffs.values()])
+        for (const checkpointId of new Set(
+          [...restoredDiffs.values()].map((d) => d.checkpointId)
+        )) {
+          const receipts = await window.ide.checkpointReview(checkpointId)
+          for (const [key, diff] of restoredDiffs) {
+            const receipt =
+              diff.checkpointId === checkpointId
+                ? receipts.find((r) => r.opIndex === diff.opIndex)
+                : undefined
+            if (receipt)
+              restoredDiffs.set(key, {
+                ...diff,
+                status: receipt.status === 'conflicted' ? 'pending' : receipt.status,
+                conflict: receipt.reason
+              })
+          }
         }
+        if (cancelled || requestIdRef.current !== job.id) return
+        setPendingDiffs([...restoredDiffs.values()])
         setActiveCheckpointId(restoredCheckpoint)
         setAnswerBuffer(job.answer)
         setThinkingBuffer('')
@@ -737,9 +753,20 @@ export function useChatSession({
       setActiveCheckpointId(diff.checkpointId)
       const autoKeep = Boolean(settingsRef.current?.agent.autoKeepDiffs)
       // Auto-keep: skip review UI entirely (edits are already on disk).
-      if (autoKeep) return
+      if (autoKeep) {
+        void window.ide
+          .decideCheckpointReview({
+            checkpointId: diff.checkpointId,
+            opIndices: [diff.opIndex],
+            decision: 'keep'
+          })
+          .catch((error) => {
+            if (requestId === requestIdRef.current) setChatError(String(error))
+          })
+        return
+      }
       setPendingDiffs((prev) => [
-        ...prev,
+        ...prev.filter((d) => d.checkpointId !== diff.checkpointId || d.opIndex !== diff.opIndex),
         {
           id: uid(),
           checkpointId: diff.checkpointId,

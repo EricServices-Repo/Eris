@@ -480,6 +480,12 @@ export interface IdeApi {
       toolsModel?: string
     }) => void
   ) => () => void
+  checkpointReview: (
+    checkpointId: string
+  ) => Promise<import('./checkpoint-review').CheckpointReviewItem[]>
+  decideCheckpointReview: (
+    input: import('./checkpoint-review').CheckpointReviewRequest
+  ) => Promise<import('./checkpoint-review').CheckpointReviewItem[]>
   restoreCheckpoint: (checkpointId: string) => Promise<{ restored: number }>
   restoreCheckpointOp: (
     checkpointId: string,
