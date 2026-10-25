@@ -1,3 +1,4 @@
+import { withPrivilegedRegistration } from './privileged'
 import { registerImageIpc } from './images'
 import { registerWorkspaceIpc } from './workspace'
 import { registerAppIpc } from './app'
@@ -27,6 +28,10 @@ import { registerUpdatesIpc } from './updates'
 import { registerBugReportIpc } from './bug-report'
 
 export function registerIpc(): void {
+  withPrivilegedRegistration(registerHandlers)
+}
+
+function registerHandlers(): void {
   registerImageIpc()
   registerWorkspaceIpc()
   registerAppIpc()
