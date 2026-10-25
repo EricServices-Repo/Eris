@@ -1,10 +1,12 @@
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   renameSync,
   rmSync,
+  rmdirSync,
   statSync,
   unlinkSync,
   writeFileSync
@@ -26,6 +28,19 @@ export interface CheckpointRecord {
   createdAt: number
   workspacePath: string
   ops: CheckpointFileOp[]
+}
+
+export class CheckpointConflictError extends Error {
+  readonly code = 'CHECKPOINT_CONFLICT'
+  constructor(
+    readonly path: string,
+    readonly reason: 'directory-not-empty' | 'directory-replaced'
+  ) {
+    super(
+      `Cannot undo directory ${path}: ${reason === 'directory-not-empty' ? 'it contains files that must be reviewed first' : 'the original directory was replaced'}.`
+    )
+    this.name = 'CheckpointConflictError'
+  }
 }
 
 function checkpointsRoot(workspacePath: string): string {
@@ -58,10 +73,7 @@ function saveRecord(record: CheckpointRecord): void {
   )
 }
 
-export function loadCheckpoint(
-  workspacePath: string,
-  id: string
-): CheckpointRecord | null {
+export function loadCheckpoint(workspacePath: string, id: string): CheckpointRecord | null {
   const path = checkpointMetaPath(workspacePath, id)
   if (!existsSync(path)) return null
   try {
@@ -149,10 +161,17 @@ export function recordMkdirOp(
 }
 
 /** Generated images are new files; undo removes the binary without interpreting it as text. */
-export function recordBinaryCreateOp(workspacePath: string, checkpointId: string, path: string): CheckpointRecord {
+export function recordBinaryCreateOp(
+  workspacePath: string,
+  checkpointId: string,
+  path: string
+): CheckpointRecord {
   const record = loadCheckpoint(workspacePath, checkpointId)
   if (!record) throw new Error('Checkpoint not found')
-  record.ops.push({ kind: 'binary-create', path: toWorkspaceRelative(workspacePath, resolveInWorkspace(workspacePath, path)) })
+  record.ops.push({
+    kind: 'binary-create',
+    path: toWorkspaceRelative(workspacePath, resolveInWorkspace(workspacePath, path))
+  })
   saveRecord(record)
   return record
 }
@@ -196,15 +215,22 @@ function applyReverseOp(workspacePath: string, op: CheckpointFileOp): boolean {
     if (op.kind === 'mkdir') {
       const abs = resolveInWorkspace(workspacePath, op.path)
       if (existsSync(abs)) {
+        if (lstatSync(abs).isSymbolicLink() || !lstatSync(abs).isDirectory())
+          throw new CheckpointConflictError(op.path, 'directory-replaced')
         try {
-          rmSync(abs, { recursive: true, force: true })
-        } catch {
-          // ignore non-empty
+          // rmdir is atomic with respect to emptiness; never infer ownership of descendants.
+          rmdirSync(abs)
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code
+          if (code === 'ENOTEMPTY' || code === 'EEXIST')
+            throw new CheckpointConflictError(op.path, 'directory-not-empty')
+          throw error
         }
       }
       return true
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof CheckpointConflictError) throw error
     return false
   }
   return false
@@ -233,8 +259,7 @@ export function restoreCheckpointOp(
   if (!op) throw new Error(`Checkpoint op ${opIndex} not found`)
   const ok = applyReverseOp(workspacePath, op)
   if (!ok) throw new Error('Failed to restore file from checkpoint')
-  const path =
-    op.kind === 'rename' ? op.from : 'path' in op ? op.path : undefined
+  const path = op.kind === 'rename' ? op.from : 'path' in op ? op.path : undefined
   return { restored: 1, path }
 }
 
@@ -264,7 +289,9 @@ export function restoreCheckpointThrough(
   return { restored, kept: keep }
 }
 
-export function listCheckpoints(workspacePath: string): Array<{ id: string; createdAt: number; opCount: number }> {
+export function listCheckpoints(
+  workspacePath: string
+): Array<{ id: string; createdAt: number; opCount: number }> {
   const root = checkpointsRoot(workspacePath)
   if (!existsSync(root)) return []
   const out: Array<{ id: string; createdAt: number; opCount: number }> = []
