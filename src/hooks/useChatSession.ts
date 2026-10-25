@@ -274,7 +274,10 @@ export function useChatSession({
         for (const checkpointId of new Set(
           [...restoredDiffs.values()].map((d) => d.checkpointId)
         )) {
-          const receipts = await window.ide.checkpointReview(checkpointId)
+          const receipts = await window.ide.checkpointReview(checkpointId).catch((error) => {
+            if (!cancelled) setChatError(String(error))
+            return []
+          })
           for (const [key, diff] of restoredDiffs) {
             const receipt =
               diff.checkpointId === checkpointId
@@ -765,19 +768,34 @@ export function useChatSession({
           })
         return
       }
-      setPendingDiffs((prev) => [
-        ...prev.filter((d) => d.checkpointId !== diff.checkpointId || d.opIndex !== diff.opIndex),
-        {
-          id: uid(),
-          checkpointId: diff.checkpointId,
-          opIndex: diff.opIndex,
-          path: diff.path,
-          before: diff.before,
-          after: diff.after,
-          op: diff.op,
-          status: 'pending'
-        }
-      ])
+      setPendingDiffs((prev) => {
+        if (prev.some((d) => d.checkpointId === diff.checkpointId && d.opIndex === diff.opIndex))
+          return prev
+        return [...prev, { id: uid(), ...diff, status: 'pending' }]
+      })
+      void window.ide
+        .checkpointReview(diff.checkpointId)
+        .then((receipts) => {
+          if (requestId !== requestIdRef.current) return
+          const receipt = receipts.find((item) => item.opIndex === diff.opIndex)
+          if (!receipt) return
+          setPendingDiffs((prev) =>
+            prev.map((item) =>
+              item.checkpointId === diff.checkpointId &&
+              item.opIndex === diff.opIndex &&
+              item.status === 'pending'
+                ? {
+                    ...item,
+                    status: receipt.status === 'conflicted' ? 'pending' : receipt.status,
+                    conflict: receipt.reason
+                  }
+                : item
+            )
+          )
+        })
+        .catch((error) => {
+          if (requestId === requestIdRef.current) setChatError(String(error))
+        })
       if (workspacePath && diff.op !== 'binary') {
         void openFile(joinWorkspacePath(workspacePath, diff.path)).catch(() => undefined)
       }
