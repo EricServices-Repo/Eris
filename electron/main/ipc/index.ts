@@ -7,6 +7,7 @@ import { registerOllamaIpc } from './ollama'
 import { registerChatsIpc } from './chats'
 import { registerAgentsIpc } from './agents'
 import { registerChatStreamIpc } from './chat-stream'
+import { registerCheckpointReviewIpc } from './checkpoint-review'
 import { registerCheckpointsIpc } from './checkpoints'
 import { registerTerminalIpc } from './terminal'
 import { registerLspIpc } from './lsp'
@@ -36,6 +37,7 @@ export function registerIpc(): void {
   registerAgentsIpc()
   registerChatStreamIpc()
   registerCheckpointsIpc()
+  registerCheckpointReviewIpc()
   registerTerminalIpc()
   registerLspIpc()
   registerGitIpc()
