@@ -1,5 +1,7 @@
 import { spawn } from 'child_process'
-import { existsSync } from 'fs'
+import { existsSync, lstatSync, readFileSync, statSync } from 'fs'
+import { loadCheckpoint } from './checkpoints'
+import { resolveInWorkspace, realpathAllowMissing, isPathInside } from './workspace-fs'
 import { join } from 'path'
 import { activeDiagnosticsScope } from './model-transport'
 
@@ -206,4 +208,136 @@ export async function gitStash(
   const output = [res.stdout, res.stderr].filter(Boolean).join('\n').trim()
   if (res.code !== 0) return { ok: false, error: output || `stash ${action} failed`, output }
   return { ok: true, output }
+}
+
+export interface ReviewedCommitRequest {
+  root: string
+  branch: string
+  head: string
+  message: string
+  action?: 'stage' | 'commit'
+  changes: { checkpointId: string; opIndex: number }[]
+}
+/** --only uses Git's temporary commit index and preserves staging outside these exact paths. */
+export async function gitCommitReviewed(
+  root: string,
+  input: ReviewedCommitRequest,
+  current: () => boolean
+) {
+  const fail = (error: string) => ({ ok: false, error })
+  if (
+    !input ||
+    input.root !== root ||
+    typeof input.message !== 'string' ||
+    !input.message.trim() ||
+    input.message.length > 10000 ||
+    !Array.isArray(input.changes) ||
+    !input.changes.length ||
+    input.changes.length > 4096
+  )
+    return fail('Invalid reviewed commit request')
+  const branch = await runGit(root, ['symbolic-ref', '--short', 'HEAD'])
+  const head = await runGit(root, ['rev-parse', 'HEAD'])
+  if (
+    !current() ||
+    branch.code ||
+    head.code ||
+    branch.stdout.trim() !== input.branch ||
+    head.stdout.trim() !== input.head
+  )
+    return fail('Repository or branch changed; review the commit again')
+  const desired = new Map<string, { before: string | null; after: string | null }>()
+  const records = new Map<string, NonNullable<ReturnType<typeof loadCheckpoint>>>()
+  for (const change of input.changes) {
+    if (
+      !/^[0-9a-f-]{36}$/i.test(change.checkpointId) ||
+      !Number.isSafeInteger(change.opIndex) ||
+      change.opIndex < 0
+    )
+      return fail('Invalid patch identity')
+    const record = records.get(change.checkpointId) || loadCheckpoint(root, change.checkpointId)
+    if (!record || record.workspacePath !== root || change.opIndex >= record.ops.length)
+      return fail('Patch belongs to a different workspace')
+    records.set(change.checkpointId, record)
+  }
+  // Checkpoint operation order, never the display string, owns both sides of a rename.
+  for (const [id, record] of records)
+    for (const [index, op] of record.ops.entries()) {
+      if (!input.changes.some((c) => c.checkpointId === id && c.opIndex === index)) continue
+      const add = (path: string, before: string | null, after: string | null) => {
+        const existing = desired.get(path)
+        if (existing && existing.after !== before)
+          throw new Error('Selected changes are not a contiguous patch; review manually')
+        desired.set(path, { before: existing ? existing.before : before, after })
+      }
+      if (op.kind === 'write') add(op.path, op.before, op.after)
+      else if (op.kind === 'delete') add(op.path, op.before, null)
+      else if (op.kind === 'rename' && op.before !== undefined) {
+        add(op.from, op.before, null)
+        add(op.to, null, op.before)
+      } else if (op.kind !== 'mkdir') return fail('Binary changes require manual Git review')
+    }
+  if (!desired.size) return fail('No committable patches selected')
+  for (const [path, patch] of desired) {
+    const absolute = resolveInWorkspace(root, path)
+    if (!isPathInside(realpathAllowMissing(root), realpathAllowMissing(absolute)))
+      return fail(`Path escapes workspace through a link: ${path}`)
+    if (existsSync(absolute) && statSync(absolute).size > 1_000_000)
+      return fail(`Large file requires manual Git review: ${path}`)
+    if (
+      existsSync(absolute) &&
+      (!lstatSync(absolute).isFile() || lstatSync(absolute).isSymbolicLink())
+    )
+      return fail(`Unsupported file type: ${path}`)
+    const disk = existsSync(absolute) ? readFileSync(absolute, 'utf8') : null
+    if (disk !== patch.after)
+      return fail(`User or later agent edits in ${path}; review its hunks manually`)
+    const base = await runGit(root, ['show', `${input.head}:${path}`])
+    const before = base.code === 0 ? base.stdout : null
+    if (before !== patch.before)
+      return fail(`Pre-existing changes in ${path}; review its hunks manually`)
+    const mode = await runGit(root, [
+      '--literal-pathspecs',
+      'diff',
+      '--summary',
+      input.head,
+      '--',
+      path
+    ])
+    if (mode.code || /mode change/.test(mode.stdout))
+      return fail(`File mode changes in ${path} require manual Git review`)
+    const staged = await runGit(root, ['show', `:${path}`])
+    const indexed = staged.code === 0 ? staged.stdout : null
+    if (indexed !== patch.before && indexed !== patch.after)
+      return fail(`Different staged content in ${path}; preserve it with manual Git review`)
+  }
+  if (!current()) return fail('Workspace changed before commit')
+  const latest = await runGit(root, ['rev-parse', 'HEAD'])
+  const latestBranch = await runGit(root, ['symbolic-ref', '--short', 'HEAD'])
+  if (
+    latest.stdout.trim() !== input.head ||
+    latestBranch.stdout.trim() !== input.branch ||
+    !current()
+  )
+    return fail('Branch changed before commit')
+  const staged = await runGit(root, ['--literal-pathspecs', 'add', '--', ...desired.keys()])
+  if (staged.code) return fail(staged.stderr || 'Could not stage reviewed paths')
+  if (input.action === 'stage') return { ok: true, root, branch: input.branch }
+  const result = await runGit(root, [
+    '--literal-pathspecs',
+    'commit',
+    '--only',
+    '-m',
+    input.message.trim(),
+    '--',
+    ...desired.keys()
+  ])
+  if (result.code)
+    return fail(
+      result.stderr.trim() ||
+        result.stdout.trim() ||
+        'Commit failed; reviewed paths remain staged and unrelated staging is preserved'
+    )
+  const committed = await runGit(root, ['rev-parse', 'HEAD'])
+  return { ok: true, root, branch: input.branch, commit: committed.stdout.trim() }
 }
