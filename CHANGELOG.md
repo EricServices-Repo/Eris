@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.0 — 2026-10-25
+
+- Start the 0.5 release train with conflict-safe checkpoints, durable Keep/Undo review, scoped agent commits, privileged IPC validation, and isolated language-server sessions. Rebuild Eris and Eris-Dev for macOS and Windows.
+
 ## 0.4.16 — 2026-10-24
 
 - Desktop rebuild with task lifecycle, credential storage, cloud isolation, and release validation fixes.
