@@ -1,7 +1,7 @@
 import { spawn } from 'child_process'
-import { existsSync, lstatSync, readFileSync } from 'fs'
+import { existsSync, lstatSync, readFileSync, statSync } from 'fs'
 import { loadCheckpoint } from './checkpoints'
-import { resolveInWorkspace } from './workspace-fs'
+import { resolveInWorkspace, realpathAllowMissing, isPathInside } from './workspace-fs'
 import { join } from 'path'
 import { activeDiagnosticsScope } from './model-transport'
 
@@ -228,7 +228,8 @@ export async function gitCommitReviewed(
   if (
     !input ||
     input.root !== root ||
-    !input.message?.trim() ||
+    typeof input.message !== 'string' ||
+    !input.message.trim() ||
     input.message.length > 10000 ||
     !Array.isArray(input.changes) ||
     !input.changes.length ||
@@ -255,7 +256,7 @@ export async function gitCommitReviewed(
     )
       return fail('Invalid patch identity')
     const record = records.get(change.checkpointId) || loadCheckpoint(root, change.checkpointId)
-    if (!record || record.workspacePath !== root)
+    if (!record || record.workspacePath !== root || change.opIndex >= record.ops.length)
       return fail('Patch belongs to a different workspace')
     records.set(change.checkpointId, record)
   }
@@ -279,6 +280,10 @@ export async function gitCommitReviewed(
   if (!desired.size) return fail('No committable patches selected')
   for (const [path, patch] of desired) {
     const absolute = resolveInWorkspace(root, path)
+    if (!isPathInside(realpathAllowMissing(root), realpathAllowMissing(absolute)))
+      return fail(`Path escapes workspace through a link: ${path}`)
+    if (existsSync(absolute) && statSync(absolute).size > 1_000_000)
+      return fail(`Large file requires manual Git review: ${path}`)
     if (
       existsSync(absolute) &&
       (!lstatSync(absolute).isFile() || lstatSync(absolute).isSymbolicLink())
@@ -291,6 +296,16 @@ export async function gitCommitReviewed(
     const before = base.code === 0 ? base.stdout : null
     if (before !== patch.before)
       return fail(`Pre-existing changes in ${path}; review its hunks manually`)
+    const mode = await runGit(root, [
+      '--literal-pathspecs',
+      'diff',
+      '--summary',
+      input.head,
+      '--',
+      path
+    ])
+    if (mode.code || /mode change/.test(mode.stdout))
+      return fail(`File mode changes in ${path} require manual Git review`)
     const staged = await runGit(root, ['show', `:${path}`])
     const indexed = staged.code === 0 ? staged.stdout : null
     if (indexed !== patch.before && indexed !== patch.after)

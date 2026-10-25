@@ -1336,6 +1336,8 @@ export default function App() {
                       const res = await commitKept('Stage reviewed changes', 'stage')
                       if (!res.ok) setChatError(res.error || 'Stage failed')
                       else setAgentStatus(`Staged ${paths.length} file(s)`)
+                    } catch (error) {
+                      setChatError(error instanceof Error ? error.message : String(error))
                     } finally {
                       setDiffGitBusy(false)
                     }
@@ -1355,6 +1357,8 @@ export default function App() {
                       const committed = await commitKept(message.trim())
                       if (!committed.ok) setChatError(committed.error || 'Commit failed')
                       else setAgentStatus('Committed kept changes')
+                    } catch (error) {
+                      setChatError(error instanceof Error ? error.message : String(error))
                     } finally {
                       setDiffGitBusy(false)
                     }
@@ -1388,6 +1392,8 @@ export default function App() {
                         return
                       }
                       setAgentStatus('Committed & pushed kept changes')
+                    } catch (error) {
+                      setChatError(error instanceof Error ? error.message : String(error))
                     } finally {
                       setDiffGitBusy(false)
                     }
@@ -1426,6 +1432,8 @@ export default function App() {
                             : pr.htmlUrl || 'Opened pull request'
                         )
                       }
+                    } catch (error) {
+                      setChatError(error instanceof Error ? error.message : String(error))
                     } finally {
                       setDiffGitBusy(false)
                     }
