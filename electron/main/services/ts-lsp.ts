@@ -1,10 +1,13 @@
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process'
-import { existsSync } from 'fs'
-import { dirname, join } from 'path'
 import { pathToFileURL } from 'url'
-import { createMessageConnection, StreamMessageReader, StreamMessageWriter } from 'vscode-jsonrpc/node'
+import {
+  createMessageConnection,
+  StreamMessageReader,
+  StreamMessageWriter
+} from 'vscode-jsonrpc/node'
 import type { MessageConnection } from 'vscode-jsonrpc/node'
 import { logError, logInfo, logWarn } from './logger'
+import { languageServerFilePath, typescriptLanguageServerLaunch } from './lsp-paths'
 
 export type LspDiagnostic = {
   path: string
@@ -37,32 +40,7 @@ function uriFor(filePath: string): string {
 }
 
 function pathFromUri(uri: string): string {
-  try {
-    return decodeURIComponent(new URL(uri).pathname)
-  } catch {
-    return uri.replace(/^file:\/\//, '')
-  }
-}
-
-function resolveServerCommand(): { command: string; args: string[] } | null {
-  const localBin = join(
-    process.cwd(),
-    'node_modules',
-    '.bin',
-    'typescript-language-server'
-  )
-  const appBin = join(
-    dirname(dirname(__dirname)),
-    'node_modules',
-    '.bin',
-    'typescript-language-server'
-  )
-  const candidates = [localBin, appBin]
-  for (const c of candidates) {
-    if (existsSync(c)) return { command: c, args: ['--stdio'] }
-  }
-  // Packaged / PATH fallback
-  return { command: 'typescript-language-server', args: ['--stdio'] }
+  return languageServerFilePath(uri)
 }
 
 async function ensureServer(root: string): Promise<boolean> {
@@ -71,13 +49,12 @@ async function ensureServer(root: string): Promise<boolean> {
 
   starting = (async () => {
     await disposeTsLsp()
-    const cmd = resolveServerCommand()
-    if (!cmd) return false
-
     try {
+      const cmd = typescriptLanguageServerLaunch(root)
       proc = spawn(cmd.command, cmd.args, {
         cwd: root,
-        env: { ...process.env },
+        env: cmd.env,
+        windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe']
       })
     } catch (err) {
@@ -104,37 +81,40 @@ async function ensureServer(root: string): Promise<boolean> {
       new StreamMessageReader(proc.stdout),
       new StreamMessageWriter(proc.stdin)
     )
-    conn.onNotification('textDocument/publishDiagnostics', (params: {
-      uri: string
-      diagnostics: Array<{
-        range: {
-          start: { line: number; character: number }
-          end: { line: number; character: number }
-        }
-        severity?: number
-        message: string
-        source?: string
-      }>
-    }) => {
-      const filePath = pathFromUri(params.uri)
-      const items: LspDiagnostic[] = (params.diagnostics || []).map((d) => ({
-        path: filePath,
-        line: (d.range?.start?.line ?? 0) + 1,
-        column: (d.range?.start?.character ?? 0) + 1,
-        endLine: (d.range?.end?.line ?? 0) + 1,
-        endColumn: (d.range?.end?.character ?? 0) + 1,
-        severity: severityFromLsp(d.severity),
-        message: d.message,
-        source: d.source || 'tsserver'
-      }))
-      for (const h of diagnosticsHandlers) {
-        try {
-          h(items)
-        } catch {
-          // ignore
+    conn.onNotification(
+      'textDocument/publishDiagnostics',
+      (params: {
+        uri: string
+        diagnostics: Array<{
+          range: {
+            start: { line: number; character: number }
+            end: { line: number; character: number }
+          }
+          severity?: number
+          message: string
+          source?: string
+        }>
+      }) => {
+        const filePath = pathFromUri(params.uri)
+        const items: LspDiagnostic[] = (params.diagnostics || []).map((d) => ({
+          path: filePath,
+          line: (d.range?.start?.line ?? 0) + 1,
+          column: (d.range?.start?.character ?? 0) + 1,
+          endLine: (d.range?.end?.line ?? 0) + 1,
+          endColumn: (d.range?.end?.character ?? 0) + 1,
+          severity: severityFromLsp(d.severity),
+          message: d.message,
+          source: d.source || 'tsserver'
+        }))
+        for (const h of diagnosticsHandlers) {
+          try {
+            h(items)
+          } catch {
+            // ignore
+          }
         }
       }
-    })
+    )
 
     conn.listen()
 
@@ -416,11 +396,7 @@ export async function lspCompletion(
       | Array<{ label: string; detail?: string; insertText?: string }>
       | null
 
-    const items = !result
-      ? []
-      : Array.isArray(result)
-        ? result
-        : result.items || []
+    const items = !result ? [] : Array.isArray(result) ? result : result.items || []
     return {
       ok: true,
       items: items.slice(0, 40).map((i) => ({
