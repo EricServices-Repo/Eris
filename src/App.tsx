@@ -37,6 +37,7 @@ import { uid } from '@/hooks/uid'
 import type { TerminalNote } from '@/features/terminal/TerminalPanel'
 import logo from '@/assets/logo.png'
 import { updateDocument } from '@/state/documents'
+import { restoreReviewedDocuments } from '@/features/editor/restore-documents'
 
 const MAX_TERMINAL_NOTES = 500
 
@@ -308,6 +309,8 @@ export default function App() {
     setActiveSkills,
     showRightPanel
   })
+  const windowWorkspaceRef = useRef(workspacePath)
+  windowWorkspaceRef.current = workspacePath
   const { breakpoints, setBreakpoints } = useBreakpoints(workspacePath)
 
   const {
@@ -1417,30 +1420,53 @@ export default function App() {
                   void (async () => {
                     const target = pendingDiffs.find((d) => d.id === id)
                     if (!target || target.status !== 'pending') return
-                    await window.ide.restoreCheckpointOp(target.checkpointId, target.opIndex)
+                    const root = workspacePath
+                    try {
+                      await restoreReviewedDocuments({
+                        targets: target.path
+                          .split(' → ')
+                          .map((path) => joinWorkspacePath(root, path)),
+                        getTabs: () => tabsRef.current,
+                        current: () => windowWorkspaceRef.current === root,
+                        restore: () =>
+                          window.ide.restoreCheckpointOp(target.checkpointId, target.opIndex),
+                        readFile: window.ide.readFile,
+                        setTabs
+                      })
+                    } catch (error) {
+                      setChatError(error instanceof Error ? error.message : String(error))
+                      return
+                    }
+                    if (windowWorkspaceRef.current !== root) return
                     void window.ide.recordDiffDecision({ undone: 1 }).catch(() => undefined)
                     setPendingDiffs((prev) =>
                       prev.map((d) => (d.id === id ? { ...d, status: 'undone' } : d))
                     )
                     setTree(await window.ide.listTree(workspacePath))
-                    for (const t of tabsRef.current) {
-                      try {
-                        const file = await window.ide.readFile(t.path)
-                        setTabs((prev) =>
-                          prev.map((x) =>
-                            x.path === t.path ? { ...x, content: file.content, dirty: false } : x
-                          )
-                        )
-                      } catch {
-                        // file may have been removed
-                      }
-                    }
                   })()
                 }}
                 onUndoAll={() => {
                   void (async () => {
                     if (!activeCheckpointId) return
-                    await window.ide.restoreCheckpoint(activeCheckpointId)
+                    const root = workspacePath
+                    try {
+                      await restoreReviewedDocuments({
+                        targets: pendingDiffs
+                          .filter((d) => d.checkpointId === activeCheckpointId)
+                          .flatMap((d) =>
+                            d.path.split(' → ').map((path) => joinWorkspacePath(root, path))
+                          ),
+                        getTabs: () => tabsRef.current,
+                        current: () => windowWorkspaceRef.current === root,
+                        restore: () => window.ide.restoreCheckpoint(activeCheckpointId),
+                        readFile: window.ide.readFile,
+                        setTabs
+                      })
+                    } catch (error) {
+                      setChatError(error instanceof Error ? error.message : String(error))
+                      return
+                    }
+                    if (windowWorkspaceRef.current !== root) return
                     setPendingDiffs((prev) => {
                       const n = prev.filter((d) => d.status === 'pending').length
                       if (n > 0)
@@ -1448,18 +1474,6 @@ export default function App() {
                       return prev.map((d) => ({ ...d, status: 'undone' as const }))
                     })
                     setTree(await window.ide.listTree(workspacePath))
-                    for (const t of tabsRef.current) {
-                      try {
-                        const file = await window.ide.readFile(t.path)
-                        setTabs((prev) =>
-                          prev.map((x) =>
-                            x.path === t.path ? { ...x, content: file.content, dirty: false } : x
-                          )
-                        )
-                      } catch {
-                        // ignore
-                      }
-                    }
                   })()
                 }}
               />

@@ -1,6 +1,20 @@
 type DocumentTab = { path: string; content: string; dirty: boolean }
 type Document = { content: string; dirty: boolean; version: number; read?: () => string }
 const documents = new Map<string, Document>()
+/** Capture both the Monaco text and document identity, including changes not flushed to tabs yet. */
+export function documentSnapshot(path: string, fallback = '') {
+  const revision = documents.get(path)
+  return { revision, content: documentText(path, fallback), dirty: revision?.dirty ?? false }
+}
+export function documentMatches(
+  path: string,
+  snapshot: ReturnType<typeof documentSnapshot>
+): boolean {
+  return (
+    documents.get(path) === snapshot.revision &&
+    documentText(path, snapshot.content) === snapshot.content
+  )
+}
 export function seedDocument(tab: DocumentTab): void {
   const previous = documents.get(tab.path)
   documents.set(tab.path, {
