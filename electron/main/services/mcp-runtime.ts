@@ -56,10 +56,7 @@ type Session = {
   /** stdio */
   child?: ChildProcessWithoutNullStreams
   buffer?: Buffer
-  pending?: Map<
-    number,
-    { resolve: (v: JsonRpcResponse) => void; reject: (e: Error) => void }
-  >
+  pending?: Map<number, { resolve: (v: JsonRpcResponse) => void; reject: (e: Error) => void }>
   nextId?: number
   /** http/sse */
   sessionUrl?: string
@@ -67,6 +64,30 @@ type Session = {
 
 const sessions = new Map<string, Session>()
 const connectionsInFlight = new Map<string, Promise<void>>()
+const MAX_MCP_HEADER_BYTES = 8 * 1024
+const MAX_MCP_MESSAGE_BYTES = 4 * 1024 * 1024
+const MCP_REQUEST_TIMEOUT_MS = 30_000
+function mcpFailure(
+  code: 'MCP_PROTOCOL_ERROR' | 'MCP_MESSAGE_LIMIT' | 'MCP_TIMEOUT',
+  message: string
+): Error {
+  return Object.assign(new Error(message), { code })
+}
+
+function requestAbortError(): Error {
+  return Object.assign(
+    new Error('MCP request cancelled; any remote effect may already have completed.'),
+    { name: 'AbortError' }
+  )
+}
+
+function failSession(session: Session, error: Error): void {
+  session.connected = false
+  session.error ??= error.message
+  session.buffer = Buffer.alloc(0)
+  for (const pending of session.pending?.values() ?? []) pending.reject(error)
+  session.pending?.clear()
+}
 
 function fqName(serverId: string, toolName: string): string {
   const safeServer = serverId.replace(/[^a-zA-Z0-9_-]/g, '_')
@@ -88,23 +109,33 @@ export function isMcpToolName(name: string): boolean {
 
 function writeStdioMessage(child: ChildProcessWithoutNullStreams, msg: unknown): void {
   const body = Buffer.from(JSON.stringify(msg), 'utf8')
+  if (body.length > MAX_MCP_MESSAGE_BYTES)
+    throw mcpFailure('MCP_MESSAGE_LIMIT', 'MCP request exceeds the message limit')
   const header = Buffer.from(`Content-Length: ${body.length}\r\n\r\n`, 'utf8')
   child.stdin.write(Buffer.concat([header, body]))
 }
 
 function feedStdio(session: Session, chunk: Buffer): void {
+  if (session.error) return
+  if ((session.buffer?.length ?? 0) + chunk.length > MAX_MCP_MESSAGE_BYTES + MAX_MCP_HEADER_BYTES)
+    throw mcpFailure('MCP_MESSAGE_LIMIT', 'MCP receive buffer exceeds the message limit')
   session.buffer = Buffer.concat([session.buffer || Buffer.alloc(0), chunk])
   for (;;) {
     const buf: Buffer = session.buffer ?? Buffer.alloc(0)
     const headerEnd = buf.indexOf('\r\n\r\n')
-    if (headerEnd < 0) return
-    const header = buf.subarray(0, headerEnd).toString('utf8')
-    const match = header.match(/Content-Length:\s*(\d+)/i)
-    if (!match) {
-      session.buffer = Buffer.from(buf.subarray(headerEnd + 4))
-      continue
+    if (headerEnd < 0) {
+      if (buf.length > MAX_MCP_HEADER_BYTES)
+        throw mcpFailure('MCP_MESSAGE_LIMIT', 'MCP header exceeds its size limit')
+      return
     }
-    const len = Number(match[1])
+    if (headerEnd > MAX_MCP_HEADER_BYTES)
+      throw mcpFailure('MCP_MESSAGE_LIMIT', 'MCP header exceeds its size limit')
+    const header = buf.subarray(0, headerEnd).toString('utf8')
+    const lengths = header.split('\r\n').filter((line) => /^Content-Length:/i.test(line))
+    const match = lengths.length === 1 ? lengths[0].match(/^Content-Length:\s*(\d+)\s*$/i) : null
+    const len = match ? Number(match[1]) : NaN
+    if (!Number.isSafeInteger(len) || len <= 0 || len > MAX_MCP_MESSAGE_BYTES)
+      throw mcpFailure('MCP_PROTOCOL_ERROR', 'Invalid or oversized MCP Content-Length')
     const start = headerEnd + 4
     if (buf.length < start + len) return
     const json = buf.subarray(start, start + len).toString('utf8')
@@ -119,37 +150,79 @@ function feedStdio(session: Session, chunk: Buffer): void {
         }
       }
     } catch (err) {
-      logWarn('MCP stdio JSON parse failed', {
-        id: session.config.id,
-        error: err instanceof Error ? err.message : String(err)
-      })
+      throw mcpFailure(
+        'MCP_PROTOCOL_ERROR',
+        `Invalid MCP response: ${err instanceof Error ? err.message : String(err)}`
+      )
     }
   }
 }
 
-function stdioRequest(session: Session, method: string, params?: unknown): Promise<unknown> {
+function stdioRequest(
+  session: Session,
+  method: string,
+  params?: unknown,
+  signal?: AbortSignal
+): Promise<unknown> {
+  if (signal?.aborted) return Promise.reject(requestAbortError())
   if (!session.child || !session.pending || session.nextId == null) {
     return Promise.reject(new Error('MCP stdio session not connected'))
   }
   const id = session.nextId++
   const req: JsonRpcRequest = { jsonrpc: '2.0', id, method, params }
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
+    let settled = false
+    const cleanup = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
       session.pending?.delete(id)
-      reject(new Error(`MCP timeout: ${method}`))
-    }, 30_000)
+    }
+    const fail = (error: Error) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(error)
+    }
+    const cancelRemote = (reason: string) => {
+      if (method === 'initialize' || !session.child) return
+      try {
+        writeStdioMessage(session.child, {
+          jsonrpc: '2.0',
+          method: 'notifications/cancelled',
+          params: { requestId: id, reason }
+        })
+      } catch {
+        /* Cancellation is best effort; the local request always settles. */
+      }
+    }
+    const abort = () => {
+      cancelRemote('Task cancelled')
+      fail(requestAbortError())
+    }
+    const timer = setTimeout(() => {
+      cancelRemote('Request deadline exceeded')
+      fail(mcpFailure('MCP_TIMEOUT', `MCP timeout: ${method}`))
+    }, MCP_REQUEST_TIMEOUT_MS)
     session.pending!.set(id, {
       resolve: (msg) => {
-        clearTimeout(timer)
+        if (settled) return
+        if (signal?.aborted) {
+          abort()
+          return
+        }
+        settled = true
+        cleanup()
         if (msg.error) reject(new Error(msg.error.message))
         else resolve(msg.result)
       },
-      reject: (e) => {
-        clearTimeout(timer)
-        reject(e)
-      }
+      reject: fail
     })
-    writeStdioMessage(session.child!, req)
+    signal?.addEventListener('abort', abort, { once: true })
+    try {
+      writeStdioMessage(session.child!, req)
+    } catch (error) {
+      fail(error instanceof Error ? error : new Error(String(error)))
+    }
   })
 }
 
@@ -169,81 +242,131 @@ async function connectStdio(config: McpServerConfig, cwd: string | null): Promis
     stdio: ['pipe', 'pipe', 'pipe']
   })
   session.child = child
-  child.stdout.on('data', (d: Buffer) => feedStdio(session, d))
+  child.stdout.on('data', (d: Buffer) => {
+    try {
+      feedStdio(session, d)
+    } catch (error) {
+      failSession(session, error instanceof Error ? error : new Error(String(error)))
+      void disconnectSession(session)
+    }
+  })
+  child.stdin.on('error', (error) => {
+    failSession(session, error)
+    void disconnectSession(session)
+  })
   child.stderr.on('data', (d: Buffer) => {
     const text = d.toString('utf8').trim()
     if (text) logWarn('MCP stderr', { id: config.id, text: text.slice(0, 400) })
   })
   child.on('error', (err) => {
-    session.error = err.message
-    session.connected = false
+    failSession(session, err)
   })
   child.on('close', () => {
-    session.connected = false
-    for (const [, p] of session.pending || []) {
-      p.reject(new Error('MCP process exited'))
-    }
-    session.pending?.clear()
+    failSession(session, new Error('MCP process exited'))
   })
 
-  await stdioRequest(session, 'initialize', {
-    protocolVersion: '2024-11-05',
-    capabilities: {},
-    clientInfo: { name: 'Eris', version: appVersion() }
-  })
-  writeStdioMessage(child, {
-    jsonrpc: '2.0',
-    method: 'notifications/initialized'
-  })
-  const listed = (await stdioRequest(session, 'tools/list', {})) as {
-    tools?: Array<{
-      name: string
-      description?: string
-      inputSchema?: Record<string, unknown>
-      annotations?: { readOnlyHint?: boolean }
-    }>
+  try {
+    await stdioRequest(session, 'initialize', {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'Eris', version: appVersion() }
+    })
+    writeStdioMessage(child, {
+      jsonrpc: '2.0',
+      method: 'notifications/initialized'
+    })
+    const listed = (await stdioRequest(session, 'tools/list', {})) as {
+      tools?: Array<{
+        name: string
+        description?: string
+        inputSchema?: Record<string, unknown>
+        annotations?: { readOnlyHint?: boolean }
+      }>
+    }
+    session.tools = (listed.tools || []).map((t) => ({
+      serverId: config.id,
+      serverName: config.name,
+      name: t.name,
+      description: t.description || '',
+      inputSchema: t.inputSchema,
+      annotations: t.annotations,
+      fqName: fqName(config.id, t.name)
+    }))
+    session.connected = true
+    return session
+  } catch (error) {
+    await disconnectSession(session)
+    throw error
   }
-  session.tools = (listed.tools || []).map((t) => ({
-    serverId: config.id,
-    serverName: config.name,
-    name: t.name,
-    description: t.description || '',
-    inputSchema: t.inputSchema,
-    annotations: t.annotations,
-    fqName: fqName(config.id, t.name)
-  }))
-  session.connected = true
-  return session
 }
 
 async function httpRpc(
   url: string,
   method: string,
   params?: unknown,
-  id = 1
+  id = 1,
+  signal?: AbortSignal
 ): Promise<unknown> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json, text/event-stream'
-    },
-    body: JSON.stringify({ jsonrpc: '2.0', id, method, params })
-  })
-  const text = await res.text()
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)
-  // Handle bare JSON or simple SSE data: lines
-  let jsonText = text.trim()
-  if (jsonText.startsWith('data:')) {
-    const line = jsonText
-      .split('\n')
-      .map((l) => l.trim())
-      .find((l) => l.startsWith('data:'))
-    jsonText = line ? line.slice(5).trim() : jsonText
+  if (signal?.aborted) throw requestAbortError()
+  const controller = new AbortController()
+  const abort = () => controller.abort(requestAbortError())
+  signal?.addEventListener('abort', abort, { once: true })
+  const timer = setTimeout(
+    () => controller.abort(mcpFailure('MCP_TIMEOUT', `MCP timeout: ${method}`)),
+    MCP_REQUEST_TIMEOUT_MS
+  )
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+  try {
+    const request = JSON.stringify({ jsonrpc: '2.0', id, method, params })
+    if (Buffer.byteLength(request) > MAX_MCP_MESSAGE_BYTES)
+      throw mcpFailure('MCP_MESSAGE_LIMIT', 'MCP request exceeds the message limit')
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream'
+      },
+      body: request,
+      signal: controller.signal
+    })
+    reader = res.body?.getReader()
+    const decoder = new TextDecoder()
+    let text = '',
+      bytes = 0
+    while (reader) {
+      const part = await reader.read()
+      if (part.done) break
+      bytes += part.value.byteLength
+      if (bytes > MAX_MCP_MESSAGE_BYTES)
+        throw mcpFailure('MCP_MESSAGE_LIMIT', 'MCP response exceeds the message limit')
+      text += decoder.decode(part.value, { stream: true })
+    }
+    text += decoder.decode()
+    controller.signal.throwIfAborted()
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)
+    // Handle bare JSON or simple SSE data: lines
+    let jsonText = text.trim()
+    if (jsonText.startsWith('data:')) {
+      const line = jsonText
+        .split('\n')
+        .map((l) => l.trim())
+        .find((l) => l.startsWith('data:'))
+      jsonText = line ? line.slice(5).trim() : jsonText
+    }
+    const msg = JSON.parse(jsonText) as JsonRpcResponse
+    if (msg.error) throw new Error(msg.error.message)
+    return msg.result
+  } catch (error) {
+    if (controller.signal.aborted) throw controller.signal.reason
+    throw error
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', abort)
+    if (reader) {
+      await reader.cancel().catch(() => undefined)
+      reader.releaseLock()
+    }
   }
-  const msg = JSON.parse(jsonText) as JsonRpcResponse
-  if (msg.error) throw new Error(msg.error.message)
-  return msg.result
 }
 
 async function connectHttpLike(config: McpServerConfig): Promise<Session> {
@@ -285,9 +408,16 @@ async function connectHttpLike(config: McpServerConfig): Promise<Session> {
 }
 
 async function disconnectSession(session: Session): Promise<void> {
-  if (session.child) {
+  failSession(session, new Error(session.error ?? 'MCP session disconnected'))
+  const child = session.child
+  if (child) {
+    const force = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    }, 2000)
+    force.unref()
+    child.once('close', () => clearTimeout(force))
     try {
-      session.child.kill('SIGTERM')
+      child.kill('SIGTERM')
     } catch {
       // ignore
     }
@@ -428,8 +558,7 @@ export function formatLiveMcpToolsPrompt(): string {
     ].join('\n')
   }
   const lines = tools.map(
-    (t) =>
-      `- ${t.fqName} — ${t.description || t.name} (server: ${t.serverName})`
+    (t) => `- ${t.fqName} — ${t.description || t.name} (server: ${t.serverName})`
   )
   return [
     'Live MCP tools (call with {"name":"<fqName>", ...args}; nest arguments when a parameter is also named name):',
@@ -440,8 +569,10 @@ export function formatLiveMcpToolsPrompt(): string {
 
 export async function callMcpTool(
   fq: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  signal?: AbortSignal
 ): Promise<{ ok: boolean; detail: string }> {
+  if (signal?.aborted) throw requestAbortError()
   const diagnostics = activeDiagnosticsScope()
   if (diagnostics) {
     diagnostics.onBlockedEffect('mcp', fq.slice(0, 200))
@@ -477,22 +608,32 @@ export async function callMcpTool(
   try {
     let result: unknown
     if (session.config.transport === 'stdio') {
-      result = await stdioRequest(session, 'tools/call', {
-        name: toolName,
-        arguments: args
-      })
+      result = await stdioRequest(
+        session,
+        'tools/call',
+        {
+          name: toolName,
+          arguments: args
+        },
+        signal
+      )
     } else {
-      result = await httpRpc(session.sessionUrl || session.config.url, 'tools/call', {
-        name: toolName,
-        arguments: args
-      })
+      result = await httpRpc(
+        session.sessionUrl || session.config.url,
+        'tools/call',
+        {
+          name: toolName,
+          arguments: args
+        },
+        undefined,
+        signal
+      )
     }
-    const detail =
-      typeof result === 'string'
-        ? result
-        : JSON.stringify(result, null, 2)
+    if (signal?.aborted) throw requestAbortError()
+    const detail = typeof result === 'string' ? result : JSON.stringify(result, null, 2)
     return { ok: true, detail: detail.slice(0, 50_000) }
   } catch (err) {
+    if (signal?.aborted) throw requestAbortError()
     return {
       ok: false,
       detail: err instanceof Error ? err.message : String(err)
