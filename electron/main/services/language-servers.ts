@@ -1,11 +1,14 @@
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process'
-import { existsSync } from 'fs'
-import { join } from 'path'
 import { pathToFileURL } from 'url'
-import { createMessageConnection, StreamMessageReader, StreamMessageWriter } from 'vscode-jsonrpc/node'
+import {
+  createMessageConnection,
+  StreamMessageReader,
+  StreamMessageWriter
+} from 'vscode-jsonrpc/node'
 import type { MessageConnection } from 'vscode-jsonrpc/node'
 import type { AppSettings, LanguageServerConfig } from '../../../src/shared/settings-schema'
 import { logError, logInfo, logWarn } from './logger'
+import { languageServerFilePath, languageServerLaunch } from './lsp-paths'
 import {
   disposeTsLsp,
   isTsLike,
@@ -46,11 +49,7 @@ function uriFor(filePath: string): string {
 }
 
 function pathFromUri(uri: string): string {
-  try {
-    return decodeURIComponent(new URL(uri).pathname)
-  } catch {
-    return uri.replace(/^file:\/\//, '')
-  }
+  return languageServerFilePath(uri)
 }
 
 function severityFromLsp(n: number | undefined): 'error' | 'warning' | 'info' {
@@ -64,19 +63,11 @@ function matchServer(language: string, filePath: string): LanguageServerConfig |
   const lang = language.toLowerCase()
   return (
     servers.find((s) => s.languageId.toLowerCase() === lang) ||
-    servers.find((s) => s.extensions.map((e) => e.replace(/^\./, '').toLowerCase()).includes(ext)) ||
+    servers.find((s) =>
+      s.extensions.map((e) => e.replace(/^\./, '').toLowerCase()).includes(ext)
+    ) ||
     null
   )
-}
-
-function resolveBin(command: string): string {
-  if (command.includes('/') && existsSync(command)) return command
-  const path = process.env.PATH || ''
-  for (const dir of path.split(':')) {
-    const cand = join(dir, command)
-    if (existsSync(cand)) return cand
-  }
-  return command
 }
 
 async function ensureExtra(root: string, spec: LanguageServerConfig): Promise<boolean> {
@@ -86,11 +77,12 @@ async function ensureExtra(root: string, spec: LanguageServerConfig): Promise<bo
   if (inflight) return inflight
   const p = (async () => {
     await disposeExtra(spec.id)
-    const command = resolveBin(spec.command)
     try {
-      const proc = spawn(command, spec.args, {
+      const launch = languageServerLaunch(spec.command, spec.args, root)
+      const proc = spawn(launch.command, launch.args, {
         cwd: root,
-        env: { ...process.env },
+        env: launch.env,
+        windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe']
       })
       proc.stderr?.on('data', (buf: Buffer) => {
@@ -150,7 +142,7 @@ async function ensureExtra(root: string, spec: LanguageServerConfig): Promise<bo
       })
       conn.sendNotification('initialized', {})
       extras.set(spec.id, { id: spec.id, proc, connection: conn, languageId: spec.languageId })
-      logInfo('Language server ready', { id: spec.id, command })
+      logInfo('Language server ready', { id: spec.id, command: launch.command })
       return true
     } catch (err) {
       logError('Language server failed', {
@@ -429,7 +421,10 @@ function formatMarkup(contents: unknown): string {
   if (!contents) return ''
   if (typeof contents === 'string') return contents
   if (Array.isArray(contents)) {
-    return contents.map((c) => formatMarkup(c)).filter(Boolean).join('\n\n')
+    return contents
+      .map((c) => formatMarkup(c))
+      .filter(Boolean)
+      .join('\n\n')
   }
   if (contents && typeof contents === 'object') {
     const obj = contents as { value?: string; language?: string }
