@@ -233,7 +233,7 @@ export async function* streamOpenAICompatible(options: {
     if (!complete)
       throw new ModelStreamError(
         'MODEL_STREAM_INCOMPLETE',
-        'Model stream ended without a finish signal.'
+        'Incomplete model stream ended without a finish signal.'
       )
     if (toolAcc.size) {
       if (finishReason === 'length' || finishReason === 'content_filter')
