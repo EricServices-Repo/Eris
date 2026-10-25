@@ -37,6 +37,7 @@ import { uid } from '@/hooks/uid'
 import type { TerminalNote } from '@/features/terminal/TerminalPanel'
 import logo from '@/assets/logo.png'
 import { updateDocument } from '@/state/documents'
+import type { PendingDiff } from '@/features/chat/DiffReview'
 import { restoreReviewedDocuments } from '@/features/editor/restore-documents'
 
 const MAX_TERMINAL_NOTES = 500
@@ -338,7 +339,6 @@ export default function App() {
     setMessageQueue,
     pendingDiffs,
     setPendingDiffs,
-    activeCheckpointId,
     sendMessage,
     rerouteLast,
     stopChat,
@@ -369,6 +369,66 @@ export default function App() {
     setRightCollapsed,
     appendTerminal
   })
+
+  const reviewBusy = useRef(false)
+  const reviewDiffs = async (targets: PendingDiff[], decision: 'keep' | 'undo') => {
+    const root = workspacePath
+    const threadId = activeThread?.id
+    if (!root || reviewBusy.current) return
+    const pending = targets.filter((d) => d.status === 'pending')
+    if (!pending.length) return
+    reviewBusy.current = true
+    const current = () =>
+      windowWorkspaceRef.current === root && activeThreadRef.current?.id === threadId
+    const apply = async () => {
+      for (const checkpointId of [...new Set(pending.map((d) => d.checkpointId))].reverse()) {
+        try {
+          const receipts = await window.ide.decideCheckpointReview({
+            checkpointId,
+            opIndices: pending.filter((d) => d.checkpointId === checkpointId).map((d) => d.opIndex),
+            decision
+          })
+          if (!current()) return
+          setPendingDiffs((prev) =>
+            prev.map((d) => {
+              const receipt =
+                d.checkpointId === checkpointId
+                  ? receipts.find((r) => r.opIndex === d.opIndex)
+                  : undefined
+              if (!receipt) return d
+              return receipt.status === 'conflicted'
+                ? { ...d, conflict: receipt.reason }
+                : { ...d, status: receipt.status, conflict: undefined }
+            })
+          )
+          const conflicts = receipts.filter((r) => r.status === 'conflicted')
+          if (conflicts.length) setChatError(conflicts.map((r) => r.reason).join('\n'))
+        } catch (error) {
+          if (current()) setChatError(error instanceof Error ? error.message : String(error))
+          break
+        }
+      }
+    }
+    try {
+      if (decision === 'undo') {
+        await restoreReviewedDocuments({
+          targets: pending.flatMap((d) =>
+            d.path.split(' → ').map((path) => joinWorkspacePath(root, path))
+          ),
+          getTabs: () => tabsRef.current,
+          current,
+          restore: apply,
+          readFile: window.ide.readFile,
+          setTabs
+        })
+        if (current()) setTree(await window.ide.listTree(root))
+      } else await apply()
+    } catch (error) {
+      if (current()) setChatError(error instanceof Error ? error.message : String(error))
+    } finally {
+      reviewBusy.current = false
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -1176,42 +1236,16 @@ export default function App() {
                     }
                     breakpoints={breakpoints.map((b) => ({ path: b.path, line: b.line }))}
                     onAcceptPatch={(id) => {
-                      const target = pendingDiffs.find((d) => d.id === id)
-                      setPendingDiffs((prev) =>
-                        prev.map((d) => (d.id === id ? { ...d, status: 'kept' } : d))
-                      )
-                      if (!target || !activeFile) return
-                      const path = target.path.split(' → ')[0] || ''
-                      if (!(activeFile.endsWith(path) || activeFile.endsWith('/' + path))) return
-                      setTabs((prev) =>
-                        prev.map((t) =>
-                          t.path === activeFile ? { ...t, content: target.after, dirty: false } : t
-                        )
+                      void reviewDiffs(
+                        pendingDiffs.filter((d) => d.id === id),
+                        'keep'
                       )
                     }}
                     onRejectPatch={(id) => {
-                      void (async () => {
-                        const target = pendingDiffs.find((d) => d.id === id)
-                        if (!target) return
-                        await window.ide.restoreCheckpointOp(target.checkpointId, target.opIndex)
-                        setPendingDiffs((prev) =>
-                          prev.map((d) => (d.id === id ? { ...d, status: 'undone' } : d))
-                        )
-                        if (activeFile) {
-                          try {
-                            const file = await window.ide.readFile(activeFile)
-                            setTabs((prev) =>
-                              prev.map((t) =>
-                                t.path === activeFile
-                                  ? { ...t, content: file.content, dirty: false }
-                                  : t
-                              )
-                            )
-                          } catch {
-                            // ignore
-                          }
-                        }
-                      })()
+                      void reviewDiffs(
+                        pendingDiffs.filter((d) => d.id === id),
+                        'undo'
+                      )
                     }}
                     onToggleBreakpoint={(path, line) => {
                       void (async () => {
@@ -1275,33 +1309,20 @@ export default function App() {
                   void openFile(abs)
                 }}
                 onKeep={(id) => {
-                  void window.ide.recordDiffDecision({ kept: 1 }).catch(() => undefined)
-                  setPendingDiffs((prev) =>
-                    prev.map((d) => (d.id === id ? { ...d, status: 'kept' } : d))
+                  void reviewDiffs(
+                    pendingDiffs.filter((d) => d.id === id),
+                    'keep'
                   )
                 }}
-                onKeepAll={() =>
-                  setPendingDiffs((prev) => {
-                    const n = prev.filter((d) => d.status === 'pending').length
-                    if (n > 0)
-                      void window.ide.recordDiffDecision({ kept: n }).catch(() => undefined)
-                    return prev.map((d) =>
-                      d.status === 'pending' ? { ...d, status: 'kept' as const } : d
-                    )
-                  })
-                }
+                onKeepAll={() => {
+                  void reviewDiffs(pendingDiffs, 'keep')
+                }}
                 autoKeepDiffs={Boolean(settings?.agent.autoKeepDiffs)}
                 onAutoKeepDiffsChange={(enabled) => {
                   void window.ide
                     .setSettings('user', { agent: { autoKeepDiffs: enabled } })
                     .then(setSettings)
-                  if (enabled) {
-                    setPendingDiffs((prev) =>
-                      prev.map((d) =>
-                        d.status === 'pending' ? { ...d, status: 'kept' as const } : d
-                      )
-                    )
-                  }
+                  if (enabled) void reviewDiffs(pendingDiffs, 'keep')
                 }}
                 onDismiss={() => setPendingDiffs([])}
                 gitBusy={diffGitBusy}
@@ -1417,64 +1438,13 @@ export default function App() {
                   })()
                 }}
                 onUndoFile={(id) => {
-                  void (async () => {
-                    const target = pendingDiffs.find((d) => d.id === id)
-                    if (!target || target.status !== 'pending') return
-                    const root = workspacePath
-                    try {
-                      await restoreReviewedDocuments({
-                        targets: target.path
-                          .split(' → ')
-                          .map((path) => joinWorkspacePath(root, path)),
-                        getTabs: () => tabsRef.current,
-                        current: () => windowWorkspaceRef.current === root,
-                        restore: () =>
-                          window.ide.restoreCheckpointOp(target.checkpointId, target.opIndex),
-                        readFile: window.ide.readFile,
-                        setTabs
-                      })
-                    } catch (error) {
-                      setChatError(error instanceof Error ? error.message : String(error))
-                      return
-                    }
-                    if (windowWorkspaceRef.current !== root) return
-                    void window.ide.recordDiffDecision({ undone: 1 }).catch(() => undefined)
-                    setPendingDiffs((prev) =>
-                      prev.map((d) => (d.id === id ? { ...d, status: 'undone' } : d))
-                    )
-                    setTree(await window.ide.listTree(workspacePath))
-                  })()
+                  void reviewDiffs(
+                    pendingDiffs.filter((d) => d.id === id),
+                    'undo'
+                  )
                 }}
                 onUndoAll={() => {
-                  void (async () => {
-                    if (!activeCheckpointId) return
-                    const root = workspacePath
-                    try {
-                      await restoreReviewedDocuments({
-                        targets: pendingDiffs
-                          .filter((d) => d.checkpointId === activeCheckpointId)
-                          .flatMap((d) =>
-                            d.path.split(' → ').map((path) => joinWorkspacePath(root, path))
-                          ),
-                        getTabs: () => tabsRef.current,
-                        current: () => windowWorkspaceRef.current === root,
-                        restore: () => window.ide.restoreCheckpoint(activeCheckpointId),
-                        readFile: window.ide.readFile,
-                        setTabs
-                      })
-                    } catch (error) {
-                      setChatError(error instanceof Error ? error.message : String(error))
-                      return
-                    }
-                    if (windowWorkspaceRef.current !== root) return
-                    setPendingDiffs((prev) => {
-                      const n = prev.filter((d) => d.status === 'pending').length
-                      if (n > 0)
-                        void window.ide.recordDiffDecision({ undone: n }).catch(() => undefined)
-                      return prev.map((d) => ({ ...d, status: 'undone' as const }))
-                    })
-                    setTree(await window.ide.listTree(workspacePath))
-                  })()
+                  void reviewDiffs(pendingDiffs, 'undo')
                 }}
               />
             </Suspense>

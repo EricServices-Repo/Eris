@@ -271,9 +271,28 @@ export function useChatSession({
           }
         }
         setToolActivity([...restoredTools.values()])
-        if (!settingsRef.current?.agent.autoKeepDiffs) {
-          setPendingDiffs([...restoredDiffs.values()])
+        for (const checkpointId of new Set(
+          [...restoredDiffs.values()].map((d) => d.checkpointId)
+        )) {
+          const receipts = await window.ide.checkpointReview(checkpointId).catch((error) => {
+            if (!cancelled) setChatError(String(error))
+            return []
+          })
+          for (const [key, diff] of restoredDiffs) {
+            const receipt =
+              diff.checkpointId === checkpointId
+                ? receipts.find((r) => r.opIndex === diff.opIndex)
+                : undefined
+            if (receipt)
+              restoredDiffs.set(key, {
+                ...diff,
+                status: receipt.status === 'conflicted' ? 'pending' : receipt.status,
+                conflict: receipt.reason
+              })
+          }
         }
+        if (cancelled || requestIdRef.current !== job.id) return
+        setPendingDiffs([...restoredDiffs.values()])
         setActiveCheckpointId(restoredCheckpoint)
         setAnswerBuffer(job.answer)
         setThinkingBuffer('')
@@ -737,20 +756,46 @@ export function useChatSession({
       setActiveCheckpointId(diff.checkpointId)
       const autoKeep = Boolean(settingsRef.current?.agent.autoKeepDiffs)
       // Auto-keep: skip review UI entirely (edits are already on disk).
-      if (autoKeep) return
-      setPendingDiffs((prev) => [
-        ...prev,
-        {
-          id: uid(),
-          checkpointId: diff.checkpointId,
-          opIndex: diff.opIndex,
-          path: diff.path,
-          before: diff.before,
-          after: diff.after,
-          op: diff.op,
-          status: 'pending'
-        }
-      ])
+      if (autoKeep) {
+        void window.ide
+          .decideCheckpointReview({
+            checkpointId: diff.checkpointId,
+            opIndices: [diff.opIndex],
+            decision: 'keep'
+          })
+          .catch((error) => {
+            if (requestId === requestIdRef.current) setChatError(String(error))
+          })
+        return
+      }
+      setPendingDiffs((prev) => {
+        if (prev.some((d) => d.checkpointId === diff.checkpointId && d.opIndex === diff.opIndex))
+          return prev
+        return [...prev, { id: uid(), ...diff, status: 'pending' }]
+      })
+      void window.ide
+        .checkpointReview(diff.checkpointId)
+        .then((receipts) => {
+          if (requestId !== requestIdRef.current) return
+          const receipt = receipts.find((item) => item.opIndex === diff.opIndex)
+          if (!receipt) return
+          setPendingDiffs((prev) =>
+            prev.map((item) =>
+              item.checkpointId === diff.checkpointId &&
+              item.opIndex === diff.opIndex &&
+              item.status === 'pending'
+                ? {
+                    ...item,
+                    status: receipt.status === 'conflicted' ? 'pending' : receipt.status,
+                    conflict: receipt.reason
+                  }
+                : item
+            )
+          )
+        })
+        .catch((error) => {
+          if (requestId === requestIdRef.current) setChatError(String(error))
+        })
       if (workspacePath && diff.op !== 'binary') {
         void openFile(joinWorkspacePath(workspacePath, diff.path)).catch(() => undefined)
       }

@@ -11,6 +11,7 @@ export interface PendingDiff {
   before: string | null
   after: string
   op: 'write' | 'delete' | 'rename' | 'mkdir' | 'binary'
+  conflict?: string
   status: 'pending' | 'kept' | 'undone'
 }
 
@@ -102,7 +103,10 @@ export function DiffReview({
       if (d.op === 'write') {
         map.set(d.id, diffLineStats(d.before ?? '', d.after))
       } else if (d.op === 'delete') {
-        map.set(d.id, { added: 0, removed: (d.before ?? '').split('\n').filter(Boolean).length || 1 })
+        map.set(d.id, {
+          added: 0,
+          removed: (d.before ?? '').split('\n').filter(Boolean).length || 1
+        })
       } else if (d.op === 'mkdir') {
         map.set(d.id, { added: 1, removed: 0 })
       } else {
@@ -225,7 +229,7 @@ export function DiffReview({
             Keep all
           </button>
           <button type="button" className="btn" disabled={!pending.length} onClick={onUndoAll}>
-            Undo all
+            Undo pending
           </button>
           {onCommitAndPush && (
             <button
@@ -318,7 +322,9 @@ export function DiffReview({
                   {stats.added > 0 && <span className="diff-stat-add">+{stats.added}</span>}
                   {stats.removed > 0 && <span className="diff-stat-del">−{stats.removed}</span>}
                 </span>
-                <span className={`diff-status badge status-${d.status}`}>{statusLabel(d.status)}</span>
+                <span className={`diff-status badge status-${d.status}`}>
+                  {statusLabel(d.status)}
+                </span>
               </button>
             )
           })}
@@ -374,6 +380,11 @@ export function DiffReview({
               )}
             </div>
 
+            {active.conflict && (
+              <p className="error" role="alert">
+                {active.conflict}
+              </p>
+            )}
             {showDiffEditor ? (
               <div className="diff-monaco-host">
                 <MonacoDiffEditor
@@ -417,18 +428,25 @@ export function DiffReview({
                 </p>
                 {active.op === 'delete' && (
                   <pre className="diff-lines">
-                    {(active.before ?? '(empty)').split('\n').slice(0, 80).map((line, i) => (
-                      <div key={i} className="diff-line diff-del">
-                        <span className="diff-mark">−</span>
-                        {line}
-                      </div>
-                    ))}
+                    {(active.before ?? '(empty)')
+                      .split('\n')
+                      .slice(0, 80)
+                      .map((line, i) => (
+                        <div key={i} className="diff-line diff-del">
+                          <span className="diff-mark">−</span>
+                          {line}
+                        </div>
+                      ))}
                   </pre>
                 )}
                 {active.op === 'rename' && (
-                  <p className="hint">File was renamed. Keep to accept; Undo restores the previous path.</p>
+                  <p className="hint">
+                    File was renamed. Keep to accept; Undo restores the previous path.
+                  </p>
                 )}
-                {active.op === 'binary' && <p>{active.after}. Keep or undo this generated image.</p>}
+                {active.op === 'binary' && (
+                  <p>{active.after}. Keep or undo this generated image.</p>
+                )}
                 {active.op === 'mkdir' && (
                   <p className="hint">Directory was created. Undo removes it if still empty.</p>
                 )}

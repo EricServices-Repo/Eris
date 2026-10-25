@@ -126,6 +126,8 @@ const api: IdeApi = {
   onChatStatus: (cb) => subscribe('chat:status', cb),
   onChatModel: (cb) => subscribe('chat:model', cb),
   onChatRouted: (cb) => subscribe('chat:routed', cb),
+  checkpointReview: (id) => ipcRenderer.invoke('checkpoint:review', id),
+  decideCheckpointReview: (input) => ipcRenderer.invoke('checkpoint:decide', input),
   restoreCheckpoint: (checkpointId) => ipcRenderer.invoke('checkpoint:restore', checkpointId),
   restoreCheckpointOp: (checkpointId, opIndex) =>
     ipcRenderer.invoke('checkpoint:restoreOp', checkpointId, opIndex),
