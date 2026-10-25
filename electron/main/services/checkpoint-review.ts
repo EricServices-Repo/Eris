@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync, statSync } from 'fs'
 import { join } from 'path'
 import { createHash, randomUUID } from 'crypto'
 import { workspaceConfigDir } from './paths'
@@ -32,15 +32,19 @@ function context(root: string, checkpointId: string) {
   )
     throw new Error('Checkpoint does not belong to this workspace')
   const path = join(workspaceConfigDir(root), 'checkpoints', checkpointId, 'review.json')
+  if (existsSync(path) && statSync(path).size > 2_000_000)
+    throw new Error('Saved review state exceeds 2 MB; preserved for inspection')
   const review: Review = existsSync(path)
     ? JSON.parse(readFileSync(path, 'utf8'))
     : { version: 1, workspace, checkpointId, decisions: {} }
   if (
+    !review ||
     review.version !== 1 ||
     review.workspace !== workspace ||
     review.checkpointId !== checkpointId ||
     !review.decisions ||
-    typeof review.decisions !== 'object'
+    typeof review.decisions !== 'object' ||
+    Array.isArray(review.decisions)
   )
     throw new Error('Checkpoint review state is invalid; original data was preserved')
   return { record, review, path }

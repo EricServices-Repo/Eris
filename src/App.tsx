@@ -381,27 +381,32 @@ export default function App() {
     const current = () =>
       windowWorkspaceRef.current === root && activeThreadRef.current?.id === threadId
     const apply = async () => {
-      for (const checkpointId of new Set(pending.map((d) => d.checkpointId))) {
-        const receipts = await window.ide.decideCheckpointReview({
-          checkpointId,
-          opIndices: pending.filter((d) => d.checkpointId === checkpointId).map((d) => d.opIndex),
-          decision
-        })
-        if (!current()) return
-        setPendingDiffs((prev) =>
-          prev.map((d) => {
-            const receipt =
-              d.checkpointId === checkpointId
-                ? receipts.find((r) => r.opIndex === d.opIndex)
-                : undefined
-            if (!receipt) return d
-            return receipt.status === 'conflicted'
-              ? { ...d, conflict: receipt.reason }
-              : { ...d, status: receipt.status, conflict: undefined }
+      for (const checkpointId of [...new Set(pending.map((d) => d.checkpointId))].reverse()) {
+        try {
+          const receipts = await window.ide.decideCheckpointReview({
+            checkpointId,
+            opIndices: pending.filter((d) => d.checkpointId === checkpointId).map((d) => d.opIndex),
+            decision
           })
-        )
-        const conflicts = receipts.filter((r) => r.status === 'conflicted')
-        if (conflicts.length) setChatError(conflicts.map((r) => r.reason).join('\n'))
+          if (!current()) return
+          setPendingDiffs((prev) =>
+            prev.map((d) => {
+              const receipt =
+                d.checkpointId === checkpointId
+                  ? receipts.find((r) => r.opIndex === d.opIndex)
+                  : undefined
+              if (!receipt) return d
+              return receipt.status === 'conflicted'
+                ? { ...d, conflict: receipt.reason }
+                : { ...d, status: receipt.status, conflict: undefined }
+            })
+          )
+          const conflicts = receipts.filter((r) => r.status === 'conflicted')
+          if (conflicts.length) setChatError(conflicts.map((r) => r.reason).join('\n'))
+        } catch (error) {
+          if (current()) setChatError(error instanceof Error ? error.message : String(error))
+          break
+        }
       }
     }
     try {
