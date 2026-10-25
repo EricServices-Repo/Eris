@@ -57,9 +57,13 @@ export class LspSession {
   }
   notify(method: string, params?: unknown): void {
     if (!this.active) return
-    void this.connection.sendNotification(method, params).catch(() => {
+    try {
+      void this.connection.sendNotification(method, params).catch(() => {
+        void this.dispose(false)
+      })
+    } catch {
       void this.dispose(false)
-    })
+    }
   }
   async request(
     method: string,
