@@ -3400,7 +3400,7 @@ export async function* runAgentWithWorkspaceTools(options: {
               mutated: false
             }
           } else if (mcpMode !== 'off' && isMcpToolName(call.name)) {
-            const mcpResult = await callMcpTool(call.name, call.args)
+            const mcpResult = await callMcpTool(call.name, call.args, options.signal)
             result = { ok: mcpResult.ok, detail: mcpResult.detail, mutated: false }
           } else if (call.name === 'search_mcp_tools') {
             result = {
