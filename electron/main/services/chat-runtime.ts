@@ -209,9 +209,12 @@ export async function* streamProviderChat(
         reportedCompletion = usage.completionTokens
       },
       onFinish: options.onTermination
-        ? (finishReason, complete) =>
+        ? (finishReason, complete, failure) =>
             options.onTermination!({
-              reason: complete ? apiFinishReason(finishReason) : 'connection-closed',
+              reason: complete
+                ? apiFinishReason(finishReason)
+                : (failure?.reason ?? 'connection-closed'),
+              ...(failure?.code ? { failureCode: failure.code } : {}),
               capabilities,
               maxOutputTokens: capabilities.outputCap,
               inputTokenSource: reportedPrompt === null ? 'unavailable' : 'measured',

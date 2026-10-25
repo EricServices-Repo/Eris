@@ -28,10 +28,12 @@ export interface ModelTermination {
     | 'tool-call'
     | 'content-filter'
     | 'connection-closed'
+    | 'protocol-error'
     | 'cancelled'
     | 'unknown'
   /** The provider's own value (finish_reason, node-llama-cpp stopReason). */
   raw?: string
+  failureCode?: string
   maxOutputTokens?: number
   promptTokens?: number
   outputTokens?: number
