@@ -1,9 +1,9 @@
 /* Actual Electron utility-process exits and cancellation; no model download or GPU claim. */
 const { app, utilityProcess } = require('electron')
-const { mkdtempSync, writeFileSync, rmSync } = require('node:fs')
+const { mkdtempSync, writeFileSync } = require('node:fs')
 const { join } = require('node:path')
 const { tmpdir } = require('node:os')
-const root = mkdtempSync(join(tmpdir(), 'eris-process-probe-'))
+const root = process.env.ERIS_PROBE_ROOT || mkdtempSync(join(tmpdir(), 'eris-process-probe-'))
 app.setPath('userData', root)
 require('esbuild').buildSync({
   entryPoints: ['electron/main/services/llama-worker-channel.ts'],
@@ -87,7 +87,6 @@ app.whenReady().then(async () => {
     if (process.env.ERIS_PROBE_REPORT)
       writeFileSync(process.env.ERIS_PROBE_REPORT, JSON.stringify(report, null, 2) + '\n')
     clearTimeout(deadline)
-    rmSync(root, { recursive: true, force: true })
     app.exit(0)
   } catch (error) {
     console.error(error.message)
