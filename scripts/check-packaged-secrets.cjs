@@ -37,6 +37,19 @@ function scan(root) {
   visit(root)
 }
 module.exports = async function afterPack(context) {
+  if (context.electronPlatformName === 'win32') {
+    const helper = path.join(
+      context.appOutDir,
+      'resources',
+      'resources',
+      'native',
+      'eris-owned-command.exe'
+    )
+    if (!fs.existsSync(helper) || fs.statSync(helper).size < 512)
+      throw new Error(
+        'Windows owned-command helper missing; prepare it on Windows before packaging'
+      )
+  }
   scan(context.appOutDir)
 }
 module.exports.scan = scan

@@ -190,3 +190,5 @@ Implementation validation: desktop/cloud typechecks; **841 tests in 82 suites**,
 ## REC-31 / #76 implementation follow-up
 
 Implemented explicit trusted-host verification admission, minimal agent environments, unobserved-host-effect receipts and owned descendant cleanup. Untrusted or explicitly isolated requests fail closed rather than falling back to host execution. Added real cancellation/timeout parent-and-child regressions plus independent-command survival, approval classification and credential-filtering checks. Local macOS targeted run: 52 tests passed across four suites. Windows Job Object code is included in the build qualification profile; local results do not certify Windows execution or an OS sandbox.
+
+REC-31 Windows follow-up: runtime PowerShell C# compilation was observed to stall in CI before ownership. Replace it with a build-prepared executable and atomic Windows Job-list creation, so compiler descendants are never part of a chat command. Early Windows qualification checks command completion, EOF, cancellation, descendant cleanup and independent-command survival before packaging.
