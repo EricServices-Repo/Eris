@@ -160,7 +160,9 @@ export function buildWorkspaceProcessEnv(
 
   const npmCache = ensureWorkspaceNpmCache(workspacePath)
   const venv =
-    localBins.find((p) => p.endsWith(`${join('.venv', 'bin')}`) || p.endsWith(`${join('venv', 'bin')}`)) ||
+    localBins.find(
+      (p) => p.endsWith(`${join('.venv', 'bin')}`) || p.endsWith(`${join('venv', 'bin')}`)
+    ) ||
     localBins.find((p) => /[/\\]\.venv[/\\]Scripts$/i.test(p) || /[/\\]venv[/\\]Scripts$/i.test(p))
 
   const env: NodeJS.ProcessEnv = {
@@ -184,4 +186,20 @@ export function buildWorkspaceProcessEnv(
   env.ERIS_WORKSPACE = workspacePath
 
   return env
+}
+
+/** Agent commands receive tool discovery plus an explicit host environment allowlist.
+ * Interactive terminal behavior remains separate; credentials/NODE_OPTIONS are not inherited here.
+ */
+export function buildAgentProcessEnv(
+  workspacePath: string,
+  extra?: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv {
+  const full = buildWorkspaceProcessEnv(workspacePath)
+  const allowed =
+    /^(?:PATH|HOME|USER|USERNAME|USERPROFILE|HOMEDRIVE|HOMEPATH|SYSTEMROOT|WINDIR|COMSPEC|PATHEXT|TEMP|TMP|TMPDIR|LANG|LC_[A-Z_]+|TERM|COLORTERM|VIRTUAL_ENV|ERIS_WORKSPACE|FORCE_COLOR|NPM_CONFIG_(?:CACHE|FUND|AUDIT|GLOBAL))$/i
+  const result: NodeJS.ProcessEnv = {}
+  for (const [key, value] of Object.entries({ ...full, ...extra }))
+    if (allowed.test(key)) result[key] = value
+  return result
 }

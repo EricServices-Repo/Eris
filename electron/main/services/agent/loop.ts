@@ -2726,10 +2726,19 @@ export async function* runAgentWithWorkspaceTools(options: {
                   command,
                   {
                     signal: options.signal,
-                    timeoutMs: 300_000
+                    timeoutMs: 300_000,
+                    trustRoot: workspacePath
                   }
                 )
-                const out = [ran.stdout, ran.stderr].filter(Boolean).join('\n')
+                const out = [
+                  ran.executionBoundary === 'trusted-host'
+                    ? 'Trusted host execution; filesystem side effects are not fully observed. This is not an OS sandbox.'
+                    : '',
+                  ran.stdout,
+                  ran.stderr
+                ]
+                  .filter(Boolean)
+                  .join('\n')
                 if (out) yield { type: 'terminal', text: `${out}\n` }
                 result = {
                   ok: ran.ok,
@@ -2750,10 +2759,19 @@ export async function* runAgentWithWorkspaceTools(options: {
                   : executionRoot!,
                 command,
                 {
-                  signal: options.signal
+                  signal: options.signal,
+                  trustRoot: workspacePath
                 }
               )
-              const out = [ran.stdout, ran.stderr].filter(Boolean).join('\n')
+              const out = [
+                ran.executionBoundary === 'trusted-host'
+                  ? 'Trusted host execution; filesystem side effects are not fully observed. This is not an OS sandbox.'
+                  : '',
+                ran.stdout,
+                ran.stderr
+              ]
+                .filter(Boolean)
+                .join('\n')
               if (out) yield { type: 'terminal', text: `${out}\n` }
               result = {
                 ok: ran.ok,
