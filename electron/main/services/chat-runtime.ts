@@ -25,6 +25,7 @@ export type StreamModelChatOptions = {
   model: string
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string } | ChatRequestMessage>
   temperature: number
+  maxOutputTokens?: number
   signal?: AbortSignal
   getSecret: (key: string) => string | null
   tools?: OpenAIToolDef[]
@@ -80,6 +81,11 @@ export async function* streamProviderChat(
   let model = options.model || options.settings.models.defaultModel || 'builtin:composer-lite'
   assertProviderCallAllowed(options.settings, model)
   const capabilities = resolveModelCapabilities(options.settings, model)
+  if (options.maxOutputTokens !== undefined) {
+    if (!Number.isSafeInteger(options.maxOutputTokens) || options.maxOutputTokens < 1)
+      throw new Error('Invalid output-token reservation')
+    capabilities.outputCap = Math.min(capabilities.outputCap, options.maxOutputTokens)
+  }
   const protocol = capabilities.tools
   const inputMessages = options.messages.map((message) => ({
     ...message,
@@ -153,6 +159,7 @@ export async function* streamProviderChat(
       }
       for await (const chunk of streamBuiltinChat({
         modelRef: model,
+        maxOutputTokens: capabilities.outputCap,
         messages: compiled
           .filter((m) => m.role === 'system' || m.role === 'user' || m.role === 'assistant')
           .map((m) => ({

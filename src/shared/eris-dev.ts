@@ -311,6 +311,10 @@ export interface DevStartInput {
 }
 
 export interface DevApi {
+  quality(input: import('./quality').QualityInput): Promise<import('./quality').QualitySummary>
+  qualityOpen(): Promise<import('./quality').QualitySummary | null>
+  qualityExport(): Promise<string | null>
+  qualityReview(): Promise<import('./quality').QualitySummary | null>
   models(): Promise<DevModelOption[]>
   connect(input: { baseUrl: string; apiKey?: string }): Promise<DevModelOption[]>
 

@@ -88,6 +88,14 @@ function Answer({ text }: { text: string }) {
 }
 
 function App() {
+  const [qualityCalls, setQualityCalls] = useState(24)
+  const [qualityTokens, setQualityTokens] = useState(32768)
+  const [qualityRepeats, setQualityRepeats] = useState(1)
+  const [qualityModel, setQualityModel] = useState('')
+  const [qualityRunning, setQualityRunning] = useState(false)
+  const [qualityResult, setQualityResult] = useState<
+    import('../shared/quality').QualitySummary | null
+  >(null)
   const [execution, setExecution] = useState<'capture' | 'live'>('live')
   const [models, setModels] = useState<DevModelOption[]>([])
   const [model, setModel] = useState('')
@@ -125,7 +133,7 @@ function App() {
   const [panel, setPanel] = useState<'settings' | 'history' | 'export' | 'comparison' | null>(null)
   const dialog = useRef<HTMLDialogElement>(null)
   const generation = useRef(0)
-  const locked = running || busy
+  const locked = running || busy || qualityRunning
   const attempt = async (fn: () => Promise<void>) => {
     setBusy(true)
     setError('')
@@ -359,7 +367,7 @@ function App() {
             <option value="__capture__">Capture requests only (no model)</option>
           </select>
         </label>
-        {running ? (
+        {running || qualityRunning ? (
           <button
             className="stop"
             disabled={busy}
@@ -380,9 +388,138 @@ function App() {
           Export results
         </button>
       </section>
+      <details className="quality-suite">
+        <summary>Quality suite · production runtime</summary>
+        <p>
+          Runs built-in isolated fixtures through the same chat pipeline. Live calls require a
+          selected model and the explicit budgets below. Host commands remain blocked; correctness
+          stays unresolved until independently reviewed.
+        </p>
+        <label>
+          Compare model{' '}
+          <select
+            disabled={locked}
+            value={qualityModel}
+            onChange={(e) => setQualityModel(e.target.value)}
+          >
+            <option value="">Only selected model</option>
+            {models
+              .filter((m) => m.id !== model)
+              .map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+          </select>
+        </label>
+        <label>
+          Repeats{' '}
+          <input
+            type="number"
+            min={1}
+            max={10}
+            disabled={locked}
+            value={qualityRepeats}
+            onChange={(e) => setQualityRepeats(Number(e.target.value))}
+          />
+        </label>
+        <label>
+          Provider call budget{' '}
+          <input
+            type="number"
+            min={6}
+            max={2000}
+            disabled={locked}
+            value={qualityCalls}
+            onChange={(e) => setQualityCalls(Number(e.target.value))}
+          />
+        </label>
+        <label>
+          Output token budget{' '}
+          <input
+            type="number"
+            min={128}
+            max={2000000}
+            disabled={locked}
+            value={qualityTokens}
+            onChange={(e) => setQualityTokens(Number(e.target.value))}
+          />
+        </label>
+        <button
+          disabled={locked || execution !== 'live' || !model}
+          onClick={() =>
+            void attempt(async () => {
+              setQualityRunning(true)
+              try {
+                setQualityResult(
+                  await window.erisDev.quality({
+                    models: qualityModel ? [model, qualityModel] : [model],
+                    context,
+                    repeats: qualityRepeats,
+                    maxCalls: qualityCalls,
+                    maxOutputTokens: qualityTokens,
+                    live: true
+                  })
+                )
+              } finally {
+                setQualityRunning(false)
+              }
+            })
+          }
+        >
+          Run quality suite with model
+        </button>
+        {qualityRunning && (
+          <button onClick={() => void window.erisDev.stop()}>Stop quality suite</button>
+        )}
+        <button
+          disabled={locked}
+          onClick={() =>
+            void attempt(async () => setQualityResult(await window.erisDev.qualityOpen()))
+          }
+        >
+          Open saved suite
+        </button>
+        <button
+          disabled={locked || !qualityResult}
+          onClick={() =>
+            void attempt(async () => {
+              const path = await window.erisDev.qualityExport()
+              if (path) setNotice('Quality report exported: ' + path)
+            })
+          }
+        >
+          Export quality report
+        </button>
+        <button
+          disabled={locked || !qualityResult}
+          onClick={() =>
+            void attempt(async () => {
+              const reviewed = await window.erisDev.qualityReview()
+              if (reviewed) setQualityResult(reviewed)
+            })
+          }
+        >
+          Import adjudications
+        </button>
+        {qualityResult && (
+          <p role="status">
+            {qualityResult.observed} observed · {qualityResult.unresolved} unresolved ·{' '}
+            {qualityResult.skipped} budget-skipped. Saved: {qualityResult.path}
+          </p>
+        )}
+      </details>
       <section className="progress-bar" aria-label="Run progress">
         <span className={`status-dot ${running ? 'running' : ''}`} />
-        <strong>{running ? 'Running' : completed ? 'Run saved' : 'Ready'}</strong>
+        <strong>
+          {qualityRunning
+            ? 'Running quality suite'
+            : running
+              ? 'Running'
+              : completed
+                ? 'Run saved'
+                : 'Ready'}
+        </strong>
         <span>
           {completed.toLocaleString()} / {questions.length.toLocaleString()}
         </span>

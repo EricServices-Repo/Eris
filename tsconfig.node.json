@@ -19,6 +19,7 @@
     "src/shared/**/*",
     "src/state/documents.ts",
     "resources/defaults.json",
+    "checks/quality/cases.json",
     "resources/agents.json",
     "src/features/chat/thinking-summary.ts",
     "tests/**/*",

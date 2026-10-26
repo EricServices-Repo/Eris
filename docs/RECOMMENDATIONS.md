@@ -171,6 +171,10 @@ Evidence: [task-contract.ts](../src/shared/task-contract.ts), [task-intake.ts](.
 
 For each implementation, record the source commit, changed boundary, acceptance evidence, limitations, and newly discovered failure cases. Update this backlog when acceptance is met; do not infer completion from a green test count or an old report's status.
 
+## REC-27 / #72 implementation follow-up
+
+Maintained production adapter, budgeted Eris-Dev quality UI, saved comparisons/adjudications and headless CLI are implemented. Local targeted and harness tests, debug-app build and zero-provider headless smoke passed. Live quality and packaged UI/Windows qualification remain open.
+
 ## Review provenance and cleanup
 
 The old `ARCH-*`, `AG-*`, `FR-*`, and `MR-*` identifiers remain useful historical evidence. This review rechecked source paths and existing regressions rather than copying their open/closed labels. Legacy scenario/question IDs are retained in code and data; they are not new REC identifiers.
