@@ -29,6 +29,7 @@ import {
   restoreEvidence,
   evidenceStores
 } from '../electron/main/services/evidence-lifecycle'
+import { createCheckpoint, loadCheckpoint } from '../electron/main/services/checkpoints'
 import { userDataRoot } from '../electron/main/services/paths'
 import { parsePersistedTask, CheckpointSchema } from '../electron/main/services/evidence-schemas'
 vi.mock('fs', async (original) => {
@@ -56,6 +57,18 @@ function put(id: string, name: string, value: unknown) {
   return path
 }
 describe('private evidence lifecycle', () => {
+  it('rejects a checkpoint whose persisted workspace was changed to a foreign root', () => {
+    const record = createCheckpoint(root)
+    const path = join(root, '.eris', 'checkpoints', record.id, 'meta.json')
+    atomicEvidenceJson(path, { ...record, workspacePath: userDataRoot() })
+    expect(loadCheckpoint(root, record.id)).toBeNull()
+    expect(
+      readdirSync(join(root, '.eris', 'checkpoints', record.id)).some((n) =>
+        n.includes('.corrupt-')
+      )
+    ).toBe(true)
+  })
+
   it('quarantines torn and invalid checkpoint metadata without losing the original', () => {
     const path = join(root, 'record.json')
     writeFileSync(path, '{"ops":[')

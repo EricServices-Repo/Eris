@@ -9,6 +9,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmdirSync,
   statSync,
@@ -128,7 +129,12 @@ export function loadCheckpoint(workspacePath: string, id: string): CheckpointRec
   if (!/^[a-f0-9-]{36}$/i.test(id)) return null
   return readEvidence(
     checkpointMetaPath(workspacePath, id),
-    (value) => CheckpointSchema.parse(value) as CheckpointRecord,
+    (value) => {
+      const record = CheckpointSchema.parse(value) as CheckpointRecord
+      if (record.id !== id || realpathSync(record.workspacePath) !== realpathSync(workspacePath))
+        throw new Error('Checkpoint identity or workspace does not match its owner')
+      return record
+    },
     64_000_000
   )
 }
