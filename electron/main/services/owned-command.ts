@@ -19,7 +19,16 @@ export function spawnOwnedCommand(
         '-EncodedCommand',
         Buffer.from(WINDOWS_PROCESS_JOB, 'utf16le').toString('base64')
       ],
-      { cwd, env: { ...env, ERIS_OWNED_COMMAND: command }, windowsHide: true, stdio: 'pipe' }
+      {
+        cwd,
+        env: {
+          ...env,
+          ERIS_OWNED_COMMAND: command,
+          ERIS_OWNED_TRACE: process.env.ERIS_COMMAND_TRACE === '1' ? '1' : '0'
+        },
+        windowsHide: true,
+        stdio: 'pipe'
+      }
     )
   }
   return spawn(command, { cwd, env, shell: true, detached: true, stdio: 'pipe' })

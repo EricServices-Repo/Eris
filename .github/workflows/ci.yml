@@ -26,6 +26,11 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Windows owned-command regression
+        run: npx vitest run tests/owned-command.test.ts
+        env:
+          ERIS_COMMAND_TRACE: '1'
+
       - name: Build Eris-Dev Windows x64 installer
         run: npm run dist:dev-app:win -- --publish never
         env:
