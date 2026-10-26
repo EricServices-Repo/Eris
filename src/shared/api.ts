@@ -223,6 +223,14 @@ export interface IdeApi {
   saveImageToWorkspace: (id: string, path: string) => Promise<{ ok: boolean; error?: string }>
   onImageProgress: (cb: (progress: ImageGenerationProgress) => void) => () => void
   onChatAsset: (cb: (data: { requestId: string; asset: GeneratedImageAsset }) => void) => () => void
+  storageInspect: (root: string | null) => Promise<import('./storage').StorageInventory>
+  storageCleanup: (root: string | null) => Promise<import('./storage').StorageCleanup>
+  storagePolicy: (
+    root: string | null,
+    enabled?: boolean
+  ) => Promise<{ version: 1; enabled: boolean }>
+  storageBackup: (root: string | null) => Promise<string | null>
+  storageRestore: (root: string | null) => Promise<{ restored: number; conflicts: string[] } | null>
   getAppState: () => Promise<AppState>
   getAppVersion: () => Promise<AppVersionInfo>
   openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>

@@ -1,3 +1,4 @@
+import { StoragePanel } from './StoragePanel'
 import { useEffect, useState } from 'react'
 import type { AppSettings } from '@/shared/settings-schema'
 import type { ApplySetting } from '../fields'
@@ -135,6 +136,7 @@ export function GeneralPanel({
           </button>
         </SettingsSection>
       )}
+      <StoragePanel />
     </SettingsPage>
   )
 }

@@ -1,12 +1,5 @@
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  writeFileSync
-} from 'fs'
+import { atomicEvidenceJson } from './evidence-records'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { workspaceConfigDir } from './paths'
@@ -69,11 +62,8 @@ function stepPath(workspacePath: string, id: string, step: number): string {
 }
 
 function writeJsonAtomic(path: string, data: unknown): void {
-  const tmp = `${path}.tmp`
-  suppressWatcherFor(tmp)
   suppressWatcherFor(path)
-  writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8')
-  renameSync(tmp, path)
+  atomicEvidenceJson(path, data)
 }
 
 /** Cap worker transcript so session files stay small. */
@@ -301,20 +291,5 @@ function pruneSessionSteps(workspacePath: string, sessionId: string, keep: numbe
   }
 }
 
-export function pruneOldSessions(workspacePath: string, keep = MAX_SESSIONS_KEPT): void {
-  const root = sessionsRoot(workspacePath)
-  if (!existsSync(root)) return
-  const metas: AgentSessionMeta[] = []
-  for (const name of readdirSync(root)) {
-    const meta = loadAgentSession(workspacePath, name)
-    if (meta) metas.push(meta)
-  }
-  metas.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-  for (const meta of metas.slice(keep)) {
-    try {
-      rmSync(sessionDir(workspacePath, meta.id), { recursive: true, force: true })
-    } catch {
-      /* ignore */
-    }
-  }
-}
+/** Unified terminal-aware idle maintenance owns session retention. */
+export function pruneOldSessions(_workspacePath: string, _keep = MAX_SESSIONS_KEPT): void {}
