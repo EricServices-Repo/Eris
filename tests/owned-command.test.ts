@@ -36,6 +36,21 @@ describe('owned host execution', () => {
       rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
+  it('executes a noninteractive command and closes its standard input', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'eris-command-eof-'))
+    setWorkspaceTrusted(root, true)
+    try {
+      const result = await runWorkspaceCommand(
+        root,
+        `"${process.execPath}" -e "process.stdin.resume();process.stdin.on('end',()=>console.log('stdin-ended'))"`,
+        { timeoutMs: 10000 }
+      )
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, timedOut: false })
+      expect(result.stdout).toContain('stdin-ended')
+    } finally {
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    }
+  })
   it.each(['cancel', 'timeout'] as const)(
     'terminates descendants after %s without killing another command',
     async (reason) => {
@@ -49,14 +64,23 @@ describe('owned host execution', () => {
       )
       const other = runWorkspaceCommand(
         root,
-        `"${process.execPath}" -e "setTimeout(()=>{console.log('independent')},500)"`
+        `"${process.execPath}" -e "setTimeout(()=>{console.log('independent')},500)"`,
+        { timeoutMs: 8000 }
       )
       try {
         const running = runWorkspaceCommand(root, `"${process.execPath}" parent.cjs`, {
           signal: controller.signal,
           timeoutMs: reason === 'timeout' ? 8000 : 20000
         })
-        await until(() => existsSync(join(root, 'pids.json')))
+        await Promise.race([
+          until(() => existsSync(join(root, 'pids.json'))),
+          running.then((result) => {
+            if (!existsSync(join(root, 'pids.json')))
+              throw new Error(
+                'Owned command exited before spawning descendants: ' + JSON.stringify(result)
+              )
+          })
+        ])
         pids = JSON.parse(readFileSync(join(root, 'pids.json'), 'utf8'))
         if (reason === 'cancel') controller.abort()
         const result = await running
