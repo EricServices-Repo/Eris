@@ -45,7 +45,7 @@
     "start:dev-app": "npm run dist:dev-app:mac && open dist-dev/mac-arm64/Eris-Dev.app",
     "test:dev-app": "node scripts/run-qualification.mjs dev-app",
     "prebuild:dev-app": "npm run test:dev-app",
-    "check:recovery": "electron scripts/check-native-recovery.cjs",
+    "check:recovery": "node scripts/run-native-recovery.cjs",
     "check:quality": "node --test checks/quality/harness.test.mjs checks/quality/scenarios.test.mjs",
     "check:scenarios": "node --test checks/quality/scenarios.test.mjs",
     "quality:scenarios": "node scripts/run-scenarios.mjs"
