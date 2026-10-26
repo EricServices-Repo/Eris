@@ -1,6 +1,6 @@
 import { atomicEvidenceJson, readEvidence } from './evidence-records'
 import { z } from 'zod'
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, rmSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { workspaceConfigDir } from './paths'
