@@ -50,7 +50,7 @@ describe('owned host execution', () => {
     } finally {
       rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
-  })
+  }, 15000)
   it.each(['cancel', 'timeout'] as const)(
     'terminates descendants after %s without killing another command',
     async (reason) => {

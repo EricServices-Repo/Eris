@@ -224,8 +224,7 @@ export function runWorkspaceCommand(
       }
       options?.onChunk?.(text, 'stderr')
     })
-    // Commands have no interactive input channel. Close it so Windows PowerShell
-    // does not wait for pipeline input before executing the encoded Job launcher.
+    // Commands have no interactive input channel. Deliver EOF to owned commands.
     child.stdin.on('error', () => {
       /* the child may exit before EOF is delivered */
     })
