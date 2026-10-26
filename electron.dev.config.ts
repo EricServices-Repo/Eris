@@ -41,6 +41,7 @@ export default defineConfig(({ command }) => ({
       rollupOptions: {
         input: {
           index: resolve('electron/dev/main.ts'),
+          'quality-scenarios': resolve('electron/dev/scenario-main.ts'),
           'llama-worker': resolve('electron/main/llama-worker.ts'),
           'workspace-worker': resolve('electron/main/workspace-worker.ts')
         }

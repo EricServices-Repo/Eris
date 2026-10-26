@@ -1,7 +1,7 @@
 {
   "name": "eris",
   "version": "0.5.0",
-  "description": "Eris — AI-first desktop IDE for macOS and Windows",
+  "description": "Eris \u2014 AI-first desktop IDE for macOS and Windows",
   "main": "./out/main/index.js",
   "author": "Eris",
   "license": "MIT",
@@ -46,7 +46,9 @@
     "test:dev-app": "node scripts/run-qualification.mjs dev-app",
     "prebuild:dev-app": "npm run test:dev-app",
     "check:recovery": "electron scripts/check-native-recovery.cjs",
-    "check:quality": "node --test checks/quality/harness.test.mjs"
+    "check:quality": "node --test checks/quality/harness.test.mjs checks/quality/scenarios.test.mjs",
+    "check:scenarios": "node --test checks/quality/scenarios.test.mjs",
+    "quality:scenarios": "node scripts/run-scenarios.mjs"
   },
   "dependencies": {
     "@parcel/watcher": "^2.6.0",

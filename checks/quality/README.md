@@ -52,3 +52,27 @@ node scripts/run-quality.mjs --adjudicate /tmp/eris-quality.json \
 
 Offline adjudication verifies the fixture and result digests before accepting a
 decision. It never imports an adapter or makes another provider call.
+
+## Multi-turn scenario matrices (REC-28)
+
+`scenarios.json` is a separately versioned family pack: actual review → selected subset → implementation → diff explanation, review-only follow-ups, missing projects, an unrelated calculator versus a requested rental website, design, security and controlled provider/cancellation/cold-load cases. Development and held-out paraphrases have separate run identities. These synthetic projects are disposable; this runner does not mutate a user's project or run generated code in a host shell. The production adapter reuses `captureQuestion`, production intake, task completion and model transport. One session owns the same fixture across turns and carries the actual prior answer, completed TaskContract and file state; it never substitutes a canned assistant review.
+
+Build Eris-Dev (`npm run build:dev-app`), then run:
+
+```
+npm run quality:scenarios -- --config comparison.json --output private-comparison.json
+```
+
+Example config (model IDs come from Eris-Dev's model selector):
+
+```json
+{"live":true,"models":["local:your-model"],"context":8192,"repeats":2,"maxCalls":120,"maxOutputTokens":200000,"seed":"comparison-1","split":"heldout","timeoutMs":90000}
+```
+
+Use the real selected model ID; the example is not a model alias. Comparisons reserve up to six internal provider calls per turn and an enforced per-call share of output tokens. Reservations are conservative; absent token/cost telemetry stays unknown. Seeded strata order and round-robin model turns make incomplete coverage explicit. Configuration has no default authorization for inference. This development-only Electron entry reads the installed Eris model configuration and credentials in the main process; reports redact paths and known secrets and omit full settings. Reports still contain private answers/source and should be reviewed before sharing.
+
+**Merge dependency:** issue #72 / REC-27 supplies enforced API/native output limits. Without its `CAPTURE_OUTPUT_LIMIT_VERSION` marker, the maintained adapter returns `not-exercised` with zero provider calls, even if live execution was requested. It never runs an unbounded comparison as a fallback. Cold-load eviction is deliberately unavailable: it is reported as not exercised rather than calling a warm run cold. Provider-error and cancellation controls inject at the agent transport before its provider invocation, label that evidence, and retain earlier intent-call accounting; they do not pretend an actual provider outage occurred.
+
+Reports separate route, applicability, edit/execution authority, artifact completeness, correctness, latency and cost. Each selected arithmetic recommendation has its own artifact digest and independent input/output observations. A restricted syntax interpreter evaluates only numeric/parameter arithmetic; it never executes generated source or host APIs. It cannot establish surrounding module safety or broad program correctness. Subjective review/design/diff obligations remain unresolved for an independent reviewer. Supply `adjudications` keyed by the report row key with `state`, `reviewer`, `rationale`, `resultDigest` and `packDigest`; changed evidence invalidates the decision. General quality pass rate is always unavailable: request counts, completed transport and topic words do not establish semantic correctness.
+
+`npm run check:quality` also exercises matrix/history/oracle invariants with an explicitly scripted adapter. Those checks and the 10,000-question capture corpus are not live model quality evidence. Production-adapter tests mock only the provider transport; no paid inference is performed by CI. Timeout/cancellation signals belong to the current session; fixture cleanup waits for an in-flight capture to settle, retaining the fixture and reporting a cleanup error if it cannot settle promptly. Native workers are disposed by the headless entry on exit.
