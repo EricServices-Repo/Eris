@@ -1,4 +1,5 @@
-import { atomicEvidenceJson } from './evidence-records'
+import { atomicEvidenceJson, readEvidence } from './evidence-records'
+import { z } from 'zod'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
@@ -37,6 +38,44 @@ export interface AgentSessionMeta {
   updatedAt: string
 }
 
+const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
+const MetaSchema = z
+  .object({
+    id: z.string().regex(SESSION_ID),
+    requestId: z.string().min(1).max(256),
+    threadId: z.string().nullable(),
+    goal: z.string().max(128000),
+    agentId: z.string(),
+    mode: z.enum(['ask', 'agent']),
+    checkpointId: z.string().nullable(),
+    status: z.enum(['running', 'done', 'stopped', 'failed', 'incomplete', 'dismissed']),
+    step: z.number().int().nonnegative(),
+    parentSessionId: z.string().nullable(),
+    branchFromStep: z.number().int().nonnegative().nullable(),
+    startedAt: z.string(),
+    updatedAt: z.string()
+  })
+  .passthrough()
+const StepSchema = z
+  .object({
+    step: z.number().int().nonnegative(),
+    opThrough: z.number().int().nonnegative(),
+    summary: z.string().max(128000),
+    actionLog: z.array(z.string()).max(10000),
+    filesTouched: z.array(z.string()).max(10000),
+    workerMessages: z
+      .array(
+        z
+          .object({
+            role: z.enum(['system', 'user', 'assistant', 'tool']),
+            content: z.string().max(1_000_000)
+          })
+          .passthrough()
+      )
+      .max(1000),
+    ts: z.string()
+  })
+  .passthrough()
 const MAX_WORKER_CHARS = 48_000
 const MAX_STEPS_KEPT = 40
 const MAX_SESSIONS_KEPT = 12
@@ -46,6 +85,7 @@ function sessionsRoot(workspacePath: string): string {
 }
 
 function sessionDir(workspacePath: string, id: string): string {
+  if (!SESSION_ID.test(id)) throw new Error('Invalid session identity')
   return join(sessionsRoot(workspacePath), id)
 }
 
@@ -140,15 +180,12 @@ export function loadAgentSession(
   workspacePath: string | null,
   id: string
 ): AgentSessionMeta | null {
-  if (!workspacePath || !id) return null
-  const path = metaPath(workspacePath, id)
-  if (!existsSync(path)) return null
-  try {
-    const meta = JSON.parse(readFileSync(path, 'utf8')) as AgentSessionMeta
-    return meta && typeof meta.id === 'string' ? meta : null
-  } catch {
-    return null
-  }
+  if (!workspacePath || !SESSION_ID.test(id)) return null
+  return readEvidence(metaPath(workspacePath, id), (value) => {
+    const meta = MetaSchema.parse(value)
+    if (meta.id !== id) throw new Error('Session metadata belongs to another identity')
+    return meta as AgentSessionMeta
+  })
 }
 
 export function saveAgentSession(workspacePath: string, meta: AgentSessionMeta): void {
@@ -199,14 +236,13 @@ export function loadSessionStep(
   sessionId: string,
   step: number
 ): AgentSessionStep | null {
-  if (!workspacePath) return null
-  const path = stepPath(workspacePath, sessionId, step)
-  if (!existsSync(path)) return null
-  try {
-    return JSON.parse(readFileSync(path, 'utf8')) as AgentSessionStep
-  } catch {
+  if (!workspacePath || !SESSION_ID.test(sessionId) || !Number.isSafeInteger(step) || step < 0)
     return null
-  }
+  return readEvidence(stepPath(workspacePath, sessionId, step), (value) => {
+    const record = StepSchema.parse(value)
+    if (record.step !== step) throw new Error('Session step identity mismatch')
+    return record as AgentSessionStep
+  })
 }
 
 export function listSessionSteps(

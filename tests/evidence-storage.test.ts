@@ -29,6 +29,7 @@ import {
   restoreEvidence,
   evidenceStores
 } from '../electron/main/services/evidence-lifecycle'
+import { createAgentSession, loadAgentSession } from '../electron/main/services/agent-sessions'
 import { createCheckpoint, loadCheckpoint } from '../electron/main/services/checkpoints'
 import { userDataRoot } from '../electron/main/services/paths'
 import { parsePersistedTask, CheckpointSchema } from '../electron/main/services/evidence-schemas'
@@ -57,6 +58,23 @@ function put(id: string, name: string, value: unknown) {
   return path
 }
 describe('private evidence lifecycle', () => {
+  it('quarantines incomplete session metadata instead of accepting a reversible resume', () => {
+    const session = createAgentSession(root, {
+      requestId: 'fixture',
+      goal: 'fix',
+      agentId: 'composer',
+      mode: 'agent',
+      checkpointId: null
+    })
+    const path = join(root, '.eris', 'sessions', session.id, 'meta.json')
+    atomicEvidenceJson(path, { id: session.id })
+    expect(loadAgentSession(root, session.id)).toBeNull()
+    expect(
+      readdirSync(join(root, '.eris', 'sessions', session.id)).some((n) => n.includes('.corrupt-'))
+    ).toBe(true)
+    expect(loadAgentSession(root, '../foreign')).toBeNull()
+  })
+
   it('rejects a checkpoint whose persisted workspace was changed to a foreign root', () => {
     const record = createCheckpoint(root)
     const path = join(root, '.eris', 'checkpoints', record.id, 'meta.json')
