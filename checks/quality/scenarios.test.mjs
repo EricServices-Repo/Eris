@@ -110,7 +110,7 @@ test('review-only authority and execution are separate observed axes', () => {
 })
 test('human judgments bind exact pack and result, with reviewer and rationale', () => {
   const turn = one.families[0].turns[0],
-    result = { answer: 'a', files: one.families[0].fixture },
+    result = { answer: 'a', completion: 'complete', files: one.families[0].fixture },
     packDigest = scenarioDigest(one)
   const decision = {
     state: 'correct',
