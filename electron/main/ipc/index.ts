@@ -1,3 +1,4 @@
+import { registerStorageIpc } from './storage'
 import { withPrivilegedRegistration } from './privileged'
 import { registerImageIpc } from './images'
 import { registerWorkspaceIpc } from './workspace'
@@ -35,6 +36,7 @@ function registerHandlers(): void {
   registerImageIpc()
   registerWorkspaceIpc()
   registerAppIpc()
+  registerStorageIpc()
   registerSettingsIpc()
   registerModelsIpc()
   registerOllamaIpc()

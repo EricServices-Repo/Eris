@@ -1,5 +1,7 @@
-import { existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'fs'
+import { atomicEvidenceJson, readEvidence } from '../main/services/evidence-records'
+import { existsSync, readdirSync, statSync } from 'fs'
 import { join } from 'path'
+import { z } from 'zod'
 import type {
   DevQuestion,
   DevRunHeader,
@@ -54,24 +56,61 @@ export interface RunListing {
   bytes?: number
 }
 
-const write = (path: string, value: unknown) => {
-  writeFileSync(`${path}.tmp`, JSON.stringify(value), 'utf8')
-  renameSync(`${path}.tmp`, path)
-}
-const read = <T>(path: string): T | null => {
-  try {
-    return JSON.parse(readFileSync(path, 'utf8')) as T
-  } catch {
-    return null
-  }
-}
+const write = (path: string, value: unknown) => atomicEvidenceJson(path, value)
+const read = <T>(path: string): T | null =>
+  readEvidence(
+    path,
+    (value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value))
+        throw new Error('Invalid evidence object')
+      return value as T
+    },
+    32_000_000
+  )
 
 export const writeManifest = (dir: string, manifest: RunManifest) =>
   write(join(dir, 'run.json'), manifest)
-export const readManifest = (dir: string) => read<RunManifest>(join(dir, 'run.json'))
+const ManifestSchema = z
+  .object({
+    runId: z.string().uuid(),
+    header: z
+      .object({ created: z.string(), corpus: z.object({ name: z.string() }).passthrough() })
+      .passthrough(),
+    questions: z.array(z.object({ id: z.string(), text: z.string() }).passthrough()).max(10000),
+    config: z
+      .object({
+        context: z.number().positive(),
+        mode: z.enum(['ask', 'agent']),
+        intentReplyMode: z.enum(['fallback', 'malformed', 'timeout']),
+        projectKind: z.enum(['sample', 'none', 'project']),
+        project: z.string().nullable()
+      })
+      .passthrough()
+  })
+  .passthrough()
+export const readManifest = (dir: string) =>
+  readEvidence(
+    join(dir, 'run.json'),
+    (value) => ManifestSchema.parse(value) as unknown as RunManifest,
+    32_000_000
+  )
 export const writeProgress = (dir: string, progress: RunProgress) =>
   write(join(dir, 'progress.json'), progress)
-export const readProgress = (dir: string) => read<RunProgress>(join(dir, 'progress.json'))
+export const readProgress = (dir: string) =>
+  readEvidence(
+    join(dir, 'progress.json'),
+    (value) =>
+      z
+        .object({
+          state: z.enum(['running', 'completed', 'stopped', 'interrupted']),
+          completed: z.number().int().nonnegative(),
+          updatedAt: z.string(),
+          rewritten: z.array(z.number().int().nonnegative()),
+          resumedAt: z.array(z.string())
+        })
+        .passthrough()
+        .parse(value) as unknown as RunProgress
+  )
 
 /** Terminal capture outcomes. A cancelled case was interrupted, not finished. */
 const TERMINAL_STATUSES = new Set(['captured', 'blocked', 'error'])

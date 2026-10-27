@@ -1,12 +1,5 @@
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync
-} from 'fs'
+import { atomicEvidenceJson } from '../evidence-records'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import type {
   DebugCaseResult,
@@ -49,7 +42,7 @@ function readJsonl<T>(path: string): T[] {
 
 export function writeRunSummary(summary: DebugRunSummary): void {
   mkdirSync(debugRunsDir(), { recursive: true })
-  writeFileSync(file(summary.runId, 'summary.json'), JSON.stringify(summary, null, 2), 'utf8')
+  atomicEvidenceJson(file(summary.runId, 'summary.json'), summary)
 }
 
 export function appendCaseResult(result: DebugCaseResult): void {
@@ -109,7 +102,5 @@ export function deleteAllDebugRuns(): number {
 }
 
 /** Keep the newest finished runs; never prune a run that is still active. */
-export function pruneDebugRuns(keep = MAX_RUNS): void {
-  const finished = listDebugRunSummaries().filter((run) => run.status !== 'running')
-  for (const run of finished.slice(keep)) deleteDebugRun(run.runId)
-}
+/** Unified terminal-aware idle maintenance owns diagnostic retention. */
+export function pruneDebugRuns(_keep = MAX_RUNS): void {}

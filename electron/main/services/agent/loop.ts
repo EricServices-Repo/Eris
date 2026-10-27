@@ -1,3 +1,5 @@
+import { activeDiagnosticsScope } from '../model-transport'
+import { pinEvidence, saveEvidenceOwner } from '../evidence-records'
 import { appendToolObservation } from '../model-protocol'
 import { acquireProjectWrite } from './task-scheduler'
 import { generateImage, saveImageToWorkspace } from '../image-generation'
@@ -328,7 +330,17 @@ async function mapWithLimit<T, R>(
   return out
 }
 
-export async function* runAgentWithWorkspaceTools(options: {
+export async function* runAgentWithWorkspaceTools(
+  options: Parameters<typeof runAgentInternal>[0]
+): ReturnType<typeof runAgentInternal> {
+  const unpin = pinEvidence()
+  try {
+    yield* runAgentInternal(options)
+  } finally {
+    unpin()
+  }
+}
+async function* runAgentInternal(options: {
   workspacePath: string | null
   settings: AppSettings
   model: string
@@ -724,7 +736,19 @@ export async function* runAgentWithWorkspaceTools(options: {
           retrievalMs = Date.now() - retrievalStartedAt
         })
 
-  const checkpoint = createCheckpoint(workspacePath)
+  const checkpoint = createCheckpoint(workspacePath, {
+    taskId: task.taskId,
+    threadId: task.threadId
+  })
+  if (task.threadId && !activeDiagnosticsScope())
+    saveEvidenceOwner({
+      version: 1,
+      taskId: task.taskId,
+      threadId: task.threadId,
+      root: task.scope.workspaceRoot,
+      terminal: false,
+      checkpointId: checkpoint.id
+    })
   pruneOldCheckpoints(workspacePath, 20)
   yield { type: 'checkpoint', checkpointId: checkpoint.id }
 
