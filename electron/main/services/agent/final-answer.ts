@@ -35,6 +35,7 @@ export interface FinalAnswerOptions {
   temperature: number
   signal?: AbortSignal
   getSecret: (key: string) => string | null
+  task?: import('../../../../src/shared/task-contract').TaskContract
   goal: string
   /** The conversation the answer was generated in, for a code continuation. */
   messages: AgentChatMessage[]
@@ -48,10 +49,11 @@ export interface FinalAnswerOptions {
   evidence?: string
 }
 
-function protocolProblems(text: string, goal: string): boolean {
-  return assessDeliverable(text, deliverableContext(goal)).checks.some(
-    (check) => PROTOCOL_CHECKS.has(check.id) && check.severity === 'fail'
-  )
+function protocolProblems(text: string, goal: string, task?: FinalAnswerOptions['task']): boolean {
+  return assessDeliverable(
+    text,
+    deliverableContext(goal, task?.interpretation?.artifact, task?.interpretation?.language)
+  ).checks.some((check) => PROTOCOL_CHECKS.has(check.id) && check.severity === 'fail')
 }
 
 /**
@@ -75,9 +77,9 @@ export async function finalizeAnswer(
     })
     return { text, incomplete, repaired, rawOutput: answer }
   }
-  if (protocolProblems(text, options.goal)) {
+  if (protocolProblems(text, options.goal, options.task)) {
     const stripped = stripProtocolTail(text)
-    if (stripped && !protocolProblems(stripped, options.goal)) {
+    if (stripped && !protocolProblems(stripped, options.goal, options.task)) {
       text = stripped
       repaired.push('protocol-tail-removed')
     } else {
@@ -102,7 +104,7 @@ export async function finalizeAnswer(
         if (options.signal?.aborted) throw error
         return ''
       })
-      if (again.trim() && !protocolProblems(again, options.goal)) {
+      if (again.trim() && !protocolProblems(again, options.goal, options.task)) {
         text = again.trim()
         repaired.push('re-answered-from-goal')
       } else {
@@ -135,7 +137,7 @@ export async function finalizeAnswer(
     if (options.signal?.aborted) throw error
     return ''
   })
-  if (continuation.trim() && !protocolProblems(continuation, options.goal)) {
+  if (continuation.trim() && !protocolProblems(continuation, options.goal, options.task)) {
     const joined = `${text}${/\s$/.test(text) ? '' : '\n'}${continuation.replace(/^\n+/, '')}`
     repaired.push('code-continued')
     if (!assessDeliverable(joined).checks.some((check) => check.id === 'unfinished-code'))

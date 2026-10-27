@@ -635,6 +635,7 @@ export async function* runAgentWithWorkspaceTools(options: {
           signal: options.signal,
           getSecret: options.getSecret,
           goal: originalUserGoal,
+          task,
           onPresentation: (audit) => appendTaskEvent(task.taskId, 'answer-presentation', audit),
           messages: askMessages
         })
@@ -1642,6 +1643,7 @@ export async function* runAgentWithWorkspaceTools(options: {
       signal: options.signal,
       getSecret: options.getSecret,
       goal: originalUserGoal,
+      task,
       onPresentation: (audit) => appendTaskEvent(task.taskId, 'answer-presentation', audit),
       messages: workerMessages,
       evidence: sourceReads.map((read) => `${read.path}:\n${read.text}`).join('\n\n')
