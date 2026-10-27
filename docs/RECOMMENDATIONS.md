@@ -121,6 +121,10 @@ Evidence: [task-contract.ts](../src/shared/task-contract.ts), [task-intake.ts](.
 
 **Where:** [Eris-Dev capture](../electron/dev/capture.ts), [eris-dev types](../src/shared/eris-dev.ts), [deliverable checks](../src/shared/deliverable-checks.ts), [debug-runs](../electron/main/services/debug-runs/evaluation.ts), topic rubrics, and eval fixtures. Preserve historical captures unchanged.
 
+### REC-38 · P2 · Task-aware deliverable/evidence review
+
+Implemented trusted-context protocol/example classification, raw/presentation auditing, assembled supported-language parsing and per-obligation bounded evidence. Omitted input stays unresolved. [Implementation and validation limits](changes/REC-38-deliverable-evidence.md).
+
 ### REC-11 · P2 · Give credentials an explicit storage policy
 
 **Status:** Implemented an explicit local/vault credential store with atomic synced migration, preserved unreadable legacy data, opt-in OS encryption, restrictive file permissions and explicit Windows current-user ACLs. Settings explain the vault prompt and migration/cleanup state. Renderer APIs expose presence only; filesystem IPC blocks credential files. Eris-Dev reads the same store and snapshots omit credentials/legacy ciphertext. Synthetic migration, deletion, unavailable-vault and unreadable-store tests pass. Real Windows ACL/vault and macOS unlock-prompt acceptance remain platform checks.

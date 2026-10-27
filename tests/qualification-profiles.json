@@ -31,6 +31,7 @@
         "tests/chat-stream.test.ts",
         "tests/command-approval.test.ts",
         "tests/debug-runs.test.ts",
+        "tests/deliverable-context.test.ts",
         "tests/eris-dev-followup.test.ts",
         "tests/eris-dev-live-review.test.ts",
         "tests/eris-dev.test.ts",

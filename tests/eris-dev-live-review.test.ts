@@ -58,7 +58,7 @@ describe('MR-001/MR-003/MR-009 deliverable checks', () => {
 
   it('separates an unfinished program from an unclosed explanatory fence', () => {
     expect(assessDeliverable(CASE_77)).toMatchObject({
-      status: 'fail',
+      status: 'needs-review',
       checks: [expect.objectContaining({ id: 'unfinished-code' })]
     })
     // Case 93 stops at an opening fence with no code at all.

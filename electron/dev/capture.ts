@@ -8,7 +8,7 @@ import type {
   DevTerminationCause,
   IntentReplyMode
 } from '../../src/shared/eris-dev'
-import { assessDeliverable } from '../../src/shared/deliverable-checks'
+import { assessDeliverable, deliverableContext } from '../../src/shared/deliverable-checks'
 import type { AppSettings } from '../../src/shared/settings-schema'
 import type { IntentResolution, TaskContract } from '../../src/shared/task-contract'
 import { interpretationOf } from '../../src/shared/task-contract'
@@ -411,7 +411,10 @@ export async function captureQuestion(
     // Runtime completion is not deliverable validity: a completed transport can
     // still return protocol framing, truncated code or a refusal.
     if (result.response !== null || result.completion?.status === 'completed')
-      result.deliverable = assessDeliverable(result.response)
+      result.deliverable = assessDeliverable(result.response, {
+        ...deliverableContext(question, result.artifact),
+        termination: firstCause ?? undefined
+      })
   }
   if (result.task) {
     result.findingsDetail = requestInvariantFindings({

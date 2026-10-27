@@ -1,0 +1,9 @@
+# REC-38 / #83: task-aware deliverable and outcome review
+
+Deliverable checks receive trusted request intent, artifact/language context and observed termination. Markdown examples/quotes are masked with stable offsets. Quoted protocol/tool JSON is a review candidate when intent is unknown and accepted when the request explicitly asks for that example. Exposed internal tool-result framing still fails, including in an answer about the protocol. A format pass is never a correctness verdict.
+
+Delimiter hints ignore strings/comments and produce review candidates. They are not parser or semantic verdicts; observed output-limit truncation remains a failure. Only a single assembled JS/TS/JSX/TSX artifact explicitly requested as complete/runnable is parsed. Unsupported languages/fragments retain uncertainty. Finalization keeps the original draft and hashes of raw/presented output, records the audit through task events, and preserves Eris-Dev's raw per-call output and termination. Audits contain private text and follow existing evidence-store privacy policies.
+
+Semantic review selects bounded excerpts per task obligation, with exact source offsets, excerpt digests and explicit omitted coverage. Tail/term selection improves coverage over a fixed answer prefix but never proves relevance or correctness. If any input is omitted, a supported evaluator answer is downgraded to unresolved. Source/evaluator input, output and deadlines remain bounded. This may yield more unresolved outcomes on long answers, intentionally avoiding unsupported certainty.
+
+Validation uses synthetic protocol examples/leaks, string/comment delimiters, parser-supported/unsupported artifacts, raw/presentation digests and long multi-obligation evidence. Existing finalization/capture/outcome regression tests run without live inference. Real model quality and full packaged UI behavior remain separate acceptance checks.

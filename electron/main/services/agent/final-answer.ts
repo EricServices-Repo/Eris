@@ -1,6 +1,12 @@
+import { createHash } from 'crypto'
+import { assembledSyntax } from './artifact-syntax'
 import type { AppSettings } from '../../../../src/shared/settings-schema'
 import { AGENT_HANDOFF_CHARS } from '../../../../src/shared/agent-orchestration'
-import { assessDeliverable, stripProtocolTail } from '../../../../src/shared/deliverable-checks'
+import {
+  assessDeliverable,
+  stripProtocolTail,
+  deliverableContext
+} from '../../../../src/shared/deliverable-checks'
 import { collectModelText } from './stream'
 import type { AgentChatMessage } from './types'
 
@@ -33,17 +39,18 @@ export interface FinalAnswerOptions {
   /** The conversation the answer was generated in, for a code continuation. */
   messages: AgentChatMessage[]
   /** Source text the worker actually read, offered again to a re-answer. */
+  onPresentation?: (audit: {
+    raw: string
+    rawDigest: string
+    presentationDigest: string
+    repairs: string[]
+  }) => void
   evidence?: string
 }
 
 function protocolProblems(text: string, goal: string): boolean {
-  const userAsked = {
-    json: /\bjson\b/i.test(goal),
-    tools: /\btool(?:s|\s+calls?)?\b/i.test(goal)
-  }
-  return assessDeliverable(text, { allowToolJson: userAsked.json }).checks.some(
-    (check) =>
-      PROTOCOL_CHECKS.has(check.id) && !(check.id === 'tool-schema-discussion' && userAsked.tools)
+  return assessDeliverable(text, deliverableContext(goal)).checks.some(
+    (check) => PROTOCOL_CHECKS.has(check.id) && check.severity === 'fail'
   )
 }
 
@@ -56,9 +63,18 @@ function protocolProblems(text: string, goal: string): boolean {
 export async function finalizeAnswer(
   answer: string,
   options: FinalAnswerOptions
-): Promise<{ text: string; incomplete: boolean; repaired: string[] }> {
+): Promise<{ text: string; incomplete: boolean; repaired: string[]; rawOutput: string }> {
   const repaired: string[] = []
   let text = answer
+  const finish = (text: string, incomplete: boolean, repaired: string[]) => {
+    options.onPresentation?.({
+      raw: answer,
+      rawDigest: createHash('sha256').update(answer).digest('hex'),
+      presentationDigest: createHash('sha256').update(text).digest('hex'),
+      repairs: [...repaired]
+    })
+    return { text, incomplete, repaired, rawOutput: answer }
+  }
   if (protocolProblems(text, options.goal)) {
     const stripped = stripProtocolTail(text)
     if (stripped && !protocolProblems(stripped, options.goal)) {
@@ -90,13 +106,19 @@ export async function finalizeAnswer(
         text = again.trim()
         repaired.push('re-answered-from-goal')
       } else {
-        return { text: PROTOCOL_BLOCKER, incomplete: true, repaired }
+        return finish(PROTOCOL_BLOCKER, true, repaired)
       }
     }
   }
 
-  if (!assessDeliverable(text).checks.some((check) => check.id === 'unfinished-code'))
-    return { text, incomplete: false, repaired }
+  if (assembledSyntax(text, options.goal).state === 'invalid')
+    return finish(text + INCOMPLETE_CODE_NOTE, true, repaired)
+  if (
+    !assessDeliverable(text, deliverableContext(options.goal)).checks.some(
+      (check) => check.id === 'unfinished-code'
+    )
+  )
+    return finish(text, false, repaired)
 
   const continuation = await collectModelText({
     settings: options.settings,
@@ -117,8 +139,8 @@ export async function finalizeAnswer(
     const joined = `${text}${/\s$/.test(text) ? '' : '\n'}${continuation.replace(/^\n+/, '')}`
     repaired.push('code-continued')
     if (!assessDeliverable(joined).checks.some((check) => check.id === 'unfinished-code'))
-      return { text: joined, incomplete: false, repaired }
+      return finish(joined, false, repaired)
     text = joined
   }
-  return { text: text + INCOMPLETE_CODE_NOTE, incomplete: true, repaired }
+  return finish(text + INCOMPLETE_CODE_NOTE, true, repaired)
 }
