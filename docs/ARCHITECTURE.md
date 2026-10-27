@@ -155,6 +155,8 @@ The desktop requires a compatible `taskContractVersion` before v2 inline routing
 
 The current implementation provides stable question IDs, import preview, resume compatibility, atomic export, key-aware sanitization, context/tool manifests, selected-case inspection, per-call termination, elapsed/deadline/cancellation causes, complete streamed output capture, deliverable findings, and explicit exported/processed/total coverage.
 
+REC-27 adds an Eris-Dev quality-suite adapter that calls the existing production capture/intake/runtime path. UI and maintained CLI bridge materialize synthetic isolated fixtures, reserve provider/output budgets, redact known credentials, preserve blocked effects and archive fixture/result digests. Saved reports support offline adjudication without new inference. Capability gaps remain not-exercised; capture does not establish answer correctness.
+
 [DIAGNOSTICS-RUNS.md](DIAGNOSTICS-RUNS.md) documents the in-app diagnostics seam. Scripted adapters must make zero provider calls; live adapters exercise inference but still do not represent every production effect. Diagnostics block host commands, network effects, MCP, images, persistent delegation, and cloud execution at their service boundaries.
 
 A runtime completion, invariant pass, or deliverable pass is not proof that an answer is correct. `answerQuality` remains explicitly `not-evaluated` in Eris-Dev results. Historical partial captures must not become whole-corpus quality claims. Independent artifact oracles, realistic multi-turn cases, repeated model comparisons, and actual desktop interaction tests remain necessary.

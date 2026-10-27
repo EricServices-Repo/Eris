@@ -65,7 +65,8 @@
       "files": [
         "tests/eris-dev.test.ts",
         "tests/eris-dev-followup.test.ts",
-        "tests/eris-dev-live-review.test.ts"
+        "tests/eris-dev-live-review.test.ts",
+        "tests/quality-adapter.test.ts"
       ],
       "notRun": [
         "model inference",
