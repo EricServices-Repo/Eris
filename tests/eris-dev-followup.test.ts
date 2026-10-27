@@ -140,14 +140,14 @@ const result = (
 let root = ''
 const priorTmp = process.env.TMPDIR
 const invoke = (channel: string, ...args: unknown[]) => h.handlers[channel]!({}, ...args)
-const idle = async () => {
+const idle = async (timeoutMs = 30000) => {
   const last = h.sent.at(-1)
   if (last && !last.running) return last
   await new Promise<void>((resolve, reject) => {
     const deadline = setTimeout(() => {
       h.drained = null
-      reject(new Error('run did not drain within 30 seconds'))
-    }, 30000)
+      reject(new Error(`run did not drain within ${timeoutMs} ms`))
+    }, timeoutMs)
     h.drained = () => {
       clearTimeout(deadline)
       h.drained = null
@@ -269,7 +269,9 @@ describe('Eris-Dev main process', () => {
     h.capture = async (index, question) => result(index, question, { intent: 'explore' })
     h.sent.length = 0
     await invoke('dev:start', { context: 8192, mode: 'agent', intentReplyMode: 'fallback' })
-    await idle()
+    // Every result/progress record is now fsynced. Windows CI flush latency is
+    // substantial for 2,400 durable writes; retain the complete 1,200-case oracle.
+    await idle(120000)
     const current = readdirSync(join(h.userData, 'captures'))
       .map((id) => JSON.parse(readFileSync(join(h.userData, 'captures', id, 'run.json'), 'utf8')))
       .find((manifest) => manifest.questions.length === 1200)
@@ -296,7 +298,7 @@ describe('Eris-Dev main process', () => {
 
     h.open.push([questionsFile(['not a header line'])])
     await expect(invoke('dev:compare')).rejects.toThrow(/not valid JSON|no run header/)
-  }, 35000)
+  }, 125000)
 
   it('FR-030: streams an export into place with no partial file left', async () => {
     const out = join(root, 'export.jsonl')

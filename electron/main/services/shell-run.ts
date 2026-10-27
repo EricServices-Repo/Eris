@@ -1,6 +1,7 @@
-import { spawn } from 'child_process'
+import { spawnOwnedCommand, signalOwnedCommand } from './owned-command'
+import { isWorkspaceTrusted } from './workspace-trust'
 import { existsSync } from 'fs'
-import { buildWorkspaceProcessEnv } from './workspace-env'
+import { buildWorkspaceProcessEnv, buildAgentProcessEnv } from './workspace-env'
 import { activeDiagnosticsScope } from './model-transport'
 
 const DEFAULT_TIMEOUT_MS = 60_000
@@ -14,6 +15,8 @@ export interface RunCommandResult {
   stderr: string
   timedOut: boolean
   command: string
+  executionBoundary?: 'trusted-host' | 'blocked'
+  effects?: 'not-observed'
 }
 
 /** Run a command in the workspace folder (for agent + terminal panel). */
@@ -24,6 +27,9 @@ export function runWorkspaceCommand(
     timeoutMs?: number
     signal?: AbortSignal
     env?: NodeJS.ProcessEnv
+    trustRoot?: string
+    environment?: 'agent' | 'terminal'
+    isolation?: 'trusted-host' | 'isolated'
     /** Live stdout/stderr chunks (for terminal panel streaming). */
     onChunk?: (chunk: string, stream: 'stdout' | 'stderr') => void
   }
@@ -72,15 +78,51 @@ export function runWorkspaceCommand(
     })
   }
 
-  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS
-  const env = buildWorkspaceProcessEnv(workspacePath, options?.env)
-
-  return new Promise((resolve) => {
-    const child = spawn(cmd, {
-      cwd: workspacePath,
-      shell: true,
-      env
+  if (
+    options?.signal?.aborted ||
+    options?.isolation === 'isolated' ||
+    !isWorkspaceTrusted(options?.trustRoot ?? workspacePath)
+  ) {
+    return Promise.resolve({
+      ok: false,
+      code: null,
+      stdout: '',
+      stderr: options?.signal?.aborted
+        ? 'Command cancelled before execution'
+        : options?.isolation === 'isolated'
+          ? 'OS-isolated desktop execution is unavailable; no host fallback was run'
+          : 'Trust this workspace before running host code. Tests and builds can modify files and access the host.',
+      timedOut: false,
+      command: cmd,
+      executionBoundary: 'blocked'
     })
+  }
+  const timeoutMs = Math.max(1, Math.min(600000, options?.timeoutMs ?? DEFAULT_TIMEOUT_MS))
+  const env =
+    options?.environment === 'terminal'
+      ? buildWorkspaceProcessEnv(workspacePath, options.env)
+      : buildAgentProcessEnv(workspacePath, options?.env)
+  return new Promise((resolve) => {
+    let child: ReturnType<typeof spawnOwnedCommand>
+    try {
+      child = spawnOwnedCommand(cmd, workspacePath, env)
+    } catch (error) {
+      resolve({
+        ok: false,
+        code: null,
+        stdout: '',
+        stderr: String(error),
+        timedOut: false,
+        command: cmd,
+        executionBoundary: 'blocked'
+      })
+      return
+    }
+    let stopping = false
+    let cancelled = false
+    let outputLimited = false
+    let escalation: ReturnType<typeof setTimeout> | undefined
+    let cleanupDeadline: ReturnType<typeof setTimeout> | undefined
     let stdout = ''
     let stderr = ''
     let timedOut = false
@@ -90,6 +132,14 @@ export function runWorkspaceCommand(
       if (settled) return
       settled = true
       clearTimeout(timer)
+      clearTimeout(escalation)
+      clearTimeout(cleanupDeadline)
+      // A normal shell exit must not leave background descendants behind.
+      try {
+        signalOwnedCommand(child, 'SIGKILL')
+      } catch {
+        /* already gone */
+      }
       options?.signal?.removeEventListener('abort', onAbort)
       const trim = (s: string) =>
         s.length > MAX_OUTPUT ? `${s.slice(0, MAX_OUTPUT)}\n…[truncated]` : s
@@ -115,47 +165,79 @@ export function runWorkspaceCommand(
           'or relaunch Eris from a terminal after `which npm` works.'
       }
       resolve({
-        ok: code === 0 && !timedOut,
+        ok: code === 0 && !timedOut && !cancelled && !outputLimited,
         code,
         stdout: trim(stdout),
         stderr: err,
         timedOut,
-        command: cmd
+        command: cmd,
+        executionBoundary: 'trusted-host',
+        effects: 'not-observed'
       })
     }
 
+    const stop = () => {
+      if (stopping) return
+      stopping = true
+      try {
+        signalOwnedCommand(child, 'SIGTERM')
+      } catch (error) {
+        stderr += String(error)
+      }
+      escalation = setTimeout(() => {
+        try {
+          signalOwnedCommand(child, 'SIGKILL')
+        } catch (error) {
+          stderr += String(error)
+        }
+      }, 500)
+      cleanupDeadline = setTimeout(() => {
+        child.stdout.destroy()
+        child.stderr.destroy()
+        child.stdin.destroy()
+        finish(null)
+      }, 2500)
+    }
     const timer = setTimeout(() => {
       timedOut = true
-      child.kill('SIGTERM')
-      setTimeout(() => child.kill('SIGKILL'), 2000)
+      stop()
     }, timeoutMs)
-
     const onAbort = () => {
-      child.kill('SIGTERM')
-      setTimeout(() => child.kill('SIGKILL'), 500)
-      finish(null)
+      cancelled = true
+      stop()
     }
-    if (options?.signal?.aborted) {
-      onAbort()
-      return
-    }
-    options?.signal?.addEventListener('abort', onAbort)
-
     child.stdout.on('data', (d) => {
       const text = String(d)
-      stdout += text
+      stdout = (stdout + text).slice(0, MAX_OUTPUT * 2)
       options?.onChunk?.(text, 'stdout')
-      if (stdout.length > MAX_OUTPUT * 2) child.kill('SIGTERM')
+      if (stdout.length >= MAX_OUTPUT * 2) {
+        outputLimited = true
+        stop()
+      }
     })
     child.stderr.on('data', (d) => {
       const text = String(d)
-      stderr += text
+      stderr = (stderr + text).slice(0, MAX_OUTPUT * 2)
+      if (stderr.length >= MAX_OUTPUT * 2) {
+        outputLimited = true
+        stop()
+      }
       options?.onChunk?.(text, 'stderr')
     })
+    // Commands have no interactive input channel. Deliver EOF to owned commands.
+    child.stdin.on('error', () => {
+      /* the child may exit before EOF is delivered */
+    })
+    child.stdin.end()
     child.on('close', (code) => finish(code))
     child.on('error', (err) => {
       stderr += err.message
       finish(1)
     })
+    if (options?.signal?.aborted) {
+      onAbort()
+      return
+    }
+    options?.signal?.addEventListener('abort', onAbort)
   })
 }

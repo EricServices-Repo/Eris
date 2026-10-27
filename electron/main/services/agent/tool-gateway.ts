@@ -19,6 +19,7 @@ export interface EvidenceRecord {
   path?: string
   ok: boolean
   mutated: boolean
+  mutationObservation?: 'unobserved-host-effects'
   digest: string
   beforeDigest?: string
   afterDigest?: string
@@ -75,6 +76,8 @@ export class TaskToolGateway {
       if (authority.execute === 'verification' && !isVerifyCommand(String(call.args.command ?? '')))
         return 'This task only permits verification commands.'
       const forbidden = this.task.interpretation?.constraints
+      if (forbidden?.edit)
+        return 'Host commands may write files. This request forbids edits and an OS-isolated runner is unavailable; no host fallback is permitted.'
       const command = String(call.args.command ?? '')
       if (forbidden?.commit && /\bgit\s+(?:commit|push|merge|rebase|tag)\b/i.test(command))
         return 'The request forbids committing.'
@@ -161,7 +164,7 @@ export class TaskToolGateway {
     call: ToolCall,
     result: { ok: boolean; mutated: boolean; path?: string; detail: string }
   ): EvidenceRecord {
-    const item = {
+    const item: EvidenceRecord = {
       id,
       tool: call.name,
       path: result.path,
@@ -183,6 +186,7 @@ export class TaskToolGateway {
         /* non-file evidence remains represented by output digest */
       }
     }
+    if (call.name === 'run') item.mutationObservation = 'unobserved-host-effects'
     this.evidence.push(item)
     if (result.ok && ['read_file', 'notebook_read'].includes(call.name) && result.path)
       this.rememberRead(
