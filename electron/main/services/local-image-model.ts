@@ -1,4 +1,3 @@
-import { inferenceDevice } from './inference-device'
 import { spawn, type ChildProcess } from 'child_process'
 import { createHash } from 'crypto'
 import { existsSync, statSync } from 'fs'
@@ -15,6 +14,7 @@ import { appResourcePath, userDataRoot } from './paths'
 import { isPathInside, resolveInWorkspace } from './workspace-fs'
 import { acquireInferenceLease } from './inference-governor'
 import { disposeRuntime } from './builtin-model'
+import { inferenceDevice } from './inference-device'
 
 const ManifestSchema = z.object({
   repoId: z.string(),
