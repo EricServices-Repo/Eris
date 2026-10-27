@@ -91,6 +91,7 @@
       "tests/gpu-accel.test.ts",
       "tests/hf-gguf.test.ts",
       "tests/line-diff.test.ts",
+      "tests/chat-performance.test.ts",
       "tests/llama-session.test.ts",
       "tests/local-model.test.ts",
       "tests/model-catalog-light.test.ts",
@@ -111,8 +112,7 @@
       "tests/cloud-task-policy.test.ts",
       "tests/chat-admission.test.ts",
       "tests/feedback-relay.test.ts",
-      "tests/worktree-integration.test.ts",
-      "tests/chat-performance.test.ts"
+      "tests/worktree-integration.test.ts"
     ]
   }
 }

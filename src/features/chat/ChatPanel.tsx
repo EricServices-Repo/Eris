@@ -1,4 +1,3 @@
-import { searchLoadedHistory } from '@/shared/chat-history-search'
 import { ImageMessage } from './ImageMessage'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type {
@@ -16,6 +15,7 @@ import { MarkdownMessage } from './MarkdownMessage'
 import { chatStream } from '@/state/chat-stream'
 import { useStore } from '@/state/store'
 import { VirtualList } from '@/components/VirtualList'
+import { searchLoadedHistory } from '@/shared/chat-history-search'
 
 export type { ToolActivityItem }
 export type ChatMode = 'ask' | 'agent'
