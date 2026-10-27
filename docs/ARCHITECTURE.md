@@ -1,5 +1,9 @@
 # Eris architecture
 
+## REC-34 · Chat virtualization and performance qualification
+
+HistoricalMessages retains a bounded selection range and one focused row, and searches loaded message data independently of mounted DOM. The scripted Electron/index fixtures measure UI and retrieval separately from model load and gate hardware-matched budgets. See [implementation, measurements and limits](changes/REC-34-chat-performance.md).
+
 Reviewed 2026-10-24 against commit `6038e16dcdf58044bd5245294931005f3094e804`, package version **0.4.15**. Updated for the local `main` implementation following this source review of the desktop IDE, Eris-Dev, cloud worker, and delivery workflows. It is not a new live-model benchmark, penetration test, or installation certification.
 
 This file describes the current implementation. [RECOMMENDATIONS.md](RECOMMENDATIONS.md) is the current prioritized implementation backlog. Historical AG, FR, MR, and ARCH review identifiers are evidence references, not an assertion that those findings remain open.

@@ -1,5 +1,9 @@
 # Eris: next fixes
 
+## REC-34 · P2 · Chat and workspace performance budgets
+
+Implemented the measured selection/focus failures and loaded-history search, retained the existing virtualizer, and added reproducible hardware-scoped budgets with raw reports. Local M4 fixture acceptance passes; Windows performance, whole-app memory and live cancellation remain unqualified. See [REC-34 evidence](changes/REC-34-chat-performance.md).
+
 Reviewed **2026-10-24**, source baseline `6038e16dcdf58044bd5245294931005f3094e804`, version **0.4.15**. Read [ARCHITECTURE.md](ARCHITECTURE.md) for the current implementation. This file supersedes the dated Markdown review backlogs. Implementation is now in the local `main` checkout. Statuses below distinguish source changes from deployment and live-platform acceptance; the baseline SHA identifies the reviewed source, not a new committed release.
 
 Priorities: **P0** is a distribution/security boundary to address before another affected release; **P1** is the next reliability or capability work; **P2** is hardening after those boundaries are stable. A source-confirmed gap is distinguished from a validation gap. No paid/live quality baseline, production cloud deployment, credential rotation, Windows installation, GPU fault certification, or signed update installation was performed. A local packaged macOS smoke test and actual Electron process recovery probe passed.

@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "fixtureVersion": "eris-ui-perf-1",
+  "quantiles": "nearest-rank; small fixture sample counts are not production confidence intervals",
+  "portableInvariants": {
+    "maxMountedRows": 120,
+    "maxAnchorErrorPx": 8,
+    "focusPreserved": true,
+    "selectionPreserved": true,
+    "searchPreserved": true,
+    "liveModelCalls": 0
+  },
+  "profiles": [
+    {
+      "id": "apple-m4-16gb-headless-electron",
+      "platform": "darwin",
+      "arch": "arm64",
+      "cpu": "Apple M4",
+      "minMemoryBytes": 16106127360,
+      "maxMemoryBytes": 18253611008,
+      "limits": {
+        "tokenToPaintMs": {
+          "p50": 50,
+          "p95": 100
+        },
+        "typingToPaintMs": {
+          "p50": 50,
+          "p95": 100
+        },
+        "stopToPaintMs": {
+          "p50": 50,
+          "p95": 100
+        },
+        "largeDiffWorkerMs": {
+          "p50": 250,
+          "p95": 1000
+        },
+        "jsHeapMiB": {
+          "p50": 128,
+          "p95": 192
+        },
+        "longestRecordedTaskMs": {
+          "p50": 250,
+          "p95": 250
+        }
+      }
+    }
+  ],
+  "workspaceProfiles": [
+    {
+      "id": "apple-m4-16gb-index-4000",
+      "platform": "darwin",
+      "arch": "arm64",
+      "cpu": "Apple M4",
+      "minMemoryBytes": 16106127360,
+      "maxMemoryBytes": 18253611008,
+      "limits": {
+        "warmRebuildMs": {
+          "p50": 15000,
+          "p95": 20000
+        },
+        "usefulEvidenceMs": {
+          "p50": 100,
+          "p95": 250
+        }
+      }
+    }
+  ],
+  "unmatchedHardware": "Timing report only. Portable functional invariants still gate CI."
+}

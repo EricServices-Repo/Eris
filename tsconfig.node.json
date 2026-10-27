@@ -27,6 +27,8 @@
     "electron.dev.config.ts",
     "cloud-agent/src/workspace-paths.ts",
     "cloud-agent/src/job-sandbox.ts",
-    "cloud-agent/src/task-policy.ts"
+    "cloud-agent/src/task-policy.ts",
+    "checks/workspace-performance.ts",
+    "checks/vite.performance-node.config.ts"
   ]
 }

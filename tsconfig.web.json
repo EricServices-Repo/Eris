@@ -17,5 +17,9 @@
     },
     "types": ["vite/client"]
   },
-  "include": ["src/**/*", "checks/client-renderer.tsx"]
+  "include": [
+    "src/**/*",
+    "checks/client-renderer.tsx",
+    "checks/performance-renderer.tsx"
+  ]
 }

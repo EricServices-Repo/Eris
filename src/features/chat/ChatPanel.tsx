@@ -1,3 +1,4 @@
+import { searchLoadedHistory } from '@/shared/chat-history-search'
 import { ImageMessage } from './ImageMessage'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type {
@@ -46,7 +47,7 @@ export const MAX_QUEUED_MESSAGES = 3
 const messageKey = (message: ChatMessage) => message.id
 const EMPTY_MESSAGES: ChatMessage[] = []
 
-const HistoricalMessages = memo(function HistoricalMessages({
+export const HistoricalMessages = memo(function HistoricalMessages({
   messages,
   onOpenPath,
   onRerouteLast,
@@ -58,6 +59,46 @@ const HistoricalMessages = memo(function HistoricalMessages({
   streaming: boolean
 }) {
   const visible = useMemo(() => messages.filter((message) => message.role !== 'system'), [messages])
+  const [query, setQuery] = useState(''),
+    [hits, setHits] = useState<string[]>([]),
+    [searching, setSearching] = useState(false),
+    [match, setMatch] = useState(-1),
+    [reveal, setReveal] = useState<{ key: string; request: number } | null>(null)
+  useEffect(() => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => {
+      setSearching(Boolean(query.trim()))
+      setHits([])
+      setMatch(-1)
+      void searchLoadedHistory(visible, query, controller.signal)
+        .then((ids) => {
+          if (!controller.signal.aborted) {
+            setHits(ids)
+            setSearching(false)
+          }
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) setSearching(false)
+        })
+    }, 150)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [visible, query])
+  const navigate = (direction: number) => {
+    if (!hits.length) return
+    window.getSelection()?.removeAllRanges()
+    const next =
+      match < 0
+        ? direction > 0
+          ? 0
+          : hits.length - 1
+        : (match + direction + hits.length) % hits.length
+    setMatch(next)
+    setReveal((previous) => ({ key: hits[next], request: (previous?.request ?? 0) + 1 }))
+  }
+
   const questions = useMemo(() => {
     let question = ''
     return new Map(
@@ -68,64 +109,104 @@ const HistoricalMessages = memo(function HistoricalMessages({
     )
   }, [visible])
   return (
-    <VirtualList
-      items={visible}
-      itemKey={messageKey}
-      renderItem={(message, index) => (
-        <div className={`chat-message-row ${message.role}`} style={{ paddingBottom: 12 }}>
-          <div className={`msg ${message.role}`}>
-            <span className="role">
-              {message.role}
-              {message.agentName ? ` · ${message.agentName}` : ''}
-              {message.model ? ` · ${message.model}` : ''}
-            </span>
-            {message.role === 'assistant' && message.thinking && (
-              <ThinkingBlock thinking={message.thinking} defaultOpen={false} />
-            )}
-            {message.role === 'assistant' && message.delegations?.length ? (
-              <DelegationCards items={message.delegations} />
-            ) : null}
-            {message.role === 'assistant' ? (
-              message.content && (
-                <div className="msg-summary">
-                  <MarkdownMessage content={message.content} onOpenPath={onOpenPath} />
-                </div>
-              )
-            ) : (
-              <div className="user-text">{message.content}</div>
-            )}
-            {message.assets?.map((asset) => (
-              <ImageMessage key={asset.id} asset={asset} />
-            ))}
-            {message.role === 'assistant' && (
-              <AnswerFeedback message={message} question={questions.get(message.id) || ''} />
-            )}
-            {message.role === 'assistant' &&
-              index === visible.length - 1 &&
-              !streaming &&
-              onRerouteLast && (
-                <div className="msg-reroute">
-                  <span>Wrong route?</span>
-                  <button
-                    type="button"
-                    className="btn btn-link"
-                    onClick={() => onRerouteLast('tools')}
-                  >
-                    Needed tools
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-link"
-                    onClick={() => onRerouteLast('answer')}
-                  >
-                    Just a question
-                  </button>
-                </div>
+    <>
+      <div className="chat-history-search" role="search" aria-label="Search loaded conversation">
+        <label>
+          Search loaded messages{' '}
+          <input
+            data-history-search
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                navigate(e.shiftKey ? -1 : 1)
+              }
+            }}
+          />
+        </label>
+        <button type="button" className="btn" disabled={!hits.length} onClick={() => navigate(-1)}>
+          Previous
+        </button>
+        <button
+          type="button"
+          className="btn"
+          data-history-next
+          disabled={!hits.length}
+          onClick={() => navigate(1)}
+        >
+          Next
+        </button>
+        <span role="status">
+          {searching
+            ? 'Searching…'
+            : query
+              ? `${hits.length} matches${match >= 0 ? ` · ${match + 1}` : ''}`
+              : 'All loaded history is searchable'}
+        </span>
+      </div>
+      <VirtualList
+        preserveInteraction
+        semanticLabel="Conversation messages"
+        reveal={reveal}
+        items={visible}
+        itemKey={messageKey}
+        renderItem={(message, index) => (
+          <div className={`chat-message-row ${message.role}`} style={{ paddingBottom: 12 }}>
+            <div className={`msg ${message.role}`}>
+              <span className="role">
+                {message.role}
+                {message.agentName ? ` · ${message.agentName}` : ''}
+                {message.model ? ` · ${message.model}` : ''}
+              </span>
+              {message.role === 'assistant' && message.thinking && (
+                <ThinkingBlock thinking={message.thinking} defaultOpen={false} />
               )}
+              {message.role === 'assistant' && message.delegations?.length ? (
+                <DelegationCards items={message.delegations} />
+              ) : null}
+              {message.role === 'assistant' ? (
+                message.content && (
+                  <div className="msg-summary">
+                    <MarkdownMessage content={message.content} onOpenPath={onOpenPath} />
+                  </div>
+                )
+              ) : (
+                <div className="user-text">{message.content}</div>
+              )}
+              {message.assets?.map((asset) => (
+                <ImageMessage key={asset.id} asset={asset} />
+              ))}
+              {message.role === 'assistant' && (
+                <AnswerFeedback message={message} question={questions.get(message.id) || ''} />
+              )}
+              {message.role === 'assistant' &&
+                index === visible.length - 1 &&
+                !streaming &&
+                onRerouteLast && (
+                  <div className="msg-reroute">
+                    <span>Wrong route?</span>
+                    <button
+                      type="button"
+                      className="btn btn-link"
+                      onClick={() => onRerouteLast('tools')}
+                    >
+                      Needed tools
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-link"
+                      onClick={() => onRerouteLast('answer')}
+                    >
+                      Just a question
+                    </button>
+                  </div>
+                )}
+            </div>
           </div>
-        </div>
-      )}
-    />
+        )}
+      />
+    </>
   )
 })
 

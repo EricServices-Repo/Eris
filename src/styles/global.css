@@ -7420,3 +7420,7 @@ button:disabled {
 .diag-card .is-pass, .diag-verdict.is-pass { color: var(--success); }
 .diag-card .is-fail, .diag-verdict.is-fail { color: var(--danger); }
 .diag-card .is-muted, .diag-verdict.is-muted { color: var(--text-muted); }
+
+.chat-history-search { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border); font-size: 12px; }
+.chat-history-search label { display: flex; align-items: center; gap: 6px; }
+.chat-history-search input { max-width: 160px; min-width: 70px; border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }

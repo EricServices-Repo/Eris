@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "createdAt": "2026-10-27T23:19:50.490Z",
+  "gitSha": "b4418268d12abf12326715f2ddff02f8ce60a956",
+  "baseline": true,
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpu": "Apple M4",
+    "logicalCpus": 10,
+    "totalMemoryBytes": 17179869184
+  },
+  "runtime": {
+    "electron": "44.9.3",
+    "chrome": "152.0.7977.167"
+  },
+  "metrics": {
+    "fixtureVersion": "eris-ui-perf-1",
+    "messages": 11000,
+    "messageChars": 6417780,
+    "pagesPrepended": 5,
+    "maxMountedRows": 7,
+    "maxAnchorErrorPx": 0,
+    "focusPreserved": false,
+    "selectionPreserved": false,
+    "searchPreserved": false,
+    "tokenToPaintMs": {
+      "samples": [
+        33.10000002384186,
+        79.09999996423721,
+        20.600000023841858,
+        33.39999997615814,
+        33.30000001192093,
+        33.30000001192093,
+        33.30000001192093,
+        33.69999998807907,
+        33.5,
+        33.19999998807907,
+        33.299999952316284,
+        33.30000001192093,
+        33.40000003576279,
+        33.299999952316284,
+        33.10000002384186,
+        33.5,
+        33.39999997615814,
+        33,
+        33.30000001192093,
+        33.30000001192093
+      ],
+      "p50": 33.30000001192093,
+      "p95": 79.09999996423721
+    },
+    "stopToPaintMs": {
+      "samples": [
+        31.80000001192093,
+        31.899999976158142,
+        32.90000003576279,
+        32.19999998807907,
+        32.09999996423721
+      ],
+      "p50": 32.09999996423721,
+      "p95": 32.90000003576279
+    },
+    "typingToPaintMs": {
+      "samples": [
+        33.40000003576279,
+        33.30000001192093,
+        34.299999952316284,
+        32.5,
+        33,
+        33.700000047683716,
+        33.299999952316284,
+        33.30000001192093,
+        33.30000001192093,
+        33.299999952316284,
+        33.30000001192093,
+        34.19999998807907,
+        32.60000002384186,
+        33,
+        33.5,
+        33.19999998807907,
+        33.5,
+        34.09999996423721,
+        32.60000002384186,
+        33.39999997615814
+      ],
+      "p50": 33.30000001192093,
+      "p95": 34.299999952316284
+    },
+    "largeDiffWorkerMs": {
+      "samples": [
+        33.90000003576279,
+        32.39999997615814,
+        33.69999998807907,
+        33.30000001192093,
+        33.19999998807907
+      ],
+      "p50": 33.30000001192093,
+      "p95": 33.90000003576279
+    },
+    "longTasks": {
+      "samples": [],
+      "p50": null,
+      "p95": null
+    },
+    "longTaskCount": 0,
+    "jsHeapBytes": 13078584,
+    "inputEvents": 20,
+    "liveModelCalls": 0
+  },
+  "interpretation": "Pre-interaction-fix baseline. Legacy p95 used ceil((n-1)*p); recompute nearest-rank from samples. Diff timing included concurrent paint wait; final reports time worker result directly. No timing speedup comparison is supported."
+}

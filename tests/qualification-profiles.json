@@ -70,10 +70,7 @@
         "tests/eris-dev-live-review.test.ts",
         "tests/quality-adapter.test.ts"
       ],
-      "notRun": [
-        "model inference",
-        "answer quality"
-      ]
+      "notRun": ["model inference", "answer quality"]
     }
   },
   "general": {
@@ -114,7 +111,8 @@
       "tests/cloud-task-policy.test.ts",
       "tests/chat-admission.test.ts",
       "tests/feedback-relay.test.ts",
-      "tests/worktree-integration.test.ts"
+      "tests/worktree-integration.test.ts",
+      "tests/chat-performance.test.ts"
     ]
   }
 }
