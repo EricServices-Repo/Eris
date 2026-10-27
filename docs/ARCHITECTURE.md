@@ -131,6 +131,8 @@ The current native runtime preserves structured history in one-shot and session 
 
 [inference-governor.ts](../electron/main/services/inference-governor.ts), GPU/VRAM fitting, and the local image-model service coordinate resource admission. Scripted worker tests establish control-path behavior, not recovery under actual GPU OOM, native faults, or desktop memory pressure.
 
+Device/host reservation ownership, fairness and measurement limits are defined in [REC-32 admission](changes/REC-32-inference-admission.md). GPU discovery does not establish pooled VRAM.
+
 ## Workspace, editor and persistence
 
 Workspace context, retrieval, code indexing, watching, Git, language servers, terminals, and inline assistance are separate services under `electron/main/services/`. The editor's current content lives in its document model; code operating on stored tab text must use a fresh document snapshot.

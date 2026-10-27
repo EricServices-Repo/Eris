@@ -1,3 +1,4 @@
+import { inferenceDevice } from './inference-device'
 import { LocalModelWorkerError, waitForWorkerMessage } from './llama-worker-channel'
 import { createHash } from 'crypto'
 import {
@@ -1453,8 +1454,9 @@ export function warmLocalInference(
 
       const lease = await acquireInferenceLease({
         workload: 'text',
+        owner: entry.ref,
+        ...(await inferenceDevice(Math.ceil(entry.approxBytes * 1.25 + 1024 ** 3))),
         requestedBytes: Math.ceil(entry.approxBytes * 1.25 + 1024 ** 3),
-        gpu: true,
         exclusiveGpu: true,
         priority: 5
       })
@@ -1534,8 +1536,9 @@ export async function* streamBuiltinChat(options: {
 
   const lease = await acquireInferenceLease({
     workload: 'text',
+    owner: entry.ref,
+    ...(await inferenceDevice(Math.ceil(entry.approxBytes * 1.25 + 1024 ** 3))),
     requestedBytes: Math.ceil(entry.approxBytes * 1.25 + 1024 ** 3),
-    gpu: true,
     exclusiveGpu: true,
     priority: 20,
     signal: options.signal

@@ -114,7 +114,8 @@
       "tests/cloud-task-policy.test.ts",
       "tests/chat-admission.test.ts",
       "tests/feedback-relay.test.ts",
-      "tests/worktree-integration.test.ts"
+      "tests/worktree-integration.test.ts",
+      "tests/inference-governor.test.ts"
     ]
   }
 }

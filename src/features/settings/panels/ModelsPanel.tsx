@@ -1,3 +1,4 @@
+import { InferenceAdmission } from '../InferenceAdmission'
 import { ImageGenerationSettings } from '../ImageGenerationSettings'
 import { useEffect, useMemo, useState } from 'react'
 import type {
@@ -519,6 +520,7 @@ export function ComposerModelsPanel({ state, resolved, status, apply, load }: Sh
 export function GpuModelsPanel({ resolved, status, apply, load }: Omit<SharedProps, 'state'>) {
   return (
     <div className="models-page">
+      <InferenceAdmission />
       <GpuAccelCard
         gpu={status?.gpu}
         preferEgpu={resolved.models.preferEgpu !== false}

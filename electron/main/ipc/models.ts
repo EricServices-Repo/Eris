@@ -1,3 +1,4 @@
+import { inferenceGovernorStatus } from '../services/inference-governor'
 import { ipcMain } from 'electron'
 import { getResolvedSettings, setSettings } from '../services/settings'
 import { connectionsWithDiscoveredModels, getModelsStatus } from '../services/model-catalog'
@@ -43,6 +44,15 @@ function flattenError(err: unknown): string {
 }
 
 export function registerModelsIpc(): void {
+  ipcMain.handle('models:admission', (event) => {
+    if (
+      !appState.mainWindow ||
+      event.sender !== appState.mainWindow.webContents ||
+      event.senderFrame !== event.sender.mainFrame
+    )
+      throw new Error('Unauthorized admission inspection')
+    return inferenceGovernorStatus()
+  })
   ipcMain.handle(
     'models:status',
     async (_e, options?: { probe?: boolean; includeGpu?: boolean }) => {

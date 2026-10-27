@@ -269,6 +269,7 @@ export interface IdeApi {
   writeFile: (path: string, content: string) => Promise<boolean>
   pickFiles: () => Promise<string[]>
   /** Light by default (no connection probes). Pass `{ probe: true }` from Settings → Providers. */
+  inferenceAdmission: () => Promise<import('./inference').InferenceSnapshot>
   modelsStatus: (opts?: { probe?: boolean; includeGpu?: boolean }) => Promise<ModelsStatus>
   /** Background-load a selected or default ready GGUF into the llama worker. */
   warmLocalModel: (modelRef?: string) => Promise<{ ok: boolean; model?: string; error?: string }>

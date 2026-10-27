@@ -141,6 +141,10 @@ Evidence: [task-contract.ts](../src/shared/task-contract.ts), [task-intake.ts](.
 
 **Where:** [chat-runtime.ts](../electron/main/services/chat-runtime.ts), [model-protocol.ts](../electron/main/services/model-protocol.ts), [model-transport.ts](../electron/main/services/model-transport.ts), context compiler and native worker. Preserve the existing one-shot/session parity regressions.
 
+### REC-32 · P2 · Device-aware inference admission
+
+Implemented per-device estimated reservations, owner/wait telemetry, bounded waits and an aged FIFO barrier; parent-owned indexing admission and explicit GPU selection avoid fictional pooled capacity. [Validation and hardware limits](changes/REC-32-inference-admission.md).
+
 ### REC-13 · P2 · Validate native failure and installer recovery on real platforms
 
 **Status:** Process/platform validation tooling implemented. The actual Electron utility-process probe passed loading/generation exits, five cancellations and successful fresh-worker recovery on macOS arm64/Electron 44.9.3. Packaged macOS renderer/preload smoke passed; both CI platforms run these gates. Probe reports explicitly exclude GPU/model-load/memory-pressure and signed installation/update certification. Those real-hardware/certificate checks remain open.

@@ -1,3 +1,4 @@
+import { inferenceDevice } from './inference-device'
 import { spawn, type ChildProcess } from 'child_process'
 import { createHash } from 'crypto'
 import { existsSync, statSync } from 'fs'
@@ -463,6 +464,17 @@ export async function generateLocalImage(options: {
     }
     const lease = await acquireInferenceLease({
       workload: 'image',
+      owner: model.repoId,
+      ...(status.runtime.device === 'cpu'
+        ? { gpu: false }
+        : await inferenceDevice(
+            Math.ceil(model.bytes * 1.55 + 2 * GIB),
+            status.runtime.deviceName
+          )),
+      onWait: (state) =>
+        options.onProgress?.(
+          `Queued for image generation: ${state.reason}. Stop cancels only this image request.`
+        ),
       requestedBytes: Math.ceil(
         model.bytes * (model.pipeline === 'StableDiffusionXLPipeline' ? 1.55 : 1.25) + 2 * GIB
       ),
