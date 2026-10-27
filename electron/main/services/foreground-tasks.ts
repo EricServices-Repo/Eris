@@ -44,6 +44,7 @@ export class ForegroundTasks {
     if (this.closing) throw new Error('Eris is closing; task was not started')
     if (this.tasks.has(id)) throw new Error('Task is already admitted')
     if (this.tasks.size >= 50) throw new Error('The foreground queue is full')
+    const idle = this.tasks.size === 0
     const controller = new AbortController(),
       previous = this.tail
     let release!: () => void
@@ -55,14 +56,16 @@ export class ForegroundTasks {
     this.notify()
     let cancel: () => void = () => {}
     try {
-      await Promise.race([
-        previous,
-        new Promise<never>((_, reject) => {
-          cancel = () =>
-            reject(Object.assign(new Error('Queued task cancelled'), { name: 'AbortError' }))
-          controller.signal.addEventListener('abort', cancel, { once: true })
-        })
-      ])
+      if (idle) await previous
+      else
+        await Promise.race([
+          previous,
+          new Promise<never>((_, reject) => {
+            cancel = () =>
+              reject(Object.assign(new Error('Queued task cancelled'), { name: 'AbortError' }))
+            controller.signal.addEventListener('abort', cancel, { once: true })
+          })
+        ])
       controller.signal.removeEventListener('abort', cancel)
       if (controller.signal.aborted)
         throw Object.assign(new Error('Queued task cancelled'), { name: 'AbortError' })
