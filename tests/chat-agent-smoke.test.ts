@@ -1,3 +1,4 @@
+import { setWorkspaceTrusted } from '../electron/main/services/workspace-trust'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
@@ -92,6 +93,7 @@ let workspacePath: string
 
 beforeEach(() => {
   workspacePath = mkdtempSync(join(tmpdir(), 'eris-chat-smoke-'))
+  setWorkspaceTrusted(workspacePath, true)
   mkdirSync(join(workspacePath, 'src'), { recursive: true })
   writeFileSync(
     join(workspacePath, 'src', 'divide.ts'),

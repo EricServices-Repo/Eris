@@ -49,7 +49,8 @@
         "tests/tool-call-schema.test.ts",
         "tests/tool-parsing.test.ts",
         "tests/user-question.test.ts",
-        "tests/web-grounding.test.ts"
+        "tests/web-grounding.test.ts",
+        "tests/owned-command.test.ts"
       ],
       "notRun": [
         "live model inference",

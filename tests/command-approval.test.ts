@@ -20,21 +20,17 @@ describe('isVerifyCommand', () => {
 })
 
 describe('isSafeCommand', () => {
-  it.each([
-    'npm test',
-    'npm run typecheck',
-    'npm run test:unit',
-    'git status',
-    'git diff --stat',
-    'ls -la src',
-    'npx tsc --noEmit',
-    'pytest -q',
-    'cargo test'
-  ])('allows %s', (cmd) => {
+  it.each(['git status', 'git diff --stat', 'ls -la src'])('allows %s', (cmd) => {
     expect(isSafeCommand(cmd)).toBe(true)
   })
 
   it.each([
+    'npm test',
+    'npm run typecheck',
+    'npm run test:unit',
+    'npx tsc --noEmit',
+    'pytest -q',
+    'cargo test',
     'npm install',
     'npm install lodash',
     'rm -rf build',
@@ -54,7 +50,7 @@ describe('isSafeCommand', () => {
 describe('commandNeedsApproval', () => {
   it('skips safe run commands but never pushes', () => {
     const s = getDefaults()
-    expect(commandNeedsApproval(s, 'run', 'npm test')).toBe(false)
+    expect(commandNeedsApproval(s, 'run', 'npm test')).toBe(true)
     expect(commandNeedsApproval(s, 'run', 'npm install')).toBe(true)
     expect(commandNeedsApproval(s, 'push', 'git push')).toBe(true)
   })
