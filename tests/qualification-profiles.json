@@ -50,7 +50,7 @@
         "tests/tool-parsing.test.ts",
         "tests/user-question.test.ts",
         "tests/web-grounding.test.ts",
-        "tests/evidence-storage.test.ts"
+        "tests/owned-command.test.ts"
       ],
       "notRun": [
         "live model inference",
@@ -65,9 +65,13 @@
       "files": [
         "tests/eris-dev.test.ts",
         "tests/eris-dev-followup.test.ts",
-        "tests/eris-dev-live-review.test.ts"
+        "tests/eris-dev-live-review.test.ts",
+        "tests/quality-adapter.test.ts"
       ],
-      "notRun": ["model inference", "answer quality"]
+      "notRun": [
+        "model inference",
+        "answer quality"
+      ]
     }
   },
   "general": {

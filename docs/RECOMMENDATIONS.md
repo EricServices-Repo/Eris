@@ -171,6 +171,10 @@ Evidence: [task-contract.ts](../src/shared/task-contract.ts), [task-intake.ts](.
 
 For each implementation, record the source commit, changed boundary, acceptance evidence, limitations, and newly discovered failure cases. Update this backlog when acceptance is met; do not infer completion from a green test count or an old report's status.
 
+## REC-20 / #66 implementation follow-up
+
+Implemented gateway-to-publication identities, atomic single-file text staging, exclusive new-file/file-rename publication, reversible-operation limits and versioned transaction journals. Metadata failure after publication remains an applied/partial outcome; missing checkpoint receipts cannot be reported as a complete diff. Recovery preserves original preimages and never automatically overwrites a changed file. Targeted local validation passed 63 tests across six suites, including external saves before execution and after staging, concurrent creation, injected disk-full final receipts, symlinks and individually applied operations. Windows filesystem behavior and power-loss recovery remain qualification limits.
+
 ## Review provenance and cleanup
 
 The old `ARCH-*`, `AG-*`, `FR-*`, and `MR-*` identifiers remain useful historical evidence. This review rechecked source paths and existing regressions rather than copying their open/closed labels. Legacy scenario/question IDs are retained in code and data; they are not new REC identifiers.
@@ -187,8 +191,8 @@ Dated review Markdown, the old agent-v2 narrative, the product-improvement backl
 
 Implementation validation: desktop/cloud typechecks; **841 tests in 82 suites**, **5 quality-harness tests**, lint with zero errors (9 existing warnings); quality harness invariants; desktop build; client worker/renderer fixtures; packaged macOS smoke; actual Electron utility-process exit/cancellation/recovery probe. Test counts and remaining platform limitations are reported with this change. Live quality, production deployment and certificate-based installation acceptance remain open.
 
-### REC-30 / issue #75 — evidence storage lifecycle implemented
+## REC-31 / #76 implementation follow-up
 
-Added schema-validated task/checkpoint/agent-run and Eris-Dev metadata reads, corruption quarantine, atomic JSON publication, durable storage-health reporting, active-work pins, ownership-linked deletion, terminal-only bounded idle retention, and user-visible private backup/restore controls. Model/image artifacts remain manually managed; no automatic cleanup touches credentials. Unknown legacy records remain retained and visible for repair rather than guessed from their prose.
+Implemented explicit trusted-host verification admission, minimal agent environments, unobserved-host-effect receipts and owned descendant cleanup. Untrusted or explicitly isolated requests fail closed rather than falling back to host execution. Added real cancellation/timeout parent-and-child regressions plus independent-command survival, approval classification and credential-filtering checks. Local macOS targeted run: 52 tests passed across four suites. Windows Job Object code is included in the build qualification profile; local results do not certify Windows execution or an OS sandbox.
 
-Validation: focused disposable-filesystem regressions cover ENOSPC publication failure preserving the last good record, corrupt checkpoint quarantine, invalid task schemas, active pins, conversation ownership isolation, grouped diagnostics retention, linked-path rejection, backup digest/path validation and restore conflicts. TypeScript and selected agent/session/capture regression suites run in this PR. Packaged Settings interaction, real disk exhaustion, cross-profile cleanup and Windows file-lock behavior require platform qualification; tests do not establish those. Directory inventory byte counts exclude recursive descendants and are lower bounds; bounded scans explicitly report truncation. Backup intentionally refuses oversized/partial inventories rather than claiming a complete export.
+REC-31 Windows follow-up: runtime PowerShell C# compilation was observed to stall in CI before ownership. Replace it with a build-prepared executable and atomic Windows Job-list creation, so compiler descendants are never part of a chat command. Early Windows qualification checks command completion, EOF, cancellation, descendant cleanup and independent-command survival before packaging.

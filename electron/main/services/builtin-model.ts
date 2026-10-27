@@ -1053,12 +1053,17 @@ async function* streamBuiltinChatInProcess(options: {
   path: string
   jsonSchema?: Record<string, unknown>
   sessionKey?: string
+  maxOutputTokens?: number
   onTermination?: (termination: ModelTermination) => void
 }): AsyncGenerator<string, void, unknown> {
   const llamaCpp = await loadLlamaModule()
   const { LlamaChatSession } = llamaCpp
   const state = await ensureRuntimeInProcess(options.path, options.entry)
   const budget = inProcessReplyBudget(state, options.messages)
+  budget.maxOutputTokens = Math.min(
+    budget.maxOutputTokens,
+    options.maxOutputTokens ?? REPLY_MAX_TOKENS
+  )
   const maxTokens = budget.maxOutputTokens
   let stopReason: unknown
 
@@ -1263,6 +1268,7 @@ async function* streamBuiltinChatViaWorker(options: {
   path: string
   jsonSchema?: Record<string, unknown>
   sessionKey?: string
+  maxOutputTokens?: number
   onTermination?: (termination: ModelTermination) => void
 }): AsyncGenerator<string, void, unknown> {
   await ensureWorkerModel(options.path, options.entry, options.signal)
@@ -1339,7 +1345,7 @@ async function* streamBuiltinChatViaWorker(options: {
       userMessage: split.userMessage,
       seedMessages: split.seed,
       temperature: options.temperature,
-      maxTokens: REPLY_MAX_TOKENS,
+      maxTokens: options.maxOutputTokens ?? REPLY_MAX_TOKENS,
       jsonSchema: options.jsonSchema
     })
   } else {
@@ -1348,7 +1354,7 @@ async function* streamBuiltinChatViaWorker(options: {
       id,
       messages: options.messages,
       temperature: options.temperature,
-      maxTokens: REPLY_MAX_TOKENS,
+      maxTokens: options.maxOutputTokens ?? REPLY_MAX_TOKENS,
       jsonSchema: options.jsonSchema
     })
   }
@@ -1491,6 +1497,7 @@ export async function* streamBuiltinChat(options: {
    */
   sessionKey?: string
   /** Called once with how generation ended (stop reason, limits, prompt size). */
+  maxOutputTokens?: number
   onTermination?: (termination: ModelTermination) => void
 }): AsyncGenerator<string, void, unknown> {
   let entry: BuiltinModelManifestEntry

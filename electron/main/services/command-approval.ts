@@ -20,12 +20,7 @@ const SHELL_META = /[;&|`$<>\n\r(){}\\]|\bsudo\b/
 const SAFE_PATTERNS: RegExp[] = [
   /^(?:ls|pwd|cat|head|tail|wc|which|echo|tree|file|stat|du|df)(?:\s|$)/,
   /^git\s+(?:status|diff|log|show|branch|remote\s+-v|rev-parse|ls-files)(?:\s|$)/,
-  /^(?:npm|pnpm|yarn)\s+(?:test|t|ls|list|outdated|why|-v|--version)(?:\s|$)/,
-  /^(?:npm|pnpm)\s+run\s+(?:test|lint|typecheck|type-check|check|build|format:check)(?::[\w-]+)?(?:\s|$)/,
-  /^yarn\s+(?:lint|typecheck|build)(?:\s|$)/,
-  /^npx\s+(?:tsc|vitest\s+run|jest|eslint|prettier\s+--check)(?:\s|$)/,
-  /^(?:node|python3?|go|cargo|rustc|tsc)\s+(?:-v|--version)$/,
-  /^(?:pytest|python3?\s+-m\s+pytest|go\s+test|go\s+vet|go\s+build|cargo\s+(?:test|check|build|clippy))(?:\s|$)/
+  /^(?:node|python3?|go|cargo|rustc|tsc)\s+(?:-v|--version)$/
 ]
 
 const VERIFY_PATTERNS: RegExp[] = [
@@ -36,14 +31,14 @@ const VERIFY_PATTERNS: RegExp[] = [
   /^(?:pytest|python3?\s+-m\s+pytest|go\s+test|go\s+vet|cargo\s+(?:test|check|clippy)|tsc)(?:\s|$)/
 ]
 
-/** Read-only agents may run tests, typecheck, or lint, and nothing else. */
+/** Classifies verification intent; this does not establish OS-enforced nonmutation. */
 export function isVerifyCommand(command: string): boolean {
   const cmd = command.trim()
   if (!cmd || SHELL_META.test(cmd)) return false
   return VERIFY_PATTERNS.some((re) => re.test(cmd))
 }
 
-/** Read-only / test / build commands without shell metacharacters run without a prompt. */
+/** Small inspection commands; repository scripts and toolchains require explicit approval. */
 export function isSafeCommand(command: string): boolean {
   const cmd = command.trim()
   if (!cmd || SHELL_META.test(cmd)) return false
@@ -61,7 +56,10 @@ export function formatMcpApprovalPreview(args: Record<string, unknown>): string 
     if (Array.isArray(value)) return value.map(redact)
     if (!value || typeof value !== 'object') return value
     return Object.fromEntries(
-      Object.entries(value).map(([key, child]) => [key, sensitiveKey.test(key) ? '[redacted]' : redact(child)])
+      Object.entries(value).map(([key, child]) => [
+        key,
+        sensitiveKey.test(key) ? '[redacted]' : redact(child)
+      ])
     )
   }
   try {
