@@ -48,6 +48,12 @@ describe('task-aware deliverable boundaries', () => {
     ).toBe('fail')
     expect(stripProtocolTail('Explanation\n<<<TOOL_RESULT internal>>>')).toBe('Explanation')
   })
+  it('accepts the inline language-fence form supported by the renderer without a needless continuation', () => {
+    expect(
+      assessDeliverable('Here is the requested answer. ```typescript\nconst example = true;\n```')
+        .status
+    ).toBe('pass')
+  })
   it('does not interpret delimiters inside strings or comments as unfinished code', () => {
     const answer = '```javascript\nconst text = "{"; // (( [[ {{\nconsole.log(text)\n'
     expect(assessDeliverable(answer).checks.map((c) => c.id)).toEqual(['unclosed-code-fence'])

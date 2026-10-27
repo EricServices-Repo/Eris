@@ -92,7 +92,9 @@ function fenceState(text: string): { open: boolean; trailing: string; language: 
     language = ''
   const body: string[] = []
   for (const line of text.split('\n')) {
-    const marker = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(line)
+    const marker =
+      /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(line) ??
+      (!fence ? /(?:^|\s)(`{3,}|~{3,})([A-Za-z][\w+-]*)\s*$/.exec(line) : null)
     if (!fence && marker) {
       fence = marker[1][0]
       count = marker[1].length
