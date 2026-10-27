@@ -1,3 +1,5 @@
+import { fileIdentity, assertIdentity, type MutationPlan } from '../file-mutations'
+import { randomUUID } from 'crypto'
 import { createHash } from 'crypto'
 import { existsSync, readFileSync, realpathSync } from 'fs'
 import type { TaskContract } from '../../../../src/shared/task-contract'
@@ -17,6 +19,7 @@ export interface EvidenceRecord {
   path?: string
   ok: boolean
   mutated: boolean
+  mutationObservation?: 'unobserved-host-effects'
   digest: string
   beforeDigest?: string
   afterDigest?: string
@@ -37,6 +40,10 @@ const fileTools = new Set([
 ])
 export class TaskToolGateway {
   readonly evidence: EvidenceRecord[] = []
+  private mutations = new WeakMap<ToolCall, MutationPlan>()
+  mutationPlan(call: ToolCall): MutationPlan | undefined {
+    return this.mutations.get(call)
+  }
   private partialReads = new Set<string>()
   private readHashes = new Map<string, string>()
   constructor(readonly task: TaskContract) {}
@@ -69,6 +76,8 @@ export class TaskToolGateway {
       if (authority.execute === 'verification' && !isVerifyCommand(String(call.args.command ?? '')))
         return 'This task only permits verification commands.'
       const forbidden = this.task.interpretation?.constraints
+      if (forbidden?.edit)
+        return 'Host commands may write files. This request forbids edits and an OS-isolated runner is unavailable; no host fallback is permitted.'
       const command = String(call.args.command ?? '')
       if (forbidden?.commit && /\bgit\s+(?:commit|push|merge|rebase|tag)\b/i.test(command))
         return 'The request forbids committing.'
@@ -107,6 +116,29 @@ export class TaskToolGateway {
             : call.name === 'rename_path'
               ? [String(call.args.path ?? ''), String(call.args.to ?? '')]
               : [String(call.args.path ?? '')]
+        if (
+          [
+            'write_file',
+            'search_replace',
+            'apply_patch',
+            'notebook_edit',
+            'delete_path',
+            'rename_path'
+          ].includes(call.name)
+        ) {
+          const previous = this.mutations.get(call)
+          if (previous)
+            for (const path of paths) assertIdentity(workspace, path, previous.expected[path]!)
+          else
+            this.mutations.set(call, {
+              root: realpathSync(workspace),
+              id: randomUUID(),
+              taskId: this.task.taskId,
+              expected: Object.fromEntries(
+                paths.map((path) => [path, fileIdentity(workspace, path)])
+              )
+            })
+        }
         for (const path of paths) {
           const abs = realpathAllowMissing(resolveInWorkspace(workspace, path))
           if (!path || !isPathInside(scope.projectRoot, abs))
@@ -132,7 +164,7 @@ export class TaskToolGateway {
     call: ToolCall,
     result: { ok: boolean; mutated: boolean; path?: string; detail: string }
   ): EvidenceRecord {
-    const item = {
+    const item: EvidenceRecord = {
       id,
       tool: call.name,
       path: result.path,
@@ -154,6 +186,7 @@ export class TaskToolGateway {
         /* non-file evidence remains represented by output digest */
       }
     }
+    if (call.name === 'run') item.mutationObservation = 'unobserved-host-effects'
     this.evidence.push(item)
     if (result.ok && ['read_file', 'notebook_read'].includes(call.name) && result.path)
       this.rememberRead(

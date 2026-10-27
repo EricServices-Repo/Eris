@@ -52,3 +52,20 @@ node scripts/run-quality.mjs --adjudicate /tmp/eris-quality.json \
 
 Offline adjudication verifies the fixture and result digests before accepting a
 decision. It never imports an adapter or makes another provider call.
+
+
+## Supported Eris runtime adapter (REC-27)
+
+In Eris-Dev, open **Quality suite · production runtime**, choose an installed/configured model, optionally choose a comparison model, set repeats and explicit provider-call/output budgets, then run. Host commands, networking tools, images and delegation stay blocked by diagnostics; unsupported fault injections are `not-exercised`, not successful correctness evidence. Reports archive their exact fixture pack and support reopening, export and digest-bound adjudication import.
+
+For CLI use, build Eris-Dev or set `ERIS_DEV_EXECUTABLE` to its installed executable, then use the maintained adapter:
+
+```sh
+node scripts/run-quality.mjs --adapter checks/quality/eris-adapter.mjs \
+  --models 'local:your-installed-model' --repeats 1 \
+  --max-calls 60 --max-output-tokens 40960 --live --output /tmp/eris-quality.json
+```
+
+Model IDs are the same IDs used by the Eris-Dev picker. A call reservation covers up to six production requests (including routing/intent); output reservations are divided across those requests and reach both API and native transports. Missing usage remains unknown, not a zero-cost claim. The CLI starts a fresh Eris-Dev process per case; its latency includes cold startup. UI and CLI both invoke `captureQuestion`, preserving production contracts/call history rather than substituting a custom prompt. Compiled provider wire serialization is still owned by the production transport.
+
+Live inference was not used to validate this implementation. Deterministic checks cover fixture isolation, traversal rejection, exact-secret/pattern redaction, reservation propagation, unsupported faults and a built headless zero-provider smoke. Human correctness remains unresolved until independently reviewed.

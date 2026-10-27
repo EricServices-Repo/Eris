@@ -15,6 +15,7 @@ export function registerTerminalIpc(): void {
     if (!appState.currentWorkspace) throw new Error('No workspace open')
     const sender = e.sender
     return runWorkspaceCommand(appState.currentWorkspace, command, {
+      environment: 'terminal',
       onChunk: (chunk, stream) => {
         if (!sender.isDestroyed()) {
           sender.send('terminal:data', { chunk, stream })
@@ -34,18 +35,13 @@ export function registerTerminalIpc(): void {
     }
   })
 
-  ipcMain.handle(
-    'pty:ensure',
-    (_e, size?: { cols?: number; rows?: number }) => {
-      if (!appState.currentWorkspace) return { ok: false, error: 'No workspace open' }
-      return ensurePtySession(appState.currentWorkspace, size?.cols ?? 80, size?.rows ?? 24)
-    }
-  )
+  ipcMain.handle('pty:ensure', (_e, size?: { cols?: number; rows?: number }) => {
+    if (!appState.currentWorkspace) return { ok: false, error: 'No workspace open' }
+    return ensurePtySession(appState.currentWorkspace, size?.cols ?? 80, size?.rows ?? 24)
+  })
   ipcMain.handle('pty:write', (_e, data: string) => writePty(String(data ?? '')))
-  ipcMain.handle(
-    'pty:resize',
-    (_e, size: { cols: number; rows: number }) =>
-      resizePty(Number(size?.cols) || 80, Number(size?.rows) || 24)
+  ipcMain.handle('pty:resize', (_e, size: { cols: number; rows: number }) =>
+    resizePty(Number(size?.cols) || 80, Number(size?.rows) || 24)
   )
   ipcMain.handle('pty:kill', () => {
     disposePtySession()

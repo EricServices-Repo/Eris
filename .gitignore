@@ -16,3 +16,6 @@ resources/eris-feedback-token
 
 out-dev/
 dist-dev/
+
+# Compiled trusted Windows command helper (built on Windows, copied by extraResources)
+resources/native/

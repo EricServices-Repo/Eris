@@ -26,6 +26,12 @@ flowchart LR
 
 The production app and Eris-Dev are separate Electron applications. The cloud agent is a separate Node service with its own worker loop and deployment. Shared types or prompts do not make these execution environments equivalent.
 
+### REC-20 mutation publication and recovery
+
+The task gateway captures canonical-root/file identities and passes them through the executor to text, patch, notebook, delete and rename operations. The mutation layer validates again after staging and immediately before publication. Text output is written/fsynced in a same-directory temporary file; existing-file replacement uses atomic rename, while new files and file rename destinations use exclusive hard links to avoid overwriting concurrent creates. Symlink components and files over the 16 MiB reversible limit fail closed. Nonempty directory deletion is refused rather than producing an unrecoverable directory-only checkpoint.
+
+Versioned transaction journals preserve preimages and prepared/applied/partial/conflicted states, linked to task/checkpoint ownership. A receipt persistence failure after an effect is reported as applied-but-incomplete, never successful nonmutation. `mutationRecovery` provides a bounded, read-only recovery inventory; prepared/partial operations require inspection, not automatic replay. Multiple file operations have individual receipts, not cross-file OS atomicity. Portable Node APIs cannot eliminate the last external replacement race for existing targets or guarantee power-loss durability across every filesystem; stronger isolation requires staging/worktrees and OS support.
+
 ### Desktop shell and renderer
 
 - [electron/main/index.ts](../electron/main/index.ts) owns startup and service shutdown; [window.ts](../electron/main/window.ts) creates the application window with `sandbox: true`, context isolation, and Node integration disabled. Navigation is restricted and external HTTP(S) links open through the OS.
@@ -151,6 +157,8 @@ The desktop requires a compatible `taskContractVersion` before v2 inline routing
 
 The current implementation provides stable question IDs, import preview, resume compatibility, atomic export, key-aware sanitization, context/tool manifests, selected-case inspection, per-call termination, elapsed/deadline/cancellation causes, complete streamed output capture, deliverable findings, and explicit exported/processed/total coverage.
 
+REC-27 adds an Eris-Dev quality-suite adapter that calls the existing production capture/intake/runtime path. UI and maintained CLI bridge materialize synthetic isolated fixtures, reserve provider/output budgets, redact known credentials, preserve blocked effects and archive fixture/result digests. Saved reports support offline adjudication without new inference. Capability gaps remain not-exercised; capture does not establish answer correctness.
+
 [DIAGNOSTICS-RUNS.md](DIAGNOSTICS-RUNS.md) documents the in-app diagnostics seam. Scripted adapters must make zero provider calls; live adapters exercise inference but still do not represent every production effect. Diagnostics block host commands, network effects, MCP, images, persistent delegation, and cloud execution at their service boundaries.
 
 A runtime completion, invariant pass, or deliverable pass is not proof that an answer is correct. `answerQuality` remains explicitly `not-evaluated` in Eris-Dev results. Historical partial captures must not become whole-corpus quality claims. Independent artifact oracles, realistic multi-turn cases, repeated model comparisons, and actual desktop interaction tests remain necessary.
@@ -174,3 +182,11 @@ Feedback uses the server relay exclusively. No shared token is injected into the
 The next fixes and acceptance criteria are maintained only in [RECOMMENDATIONS.md](RECOMMENDATIONS.md). Older review Markdown and superseded review/design backlogs have been removed. Historical JSON, JSONL, CSV, analyzer scripts, and ZIP evidence remain under `docs/reviews/` for reproducibility; their old findings are not automatically current defects.
 
 Operational guides remain in this directory. Update this architecture description when a responsibility or boundary changes, and update recommendations only after checking the current source and its validation evidence. The implementation passed 841 deterministic tests, five quality-harness checks, typechecks, lint without errors, build, client fixtures, a packaged macOS smoke and a real Electron utility-process recovery probe. CI adds the client/quality/recovery/packaged gates. Real live-model quality, cloud deployment, GPU and signed-update acceptance remain separate checks described in recommendations.
+
+## REC-31: trusted desktop commands
+
+Repository tests/builds execute trusted host code, not a read-only or network sandbox. `runWorkspaceCommand` requires workspace trust and refuses an explicitly requested isolated mode because the desktop has no accepted isolated runner. Explicit no-edit task constraints reject host commands. Command-name classification is not an effect guarantee; test/build scripts require command approval unless explicitly allowed or auto-approved by user policy. Receipts label host side effects as unobserved.
+
+Agent command environments use an allowlist and exclude inherited credentials and runtime injection variables; the interactive terminal retains its separate inherited environment. POSIX commands own a detached process group. Windows commands use a compiled helper and `PROC_THREAD_ATTRIBUTE_JOB_LIST` to enter a kill-on-close Job Object atomically during process creation; failure to establish ownership refuses execution. The helper is compiled from maintained C# source by Windows test/build preparation and copied as an executable resource; no compiler or PowerShell process runs during a chat command. Windows packaging refuses a missing helper. Cancellation, deadlines and output limits terminate the owned tree and settle within a bounded cleanup interval. Trusted code deliberately escaping a process group, kernel termination failures and unsupported host configurations are not an OS security boundary. Windows Job behavior still requires execution in Windows CI; macOS fixtures verify real child cleanup.
+
+Windows helper implementation follows [Microsoft’s process attribute contract](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute). Windows targets must prepare the helper on Windows (`npm run prepare:owned-command`); cross-packaging without a prepared helper is rejected. Generated executables/stamps remain ignored locally, while their C# source and build preparation are tracked.

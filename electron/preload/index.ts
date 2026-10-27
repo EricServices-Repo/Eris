@@ -52,6 +52,11 @@ function subscribe<T>(channel: string, cb: (data: T) => void): () => void {
 }
 
 const api: IdeApi = {
+  storageInspect: (root) => ipcRenderer.invoke('storage:inspect', root),
+  storageCleanup: (root) => ipcRenderer.invoke('storage:cleanup', root),
+  storagePolicy: (root, enabled) => ipcRenderer.invoke('storage:policy', root, enabled),
+  storageBackup: (root) => ipcRenderer.invoke('storage:backup', root),
+  storageRestore: (root) => ipcRenderer.invoke('storage:restore', root),
   getAppState: () => ipcRenderer.invoke('app:getState'),
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),

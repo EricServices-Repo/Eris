@@ -1,3 +1,4 @@
+import { deleteConversationEvidence } from './storage'
 import { ipcMain } from 'electron'
 import { deleteRule, listRules, saveRule } from '../services/rules'
 import {
@@ -54,8 +55,18 @@ export function registerChatsIpc(): void {
     (_e, id: string, message: ChatMessage, model?: string, workspacePath?: string | null) =>
       appendChatMessage(chatWorkspace(workspacePath), id, message, model)
   )
-  ipcMain.handle('chats:delete', async (_e, id: string) => {
-    await deleteChat(appState.currentWorkspace, id)
+  ipcMain.handle('chats:delete', async (event, id: string) => {
+    if (
+      !appState.mainWindow ||
+      event.sender !== appState.mainWindow.webContents ||
+      event.senderFrame !== event.sender.mainFrame ||
+      typeof id !== 'string' ||
+      id.length > 256
+    )
+      throw new Error('Invalid conversation deletion')
+    const root = appState.currentWorkspace
+    deleteConversationEvidence(root, id)
+    await deleteChat(root, id)
     logInfo('Chat deleted', { id })
     return true
   })

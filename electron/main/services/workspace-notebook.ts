@@ -1,5 +1,6 @@
+import { publishWorkspaceText, prepareMutationPlan, type MutationPlan } from './file-mutations'
 import { randomUUID } from 'crypto'
-import { existsSync, readFileSync, statSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, statSync } from 'fs'
 import { resolveInWorkspace, toWorkspaceRelative, WorkspaceFsError } from './workspace-fs'
 
 type NotebookCell = {
@@ -21,7 +22,10 @@ const MAX_NOTEBOOK_OUTPUT_CHARS = 500
 const MAX_NOTEBOOK_RESULT_CHARS = 28_000
 const MAX_NOTEBOOK_FILE_BYTES = 2_000_000
 
-function readNotebookDocument(workspacePath: string, userPath: string): {
+function readNotebookDocument(
+  workspacePath: string,
+  userPath: string
+): {
   path: string
   absPath: string
   raw: string
@@ -34,7 +38,9 @@ function readNotebookDocument(workspacePath: string, userPath: string): {
   if (!existsSync(absPath)) throw new WorkspaceFsError(`Not found: ${userPath}`)
   if (!statSync(absPath).isFile()) throw new WorkspaceFsError(`Not a file: ${userPath}`)
   if (statSync(absPath).size > MAX_NOTEBOOK_FILE_BYTES) {
-    throw new WorkspaceFsError(`Notebook exceeds the ${MAX_NOTEBOOK_FILE_BYTES}-byte tool limit: ${userPath}`)
+    throw new WorkspaceFsError(
+      `Notebook exceeds the ${MAX_NOTEBOOK_FILE_BYTES}-byte tool limit: ${userPath}`
+    )
   }
   const raw = readFileSync(absPath, 'utf8')
   let parsed: unknown
@@ -43,11 +49,7 @@ function readNotebookDocument(workspacePath: string, userPath: string): {
   } catch {
     throw new WorkspaceFsError(`Invalid notebook JSON: ${userPath}`)
   }
-  if (
-    !parsed ||
-    typeof parsed !== 'object' ||
-    !Array.isArray((parsed as NotebookDocument).cells)
-  ) {
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as NotebookDocument).cells)) {
     throw new WorkspaceFsError(`Notebook has no cells array: ${userPath}`)
   }
   if ((parsed as NotebookDocument).cells.some((cell) => !cell || typeof cell !== 'object')) {
@@ -111,9 +113,7 @@ export function readNotebook(
       ? notebook.cells.map((cell, index) => ({ cell, index }))
       : [{ cell: notebook.cells[selectedCell]!, index: selectedCell }]
   cells.forEach(({ cell, index }) => {
-    const type = ['code', 'markdown', 'raw'].includes(cell.cell_type)
-      ? cell.cell_type
-      : 'unknown'
+    const type = ['code', 'markdown', 'raw'].includes(cell.cell_type) ? cell.cell_type : 'unknown'
     const source = cellSource(cell.source)
     parts.push(
       `\n## Cell ${index} (${type})\n${source.slice(0, MAX_NOTEBOOK_SOURCE_CHARS) || '(empty)'}`
@@ -151,9 +151,11 @@ export function editNotebookCell(
     cellIndex: number
     source?: string
     cellType?: 'code' | 'markdown' | 'raw'
-  }
+  },
+  plan?: MutationPlan
 ): { path: string; before: string; after: string; detail: string } {
-  const { path, absPath, raw, notebook } = readNotebookDocument(workspacePath, options.path)
+  plan = prepareMutationPlan(workspacePath, [options.path], plan)
+  const { path, raw, notebook } = readNotebookDocument(workspacePath, options.path)
   if (!['replace_source', 'insert_before', 'insert_after', 'delete'].includes(options.operation)) {
     throw new WorkspaceFsError(`Unsupported notebook edit operation: ${options.operation}`)
   }
@@ -200,16 +202,14 @@ export function editNotebookCell(
     cells.splice(insertIndex, 0, cell)
   }
 
-  const indentMatch = raw
-    .match(/^[ \t]+"(?:cells|metadata|nbformat)"/m)?.[0]
-    .match(/^[ \t]+/)?.[0]
+  const indentMatch = raw.match(/^[ \t]+"(?:cells|metadata|nbformat)"/m)?.[0].match(/^[ \t]+/)?.[0]
   const indent = indentMatch?.includes('\t')
     ? '\t'
     : ' '.repeat(Math.min(8, indentMatch?.length || 2))
   const newline = raw.includes('\r\n') ? '\r\n' : '\n'
   const formatted = JSON.stringify(notebook, null, indent).replace(/\n/g, newline)
   const after = formatted + (raw.endsWith('\n') ? newline : '')
-  writeFileSync(absPath, after, 'utf8')
+  publishWorkspaceText(workspacePath, options.path, after, plan)
   return {
     path,
     before: raw,

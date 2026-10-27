@@ -175,6 +175,10 @@ Implemented trusted-context protocol/example classification, raw/presentation au
 
 For each implementation, record the source commit, changed boundary, acceptance evidence, limitations, and newly discovered failure cases. Update this backlog when acceptance is met; do not infer completion from a green test count or an old report's status.
 
+## REC-20 / #66 implementation follow-up
+
+Implemented gateway-to-publication identities, atomic single-file text staging, exclusive new-file/file-rename publication, reversible-operation limits and versioned transaction journals. Metadata failure after publication remains an applied/partial outcome; missing checkpoint receipts cannot be reported as a complete diff. Recovery preserves original preimages and never automatically overwrites a changed file. Targeted local validation passed 63 tests across six suites, including external saves before execution and after staging, concurrent creation, injected disk-full final receipts, symlinks and individually applied operations. Windows filesystem behavior and power-loss recovery remain qualification limits.
+
 ## Review provenance and cleanup
 
 The old `ARCH-*`, `AG-*`, `FR-*`, and `MR-*` identifiers remain useful historical evidence. This review rechecked source paths and existing regressions rather than copying their open/closed labels. Legacy scenario/question IDs are retained in code and data; they are not new REC identifiers.
@@ -190,3 +194,9 @@ Historical machine-readable material remains available:
 Dated review Markdown, the old agent-v2 narrative, the product-improvement backlog, and the superseded smoke/debug design proposal were removed. JSON/JSONL/CSV, analyzer scripts, ZIP evidence, operational guides, and regression tests were retained. The diagnostics guide now links to this backlog rather than presenting obsolete routing findings as current behavior.
 
 Implementation validation: desktop/cloud typechecks; **841 tests in 82 suites**, **5 quality-harness tests**, lint with zero errors (9 existing warnings); quality harness invariants; desktop build; client worker/renderer fixtures; packaged macOS smoke; actual Electron utility-process exit/cancellation/recovery probe. Test counts and remaining platform limitations are reported with this change. Live quality, production deployment and certificate-based installation acceptance remain open.
+
+## REC-31 / #76 implementation follow-up
+
+Implemented explicit trusted-host verification admission, minimal agent environments, unobserved-host-effect receipts and owned descendant cleanup. Untrusted or explicitly isolated requests fail closed rather than falling back to host execution. Added real cancellation/timeout parent-and-child regressions plus independent-command survival, approval classification and credential-filtering checks. Local macOS targeted run: 52 tests passed across four suites. Windows Job Object code is included in the build qualification profile; local results do not certify Windows execution or an OS sandbox.
+
+REC-31 Windows follow-up: runtime PowerShell C# compilation was observed to stall in CI before ownership. Replace it with a build-prepared executable and atomic Windows Job-list creation, so compiler descendants are never part of a chat command. Early Windows qualification checks command completion, EOF, cancellation, descendant cleanup and independent-command survival before packaging.
