@@ -26,6 +26,12 @@ flowchart LR
 
 The production app and Eris-Dev are separate Electron applications. The cloud agent is a separate Node service with its own worker loop and deployment. Shared types or prompts do not make these execution environments equivalent.
 
+### REC-20 mutation publication and recovery
+
+The task gateway captures canonical-root/file identities and passes them through the executor to text, patch, notebook, delete and rename operations. The mutation layer validates again after staging and immediately before publication. Text output is written/fsynced in a same-directory temporary file; existing-file replacement uses atomic rename, while new files and file rename destinations use exclusive hard links to avoid overwriting concurrent creates. Symlink components and files over the 16 MiB reversible limit fail closed. Nonempty directory deletion is refused rather than producing an unrecoverable directory-only checkpoint.
+
+Versioned transaction journals preserve preimages and prepared/applied/partial/conflicted states, linked to task/checkpoint ownership. A receipt persistence failure after an effect is reported as applied-but-incomplete, never successful nonmutation. `mutationRecovery` provides a bounded, read-only recovery inventory; prepared/partial operations require inspection, not automatic replay. Multiple file operations have individual receipts, not cross-file OS atomicity. Portable Node APIs cannot eliminate the last external replacement race for existing targets or guarantee power-loss durability across every filesystem; stronger isolation requires staging/worktrees and OS support.
+
 ### Desktop shell and renderer
 
 - [electron/main/index.ts](../electron/main/index.ts) owns startup and service shutdown; [window.ts](../electron/main/window.ts) creates the application window with `sandbox: true`, context isolation, and Node integration disabled. Navigation is restricted and external HTTP(S) links open through the OS.

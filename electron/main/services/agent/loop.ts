@@ -2510,6 +2510,8 @@ export async function* runAgentWithWorkspaceTools(options: {
               continue
             }
           }
+          const mutationPlan = gateway.mutationPlan(call)
+          if (mutationPlan) mutationPlan.checkpointId = checkpoint.id
           const path =
             typeof call.args.path === 'string'
               ? call.args.path
@@ -3459,7 +3461,8 @@ export async function* runAgentWithWorkspaceTools(options: {
                   writePath,
                   oldString,
                   newString,
-                  replaceAll
+                  replaceAll,
+                  mutationPlan
                 )
                 before = edited.before
                 afterContent = edited.after
@@ -3473,24 +3476,33 @@ export async function* runAgentWithWorkspaceTools(options: {
                 result = {
                   ok: false,
                   detail: err instanceof Error ? err.message : String(err),
-                  mutated: false,
+                  mutated: Boolean(
+                    err &&
+                    typeof err === 'object' &&
+                    'mutationApplied' in err &&
+                    err.mutationApplied
+                  ),
                   path: writePath || undefined
                 }
               }
             } else if (call.name === 'notebook_edit') {
               try {
-                const edited = editNotebookCell(workspacePath, {
-                  path: writePath,
-                  operation: argString(call.args, 'operation') as
-                    'replace_source' | 'insert_before' | 'insert_after' | 'delete',
-                  cellIndex:
-                    typeof call.args.cell_index === 'number' ? call.args.cell_index : Number.NaN,
-                  source: typeof call.args.source === 'string' ? call.args.source : undefined,
-                  cellType:
-                    call.args.cell_type === 'markdown' || call.args.cell_type === 'raw'
-                      ? call.args.cell_type
-                      : 'code'
-                })
+                const edited = editNotebookCell(
+                  workspacePath,
+                  {
+                    path: writePath,
+                    operation: argString(call.args, 'operation') as
+                      'replace_source' | 'insert_before' | 'insert_after' | 'delete',
+                    cellIndex:
+                      typeof call.args.cell_index === 'number' ? call.args.cell_index : Number.NaN,
+                    source: typeof call.args.source === 'string' ? call.args.source : undefined,
+                    cellType:
+                      call.args.cell_type === 'markdown' || call.args.cell_type === 'raw'
+                        ? call.args.cell_type
+                        : 'code'
+                  },
+                  mutationPlan
+                )
                 before = edited.before
                 afterContent = edited.after
                 result = { ok: true, detail: edited.detail, mutated: true, path: edited.path }
@@ -3498,14 +3510,19 @@ export async function* runAgentWithWorkspaceTools(options: {
                 result = {
                   ok: false,
                   detail: err instanceof Error ? err.message : String(err),
-                  mutated: false,
+                  mutated: Boolean(
+                    err &&
+                    typeof err === 'object' &&
+                    'mutationApplied' in err &&
+                    err.mutationApplied
+                  ),
                   path: writePath || undefined
                 }
               }
             } else if (call.name === 'apply_patch') {
               try {
                 const patch = argString(call.args, 'patch') || argString(call.args, 'diff')
-                const edited = applyUnifiedPatch(workspacePath, patch)
+                const edited = applyUnifiedPatch(workspacePath, patch, mutationPlan)
                 before = edited.before
                 afterContent = edited.after
                 result = {
@@ -3518,11 +3535,16 @@ export async function* runAgentWithWorkspaceTools(options: {
                 result = {
                   ok: false,
                   detail: err instanceof Error ? err.message : String(err),
-                  mutated: false
+                  mutated: Boolean(
+                    err &&
+                    typeof err === 'object' &&
+                    'mutationApplied' in err &&
+                    err.mutationApplied
+                  )
                 }
               }
             } else {
-              result = executeTool(workspacePath, call)
+              result = executeTool(workspacePath, call, mutationPlan)
             }
             if (result.ok && result.path && afterContent != null) {
               const rec = recordWriteOp(
@@ -3532,7 +3554,11 @@ export async function* runAgentWithWorkspaceTools(options: {
                 before,
                 afterContent
               )
-              const opIndex = rec ? rec.ops.length - 1 : 0
+              if (!rec)
+                throw new Error(
+                  'Mutation applied but checkpoint receipt is unavailable. Inspect mutation recovery before continuing.'
+                )
+              const opIndex = rec.ops.length - 1
               invalidateDiagnosticsCache()
               yield {
                 type: 'diff',
@@ -3644,7 +3670,7 @@ export async function* runAgentWithWorkspaceTools(options: {
                 // ignore
               }
             }
-            result = executeTool(workspacePath, call)
+            result = executeTool(workspacePath, call, mutationPlan)
             if (result.ok && delPath) {
               const rec = recordDeleteOp(
                 workspacePath,
@@ -3653,7 +3679,11 @@ export async function* runAgentWithWorkspaceTools(options: {
                 before,
                 wasDirectory
               )
-              const opIndex = rec ? rec.ops.length - 1 : 0
+              if (!rec)
+                throw new Error(
+                  'Mutation applied but checkpoint receipt is unavailable. Inspect mutation recovery before continuing.'
+                )
+              const opIndex = rec.ops.length - 1
               yield {
                 type: 'diff',
                 diff: {
@@ -3670,10 +3700,14 @@ export async function* runAgentWithWorkspaceTools(options: {
             const from = argString(call.args, 'path')
             const to = argString(call.args, 'to')
             const before = from ? snapshotBeforeWrite(workspacePath, checkpoint.id, from) : null
-            result = executeTool(workspacePath, call)
+            result = executeTool(workspacePath, call, mutationPlan)
             if (result.ok && from && to) {
               const rec = recordRenameOp(workspacePath, checkpoint.id, from, to, before)
-              const opIndex = rec ? rec.ops.length - 1 : 0
+              if (!rec)
+                throw new Error(
+                  'Mutation applied but checkpoint receipt is unavailable. Inspect mutation recovery before continuing.'
+                )
+              const opIndex = rec.ops.length - 1
               yield {
                 type: 'diff',
                 diff: {
@@ -3688,10 +3722,14 @@ export async function* runAgentWithWorkspaceTools(options: {
             }
           } else if (call.name === 'mkdir') {
             const mkdirPath = argString(call.args, 'path')
-            result = executeTool(workspacePath, call)
+            result = executeTool(workspacePath, call, mutationPlan)
             if (result.ok && result.mutated && mkdirPath) {
               const rec = recordMkdirOp(workspacePath, checkpoint.id, mkdirPath)
-              const opIndex = rec ? rec.ops.length - 1 : 0
+              if (!rec)
+                throw new Error(
+                  'Mutation applied but checkpoint receipt is unavailable. Inspect mutation recovery before continuing.'
+                )
+              const opIndex = rec.ops.length - 1
               yield {
                 type: 'diff',
                 diff: {
@@ -3705,7 +3743,7 @@ export async function* runAgentWithWorkspaceTools(options: {
               }
             }
           } else {
-            result = executeTool(workspacePath, call)
+            result = executeTool(workspacePath, call, mutationPlan)
           }
 
           if (result.mutated) {

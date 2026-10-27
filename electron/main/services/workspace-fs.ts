@@ -1,13 +1,20 @@
 import {
+  publishWorkspaceText,
+  journalMutation,
+  prepareMutationPlan,
+  type MutationPlan
+} from './file-mutations'
+import {
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   realpathSync,
   renameSync,
-  rmSync,
   statSync,
-  writeFileSync
+  rmdirSync,
+  unlinkSync,
+  linkSync
 } from 'fs'
 import { basename, dirname, join, relative, resolve, sep } from 'path'
 
@@ -188,12 +195,13 @@ export function readWorkspaceFile(
 export function writeWorkspaceFile(
   workspacePath: string,
   userPath: string,
-  content: string
+  content: string,
+  plan?: MutationPlan
 ): { path: string; bytes: number; created: boolean } {
+  plan = prepareMutationPlan(workspacePath, [userPath], plan)
   const abs = resolveInWorkspace(workspacePath, userPath)
   const created = !existsSync(abs)
-  mkdirSync(dirname(abs), { recursive: true })
-  writeFileSync(abs, content, 'utf8')
+  publishWorkspaceText(workspacePath, userPath, content, plan)
   invalidateWorkspaceTreeCache(workspacePath)
   return {
     path: toWorkspaceRelative(workspacePath, abs),
@@ -208,9 +216,11 @@ export function searchReplaceInFile(
   userPath: string,
   oldString: string,
   newString: string,
-  replaceAll = false
+  replaceAll = false,
+  plan?: MutationPlan
 ): { path: string; replacements: number; before: string; after: string } {
   if (!oldString) throw new WorkspaceFsError('old_string is required')
+  plan = prepareMutationPlan(workspacePath, [userPath], plan)
   const abs = resolveInWorkspace(workspacePath, userPath)
   if (!existsSync(abs)) throw new WorkspaceFsError(`Not found: ${userPath}`)
   if (statSync(abs).isDirectory()) throw new WorkspaceFsError(`Is a directory: ${userPath}`)
@@ -227,7 +237,7 @@ export function searchReplaceInFile(
   const after = replaceAll
     ? before.split(oldString).join(newString)
     : before.replace(oldString, newString)
-  writeFileSync(abs, after, 'utf8')
+  publishWorkspaceText(workspacePath, userPath, after, plan)
   invalidateWorkspaceTreeCache(workspacePath)
   return {
     path: toWorkspaceRelative(workspacePath, abs),
@@ -243,14 +253,15 @@ export function searchReplaceInFile(
  */
 export function applyUnifiedPatch(
   workspacePath: string,
-  patchText: string
+  patchText: string,
+  plan?: MutationPlan
 ): { path: string; before: string; after: string } {
   const { relPath, hunkBody } = parseUnifiedPatch(patchText)
+  plan = prepareMutationPlan(workspacePath, [relPath], plan)
   const abs = resolveInWorkspace(workspacePath, relPath)
   const before = existsSync(abs) && !statSync(abs).isDirectory() ? readFileSync(abs, 'utf8') : ''
   const after = applyHunkLines(before, hunkBody)
-  mkdirSync(dirname(abs), { recursive: true })
-  writeFileSync(abs, after, 'utf8')
+  publishWorkspaceText(workspacePath, relPath, after, plan)
   invalidateWorkspaceTreeCache(workspacePath)
   return {
     path: toWorkspaceRelative(workspacePath, abs),
@@ -377,14 +388,21 @@ export function mkdirWorkspace(
 
 export function deleteWorkspacePath(
   workspacePath: string,
-  userPath: string
+  userPath: string,
+  plan?: MutationPlan
 ): { path: string; wasDirectory: boolean } {
+  plan = prepareMutationPlan(workspacePath, [userPath], plan)
   const root = assertWorkspaceRoot(workspacePath)
   const abs = resolveInWorkspace(workspacePath, userPath)
   if (abs === root) throw new WorkspaceFsError('Refusing to delete the workspace root')
   if (!existsSync(abs)) throw new WorkspaceFsError(`Not found: ${userPath}`)
   const wasDirectory = statSync(abs).isDirectory()
-  rmSync(abs, { recursive: true, force: true })
+  journalMutation(workspacePath, [userPath], 'delete', plan, undefined, (check, mark) => {
+    check()
+    if (wasDirectory) rmdirSync(abs)
+    else unlinkSync(abs)
+    mark()
+  })
   invalidateWorkspaceTreeCache(workspacePath)
   return { path: toWorkspaceRelative(workspacePath, abs), wasDirectory }
 }
@@ -392,14 +410,26 @@ export function deleteWorkspacePath(
 export function renameWorkspacePath(
   workspacePath: string,
   fromPath: string,
-  toPath: string
+  toPath: string,
+  plan?: MutationPlan
 ): { from: string; to: string } {
+  plan = prepareMutationPlan(workspacePath, [fromPath, toPath], plan)
   const fromAbs = resolveInWorkspace(workspacePath, fromPath)
   const toAbs = resolveInWorkspace(workspacePath, toPath)
   if (!existsSync(fromAbs)) throw new WorkspaceFsError(`Not found: ${fromPath}`)
   if (existsSync(toAbs)) throw new WorkspaceFsError(`Destination already exists: ${toPath}`)
-  mkdirSync(dirname(toAbs), { recursive: true })
-  renameSync(fromAbs, toAbs)
+  journalMutation(workspacePath, [fromPath, toPath], 'rename', plan, undefined, (check, mark) => {
+    mkdirSync(dirname(toAbs), { recursive: true })
+    check()
+    if (statSync(fromAbs).isFile()) {
+      linkSync(fromAbs, toAbs)
+      mark()
+      unlinkSync(fromAbs)
+    } else {
+      renameSync(fromAbs, toAbs)
+      mark()
+    }
+  })
   invalidateWorkspaceTreeCache(workspacePath)
   return {
     from: toWorkspaceRelative(workspacePath, fromAbs),

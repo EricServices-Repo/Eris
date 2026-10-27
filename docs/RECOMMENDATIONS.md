@@ -171,6 +171,10 @@ Evidence: [task-contract.ts](../src/shared/task-contract.ts), [task-intake.ts](.
 
 For each implementation, record the source commit, changed boundary, acceptance evidence, limitations, and newly discovered failure cases. Update this backlog when acceptance is met; do not infer completion from a green test count or an old report's status.
 
+## REC-20 / #66 implementation follow-up
+
+Implemented gateway-to-publication identities, atomic single-file text staging, exclusive new-file/file-rename publication, reversible-operation limits and versioned transaction journals. Metadata failure after publication remains an applied/partial outcome; missing checkpoint receipts cannot be reported as a complete diff. Recovery preserves original preimages and never automatically overwrites a changed file. Targeted local validation passed 63 tests across six suites, including external saves before execution and after staging, concurrent creation, injected disk-full final receipts, symlinks and individually applied operations. Windows filesystem behavior and power-loss recovery remain qualification limits.
+
 ## Review provenance and cleanup
 
 The old `ARCH-*`, `AG-*`, `FR-*`, and `MR-*` identifiers remain useful historical evidence. This review rechecked source paths and existing regressions rather than copying their open/closed labels. Legacy scenario/question IDs are retained in code and data; they are not new REC identifiers.

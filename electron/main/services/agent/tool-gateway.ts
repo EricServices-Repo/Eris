@@ -1,3 +1,5 @@
+import { fileIdentity, assertIdentity, type MutationPlan } from '../file-mutations'
+import { randomUUID } from 'crypto'
 import { createHash } from 'crypto'
 import { existsSync, readFileSync, realpathSync } from 'fs'
 import type { TaskContract } from '../../../../src/shared/task-contract'
@@ -38,6 +40,10 @@ const fileTools = new Set([
 ])
 export class TaskToolGateway {
   readonly evidence: EvidenceRecord[] = []
+  private mutations = new WeakMap<ToolCall, MutationPlan>()
+  mutationPlan(call: ToolCall): MutationPlan | undefined {
+    return this.mutations.get(call)
+  }
   private partialReads = new Set<string>()
   private readHashes = new Map<string, string>()
   constructor(readonly task: TaskContract) {}
@@ -110,6 +116,29 @@ export class TaskToolGateway {
             : call.name === 'rename_path'
               ? [String(call.args.path ?? ''), String(call.args.to ?? '')]
               : [String(call.args.path ?? '')]
+        if (
+          [
+            'write_file',
+            'search_replace',
+            'apply_patch',
+            'notebook_edit',
+            'delete_path',
+            'rename_path'
+          ].includes(call.name)
+        ) {
+          const previous = this.mutations.get(call)
+          if (previous)
+            for (const path of paths) assertIdentity(workspace, path, previous.expected[path]!)
+          else
+            this.mutations.set(call, {
+              root: realpathSync(workspace),
+              id: randomUUID(),
+              taskId: this.task.taskId,
+              expected: Object.fromEntries(
+                paths.map((path) => [path, fileIdentity(workspace, path)])
+              )
+            })
+        }
         for (const path of paths) {
           const abs = realpathAllowMissing(resolveInWorkspace(workspace, path))
           if (!path || !isPathInside(scope.projectRoot, abs))
