@@ -4,6 +4,7 @@ import gc
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 import sys
 import time
@@ -90,6 +91,11 @@ def download(request):
     if total > 20 * 1024**3:
         raise ValueError("Model exceeds the 20 GB download limit; choose a smaller image model")
 
+    missing = sum(sizes[name] for name in files if not (directory / name).is_file() or (directory / name).stat().st_size != sizes[name])
+    reserve = missing + max(sizes[name] for name in files) + 1024**3
+    if shutil.disk_usage(directory).free < reserve:
+        raise OSError("Insufficient disk space for staged model download; free space and retry")
+
     class Progress(tqdm):
         last_emit = 0
         def update(self, count=1):
@@ -118,17 +124,21 @@ def download(request):
         lfs = entry.lfs
         expected = (lfs.get("sha256") if isinstance(lfs, dict) else getattr(lfs, "sha256", None)) if lfs else None
         if expected and digest.hexdigest() != expected:
+            path.unlink()  # staging only: retry downloads the corrupt file; verified models are untouched
             raise ValueError("Model checksum mismatch: " + name)
         records.append({"path": name, "bytes": path.stat().st_size, "sha256": digest.hexdigest()})
     return {"repoId": repo, "revision": revision, "pipeline": pipeline, "variant": variant, "files": records, "bytes": sum(item["bytes"] for item in records), "downloadedAt": int(time.time() * 1000)}
 
 
-def runtime_status():
+def runtime_status(preference=None):
     import torch
     import diffusers
     import transformers
     import accelerate
-    if torch.cuda.is_available():
+    if preference == "cpu":
+        device = "cpu"
+        name = "CPU (explicit fallback)"
+    elif torch.cuda.is_available():
         device = "cuda"
         name = torch.cuda.get_device_name(0)
     elif torch.backends.mps.is_available():
@@ -172,7 +182,7 @@ def generate(request):
     import torch
     from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
     pipeline_type = StableDiffusionXLPipeline if pipeline_name == "StableDiffusionXLPipeline" else StableDiffusionPipeline
-    device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+    device = "cpu" if request.get("devicePreference") == "cpu" else "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     dtype = torch.float32 if device == "cpu" else torch.float16
     gpu = None
     if device == "cuda":
@@ -240,7 +250,7 @@ def main():
         with contextlib.redirect_stdout(sys.stderr):
             operation = request["operation"]
             if operation == "status":
-                result = runtime_status()
+                result = runtime_status(request.get("devicePreference"))
             elif operation == "download":
                 result = download(request)
             elif operation == "generate":

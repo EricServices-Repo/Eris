@@ -139,6 +139,8 @@ Persistence uses several stores rather than a single task database: chats/chat d
 
 [credential-store.ts](../electron/main/services/credential-store.ts) owns explicit local-file or OS-vault policy. Local reads do not invoke the vault. Synced atomic migration preserves unreadable legacy data; selecting the vault is an explicit user action that may prompt. Credential files use POSIX permissions or explicit Windows current-user ACLs. Renderer APIs return presence, never stored values, and filesystem IPC denies credential files. Eris-Dev uses the same abstraction. Real Windows ACL and vault-unlock behavior remain platform acceptance checks.
 
+Image runtime publication and repair follow [REC-33](changes/REC-33-image-runtime-repair.md): stable staged environments, atomic active pointers, version provenance and resumable model staging.
+
 ## Cloud execution
 
 The [cloud-agent](../cloud-agent/README.md) service owns authentication, jobs, model inference, workspace materialization, events, artifacts, and optional GitHub PR creation. It is a separate implementation with a separate package lock and a smaller tool protocol.

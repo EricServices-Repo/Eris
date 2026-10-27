@@ -57,7 +57,21 @@ export interface LocalImageModel {
   ready: boolean
 }
 export interface LocalImageStatus {
-  runtime: { ready: boolean; device?: string; deviceName?: string; error?: string }
+  runtime: {
+    ready: boolean
+    device?: string
+    deviceName?: string
+    error?: string
+    setup?: {
+      operation: 'setup' | 'download'
+      phase: string
+      message: string
+      code?: string
+      updatedAt: number
+      dependencySet: string
+    }
+    provenance?: Record<string, unknown>
+  }
   models: LocalImageModel[]
   activeModelId: string | null
 }

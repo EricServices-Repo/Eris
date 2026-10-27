@@ -1,7 +1,19 @@
+import { atomicEvidenceJson } from './evidence-records'
+import {
+  activeImageRuntime,
+  publishImageRuntime,
+  readImageSetupState,
+  readRuntimeProvenance,
+  requireImageDiskSpace,
+  publishImageModel,
+  imageSetupState,
+  imageFailure,
+  IMAGE_PROVENANCE_SCRIPT
+} from './image-runtime-install'
 import { spawn, type ChildProcess } from 'child_process'
 import { createHash } from 'crypto'
 import { existsSync, statSync } from 'fs'
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { freemem, totalmem } from 'os'
 import { z } from 'zod'
@@ -43,12 +55,8 @@ const GIB = 1024 ** 3
 export const LOCAL_IMAGE_GENERATION_TIMEOUT_MS = 3 * 60_000
 export const localImageRoot = () => join(userDataRoot(), 'models', 'images')
 export const localImageRuntimeRoot = () => join(userDataRoot(), 'image-runtime')
-export const localImagePython = () =>
-  join(
-    localImageRuntimeRoot(),
-    'venv',
-    process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'
-  )
+export const localImagePython = () => activeImageRuntime(localImageRuntimeRoot()).python
+
 export const localImageModelId = (repoId: string) =>
   createHash('sha256').update(repoId).digest('hex').slice(0, 24)
 
@@ -96,6 +104,7 @@ export async function runImageProcess(options: {
         HF_HUB_DISABLE_TELEMETRY: '1',
         HF_HUB_DISABLE_IMPLICIT_TOKEN: '1',
         HF_HUB_DOWNLOAD_TIMEOUT: '120',
+        PIP_CACHE_DIR: join(localImageRuntimeRoot(), 'wheel-cache'),
         // PyTorch otherwise allows MPS to exceed the device's recommended working set. On
         // unified-memory Macs that can stall the whole desktop before Python reports an OOM.
         PYTORCH_MPS_HIGH_WATERMARK_RATIO: '0.75',
@@ -185,7 +194,10 @@ async function worker(
   return runImageProcess({
     command: localImagePython(),
     args: ['-I', appResourcePath('image-generation/worker.py')],
-    input,
+    input: {
+      ...input,
+      devicePreference: activeImageRuntime(localImageRuntimeRoot()).pointer?.backend
+    },
     signal,
     onProgress,
     timeoutMs:
@@ -205,7 +217,7 @@ export async function localImageStatus(): Promise<LocalImageStatus> {
   try {
     if (existsSync(localImagePython()))
       runtime = RuntimeSchema.parse(
-        JSON.parse(await readFile(join(localImageRuntimeRoot(), 'ready.json'), 'utf8'))
+        JSON.parse(await readFile(activeImageRuntime(localImageRuntimeRoot()).readyPath, 'utf8'))
       )
   } catch {
     /* incomplete setup is not ready */
@@ -243,20 +255,33 @@ export async function localImageStatus(): Promise<LocalImageStatus> {
     }
   }
   models.sort((a, b) => b.downloadedAt - a.downloadedAt || a.id.localeCompare(b.id))
+  runtime.setup = readImageSetupState(localImageRuntimeRoot())
+  runtime.provenance = readRuntimeProvenance(localImageRuntimeRoot())
   return { runtime, models, activeModelId: models.find((model) => model.ready)?.id ?? null }
 }
 
-async function ensureRuntime(signal?: AbortSignal, emit?: (progress: LocalImageProgress) => void) {
+async function ensureRuntime(
+  signal?: AbortSignal,
+  emit?: (progress: LocalImageProgress) => void,
+  force = false,
+  requestedBackend: 'auto' | 'cpu' | 'cuda' = 'auto',
+  reuseVersions = true
+) {
   try {
-    if (existsSync(localImagePython())) {
+    if (!force && existsSync(localImagePython())) {
       const status = RuntimeSchema.parse(await worker({ operation: 'status' }, signal))
-      await writeFile(join(localImageRuntimeRoot(), 'ready.json'), JSON.stringify(status))
+      atomicEvidenceJson(activeImageRuntime(localImageRuntimeRoot()).readyPath, status)
       return
     }
   } catch (error) {
     if (signal?.aborted) throw error
   }
-  await rm(join(localImageRuntimeRoot(), 'ready.json'), { force: true })
+  await requireImageDiskSpace(localImageRuntimeRoot(), (requestedBackend === 'cpu' ? 4 : 12) * GIB)
+  imageSetupState(localImageRuntimeRoot(), {
+    operation: 'setup',
+    phase: 'checking',
+    message: 'Checking Python and disk space'
+  })
   emit?.({ operation: 'setup', message: 'Finding Python 3.10–3.12…' })
   const candidates =
     process.platform === 'win32'
@@ -294,63 +319,119 @@ async function ensureRuntime(signal?: AbortSignal, emit?: (progress: LocalImageP
     }
   }
   if (!python) throw new Error('Install Python 3.10, 3.11, or 3.12, then retry local image setup.')
-  emit?.({ operation: 'setup', message: 'Creating the private image runtime…' })
-  await runImageProcess({
-    command: python.command,
-    args: [...python.args, '-I', '-m', 'venv', join(localImageRuntimeRoot(), 'venv')],
-    signal
-  })
-  let cuda = false
-  if (process.platform !== 'darwin') {
+  let cuda = requestedBackend === 'cuda'
+  if (requestedBackend === 'auto' && process.platform !== 'darwin') {
     try {
-      await runImageProcess({ command: 'nvidia-smi', args: ['-L'], signal, timeoutMs: 10_000 })
+      await runImageProcess({ command: 'nvidia-smi', args: ['-L'], signal, timeoutMs: 10000 })
       cuda = true
     } catch (error) {
       if (signal?.aborted) throw error
     }
   }
-  emit?.({
-    operation: 'setup',
-    message: cuda
-      ? 'Installing PyTorch with CUDA 12.8 support…'
-      : 'Installing PyTorch for local generation…'
-  })
-  const index =
-    process.platform === 'darwin'
-      ? []
-      : ['--index-url', `https://download.pytorch.org/whl/${cuda ? 'cu128' : 'cpu'}`]
-  await runImageProcess({
-    command: localImagePython(),
-    args: [
-      '-I',
-      '-m',
-      'pip',
-      'install',
-      '--disable-pip-version-check',
-      'torch>=2.8,<3',
-      'torchvision>=0.23,<1',
-      ...index
-    ],
-    signal,
-    timeoutMs: 30 * 60_000
-  })
-  emit?.({ operation: 'setup', message: 'Installing Diffusers and image dependencies…' })
-  await runImageProcess({
-    command: localImagePython(),
-    args: [
-      '-I',
-      '-m',
-      'pip',
-      'install',
-      '--disable-pip-version-check',
-      '-r',
-      appResourcePath('image-generation/requirements.txt')
-    ],
-    signal,
-    timeoutMs: 30 * 60_000
-  })
-  const ready = RuntimeSchema.parse(await worker({ operation: 'status' }, signal))
-  await writeFile(join(localImageRuntimeRoot(), 'ready.json'), JSON.stringify(ready))
+  const backend = requestedBackend === 'cpu' ? 'cpu' : cuda ? 'cuda' : 'auto'
+  await publishImageRuntime(
+    localImageRuntimeRoot(),
+    backend,
+    async (stagedPython, environment) => {
+      emit?.({ operation: 'setup', message: 'Creating a separate private runtime…' })
+      await runImageProcess({
+        command: python.command,
+        args: [...python.args, '-I', '-m', 'venv', join(environment, 'venv')],
+        signal
+      })
+      imageSetupState(localImageRuntimeRoot(), {
+        operation: 'setup',
+        phase: 'installing',
+        message: `Installing the ${backend} dependency set`
+      })
+      const prior = activeImageRuntime(localImageRuntimeRoot()).pointer
+      const packages = prior?.provenance.packages
+      const constraints: string[] = []
+      if (reuseVersions && prior?.backend === backend && packages && typeof packages === 'object') {
+        const pins = Object.entries(packages)
+          .filter(
+            ([name, version]) =>
+              /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name) &&
+              typeof version === 'string' &&
+              /^[A-Za-z0-9][A-Za-z0-9.+!_-]*$/.test(version)
+          )
+          .slice(0, 300)
+          .map(([name, version]) => `${name}==${version}`)
+        if (pins.length) {
+          const path = join(environment, 'constraints.txt')
+          await writeFile(path, pins.join('\n'))
+          constraints.push('--constraint', path)
+        }
+      }
+      const index =
+        process.platform === 'darwin'
+          ? []
+          : ['--index-url', `https://download.pytorch.org/whl/${cuda ? 'cu128' : 'cpu'}`]
+      await runImageProcess({
+        command: stagedPython,
+        args: [
+          '-I',
+          '-m',
+          'pip',
+          'install',
+          '--disable-pip-version-check',
+          'torch>=2.8,<3',
+          'torchvision>=0.23,<1',
+          ...constraints,
+          ...index
+        ],
+        signal,
+        timeoutMs: 30 * 60_000
+      })
+      emit?.({
+        operation: 'setup',
+        message: 'Installing image dependencies; wheel cache is retained for retries…'
+      })
+      await runImageProcess({
+        command: stagedPython,
+        args: [
+          '-I',
+          '-m',
+          'pip',
+          'install',
+          '--disable-pip-version-check',
+          '-r',
+          appResourcePath('image-generation/requirements.txt'),
+          ...constraints
+        ],
+        signal,
+        timeoutMs: 30 * 60_000
+      })
+      imageSetupState(localImageRuntimeRoot(), {
+        operation: 'setup',
+        phase: 'verifying',
+        message: 'Checking imports, backend and installed-version provenance'
+      })
+      const ready = await runImageProcess({
+        command: stagedPython,
+        args: ['-I', appResourcePath('image-generation/worker.py')],
+        input: { operation: 'status', devicePreference: backend },
+        signal,
+        timeoutMs: 30000
+      })
+      const provenance = await runImageProcess({
+        command: stagedPython,
+        args: ['-I', '-c', IMAGE_PROVENANCE_SCRIPT],
+        signal,
+        timeoutMs: 30000
+      })
+      return {
+        ready,
+        provenance: {
+          ...provenance,
+          requirementsDigest: createHash('sha256')
+            .update(await readFile(appResourcePath('image-generation/requirements.txt')))
+            .digest('hex')
+        }
+      }
+    },
+    signal
+  )
 }
 
 async function exclusive<T>(
@@ -364,16 +445,40 @@ async function exclusive<T>(
   activity = kind
   try {
     return await task()
+  } catch (error) {
+    if (kind === 'generate') throw error
+    const failure = imageFailure(error)
+    imageSetupState(localImageRuntimeRoot(), {
+      operation: kind,
+      phase: failure.code === 'cancelled' ? 'cancelled' : 'error',
+      ...failure
+    })
+    throw Object.assign(new Error(failure.message), {
+      code: failure.code,
+      name: failure.code === 'cancelled' ? 'AbortError' : 'Error'
+    })
   } finally {
     activity = null
   }
 }
 export async function setupLocalImageRuntime(
   signal?: AbortSignal,
-  emit?: (progress: LocalImageProgress) => void
+  emit?: (progress: LocalImageProgress) => void,
+  backend: 'auto' | 'cpu' | 'cuda' = 'auto',
+  reuseVersions = true
 ): Promise<LocalImageStatus> {
   return exclusive('setup', async () => {
-    await ensureRuntime(signal, emit)
+    try {
+      await ensureRuntime(signal, emit, true, backend, reuseVersions)
+    } catch (error) {
+      const failure = imageFailure(signal?.aborted ? new Error('cancelled') : error)
+      imageSetupState(localImageRuntimeRoot(), {
+        operation: 'setup',
+        phase: failure.code === 'cancelled' ? 'cancelled' : 'error',
+        ...failure
+      })
+      throw new Error(failure.message)
+    }
     return localImageStatus()
   })
 }
@@ -391,7 +496,14 @@ export async function downloadLocalImageModel(
     const status = await localImageStatus()
     if (status.models.some((model) => model.repoId === repoId && model.ready)) return status
     await mkdir(localImageRoot(), { recursive: true })
-    const directory = modelDirectory(repoId)
+    const destination = modelDirectory(repoId)
+    const directory = join(localImageRoot(), '.partial', localImageModelId(repoId))
+    await requireImageDiskSpace(localImageRoot(), GIB)
+    imageSetupState(localImageRuntimeRoot(), {
+      operation: 'download',
+      phase: 'downloading',
+      message: `Downloading ${repoId}; partial data is retained for retry`
+    })
     await mkdir(directory, { recursive: true })
     const result = await worker(
       { operation: 'download', repoId, modelPath: directory, token: options.token ?? null },
@@ -410,8 +522,12 @@ export async function downloadLocalImageModel(
     options.signal?.throwIfAborted()
     const manifest = ManifestSchema.parse(result)
     if (manifest.repoId !== repoId) throw new Error('Downloaded model identity mismatch')
-    await writeFile(join(directory, 'ready.json.tmp'), JSON.stringify(manifest))
-    await rename(join(directory, 'ready.json.tmp'), join(directory, 'ready.json'))
+    await publishImageModel(directory, destination, manifest)
+    imageSetupState(localImageRuntimeRoot(), {
+      operation: 'download',
+      phase: 'ready',
+      message: `Verified ${repoId} download activated`
+    })
     return localImageStatus()
   })
 }

@@ -151,6 +151,10 @@ Evidence: [task-contract.ts](../src/shared/task-contract.ts), [task-intake.ts](.
 
 **Where:** [llama-worker-channel.ts](../electron/main/services/llama-worker-channel.ts), [builtin-model.ts](../electron/main/services/builtin-model.ts), [inference-governor.ts](../electron/main/services/inference-governor.ts), [auto-update.ts](../electron/main/services/auto-update.ts), release workflow and [SIGNING.md](SIGNING.md).
 
+### REC-33 · P2 · Repairable image runtime setup
+
+Implemented staged verified environments, atomic activation, version provenance/repair constraints, explicit CPU/CUDA choice, disk checks, actionable states and resumable download staging. [Recovery contract and platform limits](changes/REC-33-image-runtime-repair.md).
+
 ### REC-14 · P2 · Extract runtime responsibilities after lifecycle tests exist
 
 **Status:** Incremental extraction implemented: chat submission validation/digests, foreground scheduling, event persistence/publication/replay, credential storage and model capabilities have dedicated modules. Existing agent-loop behavior remains covered; admission, cancellation, persistence and process boundaries have regression checks. Further context/tool/finalization and renderer-subscription extraction remains a follow-up after the full packaged interaction profile, rather than a wholesale agent-loop rewrite.

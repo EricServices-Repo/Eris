@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import {
   setupLocalImageRuntime,
   downloadLocalImageModel,
@@ -52,8 +53,15 @@ export function registerImageIpc(): void {
     }
   }
   ipcMain.handle('images:localStatus', () => localImageStatus())
-  ipcMain.handle('images:setupLocal', (event) =>
-    localOperation(event, (signal, emit) => setupLocalImageRuntime(signal, emit))
+  ipcMain.handle('images:setupLocal', (event, raw) =>
+    localOperation(event, (signal, emit) =>
+      setupLocalImageRuntime(
+        signal,
+        emit,
+        z.enum(['auto', 'cpu', 'cuda']).parse(raw?.backend ?? 'auto'),
+        z.boolean().parse(raw?.reuseVersions ?? true)
+      )
+    )
   )
   ipcMain.handle('images:downloadLocal', (event, repoId: string) =>
     localOperation(event, (signal, onProgress) =>
