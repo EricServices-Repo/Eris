@@ -9,7 +9,7 @@ export interface ChatEventTarget {
 export function chatPublisher(requestId: string, target: () => ChatEventTarget) {
   return (channel: string, data: Record<string, unknown>): void => {
     recordChatJobEvent(requestId, channel, data)
-    if (['chat:task', 'chat:evidence', 'chat:outcome'].includes(channel))
+    if (['chat:task', 'chat:evidence', 'chat:outcome', 'chat:phase'].includes(channel))
       appendTaskEvent(requestId, channel, data)
     const sender = target()
     if (!sender.isDestroyed()) sender.send(channel, data)
@@ -40,6 +40,7 @@ export function replayChatJob(job: ChatJobSnapshot, target: ChatEventTarget): vo
       ].includes(item.channel)
     )
       target.send(item.channel, item.payload)
+  if (job.timeline) target.send('chat:phase', { requestId: job.id, ...job.timeline.current })
   target.send('chat:job-snapshot', { requestId: job.id, job })
   if (job.status === 'failed')
     target.send('chat:error', {

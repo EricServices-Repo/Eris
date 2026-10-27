@@ -71,6 +71,10 @@ Evidence: [task-contract.ts](../src/shared/task-contract.ts), [task-intake.ts](.
 
 **Where:** [chat-job-controller.ts](../electron/main/services/chat-job-controller.ts), [chat-stream.ts](../electron/main/ipc/chat-stream.ts), [app-state.ts](../electron/main/app-state.ts), [useChatSession.ts](../src/hooks/useChatSession.ts), and [task-ledger.ts](../electron/main/services/task-ledger.ts). Start after the submission contract in REC-04 is fixed.
 
+### REC-37 · P2 · Task timeline and queue ownership
+
+Implemented typed persisted phases, explicit queue/Stop ownership, separate model-preparation/dispatch timing, concise activity and owner-bound live interaction restoration. [Contract and validation limits](changes/REC-37-task-timeline.md).
+
 ### REC-06 · P1 · Replace background status text with typed execution/integration state
 
 **Status:** Implemented typed waits, recorded integration branch/base, write-lock plus clean-branch/baseline checks, and shared-parent versus integrated receipts displayed in the inbox. Parent completion waits for children and fails if required child results are incomplete. Rewording display text no longer determines scheduling/blackboard blocking. Temporary Git-repository regressions verify branch/baseline/dirty-tree refusal and a successful integration receipt. Branch/baseline changes require review/rebase instead of merging into a different checkout.

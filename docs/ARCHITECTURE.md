@@ -96,6 +96,8 @@ Current safeguards include explicit effect constraints, component/verification o
 
 [chat-job-controller.ts](../electron/main/services/chat-job-controller.ts) syncs admission snapshots before acknowledgement, compares canonical request digests, indexes recovery by workspace/thread and surfaces storage failure. It retains bounded answer/event snapshots (240 events), 200 terminal tasks in memory and up to 500/30 days on disk. [chat-events.ts](../electron/main/services/chat-events.ts) owns event publication/replay and terminal transitions. Recovery is bounded snapshot replay, not an unlimited event journal. The renderer restores unfinished/unsaved terminal results and ignores duplicate terminal delivery.
 
+The [REC-37 timeline contract](changes/REC-37-task-timeline.md) defines typed queue/load/wait phases, owner-targeted Stop, independent timing spans and live interaction restoration.
+
 ## Agent to tool
 
 [TaskToolGateway](../electron/main/services/agent/tool-gateway.ts) checks project scope, task effect authority, external effects, command restrictions, and file baselines. It records reads and blocks stale writes to inspected files; partial reads cannot authorize rewriting the whole file. [workspace-fs.ts](../electron/main/services/workspace-fs.ts) provides workspace path enforcement, while [command-approval.ts](../electron/main/services/command-approval.ts) and workspace trust control command approvals.

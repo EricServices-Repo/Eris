@@ -1,3 +1,4 @@
+import { taskPhaseLabels } from '@/shared/task-timeline'
 import { imagePromptFromCommand, type GeneratedImageAsset } from '@/shared/image-generation'
 import {
   useCallback,
@@ -137,6 +138,7 @@ export function useChatSession({
   pendingDiffsRef.current = pendingDiffs
   const [activeCheckpointId, setActiveCheckpointId] = useState<string | null>(null)
   const completedRequestsRef = useRef(new Set<string>())
+  const typedPhaseRequestRef = useRef<string | null>(null)
   const requestIdRef = useRef<string | null>(null)
   /** Survives Stop so late chat:done/error still match the turn we aborted. */
   const lastRequestIdRef = useRef<string | null>(null)
@@ -222,6 +224,11 @@ export function useChatSession({
           job.workspacePath !== workspacePath
         )
           return
+        if (job.interactions) {
+          setPendingApprovals(job.interactions.approvals)
+          const question = job.interactions.questions[0]
+          if (question) setPendingQuestion(question)
+        }
         requestIdRef.current = job.id
         lastRequestIdRef.current = job.id
         requestThreadIdRef.current = job.threadId
@@ -296,7 +303,9 @@ export function useChatSession({
         setActiveCheckpointId(restoredCheckpoint)
         setAnswerBuffer(job.answer)
         setThinkingBuffer('')
-        setAgentStatus(job.statusText || 'Working…')
+        setAgentStatus(
+          job.timeline ? taskPhaseLabels[job.timeline.current.phase] : job.statusText || 'Working…'
+        )
         setStreaming(true)
       })
       .catch(() => undefined)
@@ -878,9 +887,14 @@ export function useChatSession({
         }
       }, 400)
     })
+    const offPhase = window.ide.onChatPhase(({ requestId, phase }) => {
+      if (requestId !== requestIdRef.current) return
+      typedPhaseRequestRef.current = requestId
+      setAgentStatus(taskPhaseLabels[phase])
+    })
     const offStatus = window.ide.onChatStatus(({ requestId, text }) => {
       if (requestId !== requestIdRef.current) return
-      setAgentStatus(text)
+      if (typedPhaseRequestRef.current !== requestId) setAgentStatus(text)
     })
     const offApproval = window.ide.onChatApprovalRequest(
       ({ requestId, approvalId, kind, command, toolName, canAlwaysAllow }) => {
@@ -1072,6 +1086,7 @@ export function useChatSession({
       offSessionStep()
       offTerminal()
       offWorkspaceChanged()
+      offPhase()
       offStatus()
       offApproval()
       offApprovalResolved()

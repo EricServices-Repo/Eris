@@ -45,6 +45,7 @@
         "tests/posted-answer.test.ts",
         "tests/qualification-profile.test.ts",
         "tests/task-meaning.test.ts",
+        "tests/task-timeline.test.ts",
         "tests/thinking-summary.test.ts",
         "tests/tool-call-schema.test.ts",
         "tests/tool-parsing.test.ts",
@@ -70,10 +71,7 @@
         "tests/eris-dev-live-review.test.ts",
         "tests/quality-adapter.test.ts"
       ],
-      "notRun": [
-        "model inference",
-        "answer quality"
-      ]
+      "notRun": ["model inference", "answer quality"]
     }
   },
   "general": {

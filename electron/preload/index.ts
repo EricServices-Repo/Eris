@@ -172,6 +172,7 @@ const api: IdeApi = {
   onChatSessionStep: (cb) => subscribe('chat:session-step', cb),
   onChatTerminal: (cb) => subscribe('chat:terminal', cb),
   onChatWorkspaceChanged: (cb) => subscribe('chat:workspace-changed', cb),
+  onChatPhase: (cb) => subscribe('chat:phase', cb),
   onChatStatus: (cb) => subscribe('chat:status', cb),
   onChatModel: (cb) => subscribe('chat:model', cb),
   onChatRouted: (cb) => subscribe('chat:routed', cb),

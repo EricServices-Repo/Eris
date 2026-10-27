@@ -1,3 +1,4 @@
+import { TaskTimelineView } from '../chat/TaskTimeline'
 import { useEffect, useState } from 'react'
 import type { TaskContract } from '@/shared/task-contract'
 import type { ChatJobSnapshot } from '@/shared/chat-jobs'
@@ -90,7 +91,11 @@ export function ChatAgentActivity() {
               <dd>{job.model || text(route?.model) || 'Resolving…'}</dd>
             </div>
           </dl>
-          <p className="agents-inbox-live">{job.statusText}</p>
+          <TaskTimelineView job={job} />
+          <details>
+            <summary>Internal diagnostics</summary>
+            <p>{job.statusText}</p>
+          </details>
           {route && (
             <details className="agent-evidence">
               <summary>Routing decision</summary>
