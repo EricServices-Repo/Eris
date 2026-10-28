@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1 — 2026-10-28
+
+- Desktop rebuild with retrieval provenance, keyboard and dialog focus fixes, negotiated language edit previews, and optional DAP debugging.
+
 ## 0.5.0 — 2026-10-25
 
 - Start the 0.5 release train with conflict-safe checkpoints, durable Keep/Undo review, scoped agent commits, privileged IPC validation, and isolated language-server sessions. Rebuild Eris and Eris-Dev for macOS and Windows.
