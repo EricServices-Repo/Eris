@@ -476,6 +476,9 @@ export interface IdeApi {
   ) => () => void
   onChatTerminal: (cb: (data: { requestId: string; text: string }) => void) => () => void
   onChatWorkspaceChanged: (cb: (data: { requestId: string }) => void) => () => void
+  onChatPhase: (
+    cb: (data: import('./task-timeline').TaskPhaseEvent & { requestId: string }) => void
+  ) => () => void
   onChatStatus: (cb: (data: { requestId: string; text: string }) => void) => () => void
   onChatModel: (
     cb: (data: { requestId: string; model: string; agentId?: string; agentName?: string }) => void

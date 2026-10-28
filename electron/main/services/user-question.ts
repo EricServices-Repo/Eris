@@ -1,3 +1,4 @@
+import { reportChatActivityFor } from './chat-activity'
 import { randomUUID } from 'crypto'
 import type { WebContents } from 'electron'
 import { AGENT_HANDOFF_CHARS } from '../../../src/shared/agent-orchestration'
@@ -6,9 +7,7 @@ import { AGENT_HANDOFF_CHARS } from '../../../src/shared/agent-orchestration'
 export const USER_QUESTION_TIMEOUT_MS = 5 * 60_000
 
 export type UserQuestionOutcome =
-  | { kind: 'reply'; text: string }
-  | { kind: 'timeout' }
-  | { kind: 'dismissed' }
+  { kind: 'reply'; text: string } | { kind: 'timeout' } | { kind: 'dismissed' }
 
 export interface UserQuestionRequest {
   requestId: string
@@ -20,7 +19,13 @@ export interface UserQuestionRequest {
 
 const pending = new Map<
   string,
-  { requestId: string; done: (outcome: UserQuestionOutcome) => void }
+  {
+    requestId: string
+    sender: WebContents
+    request?: UserQuestionRequest
+    expiresAt?: number
+    done: (outcome: UserQuestionOutcome) => void
+  }
 >()
 
 /** Ask the renderer for a short answer; times out to proceed without a reply. */
@@ -33,7 +38,10 @@ export function requestUserQuestion(
   const questionId = randomUUID()
   const timeoutMs = Math.max(1_000, options?.timeoutMs ?? USER_QUESTION_TIMEOUT_MS)
   const signal = options?.signal
-  const choices = options?.choices?.map((c) => c.trim()).filter(Boolean).slice(0, 6)
+  const choices = options?.choices
+    ?.map((c) => c.trim())
+    .filter(Boolean)
+    .slice(0, 6)
 
   return new Promise((resolve) => {
     let settled = false
@@ -43,6 +51,10 @@ export function requestUserQuestion(
       if (settled) return
       settled = true
       pending.delete(questionId)
+      reportChatActivityFor(requestId, 'integrating', {
+        source: 'interaction',
+        reason: 'Question response or timeout received'
+      })
       if (timer) clearTimeout(timer)
       signal?.removeEventListener('abort', onAbort)
       if (!sender.isDestroyed()) {
@@ -59,7 +71,7 @@ export function requestUserQuestion(
 
     const onAbort = () => finish({ kind: 'dismissed' })
 
-    pending.set(questionId, { requestId, done: finish })
+    pending.set(questionId, { requestId, sender, done: finish })
 
     if (signal?.aborted) {
       finish({ kind: 'dismissed' })
@@ -79,6 +91,13 @@ export function requestUserQuestion(
       choices: choices?.length ? choices : undefined,
       timeoutMs
     }
+    const entry = pending.get(questionId)!
+    entry.request = req
+    entry.expiresAt = Date.now() + timeoutMs
+    reportChatActivityFor(requestId, 'approval', {
+      source: 'interaction',
+      reason: 'A response from you is required'
+    })
     sender.send('chat:question-request', req)
     timer = setTimeout(() => finish({ kind: 'timeout' }), timeoutMs)
   })
@@ -102,4 +121,16 @@ export function cancelAllPendingQuestions(requestId?: string): void {
       pending.delete(id)
     }
   }
+}
+
+export function pendingUserQuestions(
+  requestId: string,
+  sender: WebContents
+): UserQuestionRequest[] {
+  return [...pending.values()]
+    .filter((e) => e.requestId === requestId && e.sender === sender && e.request)
+    .map((e) => ({
+      ...structuredClone(e.request!),
+      timeoutMs: Math.max(0, (e.expiresAt ?? Date.now()) - Date.now())
+    }))
 }

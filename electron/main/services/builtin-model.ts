@@ -1055,11 +1055,13 @@ async function* streamBuiltinChatInProcess(options: {
   jsonSchema?: Record<string, unknown>
   sessionKey?: string
   maxOutputTokens?: number
+  onLoaded?: () => void
   onTermination?: (termination: ModelTermination) => void
 }): AsyncGenerator<string, void, unknown> {
   const llamaCpp = await loadLlamaModule()
   const { LlamaChatSession } = llamaCpp
   const state = await ensureRuntimeInProcess(options.path, options.entry)
+  options.onLoaded?.()
   const budget = inProcessReplyBudget(state, options.messages)
   budget.maxOutputTokens = Math.min(
     budget.maxOutputTokens,
@@ -1270,9 +1272,11 @@ async function* streamBuiltinChatViaWorker(options: {
   jsonSchema?: Record<string, unknown>
   sessionKey?: string
   maxOutputTokens?: number
+  onLoaded?: () => void
   onTermination?: (termination: ModelTermination) => void
 }): AsyncGenerator<string, void, unknown> {
   await ensureWorkerModel(options.path, options.entry, options.signal)
+  options.onLoaded?.()
   const child = llamaChild
   if (!child) throw new LocalModelWorkerError('is unavailable')
 
@@ -1500,6 +1504,7 @@ export async function* streamBuiltinChat(options: {
   sessionKey?: string
   /** Called once with how generation ended (stop reason, limits, prompt size). */
   maxOutputTokens?: number
+  onLoaded?: () => void
   onTermination?: (termination: ModelTermination) => void
 }): AsyncGenerator<string, void, unknown> {
   let entry: BuiltinModelManifestEntry

@@ -21,5 +21,24 @@ export type ChatJobSnapshot = {
   model: string | null
   startedAt: string
   updatedAt: string
+  /** Live main-process tickets only; never persisted as replay authority. */
+  interactions?: {
+    approvals: Array<{
+      requestId: string
+      approvalId: string
+      kind: 'run' | 'push' | 'mcp'
+      command: string
+      toolName?: string
+      canAlwaysAllow?: boolean
+    }>
+    questions: Array<{
+      requestId: string
+      questionId: string
+      question: string
+      choices?: string[]
+      timeoutMs: number
+    }>
+  }
+  timeline?: import('./task-timeline').TaskTimeline
   events: ChatJobEvent[]
 }

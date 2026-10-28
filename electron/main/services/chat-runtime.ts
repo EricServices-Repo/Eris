@@ -1,3 +1,4 @@
+import { reportChatActivity } from './chat-activity'
 import { resolveModelCapabilities } from './model-capabilities'
 import { compileModelMessages, budgetModelMessages, type ModelMessage } from './model-protocol'
 import type { AppSettings } from '../../../src/shared/settings-schema'
@@ -116,6 +117,23 @@ export async function* streamProviderChat(
         content: message.content ?? ''
       }))
     ) + schemaTokens
+  const purpose = options.purpose ?? 'agent'
+  const phase = (value: 'loading' | 'prefill' | 'generating' | 'integrating', reason: string) =>
+    reportChatActivity(
+      purpose === 'agent' || value === 'loading'
+        ? value
+        : purpose === 'intent' || purpose === 'route'
+          ? 'routing'
+          : 'integrating',
+      { source: 'transport', purpose, model, reason }
+    )
+  let firstChunk = true
+  const chunkSeen = () => {
+    if (firstChunk) {
+      firstChunk = false
+      phase('generating', 'First model output chunk received')
+    }
+  }
   let outputText = ''
   let provider: string | null = null
   let reportedPrompt: number | null = null
@@ -157,7 +175,9 @@ export async function* streamProviderChat(
         model = ready
         provider = 'builtin'
       }
+      phase('loading', 'Waiting for local resources and model readiness')
       for await (const chunk of streamBuiltinChat({
+        onLoaded: () => phase('prefill', 'Local model ready; request dispatched'),
         modelRef: model,
         maxOutputTokens: capabilities.outputCap,
         messages: compiled
@@ -181,6 +201,7 @@ export async function* streamProviderChat(
           })
         }
       })) {
+        if (chunk) chunkSeen()
         outputText += chunk
         yield chunk
       }
@@ -200,6 +221,7 @@ export async function* streamProviderChat(
 
     provider = connection.provider || connection.name || 'custom'
     const apiKey = connection.apiKeyRef ? options.getSecret(connection.apiKeyRef) : null
+    phase('prefill', 'Provider request dispatched; network time is included')
     for await (const chunk of streamOpenAICompatible({
       baseUrl: connection.baseUrl,
       apiKey,
@@ -232,11 +254,26 @@ export async function* streamProviderChat(
             })
         : undefined
     })) {
+      if (chunk) chunkSeen()
       outputText += chunk
       yield chunk
     }
     finish()
   } catch (err) {
+    reportChatActivity('integrating', {
+      source: 'transport',
+      purpose,
+      origin:
+        (err as { code?: string }).code === 'INFERENCE_QUEUE_TIMEOUT'
+          ? 'inference-queue'
+          : (err as { code?: string }).code === 'LOCAL_MODEL_WORKER_FAILED'
+            ? 'local-worker'
+            : options.signal?.aborted
+              ? 'cancelled'
+              : 'provider',
+      errorCode: (err as { code?: string }).code ?? 'UNCLASSIFIED',
+      reason: 'Model call did not complete; preserving partial evidence'
+    })
     // Still count partial output if the stream produced anything before failing
     if (outputText) finish()
     throw err

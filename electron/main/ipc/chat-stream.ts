@@ -1,3 +1,5 @@
+import { pendingCommandApprovals } from '../services/command-approval'
+import { pendingUserQuestions } from '../services/user-question'
 import { chatPublisher, replayChatJob } from '../services/chat-events'
 import {
   parseChatSubmission,
@@ -145,6 +147,12 @@ export function registerChatStreamIpc(): void {
             return current && !current.isDestroyed() ? current : event.sender
           }
           const publish = chatPublisher(requestId, chatSender)
+          publish('chat:phase', {
+            requestId,
+            phase: 'routing',
+            source: 'intake',
+            reason: 'Resolving task and project'
+          })
           try {
             assertChatWithinPlan(settings, getSecret)
           } catch (err) {
@@ -592,7 +600,12 @@ export function registerChatStreamIpc(): void {
                 }
                 const deadline = Date.now() + Math.max(5_000, Math.min(timeoutMs, 30 * 60_000))
                 const terminal = new Set(['done', 'failed', 'stopped', 'merged', 'discarded'])
-                publish('chat:status', { requestId, text: 'Waiting for delegated agents…' })
+                publish('chat:phase', {
+                  requestId,
+                  phase: 'waiting-child',
+                  source: 'coordinator',
+                  reason: 'Waiting for delegated agents'
+                })
                 while (Date.now() < deadline) {
                   if (appState.chatAbort?.signal.aborted) {
                     publishDelegations()
@@ -602,6 +615,12 @@ export function registerChatStreamIpc(): void {
                   const children = chatChildIds.map((id) => getBackgroundJob(id)).filter(Boolean)
                   const pending = children.filter((c) => c && !terminal.has(c.status))
                   if (pending.length === 0) {
+                    publish('chat:phase', {
+                      requestId,
+                      phase: 'integrating',
+                      source: 'coordinator',
+                      reason: 'Delegated agents completed'
+                    })
                     return summarizeAgentResults(
                       chatChildIds.map((id) => getBackgroundJob(id) ?? undefined)
                     )
@@ -615,6 +634,12 @@ export function registerChatStreamIpc(): void {
                 const workspaceAllowed = workspaceAllowedCommands(workspacePath)
                 if (!commandNeedsApproval(live, kind, command, workspaceAllowed)) return true
                 flushStreamChunks()
+                publish('chat:phase', {
+                  requestId,
+                  phase: 'approval',
+                  source: 'coordinator',
+                  reason: 'Command or tool approval required'
+                })
                 const decision = await requestCommandApproval(
                   chatSender(),
                   requestId,
@@ -622,6 +647,12 @@ export function registerChatStreamIpc(): void {
                   command,
                   appState.chatAbort?.signal
                 )
+                publish('chat:phase', {
+                  requestId,
+                  phase: 'integrating',
+                  source: 'coordinator',
+                  reason: 'Approval response received'
+                })
                 logInfo('Command approval', { requestId, kind, command, decision })
                 if (decision === 'always') {
                   if (workspacePath) {
@@ -638,6 +669,12 @@ export function registerChatStreamIpc(): void {
               approveMcpTool: async (toolName, args) => {
                 flushStreamChunks()
                 const preview = formatMcpApprovalPreview(args)
+                publish('chat:phase', {
+                  requestId,
+                  phase: 'approval',
+                  source: 'coordinator',
+                  reason: 'Command or tool approval required'
+                })
                 const decision = await requestCommandApproval(
                   chatSender(),
                   requestId,
@@ -646,6 +683,12 @@ export function registerChatStreamIpc(): void {
                   appState.chatAbort?.signal,
                   { toolName, canAlwaysAllow: false }
                 )
+                publish('chat:phase', {
+                  requestId,
+                  phase: 'integrating',
+                  source: 'coordinator',
+                  reason: 'Approval response received'
+                })
                 logInfo('MCP tool approval', { requestId, toolName, decision })
                 return decision !== 'deny'
               },
@@ -1005,7 +1048,17 @@ export function registerChatStreamIpc(): void {
   ipcMain.handle('chat:jobLatest', (event, threadId?: string | null) => {
     if (appState.mainWindow && event.sender !== appState.mainWindow.webContents) return null
     if (threadId != null && !/^[a-zA-Z0-9_-]{1,128}$/.test(threadId)) return null
-    return getLatestChatJob(appState.currentWorkspace, threadId)
+    const job = getLatestChatJob(appState.currentWorkspace, threadId)
+    if (!job) return null
+    return {
+      ...job,
+      interactions: ['queued', 'running'].includes(job.status)
+        ? {
+            approvals: pendingCommandApprovals(job.id, event.sender),
+            questions: pendingUserQuestions(job.id, event.sender)
+          }
+        : undefined
+    }
   })
 
   ipcMain.handle('chat:stop', (event, requestId?: string) => {

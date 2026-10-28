@@ -47,6 +47,7 @@
         "tests/posted-answer.test.ts",
         "tests/qualification-profile.test.ts",
         "tests/task-meaning.test.ts",
+        "tests/task-timeline.test.ts",
         "tests/thinking-summary.test.ts",
         "tests/tool-call-schema.test.ts",
         "tests/tool-parsing.test.ts",
