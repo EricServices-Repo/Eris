@@ -77,6 +77,12 @@ export function DebugPanel({ open, workspacePath, activeFile, onClose, onOpenPat
     return window.ide.onDebugState((s) => setState(s))
   }, [open])
 
+  useEffect(() => {
+    setVariables([])
+    setWatchResult('')
+    setFilters([])
+  }, [state?.configId, state?.running])
+
   if (!open) return null
 
   const selected = configs.find((c) => c.id === selectedId) || configs[0]
@@ -100,7 +106,11 @@ export function DebugPanel({ open, workspacePath, activeFile, onClose, onOpenPat
           {state?.port ? ` · :${state.port}` : ''}
         </span>
         <div className="diff-actions">
-          <button type="button" className="btn" onClick={() => void refresh()}>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void refresh().catch((e) => setError(String(e)))}
+          >
             Refresh
           </button>
           <button type="button" className="btn" onClick={onClose}>
@@ -111,8 +121,8 @@ export function DebugPanel({ open, workspacePath, activeFile, onClose, onOpenPat
       <p className="subtitle">{NODE_DEBUG_CAPABILITIES.reason}</p>
       {selected && !supported && (
         <p role="status">
-          Unsupported target: {selected.type}/{selected.request}. Choose a supported Node launch
-          configuration.
+          Unsupported target: {selected.type}/{selected.request}. Choose Node launch or an
+          explicitly configured stdio DAP adapter.
         </p>
       )}
       {error && <div className="git-error">{error}</div>}
@@ -162,7 +172,7 @@ export function DebugPanel({ open, workspacePath, activeFile, onClose, onOpenPat
           type="button"
           className="btn"
           disabled={!state?.paused}
-          onClick={() => void window.ide.debugContinue()}
+          onClick={() => void window.ide.debugContinue().catch((e) => setError(String(e)))}
         >
           Continue
         </button>
@@ -170,7 +180,7 @@ export function DebugPanel({ open, workspacePath, activeFile, onClose, onOpenPat
           type="button"
           className="btn"
           disabled={!state?.paused}
-          onClick={() => void window.ide.debugStepOver()}
+          onClick={() => void window.ide.debugStepOver().catch((e) => setError(String(e)))}
         >
           Step
         </button>

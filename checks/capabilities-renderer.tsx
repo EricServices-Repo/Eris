@@ -11,8 +11,8 @@ declare global {
 const path = '/fixture/current.ts',
   before = 'const old = 1',
   after = 'const renamed = 1'
+const freezeEvents: boolean[] = []
 let applies = 0,
-  freezeEvents: boolean[] = [],
   defer = false,
   release: (() => void) | undefined
 Object.assign(window, {
