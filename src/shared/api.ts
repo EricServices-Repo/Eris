@@ -209,7 +209,10 @@ export type UsageSnapshot = {
 
 export interface IdeApi {
   localImageStatus: () => Promise<LocalImageStatus>
-  setupLocalImageRuntime: () => Promise<{ ok: boolean; status?: LocalImageStatus; error?: string }>
+  setupLocalImageRuntime: (options?: {
+    backend: 'auto' | 'cpu' | 'cuda'
+    reuseVersions?: boolean
+  }) => Promise<{ ok: boolean; status?: LocalImageStatus; error?: string }>
   downloadLocalImageModel: (
     repoId: string
   ) => Promise<{ ok: boolean; status?: LocalImageStatus; error?: string }>

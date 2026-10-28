@@ -32,6 +32,8 @@ function progressLabel(progress: LocalImageProgress | null): string {
 }
 
 export function LocalImageModels({ onDownloaded }: { onDownloaded: () => Promise<void> }) {
+  const [reuseVersions, setReuseVersions] = useState(true)
+  const [backend, setBackend] = useState<'auto' | 'cpu' | 'cuda'>('auto')
   const [status, setStatus] = useState<LocalImageStatus | null>(null)
   const [repo, setRepo] = useState('')
   const [token, setToken] = useState('')
@@ -100,6 +102,38 @@ export function LocalImageModels({ onDownloaded }: { onDownloaded: () => Promise
   return (
     <div className="local-image-models">
       <section className="models-card image-runtime-card">
+        <label>
+          Setup backend{' '}
+          <select
+            value={backend}
+            disabled={busy}
+            onChange={(e) => setBackend(e.target.value as 'auto' | 'cpu' | 'cuda')}
+          >
+            <option value="auto">Automatic</option>
+            <option value="cpu">CPU fallback</option>
+            <option value="cuda">NVIDIA CUDA</option>
+          </select>
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={reuseVersions}
+            disabled={busy}
+            onChange={(e) => setReuseVersions(e.target.checked)}
+          />{' '}
+          Reuse installed versions when repairing (turn off to resolve a fresh dependency set)
+        </label>
+        {status?.runtime.setup && (
+          <p role="status">
+            {status.runtime.setup.phase}: {status.runtime.setup.message}
+          </p>
+        )}
+        {status?.runtime.provenance && (
+          <details>
+            <summary>Installed environment versions</summary>
+            <pre>{JSON.stringify(status.runtime.provenance, null, 2)}</pre>
+          </details>
+        )}
         <header className="models-card-head">
           <div>
             <h3>Local image runtime</h3>
@@ -109,7 +143,9 @@ export function LocalImageModels({ onDownloaded }: { onDownloaded: () => Promise
             type="button"
             className="btn"
             disabled={busy}
-            onClick={() => void run(() => window.ide.setupLocalImageRuntime())}
+            onClick={() =>
+              void run(() => window.ide.setupLocalImageRuntime({ backend, reuseVersions }))
+            }
           >
             {status?.runtime.ready ? 'Repair' : 'Set up runtime'}
           </button>

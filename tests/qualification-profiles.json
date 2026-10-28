@@ -41,6 +41,7 @@
         "tests/image-generation.test.ts",
         "tests/images-ipc.test.ts",
         "tests/intelligence.test.ts",
+        "tests/image-runtime-install.test.ts",
         "tests/local-image-model.test.ts",
         "tests/local-image-python.test.ts",
         "tests/posted-answer.test.ts",
@@ -71,10 +72,7 @@
         "tests/eris-dev-live-review.test.ts",
         "tests/quality-adapter.test.ts"
       ],
-      "notRun": [
-        "model inference",
-        "answer quality"
-      ]
+      "notRun": ["model inference", "answer quality"]
     }
   },
   "general": {
