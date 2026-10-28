@@ -60,7 +60,7 @@ describe('owned host execution', () => {
       setWorkspaceTrusted(root, true)
       writeFileSync(
         join(root, 'parent.cjs'),
-        `const {spawn}=require('child_process');const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});require('fs').writeFileSync('pids.json',JSON.stringify([process.pid,child.pid]));setInterval(()=>{},1000)`
+        `const {spawn}=require('child_process');const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});require('fs').writeFileSync('pids.json.tmp',JSON.stringify([process.pid,child.pid]));require('fs').renameSync('pids.json.tmp','pids.json');setInterval(()=>{},1000)`
       )
       const other = runWorkspaceCommand(
         root,
