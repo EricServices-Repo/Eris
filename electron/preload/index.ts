@@ -86,6 +86,7 @@ const api: IdeApi = {
   readFile: (path) => ipcRenderer.invoke('fs:read', path),
   writeFile: (path, content) => ipcRenderer.invoke('fs:write', path, content),
   pickFiles: () => ipcRenderer.invoke('fs:pickFiles'),
+  inferenceAdmission: () => ipcRenderer.invoke('models:admission'),
   modelsStatus: (opts) => ipcRenderer.invoke('models:status', opts ?? {}),
   warmLocalModel: (modelRef) => ipcRenderer.invoke('models:warmLocal', modelRef),
   builtinModelStatus: () => ipcRenderer.invoke('models:builtinStatus'),

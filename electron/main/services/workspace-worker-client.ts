@@ -1,3 +1,4 @@
+import { acquireInferenceLease } from './inference-governor'
 import { Worker } from 'worker_threads'
 import { join } from 'path'
 import { app } from 'electron'
@@ -12,9 +13,10 @@ type Pending = {
 const lanes = new Map<Lane, { worker: Worker; pending: Map<number, Pending> }>()
 let sequence = 0
 let stopping = false
+const indexAdmission = new AbortController()
 
 /** Separate queues keep repository indexing from delaying file opens or chat saves. */
-export function workspaceRequest<T extends WorkspaceRequest>(
+function dispatchWorkspaceRequest<T extends WorkspaceRequest>(
   request: T
 ): Promise<WorkspaceResult<T>> {
   if (stopping) return Promise.reject(new Error('Eris is shutting down'))
@@ -74,6 +76,7 @@ export function workspaceRequest<T extends WorkspaceRequest>(
 
 export async function disposeWorkspaceWorkers(): Promise<void> {
   stopping = true
+  indexAdmission.abort()
   await Promise.all(
     [...lanes.values()].map(async ({ worker, pending }) => {
       // Drain queued writes and close WAL files before terminating the worker.
@@ -98,4 +101,26 @@ export async function disposeWorkspaceWorkers(): Promise<void> {
     })
   )
   lanes.clear()
+}
+
+/** Index memory is accounted by the main process, not an isolated worker copy of the governor. */
+export async function workspaceRequest<T extends WorkspaceRequest>(
+  request: T
+): Promise<WorkspaceResult<T>> {
+  if (request.type !== 'index' && request.type !== 'patch-index')
+    return dispatchWorkspaceRequest(request)
+  if (stopping) throw new Error('Eris is shutting down')
+  const lease = await acquireInferenceLease({
+    workload: 'index',
+    signal: indexAdmission.signal,
+    requestedBytes: 64 * 1024 ** 2,
+    gpu: false,
+    owner: 'workspace-index',
+    priority: 1
+  })
+  try {
+    return await dispatchWorkspaceRequest(request)
+  } finally {
+    lease.release()
+  }
 }

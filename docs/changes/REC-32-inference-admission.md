@@ -1,0 +1,11 @@
+# REC-32 / #77: observable device-aware admission
+
+One main-process governor owns active peak reservations and queued request IDs. Text generation/warmup and image generation provide their model owner and device estimate; indexing acquires its CPU/host lease in the parent process and releases it on worker completion/error. Index shutdown cancels pending admission. Cheap local hash embeddings and remote API embeddings do not pretend to allocate a local GPU model.
+
+Device identity, dedicated VRAM totals/free readings, estimated host/device peaks, queue position, wait reason, deadline and admission/release/cancel incidents are inspectable in Settings → Models → GPUs. Stop remains owned by the originating chat/image controller; no renderer API cancels arbitrary leases. Queued cancellation removes only that request, while active reservations remain until their owner finishes cleanup. Release is idempotent and does not claim measured driver reclamation.
+
+Wait defaults to 120 seconds (bounded to 10 minutes). After two seconds an older request becomes a FIFO reservation barrier, preventing continuous small/high-priority requests from indefinitely consuming its needed capacity. This conservative policy can reduce throughput and block unrelated work; it never destroys active user work to admit another job.
+
+Host/unified memory is counted once. Dedicated devices have separate identities and ledgers; discovered capacity is never summed into an implicit pooled device. Runtime preference exposes one selected CUDA/Vulkan GPU until exact multi-device placement is supported. Global GPU exclusivity remains conservative because backends may not confirm their entire assignment. Estimates do not guarantee OOM prevention. Cached idle models are not counted as active leases; existing load fitting, image preflight and idle text disposal remain mandatory. GPU free data can be stale and is labeled as reported.
+
+Tests inject capacities/time and verify two-device non-pooling, aged-image fairness, owner cancellation, queue expiry, unified accounting and invalid admission, alongside existing GPU/index/image checks. Real dual-GPU throughput, actual VRAM reclamation and Mac/Windows OOM recovery require hardware qualification; no inference or GPU stress test is claimed.
