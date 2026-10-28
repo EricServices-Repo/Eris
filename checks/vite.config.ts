@@ -6,5 +6,14 @@ export default defineConfig({
   base: './',
   plugins: [react()],
   resolve: { alias: { '@': resolve('src') } },
-  build: { outDir: resolve('.eris/cache/client-check'), emptyOutDir: true }
+  build: {
+    outDir: resolve('.eris/cache/client-check'),
+    emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        index: resolve('checks/index.html'),
+        performance: resolve('checks/performance.html')
+      }
+    }
+  }
 })

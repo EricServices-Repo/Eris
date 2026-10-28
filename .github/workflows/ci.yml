@@ -77,6 +77,17 @@ jobs:
       - name: Desktop client smoke (scripted, no provider calls)
         run: npm run check:client
 
+      - name: Scripted chat and workspace performance budgets
+        run: npm run check:performance
+
+      - name: Upload performance observations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-observations
+          path: out/qualification/*performance.json
+          if-no-files-found: warn
+
       - name: Typecheck cloud worker
         run: npm ci --prefix cloud-agent --ignore-scripts && npm run typecheck --prefix cloud-agent
 

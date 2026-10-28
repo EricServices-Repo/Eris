@@ -17,16 +17,27 @@ export function VirtualList<T>({
   itemKey,
   renderItem,
   estimate = 160,
-  overscan = 600
+  overscan = 600,
+  preserveInteraction = false,
+  reveal,
+  semanticLabel
 }: {
   items: readonly T[]
   itemKey: (item: T) => string
   renderItem: (item: T, index: number) => ReactNode
   estimate?: number
   overscan?: number
+  preserveInteraction?: boolean
+  reveal?: { key: string; request: number } | null
+  semanticLabel?: string
 }) {
   const container = useRef<HTMLDivElement>(null)
   const sizes = useRef(new Map<string, number>())
+  const [selectedRange, setSelectedRange] = useState<{ first: string; last: string } | null>(null)
+  const focusedElement = useRef<HTMLElement | null>(null)
+  const [focusedKey, setFocusedKey] = useState<string | null>(null)
+  const rangeRef = useRef({ first: 0, last: 0 })
+  const layoutRef = useRef<{ keys: string[]; offsets: number[] }>({ keys: [], offsets: [] })
   const [revision, setRevision] = useState(0)
   const [viewport, setViewport] = useState({ top: 0, height: 800 })
   const adjustment = useRef({ follow: false, delta: 0 })
@@ -40,11 +51,116 @@ export function VirtualList<T>({
     // Measurements are held in a ref; revision invalidates their prefix sums.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keys, estimate, revision])
-  const first = Math.min(items.length, lowerBound(offsets, Math.max(0, viewport.top - overscan)))
-  const last = Math.min(
+  const viewportFirst = Math.min(
+    items.length,
+    lowerBound(offsets, Math.max(0, viewport.top - overscan))
+  )
+  const viewportLast = Math.min(
     items.length,
     lowerBound(offsets, viewport.top + viewport.height + overscan) + 1
   )
+
+  const selectedFirst = selectedRange ? keys.indexOf(selectedRange.first) : -1
+  const selectedLast = selectedRange ? keys.indexOf(selectedRange.last) : -1
+  const first = selectedFirst >= 0 ? selectedFirst : viewportFirst
+  const last = Math.min(
+    items.length,
+    first + 119,
+    selectedLast >= first ? selectedLast + 1 : viewportLast
+  )
+  rangeRef.current = { first, last }
+  layoutRef.current = { keys, offsets }
+  const liveFocus =
+    preserveInteraction &&
+    typeof document !== 'undefined' &&
+    container.current?.contains(document.activeElement)
+      ? (document.activeElement as HTMLElement).closest<HTMLElement>('[data-virtual-key]')?.dataset
+          .virtualKey
+      : null
+  const retainedFocus = liveFocus ?? focusedKey
+  const rendered = useMemo(() => {
+    const indices = Array.from({ length: Math.max(0, last - first) }, (_, i) => first + i),
+      pinned = retainedFocus ? keys.indexOf(retainedFocus) : -1
+    if (pinned >= 0 && !indices.includes(pinned)) indices.push(pinned)
+    return indices.sort((a, b) => a - b)
+  }, [first, last, retainedFocus, keys])
+  useLayoutEffect(() => {
+    if (!preserveInteraction) return
+    const list = container.current
+    if (!list) return
+    const update = () => {
+      const active = document.activeElement
+      const row =
+        active instanceof Element && list.contains(active)
+          ? active.closest<HTMLElement>('[data-virtual-key]')
+          : null
+      if (row && active instanceof HTMLElement) focusedElement.current = active
+      else if (active !== document.body) focusedElement.current = null
+      setFocusedKey(row?.dataset.virtualKey ?? null)
+      const selection = window.getSelection()
+      if (
+        selection &&
+        !selection.isCollapsed &&
+        (list.contains(selection.anchorNode) || list.contains(selection.focusNode))
+      ) {
+        setSelectedRange(
+          (previous) =>
+            previous ?? {
+              first: layoutRef.current.keys[rangeRef.current.first],
+              last: layoutRef.current.keys[
+                Math.max(rangeRef.current.first, rangeRef.current.last - 1)
+              ]
+            }
+        )
+      } else setSelectedRange(null)
+    }
+    let disposed = false
+    const blur = () =>
+      queueMicrotask(() => {
+        if (!disposed) update()
+      })
+    const pointer = (event: PointerEvent) => {
+      if (!list.contains(event.target as Node)) {
+        focusedElement.current = null
+        setFocusedKey(null)
+      }
+    }
+    document.addEventListener('pointerdown', pointer, true)
+    document.addEventListener('selectionchange', update)
+    document.addEventListener('focusin', update)
+    document.addEventListener('focusout', blur)
+    return () => {
+      disposed = true
+      document.removeEventListener('pointerdown', pointer, true)
+      document.removeEventListener('selectionchange', update)
+      document.removeEventListener('focusin', update)
+      document.removeEventListener('focusout', blur)
+    }
+  }, [preserveInteraction])
+  // Moving a keyed DOM row across spacer siblings can blur its control in Chromium.
+  // Restore only that retained control; an explicit outside pointer/focus clears it.
+  useLayoutEffect(() => {
+    const node = focusedElement.current
+    if (
+      preserveInteraction &&
+      focusedKey &&
+      node?.isConnected &&
+      document.activeElement === document.body
+    )
+      node.focus({ preventScroll: true })
+  })
+  useLayoutEffect(() => {
+    if (!reveal) return
+    const list = container.current,
+      scroll = list?.closest<HTMLElement>('[data-virtual-scroll]'),
+      layout = layoutRef.current,
+      index = layout.keys.indexOf(reveal.key)
+    if (!list || !scroll || index < 0) return
+    const top =
+      list.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop
+    scroll.scrollTop = top + layout.offsets[index]
+    scroll.dispatchEvent(new Event('scroll'))
+  }, [reveal])
 
   useLayoutEffect(() => {
     const list = container.current
@@ -115,22 +231,50 @@ export function VirtualList<T>({
     for (const child of list.querySelectorAll<HTMLElement>(':scope > [data-virtual-key]'))
       resize.observe(child)
     return () => resize.disconnect()
-  }, [first, last, keys, estimate])
+  }, [first, last, keys, estimate, focusedKey])
 
+  let cursor = 0
+  const nodes: ReactNode[] = []
+  for (const index of rendered) {
+    const gap = offsets[index] - offsets[cursor]
+    if (gap > 0)
+      nodes.push(
+        <div
+          key={`gap:${keys[index]}`}
+          aria-hidden="true"
+          style={{ height: gap, pointerEvents: 'none' }}
+        />
+      )
+    nodes.push(
+      <div
+        key={keys[index]}
+        data-virtual-key={keys[index]}
+        role={semanticLabel ? 'listitem' : undefined}
+        aria-posinset={semanticLabel ? index + 1 : undefined}
+        aria-setsize={semanticLabel ? items.length : undefined}
+      >
+        {renderItem(items[index], index)}
+      </div>
+    )
+    cursor = index + 1
+  }
+  if (cursor < items.length)
+    nodes.push(
+      <div
+        key="tail-gap"
+        aria-hidden="true"
+        style={{ height: offsets[items.length] - offsets[cursor], pointerEvents: 'none' }}
+      />
+    )
   return (
     <div
       ref={container}
-      style={{
-        paddingTop: offsets[first],
-        paddingBottom: offsets[items.length]! - offsets[last]!,
-        overflowAnchor: 'none'
-      }}
+      data-retained-focus={retainedFocus ?? undefined}
+      role={semanticLabel ? 'list' : undefined}
+      aria-label={semanticLabel}
+      style={{ overflowAnchor: 'none' }}
     >
-      {items.slice(first, last).map((item, index) => (
-        <div key={keys[first + index]} data-virtual-key={keys[first + index]}>
-          {renderItem(item, first + index)}
-        </div>
-      ))}
+      {nodes}
     </div>
   )
 }
