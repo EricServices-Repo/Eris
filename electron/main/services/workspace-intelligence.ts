@@ -1,8 +1,9 @@
 import { findSymbols, relatedFiles } from './code-index'
-import { retrieveContextAsync } from './workspace-search'
+import { type RetrieveResult, retrieveContextAsync } from './workspace-search'
 import { shouldSkipWorkspacePath } from './workspace-ignore'
 
 export type WorkspaceIntelligenceResult = {
+  provenance?: RetrieveResult['provenance']
   ok: boolean
   detail: string
   paths: string[]
@@ -55,6 +56,7 @@ export async function inspectWorkspace(
         .join('\n')}`
     : ''
   return {
+    provenance: retrieval.provenance,
     ok: retrieval.ok,
     detail: `${retrieval.detail}${extra}`,
     paths,

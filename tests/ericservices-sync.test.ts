@@ -45,6 +45,7 @@ function withExtras(base: AppSettings): AppSettings {
     },
     backgroundAgents: { maxParallel: 3, linkNodeModules: false },
     intelligence: {
+      remoteEmbeddingPolicy: 'workspace-content',
       embeddingProvider: 'connection',
       embeddingModel: 'nomic-embed-text',
       languageServers: [
@@ -114,6 +115,7 @@ describe('buildSyncableSettings', () => {
     expect(openai?.baseUrl).toBe('https://api.openai.com/v1')
 
     expect(sync.intelligence?.embeddingModel).toBe('nomic-embed-text')
+    expect(sync.intelligence).not.toHaveProperty('remoteEmbeddingPolicy')
     expect(sync.intelligence?.languageServers?.[0]?.enabled).toBe(false)
 
     expect(sync.evals).toEqual({ useScoresForRouting: false, minRuns: 5 })

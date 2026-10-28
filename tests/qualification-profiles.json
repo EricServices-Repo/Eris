@@ -71,9 +71,13 @@
         "tests/eris-dev.test.ts",
         "tests/eris-dev-followup.test.ts",
         "tests/eris-dev-live-review.test.ts",
-        "tests/quality-adapter.test.ts"
+        "tests/quality-adapter.test.ts",
+        "tests/quality-scenarios.test.ts"
       ],
-      "notRun": ["model inference", "answer quality"]
+      "notRun": [
+        "model inference",
+        "answer quality"
+      ]
     }
   },
   "general": {
@@ -116,7 +120,8 @@
       "tests/chat-admission.test.ts",
       "tests/feedback-relay.test.ts",
       "tests/worktree-integration.test.ts",
-      "tests/inference-governor.test.ts"
+      "tests/inference-governor.test.ts",
+      "tests/retrieval-provenance.test.ts"
     ]
   }
 }

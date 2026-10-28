@@ -1,0 +1,34 @@
+{
+  "date": "2026-10-28",
+  "baseline": "d9f7a1d",
+  "fixture": "tests/retrieval-provenance.test.ts",
+  "fixtureSha256": "167db215978562041ad474e95b94e8ad8cae68aa98cd87cd906addddecb60d05",
+  "platform": "Darwin arm64",
+  "method": "production scan + actual retrieval ranking; synthetic 8 files + ignored private file; no provider calls; timings include scan per query in fixture",
+  "results": [
+    {
+      "group": "exact",
+      "queries": 4,
+      "recallAt3": 1,
+      "meanPrecisionAtReturned": 1,
+      "latencyMs": [
+        15.419457999999963,
+        8.943041999999991,
+        7.382875000000013,
+        6.685000000000002
+      ]
+    },
+    {
+      "group": "meaning",
+      "queries": 4,
+      "recallAt3": 0.5,
+      "meanPrecisionAtReturned": 0.20833333333333331,
+      "latencyMs": [
+        6.898874999999975,
+        6.063041999999996,
+        7.047041999999976,
+        6.877625000000023
+      ]
+    }
+  ]
+}

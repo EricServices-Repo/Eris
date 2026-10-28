@@ -142,6 +142,9 @@ export const SettingsSchema = z.object({
     embeddingProvider: z.enum(['auto', 'local', 'connection']),
     /** Model name served by a connection, e.g. nomic-embed-text on Ollama */
     embeddingModel: z.string(),
+    remoteEmbeddingPolicy: z
+      .enum(['disabled', 'queries-only', 'workspace-content'])
+      .default('disabled'),
     /** Extra language servers; TypeScript/JavaScript is built in */
     languageServers: z.array(LanguageServerSchema)
   }),
