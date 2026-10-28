@@ -1,3 +1,4 @@
+import type { MutationPlan } from '../file-mutations'
 import {
   applyUnifiedPatch,
   deleteWorkspacePath,
@@ -15,7 +16,8 @@ import type { ToolCall } from './types'
 
 export function executeTool(
   workspacePath: string,
-  call: ToolCall
+  call: ToolCall,
+  plan?: MutationPlan
 ): { ok: boolean; detail: string; mutated: boolean; path?: string } {
   const name = call.name
   try {
@@ -71,7 +73,7 @@ export function executeTool(
         if (typeof call.args.content !== 'string') {
           throw new WorkspaceFsError('content is required (string)')
         }
-        const result = writeWorkspaceFile(workspacePath, path, call.args.content)
+        const result = writeWorkspaceFile(workspacePath, path, call.args.content, plan)
         return {
           ok: true,
           detail: `${result.created ? 'Created' : 'Updated'} ${result.path} (${result.bytes} bytes)`,
@@ -92,7 +94,14 @@ export function executeTool(
         if (!oldString) throw new WorkspaceFsError('old_string is required')
         if (newString == null) throw new WorkspaceFsError('new_string is required')
         const replaceAll = Boolean(call.args.replace_all ?? call.args.replaceAll)
-        const result = searchReplaceInFile(workspacePath, path, oldString, newString, replaceAll)
+        const result = searchReplaceInFile(
+          workspacePath,
+          path,
+          oldString,
+          newString,
+          replaceAll,
+          plan
+        )
         return {
           ok: true,
           detail: `Replaced ${result.replacements} occurrence(s) in ${result.path}`,
@@ -103,7 +112,7 @@ export function executeTool(
       case 'apply_patch': {
         const patch = argString(call.args, 'patch') || argString(call.args, 'diff')
         if (!patch) throw new WorkspaceFsError('patch is required')
-        const result = applyUnifiedPatch(workspacePath, patch)
+        const result = applyUnifiedPatch(workspacePath, patch, plan)
         return {
           ok: true,
           detail: `Applied patch to ${result.path}`,
@@ -127,7 +136,7 @@ export function executeTool(
       case 'delete_path': {
         const path = argString(call.args, 'path')
         if (!path) throw new WorkspaceFsError('path is required')
-        const result = deleteWorkspacePath(workspacePath, path)
+        const result = deleteWorkspacePath(workspacePath, path, plan)
         return {
           ok: true,
           detail: `Deleted ${result.path}${result.wasDirectory ? ' (directory)' : ''}`,
@@ -139,7 +148,7 @@ export function executeTool(
         const path = argString(call.args, 'path')
         const to = argString(call.args, 'to')
         if (!path || !to) throw new WorkspaceFsError('path and to are required')
-        const result = renameWorkspacePath(workspacePath, path, to)
+        const result = renameWorkspacePath(workspacePath, path, to, plan)
         return {
           ok: true,
           detail: `Renamed ${result.from} → ${result.to}`,
@@ -155,7 +164,9 @@ export function executeTool(
     return {
       ok: false,
       detail: message,
-      mutated: false,
+      mutated: Boolean(
+        err && typeof err === 'object' && 'mutationApplied' in err && err.mutationApplied
+      ),
       path: argString(call.args, 'path') || undefined
     }
   }

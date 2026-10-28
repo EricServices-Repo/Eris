@@ -1,3 +1,5 @@
+import { atomicEvidenceJson, readEvidence } from './evidence-records'
+import { CheckpointSchema } from './evidence-schemas'
 import {
   existsSync,
   openSync,
@@ -7,8 +9,8 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
-  rmSync,
   rmdirSync,
   statSync,
   unlinkSync,
@@ -65,6 +67,8 @@ function postimage(path: string): CheckpointPostimage | undefined {
 const textDigest = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex')
 
 export interface CheckpointRecord {
+  schemaVersion?: 1
+  owner?: { taskId: string; threadId: string | null }
   id: string
   createdAt: number
   workspacePath: string
@@ -98,39 +102,41 @@ function checkpointMetaPath(workspacePath: string, id: string): string {
   return join(checkpointsRoot(workspacePath), id, 'meta.json')
 }
 
-export function createCheckpoint(workspacePath: string): CheckpointRecord {
+export function createCheckpoint(
+  workspacePath: string,
+  owner?: { taskId: string; threadId: string | null }
+): CheckpointRecord {
   const id = randomUUID()
   const dir = join(checkpointsRoot(workspacePath), id)
   mkdirSync(dir, { recursive: true })
   const record: CheckpointRecord = {
     id,
+    schemaVersion: 1,
+    ...(owner ? { owner } : {}),
     createdAt: Date.now(),
     workspacePath,
     ops: []
   }
-  writeFileSync(checkpointMetaPath(workspacePath, id), JSON.stringify(record, null, 2), 'utf8')
+  atomicEvidenceJson(checkpointMetaPath(workspacePath, id), record)
   return record
 }
 
 function saveRecord(record: CheckpointRecord): void {
-  const target = checkpointMetaPath(record.workspacePath, record.id)
-  const temporary = `${target}.${randomUUID()}.tmp`
-  try {
-    writeFileSync(temporary, JSON.stringify(record, null, 2), { encoding: 'utf8', flag: 'wx' })
-    renameSync(temporary, target)
-  } finally {
-    if (existsSync(temporary)) unlinkSync(temporary)
-  }
+  atomicEvidenceJson(checkpointMetaPath(record.workspacePath, record.id), record)
 }
 
 export function loadCheckpoint(workspacePath: string, id: string): CheckpointRecord | null {
-  const path = checkpointMetaPath(workspacePath, id)
-  if (!existsSync(path)) return null
-  try {
-    return JSON.parse(readFileSync(path, 'utf8')) as CheckpointRecord
-  } catch {
-    return null
-  }
+  if (!/^[a-f0-9-]{36}$/i.test(id)) return null
+  return readEvidence(
+    checkpointMetaPath(workspacePath, id),
+    (value) => {
+      const record = CheckpointSchema.parse(value) as CheckpointRecord
+      if (record.id !== id || realpathSync(record.workspacePath) !== realpathSync(workspacePath))
+        throw new Error('Checkpoint identity or workspace does not match its owner')
+      return record
+    },
+    64_000_000
+  )
 }
 
 /** Snapshot current file content before an agent write (null if new file). */
@@ -401,13 +407,5 @@ export function listCheckpoints(
   return out.sort((a, b) => b.createdAt - a.createdAt)
 }
 
-export function pruneOldCheckpoints(workspacePath: string, keep = 20): void {
-  const list = listCheckpoints(workspacePath)
-  for (const item of list.slice(keep)) {
-    try {
-      rmSync(join(checkpointsRoot(workspacePath), item.id), { recursive: true, force: true })
-    } catch {
-      // ignore
-    }
-  }
-}
+/** Legacy call retained for callers; terminal-aware Settings maintenance owns retention. */
+export function pruneOldCheckpoints(_workspacePath: string, _keep = 20): void {}

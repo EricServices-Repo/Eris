@@ -1,3 +1,12 @@
+import { qualityStdio } from './quality-stdio'
+import { disposeRuntime } from '../main/services/builtin-model'
+import {
+  QualityInputSchema,
+  runProductionQuality,
+  reviewQualityBundle,
+  readQualityBundle,
+  qualitySummary
+} from './quality-runs'
 import { createReadStream, createWriteStream, realpathSync } from 'fs'
 import { createInterface } from 'readline'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
@@ -458,7 +467,78 @@ async function readExport(path: string): Promise<{
 /** The most recent full comparison, paged to the renderer and saved beside the run. */
 let lastComparison: (CaptureComparison & { path: string }) | null = null
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  if (process.argv.includes('--eris-quality-stdio')) {
+    try {
+      await qualityStdio()
+    } catch {
+      process.exitCode = 1
+    } finally {
+      await disposeRuntime()
+      app.quit()
+    }
+    return
+  }
+  let lastQuality: string | null = null
+  const qualityDirectory = join(app.getPath('userData'), 'quality-runs')
+  const qualityOwner = (event: Electron.IpcMainInvokeEvent) => {
+    if (
+      !window ||
+      event.sender !== window.webContents ||
+      event.senderFrame !== event.sender.mainFrame
+    )
+      throw new Error('Unauthorized quality request')
+  }
+  ipcMain.handle('dev:quality', async (event, raw) => {
+    qualityOwner(event)
+    if (active) throw new Error('Stop the current run first')
+    const input = QualityInputSchema.parse(raw)
+    const controller = new AbortController()
+    active = controller
+    try {
+      const summary = await runProductionQuality(input, qualityDirectory, controller.signal)
+      lastQuality = summary.path
+      return summary
+    } finally {
+      if (active === controller) active = null
+    }
+  })
+  ipcMain.handle('dev:qualityOpen', async (event) => {
+    qualityOwner(event)
+    if (active) throw new Error('Stop the current run first')
+    const chosen = await dialog.showOpenDialog({
+      defaultPath: qualityDirectory,
+      properties: ['openFile'],
+      filters: [{ name: 'Quality report', extensions: ['json'] }]
+    })
+    if (chosen.canceled) return null
+    const path = chosen.filePaths[0]!
+    const bundle = readQualityBundle(path)
+    lastQuality = path
+    return qualitySummary(path, bundle.report)
+  })
+  ipcMain.handle('dev:qualityExport', async (event) => {
+    qualityOwner(event)
+    if (!lastQuality || active) throw new Error('Open or finish a quality run first')
+    const source = lastQuality
+    const chosen = await dialog.showSaveDialog({ defaultPath: 'eris-quality-report.json' })
+    if (chosen.canceled || !chosen.filePath) return null
+    await copyFile(source, chosen.filePath)
+    return chosen.filePath
+  })
+  ipcMain.handle('dev:qualityReview', async (event) => {
+    qualityOwner(event)
+    if (!lastQuality || active) throw new Error('Open or finish a quality run first')
+    const source = lastQuality
+    const chosen = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'Digest-bound adjudications', extensions: ['json'] }]
+    })
+    if (chosen.canceled) return null
+    const summary = reviewQualityBundle(source, chosen.filePaths[0]!, qualityDirectory)
+    lastQuality = summary.path
+    return summary
+  })
   // A run still marked running belongs to a process that did not finish it.
   markInterruptedRuns(capturesDir())
   ipcMain.handle('dev:models', () => devModels())

@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import { atomicEvidenceJson, readEvidence } from './evidence-records'
+import { AgentRunSchema } from './evidence-schemas'
 import { join } from 'path'
 import { workspaceConfigDir } from './paths'
 import { suppressWatcherFor } from './workspace-watcher'
@@ -34,29 +35,15 @@ function lastRunPath(workspacePath: string): string {
 }
 
 export function saveAgentRun(workspacePath: string, run: AgentRunRecord): void {
-  try {
-    mkdirSync(runsDir(workspacePath), { recursive: true })
-    const path = lastRunPath(workspacePath)
-    const tmp = `${path}.tmp`
-    suppressWatcherFor(tmp)
-    suppressWatcherFor(path)
-    writeFileSync(tmp, JSON.stringify({ ...run, updatedAt: new Date().toISOString() }, null, 2))
-    renameSync(tmp, path)
-  } catch {
-    // persistence is best-effort
-  }
+  const path = lastRunPath(workspacePath)
+  suppressWatcherFor(path)
+  atomicEvidenceJson(path, { ...run, updatedAt: new Date().toISOString() })
 }
 
 export function loadLastAgentRun(workspacePath: string | null): AgentRunRecord | null {
   if (!workspacePath) return null
   const path = lastRunPath(workspacePath)
-  if (!existsSync(path)) return null
-  try {
-    const run = JSON.parse(readFileSync(path, 'utf8')) as AgentRunRecord
-    return run && typeof run.goal === 'string' && Array.isArray(run.actionLog) ? run : null
-  } catch {
-    return null
-  }
+  return readEvidence(path, (value) => AgentRunSchema.parse(value) as AgentRunRecord)
 }
 
 /** Last run if it stopped before finishing and has made progress. */

@@ -1,5 +1,6 @@
 import { createHash } from 'crypto'
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import { atomicEvidenceJson, readEvidence, saveEvidenceOwner } from './evidence-records'
+import { parsePersistedTask } from './evidence-schemas'
 import { join } from 'path'
 import type { TaskContract } from '../../../src/shared/task-contract'
 import { userDataRoot } from './paths'
@@ -11,25 +12,28 @@ function threadKey(root: string | null, thread: string): string {
 }
 export function previousTask(root: string | null, thread: string | null): TaskContract | undefined {
   if (!thread) return undefined
-  try {
-    const task = JSON.parse(
-      readFileSync(
-        join(userDataRoot(), 'task-contracts', threadKey(root, thread) + '.json'),
-        'utf8'
-      )
-    ) as TaskContract
-    return task.version === 2 && task.threadId === thread && task.scope.workspaceRoot === root
-      ? task
-      : undefined
-  } catch {
-    return undefined
-  }
+  const task = readEvidence(
+    join(userDataRoot(), 'task-contracts', threadKey(root, thread) + '.json'),
+    parsePersistedTask
+  )
+  return task && task.threadId === thread && task.scope.workspaceRoot === root ? task : undefined
 }
 export function saveTask(task: TaskContract): void {
   if (!task.threadId) return
-  const directory = join(userDataRoot(), 'task-contracts')
-  mkdirSync(directory, { recursive: true })
-  const path = join(directory, threadKey(task.scope.workspaceRoot, task.threadId) + '.json')
-  writeFileSync(path + '.tmp', JSON.stringify(task), 'utf8')
-  renameSync(path + '.tmp', path)
+  const checked = parsePersistedTask(task)
+  saveEvidenceOwner({
+    version: 1,
+    taskId: checked.taskId,
+    threadId: checked.threadId,
+    root: checked.scope.workspaceRoot,
+    terminal: checked.result?.terminal === 'complete'
+  })
+  atomicEvidenceJson(
+    join(
+      userDataRoot(),
+      'task-contracts',
+      threadKey(task.scope.workspaceRoot, task.threadId) + '.json'
+    ),
+    checked
+  )
 }

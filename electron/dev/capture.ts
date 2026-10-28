@@ -28,6 +28,8 @@ import { runAgentWithWorkspaceTools } from '../main/services/agent-runner'
 import { flushTaskLedger } from '../main/services/task-ledger'
 import { requestInvariantFindings } from '../main/services/agent/request-invariants'
 
+export const CAPTURE_OUTPUT_LIMIT_VERSION = 1
+
 export interface CaptureOptions {
   /** Scenario continuity comes from the actual prior diagnostic turn, never a production thread lookup. */
   threadId?: string
@@ -38,6 +40,7 @@ export interface CaptureOptions {
   live?: PreparedLiveModel
   timeoutMs?: number
   maxCalls?: number
+  maxOutputTokens?: number
   question?: Partial<DevQuestion>
   intentReplyMode?: IntentReplyMode
 }
@@ -175,7 +178,14 @@ export async function captureQuestion(
         result.inference!.error = 'Question reached its model-call limit.'
         throw new Error(result.inference!.error)
       }
-      if (live) request = { ...request, settings, model: live.model, getSecret: live.getSecret }
+      if (live)
+        request = {
+          ...request,
+          settings,
+          model: live.model,
+          getSecret: live.getSecret,
+          ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {})
+        }
       const call: DevCapture = {
         purpose: request.purpose,
         model: request.model,

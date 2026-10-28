@@ -46,9 +46,11 @@
     "test:dev-app": "node scripts/run-qualification.mjs dev-app",
     "prebuild:dev-app": "npm run test:dev-app",
     "check:recovery": "node scripts/run-native-recovery.cjs",
-    "check:quality": "node --test checks/quality/harness.test.mjs checks/quality/scenarios.test.mjs",
-    "check:scenarios": "node --test checks/quality/scenarios.test.mjs",
-    "quality:scenarios": "node scripts/run-scenarios.mjs"
+    "check:quality": "node --test checks/quality/harness.test.mjs",
+    "prepare:owned-command": "node scripts/build-owned-command.cjs",
+    "pretest": "npm run prepare:owned-command",
+    "pretest:agents": "npm run prepare:owned-command",
+    "pretest:dev-app": "npm run prepare:owned-command"
   },
   "dependencies": {
     "@parcel/watcher": "^2.6.0",
