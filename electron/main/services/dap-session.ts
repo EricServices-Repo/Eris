@@ -128,5 +128,17 @@ export class DapSession {
   async stop(terminateDebuggee: boolean) {
     if (!this.ended) await this.request('disconnect', { terminateDebuggee }, 1000).catch(() => {})
     this.fail('Debugger stopped')
+    if (this.child.exitCode === null && this.child.signalCode === null)
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          clearTimeout(timer)
+          resolve()
+        }
+        const timer = setTimeout(() => {
+          this.child.removeListener('exit', done)
+          resolve()
+        }, 1200)
+        this.child.once('exit', done)
+      })
   }
 }

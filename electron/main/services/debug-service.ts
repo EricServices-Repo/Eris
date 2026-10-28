@@ -280,7 +280,7 @@ function resolveProgram(workspacePath: string, program: string, activeFile: stri
   return resolveInWorkspace(workspacePath, program)
 }
 
-export async function startDebug(options: {
+async function startDebugImpl(options: {
   workspacePath: string
   config: LaunchConfig
   activeFile?: string | null
@@ -314,7 +314,7 @@ export async function startDebug(options: {
     if (config.request === 'launch' && !existsSync(program))
       throw new Error('Debug program does not exist')
     if (config.cwd) config.cwd = resolveInWorkspace(options.workspacePath, config.cwd)
-    await stopDebug()
+    await stopDebugImpl()
     const current = new DapDebugger(
       options.workspacePath,
       adapter.command,
@@ -338,7 +338,7 @@ export async function startDebug(options: {
       throw e
     }
   }
-  if (session || dap) await stopDebug()
+  if (session || dap) await stopDebugImpl()
   const port = 0
   const program = resolveProgram(
     options.workspacePath,
@@ -404,10 +404,12 @@ export async function startDebug(options: {
   nodeChild.once('error', (error) => {
     if (session === owned) {
       owned.state.reason = error.message
-      void stopDebug()
+      void stopDebugImpl()
     }
   })
   nodeChild.on('close', (code) => {
+    for (const callback of owned.pending.values()) callback({ error: 'Debuggee exited' })
+    owned.pending.clear()
     if (session !== owned) return
     if (session) {
       session.state.running = false
@@ -428,13 +430,13 @@ export async function startDebug(options: {
     await connectInspector(owned)
     appendOut('[debugger attached]\n')
   } catch (err) {
-    if (session === owned) await stopDebug()
+    if (session === owned) await stopDebugImpl()
     throw err
   }
   return getDebugState()
 }
 
-export async function stopDebug(): Promise<DebugSessionState> {
+async function stopDebugImpl(): Promise<DebugSessionState> {
   if (dap) {
     const previous = dap
     dap = null
@@ -537,4 +539,64 @@ export async function debugEvaluate(expression: string) {
 export async function debugExceptions(filters: string[]) {
   if (!dap) throw new Error('Exception controls require a configured DAP session')
   await dap.exceptions(filters)
+}
+
+let debugLifecycle: Promise<unknown> = Promise.resolve()
+let debugGeneration = 0
+/** Replacement starts are serialized; Stop aborts the active transport before waiting for the queue. */
+export function startDebug(
+  options: Parameters<typeof startDebugImpl>[0]
+): Promise<DebugSessionState> {
+  try {
+    const config = options.config
+    const node = config.type === 'node' && config.request === 'launch'
+    const adapter = (getUserSettings().intelligence?.debugAdapters ?? []).find(
+      (a) => a.enabled && config.type === `dap:${a.id}`
+    )
+    if (!node && (!adapter || !['launch', 'attach'].includes(config.request)))
+      throw new Error('Unsupported debug target; configure a supported adapter')
+    if (!isWorkspaceTrusted(options.workspacePath))
+      throw new Error('Trust the workspace before launching a debugger')
+    if (config.request === 'attach') {
+      if (
+        (config.host && !['localhost', '127.0.0.1'].includes(config.host)) ||
+        !Number.isInteger(config.port) ||
+        config.port! < 1 ||
+        config.port! > 65535
+      )
+        throw new Error('DAP attach supports an explicit loopback port only')
+    } else {
+      const program = resolveProgram(
+        options.workspacePath,
+        config.program,
+        options.activeFile ?? null
+      )
+      if (!existsSync(program)) throw new Error('Debug program does not exist')
+    }
+    if (config.cwd) resolveInWorkspace(options.workspacePath, config.cwd)
+    if (node && config.runtimeArgs?.some((arg) => /^--(?:inspect|debug)/i.test(arg)))
+      throw new Error('Inspector endpoint flags are adapter-owned')
+  } catch (error) {
+    return Promise.reject(error)
+  }
+  const generation = ++debugGeneration
+  const cleanup = stopDebugImpl()
+  const next = debugLifecycle
+    .catch(() => undefined)
+    .then(async () => {
+      await cleanup
+      if (generation !== debugGeneration) throw new Error('Debug launch superseded or cancelled')
+      const result = await startDebugImpl(options)
+      if (generation !== debugGeneration) throw new Error('Debug launch superseded or cancelled')
+      return result
+    })
+  debugLifecycle = next.catch(() => undefined)
+  return next
+}
+export async function stopDebug(): Promise<DebugSessionState> {
+  ++debugGeneration
+  const previous = debugLifecycle
+  await stopDebugImpl()
+  await previous.catch(() => undefined)
+  return getDebugState()
 }

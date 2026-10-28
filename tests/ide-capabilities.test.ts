@@ -1,3 +1,4 @@
+import * as settingsService from '../electron/main/services/settings'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -17,7 +18,8 @@ import {
   listLaunchConfigs,
   saveLaunchConfigs,
   startDebug,
-  stopDebug
+  stopDebug,
+  getDebugState
 } from '../electron/main/services/debug-service'
 const edits = vi.hoisted(() => ({ response: [] as unknown }))
 vi.mock('../electron/main/services/language-servers', () => ({
@@ -36,7 +38,8 @@ function root() {
 }
 afterEach(() => {
   vi.useRealTimers()
-  for (const p of roots.splice(0)) rmSync(p, { recursive: true, force: true })
+  for (const p of roots.splice(0))
+    rmSync(p, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
 })
 const replacement = [
   { range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } }, newText: 'new' }
@@ -158,8 +161,65 @@ describe('debug adapter fixtures', () => {
           }
         })
       ).toMatchObject({ running: true })
+      await expect(
+        startDebug({
+          workspacePath: workspace,
+          config: {
+            id: 'unsupported',
+            name: 'unsupported',
+            type: 'python',
+            request: 'attach',
+            program: ''
+          }
+        })
+      ).rejects.toThrow('Unsupported')
+      expect(getDebugState()).toMatchObject({ running: true, configId: 'node' })
     } finally {
       await stopDebug()
+    }
+  }, 20000)
+  it('serializes replacement launches and cancels an initializing adapter without stopping the replacement', async () => {
+    const workspace = root()
+    writeFileSync(join(workspace, 'target.py'), 'print(1)')
+    setWorkspaceTrusted(workspace, true)
+    const mock = vi.spyOn(settingsService, 'getUserSettings').mockReturnValue({
+      intelligence: {
+        debugAdapters: [
+          { id: 'slow', enabled: true, command: process.execPath, args: [fixture, 'silent'] },
+          { id: 'ready', enabled: true, command: process.execPath, args: [fixture] }
+        ]
+      }
+    })
+    const slow = startDebug({
+      workspacePath: workspace,
+      config: {
+        id: 'slow',
+        name: 'slow',
+        type: 'dap:slow',
+        request: 'launch',
+        program: 'target.py'
+      }
+    })
+    const rejected = expect(slow).rejects.toThrow()
+    try {
+      await vi.waitFor(() =>
+        expect(getDebugState()).toMatchObject({ configId: 'slow', running: true })
+      )
+      const ready = await startDebug({
+        workspacePath: workspace,
+        config: {
+          id: 'ready',
+          name: 'ready',
+          type: 'dap:ready',
+          request: 'launch',
+          program: 'target.py'
+        }
+      })
+      await rejected
+      expect(ready).toMatchObject({ running: true, configId: 'ready' })
+    } finally {
+      await stopDebug()
+      mock.mockRestore()
     }
   }, 20000)
   it('parses split frames and refuses reverse process requests', async () => {
