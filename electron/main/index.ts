@@ -1,3 +1,4 @@
+import { stopDebug } from './services/debug-service'
 import { foregroundTasks } from './services/foreground-tasks'
 import { flushChatJobs } from './services/chat-job-controller'
 import { mkdirSync, writeFileSync } from 'fs'
@@ -170,6 +171,7 @@ app.on('before-quit', (event) => {
   setDiagnosticsPaused(false)
   stopWorkspaceWatcher()
   disposePtySession()
+  void stopDebug().catch(() => undefined)
   void disposeLanguageServers().catch(() => undefined)
   void disposeMcpRuntime().catch(() => undefined)
   void Promise.all([disposeRuntime(), disposeWorkspaceWorkers()])

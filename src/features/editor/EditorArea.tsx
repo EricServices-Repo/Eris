@@ -1,3 +1,4 @@
+import { LanguageTools } from './LanguageTools'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { monaco } from 'react-monaco-editor'
 import type { editor as MonacoEditorNS } from 'monaco-editor'
@@ -515,6 +516,19 @@ export function EditorArea({
           {completeHint && <span className="editor-ai-hint">{completeHint}</span>}
         </div>
       </div>
+      {active && (
+        <LanguageTools
+          key={active.path}
+          path={active.path}
+          text={active.content}
+          position={() => {
+            const p = editorRef.current?.getPosition()
+            return { line: (p?.lineNumber ?? 1) - 1, character: (p?.column ?? 1) - 1 }
+          }}
+          freeze={(locked) => editorRef.current?.updateOptions({ readOnly: locked })}
+          onApplied={(content) => onChange(active.path, content)}
+        />
+      )}
       {showPatchBar && pendingPatch && (
         <div className="inline-patch-bar">
           <strong>Agent change</strong>

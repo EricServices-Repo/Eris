@@ -1,3 +1,4 @@
+import { stopDebug } from '../services/debug-service'
 import { getResolvedSettings } from '../services/settings'
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from '../services/workspace-watcher'
 import { disposeMcpRuntime, syncMcpRuntime } from '../services/mcp-runtime'
@@ -10,6 +11,7 @@ export { getSecret, storeSecret } from '../services/credentials'
 
 export const refreshIntelligence = () => {
   disposePtySession()
+  void stopDebug().catch(() => undefined)
   void disposeLanguageServers()
   if (!appState.currentWorkspace) {
     stopWorkspaceWatcher()

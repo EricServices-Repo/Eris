@@ -1,3 +1,5 @@
+import { languageCapabilities } from '../../../src/shared/ide-capabilities'
+import { tsLanguageCapabilities, tsEditRequest } from './ts-lsp'
 import { pathToFileURL } from 'url'
 import { createHash } from 'crypto'
 import { LspSession } from './lsp-session'
@@ -487,4 +489,33 @@ function formatMarkup(contents: unknown): string {
 
 export function listConfiguredLanguageServers(): LanguageServerConfig[] {
   return servers
+}
+
+export async function negotiatedLanguageCapabilities(root: string, filePath: string) {
+  if (isTsLike('', filePath)) return tsLanguageCapabilities(root, filePath)
+  const spec = matchServer('', filePath)
+  const ready = spec && (await ensureExtra(root, spec))
+  const current = spec ? sessionFor(root, spec) : null
+  return languageCapabilities(
+    spec?.id ?? 'unconfigured',
+    current?.server.capabilities,
+    !!ready && !!current?.server.active && openDocs.has(filePath)
+  )
+}
+export async function negotiatedEditRequest(
+  root: string,
+  filePath: string,
+  kind: 'formatting' | 'rename' | 'codeActions',
+  params: Record<string, unknown>
+) {
+  const capabilities = await negotiatedLanguageCapabilities(root, filePath)
+  if (!capabilities[kind]) throw new Error(`Language adapter does not advertise ${kind}`)
+  const method = kind === 'codeActions' ? 'textDocument/codeAction' : `textDocument/${kind}`
+  const payload = { ...params, textDocument: { uri: uriFor(filePath) } }
+  if (isTsLike('', filePath)) return tsEditRequest(root, filePath, method, payload)
+  const spec = matchServer('', filePath),
+    current = spec ? sessionFor(root, spec) : null
+  if (!current) throw new Error('Language adapter unavailable')
+  const version = openDocs.get(filePath)!.version
+  return { response: await requestDocument(current, filePath, method, payload), version }
 }

@@ -8,6 +8,8 @@ Reviewed 2026-10-24 against commit `6038e16dcdf58044bd5245294931005f3094e804`, p
 
 This file describes the current implementation. [RECOMMENDATIONS.md](RECOMMENDATIONS.md) is the current prioritized implementation backlog. Historical AG, FR, MR, and ARCH review identifiers are evidence references, not an assertion that those findings remain open.
 
+REC-36: Language edits use advertised server capabilities, current-document preview tokens and the journaled mutation service with stale-buffer/disk checks. Debugging separates Node inspector from optional user-configured stdio DAP adapters with bounded lifecycles and explicit unsupported actions. See [capabilities, configuration and acceptance](changes/REC-36-capability-negotiation.md).
+
 ## System and process boundaries
 
 ```mermaid

@@ -1,3 +1,4 @@
+import { languageCapabilities } from '../../../src/shared/ide-capabilities'
 import { pathToFileURL } from 'url'
 import { logError, logInfo } from './logger'
 import { languageServerFilePath, typescriptLanguageServerLaunch } from './lsp-paths'
@@ -192,7 +193,7 @@ function languageIdFor(language: string, filePath: string): string {
   if (filePath.endsWith('.js') || filePath.endsWith('.mjs') || filePath.endsWith('.cjs')) {
     return 'javascript'
   }
-  return lang || 'typescript'
+  return lang || 'plaintext'
 }
 
 export function isTsLike(language: string, filePath: string): boolean {
@@ -439,4 +440,25 @@ function formatMarkup(contents: unknown): string {
     }
   }
   return ''
+}
+
+export async function tsLanguageCapabilities(root: string, filePath: string) {
+  const ready = await ensureServer(root)
+  return languageCapabilities(
+    'typescript-language-server',
+    session?.capabilities,
+    !!ready && !!session?.active && openDocs.has(filePath)
+  )
+}
+export async function tsEditRequest(
+  root: string,
+  filePath: string,
+  method: string,
+  params: unknown
+) {
+  if (!(await ensureServer(root)) || !session?.active || !openDocs.has(filePath))
+    throw new Error('Language server/document unavailable')
+  const captured = session
+  const version = openDocs.get(filePath)!.version
+  return { response: await requestDocument(captured, filePath, method, params), version }
 }

@@ -1,10 +1,12 @@
+import type { IdeApi } from '@/shared/api'
+import { NODE_DEBUG_CAPABILITIES } from '@/shared/ide-capabilities'
 import { useCallback, useEffect, useState } from 'react'
 
 type LaunchConfig = {
   id: string
   name: string
-  type: 'node'
-  request: 'launch'
+  type: string
+  request: string
   program: string
   args?: string[]
   cwd?: string
@@ -38,27 +40,28 @@ interface Props {
   onOpenPath: (path: string, line?: number) => void
 }
 
-export function DebugPanel({
-  open,
-  workspacePath,
-  activeFile,
-  onClose,
-  onOpenPath
-}: Props) {
+export function DebugPanel({ open, workspacePath, activeFile, onClose, onOpenPath }: Props) {
   const [configs, setConfigs] = useState<LaunchConfig[]>([])
   const [selectedId, setSelectedId] = useState<string>('')
   const [bps, setBps] = useState<Breakpoint[]>([])
   const [state, setState] = useState<DebugState | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [caps, setCaps] = useState<Awaited<ReturnType<IdeApi['debugCapabilities']>> | null>(null)
+  const [variables, setVariables] = useState<Array<{ name: string; value: string }>>([])
+  const [watch, setWatch] = useState('')
+  const [watchResult, setWatchResult] = useState('')
+  const [filters, setFilters] = useState<string[]>([])
 
   const refresh = useCallback(async () => {
     if (!workspacePath) return
-    const [cfgs, breakpoints, st] = await Promise.all([
+    const [cfgs, breakpoints, st, capabilities] = await Promise.all([
       window.ide.debugListConfigs(),
       window.ide.debugListBreakpoints(),
-      window.ide.debugState()
+      window.ide.debugState(),
+      window.ide.debugCapabilities()
     ])
+    setCaps(capabilities)
     setConfigs(cfgs)
     setBps(breakpoints)
     setState(st)
@@ -66,7 +69,7 @@ export function DebugPanel({
   }, [workspacePath, selectedId])
 
   useEffect(() => {
-    if (open) void refresh()
+    if (open) void refresh().catch((e) => setError(String(e)))
   }, [open, refresh])
 
   useEffect(() => {
@@ -78,6 +81,16 @@ export function DebugPanel({
 
   const selected = configs.find((c) => c.id === selectedId) || configs[0]
 
+  const supported =
+    (selected?.type === 'node' && selected.request === 'launch') ||
+    (['launch', 'attach'].includes(selected?.request ?? '') &&
+      !!caps?.configured.some((a) => a.adapter === selected?.type))
+  const dapActive = !!caps?.active && state?.running
+  const exceptionFilters = (
+    Array.isArray(caps?.active?.capabilities.exceptionBreakpointFilters)
+      ? caps?.active?.capabilities.exceptionBreakpointFilters
+      : []
+  ) as Array<{ filter: string; label: string }>
   return (
     <div className="git-panel">
       <div className="terminal-bar">
@@ -95,6 +108,13 @@ export function DebugPanel({
           </button>
         </div>
       </div>
+      <p className="subtitle">{NODE_DEBUG_CAPABILITIES.reason}</p>
+      {selected && !supported && (
+        <p role="status">
+          Unsupported target: {selected.type}/{selected.request}. Choose a supported Node launch
+          configuration.
+        </p>
+      )}
       {error && <div className="git-error">{error}</div>}
       <div className="debug-toolbar">
         <select
@@ -111,7 +131,7 @@ export function DebugPanel({
         <button
           type="button"
           className="btn btn-primary"
-          disabled={busy || !selected || state?.running}
+          disabled={busy || !selected || !supported || state?.running}
           onClick={() =>
             void (async () => {
               if (!selected) return
@@ -155,6 +175,69 @@ export function DebugPanel({
           Step
         </button>
       </div>
+      <section aria-label="Debugger adapter capabilities">
+        <p className="subtitle">
+          Optional DAP adapters must be installed and explicitly configured in user settings. Stdio
+          only; attach uses loopback, and reverse process/network requests are refused.
+        </p>
+        <button
+          type="button"
+          className="btn"
+          disabled={!dapActive || !state?.paused}
+          onClick={() =>
+            void window.ide
+              .debugVariables()
+              .then(setVariables)
+              .catch((e) => setError(String(e)))
+          }
+        >
+          Inspect variables
+        </button>
+        {variables.map((v, i) => (
+          <p key={i}>
+            <code>{v.name}</code>: {v.value}
+          </p>
+        ))}
+        <input
+          aria-label="Watch expression"
+          value={watch}
+          maxLength={2000}
+          onChange={(e) => setWatch(e.target.value)}
+        />
+        <button
+          type="button"
+          className="btn"
+          title="Evaluation may execute code in the paused debuggee"
+          disabled={!dapActive || !state?.paused || !watch.trim()}
+          onClick={() =>
+            void window.ide
+              .debugEvaluate(watch)
+              .then(setWatchResult)
+              .catch((e) => setError(String(e)))
+          }
+        >
+          Evaluate watch
+        </button>
+        {watchResult && <pre>{watchResult}</pre>}
+        {exceptionFilters.map((f) => (
+          <label key={f.filter}>
+            <input
+              type="checkbox"
+              checked={filters.includes(f.filter)}
+              onChange={(e) => {
+                const next = e.target.checked
+                  ? [...filters, f.filter]
+                  : filters.filter((x) => x !== f.filter)
+                void window.ide
+                  .debugExceptions(next)
+                  .then(() => setFilters(next))
+                  .catch((error) => setError(String(error)))
+              }}
+            />
+            {f.label || f.filter}
+          </label>
+        ))}
+      </section>
       <div className="git-body">
         <div className="git-files">
           <div className="explorer-section-label">Breakpoints</div>
@@ -194,8 +277,8 @@ export function DebugPanel({
         <pre className="git-diff">{state?.output || 'Debug output will appear here.'}</pre>
       </div>
       <div className="debug-hint">
-        Configs live in <code>.eris/launch.json</code>. Program can be{' '}
-        <code>${'{file}'}</code> for the active editor file.
+        Configs live in <code>.eris/launch.json</code>. Program can be <code>${'{file}'}</code> for
+        the active editor file.
       </div>
     </div>
   )

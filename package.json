@@ -29,6 +29,7 @@
     "test:agents": "node scripts/run-qualification.mjs agents",
     "test:smoke:chat": "vitest run tests/chat-agent-smoke.test.ts tests/agent-question-corpus.test.ts --reporter=verbose --testTimeout=30000",
     "test:watch": "vitest",
+    "check:capabilities": "vite build --config checks/vite.config.ts && electron scripts/check-capabilities.cjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

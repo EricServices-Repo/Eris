@@ -1,3 +1,5 @@
+import type { LanguageCapabilities } from './ide-capabilities'
+import type { LanguageEditInput, LanguageEditPreview } from './language-edit'
 import type { LocalImageStatus, LocalImageProgress } from './image-generation'
 import type {
   GeneratedImageAsset,
@@ -926,6 +928,9 @@ export interface IdeApi {
     ok: boolean
     locations: Array<{ path: string; line: number; name: string; kind: string }>
   }>
+  lspCapabilities: (path: string) => Promise<LanguageCapabilities>
+  lspPreviewEdit: (input: LanguageEditInput) => Promise<LanguageEditPreview[]>
+  lspApplyEdit: (id: string) => Promise<{ path: string; content: string }>
   lspDidOpen: (payload: {
     path: string
     language: string
@@ -971,42 +976,56 @@ export interface IdeApi {
     detail: string
     skipped?: boolean
   }>
+  debugCapabilities: () => Promise<{
+    node: typeof import('./ide-capabilities').NODE_DEBUG_CAPABILITIES
+    configured: Array<{ adapter: string; launch: boolean; attach: boolean }>
+    active: { adapter: string; capabilities: Record<string, unknown> } | null
+  }>
+  debugVariables: () => Promise<Array<{ name: string; value: string }>>
+  debugEvaluate: (expression: string) => Promise<string>
+  debugExceptions: (filters: string[]) => Promise<void>
   debugListConfigs: () => Promise<
     Array<{
       id: string
       name: string
-      type: 'node'
-      request: 'launch'
+      type: string
+      request: string
       program: string
       args?: string[]
       cwd?: string
       env?: Record<string, string>
       runtimeArgs?: string[]
+      port?: number
+      host?: string
     }>
   >
   debugSaveConfigs: (
     configs: Array<{
       id: string
       name: string
-      type: 'node'
-      request: 'launch'
+      type: string
+      request: string
       program: string
       args?: string[]
       cwd?: string
       env?: Record<string, string>
       runtimeArgs?: string[]
+      port?: number
+      host?: string
     }>
   ) => Promise<
     Array<{
       id: string
       name: string
-      type: 'node'
-      request: 'launch'
+      type: string
+      request: string
       program: string
       args?: string[]
       cwd?: string
       env?: Record<string, string>
       runtimeArgs?: string[]
+      port?: number
+      host?: string
     }>
   >
   debugListBreakpoints: () => Promise<

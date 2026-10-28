@@ -143,7 +143,19 @@ export const SettingsSchema = z.object({
     /** Model name served by a connection, e.g. nomic-embed-text on Ollama */
     embeddingModel: z.string(),
     /** Extra language servers; TypeScript/JavaScript is built in */
-    languageServers: z.array(LanguageServerSchema)
+    languageServers: z.array(LanguageServerSchema),
+    /** Executable DAP adapters are accepted only from the user settings layer. */
+    debugAdapters: z
+      .array(
+        z.object({
+          id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
+          command: z.string().min(1).max(4096),
+          args: z.array(z.string().max(4096)).max(64),
+          enabled: z.boolean()
+        })
+      )
+      .max(16)
+      .optional()
   }),
   evals: z.object({
     /** Prefer the model with the best eval success rate for a turn's intent */
