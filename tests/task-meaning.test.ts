@@ -79,6 +79,18 @@ describe('semantic outcome check', () => {
     expect(verdict.verdict).toBe('supported')
     expect(model.requests[0]?.tools).toBeUndefined()
   })
+  it('retains uncertainty when a long answer was reviewed through obligation excerpts', async () => {
+    model.response = '{"verdict":"supported","reason":"Selected excerpt looks complete"}'
+    const verdict = await reviewTaskOutcome({
+      ...options(),
+      task: task(),
+      answer: 'prefix '.repeat(20000) + ' booking dates are validated at the end',
+      evidence: ['Inspected booking.php']
+    })
+    expect(verdict.verdict).toBe('unresolved')
+    expect(verdict.coverage?.truncated).toBe(true)
+    expect(verdict.coverage?.obligations.length).toBeGreaterThan(0)
+  })
   it('marks an invalid evaluator response unresolved rather than treating it as success', async () => {
     model.response = '{"verdict":"done","reason":"Looks good"}'
     expect(

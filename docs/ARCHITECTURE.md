@@ -88,6 +88,8 @@ sequenceDiagram
 
 Current safeguards include explicit effect constraints, component/verification obligations, generic-versus-project evidence requirements, deterministic invalid-tool repair, bounded recovery instructions, and evidence-aware completion. Recent tests cover protocol leakage, continuation of unfinished code, scope pronouns, recommendation accounting, and unsupported execution claims.
 
+See [REC-38 deliverable/evidence contract](changes/REC-38-deliverable-evidence.md) for task-aware quoted content, original-output audit and bounded per-obligation review.
+
 ### Foreground lifecycle boundary
 
 [chat-submission.ts](../electron/main/services/chat-submission.ts) validates versioned, bounded submissions, sender/thread/workspace associations and attachment paths before admission. Renderer-supplied legacy plans do not grant authority.
