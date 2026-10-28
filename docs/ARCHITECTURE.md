@@ -1,5 +1,7 @@
 # Eris architecture
 
+REC-35: Renderer dialogs share stacked focus/Tab/Escape ownership and restore background inert state. Review mnemonic keys are region-scoped; chat announces stable task states, not token deltas. See [keyboard contracts and acceptance matrix](changes/REC-35-keyboard-acceptance.md).
+
 ## REC-34 · Chat virtualization and performance qualification
 
 HistoricalMessages retains a bounded selection range and one focused row, and searches loaded message data independently of mounted DOM. The scripted Electron/index fixtures measure UI and retrieval separately from model load and gate hardware-matched budgets. See [implementation, measurements and limits](changes/REC-34-chat-performance.md).

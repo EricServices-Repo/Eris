@@ -7424,3 +7424,15 @@ button:disabled {
 .chat-history-search { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border); font-size: 12px; }
 .chat-history-search label { display: flex; align-items: center; gap: 6px; }
 .chat-history-search input { max-width: 160px; min-width: 70px; border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
+
+/* Keyboard focus and system accessibility preferences apply across IDE surfaces. */
+:focus-visible { outline: 2px solid var(--accent, #86b7ff); outline-offset: 3px; }
+.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
+@media (forced-colors: active) {
+  button, input, textarea, select, .modal, .approval-card, .diff-review { border: 1px solid CanvasText; }
+  :focus-visible { outline: 2px solid Highlight; }
+  button:disabled { color: GrayText; }
+}

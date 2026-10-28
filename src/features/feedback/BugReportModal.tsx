@@ -1,3 +1,4 @@
+import { useDialogFocus } from '@/hooks/useDialogFocus'
 import { BugReportForm } from './BugReportForm'
 
 interface Props {
@@ -6,12 +7,18 @@ interface Props {
 }
 
 export function BugReportModal({ open, onClose }: Props) {
+  const dialogRef = useDialogFocus(onClose)
   if (!open) return null
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
         className="modal bug-report-modal"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Send feedback"
+        tabIndex={-1}
         style={{
           width: 'min(560px, 94vw)',
           height: 'auto',

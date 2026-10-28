@@ -1,3 +1,4 @@
+import { useDialogFocus } from '@/hooks/useDialogFocus'
 import { useState } from 'react'
 import type { ChatMessage } from '@/shared/settings-schema'
 import { BugReportForm } from '@/features/feedback/BugReportForm'
@@ -8,7 +9,10 @@ function clip(text: string, max = 12_000): string {
   return `${trimmed.slice(0, max)}\n\n[truncated]`
 }
 
-function feedbackDraft(question: string, message: ChatMessage): { title: string; description: string } {
+function feedbackDraft(
+  question: string,
+  message: ChatMessage
+): { title: string; description: string } {
   const asked = clip(question || '(no question text)')
   const titleSource = asked.replace(/\s+/g, ' ')
   const title = `Bad answer: ${titleSource.slice(0, 120)}`
@@ -39,13 +43,8 @@ function feedbackDraft(question: string, message: ChatMessage): { title: string;
   return { title, description }
 }
 
-export function AnswerFeedback({
-  message,
-  question
-}: {
-  message: ChatMessage
-  question: string
-}) {
+export function AnswerFeedback({ message, question }: { message: ChatMessage; question: string }) {
+  const dialogRef = useDialogFocus(() => setOpen(false))
   const [vote, setVote] = useState<'up' | 'down' | null>(null)
   const [open, setOpen] = useState(false)
   const draft = feedbackDraft(question, message)
@@ -82,7 +81,11 @@ export function AnswerFeedback({
         <div className="modal-backdrop" onClick={() => setOpen(false)}>
           <div
             className="modal bug-report-modal"
+            ref={dialogRef}
             role="dialog"
+            aria-modal="true"
+            aria-label="Send feedback"
+            tabIndex={-1}
             aria-labelledby="answer-feedback-title"
             style={{
               width: 'min(560px, 94vw)',

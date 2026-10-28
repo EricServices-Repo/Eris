@@ -20,6 +20,6 @@
   "include": [
     "src/**/*",
     "checks/client-renderer.tsx",
-    "checks/performance-renderer.tsx"
+    "checks/performance-renderer.tsx", "checks/accessibility-renderer.tsx"
   ]
 }

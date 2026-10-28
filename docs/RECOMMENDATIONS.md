@@ -1,5 +1,7 @@
 # Eris: next fixes
 
+REC-35 / #80 source fixes and scripted Electron acceptance are implemented for modal focus, scoped review keys, stable announcements and accessibility preferences. Packaged VoiceOver/NVDA acceptance remains explicitly unverified; see [matrix](changes/REC-35-keyboard-acceptance.md).
+
 ## REC-34 · P2 · Chat and workspace performance budgets
 
 Implemented the measured selection/focus failures and loaded-history search, retained the existing virtualizer, and added reproducible hardware-scoped budgets with raw reports. Local M4 fixture acceptance passes; Windows performance, whole-app memory and live cancellation remain unqualified. See [REC-34 evidence](changes/REC-34-chat-performance.md).

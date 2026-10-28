@@ -77,6 +77,9 @@ jobs:
       - name: Desktop client smoke (scripted, no provider calls)
         run: npm run check:client
 
+      - name: Keyboard and focus acceptance (scripted Electron)
+        run: npm run check:accessibility
+
       - name: Scripted chat and workspace performance budgets
         run: npm run check:performance
 
