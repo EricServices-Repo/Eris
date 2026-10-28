@@ -31,6 +31,12 @@ import { requestInvariantFindings } from '../main/services/agent/request-invaria
 export const CAPTURE_OUTPUT_LIMIT_VERSION = 1
 
 export interface CaptureOptions {
+  /** Scenario continuity comes from the actual prior diagnostic turn, never a production thread lookup. */
+  threadId?: string
+  priorTask?: TaskContract | null
+  /** Controlled test injection before an agent provider invocation, recorded as injected evidence. */
+  fault?: 'provider-error' | 'cancelled'
+
   live?: PreparedLiveModel
   timeoutMs?: number
   maxCalls?: number
@@ -148,7 +154,9 @@ export async function captureQuestion(
     model: live?.model ?? SIMULATED_MODEL_REF,
     mode,
     history: options.question?.history ?? [],
-    threadId: options.question?.history?.length ? `eris-dev-${requestId}` : null,
+    threadId:
+      options.threadId ?? (options.question?.history?.length ? `eris-dev-${requestId}` : null),
+    ...(options.priorTask !== undefined ? { priorTask: options.priorTask } : {}),
     skillIds: [],
     getSecret: live?.getSecret ?? (() => null),
     signal: controller.signal,
@@ -194,6 +202,15 @@ export async function captureQuestion(
       result.requests.push(call)
       if (live) {
         if (request.purpose === 'agent') captured = true
+        if (request.purpose === 'agent' && options.fault) {
+          const message = `Injected ${options.fault} at agent transport before provider invocation`
+          result.events.push(message)
+          call.error = message
+          result.inference!.error = message
+          if (options.fault === 'cancelled') stop('user-cancelled')
+          else cause ??= 'provider-error'
+          throw new Error(message)
+        }
         result.inference!.calls++
         const callStarted = Date.now()
         call.response = ''
