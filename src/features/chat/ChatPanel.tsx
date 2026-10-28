@@ -1,3 +1,4 @@
+import { useRequestFocus } from '@/hooks/useDialogFocus'
 import { ChatTaskTimeline } from './TaskTimeline'
 import { ImageMessage } from './ImageMessage'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
@@ -317,19 +318,15 @@ function InlineAgentQuestion({
   onReply: (reply: string | null) => void
 }) {
   const [draft, setDraft] = useState('')
-  const inputRef = useRef<HTMLInputElement>(null)
+  const questionRef = useRequestFocus(question.questionId)
   const timeoutMs = Math.max(1000, question.timeoutMs || 5 * 60_000)
-
-  useEffect(() => {
-    inputRef.current?.focus()
-  }, [question.questionId])
 
   const submit = (text: string | null) => {
     onReply(text)
   }
 
   return (
-    <div className="question-card" role="form" aria-label="Agent question">
+    <div ref={questionRef} className="question-card" role="form" aria-label="Agent question">
       <div className="question-timeout-track" aria-hidden>
         <div className="question-timeout-bar" style={{ animationDuration: `${timeoutMs}ms` }} />
       </div>
@@ -352,7 +349,8 @@ function InlineAgentQuestion({
         }}
       >
         <input
-          ref={inputRef}
+          data-initial-focus
+          aria-label="Reply to agent question"
           className="question-reply-input"
           value={draft}
           placeholder="Type a reply…"
@@ -464,6 +462,7 @@ export function ChatPanel({
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRootRef = useRef<HTMLElement | null>(null)
   const attachMenuRef = useRef<HTMLDivElement>(null)
+  const approvalRef = useRequestFocus(pendingApproval?.approvalId)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const stickToBottomRef = useRef(true)
   const scrollRafRef = useRef(0)
@@ -754,8 +753,24 @@ export function ChatPanel({
         </button>
       </div>
 
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {pendingApproval
+          ? 'Permission required. Review the command and choose Allow or Deny.'
+          : pendingQuestion
+            ? 'Agent needs a reply. The question and answer controls follow.'
+            : chatError
+              ? 'Chat failed. Error details and actions follow.'
+              : streaming
+                ? 'Agent is working. Stop is available.'
+                : 'Chat is ready.'}
+      </span>
       {pendingApproval && onApprovalDecision && (
-        <div className="approval-card" role="alertdialog">
+        <div
+          ref={approvalRef}
+          className="approval-card"
+          role="region"
+          aria-label="Permission required"
+        >
           <div className="approval-title">
             {pendingApproval.kind === 'mcp'
               ? `Agent wants to call MCP tool ${pendingApproval.toolName || ''}`
@@ -785,6 +800,7 @@ export function ChatPanel({
             )}
             <button
               className="btn"
+              data-initial-focus
               onClick={() => onApprovalDecision(pendingApproval.approvalId, 'deny')}
             >
               Deny
@@ -949,7 +965,7 @@ export function ChatPanel({
                 </div>
               )}
               {chatError && !streaming && (
-                <div className="msg error">
+                <div className="msg error" role="alert">
                   <span className="role">error</span>
                   {chatError}
                   <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
@@ -1063,6 +1079,8 @@ export function ChatPanel({
             <div className="composer-bar">
               <textarea
                 ref={textareaRef}
+                data-chat-composer
+                aria-label="Chat message"
                 value={draft}
                 lang="en"
                 spellCheck

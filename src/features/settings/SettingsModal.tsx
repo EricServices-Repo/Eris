@@ -1,3 +1,4 @@
+import { useDialogFocus } from '@/hooks/useDialogFocus'
 /* eslint-disable react-hooks/exhaustive-deps -- effects below fire on open/category transitions;
    the loaders are plain per-render functions and must not retrigger them. */
 import { useEffect, useMemo, useState } from 'react'
@@ -65,6 +66,7 @@ export function SettingsModal({
   onChanged,
   onRerunSetup
 }: Props) {
+  const dialogRef = useDialogFocus(onClose)
   const [category, setCategory] = useState<Category>('composer')
   const [layered, setLayered] = useState<LayeredSettings | null>(null)
   const [scope, setScope] = useState<SettingsScope>('user')
@@ -301,6 +303,11 @@ export function SettingsModal({
       <div className="modal-backdrop" onClick={onClose}>
         <div
           className="modal settings-modal-loading"
+          ref={dialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Settings"
+          tabIndex={-1}
           style={{ gridTemplateColumns: '1fr', height: 'auto', minHeight: 160 }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -315,7 +322,15 @@ export function SettingsModal({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal settings-modal"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-nav">
           <div className="modal-nav-brand">SETTINGS</div>
           {SETTINGS_NAV.map((group) => (

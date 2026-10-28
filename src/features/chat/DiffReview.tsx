@@ -1,3 +1,4 @@
+import { ownsReviewShortcut } from '@/components/focus-ownership'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { MonacoDiffEditor } from 'react-monaco-editor'
 import type { editor as MonacoEditorNS } from 'monaco-editor'
@@ -81,6 +82,8 @@ export function DiffReview({
   onCreatePr,
   gitBusy = false
 }: Props) {
+  const reviewRef = useRef<HTMLDivElement>(null)
+  const hasDiffs = diffs.length > 0
   const pending = diffs.filter((d) => d.status === 'pending')
   const kept = diffs.filter((d) => d.status === 'kept')
   const [openId, setOpenId] = useState<string | null>(pending[0]?.id ?? diffs[0]?.id ?? null)
@@ -161,10 +164,7 @@ export function DiffReview({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement | null)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) {
-        return
-      }
+      if (!reviewRef.current || !ownsReviewShortcut(e, reviewRef.current)) return
       if (e.key === 'n' && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault()
         diffEditorRef.current?.goToDiff('next')
@@ -187,9 +187,10 @@ export function DiffReview({
         }
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
+    const review = reviewRef.current
+    review?.addEventListener('keydown', onKey)
+    return () => review?.removeEventListener('keydown', onKey)
+  }, [hasDiffs])
 
   if (diffs.length === 0) return null
 
@@ -197,10 +198,19 @@ export function DiffReview({
   const showDiffEditor = active?.op === 'write'
 
   return (
-    <div className={`diff-review ${expanded ? 'is-expanded' : 'is-compact'}`}>
+    <div
+      ref={reviewRef}
+      tabIndex={0}
+      role="region"
+      aria-label="Review changes"
+      data-keyboard-owner="review"
+      aria-keyshortcuts="n p j k"
+      className={`diff-review ${expanded ? 'is-expanded' : 'is-compact'}`}
+    >
       <div className="diff-review-head">
         <strong>Review changes</strong>
-        <span className="diff-count">
+        <span className="subtitle">Focus review: N/P hunks · J/K files · Tab actions</span>
+        <span className="diff-count" role="status" aria-live="polite" aria-atomic="true">
           <span className="diff-count-pending">{pending.length} pending</span>
           {' · '}
           <span className="diff-count-kept">{kept.length} kept</span>

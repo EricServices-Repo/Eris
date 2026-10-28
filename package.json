@@ -51,7 +51,8 @@
     "pretest": "npm run prepare:owned-command",
     "pretest:agents": "npm run prepare:owned-command",
     "pretest:dev-app": "npm run prepare:owned-command",
-    "check:performance": "vite build --config checks/vite.config.ts && vite build --config checks/vite.performance-node.config.ts && electron scripts/check-performance.cjs --gate"
+    "check:performance": "vite build --config checks/vite.config.ts && vite build --config checks/vite.performance-node.config.ts && electron scripts/check-performance.cjs --gate",
+    "check:accessibility": "vite build --config checks/vite.config.ts && electron scripts/check-accessibility.cjs"
   },
   "dependencies": {
     "@parcel/watcher": "^2.6.0",

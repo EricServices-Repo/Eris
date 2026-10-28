@@ -1,3 +1,4 @@
+import { useDialogFocus } from '@/hooks/useDialogFocus'
 import { useEffect, useMemo, useState } from 'react'
 
 export interface CommandItem {
@@ -14,6 +15,7 @@ interface Props {
 }
 
 export function CommandPalette({ open, commands, onClose }: Props) {
+  const dialogRef = useDialogFocus(onClose)
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)
 
@@ -43,10 +45,18 @@ export function CommandPalette({ open, commands, onClose }: Props) {
 
   return (
     <div className="palette" onClick={onClose}>
-      <div className="palette-box" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="palette-box"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Commands"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <input
-          autoFocus
           placeholder="Type a command…"
+          aria-label="Search commands"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {

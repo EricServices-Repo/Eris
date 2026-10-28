@@ -1,3 +1,4 @@
+import { LoadingSettingsDialog } from '@/components/LoadingSettingsDialog'
 import {
   lazy,
   Suspense,
@@ -536,6 +537,26 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (
+        e.defaultPrevented ||
+        e.isComposing ||
+        (e.target as Element)?.closest?.('[aria-modal="true"]')
+      )
+        return
+      if (e.ctrlKey && e.altKey && !e.metaKey && !e.shiftKey) {
+        const selectors: Record<string, string> = {
+          '1': '[data-chat-composer]',
+          '2': '.diff-review',
+          '3': '.monaco-editor textarea',
+          '4': '.agents-inbox'
+        }
+        const target = selectors[e.key] && document.querySelector<HTMLElement>(selectors[e.key])
+        if (target) {
+          e.preventDefault()
+          target.focus()
+          return
+        }
+      }
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'p') {
         e.preventDefault()
         setPaletteOpen(true)
@@ -564,6 +585,17 @@ export default function App() {
         run: () => setWorkspaceModal('link')
       },
       { id: 'settings', label: 'Open Settings', shortcut: '⌘,', run: () => openSettings() },
+      ...[
+        ['chat', 'Chat composer', '[data-chat-composer]'],
+        ['review', 'Review changes', '.diff-review'],
+        ['editor', 'Editor', '.monaco-editor textarea'],
+        ['inbox', 'Agents inbox', '.agents-inbox']
+      ].map(([id, label, selector], i) => ({
+        id: `focus-${id}`,
+        label: `Focus ${label}`,
+        shortcut: `Ctrl+Alt+${i + 1}`,
+        run: () => document.querySelector<HTMLElement>(selector)?.focus()
+      })),
       {
         id: 'report-bug',
         label: 'Send Feedback…',
@@ -1499,16 +1531,7 @@ export default function App() {
       {settingsMounted && (
         <Suspense
           fallback={
-            settingsOpen ? (
-              <div className="modal-backdrop">
-                <div className="modal settings-modal-loading">
-                  <div className="modal-content">
-                    <h2>Settings</h2>
-                    <p className="subtitle">Loading…</p>
-                  </div>
-                </div>
-              </div>
-            ) : null
+            settingsOpen ? <LoadingSettingsDialog onClose={() => setSettingsOpen(false)} /> : null
           }
         >
           <SettingsModal

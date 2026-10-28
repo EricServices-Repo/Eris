@@ -1,3 +1,4 @@
+import { useDialogFocus } from '@/hooks/useDialogFocus'
 import { useEffect, useState } from 'react'
 
 interface Props {
@@ -8,6 +9,7 @@ interface Props {
 }
 
 export function CreateWorkspaceModal({ open, mode, onClose, onSubmit }: Props) {
+  const dialogRef = useDialogFocus(onClose)
   const [name, setName] = useState('')
 
   useEffect(() => {
@@ -27,6 +29,11 @@ export function CreateWorkspaceModal({ open, mode, onClose, onSubmit }: Props) {
     <div className="modal-backdrop" onClick={onClose}>
       <div
         className="modal"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Workspace"
+        tabIndex={-1}
         style={{
           width: 'min(420px, 92vw)',
           height: 'auto',
@@ -38,11 +45,14 @@ export function CreateWorkspaceModal({ open, mode, onClose, onSubmit }: Props) {
         <div style={{ padding: '20px 22px' }}>
           <h2 style={{ margin: '0 0 6px', fontSize: 18 }}>{title}</h2>
           <p style={{ margin: '0 0 16px', color: 'var(--text-muted)', lineHeight: 1.45 }}>{hint}</p>
-          <label style={{ display: 'block', marginBottom: 6, fontWeight: 500 }}>
+          <label
+            htmlFor="workspace-name"
+            style={{ display: 'block', marginBottom: 6, fontWeight: 500 }}
+          >
             Workspace name{mode === 'link' ? ' (optional)' : ''}
           </label>
           <input
-            autoFocus
+            id="workspace-name"
             value={name}
             placeholder={mode === 'create' ? 'My Project' : 'Uses folder name if empty'}
             onChange={(e) => setName(e.target.value)}

@@ -113,7 +113,7 @@ export function AgentsInboxPanel({ onOpenPath, onOpenChat }: Props) {
   }
 
   return (
-    <div className="agents-inbox">
+    <div className="agents-inbox" tabIndex={-1} role="region" aria-label="Agents inbox">
       <header className="agents-inbox-header">
         <div>
           <h2>Agents</h2>
@@ -154,7 +154,11 @@ export function AgentsInboxPanel({ onOpenPath, onOpenChat }: Props) {
         </button>
       </div>
 
-      {error && <div className="agents-inbox-error">{error}</div>}
+      {error && (
+        <div className="agents-inbox-error" role="alert">
+          {error}
+        </div>
+      )}
 
       {active.length === 0 ? (
         <div className="agents-inbox-empty">
@@ -194,7 +198,11 @@ export function AgentsInboxPanel({ onOpenPath, onOpenChat }: Props) {
                       : `Integrated into ${job.destinationBranch ?? 'destination'}${job.integration.commit ? ' · ' + job.integration.commit.slice(0, 8) : ''}`}
                   </div>
                 )}
-                {job.error && <div className="agents-inbox-error">{job.error}</div>}
+                {job.error && (
+                  <div className="agents-inbox-error" role="alert">
+                    {job.error}
+                  </div>
+                )}
                 {job.prUrl && (
                   <a className="agents-inbox-pr" href={job.prUrl} target="_blank" rel="noreferrer">
                     Open pull request

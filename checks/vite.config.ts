@@ -12,7 +12,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: resolve('checks/index.html'),
-        performance: resolve('checks/performance.html')
+        performance: resolve('checks/performance.html'),
+        accessibility: resolve('checks/accessibility.html')
       }
     }
   }

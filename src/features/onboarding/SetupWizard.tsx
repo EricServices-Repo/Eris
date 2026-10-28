@@ -1,3 +1,4 @@
+import { useDialogFocus } from '@/hooks/useDialogFocus'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { BuiltinModelStatus } from '@/shared/settings-schema'
 import logo from '@/assets/logo.png'
@@ -38,6 +39,7 @@ export function SetupWizard({
   onOpenModelsSettings,
   onStartFirstWin
 }: Props) {
+  const dialogRef = useDialogFocus(onFinished)
   const [step, setStep] = useState<StepId>('welcome')
   const [builtins, setBuiltins] = useState<BuiltinModelStatus[]>([])
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
@@ -137,7 +139,14 @@ export function SetupWizard({
   if (!open) return null
 
   return (
-    <div className="setup-wizard-backdrop" role="dialog" aria-modal="true" aria-label="Setup">
+    <div
+      className="setup-wizard-backdrop"
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Setup"
+      tabIndex={-1}
+    >
       <div className="setup-wizard">
         <div className="setup-wizard-glow" aria-hidden />
         <header className="setup-wizard-header">
@@ -152,9 +161,7 @@ export function SetupWizard({
             {STEPS.map((s, i) => (
               <li
                 key={s.id}
-                className={
-                  s.id === step ? 'active' : i < stepIndex ? 'done' : undefined
-                }
+                className={s.id === step ? 'active' : i < stepIndex ? 'done' : undefined}
               >
                 <span className="setup-step-index">{i + 1}</span>
                 <span className="setup-step-label">{s.label}</span>
@@ -185,8 +192,8 @@ export function SetupWizard({
               <h2>Install built-in models</h2>
               <p>
                 Composer Lite is the smaller local option for everyday chat. Composer Full is a
-                larger model for stronger multi-file agent work. You can also use a connected API
-                or Ollama model; cloud providers receive the prompts and files you send them.
+                larger model for stronger multi-file agent work. You can also use a connected API or
+                Ollama model; cloud providers receive the prompts and files you send them.
               </p>
               <div className="setup-model-cards">
                 {[lite, full].filter(Boolean).map((b) => {
@@ -206,7 +213,9 @@ export function SetupWizard({
                     >
                       <div className="setup-model-card-top">
                         <strong>{model.displayName}</strong>
-                        <span className="badge">{model.tier === 'lite' ? 'recommended' : 'optional'}</span>
+                        <span className="badge">
+                          {model.tier === 'lite' ? 'recommended' : 'optional'}
+                        </span>
                       </div>
                       <p>{model.description || `${model.family} · ${model.parameters}`}</p>
                       <div className="setup-model-meta">
@@ -268,9 +277,7 @@ export function SetupWizard({
                   </span>
                 </div>
               )}
-              {!lite && (
-                <p className="model-conn-hint">Loading model catalog…</p>
-              )}
+              {!lite && <p className="model-conn-hint">Loading model catalog…</p>}
             </section>
           )}
 
@@ -333,7 +340,10 @@ export function SetupWizard({
                   <span>New agent chat</span>
                 </div>
                 <div>
-                  <kbd>{modKey}{shiftKey}P</kbd>
+                  <kbd>
+                    {modKey}
+                    {shiftKey}P
+                  </kbd>
                   <span>Command palette</span>
                 </div>
                 <div>
@@ -354,7 +364,9 @@ export function SetupWizard({
                 </li>
                 <li>
                   Composer Full:{' '}
-                  {full?.ready ? 'ready for agent work' : 'optional — install later in Settings → Models'}
+                  {full?.ready
+                    ? 'ready for agent work'
+                    : 'optional — install later in Settings → Models'}
                 </li>
                 <li>Workspace: {hasWorkspace ? 'open' : 'open one when you start a project'}</li>
               </ul>
@@ -407,7 +419,9 @@ export function SetupWizard({
               </button>
             ) : (
               <>
-                {onStartFirstWin && hasWorkspace && (hasReadyModel || lite?.ready || full?.ready) ? (
+                {onStartFirstWin &&
+                hasWorkspace &&
+                (hasReadyModel || lite?.ready || full?.ready) ? (
                   <button
                     type="button"
                     className="btn"
