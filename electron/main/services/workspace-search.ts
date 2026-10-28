@@ -3,7 +3,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
 import { join, relative, sep } from 'path'
 import { resolveInWorkspace, toWorkspaceRelative } from './workspace-fs'
 import { buildWorkspaceProcessEnv } from './workspace-env'
-import { cosine, hashEmbed } from './embeddings'
+import { cosine, hashEmbed } from './hash-embeddings'
+import { HASH_EMBEDDING_SPACE, sameEmbeddingSpace } from '../../../src/shared/embedding-space'
 import { ensureCodeIndexAsync, loadCodeIndex } from './code-index'
 import { DEFAULT_SKIP_DIRS, shouldSkipDir, shouldSkipWorkspacePath } from './workspace-ignore'
 
@@ -276,7 +277,18 @@ function yieldEventLoop(): Promise<void> {
   return new Promise((r) => setImmediate(r))
 }
 
-type RetrieveResult = { ok: boolean; detail: string; paths: string[] }
+export type RetrieveResult = {
+  ok: boolean
+  detail: string
+  paths: string[]
+  provenance?: {
+    method: 'lexical-path-symbol-hash'
+    embeddingSpace: typeof HASH_EMBEDDING_SPACE
+    indexSpaceCompatible: boolean
+    remoteTransfer: false
+    fallback?: string
+  }
+}
 
 const retrieveCache = new Map<string, { at: number; result: RetrieveResult }>()
 const RETRIEVE_CACHE_MS = 60_000
@@ -395,6 +407,20 @@ export async function retrieveContextAsync(
   }
 
   const index = await ensureCodeIndexAsync(workspacePath).catch(() => loadCodeIndex(workspacePath))
+  const compatible = sameEmbeddingSpace(index?.embeddingSpace, HASH_EMBEDDING_SPACE)
+  const provenance: NonNullable<RetrieveResult['provenance']> = {
+    method: 'lexical-path-symbol-hash',
+    embeddingSpace: HASH_EMBEDDING_SPACE,
+    indexSpaceCompatible: compatible,
+    remoteTransfer: false,
+    ...(!compatible
+      ? {
+          fallback: index
+            ? 'Incompatible or legacy vectors excluded; rebuilding locally'
+            : 'Cold index: lexical search while local index builds'
+        }
+      : {})
+  }
   const queryVec = hashEmbed(normalizedQuery)
   const scored = new Map<string, number>()
 
@@ -410,7 +436,13 @@ export async function retrieveContextAsync(
         if (lowerPath.split('/').pop()?.includes(t)) score += 3
       }
       const embedding = index.embeddings?.[rel]
-      if (queryVec && embedding) score += cosine(queryVec, embedding) * 18
+      if (
+        compatible &&
+        embedding &&
+        embedding.length === HASH_EMBEDDING_SPACE.dimensions &&
+        embedding.every(Number.isFinite)
+      )
+        score += cosine(queryVec, embedding) * 18
       if (score > 0) scored.set(rel, (scored.get(rel) ?? 0) + score)
     }
     // Symbol name hits are strong signals for “where is X?”
@@ -494,8 +526,9 @@ export async function retrieveContextAsync(
     .join('\n\n')
   const result: RetrieveResult = {
     ok: true,
-    detail: top.length ? detail : 'No relevant files found',
-    paths: top.map((t) => t.path)
+    detail: `[Retrieval: local lexical/path/symbol + hash128; no learned semantic model; no remote transfer${provenance.fallback ? '; ' + provenance.fallback : ''}]\n${top.length ? detail : 'No relevant files found'}`,
+    paths: top.map((t) => t.path),
+    provenance
   }
   if (index && Date.now() - index.updatedAt < 5 * 60_000) {
     retrieveCache.set(cacheKey, { at: Date.now(), result })

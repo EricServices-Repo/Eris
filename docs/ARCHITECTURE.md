@@ -1,5 +1,7 @@
 # Eris architecture
 
+REC-29: Local index vectors have an explicit versioned hash space; incompatible vectors trigger rebuild and lexical fallback. External embedding utility returns provenance with opt-in transfer policy and bounded cancellation. Workspace ranking remains local; see [contract and calibration](changes/REC-29-retrieval-provenance.md).
+
 ## REC-34 · Chat virtualization and performance qualification
 
 HistoricalMessages retains a bounded selection range and one focused row, and searches loaded message data independently of mounted DOM. The scripted Electron/index fixtures measure UI and retrieval separately from model load and gate hardware-matched budgets. See [implementation, measurements and limits](changes/REC-34-chat-performance.md).

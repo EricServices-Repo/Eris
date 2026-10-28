@@ -1,5 +1,6 @@
 import { readdirSync, lstatSync, readFileSync, mkdirSync, writeFileSync, renameSync } from 'fs'
 import { dirname, join, relative, resolve, sep } from 'path'
+import { HASH_EMBEDDING_SPACE, sameEmbeddingSpace } from '../../../src/shared/embedding-space'
 import { hashEmbed } from './hash-embeddings'
 import { parseSymbolsAndRefs } from './symbol-parse'
 import {
@@ -17,6 +18,7 @@ export async function scanWorkspaceIndex(root: string, indexPath: string): Promi
     files: [],
     symbols: [],
     refs: [],
+    embeddingSpace: HASH_EMBEDDING_SPACE,
     embeddings: {},
     fileMeta: {}
   }
@@ -99,6 +101,8 @@ export async function patchWorkspaceIndex(
   } catch {
     return scanWorkspaceIndex(root, indexPath)
   }
+  if (!sameEmbeddingSpace(record.embeddingSpace, HASH_EMBEDDING_SPACE))
+    return scanWorkspaceIndex(root, indexPath)
   if (record.workspacePath !== root) return scanWorkspaceIndex(root, indexPath)
   const paths = [...new Set(changes.map((path) => path.replace(/\\/g, '/').replace(/^\.\//, '')))]
   if (paths.some((path) => record.files.some((file) => file.startsWith(`${path}/`))))

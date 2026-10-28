@@ -234,7 +234,7 @@ export function settingFields(agentIds: string[]): SettingField[] {
     {
       cat: 'editor',
       label: 'Embedding provider',
-      hint: 'auto uses a connection model when set, otherwise local hashed vectors',
+      hint: 'External embedding utility only. Workspace retrieval stays local: path/symbol/lexical + hash128; not a learned semantic model.',
       path: ['intelligence', 'embeddingProvider'],
       type: 'select',
       options: ['auto', 'local', 'connection']
@@ -242,9 +242,17 @@ export function settingFields(agentIds: string[]): SettingField[] {
     {
       cat: 'editor',
       label: 'Embedding model',
-      hint: 'Optional connection model (e.g. nomic-embed-text). Empty = local vectors.',
+      hint: 'Optional external utility model. Changing it does not change the workspace index or enable remote transfer.',
       path: ['intelligence', 'embeddingModel'],
       type: 'string'
+    },
+    {
+      cat: 'editor',
+      label: 'Remote embedding transfer policy',
+      hint: 'Disabled by default. Queries-only may send query text; workspace-content additionally permits source text. Current workspace indexing never transfers files.',
+      path: ['intelligence', 'remoteEmbeddingPolicy'],
+      type: 'select',
+      options: ['disabled', 'queries-only', 'workspace-content']
     },
     {
       cat: 'editor',

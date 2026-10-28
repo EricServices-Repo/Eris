@@ -120,7 +120,8 @@
       "tests/chat-admission.test.ts",
       "tests/feedback-relay.test.ts",
       "tests/worktree-integration.test.ts",
-      "tests/inference-governor.test.ts"
+      "tests/inference-governor.test.ts",
+      "tests/retrieval-provenance.test.ts"
     ]
   }
 }

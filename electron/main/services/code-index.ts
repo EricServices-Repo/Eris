@@ -3,7 +3,12 @@ import { join, relative, sep } from 'path'
 import { workspaceConfigDir } from './paths'
 import { logInfo } from './logger'
 import { suppressWatcherFor } from './workspace-watcher'
-import { hashEmbed } from './embeddings'
+import { hashEmbed } from './hash-embeddings'
+import {
+  HASH_EMBEDDING_SPACE,
+  sameEmbeddingSpace,
+  type EmbeddingSpace
+} from '../../../src/shared/embedding-space'
 import { workspaceRequest } from './workspace-worker-client'
 import { shouldSkipDir, shouldSkipWorkspacePath } from './workspace-ignore'
 
@@ -28,6 +33,7 @@ export type IndexRecord = {
   symbols: SymbolHit[]
   files: string[]
   refs?: SymbolRef[]
+  embeddingSpace?: EmbeddingSpace
   embeddings?: Record<string, number[]>
   /** Per-file mtimes for incremental patching. */
   fileMeta?: Record<string, FileMeta>
@@ -153,6 +159,7 @@ export function buildCodeIndex(workspacePath: string): IndexRecord {
     symbols,
     files,
     refs,
+    embeddingSpace: HASH_EMBEDDING_SPACE,
     embeddings,
     fileMeta
   })
@@ -199,7 +206,11 @@ export async function patchCodeIndexFiles(
 }
 
 export function loadCodeIndex(workspacePath: string): IndexRecord | null {
-  if (memoryIndex?.workspacePath === workspacePath) return memoryIndex
+  if (memoryIndex?.workspacePath === workspacePath) {
+    if (sameEmbeddingSpace(memoryIndex.embeddingSpace, HASH_EMBEDDING_SPACE)) return memoryIndex
+    scheduleBackgroundRebuild(workspacePath)
+    return { ...memoryIndex, embeddings: undefined }
+  }
   void ensureCodeIndexAsync(workspacePath).catch(() => undefined)
   return null
 }
@@ -281,6 +292,10 @@ export async function ensureCodeIndexAsync(workspacePath: string): Promise<Index
     } else existing = null
   }
   if (existing) {
+    if (!sameEmbeddingSpace(existing.embeddingSpace, HASH_EMBEDDING_SPACE)) {
+      scheduleBackgroundRebuild(workspacePath)
+      return { ...existing, embeddings: undefined }
+    }
     if (Date.now() - existing.updatedAt >= FRESH_MS) scheduleBackgroundRebuild(workspacePath)
     return existing
   }

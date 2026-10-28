@@ -1,5 +1,7 @@
 # Eris: next fixes
 
+REC-29 / #74 implemented vector-space invalidation, honest local-retrieval labels, explicit external transfer policy and bounded embedding utility. Small held-out calibration exposes the remaining semantic gap; learned workspace indexing is not enabled. See [evidence and remaining scope](changes/REC-29-retrieval-provenance.md).
+
 ## REC-34 · P2 · Chat and workspace performance budgets
 
 Implemented the measured selection/focus failures and loaded-history search, retained the existing virtualizer, and added reproducible hardware-scoped budgets with raw reports. Local M4 fixture acceptance passes; Windows performance, whole-app memory and live cancellation remain unqualified. See [REC-34 evidence](changes/REC-34-chat-performance.md).
