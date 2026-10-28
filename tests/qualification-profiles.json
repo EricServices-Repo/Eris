@@ -83,6 +83,8 @@
   "general": {
     "description": "General app behavior outside the qualification gates; runs in npm test and CI.",
     "files": [
+      "tests/language-negotiation.test.ts",
+      "tests/ide-capabilities.test.ts",
       "tests/auto-update-version.test.ts",
       "tests/background-job-detail.test.ts",
       "tests/bug-report-sanitize.test.ts",

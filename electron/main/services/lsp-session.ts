@@ -11,6 +11,7 @@ import {
 export class LspSession {
   readonly proc: ChildProcessWithoutNullStreams
   readonly connection: MessageConnection
+  capabilities: unknown = {}
   private alive = true
   private connectionDisposed = false
   private pending = new Set<(error: Error) => void>()
@@ -107,7 +108,11 @@ export class LspSession {
       response.then(
         (value) => {
           if (!this.active) finish(new Error('Stale language server response'))
-          else finish(undefined, value)
+          else {
+            if (method === 'initialize')
+              this.capabilities = (value as { capabilities?: unknown })?.capabilities ?? {}
+            finish(undefined, value)
+          }
         },
         (error) => finish(error instanceof Error ? error : new Error(String(error)))
       )

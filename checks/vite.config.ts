@@ -11,6 +11,7 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       input: {
+        capabilities: resolve('checks/capabilities.html'),
         index: resolve('checks/index.html'),
         performance: resolve('checks/performance.html'),
         accessibility: resolve('checks/accessibility.html')

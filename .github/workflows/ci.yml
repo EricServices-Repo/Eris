@@ -71,6 +71,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Language edit preview acceptance (scripted Electron)
+        run: npm run check:capabilities
+
       - name: Test
         run: npm test
 

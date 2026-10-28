@@ -25,6 +25,8 @@ Do not reopen these as missing features without a new regression:
 
 Evidence: [task-contract.ts](../src/shared/task-contract.ts), [task-intake.ts](../electron/main/services/task-intake.ts), [tool-gateway.ts](../electron/main/services/agent/tool-gateway.ts), [task-scheduler.ts](../electron/main/services/agent/task-scheduler.ts), [live-review regressions](../tests/eris-dev-live-review.test.ts), [snapshot regression](../tests/eris-dev-followup.test.ts), and [GitHub workflow](GITHUB-WORKFLOW.md).
 
+REC-36 / #81 implements explicit language/debug descriptors, previewed single-document language edits, optional stdio DAP launch/loopback attach and bounded variables/watch/exception controls. Multi-file/resource edits and remote/reverse process requests remain refused. Actual installed adapters and packaged acceptance remain unverified; see [contract](changes/REC-36-capability-negotiation.md).
+
 ## Implementation and remaining acceptance
 
 ### REC-01 · P0 · Remove shared feedback credentials from distributable apps
