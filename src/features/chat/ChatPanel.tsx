@@ -1,3 +1,4 @@
+import { ChatTaskTimeline } from './TaskTimeline'
 import { ImageMessage } from './ImageMessage'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type {
@@ -905,6 +906,7 @@ export function ChatPanel({
                 </button>
               )}
               {historyError && <div role="alert">{historyError}</div>}
+              <ChatTaskTimeline threadId={activeThread?.id ?? null} />
               <HistoricalMessages
                 messages={activeThread?.messages ?? EMPTY_MESSAGES}
                 onOpenPath={onOpenPath}

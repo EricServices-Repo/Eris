@@ -1,3 +1,4 @@
+import { reportChatActivityFor } from './chat-activity'
 import { randomUUID } from 'crypto'
 import type { WebContents } from 'electron'
 import type { AppSettings } from '../../../src/shared/settings-schema'
@@ -85,7 +86,12 @@ export function commandNeedsApproval(
 
 const pending = new Map<
   string,
-  { requestId: string; done: (decision: CommandApprovalDecision) => void }
+  {
+    requestId: string
+    sender: WebContents
+    request?: CommandApprovalRequest
+    done: (decision: CommandApprovalDecision) => void
+  }
 >()
 
 /** Ask the renderer to approve a command; resolves deny on abort. */
@@ -102,6 +108,10 @@ export function requestCommandApproval(
     const done = (decision: CommandApprovalDecision) => {
       if (!pending.has(approvalId)) return
       pending.delete(approvalId)
+      reportChatActivityFor(requestId, 'integrating', {
+        source: 'interaction',
+        reason: 'Approval response received'
+      })
       signal?.removeEventListener('abort', onAbort)
       if (!sender.isDestroyed()) {
         sender.send('chat:approval-resolved', { requestId, approvalId, decision })
@@ -109,7 +119,7 @@ export function requestCommandApproval(
       resolve(decision)
     }
     const onAbort = () => done('deny')
-    pending.set(approvalId, { requestId, done })
+    pending.set(approvalId, { requestId, sender, done })
     if (signal?.aborted) {
       done('deny')
       return
@@ -126,6 +136,11 @@ export function requestCommandApproval(
       command,
       ...metadata
     }
+    pending.get(approvalId)!.request = req
+    reportChatActivityFor(requestId, 'approval', {
+      source: 'interaction',
+      reason: 'Command or tool approval required'
+    })
     sender.send('chat:approval-request', req)
   })
 }
@@ -145,4 +160,13 @@ export function denyAllPendingApprovals(requestId?: string): void {
   for (const entry of [...pending.values()]) {
     if (requestId === undefined || entry.requestId === requestId) entry.done('deny')
   }
+}
+
+export function pendingCommandApprovals(
+  requestId: string,
+  sender: WebContents
+): CommandApprovalRequest[] {
+  return [...pending.values()]
+    .filter((e) => e.requestId === requestId && e.sender === sender && e.request)
+    .map((e) => structuredClone(e.request!))
 }

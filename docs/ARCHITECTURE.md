@@ -92,6 +92,8 @@ sequenceDiagram
 
 Current safeguards include explicit effect constraints, component/verification obligations, generic-versus-project evidence requirements, deterministic invalid-tool repair, bounded recovery instructions, and evidence-aware completion. Recent tests cover protocol leakage, continuation of unfinished code, scope pronouns, recommendation accounting, and unsupported execution claims.
 
+See [REC-38 deliverable/evidence contract](changes/REC-38-deliverable-evidence.md) for task-aware quoted content, original-output audit and bounded per-obligation review.
+
 ### Foreground lifecycle boundary
 
 [chat-submission.ts](../electron/main/services/chat-submission.ts) validates versioned, bounded submissions, sender/thread/workspace associations and attachment paths before admission. Renderer-supplied legacy plans do not grant authority.
@@ -99,6 +101,8 @@ Current safeguards include explicit effect constraints, component/verification o
 [foreground-tasks.ts](../electron/main/services/foreground-tasks.ts) queues foreground execution FIFO with task-owned controllers and cancellation ownership. Global app-state fields describe only the currently executing task; a new request does not abort it.
 
 [chat-job-controller.ts](../electron/main/services/chat-job-controller.ts) syncs admission snapshots before acknowledgement, compares canonical request digests, indexes recovery by workspace/thread and surfaces storage failure. It retains bounded answer/event snapshots (240 events), 200 terminal tasks in memory and up to 500/30 days on disk. [chat-events.ts](../electron/main/services/chat-events.ts) owns event publication/replay and terminal transitions. Recovery is bounded snapshot replay, not an unlimited event journal. The renderer restores unfinished/unsaved terminal results and ignores duplicate terminal delivery.
+
+The [REC-37 timeline contract](changes/REC-37-task-timeline.md) defines typed queue/load/wait phases, owner-targeted Stop, independent timing spans and live interaction restoration.
 
 ## Agent to tool
 
@@ -135,6 +139,8 @@ The current native runtime preserves structured history in one-shot and session 
 
 [inference-governor.ts](../electron/main/services/inference-governor.ts), GPU/VRAM fitting, and the local image-model service coordinate resource admission. Scripted worker tests establish control-path behavior, not recovery under actual GPU OOM, native faults, or desktop memory pressure.
 
+Device/host reservation ownership, fairness and measurement limits are defined in [REC-32 admission](changes/REC-32-inference-admission.md). GPU discovery does not establish pooled VRAM.
+
 ## Workspace, editor and persistence
 
 Workspace context, retrieval, code indexing, watching, Git, language servers, terminals, and inline assistance are separate services under `electron/main/services/`. The editor's current content lives in its document model; code operating on stored tab text must use a fresh document snapshot.
@@ -142,6 +148,8 @@ Workspace context, retrieval, code indexing, watching, Git, language servers, te
 Persistence uses several stores rather than a single task database: chats/chat database, settings, task store, task ledger, chat-job snapshots, checkpoints, sessions, agent runs, and background jobs. [task-ledger.ts](../electron/main/services/task-ledger.ts) writes metadata and hashes as JSONL; content snapshots remain in checkpoint storage. A metadata ledger is not a complete transactional replay journal.
 
 [credential-store.ts](../electron/main/services/credential-store.ts) owns explicit local-file or OS-vault policy. Local reads do not invoke the vault. Synced atomic migration preserves unreadable legacy data; selecting the vault is an explicit user action that may prompt. Credential files use POSIX permissions or explicit Windows current-user ACLs. Renderer APIs return presence, never stored values, and filesystem IPC denies credential files. Eris-Dev uses the same abstraction. Real Windows ACL and vault-unlock behavior remain platform acceptance checks.
+
+Image runtime publication and repair follow [REC-33](changes/REC-33-image-runtime-repair.md): stable staged environments, atomic active pointers, version provenance and resumable model staging.
 
 ## Cloud execution
 

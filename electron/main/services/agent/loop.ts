@@ -638,7 +638,7 @@ async function* runAgentInternal(options: {
     } finally {
       if (askSessionKey) releaseLocalChatSession(askSessionKey)
     }
-    const draft = stripToolBlocks(full) || full
+    const draft = full // Finalization owns task-aware presentation; retain the original model draft.
     const final = draft
       ? await finalizeAnswer(draft, {
           settings: options.settings,
@@ -647,6 +647,8 @@ async function* runAgentInternal(options: {
           signal: options.signal,
           getSecret: options.getSecret,
           goal: originalUserGoal,
+          task,
+          onPresentation: (audit) => appendTaskEvent(task.taskId, 'answer-presentation', audit),
           messages: askMessages
         })
       : { text: '', incomplete: false, repaired: [] }
@@ -1665,6 +1667,8 @@ async function* runAgentInternal(options: {
       signal: options.signal,
       getSecret: options.getSecret,
       goal: originalUserGoal,
+      task,
+      onPresentation: (audit) => appendTaskEvent(task.taskId, 'answer-presentation', audit),
       messages: workerMessages,
       evidence: sourceReads.map((read) => `${read.path}:\n${read.text}`).join('\n\n')
     })

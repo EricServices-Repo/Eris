@@ -75,6 +75,10 @@ Evidence: [task-contract.ts](../src/shared/task-contract.ts), [task-intake.ts](.
 
 **Where:** [chat-job-controller.ts](../electron/main/services/chat-job-controller.ts), [chat-stream.ts](../electron/main/ipc/chat-stream.ts), [app-state.ts](../electron/main/app-state.ts), [useChatSession.ts](../src/hooks/useChatSession.ts), and [task-ledger.ts](../electron/main/services/task-ledger.ts). Start after the submission contract in REC-04 is fixed.
 
+### REC-37 · P2 · Task timeline and queue ownership
+
+Implemented typed persisted phases, explicit queue/Stop ownership, separate model-preparation/dispatch timing, concise activity and owner-bound live interaction restoration. [Contract and validation limits](changes/REC-37-task-timeline.md).
+
 ### REC-06 · P1 · Replace background status text with typed execution/integration state
 
 **Status:** Implemented typed waits, recorded integration branch/base, write-lock plus clean-branch/baseline checks, and shared-parent versus integrated receipts displayed in the inbox. Parent completion waits for children and fails if required child results are incomplete. Rewording display text no longer determines scheduling/blackboard blocking. Temporary Git-repository regressions verify branch/baseline/dirty-tree refusal and a successful integration receipt. Branch/baseline changes require review/rebase instead of merging into a different checkout.
@@ -125,6 +129,10 @@ Evidence: [task-contract.ts](../src/shared/task-contract.ts), [task-intake.ts](.
 
 **Where:** [Eris-Dev capture](../electron/dev/capture.ts), [eris-dev types](../src/shared/eris-dev.ts), [deliverable checks](../src/shared/deliverable-checks.ts), [debug-runs](../electron/main/services/debug-runs/evaluation.ts), topic rubrics, and eval fixtures. Preserve historical captures unchanged.
 
+### REC-38 · P2 · Task-aware deliverable/evidence review
+
+Implemented trusted-context protocol/example classification, raw/presentation auditing, assembled supported-language parsing and per-obligation bounded evidence. Omitted input stays unresolved. [Implementation and validation limits](changes/REC-38-deliverable-evidence.md).
+
 ### REC-11 · P2 · Give credentials an explicit storage policy
 
 **Status:** Implemented an explicit local/vault credential store with atomic synced migration, preserved unreadable legacy data, opt-in OS encryption, restrictive file permissions and explicit Windows current-user ACLs. Settings explain the vault prompt and migration/cleanup state. Renderer APIs expose presence only; filesystem IPC blocks credential files. Eris-Dev reads the same store and snapshots omit credentials/legacy ciphertext. Synthetic migration, deletion, unavailable-vault and unreadable-store tests pass. Real Windows ACL/vault and macOS unlock-prompt acceptance remain platform checks.
@@ -145,6 +153,10 @@ Evidence: [task-contract.ts](../src/shared/task-contract.ts), [task-intake.ts](.
 
 **Where:** [chat-runtime.ts](../electron/main/services/chat-runtime.ts), [model-protocol.ts](../electron/main/services/model-protocol.ts), [model-transport.ts](../electron/main/services/model-transport.ts), context compiler and native worker. Preserve the existing one-shot/session parity regressions.
 
+### REC-32 · P2 · Device-aware inference admission
+
+Implemented per-device estimated reservations, owner/wait telemetry, bounded waits and an aged FIFO barrier; parent-owned indexing admission and explicit GPU selection avoid fictional pooled capacity. [Validation and hardware limits](changes/REC-32-inference-admission.md).
+
 ### REC-13 · P2 · Validate native failure and installer recovery on real platforms
 
 **Status:** Process/platform validation tooling implemented. The actual Electron utility-process probe passed loading/generation exits, five cancellations and successful fresh-worker recovery on macOS arm64/Electron 44.9.3. Packaged macOS renderer/preload smoke passed; both CI platforms run these gates. Probe reports explicitly exclude GPU/model-load/memory-pressure and signed installation/update certification. Those real-hardware/certificate checks remain open.
@@ -154,6 +166,10 @@ Evidence: [task-contract.ts](../src/shared/task-contract.ts), [task-intake.ts](.
 **Acceptance:** The renderer remains responsive, pending callers terminate, stale sessions/resources are released, and a subsequent task can run. Signed updates verify and install; unsigned macOS builds clearly take the existing manual-install route. Findings include OS, architecture, model, backend, and effective limits.
 
 **Where:** [llama-worker-channel.ts](../electron/main/services/llama-worker-channel.ts), [builtin-model.ts](../electron/main/services/builtin-model.ts), [inference-governor.ts](../electron/main/services/inference-governor.ts), [auto-update.ts](../electron/main/services/auto-update.ts), release workflow and [SIGNING.md](SIGNING.md).
+
+### REC-33 · P2 · Repairable image runtime setup
+
+Implemented staged verified environments, atomic activation, version provenance/repair constraints, explicit CPU/CUDA choice, disk checks, actionable states and resumable download staging. [Recovery contract and platform limits](changes/REC-33-image-runtime-repair.md).
 
 ### REC-14 · P2 · Extract runtime responsibilities after lifecycle tests exist
 

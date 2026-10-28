@@ -8,7 +8,7 @@ import type {
   DevTerminationCause,
   IntentReplyMode
 } from '../../src/shared/eris-dev'
-import { assessDeliverable } from '../../src/shared/deliverable-checks'
+import { assessDeliverable, deliverableContext } from '../../src/shared/deliverable-checks'
 import type { AppSettings } from '../../src/shared/settings-schema'
 import type { IntentResolution, TaskContract } from '../../src/shared/task-contract'
 import { interpretationOf } from '../../src/shared/task-contract'
@@ -31,6 +31,12 @@ import { requestInvariantFindings } from '../main/services/agent/request-invaria
 export const CAPTURE_OUTPUT_LIMIT_VERSION = 1
 
 export interface CaptureOptions {
+  /** Scenario continuity comes from the actual prior diagnostic turn, never a production thread lookup. */
+  threadId?: string
+  priorTask?: TaskContract | null
+  /** Controlled test injection before an agent provider invocation, recorded as injected evidence. */
+  fault?: 'provider-error' | 'cancelled'
+
   live?: PreparedLiveModel
   timeoutMs?: number
   maxCalls?: number
@@ -148,7 +154,9 @@ export async function captureQuestion(
     model: live?.model ?? SIMULATED_MODEL_REF,
     mode,
     history: options.question?.history ?? [],
-    threadId: options.question?.history?.length ? `eris-dev-${requestId}` : null,
+    threadId:
+      options.threadId ?? (options.question?.history?.length ? `eris-dev-${requestId}` : null),
+    ...(options.priorTask !== undefined ? { priorTask: options.priorTask } : {}),
     skillIds: [],
     getSecret: live?.getSecret ?? (() => null),
     signal: controller.signal,
@@ -194,6 +202,15 @@ export async function captureQuestion(
       result.requests.push(call)
       if (live) {
         if (request.purpose === 'agent') captured = true
+        if (request.purpose === 'agent' && options.fault) {
+          const message = `Injected ${options.fault} at agent transport before provider invocation`
+          result.events.push(message)
+          call.error = message
+          result.inference!.error = message
+          if (options.fault === 'cancelled') stop('user-cancelled')
+          else cause ??= 'provider-error'
+          throw new Error(message)
+        }
         result.inference!.calls++
         const callStarted = Date.now()
         call.response = ''
@@ -421,7 +438,10 @@ export async function captureQuestion(
     // Runtime completion is not deliverable validity: a completed transport can
     // still return protocol framing, truncated code or a refusal.
     if (result.response !== null || result.completion?.status === 'completed')
-      result.deliverable = assessDeliverable(result.response)
+      result.deliverable = assessDeliverable(result.response, {
+        ...deliverableContext(question, result.artifact),
+        termination: firstCause ?? undefined
+      })
   }
   if (result.task) {
     result.findingsDetail = requestInvariantFindings({

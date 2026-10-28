@@ -31,6 +31,7 @@
         "tests/chat-stream.test.ts",
         "tests/command-approval.test.ts",
         "tests/debug-runs.test.ts",
+        "tests/deliverable-context.test.ts",
         "tests/eris-dev-followup.test.ts",
         "tests/eris-dev-live-review.test.ts",
         "tests/eris-dev.test.ts",
@@ -40,11 +41,13 @@
         "tests/image-generation.test.ts",
         "tests/images-ipc.test.ts",
         "tests/intelligence.test.ts",
+        "tests/image-runtime-install.test.ts",
         "tests/local-image-model.test.ts",
         "tests/local-image-python.test.ts",
         "tests/posted-answer.test.ts",
         "tests/qualification-profile.test.ts",
         "tests/task-meaning.test.ts",
+        "tests/task-timeline.test.ts",
         "tests/thinking-summary.test.ts",
         "tests/tool-call-schema.test.ts",
         "tests/tool-parsing.test.ts",
@@ -112,7 +115,8 @@
       "tests/cloud-task-policy.test.ts",
       "tests/chat-admission.test.ts",
       "tests/feedback-relay.test.ts",
-      "tests/worktree-integration.test.ts"
+      "tests/worktree-integration.test.ts",
+      "tests/inference-governor.test.ts"
     ]
   }
 }

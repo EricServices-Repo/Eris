@@ -209,7 +209,10 @@ export type UsageSnapshot = {
 
 export interface IdeApi {
   localImageStatus: () => Promise<LocalImageStatus>
-  setupLocalImageRuntime: () => Promise<{ ok: boolean; status?: LocalImageStatus; error?: string }>
+  setupLocalImageRuntime: (options?: {
+    backend: 'auto' | 'cpu' | 'cuda'
+    reuseVersions?: boolean
+  }) => Promise<{ ok: boolean; status?: LocalImageStatus; error?: string }>
   downloadLocalImageModel: (
     repoId: string
   ) => Promise<{ ok: boolean; status?: LocalImageStatus; error?: string }>
@@ -269,6 +272,7 @@ export interface IdeApi {
   writeFile: (path: string, content: string) => Promise<boolean>
   pickFiles: () => Promise<string[]>
   /** Light by default (no connection probes). Pass `{ probe: true }` from Settings → Providers. */
+  inferenceAdmission: () => Promise<import('./inference').InferenceSnapshot>
   modelsStatus: (opts?: { probe?: boolean; includeGpu?: boolean }) => Promise<ModelsStatus>
   /** Background-load a selected or default ready GGUF into the llama worker. */
   warmLocalModel: (modelRef?: string) => Promise<{ ok: boolean; model?: string; error?: string }>
@@ -472,6 +476,9 @@ export interface IdeApi {
   ) => () => void
   onChatTerminal: (cb: (data: { requestId: string; text: string }) => void) => () => void
   onChatWorkspaceChanged: (cb: (data: { requestId: string }) => void) => () => void
+  onChatPhase: (
+    cb: (data: import('./task-timeline').TaskPhaseEvent & { requestId: string }) => void
+  ) => () => void
   onChatStatus: (cb: (data: { requestId: string; text: string }) => void) => () => void
   onChatModel: (
     cb: (data: { requestId: string; model: string; agentId?: string; agentName?: string }) => void

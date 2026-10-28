@@ -1,3 +1,4 @@
+import { transitionTaskTimeline, isTaskPhaseEvent } from '../../../src/shared/task-timeline'
 import { createHash } from 'crypto'
 import { readFileSync } from 'fs'
 import { mkdir, open, readdir, rename, unlink } from 'fs/promises'
@@ -165,6 +166,7 @@ export async function admitChatJob(input: {
   const job = startChatJob(input, false)
   job.status = 'queued'
   job.statusText = 'Queued'
+  job.timeline = transitionTaskTimeline(job.id, undefined, { phase: 'queued', source: 'admission' })
   const write = persistNow(job)
   admissions.set(job.id, write)
   try {
@@ -182,6 +184,10 @@ export function markChatJobRunning(id: string): void {
   const job = jobs.get(id)
   if (job) {
     job.status = 'running'
+    job.timeline = transitionTaskTimeline(id, job.timeline, {
+      phase: 'admitted',
+      source: 'foreground'
+    })
     job.statusText = 'Planning…'
     job.updatedAt = new Date().toISOString()
     persistLater(job)
@@ -195,6 +201,29 @@ export function recordChatJobEvent(
   const job = jobs.get(id)
   if (!job) return
   job.updatedAt = new Date().toISOString()
+  if (channel === 'chat:phase' && isTaskPhaseEvent(payload))
+    job.timeline = transitionTaskTimeline(id, job.timeline, payload)
+  if (channel === 'chat:tool' && payload.tool && typeof payload.tool === 'object') {
+    const tool = payload.tool as { status?: string }
+    if (tool.status === 'running')
+      job.timeline = transitionTaskTimeline(id, job.timeline, {
+        phase: 'tool',
+        source: 'tool-event',
+        reason: 'Workspace tool running'
+      })
+  }
+  if (channel === 'chat:approval-request' || channel === 'chat:question-request')
+    job.timeline = transitionTaskTimeline(id, job.timeline, {
+      phase: 'approval',
+      source: 'approval',
+      reason: 'A response from you is required'
+    })
+  if (channel === 'chat:approval-resolved' || channel === 'chat:question-resolved')
+    job.timeline = transitionTaskTimeline(id, job.timeline, {
+      phase: 'integrating',
+      source: 'approval',
+      reason: 'Your response was received'
+    })
   if (channel === 'chat:answer') {
     const chunk = typeof payload.chunk === 'string' ? payload.chunk : ''
     job.answer = payload.replace ? chunk : job.answer + chunk
@@ -213,6 +242,15 @@ export function finishChatJob(id: string, status: ChatJobStatus): void {
   const job = jobs.get(id)
   if (!job) return
   job.status = status
+  if (status !== 'running' && status !== 'queued')
+    job.timeline = transitionTaskTimeline(id, job.timeline, {
+      phase: status,
+      source: 'terminal',
+      reason:
+        status === 'failed'
+          ? (job.timeline?.lastFailure?.origin ?? 'Unclassified task error')
+          : undefined
+    })
   job.statusText =
     status === 'done'
       ? 'Done'
@@ -232,6 +270,12 @@ function recovered(job: ChatJobSnapshot): ChatJobSnapshot {
   if (active(job)) {
     job.status = 'stopped'
     job.statusText = 'Stopped when Eris closed'
+    job.timeline = transitionTaskTimeline(job.id, job.timeline, {
+      phase: 'stopped',
+      at: Date.parse(job.updatedAt),
+      source: 'recovery',
+      reason: 'Interrupted when the application closed; effects are not replayed'
+    })
     job.updatedAt = new Date().toISOString()
     persistLater(job)
   }
