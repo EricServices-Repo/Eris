@@ -1,7 +1,5 @@
 # Eris: next fixes
 
-REC-35 / #80 source fixes and scripted Electron acceptance are implemented for modal focus, scoped review keys, stable announcements and accessibility preferences. Packaged VoiceOver/NVDA acceptance remains explicitly unverified; see [matrix](changes/REC-35-keyboard-acceptance.md).
-
 ## REC-34 · P2 · Chat and workspace performance budgets
 
 Implemented the measured selection/focus failures and loaded-history search, retained the existing virtualizer, and added reproducible hardware-scoped budgets with raw reports. Local M4 fixture acceptance passes; Windows performance, whole-app memory and live cancellation remain unqualified. See [REC-34 evidence](changes/REC-34-chat-performance.md).
@@ -218,3 +216,5 @@ Implementation validation: desktop/cloud typechecks; **841 tests in 82 suites**,
 Implemented explicit trusted-host verification admission, minimal agent environments, unobserved-host-effect receipts and owned descendant cleanup. Untrusted or explicitly isolated requests fail closed rather than falling back to host execution. Added real cancellation/timeout parent-and-child regressions plus independent-command survival, approval classification and credential-filtering checks. Local macOS targeted run: 52 tests passed across four suites. Windows Job Object code is included in the build qualification profile; local results do not certify Windows execution or an OS sandbox.
 
 REC-31 Windows follow-up: runtime PowerShell C# compilation was observed to stall in CI before ownership. Replace it with a build-prepared executable and atomic Windows Job-list creation, so compiler descendants are never part of a chat command. Early Windows qualification checks command completion, EOF, cancellation, descendant cleanup and independent-command survival before packaging.
+
+REC-35 / #80 source fixes and scripted Electron acceptance are implemented for modal focus, scoped review keys, stable announcements and accessibility preferences. Packaged VoiceOver/NVDA acceptance remains explicitly unverified; see [matrix](changes/REC-35-keyboard-acceptance.md).

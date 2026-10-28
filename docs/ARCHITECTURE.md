@@ -1,7 +1,5 @@
 # Eris architecture
 
-REC-35: Renderer dialogs share stacked focus/Tab/Escape ownership and restore background inert state. Review mnemonic keys are region-scoped; chat announces stable task states, not token deltas. See [keyboard contracts and acceptance matrix](changes/REC-35-keyboard-acceptance.md).
-
 ## REC-34 · Chat virtualization and performance qualification
 
 HistoricalMessages retains a bounded selection range and one focused row, and searches loaded message data independently of mounted DOM. The scripted Electron/index fixtures measure UI and retrieval separately from model load and gate hardware-matched budgets. See [implementation, measurements and limits](changes/REC-34-chat-performance.md).
@@ -202,3 +200,5 @@ Repository tests/builds execute trusted host code, not a read-only or network sa
 Agent command environments use an allowlist and exclude inherited credentials and runtime injection variables; the interactive terminal retains its separate inherited environment. POSIX commands own a detached process group. Windows commands use a compiled helper and `PROC_THREAD_ATTRIBUTE_JOB_LIST` to enter a kill-on-close Job Object atomically during process creation; failure to establish ownership refuses execution. The helper is compiled from maintained C# source by Windows test/build preparation and copied as an executable resource; no compiler or PowerShell process runs during a chat command. Windows packaging refuses a missing helper. Cancellation, deadlines and output limits terminate the owned tree and settle within a bounded cleanup interval. Trusted code deliberately escaping a process group, kernel termination failures and unsupported host configurations are not an OS security boundary. Windows Job behavior still requires execution in Windows CI; macOS fixtures verify real child cleanup.
 
 Windows helper implementation follows [Microsoft’s process attribute contract](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute). Windows targets must prepare the helper on Windows (`npm run prepare:owned-command`); cross-packaging without a prepared helper is rejected. Generated executables/stamps remain ignored locally, while their C# source and build preparation are tracked.
+
+REC-35: Renderer dialogs share stacked focus/Tab/Escape ownership and restore background inert state. Review mnemonic keys are region-scoped; chat announces stable task states, not token deltas. See [keyboard contracts and acceptance matrix](changes/REC-35-keyboard-acceptance.md).
