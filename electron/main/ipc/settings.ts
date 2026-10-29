@@ -1,4 +1,5 @@
 import { credentialStore } from '../services/credential-store'
+import { contextMemoryStore } from '../services/context-memory-store'
 import { ipcMain } from 'electron'
 import {
   getLayeredSettings,
@@ -29,6 +30,7 @@ export function registerSettingsIpc(): void {
   ipcMain.handle('settings:getResolved', () => getResolvedSettings(appState.currentWorkspace))
   ipcMain.handle('settings:set', (_e, scope: SettingsScope, patch: SettingsPatch) => {
     const next = setSettings(scope, patch, appState.currentWorkspace)
+    contextMemoryStore.configure(next.agent.contextMemory)
     if (patch.mcp) refreshIntelligence()
     configureLogger(next)
     logInfo('Settings updated', { scope, keys: Object.keys(patch) })
@@ -36,6 +38,7 @@ export function registerSettingsIpc(): void {
   })
   ipcMain.handle('settings:resetKey', (_e, scope: SettingsScope, pathKeys: string[]) => {
     const next = resetSettingKey(scope, pathKeys, appState.currentWorkspace)
+    contextMemoryStore.configure(next.agent.contextMemory)
     configureLogger(next)
     return next
   })

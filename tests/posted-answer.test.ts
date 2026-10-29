@@ -1,3 +1,4 @@
+import { finalizePostedAnswer } from '../src/shared/posted-answer'
 import { describe, expect, it } from 'vitest'
 import { promoteThinkingToAnswer, stripAnswerFromThinking } from '../src/shared/posted-answer'
 
@@ -39,4 +40,13 @@ describe('promoteThinkingToAnswer', () => {
       )
     ).toBe('')
   })
+})
+
+it('finalizes identical durable and visible replies for image-only, stopped and empty turns', () => {
+  expect(finalizePostedAnswer('', '', false, true)).toEqual({ content: '', thinking: '' })
+  expect(finalizePostedAnswer('Partial answer', '— Step', true, false)).toEqual({
+    content: 'Partial answer\n\n_(stopped)_',
+    thinking: '— Step'
+  })
+  expect(finalizePostedAnswer('', '', false, false).content).toContain('ended without a response')
 })

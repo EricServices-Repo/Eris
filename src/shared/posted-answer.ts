@@ -50,3 +50,23 @@ export function stripAnswerFromThinking(thinking: string, answer: string): strin
     .join('\n')
     .trim()
 }
+
+/** The renderer and durable main-process history must finalize the same reply. */
+export function finalizePostedAnswer(
+  answer: string,
+  thinkingRaw: string,
+  aborted: boolean,
+  hasAssets: boolean
+): { content: string; thinking: string } {
+  let content = promoteThinkingToAnswer(answer, thinkingRaw)
+  if (!content.trim() && thinkingRaw && !aborted) content = promoteThinkingToAnswer('', thinkingRaw)
+  if (!content.trim() && !aborted && !hasAssets)
+    content = 'The agent ended without a response. Please retry the message or report this run.'
+  const thinking = stripAnswerFromThinking(thinkingRaw, content)
+  if (aborted) {
+    if (content)
+      content = content.endsWith('\n') ? `${content}_(stopped)_` : `${content}\n\n_(stopped)_`
+    else if (thinking) content = '_(stopped)_'
+  }
+  return { content, thinking }
+}

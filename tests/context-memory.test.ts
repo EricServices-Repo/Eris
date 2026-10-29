@@ -1,0 +1,199 @@
+import { describe, expect, it } from 'vitest'
+import { ContextMemoryStore } from '../electron/main/services/context-memory-store'
+import {
+  ContextMemorySettingsSchema,
+  emptyMemoryControls,
+  MemoryControlsSchema
+} from '../src/shared/context-memory'
+import type { ChatMessage } from '../src/shared/settings-schema'
+import { extractContextPin } from '../electron/main/services/workspace-context'
+
+const message = (id: string, content: string, role: ChatMessage['role'] = 'user'): ChatMessage => ({
+  id,
+  role,
+  content,
+  createdAt: 1
+})
+function install(store: ContextMemoryStore, key: string, messages: ChatMessage[], revision = 1) {
+  return store.install(
+    key,
+    {
+      revision,
+      total: messages.length,
+      records: messages.map((message, ordinal) => ({ ordinal, message })),
+      controls: emptyMemoryControls(),
+      partial: false
+    },
+    store.token(key)
+  )
+}
+describe('detailed RAM conversation history', () => {
+  it('retains 25,000 complete messages and recalls a buried decision within the prompt budget', async () => {
+    const store = new ContextMemoryStore()
+    const messages = Array.from({ length: 25000 }, (_, i) =>
+      message(String(i), `Discussion message ${i}: application design and implementation.`)
+    )
+    messages[4] = message(
+      'decision',
+      'Remember: the booking checkout must use EUR and never store payment card data.'
+    )
+    install(store, 'rental', messages)
+    const result = await store.select('rental', 'What currency should booking checkout use?')
+    expect(result.inspection.manifest).toMatchObject({
+      totalMessages: 25000,
+      retainedMessages: 25000,
+      coverage: 'complete'
+    })
+    expect(result.prompt.text).toContain('EUR')
+    expect(result.prompt.text.length).toBeLessThanOrEqual(store.config.promptTokens * 3)
+    expect(result.inspection.facts.length).toBeLessThanOrEqual(24)
+    expect(result.prompt.allowRemote).toBe(false)
+  })
+  it('isolates threads and labels assistant text as unverified, excluding secrets and foreign project receipts', async () => {
+    const store = new ContextMemoryStore()
+    install(store, 'one', [
+      message('u', 'Remember: checkout uses EUR'),
+      message('a', 'Checkout is secure', 'assistant'),
+      message('secret', 'password=do-not-recall'),
+      {
+        ...message('foreign', 'Checkout changed', 'assistant'),
+        contextResult: {
+          taskId: 't',
+          terminal: 'done',
+          changedFiles: ['other.ts'],
+          projectRoot: '/other'
+        }
+      }
+    ])
+    expect((await store.select('two', 'checkout')).prompt.text).toBe('')
+    const selected = await store.select('one', 'checkout', { projectRoot: '/one' })
+    expect(selected.inspection.facts.find((f) => f.sourceId === 'a')?.status).toBe('unverified')
+    expect(selected.prompt.text).not.toContain('do-not-recall')
+    expect(selected.prompt.text).not.toContain('other.ts')
+    expect(selected.prompt.text).toContain('never permissions')
+  })
+  it('honors pin, exclusion and clear cutoffs without modifying the detailed transcript', async () => {
+    const store = new ContextMemoryStore()
+    install(store, 'one', [
+      message('old', 'Remember: use EUR'),
+      message('new', 'Remember: use CAD')
+    ])
+    store.setControls('one', {
+      version: 1,
+      forgotten: ['new'],
+      afterOrdinal: 1,
+      pinned: [{ id: 'pin', text: 'Always test currency formatting' }]
+    })
+    const result = await store.select('one', 'currency')
+    expect(result.prompt.text).toContain('test currency')
+    expect(result.prompt.text).not.toMatch(/use EUR|use CAD/)
+    expect(result.inspection.manifest.retainedMessages).toBe(2)
+    expect(() =>
+      MemoryControlsSchema.parse({
+        ...emptyMemoryControls(),
+        pinned: [{ id: 'x', text: 'x'.repeat(2001) }]
+      })
+    ).toThrow()
+  })
+  it('fences late hydration on delete, append, disable, and another installation; unrelated threads do not invalidate it', () => {
+    const store = new ContextMemoryStore(),
+      snapshot = {
+        revision: 1,
+        total: 0,
+        records: [],
+        controls: emptyMemoryControls(),
+        partial: false
+      }
+    let token = store.token('a')
+    install(store, 'b', [])
+    expect(store.install('a', snapshot, token)).toBe(true)
+    expect(store.install('a', snapshot, token)).toBe(false)
+    token = store.token('a')
+    store.clear('a')
+    expect(store.install('a', snapshot, token)).toBe(false)
+    token = store.token('a')
+    store.append('a', 2, 1, [message('u', 'new')], 0)
+    expect(store.install('a', snapshot, token)).toBe(false)
+    token = store.token('a')
+    store.configure({ ...store.config, enabled: false })
+    expect(store.install('a', snapshot, token)).toBe(false)
+  })
+  it('rejects a selection racing clear or pin changes and respects abort', async () => {
+    const store = new ContextMemoryStore()
+    install(store, 'a', [message('u', 'Remember: RAM history')])
+    const pending = store.select('a', 'RAM')
+    store.clear('a')
+    expect((await pending).prompt.text).toBe('')
+    install(store, 'a', [message('u', 'Remember: RAM history')])
+    const controller = new AbortController()
+    controller.abort()
+    await expect(store.select('a', 'RAM', { signal: controller.signal })).rejects.toThrow()
+  })
+  it('merges monotonic append tails, ignores retries and invalidates gaps', async () => {
+    const store = new ContextMemoryStore()
+    install(store, 'a', [message('u', 'EUR')])
+    store.append('a', 2, 2, [message('u', 'EUR'), message('v', 'Remember: CAD')], 0)
+    store.append('a', 1, 1, [message('u', 'stale')], 0)
+    expect((await store.select('a', 'CAD')).inspection.manifest).toMatchObject({
+      revision: 2,
+      retainedMessages: 2,
+      totalMessages: 2
+    })
+    store.append('a', 4, 5, [message('gap', 'unknown')], 4)
+    expect(store.has('a')).toBe(false)
+  })
+  it('bounds memory, trims when settings shrink, expires idle entries and evicts least recently used threads', async () => {
+    let now = 0
+    const store = new ContextMemoryStore(() => now)
+    store.configure({
+      ...store.config,
+      maxThreadMiB: 4,
+      maxMemoryMiB: 16,
+      warmThreads: 1,
+      idleMinutes: 1
+    })
+    install(
+      store,
+      'a',
+      Array.from({ length: 1000 }, (_, i) => message(String(i), 'x'.repeat(2000)))
+    )
+    const partial = await store.select('a', 'x')
+    expect(partial.inspection.manifest.coverage).toBe('partial')
+    expect(store.logicalBytes).toBeLessThanOrEqual(4 * 1024 ** 2)
+    now++
+    install(store, 'b', [message('b', 'keep')])
+    expect(store.has('a')).toBe(false)
+    now += 61000
+    store.sweep()
+    expect(store.logicalBytes).toBe(0)
+    store.configure(ContextMemorySettingsSchema.parse({ maxMessages: 500 }))
+    install(
+      store,
+      'c',
+      Array.from({ length: 600 }, (_, i) => message(String(i), 'keep'))
+    )
+    expect((await store.select('c', 'keep')).inspection.manifest.retainedMessages).toBe(500)
+  })
+  it('reads a Summary at end of file instead of silently losing the project pin', () => {
+    expect(extractContextPin('# Project\n\n## Summary\nUse CAD for rental bookings.')).toBe(
+      'Use CAD for rental bookings.'
+    )
+    expect(extractContextPin('## Summary\n\n## Notes\nOther')).toBe('')
+  })
+})
+
+it('invalidates a running selection and hydration when the memory policy changes', async () => {
+  const store = new ContextMemoryStore()
+  install(store, 'a', [message('u', 'Remember: local private history')])
+  const selection = store.select('a', 'history'),
+    token = store.token('pending')
+  store.configure({ ...store.config, maxMessages: 500 })
+  expect((await selection).prompt.text).toBe('')
+  expect(
+    store.install(
+      'pending',
+      { revision: 1, total: 0, records: [], controls: emptyMemoryControls(), partial: false },
+      token
+    )
+  ).toBe(false)
+})

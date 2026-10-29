@@ -1,3 +1,4 @@
+import { ContextMemoryInspector } from './ContextMemoryInspector'
 import { useRequestFocus } from '@/hooks/useDialogFocus'
 import { ChatTaskTimeline } from './TaskTimeline'
 import { ImageMessage } from './ImageMessage'
@@ -730,6 +731,9 @@ export function ChatPanel({
     <div className="agent-center">
       <div className="panel-header agent-header">
         <span>{activeThread?.title || 'Agent'}</span>
+        {activeThread && (
+          <ContextMemoryInspector key={activeThread.id} threadId={activeThread.id} />
+        )}
         <div className="mode-toggle" role="group" aria-label="Task permissions">
           <button
             type="button"

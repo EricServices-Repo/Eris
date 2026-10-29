@@ -41,12 +41,14 @@ type CacheEntry = {
 }
 
 const cache = new Map<string, CacheEntry>()
+function cacheContext(key: string, entry: CacheEntry) {
+  cache.delete(key)
+  if (entry.size <= 1024 * 1024) cache.set(key, entry)
+  while (cache.size > 8) cache.delete(cache.keys().next().value!)
+}
 
 function extractSection(body: string, heading: string): string {
-  const re = new RegExp(
-    `^##\\s+${heading}\\s*\\n([\\s\\S]*?)(?=^##\\s+|\\Z)`,
-    'im'
-  )
+  const re = new RegExp(`^##\\s+${heading}\\s*\\n([\\s\\S]*?)(?=^##\\s+|(?![\\s\\S]))`, 'im')
   const m = body.match(re)
   return m?.[1]?.trim() ?? ''
 }
@@ -87,7 +89,7 @@ function fromCacheOrDisk(workspacePath: string): CacheEntry {
     const hit = cache.get(workspacePath)
     if (hit?.mtimeMs === 0 && hit.size === 0) return hit
     const empty = { mtimeMs: 0, size: 0, body: '', pin: '' }
-    cache.set(workspacePath, empty)
+    cacheContext(workspacePath, empty)
     return empty
   }
   const hit = cache.get(workspacePath)
@@ -101,7 +103,7 @@ function fromCacheOrDisk(workspacePath: string): CacheEntry {
     body,
     pin: extractContextPin(body)
   }
-  cache.set(workspacePath, entry)
+  cacheContext(workspacePath, entry)
   return entry
 }
 

@@ -341,6 +341,7 @@ export async function* runAgentWithWorkspaceTools(
   }
 }
 async function* runAgentInternal(options: {
+  conversationMemory?: import('../../../../src/shared/context-memory').MemoryPrompt
   workspacePath: string | null
   settings: AppSettings
   model: string
@@ -606,6 +607,10 @@ async function* runAgentInternal(options: {
       task,
       toolsAvailable: false,
       guidance: tips.join('\n\n'),
+      memory:
+        isNativeGgufRef(chatModel) || options.conversationMemory?.allowRemote
+          ? options.conversationMemory?.text
+          : undefined,
       project: priorSystem,
       retrieval: '',
       maxInputTokens: contextBudgetTokens(options.settings, chatModel)
@@ -858,6 +863,7 @@ async function* runAgentInternal(options: {
     workspacePath,
     settings: options.settings,
     inputTokenBudget: promptBudget,
+    conversationMemory: options.conversationMemory,
     plan: { ...plan, task },
     originalUserGoal,
     retrievalHint,
@@ -1294,6 +1300,7 @@ async function* runAgentInternal(options: {
         workspacePath,
         settings: options.settings,
         inputTokenBudget: promptBudget,
+        conversationMemory: options.conversationMemory,
         plan: { ...plan, task },
         originalUserGoal,
         retrievalHint,

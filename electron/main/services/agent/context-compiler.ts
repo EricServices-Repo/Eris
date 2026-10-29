@@ -9,7 +9,7 @@ import { createHash } from 'crypto'
 import { basename, relative } from 'path'
 
 export interface ContextBlock {
-  kind: 'task' | 'instructions' | 'project' | 'retrieval'
+  kind: 'task' | 'instructions' | 'memory' | 'project' | 'retrieval'
   content: string
   required: boolean
 }
@@ -18,6 +18,7 @@ export type ContextTrust = 'authoritative' | 'instructions' | 'evidence'
 const TRUST: Record<ContextBlock['kind'], ContextTrust> = {
   task: 'authoritative',
   instructions: 'instructions',
+  memory: 'evidence',
   project: 'evidence',
   retrieval: 'evidence'
 }
@@ -157,6 +158,7 @@ export const SYSTEM_CONTEXT_SHARE = 0.55
 export function compileTaskContext(input: {
   task: TaskContract
   guidance: string
+  memory?: string
   project: string
   retrieval: string
   maxInputTokens: number
@@ -173,6 +175,7 @@ export function compileTaskContext(input: {
   const blocks: ContextBlock[] = [
     { kind: 'task', content: `TASK CONTRACT\n${taskText}`, required: true },
     { kind: 'instructions', content: protocol + '\n' + input.guidance, required: true },
+    ...(input.memory ? [{ kind: 'memory' as const, content: input.memory, required: false }] : []),
     {
       kind: 'project',
       content: input.project

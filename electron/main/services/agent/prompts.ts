@@ -1,3 +1,4 @@
+import { isNativeGgufRef } from '../builtin-model'
 import { loadWorkspaceRules } from '../chats'
 import { loadSkillsPrompt } from '../skills'
 import { findAgent } from '../agents'
@@ -334,6 +335,7 @@ export function buildPreservedWorkerMessages(options: {
   retrievalHint: string
   mcpToolCount: number
   inputTokenBudget?: number
+  conversationMemory?: import('../../../../src/shared/context-memory').MemoryPrompt
 }): AgentChatMessage[] {
   const { plan } = options
   const task = plan.task
@@ -374,6 +376,10 @@ export function buildPreservedWorkerMessages(options: {
       skillIds: task.skillIds,
       customAgentPrompt
     }),
+    memory:
+      isNativeGgufRef(options.plan.models.tools) || options.conversationMemory?.allowRemote
+        ? options.conversationMemory?.text
+        : undefined,
     retrieval: options.retrievalHint,
     maxInputTokens:
       options.inputTokenBudget ?? contextBudgetTokens(options.settings, plan.models.tools)

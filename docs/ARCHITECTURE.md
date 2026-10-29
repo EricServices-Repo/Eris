@@ -73,10 +73,12 @@ sequenceDiagram
   participant Agent as Agent loop
   participant Model as Model transport
   participant Tool as Gateway and executor
-  UI->>IPC: Original request, history and preferences
+  UI->>IPC: Current request, thread ID, attachments and preferences
   IPC->>IPC: Workspace check and job lookup
+  IPC->>IPC: Save user message and load canonical recent history
   IPC->>Turn: Plan, resolve intent and build task
   Turn-->>IPC: Task contract and worker plan
+  IPC->>IPC: Recall budgeted evidence from detailed RAM history
   IPC->>Agent: Task, compiled context and callbacks
   loop Until completion, stop or budget
     Agent->>Model: Validated conversation and tool schemas
@@ -87,6 +89,7 @@ sequenceDiagram
     IPC-->>UI: Stream updates
   end
   IPC->>Turn: Complete task and review outcome when applicable
+  IPC->>IPC: Save assistant reply before terminal delivery
   IPC-->>UI: Complete, incomplete, failed or stopped
 ```
 
@@ -206,3 +209,14 @@ Agent command environments use an allowlist and exclude inherited credentials an
 Windows helper implementation follows [Microsoft’s process attribute contract](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute). Windows targets must prepare the helper on Windows (`npm run prepare:owned-command`); cross-packaging without a prepared helper is rejected. Generated executables/stamps remain ignored locally, while their C# source and build preparation are tracked.
 
 REC-35: Renderer dialogs share stacked focus/Tab/Escape ownership and restore background inert state. Review mnemonic keys are region-scoped; chat announces stable task states, not token deltas. See [keyboard contracts and acceptance matrix](changes/REC-35-keyboard-acceptance.md).
+
+
+## Detailed RAM conversation context
+
+The main process now owns a bounded detailed history cache, hydrated from the existing SQLite transcript over a dedicated context worker lane. Normal thread-bound submissions carry no renderer history; main supplies canonical recent messages for task intake and a separate budgeted historical evidence selection for model prompts. This removes UI paging from the context pipeline and prevents long loaded transcripts from exceeding submission limits.
+
+Default capacity is 128 MiB of conservatively estimated logical storage globally, 32 MiB and 25,000 messages per conversation, eight warm conversations and a 30-minute idle expiry. The full saved transcript remains durable. Revision-consistent pages, generation fencing, LRU/count/byte bounds and cooperative selection protect correctness and responsiveness. These are logical cache limits, not hard process RSS guarantees.
+
+Both answer-only and tool-worker compilers treat recalled facts as optional evidence after task authority. Native local models receive additional recall by default; remote workers require opt-in. Current user messages and final assistant replies use deterministic request IDs, with main saving the visible reply before terminal publication. A Context inspector supports preview, pins, exclusions and cutoffs; settings control budgets and remote sharing. Independent Eris-Dev cases remain isolated from production conversations.
+
+See [CONTEXT-MEMORY.md](CONTEXT-MEMORY.md) for lifecycle, data flow, settings, privacy rules, test coverage and remaining extensions.

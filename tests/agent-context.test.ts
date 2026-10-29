@@ -141,3 +141,71 @@ describe('agent context boundaries', () => {
     expect(summarizeAgentResults([{ ...failed, status: 'done', error: undefined }]).ok).toBe(true)
   })
 })
+
+describe('memory at model boundaries', () => {
+  it('compiles recalled evidence for local models, omits it for remote workers and honors explicit opt-in', () => {
+    const folder = mkdtempSync(join(tmpdir(), 'eris-private-context-'))
+    folders.push(folder)
+    const plan: TurnPlan = {
+      agentId: 'composer',
+      agentName: 'Composer',
+      intent: 'answer',
+      mode: 'ask',
+      toolPolicy: 'none',
+      requiresTools: false,
+      escalateToFull: false,
+      models: { chat: 'local:test', tools: 'local:test' },
+      reason: 'test',
+      method: 'manual'
+    }
+    const task = createTaskContract({ workspacePath: folder, text: 'Explain context', plan })
+    const { prompt: memory } = {
+      prompt: {
+        text: 'CONVERSATION MEMORY: confidential recalled choice CAD',
+        allowRemote: false,
+        manifest: {
+          version: 1 as const,
+          revision: 1,
+          generation: 1,
+          totalMessages: 1000,
+          retainedMessages: 1000,
+          firstOrdinal: 0,
+          logicalBytes: 100000,
+          coverage: 'complete' as const,
+          selectedIds: [],
+          sourceIds: [],
+          estimatedTokens: 30,
+          omittedFacts: 0
+        }
+      }
+    }
+    const base = {
+      workspacePath: folder,
+      settings: getDefaults(),
+      originalUserGoal: 'Explain context',
+      retrievalHint: '',
+      mcpToolCount: 0,
+      messages: [{ role: 'user' as const, content: 'Explain context' }],
+      conversationMemory: memory
+    }
+    const local = buildPreservedWorkerMessages({ ...base, plan: { ...plan, task } })
+    expect(local[0]?.content).toContain('confidential recalled choice CAD')
+    expect(local[0]?.content).toContain('task contract is authoritative')
+    const remote = {
+      ...plan,
+      models: { chat: 'connection:remote', tools: 'connection:remote' },
+      task
+    }
+    expect(buildPreservedWorkerMessages({ ...base, plan: remote })[0]?.content).not.toContain(
+      'confidential recalled choice CAD'
+    )
+    expect(
+      buildPreservedWorkerMessages({
+        ...base,
+        plan: remote,
+        conversationMemory: { ...memory, allowRemote: true }
+      })[0]?.content
+    ).toContain('confidential recalled choice CAD')
+    expect(local.at(-1)?.content).toBe('Explain context')
+  })
+})
