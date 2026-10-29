@@ -346,6 +346,12 @@ export interface IdeApi {
   getWorkspaceTrust: () => Promise<WorkspaceTrustStatus>
   setWorkspaceTrust: (trusted: boolean) => Promise<boolean>
   listChats: () => Promise<ChatThread[]>
+  inspectContextMemory: (input: {
+    id: string
+    query?: string
+    controls?: import('./context-memory').MemoryControls
+    evict?: boolean
+  }) => Promise<import('./context-memory').MemoryInspection>
   getChat: (id: string, page?: { before?: number; limit?: number }) => Promise<ChatThread | null>
   appendChatMessage: (
     id: string,

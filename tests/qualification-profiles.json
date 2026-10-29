@@ -55,7 +55,9 @@
         "tests/web-grounding.test.ts",
         "tests/owned-command.test.ts",
         "tests/evidence-storage.test.ts",
-        "tests/file-mutations.test.ts"
+        "tests/file-mutations.test.ts",
+        "tests/context-memory.test.ts",
+        "tests/context-memory-recovery.test.ts"
       ],
       "notRun": [
         "live model inference",
@@ -74,10 +76,7 @@
         "tests/quality-adapter.test.ts",
         "tests/quality-scenarios.test.ts"
       ],
-      "notRun": [
-        "model inference",
-        "answer quality"
-      ]
+      "notRun": ["model inference", "answer quality"]
     }
   },
   "general": {

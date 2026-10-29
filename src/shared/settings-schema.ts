@@ -1,3 +1,4 @@
+import { ContextMemorySettingsSchema } from './context-memory'
 import type { TaskContract } from './task-contract'
 import { z } from 'zod'
 import { ImageGenerationSettingsSchema } from './image-generation-schema'
@@ -94,6 +95,7 @@ export const SettingsSchema = z.object({
     preferEgpu: z.boolean().default(true)
   }),
   agent: z.object({
+    contextMemory: ContextMemorySettingsSchema.prefault({}),
     systemPrompt: z.string(),
     includeOpenFiles: z.boolean(),
     maxHistoryMessages: z.number().int().min(2).max(200),
@@ -303,6 +305,12 @@ export interface ChatMessage {
   agentId?: string
   agentName?: string
   model?: string
+  contextResult?: {
+    taskId: string
+    terminal: string
+    projectRoot: string | null
+    changedFiles: string[]
+  }
   /** Specialists Composer handed this turn to. */
   delegations?: ChatDelegation[]
 }
@@ -315,6 +323,7 @@ export interface ChatThread {
   /** Position of the first loaded message; omitted means a complete transcript. */
   messageOffset?: number
   messageCount?: number
+  contextRevision?: number
   updatedAt: number
   createdAt: number
 }
@@ -468,6 +477,7 @@ export interface ChatTurnContext {
 /** Structured chat turn; the main process assembles the final prompt from this. */
 export interface ChatPromptInput {
   text: string
+  displayContent?: string
   mode: 'ask' | 'agent'
   agentId: string
   agentName?: string

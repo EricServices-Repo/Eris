@@ -18,7 +18,7 @@ import type {
   ModelInfo,
   SkillRecord
 } from '@/shared/settings-schema'
-import { promoteThinkingToAnswer, stripAnswerFromThinking } from '@/shared/posted-answer'
+import { finalizePostedAnswer } from '@/shared/posted-answer'
 import type { OpenTab } from '@/features/editor/EditorArea'
 import type {
   ActiveSkillRef,
@@ -524,7 +524,6 @@ export function useChatSession({
         const selectedTab = tabsRef.current.find((t) => t.path === activeFile)
         const openTab =
           selectedTab && selectedTab.loaded !== false ? snapshotTab(selectedTab) : undefined
-        const history = thread.messages.filter((m) => m.role !== 'system')
 
         const skillNames = skillIds
           .map((id) => skills.find((s) => s.id === id)?.name || id)
@@ -536,7 +535,7 @@ export function useChatSession({
         const displayContent = extras.length > 0 ? `${text}\n\n${extras.join('\n')}` : text
 
         const userMsg = {
-          id: uid(),
+          id: `${requestId}:user`,
           role: 'user' as const,
           content: displayContent,
           createdAt: Date.now()
@@ -580,6 +579,7 @@ export function useChatSession({
           threadId: thread.id,
           prompt: {
             text,
+            displayContent,
             mode: chatMode,
             agentId: selectedAgentId,
 
@@ -594,12 +594,7 @@ export function useChatSession({
                 ? { path: f.path, name: f.name, language: open.language, content: open.content }
                 : { path: f.path, name: f.name }
             }),
-            history: history.map((m) => ({
-              role: m.role,
-              content: m.content,
-              agentId: m.agentId,
-              agentName: m.agentName
-            })),
+            history: [], // Main process owns canonical history, independent of UI pagination.
             threadId: thread.id
           }
         })
@@ -960,21 +955,12 @@ export function useChatSession({
         paintRaf.current = 0
       }
       const thinkingRaw = thinkingAcc.current
-      let content = promoteThinkingToAnswer(answerAcc.current, thinkingRaw)
-      if (!content.trim() && thinkingRaw && !aborted) {
-        content = promoteThinkingToAnswer('', thinkingRaw)
-      }
-      if (!content.trim() && !aborted && !imageAssetsRef.current.length) {
-        content = 'The agent ended without a response. Please retry the message or report this run.'
-      }
-      const thinking = stripAnswerFromThinking(thinkingRaw, content)
-      if (aborted) {
-        if (content) {
-          content = content.endsWith('\n') ? `${content}_(stopped)_` : `${content}\n\n_(stopped)_`
-        } else if (thinking) {
-          content = '_(stopped)_'
-        }
-      }
+      const { content, thinking } = finalizePostedAnswer(
+        answerAcc.current,
+        thinkingRaw,
+        Boolean(aborted),
+        imageAssetsRef.current.length > 0
+      )
       const threadId = requestThreadIdRef.current
       const meta = routeMetaRef.current
       setAgentStatus(null)

@@ -7436,3 +7436,62 @@ button:disabled {
   :focus-visible { outline: 2px solid Highlight; }
   button:disabled { color: GrayText; }
 }
+
+
+/* Conversation recall is a single-column inspector, not the settings split view. */
+.modal.context-memory-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: auto;
+  min-height: 0;
+}
+.context-memory-dialog h2,
+.context-memory-dialog p {
+  margin: 0;
+}
+.context-memory-dialog p {
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.context-memory-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.context-memory-dialog input,
+.context-memory-dialog textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+.context-memory-dialog textarea {
+  min-height: 76px;
+  resize: vertical;
+}
+.context-memory-dialog form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.context-memory-dialog form .btn {
+  align-self: flex-start;
+}
+.context-memory-dialog ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.context-memory-dialog li {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+  margin-bottom: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow-wrap: anywhere;
+}
+.context-memory-dialog small {
+  color: var(--text-secondary);
+}

@@ -1,3 +1,12 @@
+import { z } from 'zod'
+import {
+  conversationContext,
+  warmConversationMemory,
+  saveMemoryControls,
+  invalidateConversationMemory
+} from '../services/context-memory'
+import { MemoryControlsSchema } from '../../../src/shared/context-memory'
+import { getResolvedSettings } from '../services/settings'
 import { deleteConversationEvidence } from './storage'
 import { ipcMain } from 'electron'
 import { deleteRule, listRules, saveRule } from '../services/rules'
@@ -38,9 +47,38 @@ function chatWorkspace(requested: string | null | undefined): string | null {
 }
 
 export function registerChatsIpc(): void {
+  ipcMain.handle('contextMemory:inspect', async (event, raw: unknown) => {
+    if (
+      !appState.mainWindow ||
+      event.sender !== appState.mainWindow.webContents ||
+      event.senderFrame !== event.sender.mainFrame
+    )
+      throw new Error('Unauthorized context inspection')
+    const { id, query, controls, evict } = z
+      .object({
+        id: z.string().min(1).max(256),
+        query: z.string().max(4000).default(''),
+        controls: MemoryControlsSchema.optional(),
+        evict: z.boolean().optional()
+      })
+      .strict()
+      .parse(raw)
+    const root = appState.currentWorkspace
+    if (!(await getChat(root, id, { limit: 1 }))) throw new Error('Chat not found')
+    if (controls) await saveMemoryControls(root, id, controls)
+    if (evict) invalidateConversationMemory(root, id)
+    return (await conversationContext(root, id, query, getResolvedSettings(root))).inspection
+  })
   ipcMain.handle('chats:list', () => listChats(appState.currentWorkspace))
-  ipcMain.handle('chats:get', (_e, id: string, page?: { before?: number; limit?: number }) =>
-    getChat(appState.currentWorkspace, id, { limit: 60, ...page })
+  ipcMain.handle(
+    'chats:get',
+    async (_e, id: string, page?: { before?: number; limit?: number }) => {
+      const root = appState.currentWorkspace
+      const chat = await getChat(root, id, { limit: 60, ...page })
+      if (chat && page?.before === undefined)
+        void warmConversationMemory(root, id, getResolvedSettings(root)).catch(() => undefined)
+      return chat
+    }
   )
   ipcMain.handle('chats:create', async (_e, model: string) => {
     const thread = await createChat(appState.currentWorkspace, model)

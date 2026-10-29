@@ -4,7 +4,7 @@ import { join } from 'path'
 import { app } from 'electron'
 import type { WorkspaceRequest, WorkspaceReply, WorkspaceResult } from './workspace-worker-protocol'
 
-type Lane = 'io' | 'index' | 'chat'
+type Lane = 'io' | 'index' | 'chat' | 'context'
 type Pending = {
   resolve: (value: unknown) => void
   reject: (error: Error) => void
@@ -20,11 +20,13 @@ function dispatchWorkspaceRequest<T extends WorkspaceRequest>(
   request: T
 ): Promise<WorkspaceResult<T>> {
   if (stopping) return Promise.reject(new Error('Eris is shutting down'))
-  const lane: Lane = request.type.startsWith('chat-')
-    ? 'chat'
-    : request.type === 'index' || request.type === 'patch-index'
-      ? 'index'
-      : 'io'
+  const lane: Lane = request.type.startsWith('context-')
+    ? 'context'
+    : request.type.startsWith('chat-')
+      ? 'chat'
+      : request.type === 'index' || request.type === 'patch-index'
+        ? 'index'
+        : 'io'
   let state = lanes.get(lane)
   if (!state) {
     const worker = new Worker(join(__dirname, 'workspace-worker.js'), {

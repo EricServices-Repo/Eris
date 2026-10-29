@@ -97,3 +97,53 @@ describe('transactional chat storage', () => {
     expect(readFileSync(join(dir, 'broken.json'), 'utf8')).toBe('{unfinished')
   })
 })
+
+describe('RAM context durable recovery', () => {
+  it('pages complete history with stable ordinals and revisions, independent of UI paging', () => {
+    db = new ChatDatabase(dir)
+    db.save(thread(1201))
+    const first = db.contextPage('thread')!
+    const second = db.contextPage('thread', first.before)!
+    const third = db.contextPage('thread', second.before)!
+    expect(first.records).toHaveLength(500)
+    expect(third.done).toBe(true)
+    expect([...third.records, ...second.records, ...first.records].map((r) => r.ordinal)).toEqual(
+      Array.from({ length: 1201 }, (_, i) => i)
+    )
+    const revision = first.revision
+    db.append('thread', { id: 'new', role: 'user', content: 'new', createdAt: 2 })
+    expect(db.contextPage('thread')!.revision).toBeGreaterThan(revision)
+    db.save({ ...db.get('thread')!, messages: thread(2).messages })
+    expect(db.contextPage('thread')!.revision).toBeGreaterThan(revision + 1)
+  })
+  it('advances over oversized rows, reports omitted coverage and strips reasoning and image assets', () => {
+    db = new ChatDatabase(dir)
+    const input = thread(3)
+    input.messages[1]!.content = 'x'.repeat(4000)
+    input.messages[2]!.thinking = 'private trace'
+    db.save(input)
+    const page = db.contextPage('thread', undefined, 1000)!
+    expect(page.omitted).toBe(1)
+    expect(page.done).toBe(true)
+    expect(page.records.map((r) => r.ordinal)).toEqual([0, 2])
+    expect(JSON.stringify(page)).not.toContain('private trace')
+  })
+  it('recovers explicit controls on restart, validates them and removes them with deleted conversations', () => {
+    db = new ChatDatabase(dir)
+    db.save(thread(2))
+    const controls = {
+      version: 1 as const,
+      forgotten: ['0'],
+      pinned: [{ id: 'p', text: 'Use CAD' }],
+      afterOrdinal: 1
+    }
+    db.memoryControls('thread', controls)
+    db.close()
+    db = new ChatDatabase(dir)
+    expect(db.memoryControls('thread')).toEqual(controls)
+    expect(() => db!.memoryControls('thread', { ...controls, afterOrdinal: -1 })).toThrow()
+    db.remove('thread')
+    db.save(thread(0))
+    expect(db.memoryControls('thread').pinned).toEqual([])
+  })
+})

@@ -1,3 +1,5 @@
+import { ContextMemoryInspector } from '@/features/chat/ContextMemoryInspector'
+import { emptyMemoryControls } from '@/shared/context-memory'
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -48,6 +50,7 @@ function Fixture() {
     <>
       <textarea data-chat-composer aria-label="Chat message" />
       <Approval active={pending} />
+      <ContextMemoryInspector threadId="memory-fixture" />
       <div className="monaco-editor">
         <div role="textbox" contentEditable suppressContentEditableWarning>
           editor
@@ -87,6 +90,44 @@ function key(node: Element, key: string, shiftKey = false) {
   )
 }
 window.accessibilityCheck = async () => {
+  let controls = emptyMemoryControls()
+  window.ide = {
+    ...window.ide,
+    inspectContextMemory: async (input) => {
+      controls = input.controls ?? controls
+      return {
+        manifest: {
+          version: 1,
+          revision: 7,
+          generation: 3,
+          totalMessages: 10001,
+          retainedMessages: 10001,
+          firstOrdinal: 0,
+          logicalBytes: 12 * 1024 ** 2,
+          coverage: 'complete',
+          selectedIds: ['fact'],
+          sourceIds: ['source'],
+          estimatedTokens: 100,
+          omittedFacts: 20
+        },
+        facts: controls.forgotten.length
+          ? []
+          : [
+              {
+                id: 'fact',
+                sourceId: 'source',
+                ordinal: 2,
+                kind: 'user-stated',
+                status: 'user-stated',
+                text: 'Remember: rental checkout must use CAD.'
+              }
+            ],
+        controls,
+        processLogicalBytes: 12 * 1024 ** 2
+      }
+    }
+  }
+
   await tick()
   const composer = document.querySelector<HTMLTextAreaElement>('[data-chat-composer]')!
   composer.focus()
@@ -110,7 +151,15 @@ window.accessibilityCheck = async () => {
   assert(document.activeElement === buttons[buttons.length - 1], 'Shift Tab wraps backward')
   composer.focus()
   await tick()
-  assert(modal.contains(document.activeElement), 'Background cannot steal modal focus: '+document.activeElement?.outerHTML.slice(0,180)+' focus='+document.hasFocus()+' dialog='+modal.outerHTML.slice(0,200))
+  assert(
+    modal.contains(document.activeElement),
+    'Background cannot steal modal focus: ' +
+      document.activeElement?.outerHTML.slice(0, 180) +
+      ' focus=' +
+      document.hasFocus() +
+      ' dialog=' +
+      modal.outerHTML.slice(0, 200)
+  )
   const opener = document.activeElement
   flushSync(() => nested(true))
   await tick()
@@ -151,8 +200,39 @@ window.accessibilityCheck = async () => {
   key(undo, 'j')
   undo.click()
   assert(undoCount === 1, 'Keyboard-reachable undo action invoked once')
+  const contextButton = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+    (b) => b.textContent === 'Context'
+  )!
+  contextButton.focus()
+  contextButton.click()
+  await tick()
+  const memory = document.querySelector<HTMLElement>('[aria-labelledby="context-memory-title"]')!
+  assert(memory?.contains(document.activeElement), 'Memory inspector owns initial focus')
+  assert(
+    memory.textContent?.includes('10,001 of 10,001'),
+    'Memory shows full retained history coverage'
+  )
+  assert(memory.textContent?.includes('checkout must use CAD'), 'Memory source preview visible')
+  const exclude = [...memory.querySelectorAll<HTMLButtonElement>('button')].find(
+    (b) => b.textContent === 'Exclude source from older recall'
+  )!
+  exclude.click()
+  await tick()
+  assert(
+    !memory.textContent?.includes('checkout must use CAD'),
+    'Source exclusion refreshes preview'
+  )
+  key(document.activeElement!, 'Escape')
+  await tick()
+  assert(
+    !document.querySelector('[aria-labelledby="context-memory-title"]'),
+    'Escape closes memory inspector'
+  )
+  assert(document.activeElement === contextButton, 'Memory inspector returns focus to opener')
   composer.focus()
   return {
+    contextInspector: true,
+
     approvalSafeFocus: true,
     approvalReturn: true,
     modalTrap: true,

@@ -91,9 +91,21 @@ try {
   assert.equal(full.messages.length, 156)
   assert.equal(full.messages[0].content, 'Message 0')
   assert.equal(await readFile(join(dir, 'legacy.json'), 'utf8'), original)
+  const context = await request({ type: 'context-page', dir, id: 'legacy' })
+  assert.equal(context.records.length, 156)
+  assert.equal(context.revision, full.contextRevision)
+  assert.equal(context.done, true)
+  const controls = {
+    version: 1,
+    forgotten: ['0'],
+    pinned: [{ id: 'pin', text: 'Use CAD for checkout' }],
+    afterOrdinal: 0
+  }
+  await request({ type: 'context-controls', dir, id: 'legacy', write: controls })
+  assert.deepEqual(await request({ type: 'context-controls', dir, id: 'legacy' }), controls)
   await request({ type: 'shutdown' })
   console.log(
-    'Client worker checks passed: lazy tree, index patch, legacy import, paginated save, concurrent append, graceful shutdown.'
+    'Client worker checks passed: lazy tree, index patch, legacy import, paginated save, concurrent append, context paging and controls, graceful shutdown.'
   )
 } finally {
   await worker.terminate()

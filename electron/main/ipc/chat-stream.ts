@@ -7,7 +7,10 @@ import {
   validateSubmissionPaths
 } from '../services/chat-submission'
 import { foregroundTasks } from '../services/foreground-tasks'
-import { getChat } from '../services/chats'
+import { getChat, appendChatMessage } from '../services/chats'
+import { conversationContext } from '../services/context-memory'
+import { appendTaskEvent } from '../services/task-ledger'
+import type { MemoryPrompt } from '../../../src/shared/context-memory'
 import { flushTaskLedger } from '../services/task-ledger'
 import { reviewTaskOutcome } from '../services/task-outcome'
 import { asksForImageGeneration } from '../../../src/shared/image-generation'
@@ -39,7 +42,8 @@ import {
   resolveUserQuestion,
   USER_QUESTION_TIMEOUT_MS
 } from '../services/user-question'
-import type { TurnPlan } from '../../../src/shared/settings-schema'
+import { finalizePostedAnswer } from '../../../src/shared/posted-answer'
+import type { ChatMessage, ChatDelegation, TurnPlan } from '../../../src/shared/settings-schema'
 import { AGENT_HANDOFF_CHARS, summarizeAgentResults } from '../../../src/shared/agent-orchestration'
 import { saveTask } from '../services/task-store'
 import { saveAgentRun, type AgentRunRecord } from '../services/agent-runs'
@@ -85,7 +89,7 @@ export function registerChatStreamIpc(): void {
       payload = parseChatSubmission(raw)
       validateSubmissionPaths(payload, workspacePath)
       const threadId = payload.threadId ?? payload.prompt?.threadId
-      if (threadId && !(await getChat(workspacePath, threadId)))
+      if (threadId && !(await getChat(workspacePath, threadId, { limit: 1 })))
         throw new Error('The chat thread does not belong to the selected workspace.')
     } catch (error) {
       const id =
@@ -146,7 +150,73 @@ export function registerChatStreamIpc(): void {
             const current = appState.mainWindow?.webContents
             return current && !current.isDestroyed() ? current : event.sender
           }
-          const publish = chatPublisher(requestId, chatSender)
+          const publishEvent = chatPublisher(requestId, chatSender)
+          let visibleAnswer = ''
+          let visibleThinking = ''
+          const replyAssets: NonNullable<ChatMessage['assets']> = []
+          const replyDelegations = new Map<string, ChatDelegation>()
+          let replyModel = payload.model
+          let replyAgentId = payload.agentId
+          let replyAgentName: string | undefined
+          const publish = (channel: string, data: Record<string, unknown>) => {
+            if (channel === 'chat:thinking' && typeof data.chunk === 'string')
+              visibleThinking += data.chunk
+            if (channel === 'chat:asset' && data.asset) {
+              const asset = data.asset as NonNullable<ChatMessage['assets']>[number]
+              if (!replyAssets.some((item) => item.id === asset.id)) replyAssets.push(asset)
+            }
+            if (channel === 'chat:delegation' && data.delegation) {
+              const delegation = data.delegation as ChatDelegation
+              replyDelegations.set(delegation.id, delegation)
+            }
+            if (channel === 'chat:model') {
+              if (typeof data.model === 'string') replyModel = data.model
+              if (typeof data.agentId === 'string') replyAgentId = data.agentId
+              if (typeof data.agentName === 'string') replyAgentName = data.agentName
+            }
+            if (channel === 'chat:answer' && typeof data.chunk === 'string')
+              visibleAnswer = data.replace ? data.chunk : visibleAnswer + data.chunk
+            publishEvent(channel, data)
+          }
+          const contextThreadId = payload.threadId ?? payload.prompt?.threadId
+          let conversationMemory: MemoryPrompt | undefined
+          const persistReply = async (terminal: string) => {
+            if (!contextThreadId) return true
+            const { content, thinking } = finalizePostedAnswer(
+              visibleAnswer,
+              visibleThinking,
+              terminal === 'stopped',
+              replyAssets.length > 0
+            )
+            if (!content && !replyAssets.length) return true
+            try {
+              await appendChatMessage(workspacePath, contextThreadId, {
+                id: `${requestId}:assistant`,
+                role: 'assistant',
+                content,
+                thinking: thinking || undefined,
+                assets: replyAssets.length ? [...replyAssets] : undefined,
+                delegations: replyDelegations.size ? [...replyDelegations.values()] : undefined,
+                createdAt: Date.now(),
+                model: replyModel,
+                agentId: replyAgentId ?? turnPlan?.agentId,
+                agentName: replyAgentName,
+                contextResult: {
+                  taskId: requestId,
+                  terminal,
+                  projectRoot: turnPlan?.task?.scope.projectRoot ?? null,
+                  changedFiles: memoryFiles.slice(0, 200)
+                }
+              })
+              return true
+            } catch (error) {
+              publish('chat:error', {
+                requestId,
+                error: `The reply was generated but could not be saved: ${error instanceof Error ? error.message : String(error)}`
+              })
+              return false
+            }
+          }
           publish('chat:phase', {
             requestId,
             phase: 'routing',
@@ -167,6 +237,40 @@ export function registerChatStreamIpc(): void {
           abortAllCompletes()
           const { model, agentId, mode } = payload
           let messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+          // Canonical recent history is independent of renderer pagination. Appending
+          // the same request ID is idempotent when optimistic persistence races us.
+          if (contextThreadId && payload.prompt) {
+            try {
+              const recent = await appendChatMessage(
+                workspacePath,
+                contextThreadId,
+                {
+                  id: `${requestId}:user`,
+                  role: 'user',
+                  content: payload.prompt.displayContent ?? payload.prompt.text,
+                  createdAt: Date.now()
+                },
+                payload.model
+              )
+              payload.prompt.history = recent.messages
+                .filter((m) => m.id !== `${requestId}:user` && m.role !== 'system')
+                .slice(-20)
+                .map(({ role, content, agentId, agentName }) => ({
+                  role,
+                  content,
+                  agentId,
+                  agentName
+                }))
+            } catch (error) {
+              publish('chat:error', {
+                requestId,
+                error: `Could not save conversation: ${error instanceof Error ? error.message : String(error)}`
+              })
+              appState.chatStreamActive = false
+              appState.activeChatRequestId = null
+              return false
+            }
+          }
           // Resolve the route before generating role instructions. A renderer route can
           // be corrected below, so its original agent must never own the final prompt.
           messages = payload.prompt
@@ -236,6 +340,29 @@ export function registerChatStreamIpc(): void {
               appState.activeChatRequestId = null
             }
             return false
+          }
+          if (contextThreadId && payload.prompt) {
+            try {
+              const recalled = await conversationContext(
+                workspacePath,
+                contextThreadId,
+                userText,
+                settings,
+                {
+                  excludeId: `${requestId}:user`,
+                  projectRoot: turnPlan.task?.scope.projectRoot ?? null,
+                  signal: controller.signal
+                }
+              )
+              conversationMemory = recalled.prompt
+              appendTaskEvent(requestId, 'memory-selected', recalled.prompt.manifest)
+            } catch (error) {
+              if (controller.signal.aborted) throw error
+              logWarn('Conversation recall unavailable; using canonical recent history', {
+                requestId,
+                error: String(error)
+              })
+            }
           }
           const promptBuildStartedAt = Date.now()
           try {
@@ -510,6 +637,7 @@ export function registerChatStreamIpc(): void {
                 } catch {
                   /* memory is best-effort */
                 }
+                if (!(await persistReply('done'))) return false
                 publish('chat:done', { requestId })
                 logInfo('Chat stream done (cloud inline)', {
                   requestId,
@@ -522,6 +650,7 @@ export function registerChatStreamIpc(): void {
                 if ((cloudErr as Error).name === 'AbortError') {
                   flushStreamChunks()
                   persistRun({ status: 'stopped' })
+                  if (!(await persistReply('stopped'))) return false
                   publish('chat:done', { requestId, aborted: true })
                   return false
                 }
@@ -549,6 +678,7 @@ export function registerChatStreamIpc(): void {
               settings,
               model: resolvedModel,
               messages,
+              conversationMemory,
               temperature,
               signal: controller.signal,
               getSecret,
@@ -948,6 +1078,7 @@ export function registerChatStreamIpc(): void {
                 error: memErr instanceof Error ? memErr.message : String(memErr)
               })
             }
+            if (!(await persistReply(runIncomplete ? 'incomplete' : 'done'))) return false
             publish('chat:done', { requestId, incomplete: runIncomplete })
             logInfo('Chat stream done', {
               requestId,
@@ -968,6 +1099,7 @@ export function registerChatStreamIpc(): void {
                 firstOutputMs: firstModelOutputMs,
                 promptBuildMs
               })
+              if (!(await persistReply('stopped'))) return false
               publish('chat:done', { requestId, aborted: true })
               return false
             }

@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto'
 import type { ChatThread, ChatMessage } from '../../../src/shared/settings-schema'
 import { userChatsDir, workspaceChatsDir, workspaceRulesDir } from './paths'
 import { workspaceRequest } from './workspace-worker-client'
+import { invalidateConversationMemory, updateConversationMemory } from './context-memory'
 import type { ChatPage } from './workspace-worker-protocol'
 
 function chatsDir(workspacePath: string | null): string {
@@ -36,11 +37,17 @@ export function createChat(workspacePath: string | null, model: string): Promise
 }
 
 export function saveChat(workspacePath: string | null, thread: ChatThread): Promise<ChatThread> {
-  return workspaceRequest({ type: 'chat-save', dir: chatsDir(workspacePath), thread })
+  invalidateConversationMemory(workspacePath, thread.id)
+  return workspaceRequest({ type: 'chat-save', dir: chatsDir(workspacePath), thread }).finally(() =>
+    invalidateConversationMemory(workspacePath, thread.id)
+  )
 }
 
 export function deleteChat(workspacePath: string | null, id: string): Promise<boolean> {
-  return workspaceRequest({ type: 'chat-delete', dir: chatsDir(workspacePath), id })
+  invalidateConversationMemory(workspacePath, id)
+  return workspaceRequest({ type: 'chat-delete', dir: chatsDir(workspacePath), id }).finally(() =>
+    invalidateConversationMemory(workspacePath, id)
+  )
 }
 
 export function appendChatMessage(
@@ -49,7 +56,16 @@ export function appendChatMessage(
   message: ChatMessage,
   model?: string
 ): Promise<ChatThread> {
-  return workspaceRequest({ type: 'chat-append', dir: chatsDir(workspacePath), id, message, model })
+  return workspaceRequest({
+    type: 'chat-append',
+    dir: chatsDir(workspacePath),
+    id,
+    message,
+    model
+  }).then((thread) => {
+    updateConversationMemory(workspacePath, thread)
+    return thread
+  })
 }
 
 export async function appendMessage(
@@ -58,11 +74,11 @@ export async function appendMessage(
   role: ChatMessage['role'],
   content: string
 ): Promise<ChatThread> {
-  return workspaceRequest({
-    type: 'chat-append',
-    dir: chatsDir(workspacePath),
-    id: chatId,
-    message: { id: randomUUID(), role, content, createdAt: Date.now() }
+  return appendChatMessage(workspacePath, chatId, {
+    id: randomUUID(),
+    role,
+    content,
+    createdAt: Date.now()
   })
 }
 

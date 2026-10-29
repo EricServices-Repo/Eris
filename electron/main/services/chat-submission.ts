@@ -33,6 +33,7 @@ export const ChatSubmissionSchema = z
     prompt: z
       .object({
         text: z.string().min(1).max(128_000),
+        displayContent: z.string().max(160_000).optional(),
         mode: z.enum(['ask', 'agent']),
         agentId: z.string().max(128),
         agentName: z.string().max(256).optional(),

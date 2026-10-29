@@ -90,3 +90,11 @@ describe('per-workspace allowed commands', () => {
     expect(workspaceAllowedCommands(null)).toEqual([])
   })
 })
+
+it('does not let an untrusted repository opt older conversation recall into remote model requests', () => {
+  const root = newWorkspace({ agent: { contextMemory: { shareWithRemoteModels: true } } })
+  expect(getResolvedSettings(root).agent.contextMemory.shareWithRemoteModels).toBe(false)
+  expect(
+    riskyWorkspaceSettings({ agent: { contextMemory: { shareWithRemoteModels: true } } })
+  ).toContain('Send older recalled conversation context to remote models')
+})

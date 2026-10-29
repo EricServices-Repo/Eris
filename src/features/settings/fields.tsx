@@ -132,6 +132,62 @@ export function settingFields(agentIds: string[]): SettingField[] {
     },
     {
       cat: 'agent',
+      hint: 'Retains detailed saved history for recall on later messages.',
+      label: 'Keep detailed conversation history in RAM',
+      path: ['agent', 'contextMemory', 'enabled'],
+      type: 'boolean'
+    },
+    {
+      cat: 'agent',
+      hint: 'Conservative logical accounting, not a hard process RSS limit. Range: 16–512.',
+      label: 'Conversation RAM budget (MiB, logical estimate)',
+      path: ['agent', 'contextMemory', 'maxMemoryMiB'],
+      type: 'number'
+    },
+    {
+      cat: 'agent',
+      hint: 'Each conversation is limited by this and the global budget. Range: 4–128.',
+      label: 'RAM budget per conversation (MiB)',
+      path: ['agent', 'contextMemory', 'maxThreadMiB'],
+      type: 'number'
+    },
+    {
+      cat: 'agent',
+      hint: 'Full transcripts stay on disk when older messages are evicted. Range: 500–100000.',
+      label: 'Maximum retained messages per conversation',
+      path: ['agent', 'contextMemory', 'maxMessages'],
+      type: 'number'
+    },
+    {
+      cat: 'agent',
+      hint: 'Least recently used conversations are evicted first. Range: 1–16.',
+      label: 'Maximum warm conversations',
+      path: ['agent', 'contextMemory', 'warmThreads'],
+      type: 'number'
+    },
+    {
+      cat: 'agent',
+      hint: 'Idle RAM entries expire; saved history remains available. Range: 1–120.',
+      label: 'Evict idle conversations after minutes',
+      path: ['agent', 'contextMemory', 'idleMinutes'],
+      type: 'number'
+    },
+    {
+      cat: 'agent',
+      hint: 'Selected evidence also fits the model input window. Range: 128–4096.',
+      label: 'Recalled context token budget (estimate)',
+      path: ['agent', 'contextMemory', 'promptTokens'],
+      type: 'number'
+    },
+    {
+      cat: 'agent',
+      hint: 'Off by default. Existing recent chat history still goes to the selected model.',
+      label: 'Allow older recalled context in remote model requests',
+      path: ['agent', 'contextMemory', 'shareWithRemoteModels'],
+      type: 'boolean'
+    },
+    {
+      cat: 'agent',
       label: 'Max history messages',
       hint: 'Trim older turns from context',
       path: ['agent', 'maxHistoryMessages'],

@@ -8,6 +8,8 @@ import { ipcMain } from 'electron'
 import type { TurnPlan } from '../src/shared/settings-schema'
 
 type RunnerOptions = {
+  conversationMemory?: import('../src/shared/context-memory').MemoryPrompt
+  messages: Array<{ role: string; content: string }>
   workspacePath: string
   turnPlan: TurnPlan
   approveCommand: (kind: 'run' | 'push', command: string) => Promise<boolean>
@@ -226,5 +228,139 @@ describe('main-process task authority', () => {
     await stream()
     const { getLatestChatJob } = await import('../electron/main/services/chat-job-controller')
     expect(getLatestChatJob(original)?.status).toBe('incomplete')
+  })
+})
+
+describe('canonical RAM history at the production chat IPC boundary', () => {
+  it('ignores renderer paging, recalls buried facts and persists the answer before terminal delivery', async () => {
+    const chats = await import('../electron/main/services/chats')
+    const { contextMemoryStore } = await import('../electron/main/services/context-memory-store')
+    const { memoryKey } = await import('../electron/main/services/context-memory')
+    const { emptyMemoryControls } = await import('../src/shared/context-memory')
+    const requestId = randomUUID(),
+      threadId = randomUUID(),
+      root = appState.currentWorkspace
+    const messages = Array.from({ length: 1000 }, (_, i) => ({
+      id: String(i),
+      role: 'user' as const,
+      content: i === 2 ? 'Remember: currency is EUR for checkout' : `Message ${i}`,
+      createdAt: 1
+    }))
+    const thread = {
+      id: threadId,
+      title: 'Bookings',
+      model: 'builtin:composer-lite',
+      messages,
+      createdAt: 1,
+      updatedAt: 1,
+      contextRevision: 1,
+      messageCount: 1000,
+      messageOffset: 0
+    }
+    vi.spyOn(chats, 'getChat').mockResolvedValue({
+      ...thread,
+      messages: messages.slice(-1),
+      messageOffset: 999
+    })
+    let assistantSaved = false
+    vi.spyOn(chats, 'appendChatMessage').mockImplementation(async (_root, _id, message) => {
+      if (message.role === 'assistant') {
+        expect(channels()).not.toContain('chat:done')
+        expect(message).toMatchObject({
+          id: `${requestId}:assistant`,
+          content: 'Use EUR for checkout.',
+          contextResult: { terminal: 'done' }
+        })
+        assistantSaved = true
+      }
+      messages.push(message as (typeof messages)[number])
+      return {
+        ...thread,
+        messages: messages.slice(-60),
+        messageCount: messages.length,
+        messageOffset: messages.length - 60
+      }
+    })
+    const image = {
+      id: 'generated-image',
+      kind: 'image' as const,
+      mimeType: 'image/png' as const,
+      width: 512,
+      height: 512,
+      bytes: 1234,
+      provider: 'local',
+      model: 'sdxl',
+      prompt: 'rental icon',
+      createdAt: 1
+    }
+    const key = memoryKey(root, threadId)
+    contextMemoryStore.configure(getResolvedSettings(root).agent.contextMemory)
+    contextMemoryStore.install(
+      key,
+      {
+        revision: 1,
+        total: 1000,
+        records: messages.map((message, ordinal) => ({ ordinal, message })),
+        controls: emptyMemoryControls(),
+        partial: false
+      },
+      contextMemoryStore.token(key)
+    )
+    runner.script = async function* (opts) {
+      expect(opts.conversationMemory?.text).toContain('EUR')
+      expect(opts.messages.some((m) => m.content === 'Message 0')).toBe(false)
+      expect(opts.messages.at(-1)?.content).toBe('What currency should checkout use?')
+      yield { type: 'asset', asset: image }
+      yield { type: 'thinking', text: '— Inspected currency settings' }
+      yield { type: 'answer', text: 'Use EUR for checkout.' }
+    }
+    try {
+      expect(
+        await stream({ text: 'What currency should checkout use?', threadId }, requestId)
+      ).toBe(true)
+      expect(assistantSaved).toBe(true)
+      const savedReply = vi
+        .mocked(chats.appendChatMessage)
+        .mock.calls.find((call) => call[2].role === 'assistant')![2]
+      expect(savedReply.assets).toEqual([image])
+      expect(savedReply.thinking).toContain('Inspected currency settings')
+      expect(channels()).toContain('chat:done')
+      expect(chats.getChat).toHaveBeenCalledWith(root, threadId, { limit: 1 })
+    } finally {
+      contextMemoryStore.clear()
+    }
+  })
+  it('does not report success when the generated reply cannot be saved', async () => {
+    const chats = await import('../electron/main/services/chats')
+    const threadId = randomUUID()
+    vi.spyOn(chats, 'getChat').mockResolvedValue({
+      id: threadId,
+      title: 'History',
+      model: 'builtin:composer-lite',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    })
+    vi.spyOn(chats, 'appendChatMessage').mockImplementation(async (_root, _id, message) => {
+      if (message.role === 'assistant') throw Error('disk full')
+      return {
+        id: threadId,
+        title: 'History',
+        model: 'builtin:composer-lite',
+        messages: [message],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    })
+    const memory = await import('../electron/main/services/context-memory')
+    vi.spyOn(memory, 'conversationContext').mockRejectedValue(Error('cache unavailable'))
+    runner.script = async function* () {
+      yield { type: 'answer', text: 'Generated reply' }
+    }
+    expect(await stream({ text: 'Explain RAM context', threadId })).toBe(false)
+    expect(channels()).not.toContain('chat:done')
+    expect(sent.find((e) => e.channel === 'chat:error')?.payload.error).toContain(
+      'could not be saved'
+    )
   })
 })
