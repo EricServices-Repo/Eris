@@ -1,5 +1,7 @@
 # Detailed conversation memory
 
+For the detailed **target** design, implementation work packages and acceptance gates, see [RAM-CONTEXT-ARCHITECTURE.md](RAM-CONTEXT-ARCHITECTURE.md). That specification distinguishes proposed changes from the implemented behavior below.
+
 ## Implemented behavior
 
 Eris now keeps a large, detailed, bounded copy of saved conversation history in the Electron main process. A new chat message can retrieve relevant older evidence even when the renderer has loaded only the newest page. The model receives a small selection, rather than the entire RAM history.
