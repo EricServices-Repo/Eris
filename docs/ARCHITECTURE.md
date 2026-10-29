@@ -220,3 +220,6 @@ Default capacity is 128 MiB of conservatively estimated logical storage globally
 Both answer-only and tool-worker compilers treat recalled facts as optional evidence after task authority. Native local models receive additional recall by default; remote workers require opt-in. Current user messages and final assistant replies use deterministic request IDs, with main saving the visible reply before terminal publication. A Context inspector supports preview, pins, exclusions and cutoffs; settings control budgets and remote sharing. Independent Eris-Dev cases remain isolated from production conversations.
 
 See [CONTEXT-MEMORY.md](CONTEXT-MEMORY.md) for lifecycle, data flow, settings, privacy rules, test coverage and remaining extensions.
+
+
+The next RAM/history design is specified in [RAM-CONTEXT-ARCHITECTURE.md](RAM-CONTEXT-ARCHITECTURE.md), including worker-owned resident segments, shared allocation reservations, cold archive search, typed reference binding, actual-sent context manifests, quality/performance gates and phased AI work packages. These are target requirements; consult [CONTEXT-MEMORY.md](CONTEXT-MEMORY.md) for current behavior.
