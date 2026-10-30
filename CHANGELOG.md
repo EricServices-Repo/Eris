@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.4 — 2026-10-30
+
+- Tighten RAM context privacy and accuracy: bind memory to registered workspaces, recheck recall at dispatch, keep local-only recall from remote models within a run, and record what was actually sent. Add Unicode and code-aware recall, coherent evidence packing, byte-bounded chat history, memory previews with source navigation, memory reservations, and a context release gate.
+
 ## 0.6.3 — 2026-10-30
 
 - Improve RAM context recall, isolate workspace policies, prioritize foreground chat and current source evidence, and avoid duplicate recent history.
