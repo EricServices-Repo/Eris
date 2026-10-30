@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode
+} from 'react'
 
 function lowerBound(offsets: number[], target: number): number {
   let lo = 0,
@@ -42,6 +50,18 @@ export function VirtualList<T>({
   const [viewport, setViewport] = useState({ top: 0, height: 800 })
   const adjustment = useRef({ follow: false, delta: 0 })
   const previousLayout = useRef<{ keys: string[]; offsets: number[] }>({ keys: [], offsets: [] })
+  const reconcileViewport = useCallback(() => {
+    const list = container.current
+    const scroll = list?.closest<HTMLElement>('[data-virtual-scroll]')
+    if (!list || !scroll) return
+    const listTop =
+      list.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop
+    const top = Math.max(0, scroll.scrollTop - listTop)
+    const height = scroll.clientHeight
+    setViewport((previous) =>
+      previous.top === top && previous.height === height ? previous : { top, height }
+    )
+  }, [])
   const keys = useMemo(() => items.map(itemKey), [items, itemKey])
   const offsets = useMemo(() => {
     const result = [0]
@@ -169,9 +189,7 @@ export function VirtualList<T>({
     let frame = 0
     const update = () => {
       frame = 0
-      const listTop =
-        list.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop
-      setViewport({ top: Math.max(0, scroll.scrollTop - listTop), height: scroll.clientHeight })
+      reconcileViewport()
     }
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(update)
@@ -185,7 +203,7 @@ export function VirtualList<T>({
       resize.disconnect()
       cancelAnimationFrame(frame)
     }
-  }, [])
+  }, [reconcileViewport])
 
   useLayoutEffect(() => {
     const scroll = container.current?.closest<HTMLElement>('[data-virtual-scroll]')
@@ -204,7 +222,10 @@ export function VirtualList<T>({
     if (adjustment.current.follow) scroll.scrollTop = scroll.scrollHeight
     else if (adjustment.current.delta) scroll.scrollTop += adjustment.current.delta
     adjustment.current = { follow: false, delta: 0 }
-  }, [offsets, keys])
+    // Native scroll notifications are asynchronous and may be omitted in a hidden window.
+    // Reconcile before paint so prepends/measurements cannot leave the rendered range stale.
+    reconcileViewport()
+  }, [offsets, keys, reconcileViewport])
 
   useEffect(() => {
     const active = new Set(keys)
