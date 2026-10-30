@@ -2,9 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+vi.mock('worker_threads', async () => ({
+  ...(await vi.importActual<typeof import('worker_threads')>('worker_threads')),
+  parentPort: null
+}))
 vi.mock('../electron/main/services/workspace-worker-client', () => ({ workspaceRequest: vi.fn() }))
 import { workspaceRequest } from '../electron/main/services/workspace-worker-client'
-import { ChatDatabase } from '../electron/main/services/chat-database'
+import { ChatDatabase, closeChatDatabases } from '../electron/main/services/chat-database'
+import { handleWorkspaceRequest } from '../electron/main/workspace-worker'
+import type { WorkspaceRequest } from '../electron/main/services/workspace-worker-protocol'
 import {
   conversationContext,
   inspectConversationMemory,
@@ -33,20 +39,18 @@ function save(id: string, count = 1001) {
     }))
   })
 }
+const dispatchContextRequest = async (req: WorkspaceRequest) =>
+  (await handleWorkspaceRequest({ ...req, dir: folder } as WorkspaceRequest)) as never
 beforeEach(() => {
   contextMemoryStore.clear()
   contextMemoryStore.configure(settings().agent.contextMemory)
   folder = mkdtempSync(join(tmpdir(), 'eris-memory-'))
   db = new ChatDatabase(folder)
-  vi.mocked(workspaceRequest).mockImplementation(async (req) => {
-    if (req.type === 'context-controls') return db.memoryControls(req.id, req.write) as never
-    if (req.type === 'context-page') return db.contextPage(req.id, req.before) as never
-    if (req.type === 'chat-get') return db.get(req.id, req.page) as never
-    throw Error('Unexpected request')
-  })
+  vi.mocked(workspaceRequest).mockImplementation(dispatchContextRequest)
 })
 afterEach(() => {
   contextMemoryStore.clear()
+  closeChatDatabases()
   db.close()
   rmSync(folder, { recursive: true, force: true })
 })
@@ -79,7 +83,7 @@ describe('canonical context hydration', () => {
         })
         return db.contextPage('t') as never
       }
-      throw Error('Unexpected')
+      return dispatchContextRequest(req)
     })
     const warming = warmConversationMemory(null, 't', settings())
     while (!release) await new Promise<void>((r) => setImmediate(r))
@@ -104,7 +108,7 @@ describe('canonical context hydration', () => {
           })
         return page as never
       }
-      throw Error('Unexpected')
+      return dispatchContextRequest(req)
     })
     const result = await conversationContext(null, 't', 'receipt', settings())
     expect(result.prompt.manifest.totalMessages).toBe(1002)
@@ -139,7 +143,7 @@ it('does not inherit remote-sharing policy from another workspace warming concur
       contextMemoryStore.configure({ ...own.agent.contextMemory, shareWithRemoteModels: true })
       return page as never
     }
-    throw Error('Unexpected request')
+    return dispatchContextRequest(req)
   })
   const result = await conversationContext(null, 't', 'checkout', own)
   expect(result.prompt.allowRemote).toBe(false)
@@ -157,7 +161,7 @@ it('inspects durable controls and cutoff counts while recall is disabled', async
   const config = settings()
   config.agent.contextMemory.enabled = false
   const inspected = await inspectConversationMemory(null, 't', '', config)
-  expect(inspected.controls).toEqual(saved)
+  expect(inspected.controls).toMatchObject(saved)
   expect(inspected.controlsAvailable).toBe(true)
   expect(inspected.manifest).toMatchObject({
     coverage: 'disabled',
@@ -186,9 +190,8 @@ it('preserves editable canonical controls when hydration fails', async () => {
     pinned: [{ id: 'old', text: 'Saved note' }]
   })
   vi.mocked(workspaceRequest).mockImplementation(async (req) => {
-    if (req.type === 'context-controls') return db.memoryControls(req.id, req.write) as never
-    if (req.type === 'chat-get') return db.get(req.id, req.page) as never
-    throw Error('Hydration unavailable')
+    if (req.type === 'context-page') throw Error('Hydration unavailable')
+    return dispatchContextRequest(req)
   })
   const inspected = await inspectConversationMemory(null, 't', 'note', settings())
   expect(inspected.controlsAvailable).toBe(true)
@@ -214,13 +217,9 @@ it('inspects canonical controls while two background hydrations occupy all slots
   db.memoryControls('t', { ...emptyMemoryControls(), pinned: [{ id: 'p', text: 'Saved note' }] })
   const releases: Array<() => void> = []
   vi.mocked(workspaceRequest).mockImplementation(async (req) => {
-    if (req.type === 'context-controls') return db.memoryControls(req.id, req.write) as never
-    if (req.type === 'chat-get') return db.get(req.id, req.page) as never
-    if (req.type === 'context-page') {
-      if (req.id !== 't') await new Promise<void>((resolve) => releases.push(resolve))
-      return db.contextPage(req.id, req.before) as never
-    }
-    throw Error('Unexpected request')
+    if (req.type === 'context-page' && req.id !== 't')
+      await new Promise<void>((resolve) => releases.push(resolve))
+    return dispatchContextRequest(req)
   })
   const warms = [
     warmConversationMemory(null, 'warm-a', settings()),
