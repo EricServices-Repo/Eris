@@ -30,12 +30,29 @@ export function looksLikeRefusal(text: string): boolean {
 }
 
 /** Detect stuck repetitive generation (common on small local models). */
+/** Lines that say something. Code, rules and field labels recur in any structured reply. */
+function proseLines(text: string): string[] {
+  let fenced = false
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => {
+      if (/^(```|~~~)/.test(line)) {
+        fenced = !fenced
+        return false
+      }
+      return (
+        !fenced &&
+        Boolean(line) &&
+        !/^([-*_=|]\s*){3,}$/.test(line) &&
+        !/^[-*#>\s]*(\*\*[^*]{1,40}\*\*|[\w ]{1,24}:\s)/.test(line)
+      )
+    })
+}
+
 export function looksLikeDegenerateLoop(text: string): boolean {
   if (text.length < 280) return false
-  const lines = text
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
+  const lines = proseLines(text)
   if (lines.length >= 10) {
     const normalized = lines.map((l) =>
       l
@@ -67,15 +84,19 @@ export function looksLikeDegenerateLoop(text: string): boolean {
   return false
 }
 
-export function talksAboutToolsWithoutCalling(text: string): boolean {
-  if (parseToolCalls(text).length > 0) return false
+function mentionsTools(text: string): boolean {
   const t = text.toLowerCase()
-  const mentions =
+  return (
     /\b(list_dir|read_file|write_file|mkdir|delete_path|rename_path|<<<tool>>>)\b/i.test(t) ||
     /"name"\s*:\s*"(tree|list_dir|read_file|write_file)"/i.test(t) ||
     /\bi will (use|call|run) (the )?(tool|list_dir|read_file|tree)\b/i.test(t)
+  )
+}
+
+export function talksAboutToolsWithoutCalling(text: string): boolean {
+  if (parseToolCalls(text).length > 0) return false
   const longPlan = (text.match(/^\s*\d+\.\s+/gm) || []).length >= 5
-  return mentions || longPlan
+  return mentionsTools(text) || longPlan
 }
 
 /**
@@ -253,7 +274,7 @@ export function rejectedReplyReason(assistantText: string, actions: string[]): s
   if (!note) return 'tool-text-only'
   if (looksLikeRefusal(assistantText)) return 'refusal'
   if (looksLikeAsksForWorkspaceInfo(assistantText)) return 'asks-for-workspace-info'
-  if (talksAboutToolsWithoutCalling(assistantText)) return 'describes-tools'
+  if (mentionsTools(assistantText)) return 'describes-tools'
   if (looksLikeDegenerateLoop(assistantText)) return 'degenerate-loop'
   if (isUnfinishedWorkNarration(note)) return 'unfinished-work'
   if (!actions.some((action) => /^Read (?!\.eris\/)/.test(action))) return 'no-source-evidence'

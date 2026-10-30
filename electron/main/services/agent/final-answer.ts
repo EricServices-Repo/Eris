@@ -25,6 +25,9 @@ const CONTINUE_CODE =
 export const INCOMPLETE_CODE_NOTE =
   '\n\n_The code above stopped before it was complete; treat it as a partial draft._'
 
+export const TRUNCATED_NOTE =
+  '\n\n_The model repeated itself and was stopped, so this reply is partial._'
+
 export const PROTOCOL_BLOCKER =
   'I couldn’t produce a usable answer: the model returned internal tool instructions instead of a response. ' +
   'Retry the request, or rephrase it.'
@@ -39,6 +42,8 @@ export interface FinalAnswerOptions {
   goal: string
   /** The conversation the answer was generated in, for a code continuation. */
   messages: AgentChatMessage[]
+  /** The stream was cut off, so the draft is partial however well-formed it looks. */
+  truncated?: boolean
   /** Source text the worker actually read, offered again to a re-answer. */
   onPresentation?: (audit: {
     raw: string
@@ -113,6 +118,7 @@ export async function finalizeAnswer(
     }
   }
 
+  if (options.truncated) return finish(text + TRUNCATED_NOTE, true, repaired)
   if (assembledSyntax(text, options.goal).state === 'invalid')
     return finish(text + INCOMPLETE_CODE_NOTE, true, repaired)
   if (

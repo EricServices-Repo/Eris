@@ -465,15 +465,10 @@ describe('chat agent complex smoke test', () => {
       harness.retrievedPaths = []
     })
     it('forces a tool call until a source file has been read', async () => {
-      harness.replies.push(
-        PROSE,
-        JSON.stringify({ name: 'read_file', path: 'src/retry.ts' }),
-        FINDINGS
-      )
+      harness.replies.push(JSON.stringify({ name: 'read_file', path: 'src/retry.ts' }), FINDINGS)
       const events = await review()
       expectCompleted(events)
-      expect(harness.requestModes.slice(0, 3).map((mode) => mode.constrained)).toEqual([
-        false,
+      expect(harness.requestModes.slice(0, 2).map((mode) => mode.constrained)).toEqual([
         true,
         false
       ])
@@ -497,6 +492,19 @@ describe('chat agent complex smoke test', () => {
           .map((message) => message.content)
           .join('\n')
       ).toContain('MAX_RETRIES')
+    })
+    it('marks a synthesis stopped as a repeat loop as partial', async () => {
+      const loop = Array.from(
+        { length: 12 },
+        () => 'The same finding repeats here forever and ever.'
+      )
+      harness.retrievedPaths = ['src/retry.ts']
+      harness.replies.push(...Array.from({ length: 6 }, () => PROSE), loop.join('\n'))
+      const events = await review()
+      expect(lastAnswer(events)).toContain('this reply is partial')
+      expect(events.some((event) => event.type === 'progress' && event.incomplete === true)).toBe(
+        true
+      )
     })
     it('says no files were inspected when there is nothing to read', async () => {
       harness.replies.push(...Array.from({ length: 16 }, () => PROSE))

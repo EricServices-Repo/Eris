@@ -72,12 +72,12 @@ function Fixture() {
 }
 createRoot(document.getElementById('root')!).render(<Fixture />)
 const quantiles = performanceQuantiles
-const until = async (fn: () => boolean) => {
+const until = async (fn: () => boolean, waitingFor = 'its next state') => {
   for (let i = 0; i < 150; i++) {
     if (fn()) return
     await tick()
   }
-  throw new Error('Performance fixture did not settle')
+  throw new Error(`Performance fixture did not settle: ${waitingFor}`)
 }
 window.runPerformance = async (baseline) => {
   await tick()
@@ -98,12 +98,16 @@ window.runPerformance = async (baseline) => {
   scroll.dispatchEvent(new Event('scroll'))
   await tick()
   await tick()
+  // Rows mount a frame or more after a scroll; a loaded runner can take longer than two.
+  const firstVisible = () =>
+    [...rows()].find(
+      (node) => node.getBoundingClientRect().bottom > scroll.getBoundingClientRect().top + 5
+    )
   for (let page = 0; page < 5; page++) {
-    const anchor = [...rows()].find(
-        (node) => node.getBoundingClientRect().bottom > scroll.getBoundingClientRect().top + 5
-      )!,
-      key = anchor?.dataset.virtualKey,
-      y = anchor?.getBoundingClientRect().top ?? 0
+    await until(() => !!firstVisible(), `a visible row before page ${page}`)
+    const anchor = firstVisible()!,
+      key = anchor.dataset.virtualKey,
+      y = anchor.getBoundingClientRect().top
     flushSync(() =>
       setMessages((previous) => [
         ...Array.from({ length: 200 }, (_, i) => make(-1 - page * 200 - i)),
@@ -112,8 +116,12 @@ window.runPerformance = async (baseline) => {
     )
     await tick()
     await tick()
-    const after = [...rows()].find((n) => n.dataset.virtualKey === key)
-    anchorErrors.push(after ? Math.abs(after.getBoundingClientRect().top - y) : Infinity)
+    await until(
+      () => [...rows()].some((n) => n.dataset.virtualKey === key),
+      `anchor ${key} to return after page ${page}`
+    )
+    const after = [...rows()].find((n) => n.dataset.virtualKey === key)!
+    anchorErrors.push(Math.abs(after.getBoundingClientRect().top - y))
     counts.push(rows().length)
   }
   const button = scroll.querySelector<HTMLButtonElement>('.msg-feedback button')

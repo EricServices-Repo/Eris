@@ -1044,7 +1044,7 @@ async function* runAgentInternal(options: {
   // #4 grammar-constrained local tool calls: when a retry needs a tool and the
   // worker is the built-in GGUF model, force valid tool-call JSON via a grammar.
   const localConstrainEnabled = options.settings.agent.constrainLocalToolCalls !== false
-  let constrainNextToolCall = false
+  let constrainNextToolCall = awaitingSourceEvidence()
   // A grammar that yields no visible output must not poison every subsequent retry.
   let disableRetryGrammar = false
   let consecutiveEmptyReplies = 0
@@ -1685,6 +1685,7 @@ async function* runAgentInternal(options: {
     })
     yield { type: 'answer', text: '', replace: true }
     let reply = ''
+    let truncated = false
     for await (const evt of streamThinkingText({
       ...options,
       model: workerModel,
@@ -1696,7 +1697,10 @@ async function* runAgentInternal(options: {
     })) {
       if (evt.kind === 'thinking') {
         if (evt.text) yield { type: 'answer', text: evt.text }
-      } else reply = evt.full
+      } else {
+        reply = evt.full
+        truncated = evt.aborted === 'loop'
+      }
     }
     const clean = proseOutsideTools(reply)
     const searched = actionLog.find((entry) => entry.startsWith('Searched the web'))
@@ -1721,7 +1725,7 @@ async function* runAgentInternal(options: {
       }
       return
     }
-    yield* postFinalAnswer(answer)
+    yield* postFinalAnswer(answer, truncated)
   }
 
   /** The retrieved leads, read through the normal tool path when the model will not. */
@@ -1758,8 +1762,12 @@ async function* runAgentInternal(options: {
   }
 
   /** Internal framing and truncated code never reach the user as a finished answer. */
-  async function* postFinalAnswer(draft: string): AsyncGenerator<AgentRunnerEvent, void, unknown> {
+  async function* postFinalAnswer(
+    draft: string,
+    truncated = false
+  ): AsyncGenerator<AgentRunnerEvent, void, unknown> {
     const final = await finalizeAnswer(draft, {
+      truncated,
       settings: options.settings,
       model: workerModel,
       temperature: options.temperature,
@@ -1946,6 +1954,15 @@ async function* runAgentInternal(options: {
         isNativeGgufRef(workerModel)
       constrainNextToolCall = false
       const visibleToolNamesThisStep = new Set(openaiTools.map((tool) => tool.function.name))
+      /** Once the tree is known, a forced call has to open a file rather than list again. */
+      const grammarToolNames = () => {
+        const names = [...visibleToolNamesThisStep]
+        return awaitingSourceEvidence() &&
+          inspectRounds &&
+          visibleToolNamesThisStep.has('read_file')
+          ? ['read_file']
+          : names
+      }
       for await (const evt of streamThinkingText({
         ...options,
         model: workerModel,
@@ -1955,7 +1972,7 @@ async function* runAgentInternal(options: {
         builtinJsonSchema: constrainThisTurn
           ? toolCallJsonSchema(
               mcpTools.map((tool) => tool.fqName),
-              openaiTools.map((tool) => tool.function.name),
+              grammarToolNames(),
               true
             )
           : undefined,
