@@ -57,6 +57,7 @@
         "tests/evidence-storage.test.ts",
         "tests/file-mutations.test.ts",
         "tests/context-memory.test.ts",
+        "tests/context-sequence.test.ts",
         "tests/context-memory-recovery.test.ts"
       ],
       "notRun": [

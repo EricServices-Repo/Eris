@@ -25,7 +25,7 @@ async function handle(request: WorkspaceRequest): Promise<unknown> {
     case 'context-page':
       return chatDatabase(request.dir).contextPage(request.id, request.before)
     case 'context-controls':
-      return chatDatabase(request.dir).memoryControls(request.id, request.write)
+      return chatDatabase(request.dir).contextControls(request.id, request.write)
     case 'chat-list':
       return chatDatabase(request.dir).list()
     case 'chat-get':

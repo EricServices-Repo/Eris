@@ -28,12 +28,21 @@ export const MemoryControlsSchema = z
         z.object({ id: z.string().min(1).max(256), text: z.string().min(1).max(2000) }).strict()
       )
       .max(100),
-    afterOrdinal: z.number().int().nonnegative()
+    afterOrdinal: z.number().int().nonnegative(),
+    afterSequence: z.number().int().nonnegative().optional()
   })
   .strict()
-  .refine((value) => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 750000, {
-    message: 'Recall controls exceed 750 KB; remove unused exclusions or pins.'
-  })
+  .refine(
+    (value) => {
+      const content = { ...value } as Record<string, unknown>
+      delete content.afterSequence
+      delete content.revision
+      return new TextEncoder().encode(JSON.stringify(content)).byteLength <= 750000
+    },
+    {
+      message: 'Recall controls exceed 750 KB; remove unused exclusions or pins.'
+    }
+  )
 export type MemoryControls = z.infer<typeof MemoryControlsSchema>
 export const emptyMemoryControls = (): MemoryControls => ({
   version: 1,

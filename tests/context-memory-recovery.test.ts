@@ -38,7 +38,7 @@ beforeEach(() => {
   folder = mkdtempSync(join(tmpdir(), 'eris-memory-'))
   db = new ChatDatabase(folder)
   vi.mocked(workspaceRequest).mockImplementation(async (req) => {
-    if (req.type === 'context-controls') return db.memoryControls(req.id, req.write) as never
+    if (req.type === 'context-controls') return db.contextControls(req.id, req.write) as never
     if (req.type === 'context-page') return db.contextPage(req.id, req.before) as never
     throw Error('Unexpected request')
   })

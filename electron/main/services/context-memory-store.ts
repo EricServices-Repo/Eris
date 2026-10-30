@@ -34,6 +34,7 @@ const clean = (m: ChatMessage): ChatMessage => ({
   agentId: m.agentId,
   agentName: m.agentName,
   model: m.model,
+  contextSequence: m.contextSequence,
   contextResult: m.contextResult ? structuredClone(m.contextResult) : undefined
 })
 const size = (m: ChatMessage) => Buffer.byteLength(JSON.stringify(m), 'utf8') * 4 + 512
@@ -296,7 +297,9 @@ export class ContextMemoryStore {
       if (
         m.id === options.excludeId ||
         m.role === 'system' ||
-        row.ordinal < controls.afterOrdinal ||
+        (controls.afterSequence !== undefined
+          ? (m.contextSequence ?? row.ordinal + 1) <= controls.afterSequence
+          : row.ordinal < controls.afterOrdinal) ||
         controls.forgotten.includes(m.id)
       )
         continue

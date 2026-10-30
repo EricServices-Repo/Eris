@@ -18,6 +18,7 @@ type Header = {
   updatedAt: number
   messageCount: number
   contextRevision: number
+  contextSequence: number
 }
 
 /** Runs in the chat worker. Legacy transcripts remain untouched after import. */
@@ -53,12 +54,86 @@ export class ChatDatabase {
     this.db.exec(
       'CREATE TABLE IF NOT EXISTS context_controls(threadId TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,body TEXT NOT NULL)'
     )
+    this.migrateContextSequences()
     try {
       this.importLegacy(dir)
     } catch (error) {
       this.db.close()
       throw error
     }
+  }
+  private migrateContextSequences(): void {
+    this.transaction(() => {
+      if (this.db.prepare('SELECT 1 FROM migrations WHERE name=?').get('context-sequence-v1'))
+        return
+      for (const table of ['conversations', 'messages']) {
+        const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+          name: string
+        }>
+        if (!columns.some((c) => c.name === 'contextSequence'))
+          this.db.exec(`ALTER TABLE ${table} ADD COLUMN contextSequence INTEGER NOT NULL DEFAULT 0`)
+      }
+      this.db.exec(`UPDATE messages SET contextSequence=ordinal+1 WHERE contextSequence=0;
+        UPDATE conversations SET contextSequence=MAX(contextSequence,COALESCE((SELECT MAX(contextSequence) FROM messages WHERE threadId=conversations.id),0));`)
+      for (const row of this.db.prepare('SELECT threadId FROM context_controls').all())
+        this.bindLegacyCutoff(String(row.threadId))
+      this.db.prepare('INSERT INTO migrations(name) VALUES (?)').run('context-sequence-v1')
+    })
+  }
+  private cutoffSequence(id: string, ordinal: number): number {
+    return Number(
+      this.db
+        .prepare(
+          'SELECT COALESCE(MAX(contextSequence),0) AS sequence FROM messages WHERE threadId=? AND ordinal<?'
+        )
+        .get(id, ordinal)?.sequence ?? 0
+    )
+  }
+  private bindLegacyCutoff(id: string): void {
+    const row = this.db.prepare('SELECT body FROM context_controls WHERE threadId=?').get(id)
+    if (!row) return
+    let raw: Record<string, unknown>
+    try {
+      raw = JSON.parse(String(row.body))
+    } catch {
+      return
+    }
+    if (
+      !raw ||
+      typeof raw !== 'object' ||
+      Array.isArray(raw) ||
+      !Number.isSafeInteger(raw.afterOrdinal) ||
+      Number(raw.afterOrdinal) < 0
+    )
+      return
+    if (raw.afterSequence !== undefined) return
+    raw.afterSequence = this.cutoffSequence(id, Number(raw.afterOrdinal ?? 0))
+    // Preserve the optimistic concurrency contract if it is present in this database.
+    if (typeof raw.revision === 'number') raw.revision++
+    this.db
+      .prepare('UPDATE context_controls SET body=? WHERE threadId=?')
+      .run(JSON.stringify(raw), id)
+  }
+  /** Bind legacy ordinal cutoffs once while the canonical snapshot is locked. */
+  contextControls(id: string, write?: MemoryControls): MemoryControls {
+    return this.transaction(() => {
+      this.bindLegacyCutoff(id)
+      if (write) {
+        const parsed = MemoryControlsSchema.parse(write)
+        const maximum = Number(
+          this.db.prepare('SELECT contextSequence FROM conversations WHERE id=?').get(id)
+            ?.contextSequence ?? 0
+        )
+        return this.memoryControls(id, {
+          ...parsed,
+          afterSequence:
+            parsed.afterSequence === undefined
+              ? this.cutoffSequence(id, parsed.afterOrdinal)
+              : Math.min(maximum, parsed.afterSequence)
+        })
+      }
+      return this.memoryControls(id)
+    })
   }
   close(): void {
     this.db.close()
@@ -118,12 +193,15 @@ export class ChatDatabase {
     const start = Math.max(0, end - limit)
     const rows = this.db
       .prepare(
-        'SELECT body FROM messages WHERE threadId = ? AND ordinal >= ? AND ordinal < ? ORDER BY ordinal'
+        'SELECT body,contextSequence FROM messages WHERE threadId = ? AND ordinal >= ? AND ordinal < ? ORDER BY ordinal'
       )
       .all(id, start, end)
     return {
       ...header,
-      messages: rows.map((row) => JSON.parse(String(row.body))),
+      messages: rows.map((row) => ({
+        ...JSON.parse(String(row.body)),
+        contextSequence: Number(row.contextSequence)
+      })),
       messageOffset: start
     }
   }
@@ -142,8 +220,30 @@ export class ChatDatabase {
               ?.content.slice(0, 48)
               .replace(/\s+/g, ' ') || 'New chat'
         : thread.title
+    this.bindLegacyCutoff(thread.id)
+    let sequence = previous?.contextSequence ?? 0
+    const prepared = thread.messages.map((message, index) => {
+      const prior = this.db
+        .prepare('SELECT id,body,contextSequence FROM messages WHERE threadId=? AND ordinal=?')
+        .get(thread.id, offset + index)
+      let unchanged = false
+      if (prior && prior.id === message.id) {
+        const old = JSON.parse(String(prior.body)) as ChatMessage
+        unchanged = old.role === message.role && old.content === message.content
+      }
+      const sourceSequence = unchanged ? Number(prior!.contextSequence) : ++sequence
+      sequence = Math.max(sequence, sourceSequence)
+      const { contextSequence: _clientSequence, ...canonical } = message
+      return {
+        message: { ...canonical, contextSequence: sourceSequence },
+        body: JSON.stringify(canonical),
+        sequence: sourceSequence
+      }
+    })
     const next = {
       ...thread,
+      messages: prepared.map((row) => row.message),
+      contextSequence: sequence,
       title,
       updatedAt: preserveTime ? thread.updatedAt : Date.now(),
       messageOffset: offset,
@@ -152,8 +252,8 @@ export class ChatDatabase {
     }
     this.db
       .prepare(
-        `INSERT INTO conversations(id,title,model,createdAt,updatedAt,messageCount,contextRevision) VALUES (?,?,?,?,?,?,?)
-      ON CONFLICT(id) DO UPDATE SET title=excluded.title,model=excluded.model,updatedAt=excluded.updatedAt,messageCount=excluded.messageCount,contextRevision=excluded.contextRevision`
+        `INSERT INTO conversations(id,title,model,createdAt,updatedAt,messageCount,contextRevision,contextSequence) VALUES (?,?,?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET title=excluded.title,model=excluded.model,updatedAt=excluded.updatedAt,messageCount=excluded.messageCount,contextRevision=excluded.contextRevision,contextSequence=excluded.contextSequence`
       )
       .run(
         next.id,
@@ -162,12 +262,14 @@ export class ChatDatabase {
         next.createdAt,
         next.updatedAt,
         next.messageCount,
-        next.contextRevision
+        next.contextRevision,
+        next.contextSequence
       )
-    const put = this.db.prepare(`INSERT INTO messages(threadId,ordinal,id,body) VALUES (?,?,?,?)
-      ON CONFLICT(threadId,ordinal) DO UPDATE SET id=excluded.id,body=excluded.body WHERE messages.body != excluded.body`)
-    for (const [index, message] of next.messages.entries())
-      put.run(next.id, offset + index, message.id, JSON.stringify(message))
+    const put = this.db
+      .prepare(`INSERT INTO messages(threadId,ordinal,id,body,contextSequence) VALUES (?,?,?,?,?)
+      ON CONFLICT(threadId,ordinal) DO UPDATE SET id=excluded.id,body=excluded.body,contextSequence=excluded.contextSequence WHERE messages.body != excluded.body`)
+    for (const [index, row] of prepared.entries())
+      put.run(next.id, offset + index, row.message.id, row.body, row.sequence)
     this.db
       .prepare('DELETE FROM messages WHERE threadId = ? AND ordinal >= ?')
       .run(next.id, next.messageCount)
@@ -186,15 +288,23 @@ export class ChatDatabase {
       )
         return this.get(id, { limit: 60 })!
       this.db
-        .prepare('INSERT INTO messages(threadId,ordinal,id,body) VALUES (?,?,?,?)')
-        .run(id, header.messageCount, message.id, JSON.stringify(message))
+        .prepare(
+          'INSERT INTO messages(threadId,ordinal,id,body,contextSequence) VALUES (?,?,?,?,?)'
+        )
+        .run(
+          id,
+          header.messageCount,
+          message.id,
+          JSON.stringify({ ...message, contextSequence: undefined }),
+          header.contextSequence + 1
+        )
       const title =
         header.title === 'New chat' && message.role === 'user'
           ? message.content.slice(0, 48).replace(/\s+/g, ' ')
           : header.title
       this.db
         .prepare(
-          'UPDATE conversations SET messageCount = messageCount + 1, contextRevision = contextRevision + 1, updatedAt = ?, title = ?, model = ? WHERE id = ?'
+          'UPDATE conversations SET messageCount = messageCount + 1, contextRevision = contextRevision + 1, contextSequence=contextSequence+1, updatedAt = ?, title = ?, model = ? WHERE id = ?'
         )
         .run(Date.now(), title, model ?? header.model, id)
       return this.get(id, { limit: 60 })!
@@ -223,7 +333,7 @@ export class ChatDatabase {
     // Bound each transfer independently of huge archived messages. Oversize rows advance coverage explicitly.
     for (const row of this.db
       .prepare(
-        'SELECT ordinal,CASE WHEN length(CAST(body AS BLOB))<=? THEN body ELSE NULL END AS body FROM messages WHERE threadId=? AND ordinal<? ORDER BY ordinal DESC LIMIT 500'
+        'SELECT ordinal,contextSequence,CASE WHEN length(CAST(body AS BLOB))<=? THEN body ELSE NULL END AS body FROM messages WHERE threadId=? AND ordinal<? ORDER BY ordinal DESC LIMIT 500'
       )
       .iterate(maxBytes, id, end)) {
       const body = row.body === null ? null : String(row.body)
@@ -243,6 +353,7 @@ export class ChatDatabase {
           role: message.role,
           content: message.content,
           createdAt: message.createdAt,
+          contextSequence: Number(row.contextSequence),
           agentId: message.agentId,
           agentName: message.agentName,
           model: message.model,
