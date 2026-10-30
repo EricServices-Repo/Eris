@@ -63,6 +63,7 @@
         "tests/context-memory.test.ts",
         "tests/memory-dispatch.test.ts",
         "tests/context-memory-reservations.test.ts",
+        "tests/context-release-gate.test.ts",
         "tests/context-dispatch.test.ts",
         "tests/context-sequence.test.ts",
         "tests/context-memory-recovery.test.ts"
