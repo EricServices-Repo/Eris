@@ -1,4 +1,5 @@
-import { abortable, SharedHydration } from './context-hydration'
+import { HydrationScheduler, type HydrationPriority } from './context-hydration-scheduler'
+import { SharedHydration } from './context-hydration'
 import { createHash } from 'crypto'
 import { userDataRoot, userChatsDir, workspaceChatsDir } from './paths'
 import { realpathAllowMissing } from './workspace-fs'
@@ -11,6 +12,7 @@ import {
   type MemoryControls
 } from '../../../src/shared/context-memory'
 const pending = new Map<string, SharedHydration>()
+const scheduler = new HydrationScheduler()
 const idleSweep = setInterval(() => contextMemoryStore.sweep(), 60000)
 idleSweep.unref()
 export const memoryKey = (root: string | null, thread: string) =>
@@ -37,7 +39,8 @@ export async function warmConversationMemory(
   root: string | null,
   id: string,
   settings: AppSettings,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  priority: HydrationPriority = signal ? 'foreground' : 'background'
 ) {
   contextMemoryStore.configure(
     settings.agent.contextMemory ?? ContextMemorySettingsSchema.parse({})
@@ -45,26 +48,30 @@ export async function warmConversationMemory(
   const key = memoryKey(root, id)
   if (!contextMemoryStore.config.enabled) return
   signal?.throwIfAborted()
-  const header = await abortable(workspaceRequest({ type: 'context-header', dir: dir(root), id }), [
-    signal
-  ])
-  if (!header) {
-    contextMemoryStore.clear(key)
-    return
-  }
-  const current = contextMemoryStore.matchesSource(key, header)
-  const seed = current ? contextMemoryStore.backfillSeed(key) : undefined
-  if (current && !seed) return
-  if (contextMemoryStore.has(key) && !seed) contextMemoryStore.clear(key)
   const existing = pending.get(key)
   if (existing) {
+    if (priority === 'foreground') scheduler.promote(key)
     await existing.wait(signal)
     return
   }
-  if (pending.size >= 2) return
-  const token = contextMemoryStore.token(key),
-    config = { ...contextMemoryStore.config }
-  const load = new SharedHydration(async (loadSignal) => {
+  if (pending.size >= 10) {
+    const discarded = priority === 'foreground' ? scheduler.discardSpeculative() : undefined
+    if (!discarded) throw new Error('Conversation hydration admission is full')
+    pending.delete(discarded)
+  }
+  const config = { ...contextMemoryStore.config }
+  async function hydrate(loadSignal: AbortSignal) {
+    const header = await workspaceRequest({ type: 'context-header', dir: dir(root), id })
+    loadSignal.throwIfAborted()
+    if (!header) {
+      contextMemoryStore.clear(key)
+      return
+    }
+    const current = contextMemoryStore.matchesSource(key, header)
+    const seed = current ? contextMemoryStore.backfillSeed(key) : undefined
+    if (current && !seed) return
+    if (contextMemoryStore.has(key) && !seed) contextMemoryStore.clear(key)
+    const token = contextMemoryStore.token(key)
     const controls = await workspaceRequest({ type: 'context-controls', dir: dir(root), id })
     let before: number | undefined = seed?.before,
       revision: number | undefined = seed?.revision,
@@ -137,7 +144,10 @@ export async function warmConversationMemory(
         },
         token
       )
-  })
+  }
+  const load = new SharedHydration((loadSignal) =>
+    scheduler.run(key, root ?? '<profile>', priority, loadSignal, () => hydrate(loadSignal))
+  )
   pending.set(key, load)
   void load.done
     .finally(() => {
