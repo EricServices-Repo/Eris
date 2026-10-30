@@ -276,9 +276,10 @@ export async function inspectConversationMemory(
   settings: AppSettings,
   model?: string
 ) {
-  const [controls, thread] = await Promise.all([
+  const [controls, thread, sourceHeader] = await Promise.all([
     workspaceRequest({ type: 'context-controls', dir: dir(root), id }),
-    workspaceRequest({ type: 'chat-get', dir: dir(root), id, page: { limit: 1 } })
+    workspaceRequest({ type: 'chat-get', dir: dir(root), id, page: { limit: 1 } }),
+    workspaceRequest({ type: 'context-header', dir: dir(root), id })
   ])
   if (!thread) throw new Error('Chat not found')
   const projectRoot = taskScopes.get(memoryKey(root, id))
@@ -305,6 +306,7 @@ export async function inspectConversationMemory(
     preview,
     manifest: {
       ...inspection.manifest,
+      derivation: sourceHeader?.derivation,
       ...(inspection.manifest.retainedMessages === 0
         ? {
             totalMessages: thread.messageCount ?? thread.messages.length,

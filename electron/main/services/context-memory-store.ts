@@ -390,7 +390,9 @@ export class ContextMemoryStore {
       entry &&
       entry.revision === header.revision &&
       entry.total === header.messageCount &&
-      entry.sourceEpoch === header.sourceEpoch
+      entry.sourceEpoch === header.sourceEpoch &&
+      (header.controlsRevision === undefined ||
+        (entry.controls.revision ?? 0) === header.controlsRevision)
     )
   }
   /** Keep the current tail available while an expanded capacity loads older pages. */

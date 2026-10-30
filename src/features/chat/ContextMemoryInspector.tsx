@@ -117,6 +117,16 @@ export function ContextMemoryInspector({
                 revision {snapshot.manifest.revision}
               </p>
             )}
+            {snapshot?.manifest.derivation && (
+              <p role="status">
+                Source catalog:{' '}
+                {snapshot.manifest.derivation.complete
+                  ? 'up to date'
+                  : `${snapshot.manifest.derivation.pending} changes pending`}
+                . Watermark {snapshot.manifest.derivation.watermark}/
+                {snapshot.manifest.derivation.highWatermark}. Archive search coverage is separate.
+              </p>
+            )}
             {snapshot?.lastDispatch && (
               <p>
                 Last request to {snapshot.lastDispatch.model} ({snapshot.lastDispatch.destination}):{' '}

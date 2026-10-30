@@ -1,3 +1,8 @@
+import {
+  installContextChangeLog,
+  replayContextChanges,
+  contextDerivationStatus
+} from './context-change-log'
 import { contextRecord } from '../../../src/shared/context-record'
 import { recallTerms } from '../../../src/shared/recall-terms'
 import {
@@ -85,6 +90,7 @@ export class ChatDatabase {
       'CREATE TABLE IF NOT EXISTS context_controls(threadId TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,body TEXT NOT NULL)'
     )
     this.migrateContextSequences()
+    this.transaction(() => installContextChangeLog(this.db))
     try {
       this.importLegacy(dir)
     } catch (error) {
@@ -251,12 +257,45 @@ export class ChatDatabase {
     if (!row) throw new Error('Chat not found')
     return String(row.epoch)
   }
+  replayContextChanges(limit = 128) {
+    return this.transaction(() => replayContextChanges(this.db, limit))
+  }
+  contextChangeStatus() {
+    return contextDerivationStatus(this.db)
+  }
+  contextChanges(after = 0, limit = 128) {
+    if (
+      !Number.isSafeInteger(after) ||
+      after < 0 ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 500
+    )
+      throw new Error('Invalid context change cursor')
+    return {
+      status: this.contextChangeStatus(),
+      events: this.db
+        .prepare('SELECT * FROM context_changes WHERE sequence>? ORDER BY sequence LIMIT ?')
+        .all(after, limit)
+    }
+  }
+  contextCapabilities() {
+    return {
+      journal: String(this.db.prepare('PRAGMA journal_mode').get()!.journal_mode),
+      fts5: Boolean(
+        this.db.prepare("SELECT sqlite_compileoption_used('ENABLE_FTS5') AS supported").get()!
+          .supported
+      )
+    }
+  }
   contextHeader(id: string): ContextHeader | null {
     const header = this.db
       .prepare('SELECT contextRevision,messageCount FROM conversations WHERE id=?')
       .get(id)
     if (!header) return null
     return {
+      controlsRevision: this.memoryControls(id).revision ?? 0,
+      derivation: this.contextChangeStatus(),
       revision: Number(header.contextRevision),
       messageCount: Number(header.messageCount),
       sourceEpoch: this.sourceEpoch(id)

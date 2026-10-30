@@ -22,8 +22,15 @@ export async function handleWorkspaceRequest(request: WorkspaceRequest): Promise
         return null
       }
     }
-    case 'context-header':
-      return chatDatabase(request.dir).contextHeader(request.id)
+    case 'context-replay':
+      return chatDatabase(request.dir).replayContextChanges(request.limit)
+    case 'context-changes':
+      return chatDatabase(request.dir).contextChanges(request.after, request.limit)
+    case 'context-header': {
+      const db = chatDatabase(request.dir)
+      db.replayContextChanges()
+      return db.contextHeader(request.id)
+    }
     case 'context-page':
       return chatDatabase(request.dir).contextPage(
         request.id,

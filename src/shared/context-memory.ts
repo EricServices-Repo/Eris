@@ -1,3 +1,11 @@
+export type ContextDerivationStatus = {
+  version: 1
+  kind: 'source-catalog'
+  watermark: number
+  highWatermark: number
+  pending: number
+  complete: boolean
+}
 import { z } from 'zod'
 export const ContextMemorySettingsSchema = z.object({
   enabled: z.boolean().default(true),
@@ -66,6 +74,7 @@ export type MemoryManifest = {
   sourceIds: string[]
   estimatedTokens: number
   /** Lexical ranking that produced this selection. */
+  derivation?: ContextDerivationStatus
   rankingVersion?: number
   /** Matching raw sources already covered by admitted complete recent turns. */
   duplicateSourceMessages?: number
@@ -181,7 +190,13 @@ export type ContextPreview = {
   counts: ContextBundleCounts
   items: Array<Pick<ContextBundleItem, 'id' | 'status' | 'reason'>>
 }
-export type ContextHeader = { revision: number; messageCount: number; sourceEpoch: string }
+export type ContextHeader = {
+  revision: number
+  messageCount: number
+  sourceEpoch: string
+  controlsRevision?: number
+  derivation?: ContextDerivationStatus
+}
 export type ContextPage = {
   sourceEpoch?: string
   revision: number
