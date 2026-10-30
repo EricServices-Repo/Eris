@@ -142,3 +142,21 @@ it('does not inherit remote-sharing policy from another workspace warming concur
   const result = await conversationContext(null, 't', 'checkout', own)
   expect(result.prompt.allowRemote).toBe(false)
 })
+
+it('keeps excluded pins excluded after RAM eviction and database restart', async () => {
+  save('t', 1)
+  await saveMemoryControls(null, 't', {
+    ...emptyMemoryControls(),
+    pinned: [{ id: 'p', text: 'Remember: currency CAD' }],
+    forgotten: ['p']
+  })
+  let result = await conversationContext(null, 't', 'currency', settings())
+  expect(result.prompt.text).not.toContain('CAD')
+  invalidateConversationMemory(null, 't')
+  db.close()
+  db = new ChatDatabase(folder)
+  result = await conversationContext(null, 't', 'currency', settings())
+  expect(result.inspection.controls.pinned).toHaveLength(1)
+  expect(result.inspection.facts.some((f) => f.sourceId === 'p')).toBe(false)
+  expect(db.get('t')!.messageCount).toBe(1)
+})

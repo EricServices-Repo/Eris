@@ -197,3 +197,29 @@ it('invalidates a running selection and hydration when the memory policy changes
     )
   ).toBe(false)
 })
+
+it('excludes pinned source IDs from preview and model-bound memory', async () => {
+  const store = new ContextMemoryStore()
+  install(store, 'pins', [message('context', 'Routine discussion')])
+  store.setControls('pins', {
+    ...emptyMemoryControls(),
+    pinned: [
+      { id: 'excluded', text: 'Remember: currency CAD' },
+      { id: 'kept', text: 'Remember: use UTC' }
+    ],
+    forgotten: ['excluded']
+  })
+  const result = await store.select('pins', 'currency')
+  expect(result.prompt.text).not.toContain('CAD')
+  expect(result.inspection.facts.filter((f) => f.kind === 'pinned').map((f) => f.sourceId)).toEqual(
+    ['kept']
+  )
+  expect(result.prompt.text).toContain('UTC')
+  const pending = store.select('pins', 'currency')
+  store.setControls('pins', {
+    ...emptyMemoryControls(),
+    pinned: [{ id: 'kept', text: 'Remember: use UTC' }],
+    forgotten: ['kept']
+  })
+  expect((await pending).prompt.text).toBe('')
+})
