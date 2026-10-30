@@ -311,6 +311,7 @@ export interface ChatMessage {
   agentName?: string
   model?: string
   contextResult?: {
+    workingState?: import('./thread-working-state').ThreadWorkingState
     taskId: string
     terminal: string
     projectRoot: string | null

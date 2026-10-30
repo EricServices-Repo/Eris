@@ -1,3 +1,4 @@
+import { workingStateText } from '../../../src/shared/thread-working-state'
 import { contextRecord } from '../../../src/shared/context-record'
 import {
   firstMatchOffset,
@@ -336,7 +337,9 @@ export class ContextMemoryStore {
           if (corruptOrdinals.length < 100500) corruptOrdinals.push(ordinal)
           return []
         }
-        const rowTerms = terms ?? recallTerms(m.content)
+        const rowTerms = m.contextResult?.workingState
+          ? recallTerms(m.content + ' ' + workingStateText(m.contextResult.workingState))
+          : (terms ?? recallTerms(m.content))
         return [
           {
             ordinal,
@@ -467,7 +470,12 @@ export class ContextMemoryStore {
         if (entry.corruptOrdinals.length < 100500) entry.corruptOrdinals.push(ordinal)
         continue
       }
-      const terms = recallTerms(message.content)
+      const terms = recallTerms(
+        message.content +
+          (message.contextResult?.workingState
+            ? ' ' + workingStateText(message.contextResult.workingState)
+            : '')
+      )
       const row: RecordEntry = {
         ordinal,
         message,
@@ -765,7 +773,12 @@ export class ContextMemoryStore {
             sourceId: m.id,
             ordinal: row.ordinal,
             kind: 'task-result',
-            text: `Recorded task ${r.taskId}: ${r.terminal}. Recorded changed paths: ${r.changedFiles.slice(0, 20).join(', ')}. Historical outcome, not current verification.`,
+            text:
+              r.workingState &&
+              r.workingState.sourceMessageId === m.id &&
+              r.workingState.taskId === r.taskId
+                ? workingStateText(r.workingState)
+                : `Recorded task ${r.taskId}: ${r.terminal}. Recorded changed paths: ${r.changedFiles.slice(0, 20).join(', ')}. Historical outcome, not current verification.`,
             status: 'observed',
             projectRoot: r.projectRoot
           },

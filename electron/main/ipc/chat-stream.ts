@@ -1,3 +1,4 @@
+import { ThreadWorkingStateBuilder } from '../services/thread-working-state'
 import { pendingCommandApprovals } from '../services/command-approval'
 import { pendingUserQuestions } from '../services/user-question'
 import { chatPublisher, replayChatJob } from '../services/chat-events'
@@ -183,6 +184,7 @@ export function registerChatStreamIpc(): void {
           }
           const contextThreadId = payload.threadId ?? payload.prompt?.threadId
           let conversationMemory: MemoryPrompt | undefined
+          let workingState: ThreadWorkingStateBuilder | undefined
           const persistReply = async (terminal: string) => {
             if (!contextThreadId) return true
             const { content, thinking } = finalizePostedAnswer(
@@ -205,6 +207,7 @@ export function registerChatStreamIpc(): void {
                 agentId: replyAgentId ?? turnPlan?.agentId,
                 agentName: replyAgentName,
                 contextResult: {
+                  workingState: workingState?.snapshot(terminal),
                   taskId: requestId,
                   terminal,
                   projectRoot: turnPlan?.task?.scope.projectRoot ?? null,
@@ -333,6 +336,7 @@ export function registerChatStreamIpc(): void {
             const contract = await resolveChatTurnContract(turnInput, turnPlan)
             turnPlan = contract.plan
             saveTask(contract.task)
+            workingState = new ThreadWorkingStateBuilder(contract.task, `${requestId}:assistant`)
             publish('chat:task', { requestId, task: contract.task })
           } catch (error) {
             publish('chat:error', {
@@ -591,6 +595,7 @@ export function registerChatStreamIpc(): void {
                   getSecret,
                   signal: controller.signal
                 })) {
+                  workingState?.observe(evt)
                   noteFirstAgentOutput(evt)
                   if (evt.type === 'thinking') {
                     pendingThinking += evt.text
@@ -843,6 +848,7 @@ export function registerChatStreamIpc(): void {
                   timeoutMs: USER_QUESTION_TIMEOUT_MS,
                   signal: appState.chatAbort?.signal
                 })
+                workingState?.question(question, outcome.kind === 'reply')
                 logInfo('User question', {
                   requestId,
                   kind: outcome.kind,
@@ -874,6 +880,7 @@ export function registerChatStreamIpc(): void {
                 return null
               }
             })) {
+              workingState?.observe(evt)
               noteFirstAgentOutput(evt)
               if (evt.type === 'thinking') {
                 pendingThinking += evt.text
