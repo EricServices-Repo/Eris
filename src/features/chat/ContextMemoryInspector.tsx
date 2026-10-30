@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useDialogFocus } from '@/hooks/useDialogFocus'
 import type { MemoryControls, MemoryInspection } from '@/shared/context-memory'
+import { useInspectorRequests } from '@/hooks/useInspectorRequests'
 
 export function ContextMemoryInspector({
   threadId,
@@ -15,26 +16,41 @@ export function ContextMemoryInspector({
   const [snapshot, setSnapshot] = useState<MemoryInspection | null>(null),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false)
-  const focus = useDialogFocus(() => setOpen(false))
+  const requests = useInspectorRequests(JSON.stringify([workspacePath, threadId]))
+  const close = () => {
+    requests.invalidate()
+    setBusy(false)
+    setOpen(false)
+  }
+  const focus = useDialogFocus(close)
   const refresh = async (controls?: MemoryControls, evict = false) => {
+    const ticket = requests.begin(Boolean(controls) || evict)
+    if (!ticket) return false
     setBusy(true)
     setError('')
     try {
       setSnapshot(
-        await window.ide.inspectContextMemory({
-          id: threadId,
-          workspacePath,
-          snapshotHandle: snapshot?.snapshotHandle,
-          query,
-          controls,
-          evict
-        })
+        await requests.guard(
+          ticket,
+          window.ide.inspectContextMemory({
+            id: threadId,
+            workspacePath,
+            snapshotHandle: snapshot?.snapshotHandle,
+            query,
+            controls,
+            evict
+          })
+        )
       )
     } catch (e) {
+      if (!requests.current(ticket)) return false
       setError(String(e))
       setSnapshot(null)
     } finally {
-      setBusy(false)
+      if (requests.current(ticket)) {
+        requests.finish(ticket)
+        setBusy(false)
+      }
     }
   }
   const controls = snapshot?.controlsAvailable ? snapshot.controls : undefined
@@ -43,6 +59,8 @@ export function ContextMemoryInspector({
       <button
         className="btn"
         onClick={() => {
+          requests.invalidate()
+          setSnapshot(null)
           setOpen(true)
           void refresh()
         }}
@@ -182,7 +200,7 @@ export function ContextMemoryInspector({
             <button className="btn" disabled={busy} onClick={() => void refresh(undefined, true)}>
               Reload RAM from saved history
             </button>
-            <button className="btn" onClick={() => setOpen(false)}>
+            <button className="btn" onClick={close}>
               Close
             </button>
           </section>

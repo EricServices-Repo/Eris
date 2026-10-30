@@ -1,0 +1,3 @@
+# Inspector request ownership (#121)
+
+Each view owns monotonically increasing request tickets bound to its thread/workspace namespace. Only the current ticket may publish a snapshot, error, or idle state. New previews supersede older previews; a pending mutation exclusively owns the view until it settles. Closing, reopening, namespace changes and unmount invalidate prior consumers. Old results may finish at IPC but cannot publish into a new view or clear its busy state. This does not cancel or undo a durable mutation already accepted by main; snapshot/source/CAS checks remain the server-side boundary. The Electron acceptance fixture covers reversed successes, stale errors, pending mutation ownership and namespace remounts.
