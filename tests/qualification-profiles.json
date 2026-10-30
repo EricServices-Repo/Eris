@@ -59,6 +59,7 @@
         "tests/context-preview.test.ts",
         "tests/recall-quality.test.ts",
         "tests/owned-command.test.ts",
+        "tests/context-memory-reservations.test.ts",
         "tests/evidence-storage.test.ts",
         "tests/context-packing.test.ts",
         "tests/file-mutations.test.ts",

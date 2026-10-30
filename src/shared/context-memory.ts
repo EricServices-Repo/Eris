@@ -161,6 +161,13 @@ export type MemoryInspection = {
   facts: MemoryFact[]
   controls: MemoryControls
   processLogicalBytes: number
+  /** Estimated bytes by owner against one envelope; separate from process heap or RSS. */
+  ledger?: {
+    ownedBytes: number
+    reservedBytes: number
+    pinnedBytes: number
+    envelopeBytes: number
+  }
   /** The latest actual model request for this conversation, when one ran this session. */
   lastDispatch?: ContextDispatch
   /** Task scope recall used; undefined until a turn in this session has resolved one. */

@@ -47,6 +47,8 @@ export function updateConversationMemory(root: string | null, thread: ChatThread
     thread.contextEpoch
   )
 }
+/** A worker page is at most 2 MB of UTF-8, which can decode to twice that as strings. */
+const PAGE_TRANSFER_BYTES = 4_000_000
 export async function warmConversationMemory(
   root: string | null,
   id: string,
@@ -102,77 +104,90 @@ export async function warmConversationMemory(
       corruptRecords = seed?.corruptRecords ?? 0
     const corruptOrdinals = new Set<number>(seed?.corruptOrdinals ?? [])
     const records: ContextPage['records'] = [...(seed?.records ?? [])]
-    for (
-      let pages = 0;
-      pages < Math.ceil(Math.min(config.maxMessages, policy.maxMessages) / 500) + 1;
-      pages++
-    ) {
-      loadSignal.throwIfAborted()
-      if (token !== contextMemoryStore.token(key)) return
-      const page = await workspaceRequest({
-        type: 'context-page',
-        dir: dir(root),
-        id,
-        before,
-        beforeContentOffset
-      })
-      loadSignal.throwIfAborted()
-      if (!page) return
-      if (
-        revision !== undefined &&
-        (revision !== page.revision || sourceEpoch !== page.sourceEpoch)
+    const reservation = contextMemoryStore.reserve(key, bytes + PAGE_TRANSFER_BYTES)
+    if (!reservation) return
+    try {
+      for (
+        let pages = 0;
+        pages < Math.ceil(Math.min(config.maxMessages, policy.maxMessages) / 500) + 1;
+        pages++
       ) {
-        // A backfill must not leave its older seed eligible after a canonical rewrite/append.
-        if (seed && token === contextMemoryStore.token(key)) contextMemoryStore.clear(key)
-        return // concurrent transcript mutation; next request retries, never publish a mixed snapshot
+        loadSignal.throwIfAborted()
+        if (token !== contextMemoryStore.token(key)) return
+        // Charge the next transfer before asking for it; what fits so far is still useful.
+        if (!reservation.grow(Math.max(0, bytes + PAGE_TRANSFER_BYTES - reservation.bytes))) {
+          partial = true
+          break
+        }
+        const page = await workspaceRequest({
+          type: 'context-page',
+          dir: dir(root),
+          id,
+          before,
+          beforeContentOffset
+        })
+        loadSignal.throwIfAborted()
+        if (!page) return
+        if (
+          revision !== undefined &&
+          (revision !== page.revision || sourceEpoch !== page.sourceEpoch)
+        ) {
+          // A backfill must not leave its older seed eligible after a canonical rewrite/append.
+          if (seed && token === contextMemoryStore.token(key)) contextMemoryStore.clear(key)
+          return // concurrent transcript mutation; next request retries, never publish a mixed snapshot
+        }
+        revision = page.revision
+        sourceEpoch = page.sourceEpoch
+        total = page.messageCount
+        before = page.before
+        beforeContentOffset = page.beforeContentOffset
+        partial ||= page.omitted > 0 || (page.metadataOmitted ?? 0) > 0
+        const overlappingCorruption = (page.corruptOrdinals ?? []).filter((ordinal) =>
+          corruptOrdinals.has(ordinal)
+        ).length
+        corruptRecords += Math.max(0, (page.corruptRecords ?? 0) - overlappingCorruption)
+        for (const ordinal of page.corruptOrdinals ?? [])
+          if (corruptOrdinals.size < 100500) corruptOrdinals.add(ordinal)
+        records.unshift(...page.records)
+        bytes += page.records.reduce(
+          (n, r) => n + Buffer.byteLength(JSON.stringify(r.message)) * 4 + 512,
+          0
+        )
+        if (page.done) {
+          complete = true
+          break
+        }
+        if (
+          bytes >=
+            Math.min(config.maxThreadMiB, policy.maxThreadMiB, config.maxMemoryMiB) * 1024 ** 2 ||
+          records.length >= Math.min(config.maxMessages, policy.maxMessages)
+        ) {
+          partial = true
+          break
+        }
+        await new Promise<void>((r) => setImmediate(r))
       }
-      revision = page.revision
-      sourceEpoch = page.sourceEpoch
-      total = page.messageCount
-      before = page.before
-      beforeContentOffset = page.beforeContentOffset
-      partial ||= page.omitted > 0 || (page.metadataOmitted ?? 0) > 0
-      const overlappingCorruption = (page.corruptOrdinals ?? []).filter((ordinal) =>
-        corruptOrdinals.has(ordinal)
-      ).length
-      corruptRecords += Math.max(0, (page.corruptRecords ?? 0) - overlappingCorruption)
-      for (const ordinal of page.corruptOrdinals ?? [])
-        if (corruptOrdinals.size < 100500) corruptOrdinals.add(ordinal)
-      records.unshift(...page.records)
-      bytes += page.records.reduce(
-        (n, r) => n + Buffer.byteLength(JSON.stringify(r.message)) * 4 + 512,
-        0
-      )
-      if (page.done) {
-        complete = true
-        break
-      }
-      if (
-        bytes >=
-          Math.min(config.maxThreadMiB, policy.maxThreadMiB, config.maxMemoryMiB) * 1024 ** 2 ||
-        records.length >= Math.min(config.maxMessages, policy.maxMessages)
-      ) {
-        partial = true
-        break
-      }
-      await new Promise<void>((r) => setImmediate(r))
+      loadSignal.throwIfAborted()
+      if (revision !== undefined)
+        contextMemoryStore.install(
+          key,
+          {
+            revision,
+            sourceEpoch,
+            total,
+            records,
+            controls,
+            partial: partial || !complete,
+            corruptRecords,
+            corruptOrdinals: [...corruptOrdinals]
+          },
+          token,
+          reservation
+        )
+    } finally {
+      // Aborts, worker failures and late replies all end here; install already released.
+      reservation.release()
     }
-    loadSignal.throwIfAborted()
-    if (revision !== undefined)
-      contextMemoryStore.install(
-        key,
-        {
-          revision,
-          sourceEpoch,
-          total,
-          records,
-          controls,
-          partial: partial || !complete,
-          corruptRecords,
-          corruptOrdinals: [...corruptOrdinals]
-        },
-        token
-      )
   }
   const load = new SharedHydration((loadSignal) =>
     scheduler.run(key, root ?? '<profile>', priority, loadSignal, () => hydrate(loadSignal))
