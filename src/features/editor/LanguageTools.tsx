@@ -97,10 +97,10 @@ export function LanguageTools({
     }
   }
   return (
-    <section aria-label="Language actions">
-      <div className="diff-actions">
+    <section className="language-tools" aria-label="Language actions">
+      <div className="language-tool-fields">
         <button type="button" className="btn" onClick={refresh} disabled={busy}>
-          Refresh language capabilities
+          Refresh capabilities
         </button>
         <span className="subtitle">
           {cap?.ready
@@ -117,6 +117,7 @@ export function LanguageTools({
           Format preview
         </button>
         <input
+          placeholder="New symbol name"
           aria-label="New symbol name"
           value={name}
           maxLength={256}

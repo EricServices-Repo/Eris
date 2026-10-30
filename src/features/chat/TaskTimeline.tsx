@@ -94,5 +94,14 @@ export function ChatTaskTimeline({ threadId }: { threadId: string | null }) {
       clearInterval(timer)
     }
   }, [threadId])
-  return job ? <TaskTimelineView job={job} /> : null
+  if (!job) return null
+  if (['running', 'queued'].includes(job.status)) return <TaskTimelineView job={job} />
+  return (
+    <details className="task-history-details" key={job.id}>
+      <summary>
+        Last run · {job.timeline ? taskPhaseLabels[job.timeline.current.phase] : job.status}
+      </summary>
+      <TaskTimelineView job={job} />
+    </details>
+  )
 }
