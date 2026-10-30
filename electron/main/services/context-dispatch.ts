@@ -2,6 +2,7 @@ import { createHash } from 'crypto'
 import { isNativeGgufRef } from './builtin-model'
 import { appendTaskEvent } from './task-ledger'
 import { countContextItems } from './agent/context-compiler'
+import { estimateContextTokens } from '../../../src/shared/token-estimate'
 import {
   type ContextBundle,
   type ContextBundleItem,
@@ -68,6 +69,7 @@ export function reportContextDispatch(input: {
     requestDigest: createHash('sha256')
       .update(JSON.stringify([input.outbound, input.tools ?? null]))
       .digest('hex'),
+    estimatedTokens: estimateContextTokens(wire),
     counts: countContextItems(items),
     ...(changed ? { items } : {}),
     at: Date.now()
@@ -77,4 +79,21 @@ export function reportContextDispatch(input: {
   latest.delete(bundle.namespace)
   latest.set(bundle.namespace, { ...dispatch, items })
   if (latest.size > MAX_REMEMBERED) latest.delete(latest.keys().next().value!)
+}
+
+/** Pair the request estimate with provider-reported usage, keeping the two distinguishable. */
+export function reportContextUsage(input: {
+  compiled: readonly WireMessage[]
+  outbound: readonly WireMessage[]
+  model: string
+  measuredPromptTokens: number | null
+}): void {
+  const bundle = input.compiled.find((message) => message.contextBundle)?.contextBundle
+  if (!bundle) return
+  appendTaskEvent(bundle.taskId, 'context-usage', {
+    model: input.model,
+    estimatedTokens: estimateContextTokens(textOf(input.outbound)),
+    measuredPromptTokens: input.measuredPromptTokens,
+    source: input.measuredPromptTokens === null ? 'estimate-only' : 'provider-measured'
+  })
 }

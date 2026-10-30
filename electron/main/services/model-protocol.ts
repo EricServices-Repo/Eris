@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import type { ChatRequestMessage } from './openai-compatible'
+import { contextUnits } from '../../../src/shared/token-estimate'
 
 function decodedArguments(value: string): unknown {
   try {
@@ -80,7 +81,7 @@ export function budgetModelMessages(
     Math.ceil(
       items.reduce(
         (sum, item) =>
-          sum + item.content.length + JSON.stringify(item.tool_calls ?? []).length + 16,
+          sum + contextUnits(item.content) + JSON.stringify(item.tool_calls ?? []).length + 16,
         0
       ) / 3
     )

@@ -117,7 +117,12 @@ export type ContextBundle = {
   taskId: string
   /** Memory namespace, so a later inspection can find its conversation's last request. */
   namespace?: string
-  tokenizer: { method: 'characters'; tokenizer: 'none'; charsPerToken: 3 }
+  tokenizer: {
+    method: 'characters'
+    tokenizer: 'none'
+    charsPerToken: number
+    nonAsciiCharsPerToken: number
+  }
   counts: ContextBundleCounts
   items: ContextBundleItem[]
 }
@@ -130,6 +135,8 @@ export type ContextDispatch = {
   /** False when a diagnostics adapter received the request before provider adaptation. */
   adapted: boolean
   requestDigest: string
+  /** Conservative estimate for the whole request; never a provider measurement. */
+  estimatedTokens: number
   counts: ContextBundleCounts
   /** Present on a run's first dispatch and whenever an item's status changes. */
   items?: ContextBundleItem[]

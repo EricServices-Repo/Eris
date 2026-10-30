@@ -12,6 +12,12 @@ import type {
 import { isNativeGgufRef } from '../builtin-model'
 import type { AgentChatMessage } from './types'
 import type { ToolCallProtocol } from '../tool-protocol'
+import {
+  CHARS_PER_TOKEN,
+  contextUnits,
+  fitAtBoundary,
+  NON_ASCII_CHARS_PER_TOKEN
+} from '../../../../src/shared/token-estimate'
 import { createHash } from 'crypto'
 import { basename, relative } from 'path'
 
@@ -148,6 +154,8 @@ export interface ContextBudget {
   method: 'characters'
   tokenizer: 'none'
   charsPerToken: 3
+  /** Non-ASCII text is budgeted at one token per code unit. */
+  nonAsciiCharsPerToken: 1
   uncertainty: string
   /** Input tokens available to this request after tool schemas were subtracted by the caller. */
   inputTokens: number
@@ -188,23 +196,32 @@ export function countContextItems(items: readonly ContextBundleItem[]) {
   return counts
 }
 
-/** Place each selected item against the characters of the memory block that survived. */
+/** Keep whole recalled items in priority order; a later smaller item may still fit. */
+function packMemory(memory: string, items: readonly MemoryPromptItem[], units: number) {
+  if (!items.length) return { text: fitAtBoundary(memory, units), kept: new Set<string>() }
+  const header = memory.slice(0, Math.max(0, memory.indexOf(items[0]!.line)))
+  let text = header
+  let used = contextUnits(header)
+  const kept = new Set<string>()
+  for (const item of items) {
+    const cost = contextUnits(item.line)
+    if (used + cost > units) continue
+    text += item.line
+    used += cost
+    kept.add(item.id)
+  }
+  return { text: kept.size ? text : '', kept }
+}
+
+/** Account for each selected item against what the memory block kept. */
 function bundleItems(input: {
   items: readonly MemoryPromptItem[]
-  memory: string
-  includedChars: number
+  kept: ReadonlySet<string>
   blocked: boolean
   duplicate: boolean
 }): ContextBundleItem[] {
-  let cursor = 0
   return input.items.map((item) => {
-    const start = input.memory.indexOf(item.line, cursor)
-    const end = start + item.line.length
-    if (start >= 0) cursor = end
-    const sentChars =
-      input.blocked || input.duplicate || start < 0
-        ? 0
-        : Math.min(item.line.length, Math.max(0, input.includedChars - start))
+    const sent = input.kept.has(item.id)
     return {
       id: item.id,
       sourceDigest: hash(item.sourceId),
@@ -213,13 +230,13 @@ function bundleItems(input: {
       ...(item.span ? { span: item.span } : {}),
       digest: hash(item.line),
       chars: item.line.length,
-      sentChars,
-      status: sentChars === item.line.length ? 'sent' : sentChars > 0 ? 'truncated' : 'omitted',
+      sentChars: sent ? item.line.length : 0,
+      status: sent ? 'sent' : 'omitted',
       reason: input.blocked
         ? 'destination-policy'
         : input.duplicate
           ? 'duplicate-evidence'
-          : sentChars === item.line.length
+          : sent
             ? 'fits-budget'
             : 'input-budget'
     }
@@ -270,7 +287,7 @@ export function compileTaskContext(input: {
   // Leave the remaining input window for conversation, tools and source evidence.
   if (!Number.isFinite(input.maxInputTokens) || input.maxInputTokens <= 0)
     throw new Error('The model input context budget must be a positive finite number.')
-  const maxChars = Math.floor(input.maxInputTokens * 3 * SYSTEM_CONTEXT_SHARE)
+  const maxChars = Math.floor(input.maxInputTokens * CHARS_PER_TOKEN * SYSTEM_CONTEXT_SHARE)
   const freshFirst =
     evidenceRequirementFor(input.task.scope.applicability) !== 'none' &&
     Boolean(input.project || input.retrieval)
@@ -287,7 +304,7 @@ export function compileTaskContext(input: {
     : blocks
   const mandatoryChars = blocks
     .filter((b) => b.required)
-    .reduce((n, b) => n + b.content.length + 2, -2)
+    .reduce((n, b) => n + contextUnits(b.content) + 2, -2)
   const historicalCapChars = Math.max(
     0,
     Math.floor((maxChars - mandatoryChars) * (freshFirst ? 0.4 : 1))
@@ -295,13 +312,14 @@ export function compileTaskContext(input: {
   let duplicateBlocks = 0
   const seenEvidence = new Set<string>()
   let remaining = maxChars
+  let keptMemory: ReadonlySet<string> = new Set()
   const chosen: ContextBlock[] = []
   const manifest: ContextManifestBlock[] = []
   const digest = (value: string) => createHash('sha256').update(value).digest('hex')
   for (const block of ordered) {
     const separator = chosen.length ? 2 : 0
     const available = Math.max(0, remaining - separator)
-    if (block.required && block.content.length > available)
+    if (block.required && contextUnits(block.content) > available)
       throw new Error(
         'The task contract and instructions exceed this model context. Reduce attached instructions or increase the context window.'
       )
@@ -318,10 +336,19 @@ export function compileTaskContext(input: {
     if (duplicate) duplicateBlocks++
     if (identity) seenEvidence.add(identity)
     const cap = block.kind === 'memory' ? Math.min(available, historicalCapChars) : available
-    const content = duplicate ? '' : block.required ? block.content : block.content.slice(0, cap)
+    const packed =
+      block.kind === 'memory' && !duplicate
+        ? packMemory(block.content, input.memoryItems ?? [], cap)
+        : null
+    if (packed) keptMemory = packed.kept
+    const content = duplicate
+      ? ''
+      : block.required
+        ? block.content
+        : (packed?.text ?? fitAtBoundary(block.content, cap))
     if (content) {
       chosen.push({ ...block, content })
-      remaining -= content.length + separator
+      remaining -= contextUnits(content) + separator
     }
     manifest.push({
       kind: block.kind,
@@ -345,11 +372,11 @@ export function compileTaskContext(input: {
     })
   }
   const content = chosen.map((block) => block.content).join('\n\n')
+  const estimatedTokens = Math.ceil(contextUnits(content) / CHARS_PER_TOKEN)
   const memoryBlock = manifest.find((block) => block.kind === 'memory')
   const items = bundleItems({
     items: input.memoryItems ?? [],
-    memory: input.memory ?? '',
-    includedChars: memoryBlock?.chars ?? 0,
+    kept: keptMemory,
     blocked: Boolean(input.memoryBlocked),
     duplicate: duplicateBlocks > 0 && !memoryBlock?.chars
   })
@@ -357,7 +384,12 @@ export function compileTaskContext(input: {
     version: 1,
     taskId: input.task.taskId,
     ...(input.memoryNamespace ? { namespace: input.memoryNamespace } : {}),
-    tokenizer: { method: 'characters', tokenizer: 'none', charsPerToken: 3 },
+    tokenizer: {
+      method: 'characters',
+      tokenizer: 'none',
+      charsPerToken: CHARS_PER_TOKEN,
+      nonAsciiCharsPerToken: NON_ASCII_CHARS_PER_TOKEN
+    },
     counts: countContextItems(items),
     items
   }
@@ -368,15 +400,16 @@ export function compileTaskContext(input: {
     budget: {
       method: 'characters',
       tokenizer: 'none',
-      charsPerToken: 3,
+      charsPerToken: CHARS_PER_TOKEN,
+      nonAsciiCharsPerToken: NON_ASCII_CHARS_PER_TOKEN,
       uncertainty:
-        'Character estimate; actual tokenizer counts vary with language and code density.',
+        'Conservative character estimate; actual tokenizer counts vary with language and code density.',
       inputTokens: input.maxInputTokens,
       systemShare: SYSTEM_CONTEXT_SHARE,
-      reservedForConversationTokens: input.maxInputTokens - Math.ceil(content.length / 3),
+      reservedForConversationTokens: input.maxInputTokens - estimatedTokens,
       maxChars,
-      usedChars: content.length,
-      estimatedTokens: Math.ceil(content.length / 3),
+      usedChars: contextUnits(content),
+      estimatedTokens,
       optionalAllocation: {
         policy: freshFirst ? 'fresh-first' : 'conversation-first',
         historicalCapChars,

@@ -9,7 +9,7 @@ import {
   streamBuiltinChat
 } from './builtin-model'
 import { withEligibleMemory } from './memory-dispatch'
-import { reportContextDispatch } from './context-dispatch'
+import { reportContextDispatch, reportContextUsage } from './context-dispatch'
 import { isLocalRef, resolveExactLocalRef } from './local-model'
 import {
   streamOpenAICompatible,
@@ -159,6 +159,12 @@ export async function* streamProviderChat(
   let reportedCompletion: number | null = null
 
   const finish = () => {
+    reportContextUsage({
+      compiled: options.messages,
+      outbound: compiled,
+      model,
+      measuredPromptTokens: reportedPrompt
+    })
     try {
       recordModelUsage({
         model,
