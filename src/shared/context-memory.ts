@@ -75,7 +75,22 @@ export type MemoryManifest = {
   omittedPinnedFacts?: number
   reason?: string
 }
-export type MemoryPrompt = { text: string; manifest: MemoryManifest; allowRemote: boolean }
+/** One recalled unit exactly as rendered into a prompt, so it can be traced or removed later. */
+export type MemoryPromptItem = {
+  id: string
+  sourceId: string
+  kind: MemoryFact['kind']
+  text: string
+  line: string
+}
+export type MemoryPrompt = {
+  text: string
+  manifest: MemoryManifest
+  allowRemote: boolean
+  items?: MemoryPromptItem[]
+  /** Revocation state at selection; dispatch compares it before sending these items. */
+  evidenceToken?: string
+}
 export type MemoryInspection = {
   /** Opaque main-owned handle binding controls to the inspected namespace and source. */
   snapshotHandle?: string
