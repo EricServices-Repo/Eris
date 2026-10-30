@@ -24,7 +24,7 @@ export function installContextChangeLog(db: DatabaseSync) {
     CREATE TRIGGER IF NOT EXISTS context_log_timeline AFTER UPDATE OF contextRevision ON conversations
       WHEN NEW.contextRevision != OLD.contextRevision BEGIN
       INSERT INTO context_changes(threadId,kind,timelineRevision,controlsRevision,sourceEpoch)
-        VALUES(NEW.id,'timeline',NEW.contextRevision,COALESCE((SELECT json_extract(body,'$.revision') FROM context_controls WHERE threadId=NEW.id),0),
+        VALUES(NEW.id,'timeline',NEW.contextRevision,COALESCE((SELECT CASE WHEN json_valid(body) THEN json_extract(body,'$.revision') ELSE 0 END FROM context_controls WHERE threadId=NEW.id),0),
         (SELECT epoch FROM context_source_epochs WHERE threadId=NEW.id));
     END;
     CREATE TRIGGER IF NOT EXISTS context_log_delete AFTER DELETE ON conversations BEGIN
@@ -37,13 +37,13 @@ export function installContextChangeLog(db: DatabaseSync) {
     db.exec(`CREATE TRIGGER IF NOT EXISTS context_log_controls_${operation.toLowerCase()} AFTER ${operation} ON context_controls BEGIN
       INSERT INTO context_changes(threadId,kind,timelineRevision,controlsRevision,sourceEpoch)
         VALUES(${row}.threadId,'controls',COALESCE((SELECT contextRevision FROM conversations WHERE id=${row}.threadId),0),
-        COALESCE(json_extract(${row}.body,'$.revision'),0),(SELECT epoch FROM context_source_epochs WHERE threadId=${row}.threadId));
+        CASE WHEN json_valid(${row}.body) THEN COALESCE(json_extract(${row}.body,'$.revision'),0) ELSE 0 END,(SELECT epoch FROM context_source_epochs WHERE threadId=${row}.threadId));
     END;`)
   }
   if (!db.prepare('SELECT 1 FROM migrations WHERE name=?').get('context-change-log-v1')) {
     db.exec(`INSERT OR IGNORE INTO context_source_epochs SELECT id,lower(hex(randomblob(16))) FROM conversations;
       INSERT INTO context_changes(threadId,kind,timelineRevision,controlsRevision,sourceEpoch)
-        SELECT c.id,'backfill',c.contextRevision,COALESCE(json_extract(k.body,'$.revision'),0),s.epoch
+        SELECT c.id,'backfill',c.contextRevision,CASE WHEN json_valid(k.body) THEN COALESCE(json_extract(k.body,'$.revision'),0) ELSE 0 END,s.epoch
         FROM conversations c LEFT JOIN context_controls k ON k.threadId=c.id JOIN context_source_epochs s ON s.threadId=c.id;
       INSERT INTO migrations(name) VALUES('context-change-log-v1');`)
   }

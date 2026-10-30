@@ -90,3 +90,23 @@ it('resets an invalid derived cursor without changing canonical messages', () =>
   }
   expect(db.get('t')).not.toBeNull()
 })
+
+it('never blocks canonical append/delete on a corrupt optional control row', () => {
+  db.save(thread)
+  const raw = new DatabaseSync(join(dir, 'chats.sqlite'))
+  try {
+    raw.prepare('INSERT INTO context_controls(threadId,body) VALUES(?,?)').run('t', '{broken')
+    expect(() =>
+      db.append('t', {
+        id: 'u',
+        role: 'user',
+        content: 'Still save the user request',
+        createdAt: 1
+      })
+    ).not.toThrow()
+    expect(() => db.remove('t')).not.toThrow()
+    expect(db.replayContextChanges(500).complete).toBe(true)
+  } finally {
+    raw.close()
+  }
+})
