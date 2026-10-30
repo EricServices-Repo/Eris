@@ -255,3 +255,92 @@ it('inspects canonical controls while two background hydrations occupy all slots
     await Promise.all(warms)
   }
 })
+
+describe('RAM-CTX-004 growing context capacity', () => {
+  it('backfills a partial tail once, fetching only older pages while keeping recent context available', async () => {
+    save('growing', 1001)
+    const config = settings()
+    config.agent.contextMemory.maxMessages = 500
+    expect(
+      (await conversationContext(null, 'growing', 'checkout', config)).inspection.manifest
+        .retainedMessages
+    ).toBe(500)
+    const beforeCalls = vi.mocked(workspaceRequest).mock.calls.length
+    config.agent.contextMemory.maxMessages = 1000
+    let retainedWhileLoading = 0
+    vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+      if (req.type === 'context-page')
+        retainedWhileLoading = (
+          await contextMemoryStore.select(memoryKey(null, 'growing'), 'Discussion')
+        ).inspection.manifest.retainedMessages
+      return dispatchContextRequest(req)
+    })
+    const result = await conversationContext(null, 'growing', 'checkout', config)
+    expect(retainedWhileLoading).toBe(500)
+    expect(result.inspection.manifest.retainedMessages).toBe(1000)
+    const pages = vi
+      .mocked(workspaceRequest)
+      .mock.calls.slice(beforeCalls)
+      .map(([req]) => req)
+      .filter((req) => req.type === 'context-page')
+    expect(pages).toHaveLength(1)
+    expect(pages[0]).toMatchObject({ before: 501 })
+    const calls = vi.mocked(workspaceRequest).mock.calls.length
+    await conversationContext(null, 'growing', 'checkout', config)
+    expect(vi.mocked(workspaceRequest).mock.calls).toHaveLength(calls + 1)
+    config.agent.contextMemory.maxMessages = 500
+    expect(
+      (await conversationContext(null, 'growing', 'checkout', config)).inspection.manifest
+        .retainedMessages
+    ).toBe(500)
+  })
+  it('backfills after byte-budget growth and reloads an evicted thread when warm slots grow', async () => {
+    save('bytes', 1001)
+    const thread = db.get('bytes')!
+    thread.messages = thread.messages.map((m) => ({
+      ...m,
+      content: 'Discussion ' + 'x'.repeat(3000)
+    }))
+    db.save(thread)
+    const config = settings()
+    config.agent.contextMemory.maxThreadMiB = 4
+    const small = await conversationContext(null, 'bytes', 'Discussion', config)
+    config.agent.contextMemory.maxThreadMiB = 8
+    const larger = await conversationContext(null, 'bytes', 'Discussion', config)
+    expect(larger.inspection.manifest.retainedMessages).toBeGreaterThan(
+      small.inspection.manifest.retainedMessages
+    )
+    expect(contextMemoryStore.logicalBytes).toBeLessThanOrEqual(8 * 1024 ** 2)
+    save('other', 1)
+    config.agent.contextMemory.warmThreads = 1
+    await conversationContext(null, 'other', 'Discussion', config)
+    expect(contextMemoryStore.has(memoryKey(null, 'bytes'))).toBe(false)
+    config.agent.contextMemory.warmThreads = 2
+    await conversationContext(null, 'bytes', 'Discussion', config)
+    expect(contextMemoryStore.has(memoryKey(null, 'other'))).toBe(true)
+    expect(contextMemoryStore.has(memoryKey(null, 'bytes'))).toBe(true)
+  })
+  it('never publishes a backfill over a concurrent canonical append', async () => {
+    save('append', 1001)
+    const config = settings()
+    config.agent.contextMemory.maxMessages = 500
+    await conversationContext(null, 'append', 'checkout', config)
+    config.agent.contextMemory.maxMessages = 1500
+    let changed = false
+    vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+      if (req.type === 'context-page' && !changed) {
+        changed = true
+        db.append('append', {
+          id: 'late',
+          role: 'user',
+          content: 'Remember: checkout uses SEK',
+          createdAt: 2
+        })
+      }
+      return dispatchContextRequest(req)
+    })
+    const current = await conversationContext(null, 'append', 'checkout', config)
+    expect(current.prompt.text).toContain('SEK')
+    expect(current.inspection.manifest.totalMessages).toBe(1002)
+  })
+})

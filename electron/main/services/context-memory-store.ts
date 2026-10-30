@@ -21,6 +21,7 @@ type ThreadEntry = {
   bytes: number
   at: number
   partial: boolean
+  backfill: boolean
 }
 const digest = (value: string) => createHash('sha256').update(value).digest('hex')
 const sensitive =
@@ -55,6 +56,13 @@ export class ContextMemoryStore {
   config: ContextMemorySettings = ContextMemorySettingsSchema.parse({})
   constructor(private now = () => Date.now()) {}
   configure(config: ContextMemorySettings) {
+    const capacityGrew =
+      config.maxMessages > this.config.maxMessages ||
+      Math.min(config.maxThreadMiB, config.maxMemoryMiB) >
+        Math.min(this.config.maxThreadMiB, this.config.maxMemoryMiB)
+    if (capacityGrew)
+      for (const entry of this.entries.values())
+        if (entry.partial || entry.records.length < entry.total) entry.backfill = true
     const changed = JSON.stringify(this.config) !== JSON.stringify(config)
     if (changed) {
       // Invalidate selections and pending loads made under an older privacy/budget policy.
@@ -121,6 +129,7 @@ export class ContextMemoryStore {
       generation: ++this.counter,
       bytes: controlSize(input.controls) + records.reduce((n, r) => n + r.bytes, 0),
       at: this.now(),
+      backfill: false,
       partial: input.partial
     }
     this.entries.set(key, entry)
@@ -139,6 +148,18 @@ export class ContextMemoryStore {
       entry.total === header.messageCount &&
       entry.sourceEpoch === header.sourceEpoch
     )
+  }
+  /** Keep the current tail available while an expanded capacity loads older pages. */
+  backfillSeed(key: string) {
+    const entry = this.entries.get(key)
+    if (!entry?.backfill) return undefined
+    return {
+      revision: entry.revision,
+      sourceEpoch: entry.sourceEpoch,
+      total: entry.total,
+      before: entry.records[0]?.ordinal ?? entry.total,
+      records: entry.records.map(({ ordinal, message }) => ({ ordinal, message }))
+    }
   }
   append(
     key: string,
