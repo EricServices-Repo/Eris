@@ -10,6 +10,7 @@ import { foregroundTasks } from '../services/foreground-tasks'
 import { getChat, appendChatMessage } from '../services/chats'
 import { compactHistory } from '../services/chat-prompt'
 import { conversationContext } from '../services/context-memory'
+import { leaseMemoryEvidence } from '../services/memory-dispatch'
 import { appendTaskEvent } from '../services/task-ledger'
 import type { MemoryPrompt } from '../../../src/shared/context-memory'
 import { flushTaskLedger } from '../services/task-ledger'
@@ -140,6 +141,7 @@ export function registerChatStreamIpc(): void {
         if (workspacePath !== appState.currentWorkspace)
           throw new Error('The workspace changed while this task was queued.')
         markChatJobRunning(payload.requestId)
+        let releaseMemoryEvidence = (): void => undefined
         try {
           const requestReceivedAt = Date.now()
           // Renderer planning happens before this IPC request; fallback planning below
@@ -361,6 +363,12 @@ export function registerChatStreamIpc(): void {
                 }
               )
               conversationMemory = recalled.prompt
+              releaseMemoryEvidence = leaseMemoryEvidence({
+                root: workspacePath,
+                threadId: contextThreadId,
+                taskId: requestId,
+                prompt: recalled.prompt
+              })
               appendTaskEvent(requestId, 'memory-selected', recalled.prompt.manifest)
             } catch (error) {
               if (controller.signal.aborted) throw error
@@ -1134,6 +1142,7 @@ export function registerChatStreamIpc(): void {
             }
           }
         } finally {
+          releaseMemoryEvidence()
           if (appState.chatAbort === controller) {
             appState.chatStreamActive = false
             appState.activeChatRequestId = null
