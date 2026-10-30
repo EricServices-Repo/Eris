@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1 — 2026-10-29
+
+- Add bounded RAM chat context with durable memory controls, stable history cutoffs, conflict-safe updates, and canonical cache continuity checks.
+
 ## 0.5.1 — 2026-10-28
 
 - Desktop rebuild with retrieval provenance, keyboard and dialog focus fixes, negotiated language edit previews, and optional DAP debugging.
