@@ -64,6 +64,8 @@ export type MemoryManifest = {
   selectedIds: string[]
   sourceIds: string[]
   estimatedTokens: number
+  corruptRecords?: number
+  corruptOrdinals?: number[]
   omittedFacts: number
   omittedPinnedFacts?: number
   reason?: string
@@ -88,4 +90,6 @@ export type ContextPage = {
   done: boolean
   records: Array<{ ordinal: number; message: import('./settings-schema').ChatMessage }>
   omitted: number
+  corruptRecords?: number
+  corruptOrdinals?: number[]
 }

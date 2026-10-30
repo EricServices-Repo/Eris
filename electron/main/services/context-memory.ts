@@ -75,7 +75,9 @@ export async function warmConversationMemory(
           (n, r) => n + Buffer.byteLength(JSON.stringify(r.message)) * 4 + 512,
           0
         ) ?? 0,
-      partial = false
+      partial = false,
+      corruptRecords = seed?.corruptRecords ?? 0
+    const corruptOrdinals = new Set<number>(seed?.corruptOrdinals ?? [])
     const records: Array<{ ordinal: number; message: ChatThread['messages'][number] }> = [
       ...(seed?.records ?? [])
     ]
@@ -98,6 +100,12 @@ export async function warmConversationMemory(
       total = page.messageCount
       before = page.before
       partial ||= page.omitted > 0
+      const overlappingCorruption = (page.corruptOrdinals ?? []).filter((ordinal) =>
+        corruptOrdinals.has(ordinal)
+      ).length
+      corruptRecords += Math.max(0, (page.corruptRecords ?? 0) - overlappingCorruption)
+      for (const ordinal of page.corruptOrdinals ?? [])
+        if (corruptOrdinals.size < 100500) corruptOrdinals.add(ordinal)
       records.unshift(...page.records)
       bytes += page.records.reduce(
         (n, r) => n + Buffer.byteLength(JSON.stringify(r.message)) * 4 + 512,
@@ -117,7 +125,16 @@ export async function warmConversationMemory(
     if (revision !== undefined)
       contextMemoryStore.install(
         key,
-        { revision, sourceEpoch, total, records, controls, partial },
+        {
+          revision,
+          sourceEpoch,
+          total,
+          records,
+          controls,
+          partial,
+          corruptRecords,
+          corruptOrdinals: [...corruptOrdinals]
+        },
         token
       )
   })

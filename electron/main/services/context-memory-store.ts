@@ -1,3 +1,4 @@
+import { contextRecord } from '../../../src/shared/context-record'
 import { createHash } from 'crypto'
 import type { ChatMessage } from '../../../src/shared/settings-schema'
 import {
@@ -22,6 +23,8 @@ type ThreadEntry = {
   at: number
   partial: boolean
   backfill: boolean
+  corruptRecords: number
+  corruptOrdinals: number[]
 }
 const digest = (value: string) => createHash('sha256').update(value).digest('hex')
 const sensitive =
@@ -40,6 +43,7 @@ const clean = (m: ChatMessage): ChatMessage => ({
   contextResult: m.contextResult ? structuredClone(m.contextResult) : undefined
 })
 const size = (m: ChatMessage) => Buffer.byteLength(JSON.stringify(m), 'utf8') * 4 + 512
+const corruptionSize = (ordinals: number[]) => Buffer.byteLength(JSON.stringify(ordinals)) * 4 + 64
 const controlSize = (c: MemoryControls) => Buffer.byteLength(JSON.stringify(c), 'utf8') * 4 + 512
 export class ContextMemoryStore {
   private entries = new Map<string, ThreadEntry>()
@@ -109,15 +113,24 @@ export class ContextMemoryStore {
       records: Array<{ ordinal: number; message: ChatMessage }>
       controls: MemoryControls
       partial: boolean
+      corruptRecords?: number
+      corruptOrdinals?: number[]
     },
     token: string
   ) {
     if (token !== this.token(key) || !this.config.enabled) return false
     this.bump(key)
+    let corruptRecords = input.corruptRecords ?? 0
+    const corruptOrdinals = [...new Set(input.corruptOrdinals ?? [])].slice(0, 100500)
     const records: RecordEntry[] = input.records
-      .map(({ ordinal, message }) => {
-        const m = clean(message)
-        return { ordinal, message: m, bytes: size(m), salient: salient.test(m.content) }
+      .flatMap(({ ordinal, message }) => {
+        const m = contextRecord(message)
+        if (!m || !Number.isSafeInteger(ordinal) || ordinal < 0) {
+          corruptRecords++
+          if (corruptOrdinals.length < 100500) corruptOrdinals.push(ordinal)
+          return []
+        }
+        return [{ ordinal, message: m, bytes: size(m), salient: salient.test(m.content) }]
       })
       .sort((a, b) => a.ordinal - b.ordinal)
     const entry: ThreadEntry = {
@@ -127,10 +140,15 @@ export class ContextMemoryStore {
       records,
       controls: structuredClone(input.controls),
       generation: ++this.counter,
-      bytes: controlSize(input.controls) + records.reduce((n, r) => n + r.bytes, 0),
+      bytes:
+        controlSize(input.controls) +
+        corruptionSize(corruptOrdinals) +
+        records.reduce((n, r) => n + r.bytes, 0),
       at: this.now(),
       backfill: false,
-      partial: input.partial
+      corruptRecords,
+      corruptOrdinals,
+      partial: input.partial || corruptRecords > 0
     }
     this.entries.set(key, entry)
     this.trim(entry)
@@ -158,6 +176,8 @@ export class ContextMemoryStore {
       sourceEpoch: entry.sourceEpoch,
       total: entry.total,
       before: entry.records[0]?.ordinal ?? entry.total,
+      corruptRecords: entry.corruptRecords,
+      corruptOrdinals: entry.corruptOrdinals,
       records: entry.records.map(({ ordinal, message }) => ({ ordinal, message }))
     }
   }
@@ -206,7 +226,13 @@ export class ContextMemoryStore {
     for (let i = 0; i < tail.length; i++) {
       const ordinal = offset + i
       if (ordinal < entry.total) continue
-      const message = clean(tail[i])
+      const message = contextRecord(tail[i])
+      if (!message) {
+        entry.partial = true
+        entry.corruptRecords++
+        if (entry.corruptOrdinals.length < 100500) entry.corruptOrdinals.push(ordinal)
+        continue
+      }
       existing.set(ordinal, {
         ordinal,
         message,
@@ -219,7 +245,10 @@ export class ContextMemoryStore {
     entry.revision = revision
     entry.generation = ++this.counter
     entry.at = this.now()
-    entry.bytes = controlSize(entry.controls) + entry.records.reduce((n, r) => n + r.bytes, 0)
+    entry.bytes =
+      controlSize(entry.controls) +
+      corruptionSize(entry.corruptOrdinals) +
+      entry.records.reduce((n, r) => n + r.bytes, 0)
     this.trim(entry)
     this.evict(key)
   }
@@ -497,7 +526,15 @@ export class ContextMemoryStore {
       sourceIds: selected.map((f) => digest(f.sourceId)),
       estimatedTokens: Math.ceil(text.length / 3),
       omittedPinnedFacts: pins.length - selected.filter((f) => f.kind === 'pinned').length,
-      omittedFacts: Math.max(0, candidateCount - selected.length)
+      omittedFacts: Math.max(0, candidateCount - selected.length),
+      corruptRecords: e.corruptRecords,
+      corruptOrdinals: e.corruptOrdinals.slice(0, 100),
+      ...(e.corruptRecords
+        ? {
+            reason:
+              'Some corrupt or unsupported transcript records were excluded from recall; canonical rows are preserved for repair.'
+          }
+        : {})
     }
 
     if (candidateCount > 0 && !selected.length)

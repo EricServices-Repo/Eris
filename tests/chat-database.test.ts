@@ -1,3 +1,4 @@
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
@@ -198,5 +199,44 @@ describe('RAM context durable recovery', () => {
     db.remove('thread')
     db.save(thread(0))
     expect(db.memoryControls('thread').pinned).toEqual([])
+  })
+})
+
+describe('RAM-CTX-013 malformed context records', () => {
+  it('skips malformed JSON, field types, and receipt shapes without changing canonical rows', () => {
+    db = new ChatDatabase(dir)
+    db.save(thread(6))
+    const raw = new DatabaseSync(join(dir, 'chats.sqlite'))
+    const bad = [
+      '{broken',
+      JSON.stringify({ id: '1', role: 'user', content: 42 }),
+      JSON.stringify({ id: '2', role: 'unsupported', content: 'Bad role' }),
+      JSON.stringify({
+        id: '3',
+        role: 'assistant',
+        content: 'False receipt',
+        contextResult: { taskId: 'fake' }
+      })
+    ]
+    for (const [ordinal, body] of bad.entries())
+      raw
+        .prepare('UPDATE messages SET body=? WHERE threadId=? AND ordinal=?')
+        .run(body, 'thread', ordinal)
+    raw
+      .prepare('UPDATE messages SET body=? WHERE threadId=? AND ordinal=4')
+      .run(
+        JSON.stringify({ id: 'legacy', role: 'user', content: 'Remember: currency CAD' }),
+        'thread'
+      )
+    const page = db.contextPage('thread')!
+    expect(page.records.map((r) => r.message.id)).toEqual(['legacy', '5'])
+    expect(page.records[0].message.createdAt).toBe(0)
+    expect(page.corruptRecords).toBe(4)
+    expect(page.corruptOrdinals?.slice().sort()).toEqual([0, 1, 2, 3])
+    expect(page.done).toBe(true)
+    expect(
+      raw.prepare('SELECT body FROM messages WHERE threadId=? AND ordinal=0').get('thread')?.body
+    ).toBe('{broken')
+    raw.close()
   })
 })

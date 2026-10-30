@@ -27,6 +27,24 @@ function install(store: ContextMemoryStore, key: string, messages: ChatMessage[]
     store.token(key)
   )
 }
+describe('RAM-CTX-013 cache record validation', () => {
+  it('keeps valid facts searchable and exposes corrupt source positions', async () => {
+    const store = new ContextMemoryStore()
+    install(store, 'corrupt', [
+      message('bad', 42 as unknown as string),
+      message('good', 'Remember: currency CAD')
+    ])
+    const result = await store.select('corrupt', 'currency')
+    expect(result.prompt.text).toContain('CAD')
+    expect(result.inspection.manifest).toMatchObject({
+      coverage: 'partial',
+      corruptRecords: 1,
+      corruptOrdinals: [0]
+    })
+    expect(result.inspection.manifest.reason).toContain('corrupt')
+  })
+})
+
 describe('detailed RAM conversation history', () => {
   it('retains 25,000 complete messages and recalls a buried decision within the prompt budget', async () => {
     const store = new ContextMemoryStore()

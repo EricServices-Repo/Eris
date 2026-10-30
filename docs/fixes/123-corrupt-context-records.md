@@ -1,0 +1,3 @@
+# Corrupt recall records (#123)
+
+The durable context-page boundary validates identity, role, content, timestamp and optional task receipt shape. Invalid JSON or unsupported rows are skipped individually; their canonical body remains untouched for repair. A missing legacy timestamp normalizes to zero without changing source identity. Context pages report corruption separately from oversized-row omissions. RAM installation and append validate defensively, and manifests expose corruption counts plus at most 100 source ordinals and partial coverage. A bad receipt is never promoted to observed evidence. This does not repair the canonical transcript or change ordinary rendering/import behavior.

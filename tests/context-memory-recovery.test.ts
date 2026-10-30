@@ -1,3 +1,4 @@
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -422,4 +423,20 @@ describe('RAM-CTX-004 growing context capacity', () => {
     expect(current.prompt.text).toContain('SEK')
     expect(current.inspection.manifest.totalMessages).toBe(1002)
   })
+})
+
+it('RAM-CTX-013 hydrates valid records around corrupt rows and retains explicit coverage gaps', async () => {
+  save('mixed', 3)
+  const raw = new DatabaseSync(join(folder, 'chats.sqlite'))
+  raw.prepare('UPDATE messages SET body=? WHERE threadId=? AND ordinal=0').run('{broken', 'mixed')
+  raw.close()
+  const result = await conversationContext(null, 'mixed', 'checkout', settings())
+  expect(result.prompt.text).toContain('CAD')
+  expect(result.inspection.manifest.corruptRecords).toBe(1)
+  expect(result.inspection.manifest.coverage).toBe('partial')
+  const expanded = settings()
+  expanded.agent.contextMemory.maxMessages *= 2
+  const backfilled = await conversationContext(null, 'mixed', 'checkout', expanded)
+  expect(backfilled.inspection.manifest.corruptRecords).toBe(1)
+  expect(backfilled.inspection.manifest.reason).toContain('corrupt')
 })
