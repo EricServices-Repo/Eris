@@ -151,6 +151,13 @@ export interface ContextBudget {
   maxChars: number
   usedChars: number
   estimatedTokens: number
+  optionalAllocation: {
+    policy: 'fresh-first' | 'conversation-first'
+    historicalCapChars: number
+    freshChars: number
+    historicalChars: number
+    duplicateBlocks: number
+  }
 }
 
 export const SYSTEM_CONTEXT_SHARE = 0.55
@@ -195,18 +202,54 @@ export function compileTaskContext(input: {
   if (!Number.isFinite(input.maxInputTokens) || input.maxInputTokens <= 0)
     throw new Error('The model input context budget must be a positive finite number.')
   const maxChars = Math.floor(input.maxInputTokens * 3 * SYSTEM_CONTEXT_SHARE)
+  const freshFirst =
+    evidenceRequirementFor(input.task.scope.applicability) !== 'none' &&
+    Boolean(input.project || input.retrieval)
+  // Current source leads outrank historical excerpts for project-dependent work.
+  // The remaining 45% of input stays reserved for recent turns and tool results.
+  // Generic questions reserve nothing for unrelated source evidence.
+  const ordered = freshFirst
+    ? [
+        ...blocks.filter((b) => b.required),
+        ...blocks.filter((b) => b.kind === 'retrieval'),
+        ...blocks.filter((b) => b.kind === 'project'),
+        ...blocks.filter((b) => b.kind === 'memory')
+      ]
+    : blocks
+  const mandatoryChars = blocks
+    .filter((b) => b.required)
+    .reduce((n, b) => n + b.content.length + 2, -2)
+  const historicalCapChars = Math.max(
+    0,
+    Math.floor((maxChars - mandatoryChars) * (freshFirst ? 0.4 : 1))
+  )
+  let duplicateBlocks = 0
+  const seenEvidence = new Set<string>()
   let remaining = maxChars
   const chosen: ContextBlock[] = []
   const manifest: ContextManifestBlock[] = []
   const digest = (value: string) => createHash('sha256').update(value).digest('hex')
-  for (const block of blocks) {
+  for (const block of ordered) {
     const separator = chosen.length ? 2 : 0
     const available = Math.max(0, remaining - separator)
     if (block.required && block.content.length > available)
       throw new Error(
         'The task contract and instructions exceed this model context. Reduce attached instructions or increase the context window.'
       )
-    const content = block.required ? block.content : block.content.slice(0, available)
+    const raw =
+      block.kind === 'memory'
+        ? input.memory
+        : block.kind === 'project'
+          ? input.project
+          : block.kind === 'retrieval'
+            ? input.retrieval
+            : ''
+    const identity = raw?.trim()
+    const duplicate = !block.required && Boolean(identity && seenEvidence.has(identity))
+    if (duplicate) duplicateBlocks++
+    if (identity) seenEvidence.add(identity)
+    const cap = block.kind === 'memory' ? Math.min(available, historicalCapChars) : available
+    const content = duplicate ? '' : block.required ? block.content : block.content.slice(0, cap)
     if (content) {
       chosen.push({ ...block, content })
       remaining -= content.length + separator
@@ -247,7 +290,16 @@ export function compileTaskContext(input: {
       reservedForConversationTokens: input.maxInputTokens - Math.ceil(content.length / 3),
       maxChars,
       usedChars: content.length,
-      estimatedTokens: Math.ceil(content.length / 3)
+      estimatedTokens: Math.ceil(content.length / 3),
+      optionalAllocation: {
+        policy: freshFirst ? 'fresh-first' : 'conversation-first',
+        historicalCapChars,
+        freshChars: manifest
+          .filter((b) => b.kind === 'project' || b.kind === 'retrieval')
+          .reduce((n, b) => n + b.chars, 0),
+        historicalChars: manifest.find((b) => b.kind === 'memory')?.chars ?? 0,
+        duplicateBlocks
+      }
     }
   }
 }
