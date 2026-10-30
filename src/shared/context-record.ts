@@ -7,6 +7,7 @@ const ContextRecordSchema = z.object({
   createdAt: z.number().finite().default(0),
   contextContentOffset: z.number().int().nonnegative().optional(),
   contextContentLength: z.number().int().nonnegative().optional(),
+  contextProjectRoot: z.string().max(4096).nullable().optional(),
   contextSequence: z.number().int().nonnegative().optional(),
   agentId: z.string().max(256).optional(),
   agentName: z.string().max(512).optional(),

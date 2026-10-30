@@ -15,9 +15,9 @@ export type MemoryFact = {
   id: string
   sourceId: string
   ordinal: number
-  kind: 'user-stated' | 'prior-answer' | 'recommendation' | 'task-result' | 'pinned'
+  kind: 'user-stated' | 'prior-answer' | 'recommendation' | 'task-result' | 'pinned' | 'decision'
   text: string
-  status: 'user-stated' | 'unverified' | 'observed'
+  status: 'user-stated' | 'unverified' | 'observed' | 'active' | 'disputed'
   projectRoot?: string | null
 }
 export const CONTEXT_CONTROLS_CONFLICT = 'CONTEXT_CONTROLS_CONFLICT' as const

@@ -7,7 +7,7 @@ import {
   validateSubmissionPaths
 } from '../services/chat-submission'
 import { foregroundTasks } from '../services/foreground-tasks'
-import { getChat, appendChatMessage } from '../services/chats'
+import { getChat, appendChatMessage, scopeChatSource } from '../services/chats'
 import { compactHistory } from '../services/chat-prompt'
 import { conversationContext } from '../services/context-memory'
 import { leaseMemoryEvidence } from '../services/memory-dispatch'
@@ -347,6 +347,12 @@ export function registerChatStreamIpc(): void {
           }
           if (contextThreadId && payload.prompt) {
             try {
+              await scopeChatSource(
+                workspacePath,
+                contextThreadId,
+                `${requestId}:user`,
+                turnPlan.task?.scope.projectRoot ?? null
+              )
               const recalled = await conversationContext(
                 workspacePath,
                 contextThreadId,

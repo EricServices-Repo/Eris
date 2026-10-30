@@ -7,6 +7,7 @@ import {
   RECALL_RANKING_VERSION,
   tokenScore
 } from '../../../src/shared/recall-terms'
+import { DecisionIndex, decisionId } from './context-decisions'
 import { RecallIndex } from './context-recall-index'
 import { createHash } from 'crypto'
 import type { ChatMessage } from '../../../src/shared/settings-schema'
@@ -36,6 +37,7 @@ type ThreadEntry = {
   records: RecordEntry[]
   /** Row ID of records[0]; a row's ID is its position plus this offset. */
   firstRow: number
+  decisions: DecisionIndex
   index: RecallIndex
   /** Row IDs of salient rows, ascending. */
   salientRows: number[]
@@ -61,6 +63,7 @@ const clean = (m: ChatMessage): ChatMessage => ({
   agentName: m.agentName,
   model: m.model,
   contextSequence: m.contextSequence,
+  contextProjectRoot: m.contextProjectRoot,
   contextContentOffset: m.contextContentOffset,
   contextContentLength: m.contextContentLength,
   contextResult: m.contextResult ? structuredClone(m.contextResult) : undefined
@@ -282,6 +285,7 @@ export class ContextMemoryStore {
         return !controls.pinned.some((p) => p.id === item.id && p.text.startsWith(item.text))
       const rows = sources.get(item.sourceId) ?? []
       if (!rows.length || rows.some((row) => excludedByCutoff(row, controls))) return true
+      if (item.kind === 'decision') return !e.decisions.currentId(item.id)
       return item.kind !== 'task-result' && !rows.some((r) => r.message.content.includes(item.text))
     })
   }
@@ -352,6 +356,8 @@ export class ContextMemoryStore {
           a.ordinal - b.ordinal ||
           (a.message.contextContentOffset ?? 0) - (b.message.contextContentOffset ?? 0)
       )
+    const decisions = new DecisionIndex()
+    records.forEach((row) => decisions.add(row.message))
     const index = new RecallIndex()
     records.forEach((row, position) => index.add(position, row.terms))
     const entry: ThreadEntry = {
@@ -360,11 +366,13 @@ export class ContextMemoryStore {
       total: input.total,
       records,
       firstRow: 0,
+      decisions,
       index,
       salientRows: records.flatMap((row, position) => (row.salient ? [position] : [])),
       controls: structuredClone(input.controls),
       generation: ++this.counter,
       bytes:
+        decisions.bytes +
         controlSize(input.controls) +
         corruptionSize(corruptOrdinals) +
         records.reduce((n, r) => n + r.bytes, 0),
@@ -477,6 +485,9 @@ export class ContextMemoryStore {
       }
       // New ordinals follow everything retained, so row IDs stay in position order.
       const id = entry.firstRow + entry.records.length + appended.length
+      const beforeDecisions = entry.decisions.bytes
+      entry.decisions.add(message)
+      entry.bytes += entry.decisions.bytes - beforeDecisions
       appended.push(row)
       entry.index.add(id, terms)
       if (row.salient) entry.salientRows.push(id)
@@ -487,6 +498,7 @@ export class ContextMemoryStore {
     entry.generation = ++this.counter
     entry.at = this.now()
     entry.bytes =
+      entry.decisions.bytes +
       controlSize(entry.controls) +
       corruptionSize(entry.corruptOrdinals) +
       entry.records.reduce((n, r) => n + r.bytes, 0)
@@ -702,6 +714,12 @@ export class ContextMemoryStore {
       )
         continue
       if (
+        m.contextProjectRoot !== undefined &&
+        options.projectRoot !== undefined &&
+        m.contextProjectRoot !== options.projectRoot
+      )
+        continue
+      if (
         m.contextResult?.projectRoot &&
         options.projectRoot !== undefined &&
         m.contextResult.projectRoot !== options.projectRoot
@@ -739,6 +757,34 @@ export class ContextMemoryStore {
       else if (row.salient) start = Math.max(0, m.content.search(salient) - 120)
       const excerpt = m.content.slice(start, start + 1800)
       if (sensitive.test(excerpt)) continue
+      const declarations = e.decisions
+        .forMessage(m)
+        .filter(
+          (decision) => options.projectRoot === undefined || decision.scope === options.projectRoot
+        )
+      for (const decision of declarations)
+        if (
+          decision.state !== 'superseded' &&
+          (!covered.has(m.id) || decision.correction || decision.state === 'disputed') &&
+          (options.projectRoot === undefined || decision.scope === options.projectRoot)
+        )
+          add({
+            fact: {
+              id: decisionId(decision),
+              sourceId: m.id,
+              ordinal: row.ordinal,
+              kind: 'decision',
+              status: decision.state,
+              projectRoot: decision.scope,
+              text:
+                decision.state === 'active'
+                  ? decision.correction
+                    ? `Current: ${decision.subject} = ${decision.value}.`
+                    : `Current: ${m.content.slice(decision.offset - (m.contextContentOffset ?? 0), decision.offset - (m.contextContentOffset ?? 0) + decision.length)}`
+                  : `Disputed: ${decision.subject} = ${decision.value}. Clarify; no current choice.`
+            },
+            score: score + 40
+          })
       const fact: MemoryFact = {
         id: digest(m.id + ':' + (m.contextContentOffset ?? 0) + ':' + start),
         sourceId: m.id,
@@ -753,7 +799,7 @@ export class ContextMemoryStore {
         status: m.role === 'user' ? 'user-stated' : 'unverified',
         projectRoot: m.contextResult?.projectRoot
       }
-      if (!covered.has(m.id))
+      if (!covered.has(m.id) && !declarations.length)
         add({ fact, score: score + row.ordinal / Math.max(1, e.total), message: m })
       // A structured task receipt contributes observed outcome/obligation state
       // absent from raw conversational content, so it remains eligible.

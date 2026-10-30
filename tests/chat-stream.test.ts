@@ -300,6 +300,7 @@ describe('canonical RAM history at the production chat IPC boundary', () => {
     }
     const worker = await import('../electron/main/services/workspace-worker-client')
     vi.spyOn(worker, 'workspaceRequest').mockImplementation(async (req) => {
+      if (req.type === 'context-source-scope') return false as never
       if (req.type === 'context-header')
         return { revision: 1, messageCount: 1000, sourceEpoch: 'scripted-history' } as never
       throw Error('Unexpected worker request')

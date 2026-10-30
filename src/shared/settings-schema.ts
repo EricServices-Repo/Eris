@@ -295,6 +295,8 @@ export interface ChatDelegation {
 }
 
 export interface ChatMessage {
+  /** Resolved scope recorded by main for a user declaration, never inferred from its prose. */
+  contextProjectRoot?: string | null
   /** Recall-only chunk position in Unicode code points; canonical rendering remains intact. */
   contextContentOffset?: number
   contextContentLength?: number

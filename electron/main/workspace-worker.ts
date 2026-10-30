@@ -47,6 +47,12 @@ export async function handleWorkspaceRequest(request: WorkspaceRequest): Promise
       return chatDatabase(request.dir).remove(request.id)
     case 'chat-append':
       return chatDatabase(request.dir).append(request.id, request.message, request.model)
+    case 'context-source-scope':
+      return chatDatabase(request.dir).scopeContextSource(
+        request.id,
+        request.messageId,
+        request.projectRoot
+      )
     case 'shutdown':
       closeChatDatabases()
       return true
