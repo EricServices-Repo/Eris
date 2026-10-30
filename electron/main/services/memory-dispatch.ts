@@ -1,3 +1,4 @@
+import { createHash } from 'crypto'
 import { isNativeGgufRef } from './builtin-model'
 import { memoryKey, warmConversationMemory } from './context-memory'
 import { contextMemoryStore, MEMORY_PROMPT_HEADER } from './context-memory-store'
@@ -19,8 +20,12 @@ type EvidenceLease = {
   allowRemote: boolean
   token: string
   revoked: Set<string>
+  /** Set once a model has received an item; digests the messages that predate it. */
+  exposure: { clean: Set<string>; intent: unknown } | null
 }
 const leases = new Set<EvidenceLease>()
+export const DERIVED_WITHHELD_NOTICE =
+  'Earlier steps in this run used local-only conversation memory and are not shown to this model. Inspect the workspace again rather than assuming their results.'
 
 /** Track recalled items for one request. The returned function ends tracking. */
 export function leaseMemoryEvidence(input: {
@@ -39,7 +44,8 @@ export function leaseMemoryEvidence(input: {
     items: prompt.items,
     allowRemote: prompt.allowRemote,
     token: prompt.evidenceToken,
-    revoked: new Set()
+    revoked: new Set(),
+    exposure: null
   }
   leases.add(lease)
   return () => leases.delete(lease)
@@ -93,6 +99,47 @@ function withoutItem(content: string, line: string) {
   return content
 }
 
+const digest = (message: { content?: unknown }) =>
+  createHash('sha256')
+    .update(JSON.stringify([(message as { role?: unknown }).role, message.content]))
+    .digest('hex')
+
+/** Later messages may repeat what the model read, so they inherit its privacy limit. */
+function recordExposure(lease: EvidenceLease, messages: Array<{ content?: unknown }>) {
+  if (lease.exposure) return
+  const exposed = messages.some(
+    ({ content }) =>
+      typeof content === 'string' &&
+      lease.items.some((item) => content.includes(memoryItemMarker(item.line)))
+  )
+  if (!exposed) return
+  const user = messages.filter((message) => (message as { role?: unknown }).role === 'user')
+  lease.exposure = { clean: new Set(messages.map(digest)), intent: user[user.length - 1] }
+}
+
+/**
+ * Withhold what may derive from private recall. Generated turns, tool output and summaries
+ * carry no sentence-level lineage, so everything after exposure is treated as dependent.
+ * Compiled system prompts stay because their memory items were already removed.
+ */
+function withoutDerived<T extends { content?: unknown }>(lease: EvidenceLease, messages: T[]): T[] {
+  const { clean, intent } = lease.exposure!
+  const kept = messages.filter(
+    (message) => clean.has(digest(message)) || 'contextBundle' in message
+  )
+  if (kept.length === messages.length) return messages
+  appendTaskEvent(lease.taskId, 'derived-context-withheld', {
+    withheld: messages.length - kept.length,
+    kept: kept.length
+  })
+  const hasUser = kept.some((message) => (message as { role?: unknown }).role === 'user')
+  return [
+    ...kept,
+    ...(hasUser || !intent ? [] : [intent as T]),
+    { role: 'system', content: DERIVED_WITHHELD_NOTICE } as unknown as T
+  ]
+}
+
 /**
  * The outbound messages this destination may receive right now. Retained prompts are
  * never edited, so a later recompile or compaction passes through the same removal.
@@ -117,6 +164,11 @@ export async function withEligibleMemory<T extends { content?: unknown }>(
       if (everything) content = content.replace(MEMORY_PROMPT_HEADER, '')
       return content === message.content ? message : { ...message, content }
     })
+  }
+  for (const lease of leases) {
+    recordExposure(lease, outbound)
+    if (lease.exposure && !lease.allowRemote && !isNativeGgufRef(model))
+      outbound = withoutDerived(lease, outbound)
   }
   return { messages: outbound, revoked }
 }
