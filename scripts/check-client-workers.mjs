@@ -43,6 +43,21 @@ try {
   const tree = await request({ type: 'tree', root, maxDepth: 0 })
   assert.equal(tree[0].name, 'src')
   assert.equal(tree[0].children, undefined)
+  const evidence = await request({
+    type: 'context-evidence-capture',
+    root,
+    paths: ['src/nested/b.ts']
+  })
+  assert.equal(evidence.complete, true)
+  assert.deepEqual(
+    await request({ type: 'context-evidence-validate', root, snapshots: [evidence] }),
+    [true]
+  )
+  await writeFile(join(root, 'src', 'nested', 'b.ts'), 'export function beta() { return 3 }')
+  assert.deepEqual(
+    await request({ type: 'context-evidence-validate', root, snapshots: [evidence] }),
+    [false]
+  )
   const indexPath = join(root, '.eris', 'code-index.json')
   const indexed = await request({ type: 'index', root, indexPath })
   assert.ok(indexed.symbols.some((symbol) => symbol.name === 'alpha'))
