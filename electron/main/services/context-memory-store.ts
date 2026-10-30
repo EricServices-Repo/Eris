@@ -351,7 +351,7 @@ export class ContextMemoryStore {
       }
     }
     for (const p of controls.pinned)
-      if (!sensitive.test(p.text))
+      if (!controls.forgotten.includes(p.id) && !sensitive.test(p.text))
         add({
           fact: {
             id: p.id,
