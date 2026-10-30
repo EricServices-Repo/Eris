@@ -223,6 +223,7 @@ window.accessibilityCheck = async () => {
     !memory.textContent?.includes('checkout must use CAD'),
     'Source exclusion refreshes preview'
   )
+  await (await import('./context-pin-draft-check')).checkPinDraftRetention(memory)
   key(document.activeElement!, 'Escape')
   await tick()
   assert(
@@ -233,6 +234,7 @@ window.accessibilityCheck = async () => {
   composer.focus()
   return {
     contextInspector: true,
+    pinDraftRetention: true,
 
     approvalSafeFocus: true,
     approvalReturn: true,

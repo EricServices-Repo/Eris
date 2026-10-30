@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useDialogFocus } from '@/hooks/useDialogFocus'
 import type { MemoryControls, MemoryInspection } from '@/shared/context-memory'
 
@@ -9,6 +9,7 @@ export function ContextMemoryInspector({
   threadId: string
   workspacePath?: string | null
 }) {
+  const draftRevision = useRef(0)
   const [open, setOpen] = useState(false),
     [query, setQuery] = useState(''),
     [note, setNote] = useState('')
@@ -30,9 +31,11 @@ export function ContextMemoryInspector({
           evict
         })
       )
+      return true
     } catch (e) {
       setError(String(e))
       setSnapshot(null)
+      return false
     } finally {
       setBusy(false)
     }
@@ -92,7 +95,12 @@ export function ContextMemoryInspector({
               This preview depends on the question. Actual model context can be smaller because of
               its input window. Extra recall is local only unless enabled in Settings → Agent.
             </p>
-            {error && <p role="alert">{error}</p>}
+            {error && (
+              <p role="alert">
+                {error} Your note draft is preserved. Preview again to reload controls before
+                retrying.
+              </p>
+            )}
             <ul>
               {snapshot?.facts.map((f) => (
                 <li key={f.id}>
@@ -123,16 +131,28 @@ export function ContextMemoryInspector({
             <form
               onSubmit={(e) => {
                 e.preventDefault()
-                if (controls && note.trim())
+                if (controls && note.trim()) {
+                  const submittedRevision = draftRevision.current
+                  const submittedText = note.trim()
                   void refresh({
                     ...controls,
-                    pinned: [...controls.pinned, { id: crypto.randomUUID(), text: note.trim() }]
-                  }).then(() => setNote(''))
+                    pinned: [...controls.pinned, { id: crypto.randomUUID(), text: submittedText }]
+                  }).then((saved) => {
+                    if (saved && draftRevision.current === submittedRevision) setNote('')
+                  })
+                }
               }}
             >
               <label>
                 Pin an important note
-                <textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} />
+                <textarea
+                  value={note}
+                  onChange={(e) => {
+                    draftRevision.current++
+                    setNote(e.target.value)
+                  }}
+                  maxLength={2000}
+                />
               </label>
               <button
                 className="btn"
