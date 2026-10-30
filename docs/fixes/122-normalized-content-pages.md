@@ -7,3 +7,5 @@ Large text is split into at most 32,768 Unicode code-point chunks, with a contin
 SQL JSON parsing can still allocate native worker memory proportional to the canonical row; this change bounds decoded JS/IPC content, not a hard process RSS ceiling. Hydration remains subject to existing byte/message/page/deadline limits; searchable evicted archive coverage remains #134.
 
 Validation: `npx vitest run tests/chat-database.test.ts tests/context-memory-recovery.test.ts tests/context-memory.test.ts tests/context-sequence.test.ts` covers 2MB traces, image metadata, escaped Unicode reconstruction, bounded page payloads, old-schema/corrupt rows and real worker recall of an older chunk. Deterministic fixtures; no live inference or hardware claims.
+
+`node scripts/check-client-workers.mjs` additionally sends a trace-heavy Unicode source through the built workspace worker, follows content cursors and reconstructs every chunk without trace text.
