@@ -13,7 +13,9 @@ const harness = vi.hoisted(() => ({
   replies: [] as string[],
   prompts: [] as string[],
   nativeCalls: [] as Array<Array<{ id: string; name: string; arguments: string }> | undefined>,
-  transcripts: [] as Array<Array<{ role: string; content: string }>>,
+  transcripts: [] as Array<Array<{ role: string; content: string; tool_calls?: unknown[] }>>,
+  requestModes: [] as Array<{ constrained: boolean; sessionKey?: string }>,
+  releasedSessions: [] as string[],
   verifyCalls: 0,
   verifyResults: [] as Array<{
     ok: boolean
@@ -26,8 +28,14 @@ const harness = vi.hoisted(() => ({
 vi.mock('../electron/main/services/chat-runtime', () => ({
   streamModelChat: async function* (options: {
     messages: Array<{ role: string; content: string }>
+    builtinJsonSchema?: Record<string, unknown>
+    sessionKey?: string
     onNativeToolCalls?: (calls: Array<{ id: string; name: string; arguments: string }>) => void
   }) {
+    harness.requestModes.push({
+      constrained: Boolean(options.builtinJsonSchema),
+      sessionKey: options.sessionKey
+    })
     harness.prompts.push(options.messages.map((message) => message.content).join('\n'))
     harness.transcripts.push(structuredClone(options.messages))
     const native = harness.nativeCalls.shift()
@@ -43,6 +51,9 @@ vi.mock('../electron/main/services/builtin-model', async () => {
   )
   return {
     ...actual,
+    releaseLocalChatSession: (key: string) => {
+      harness.releasedSessions.push(key)
+    },
     isExactBuiltinReady: () => true,
     resolveExactBuiltinRef: (ref: string) => ref
   }
@@ -128,6 +139,8 @@ beforeEach(() => {
   harness.transcripts.length = 0
   harness.replies.length = 0
   harness.prompts.length = 0
+  harness.requestModes.length = 0
+  harness.releasedSessions.length = 0
   harness.verifyCalls = 0
   harness.verifyResults.length = 0
 })
@@ -334,6 +347,322 @@ describe('chat agent complex smoke test', () => {
       harness.prompts.some((prompt) => prompt.includes('Do not retry this blocked action'))
     ).toBe(true)
     expectCompleted(events)
+    expect(harness.replies).toHaveLength(0)
+  })
+
+  it('counts different ranges of the same source as evidence beyond six rounds', async () => {
+    for (let line = 1; line <= 9; line++)
+      harness.replies.push(
+        JSON.stringify({
+          name: 'read_file',
+          path: 'src/divide.ts',
+          start_line: line,
+          end_line: line
+        })
+      )
+    harness.replies.push(
+      JSON.stringify({ name: 'read_file', path: 'src/retry.ts' }),
+      JSON.stringify({
+        name: 'search_replace',
+        path: 'src/retry.ts',
+        old_string: 'MAX_RETRIES = 3',
+        new_string: 'MAX_RETRIES = 4'
+      }),
+      'DONE: Updated the retry limit in src/retry.ts to four after inspecting the source ranges.'
+    )
+    const events = await drain(
+      runAgentWithWorkspaceTools({
+        workspacePath,
+        settings: getDefaults(),
+        model: 'builtin:composer-lite',
+        messages: [
+          {
+            role: 'user',
+            content:
+              'Update the retry limit in src/retry.ts to four. Inspect source before editing.'
+          }
+        ],
+        temperature: 0,
+        getSecret: () => null,
+        mode: 'agent',
+        turnPlan: fullEditPlan(),
+        mcp: 'off'
+      })
+    )
+    expect(readFileSync(join(workspacePath, 'src/retry.ts'), 'utf8')).toContain('MAX_RETRIES = 4')
+    expect(
+      toolsFrom(events).filter((tool) => tool.name === 'read_file' && tool.status === 'ok')
+    ).toHaveLength(10)
+    expectCompleted(events)
+    expect(lastAnswer(events)).not.toContain('Stopped after')
+    expect(harness.replies).toHaveLength(0)
+  })
+
+  it('synthesizes a stalled review instead of posting its promise to keep reading', async () => {
+    const before = readFileSync(join(workspacePath, 'src/retry.ts'), 'utf8')
+    harness.replies.push(
+      JSON.stringify({ name: 'read_file', path: 'src/retry.ts' }),
+      ...Array.from(
+        { length: 6 },
+        () =>
+          'I need to read more files to complete the review. Let me check the remaining source files.'
+      ),
+      '1. Make MAX_RETRIES configurable in src/retry.ts.\n2. Add jitter to retryDelay in src/retry.ts.\n3. Test the 4,000 ms backoff cap in src/retry.ts.'
+    )
+    const events = await drain(
+      runAgentWithWorkspaceTools({
+        workspacePath,
+        settings: getDefaults(),
+        model: 'builtin:composer-lite',
+        messages: [{ role: 'user', content: 'Review the project and recommend 3 improvements.' }],
+        temperature: 0,
+        getSecret: () => null,
+        mode: 'agent',
+        turnPlan: { ...workspaceQuestionPlan(), intent: 'review', toolPolicy: 'full' },
+        mcp: 'off'
+      })
+    )
+    expectCompleted(events)
+    expect(lastAnswer(events)).toContain('jitter')
+    expect(lastAnswer(events)).not.toMatch(/Stopped after|I need to read/)
+    expect(readFileSync(join(workspacePath, 'src/retry.ts'), 'utf8')).toBe(before)
+    expect(
+      harness.prompts.some((prompt) => prompt.includes('Thinking is finished. Write the reply'))
+    ).toBe(true)
+    expect(harness.replies).toHaveLength(0)
+  })
+
+  it('gives a stalled edit a bounded recovery window that can reach a real change', async () => {
+    harness.replies.push(
+      ...Array.from(
+        { length: 7 },
+        () => 'I will inspect the source and make the requested changes.'
+      ),
+      JSON.stringify({ name: 'read_file', path: 'src/retry.ts' }),
+      JSON.stringify({
+        name: 'search_replace',
+        path: 'src/retry.ts',
+        old_string: 'MAX_RETRIES = 3',
+        new_string: 'MAX_RETRIES = 4'
+      }),
+      'DONE: Updated src/retry.ts to allow four retries.'
+    )
+    const events = await drain(
+      runAgentWithWorkspaceTools({
+        workspacePath,
+        settings: getDefaults(),
+        model: 'builtin:composer-lite',
+        messages: [{ role: 'user', content: 'Update the retry limit to four.' }],
+        temperature: 0,
+        getSecret: () => null,
+        mode: 'agent',
+        turnPlan: fullEditPlan(),
+        mcp: 'off'
+      })
+    )
+    expect(harness.prompts.some((prompt) => prompt.includes('RECOVERY: The last attempts'))).toBe(
+      true
+    )
+    expect(readFileSync(join(workspacePath, 'src/retry.ts'), 'utf8')).toContain('MAX_RETRIES = 4')
+    expectCompleted(events)
+  })
+
+  it('still bounds an irrecoverable model and reports the blocker once without fabricated edits', async () => {
+    harness.replies.push(
+      ...Array.from(
+        { length: 30 },
+        () => 'I will inspect the source and make the requested changes.'
+      )
+    )
+    const events = await drain(
+      runAgentWithWorkspaceTools({
+        workspacePath,
+        settings: getDefaults(),
+        model: 'builtin:composer-lite',
+        messages: [{ role: 'user', content: 'Update the retry limit to four.' }],
+        temperature: 0,
+        getSecret: () => null,
+        mode: 'agent',
+        turnPlan: fullEditPlan(),
+        mcp: 'off'
+      })
+    )
+    expect(events.some((event) => event.type === 'progress' && event.incomplete)).toBe(true)
+    expect(lastAnswer(events)).toContain('No file changes were made.')
+    expect(lastAnswer(events)).not.toMatch(/Stopped after|What I did:/)
+    expect(lastAnswer(events).match(/couldn’t complete/g)).toHaveLength(1)
+    expect(harness.prompts.length).toBeLessThan(20)
+    expect(
+      harness.prompts.filter((prompt) => prompt.includes('RECOVERY: The last attempts')).length
+    ).toBeGreaterThan(0)
+    expect(readFileSync(join(workspacePath, 'src/retry.ts'), 'utf8')).toContain('MAX_RETRIES = 3')
+  })
+
+  it('recovers an empty constrained reply after scaffolding a website and accepts a verified completion list', async () => {
+    const paths = [
+      'public/index.html',
+      'public/styles/main.css',
+      'public/js/main.js',
+      'backend/app.py',
+      'backend/templates/login.html',
+      'backend/templates/register.html',
+      'backend/templates/admin.html'
+    ]
+    harness.replies.push(
+      JSON.stringify({ name: 'tree', path: '.' }),
+      ...paths.map((path) =>
+        JSON.stringify({
+          name: 'write_file',
+          path,
+          content: '<!-- realistic source fixture -->\n'.repeat(15)
+        })
+      ),
+      'I will inspect the implementation and make any remaining changes.',
+      '',
+      '1. Created the public news website in public/index.html.\n2. Implemented registration in backend/app.py.\n3. Created the admin templates in backend/templates/admin.html.'
+    )
+    const events = await drain(
+      runAgentWithWorkspaceTools({
+        workspacePath,
+        settings: getDefaults(),
+        jobId: 'empty-reply-regression',
+        model: 'builtin:composer-lite',
+        messages: [
+          {
+            role: 'user',
+            content: 'Build a news media website with registration and an admin backend.'
+          }
+        ],
+        temperature: 0,
+        getSecret: () => null,
+        mode: 'agent',
+        turnPlan: fullEditPlan(),
+        mcp: 'off'
+      })
+    )
+    expectCompleted(events)
+    expect(lastAnswer(events)).toContain('registration')
+    expect(harness.requestModes.at(-2)?.constrained).toBe(true)
+    expect(harness.requestModes.at(-1)?.constrained).toBe(false)
+    expect(harness.releasedSessions).toContain('gguf:empty-reply-regression')
+    expect(
+      harness.transcripts
+        .at(-1)
+        ?.some(
+          (message) =>
+            message.role === 'assistant' && !message.content.trim() && !message.tool_calls?.length
+        )
+    ).toBe(false)
+    expect(harness.prompts.at(-1)).toContain('EMPTY_RESPONSE_RECOVERY')
+    expect(harness.verifyCalls).toBeGreaterThan(0)
+    for (const path of paths) expect(existsSync(join(workspacePath, path))).toBe(true)
+    expect(
+      toolsFrom(events).filter((tool) => tool.name === 'write_file' && tool.status === 'ok')
+    ).toHaveLength(paths.length)
+    expect(harness.replies).toHaveLength(0)
+  })
+
+  it('resumes missing edits after an empty reply instead of declaring partial work complete', async () => {
+    harness.replies.push(
+      JSON.stringify({ name: 'read_file', path: 'src/retry.ts' }),
+      '',
+      JSON.stringify({
+        name: 'search_replace',
+        path: 'src/retry.ts',
+        old_string: 'MAX_RETRIES = 3',
+        new_string: 'MAX_RETRIES = 4'
+      }),
+      'DONE: Updated the retry limit in src/retry.ts to four.'
+    )
+    const events = await drain(
+      runAgentWithWorkspaceTools({
+        workspacePath,
+        settings: getDefaults(),
+        model: 'builtin:composer-lite',
+        messages: [{ role: 'user', content: 'Update the retry limit to four.' }],
+        temperature: 0,
+        getSecret: () => null,
+        mode: 'agent',
+        turnPlan: fullEditPlan(),
+        mcp: 'off'
+      })
+    )
+    expectCompleted(events)
+    expect(readFileSync(join(workspacePath, 'src/retry.ts'), 'utf8')).toContain('MAX_RETRIES = 4')
+    expect(harness.verifyCalls).toBeGreaterThan(0)
+    expect(harness.replies).toHaveLength(0)
+  })
+
+  it('bounds repeated empty completions without saving empty assistant turns or claiming success', async () => {
+    harness.replies.push(
+      JSON.stringify({
+        name: 'write_file',
+        path: 'partial.html',
+        content: '<main>Partial work</main>\n'.repeat(20)
+      }),
+      '',
+      '',
+      ''
+    )
+    const events = await drain(
+      runAgentWithWorkspaceTools({
+        workspacePath,
+        settings: getDefaults(),
+        model: 'builtin:composer-lite',
+        messages: [
+          { role: 'user', content: 'Build a news website with registration and admin pages.' }
+        ],
+        temperature: 0,
+        getSecret: () => null,
+        mode: 'agent',
+        turnPlan: fullEditPlan(),
+        mcp: 'off'
+      })
+    )
+    expect(events.some((event) => event.type === 'progress' && event.incomplete)).toBe(true)
+    expect(lastAnswer(events)).toContain('empty responses after two fresh-session retries')
+    expect(lastAnswer(events)).toContain('implementation has not been confirmed complete')
+    expect(harness.prompts).toHaveLength(4)
+    expect(
+      harness.transcripts.every(
+        (messages) =>
+          !messages.some(
+            (message) =>
+              message.role === 'assistant' && !message.content.trim() && !message.tool_calls?.length
+          )
+      )
+    ).toBe(true)
+    expect(existsSync(join(workspacePath, 'partial.html'))).toBe(true)
+    expect(harness.verifyCalls).toBe(0)
+  })
+
+  it('validates a short completion before committing the workflow terminal state', async () => {
+    harness.replies.push(
+      JSON.stringify({
+        name: 'write_file',
+        path: 'greeting.txt',
+        content: 'A real greeting for the user.\n'.repeat(20)
+      }),
+      'DONE',
+      'I need to read more files before I can provide the requested summary.'
+    )
+    const events = await drain(
+      runAgentWithWorkspaceTools({
+        workspacePath,
+        settings: getDefaults(),
+        model: 'builtin:composer-lite',
+        messages: [{ role: 'user', content: 'Create greeting.txt with a greeting.' }],
+        temperature: 0,
+        getSecret: () => null,
+        mode: 'agent',
+        turnPlan: fullEditPlan(),
+        mcp: 'off'
+      })
+    )
+    expect(events.some((event) => event.type === 'progress' && event.incomplete)).toBe(true)
+    expect(lastAnswer(events)).toContain('did not return usable findings')
+    expect(lastAnswer(events)).not.toContain('Invalid agent workflow transition')
+    expect(existsSync(join(workspacePath, 'greeting.txt'))).toBe(true)
     expect(harness.replies).toHaveLength(0)
   })
 
