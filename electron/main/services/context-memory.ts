@@ -7,6 +7,7 @@ import { registeredWorkspaceId } from './workspace'
 import { getResolvedSettings } from './settings'
 import { workspaceRequest } from './workspace-worker-client'
 import { contextMemoryStore } from './context-memory-store'
+import { lastContextDispatch } from './context-dispatch'
 import type { AppSettings, ChatThread } from '../../../src/shared/settings-schema'
 import {
   ContextMemorySettingsSchema,
@@ -267,6 +268,7 @@ export async function inspectConversationMemory(
     ...inspection,
     controls,
     controlsAvailable: true,
+    lastDispatch: lastContextDispatch(memoryKey(root, id)),
     manifest: {
       ...inspection.manifest,
       ...(inspection.manifest.retainedMessages === 0

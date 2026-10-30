@@ -1,8 +1,7 @@
-import { isNativeGgufRef } from '../builtin-model'
 import { loadWorkspaceRules } from '../chats'
 import { loadSkillsPrompt } from '../skills'
 import { findAgent } from '../agents'
-import { compileTaskContext } from './context-compiler'
+import { compileTaskContext, memoryForDestination } from './context-compiler'
 import { appendTaskEvent } from '../task-ledger'
 import { contextBudgetTokens } from './context-budget'
 import type { AppSettings, ChatIntent, TurnPlan } from '../../../../src/shared/settings-schema'
@@ -376,10 +375,7 @@ export function buildPreservedWorkerMessages(options: {
       skillIds: task.skillIds,
       customAgentPrompt
     }),
-    memory:
-      isNativeGgufRef(options.plan.models.tools) || options.conversationMemory?.allowRemote
-        ? options.conversationMemory?.text
-        : undefined,
+    ...memoryForDestination(options.conversationMemory, options.plan.models.tools),
     retrieval: options.retrievalHint,
     maxInputTokens:
       options.inputTokenBudget ?? contextBudgetTokens(options.settings, plan.models.tools)
@@ -389,7 +385,8 @@ export function buildPreservedWorkerMessages(options: {
     agentId: plan.agentId,
     model: plan.models.tools,
     blocks: compiled.blocks,
-    budget: compiled.budget
+    budget: compiled.budget,
+    bundle: compiled.bundle
   })
   return [compiled.message, ...historyTail, { role: 'user', content: options.originalUserGoal }]
 }

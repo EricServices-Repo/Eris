@@ -120,7 +120,7 @@ import {
   type TaskContract
 } from '../../../../src/shared/task-contract'
 import { artifactResponseContract } from '../../../../src/shared/task-interpretation'
-import { compileTaskContext } from './context-compiler'
+import { compileTaskContext, memoryForDestination } from './context-compiler'
 import { executionPlanFor } from '../execution-plan'
 import { lintExecutionPlan } from './workflow-lint'
 import { appendTaskEvent } from '../task-ledger'
@@ -609,10 +609,7 @@ async function* runAgentInternal(options: {
       task,
       toolsAvailable: false,
       guidance: tips.join('\n\n'),
-      memory:
-        isNativeGgufRef(chatModel) || options.conversationMemory?.allowRemote
-          ? options.conversationMemory?.text
-          : undefined,
+      ...memoryForDestination(options.conversationMemory, chatModel),
       project: priorSystem,
       retrieval: '',
       maxInputTokens: contextBudgetTokens(options.settings, chatModel)
@@ -622,7 +619,8 @@ async function* runAgentInternal(options: {
       agentId: plan.agentId,
       model: chatModel,
       blocks: compiled.blocks,
-      budget: compiled.budget
+      budget: compiled.budget,
+      bundle: compiled.bundle
     })
     const askMessages = [
       compiled.message,

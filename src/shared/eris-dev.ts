@@ -117,6 +117,7 @@ export interface DevCapture {
   schema?: Record<string, unknown>
   /** Context compiler manifest for this request: blocks, trust, truncation, budget. */
   context?: unknown
+  dispatch?: unknown
   /** Tool capability record in effect for this request. */
   toolManifest?: unknown
 }

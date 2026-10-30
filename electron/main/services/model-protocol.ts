@@ -9,7 +9,11 @@ function decodedArguments(value: string): unknown {
   }
 }
 
-export type ModelMessage = Omit<ChatRequestMessage, 'content'> & { content: string }
+export type ModelMessage = Omit<ChatRequestMessage, 'content'> & {
+  content: string
+  /** Item accounting for a compiled context. Removed before a request is serialized. */
+  contextBundle?: import('../../../src/shared/context-memory').ContextBundle
+}
 export type ModelCapabilities = {
   protocol: 'native-tools' | 'text-tools'
   contextWindow: number
