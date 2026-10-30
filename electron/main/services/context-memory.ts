@@ -3,6 +3,7 @@ import { SharedHydration } from './context-hydration'
 import { createHash } from 'crypto'
 import { userDataRoot, userChatsDir, workspaceChatsDir } from './paths'
 import { realpathAllowMissing } from './workspace-fs'
+import { registeredWorkspaceId } from './workspace'
 import { getResolvedSettings } from './settings'
 import { workspaceRequest } from './workspace-worker-client'
 import { contextMemoryStore } from './context-memory-store'
@@ -18,7 +19,14 @@ const idleSweep = setInterval(() => contextMemoryStore.sweep(), 60000)
 idleSweep.unref()
 export const memoryKey = (root: string | null, thread: string) =>
   createHash('sha256')
-    .update(JSON.stringify([userDataRoot(), root ? realpathAllowMissing(root) : null, thread]))
+    .update(
+      JSON.stringify([
+        userDataRoot(),
+        root ? realpathAllowMissing(root) : null,
+        root ? registeredWorkspaceId(root) : null,
+        thread
+      ])
+    )
     .digest('hex')
 const dir = (root: string | null) => (root ? workspaceChatsDir(root) : userChatsDir())
 export function invalidateConversationMemory(root: string | null, id: string) {
