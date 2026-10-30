@@ -455,12 +455,12 @@ export class ContextMemoryStore {
                 Math.floor(budget / 2) - pinChars - prefix.length - 2
               )
             : budget - text.length - prefix.length - 2
-      if (
-        c.fact.kind === 'pinned' &&
-        (room < 120 || selected.filter((f) => f.kind === 'pinned').length >= 8)
-      )
+      const minimumChars = Math.min(120, c.fact.text.length)
+      if (c.fact.kind === 'pinned' && selected.filter((f) => f.kind === 'pinned').length >= 8)
         continue
-      if (room < 120) break
+      // A short complete fact does not need 120 characters of empty headroom.
+      // Skip a unit that cannot fit so a later smaller fact still gets considered.
+      if (room < minimumChars) continue
       const excerpt = c.fact.text.slice(0, Math.min(1200, room))
       text += prefix + excerpt + '\n'
       if (c.fact.kind === 'pinned') pinChars += prefix.length + excerpt.length + 1
@@ -497,7 +497,13 @@ export class ContextMemoryStore {
       sourceIds: selected.map((f) => digest(f.sourceId)),
       estimatedTokens: Math.ceil(text.length / 3),
       omittedPinnedFacts: pins.length - selected.filter((f) => f.kind === 'pinned').length,
-      omittedFacts: Math.max(0, candidateCount - selected.length)
+      omittedFacts: Math.max(0, candidateCount - selected.length),
+      ...(candidateCount > 0 && !selected.length
+        ? {
+            reason:
+              'Recall budget too small for eligible evidence; increase the recalled context token budget.'
+          }
+        : {})
     }
 
     return {
