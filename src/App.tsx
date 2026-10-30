@@ -270,7 +270,10 @@ export default function App() {
     activeThreadRef,
     refreshChats,
     selectThread,
-    loadEarlier
+    loadEarlier,
+    loadNewer,
+    jumpToLatest,
+    history
   } = useChatThreads()
 
   const {
@@ -975,6 +978,9 @@ export default function App() {
                   workspacePath={workspacePath}
                   activeThread={activeThread}
                   onLoadEarlier={loadEarlier}
+                  onLoadNewer={loadNewer}
+                  onJumpToLatest={jumpToLatest}
+                  history={history}
                   routeLabel={routeLabel}
                   composerReady={composerReady}
                   modelsOk={ollamaOk}

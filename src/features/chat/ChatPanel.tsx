@@ -20,6 +20,7 @@ import { chatStream } from '@/state/chat-stream'
 import { useStore } from '@/state/store'
 import { VirtualList } from '@/components/VirtualList'
 import { searchLoadedHistory } from '@/shared/chat-history-search'
+import type { historyView } from '@/shared/chat-history-window'
 
 export type { ToolActivityItem }
 export type ChatMode = 'ask' | 'agent'
@@ -258,6 +259,10 @@ interface Props {
   workspacePath?: string | null
   activeThread: ChatThread | null
   onLoadEarlier?: () => Promise<void>
+  onLoadNewer?: () => Promise<void>
+  onJumpToLatest?: () => void
+  /** Older pages plus the live tail, as produced by historyView. */
+  history?: ReturnType<typeof historyView>
   routeLabel: string | null
   composerReady: boolean
   /** True when any chat backend is ready (builtin or Ollama/API connection). */
@@ -443,6 +448,9 @@ export function ChatPanel({
   workspacePath = null,
   activeThread,
   onLoadEarlier,
+  onLoadNewer,
+  onJumpToLatest,
+  history,
   routeLabel,
   composerReady,
   modelsOk = false,
@@ -495,6 +503,13 @@ export function ChatPanel({
   useEffect(() => setSearchOpen(false), [activeThread?.id])
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
+  const loadHistory = (load: () => Promise<void>) => {
+    setLoadingHistory(true)
+    setHistoryError(null)
+    void load()
+      .catch((error) => setHistoryError(String(error)))
+      .finally(() => setLoadingHistory(false))
+  }
   const [draft, setDraft] = useState('')
   const [dragging, setDragging] = useState(false)
   const [slashIndex, setSlashIndex] = useState(0)
@@ -988,17 +1003,11 @@ export function ChatPanel({
             </div>
           ) : (
             <div className="chat-messages">
-              {!!activeThread?.messageOffset && onLoadEarlier && (
+              {!!(history?.start ?? activeThread?.messageOffset) && onLoadEarlier && (
                 <button
                   className="btn"
                   disabled={loadingHistory}
-                  onClick={() => {
-                    setLoadingHistory(true)
-                    setHistoryError(null)
-                    void onLoadEarlier()
-                      .catch((error) => setHistoryError(String(error)))
-                      .finally(() => setLoadingHistory(false))
-                  }}
+                  onClick={() => loadHistory(onLoadEarlier)}
                 >
                   {loadingHistory ? 'Loading…' : 'Load earlier messages'}
                 </button>
@@ -1009,11 +1018,25 @@ export function ChatPanel({
                 key={activeThread?.id ?? 'empty'}
                 searchOpen={searchOpen}
                 onCloseSearch={closeSearch}
-                messages={activeThread?.messages ?? EMPTY_MESSAGES}
+                messages={history?.messages ?? activeThread?.messages ?? EMPTY_MESSAGES}
                 onOpenPath={onOpenPath}
                 onRerouteLast={onRerouteLast}
                 streaming={streaming}
               />
+              {history?.gap && onLoadNewer && (
+                <div className="chat-history-gap">
+                  <button
+                    className="btn"
+                    disabled={loadingHistory}
+                    onClick={() => loadHistory(onLoadNewer)}
+                  >
+                    {loadingHistory ? 'Loading…' : 'Load newer messages'}
+                  </button>
+                  <button className="btn" onClick={onJumpToLatest}>
+                    Jump to latest
+                  </button>
+                </div>
+              )}
               {streaming && (
                 <div className="msg assistant">
                   <span className="role">
