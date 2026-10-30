@@ -44,7 +44,7 @@ export const ThreadWorkingStateSchema = z.object({
 export type ThreadWorkingState = z.infer<typeof ThreadWorkingStateSchema>
 /** Evidence, never a completion authority. Counts and omitted ranges remain explicit. */
 export function workingStateText(state: ThreadWorkingState): string {
-  return (
+  const text =
     `Task ${state.taskId} revision ${state.taskRevision}, terminal ${state.terminal}. ` +
     `Observed effects: ${
       state.effects
@@ -71,5 +71,9 @@ export function workingStateText(state: ThreadWorkingState): string {
         .join('; ') || 'none recorded'
     }. ` +
     `Omitted units: ${state.omitted + Math.max(0, state.effects.length - 8) + Math.max(0, state.checks.length - 6) + Math.max(0, state.obligations.length - 8)}. Historical source state; revalidate effects before repeating them. Narrative completion is not proof.`
+  return /\b(?:api[_-]?key|password|passwd|authorization|secret|token)\s*[:=]\s*\S+|\bBearer\s+\S+/i.test(
+    text
   )
+    ? 'Recorded task state contains sensitive text and is withheld from recall. Inspect the original source locally.'
+    : text
 }

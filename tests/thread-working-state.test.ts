@@ -133,3 +133,11 @@ it('makes typed pending state searchable even when the assistant reply only says
     )
   ).toBe(true)
 })
+
+it('never introduces sensitive task metadata into recalled working-state text', () => {
+  const b = new ThreadWorkingStateBuilder(task(), 'reply')
+  b.question('Should password=PRIVATE_SENTINEL be configured?', false)
+  const text = workingStateText(b.snapshot('stopped'))
+  expect(text).not.toContain('PRIVATE_SENTINEL')
+  expect(text).toContain('withheld')
+})
