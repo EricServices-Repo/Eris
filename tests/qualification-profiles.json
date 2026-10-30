@@ -5,6 +5,7 @@
       "description": "Deterministic agent routing, contracts, tools, diagnostics and capture qualification. Gates npm run build.",
       "files": [
         "tests/agent-capabilities.test.ts",
+        "tests/thread-working-state.test.ts",
         "tests/agent-context.test.ts",
         "tests/agent-contract.test.ts",
         "tests/context-decisions.test.ts",

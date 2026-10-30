@@ -1,3 +1,4 @@
+import { workingStateText } from '../../../src/shared/thread-working-state'
 import { contextRecord } from '../../../src/shared/context-record'
 import {
   firstMatchOffset,
@@ -52,6 +53,9 @@ type ThreadEntry = {
 const digest = (value: string) => createHash('sha256').update(value).digest('hex')
 const sensitive =
   /\b(?:api[_-]?key|password|passwd|authorization|secret|token)\s*[:=]\s*\S+|\bBearer\s+\S+/i
+const unfinished = (message: ChatMessage) =>
+  message.contextResult?.workingState &&
+  !/^(?:done|complete)$/.test(message.contextResult.workingState.terminal)
 const salient =
   /\b(?:remember|must|always|never|do not|only|decision|prefer|constraint|instead|unfinished|pending)\b/i
 const clean = (m: ChatMessage): ChatMessage => ({
@@ -349,13 +353,15 @@ export class ContextMemoryStore {
           if (corruptOrdinals.length < 100500) corruptOrdinals.push(ordinal)
           return []
         }
-        const rowTerms = terms ?? recallTerms(m.content)
+        const rowTerms = m.contextResult?.workingState
+          ? recallTerms(m.content + ' ' + workingStateText(m.contextResult.workingState))
+          : (terms ?? recallTerms(m.content))
         return [
           {
             ordinal,
             message: m,
             bytes: size(m) + termSize(rowTerms),
-            salient: salient.test(m.content),
+            salient: salient.test(m.content) || Boolean(unfinished(m)),
             terms: rowTerms
           }
         ]
@@ -484,12 +490,17 @@ export class ContextMemoryStore {
         if (entry.corruptOrdinals.length < 100500) entry.corruptOrdinals.push(ordinal)
         continue
       }
-      const terms = recallTerms(message.content)
+      const terms = recallTerms(
+        message.content +
+          (message.contextResult?.workingState
+            ? ' ' + workingStateText(message.contextResult.workingState)
+            : '')
+      )
       const row: RecordEntry = {
         ordinal,
         message,
         bytes: size(message) + termSize(terms),
-        salient: salient.test(message.content),
+        salient: salient.test(message.content) || Boolean(unfinished(message)),
         terms
       }
       // New ordinals follow everything retained, so row IDs stay in position order.
@@ -684,6 +695,7 @@ export class ContextMemoryStore {
       revision = e.revision,
       records = e.records,
       controls = structuredClone(e.controls)
+    const resume = /\b(?:resume|continue|remaining|unfinished|left off|what remains)\b/i.test(query)
     const tokens = recallQuery(query)
     const forgotten = new Set(controls.forgotten)
     const firstRow = e.firstRow
@@ -735,6 +747,7 @@ export class ContextMemoryStore {
       const score =
         tokens.reduce((sum, token) => sum + tokenScore(token, (term) => terms.has(term)), 0) +
         (row.salient && m.role === 'user' ? 12 : 0) +
+        (resume && unfinished(m) ? 15 : 0) +
         (position >= records.length - RECENT_ROWS ? 3 : 0)
       if (score === 0) continue
       if (covered.has(m.id)) {
@@ -817,7 +830,12 @@ export class ContextMemoryStore {
             sourceId: m.id,
             ordinal: row.ordinal,
             kind: 'task-result',
-            text: `Recorded task ${r.taskId}: ${r.terminal}. Recorded changed paths: ${r.changedFiles.slice(0, 20).join(', ')}. Historical outcome, not current verification.`,
+            text:
+              r.workingState &&
+              r.workingState.sourceMessageId === m.id &&
+              r.workingState.taskId === r.taskId
+                ? workingStateText(r.workingState)
+                : `Recorded task ${r.taskId}: ${r.terminal}. Recorded changed paths: ${r.changedFiles.slice(0, 20).join(', ')}. Historical outcome, not current verification.`,
             status: 'observed',
             projectRoot: r.projectRoot
           },

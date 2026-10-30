@@ -4185,6 +4185,7 @@ async function* runAgentInternal(options: {
               tool: {
                 id: `verify_${toolExecRounds}`,
                 name: 'verify',
+                path: verified.command,
                 status: verified.ok ? 'ok' : 'error',
                 detail: verified.detail.slice(0, AGENT_HANDOFF_CHARS)
               }
