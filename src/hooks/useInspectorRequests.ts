@@ -9,11 +9,12 @@ export function useInspectorRequests(namespace: string) {
     state.current.mutation = false
   }
   useLayoutEffect(() => {
-    state.current.mounted = true
+    const owner = state.current
+    owner.mounted = true
     return () => {
-      state.current.mounted = false
-      state.current.sequence++
-      state.current.mutation = false
+      owner.mounted = false
+      owner.sequence++
+      owner.mutation = false
     }
   }, [namespace])
   const current = (ticket: Ticket) =>
