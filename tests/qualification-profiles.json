@@ -67,6 +67,7 @@
         "tests/context-packing.test.ts",
         "tests/file-mutations.test.ts",
         "tests/context-memory.test.ts",
+        "tests/context-change-log.test.ts",
         "tests/memory-dispatch.test.ts",
         "tests/derived-privacy-lineage.test.ts",
         "tests/context-dispatch.test.ts",

@@ -3,6 +3,10 @@ import type { ChatThread, ChatMessage, FileEntry } from '../../../src/shared/set
 import type { IndexRecord } from './code-index'
 
 export type ChatPage = { before?: number; limit?: number }
+interface AdditionalWorkspaceResults {
+  'context-replay': import('../../../src/shared/context-memory').ContextDerivationStatus
+  'context-changes': ReturnType<import('./chat-database').ChatDatabase['contextChanges']>
+}
 export type WorkspaceRequest =
   | { type: 'tree'; root: string; maxDepth: number }
   | { type: 'read'; path: string }
@@ -15,6 +19,8 @@ export type WorkspaceRequest =
   | { type: 'index'; root: string; indexPath: string }
   | { type: 'patch-index'; root: string; indexPath: string; paths: string[] }
   | { type: 'load-index'; indexPath: string }
+  | { type: 'context-replay'; dir: string; limit?: number }
+  | { type: 'context-changes'; dir: string; after?: number; limit?: number }
   | { type: 'context-header'; dir: string; id: string }
   | { type: 'context-page'; dir: string; id: string; before?: number; beforeContentOffset?: number }
   | {

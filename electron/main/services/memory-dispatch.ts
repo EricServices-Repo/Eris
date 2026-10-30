@@ -4,6 +4,10 @@ import { createHash } from 'crypto'
 import { isNativeGgufRef } from './builtin-model'
 import { memoryKey, warmConversationMemory } from './context-memory'
 import { contextMemoryStore, MEMORY_PROMPT_HEADER } from './context-memory-store'
+import { workspaceRequest } from './workspace-worker-client'
+import { userChatsDir, workspaceChatsDir } from './paths'
+import { abortable } from './context-hydration'
+import type { ContextHeader } from '../../../src/shared/context-memory'
 import { getResolvedSettings } from './settings'
 import { appendTaskEvent } from './task-ledger'
 import {
@@ -20,6 +24,7 @@ type EvidenceLease = {
   key: string
   items: MemoryPromptItem[]
   allowRemote: boolean
+  sourceVersion?: ContextHeader
   token: string
   revoked: Set<string>
   /** Set once a model has received an item; digests the messages that predate it. */
@@ -46,6 +51,7 @@ export function leaseMemoryEvidence(input: {
     items: prompt.items,
     allowRemote: prompt.allowRemote,
     token: prompt.evidenceToken,
+    sourceVersion: prompt.sourceVersion,
     revoked: new Set(),
     exposure: null
   }
@@ -59,12 +65,40 @@ const policyOf = (lease: EvidenceLease) =>
 /** Reload a cleared snapshot once so a rewrite that kept a source does not lose it. */
 async function reloadIfCleared(lease: EvidenceLease) {
   const { key, token, root, threadId } = lease
-  if (contextMemoryStore.revocationToken(key) === token || contextMemoryStore.has(key)) return
   try {
     const signal = AbortSignal.timeout(policyOf(lease).foregroundDeadlineMs)
+    if (lease.sourceVersion) {
+      // This tiny canonical check is mandatory even when optional warming is
+      // pressure-paused or another process made the change without main IPC.
+      const header = await abortable(
+        workspaceRequest({
+          type: 'context-header',
+          dir: root ? workspaceChatsDir(root) : userChatsDir(),
+          id: threadId
+        }),
+        [signal]
+      )
+      const old = lease.sourceVersion
+      if (!header) {
+        contextMemoryStore.clear(key)
+        return
+      }
+      if (
+        header.revision !== old.revision ||
+        header.sourceEpoch !== old.sourceEpoch ||
+        header.messageCount !== old.messageCount ||
+        header.controlsRevision !== old.controlsRevision
+      ) {
+        contextMemoryStore.clear(key)
+        await warmConversationMemory(root, threadId, getResolvedSettings(root), signal)
+        lease.sourceVersion = header
+        return
+      }
+    }
+    if (contextMemoryStore.revocationToken(key) === token || contextMemoryStore.has(key)) return
     await warmConversationMemory(root, threadId, getResolvedSettings(root), signal)
   } catch {
-    /* Without a snapshot the items cannot be proven eligible, so they are dropped. */
+    contextMemoryStore.clear(key) // A source that cannot be revalidated fails closed.
   }
 }
 

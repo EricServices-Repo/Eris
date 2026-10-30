@@ -413,7 +413,9 @@ export class ContextMemoryStore {
       entry &&
       entry.revision === header.revision &&
       entry.total === header.messageCount &&
-      entry.sourceEpoch === header.sourceEpoch
+      entry.sourceEpoch === header.sourceEpoch &&
+      (header.controlsRevision === undefined ||
+        (entry.controls.revision ?? 0) === header.controlsRevision)
     )
   }
   /** Keep the current tail available while an expanded capacity loads older pages. */
@@ -960,6 +962,14 @@ export class ContextMemoryStore {
         .join(' ')
     return {
       prompt: {
+        sourceVersion: e.sourceEpoch
+          ? {
+              revision: e.revision,
+              messageCount: e.total,
+              sourceEpoch: e.sourceEpoch,
+              controlsRevision: e.controls.revision ?? 0
+            }
+          : undefined,
         text,
         manifest,
         allowRemote: policy.shareWithRemoteModels,
