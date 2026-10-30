@@ -1,4 +1,13 @@
 import { contextRecord } from '../../../src/shared/context-record'
+import {
+  firstMatchOffset,
+  queryTerms,
+  recallQuery,
+  recallTerms,
+  RECALL_RANKING_VERSION,
+  tokenScore
+} from '../../../src/shared/recall-terms'
+import { RecallIndex } from './context-recall-index'
 import { createHash } from 'crypto'
 import type { ChatMessage } from '../../../src/shared/settings-schema'
 import {
@@ -12,13 +21,24 @@ import {
   type MemoryPrompt,
   type MemoryPromptItem
 } from '../../../src/shared/context-memory'
-type RecordEntry = { ordinal: number; message: ChatMessage; bytes: number; salient: boolean }
+type RecordEntry = {
+  ordinal: number
+  message: ChatMessage
+  bytes: number
+  salient: boolean
+  terms: string[]
+}
 type ThreadEntry = {
   revision: number
   sourceEpoch?: string
   generation: number
   total: number
   records: RecordEntry[]
+  /** Row ID of records[0]; a row's ID is its position plus this offset. */
+  firstRow: number
+  index: RecallIndex
+  /** Row IDs of salient rows, ascending. */
+  salientRows: number[]
   controls: MemoryControls
   bytes: number
   at: number
@@ -46,6 +66,12 @@ const clean = (m: ChatMessage): ChatMessage => ({
   contextResult: m.contextResult ? structuredClone(m.contextResult) : undefined
 })
 const size = (m: ChatMessage) => Buffer.byteLength(JSON.stringify(m), 'utf8') * 4 + 512
+const termSize = (terms: readonly string[]) =>
+  terms.reduce((n, term) => n + term.length * 2 + 16, 48)
+/** Rows fully ranked per query; only these materialize excerpts. */
+const MAX_RANKED_ROWS = 128
+const MAX_SALIENT_ROWS = 256
+const RECENT_ROWS = 12
 const corruptionSize = (ordinals: number[]) => Buffer.byteLength(JSON.stringify(ordinals)) * 4 + 64
 const controlSize = (c: MemoryControls) => Buffer.byteLength(JSON.stringify(c), 'utf8') * 4 + 512
 const excludedByCutoff = (row: Pick<RecordEntry, 'ordinal' | 'message'>, c: MemoryControls) =>
@@ -215,7 +241,7 @@ export class ContextMemoryStore {
       revision: number
       sourceEpoch?: string
       total: number
-      records: Array<{ ordinal: number; message: ChatMessage }>
+      records: Array<{ ordinal: number; message: ChatMessage; terms?: string[] }>
       controls: MemoryControls
       partial: boolean
       corruptRecords?: number
@@ -233,25 +259,39 @@ export class ContextMemoryStore {
     let corruptRecords = input.corruptRecords ?? 0
     const corruptOrdinals = [...new Set(input.corruptOrdinals ?? [])].slice(0, 100500)
     const records: RecordEntry[] = input.records
-      .flatMap(({ ordinal, message }) => {
+      .flatMap(({ ordinal, message, terms }) => {
         const m = contextRecord(message)
         if (!m || !Number.isSafeInteger(ordinal) || ordinal < 0) {
           corruptRecords++
           if (corruptOrdinals.length < 100500) corruptOrdinals.push(ordinal)
           return []
         }
-        return [{ ordinal, message: m, bytes: size(m), salient: salient.test(m.content) }]
+        const rowTerms = terms ?? recallTerms(m.content)
+        return [
+          {
+            ordinal,
+            message: m,
+            bytes: size(m) + termSize(rowTerms),
+            salient: salient.test(m.content),
+            terms: rowTerms
+          }
+        ]
       })
       .sort(
         (a, b) =>
           a.ordinal - b.ordinal ||
           (a.message.contextContentOffset ?? 0) - (b.message.contextContentOffset ?? 0)
       )
+    const index = new RecallIndex()
+    records.forEach((row, position) => index.add(position, row.terms))
     const entry: ThreadEntry = {
       revision: input.revision,
       sourceEpoch: input.sourceEpoch,
       total: input.total,
       records,
+      firstRow: 0,
+      index,
+      salientRows: records.flatMap((row, position) => (row.salient ? [position] : [])),
       controls: structuredClone(input.controls),
       generation: ++this.counter,
       bytes:
@@ -293,7 +333,7 @@ export class ContextMemoryStore {
       beforeContentOffset: entry.records[0]?.message.contextContentOffset || undefined,
       corruptRecords: entry.corruptRecords,
       corruptOrdinals: entry.corruptOrdinals,
-      records: entry.records.map(({ ordinal, message }) => ({ ordinal, message }))
+      records: entry.records.map(({ ordinal, message, terms }) => ({ ordinal, message, terms }))
     }
   }
   append(
@@ -344,6 +384,7 @@ export class ContextMemoryStore {
     }
     if (revision === entry.revision) return
     this.bump(key)
+    const appended: RecordEntry[] = []
     for (let i = 0; i < tail.length; i++) {
       const ordinal = offset + i
       if (ordinal < entry.total) continue
@@ -354,18 +395,21 @@ export class ContextMemoryStore {
         if (entry.corruptOrdinals.length < 100500) entry.corruptOrdinals.push(ordinal)
         continue
       }
-      existing.set(ordinal, {
+      const terms = recallTerms(message.content)
+      const row: RecordEntry = {
         ordinal,
         message,
-        bytes: size(message),
-        salient: salient.test(message.content)
-      })
+        bytes: size(message) + termSize(terms),
+        salient: salient.test(message.content),
+        terms
+      }
+      // New ordinals follow everything retained, so row IDs stay in position order.
+      const id = entry.firstRow + entry.records.length + appended.length
+      appended.push(row)
+      entry.index.add(id, terms)
+      if (row.salient) entry.salientRows.push(id)
     }
-    entry.records = [...existing.values()].sort(
-      (a, b) =>
-        a.ordinal - b.ordinal ||
-        (a.message.contextContentOffset ?? 0) - (b.message.contextContentOffset ?? 0)
-    )
+    entry.records = [...entry.records, ...appended]
     entry.total = total
     entry.revision = revision
     entry.generation = ++this.counter
@@ -412,7 +456,14 @@ export class ContextMemoryStore {
       removed++
     }
     if (removed) {
+      const gone = e.records.slice(0, removed)
       e.records = e.records.slice(removed)
+      e.firstRow += removed
+      e.index.prune(
+        e.firstRow,
+        gone.flatMap((row) => row.terms)
+      )
+      e.salientRows = e.salientRows.filter((row) => row >= e.firstRow)
       e.partial = true
     }
   }
@@ -518,57 +569,39 @@ export class ContextMemoryStore {
       revision = e.revision,
       records = e.records,
       controls = structuredClone(e.controls)
-    const words = [
-      ...new Set(
-        query
-          .toLowerCase()
-          .split(/[^a-z0-9_./-]+/)
-          .filter(
-            (t) =>
-              t.length > 2 &&
-              ![
-                'the',
-                'this',
-                'that',
-                'those',
-                'with',
-                'what',
-                'please',
-                'make',
-                'changes'
-              ].includes(t)
-          )
-      )
-    ].slice(0, 24)
+    const tokens = recallQuery(query)
+    const forgotten = new Set(controls.forgotten)
+    const firstRow = e.firstRow
+    // Read the index before the first yield; `records` above is the same snapshot.
+    const matched = e.index.match(queryTerms(tokens))
+    const rowIds = new Set([...matched.keys(), ...e.salientRows.slice(-MAX_SALIENT_ROWS)])
+    for (let i = Math.max(0, records.length - RECENT_ROWS); i < records.length; i++)
+      rowIds.add(firstRow + i)
     const covered = new Set(options.coveredSourceIds ?? [])
     let duplicateSourceMessages = 0,
       duplicateEstimatedTokensAvoided = 0
-    const candidates: Array<{ fact: MemoryFact; score: number; message?: ChatMessage }> = []
-    let candidateCount = 0
-    const rank = () =>
-      candidates.sort((a, b) => b.score - a.score || b.fact.ordinal - a.fact.ordinal)
-    const add = (candidate: (typeof candidates)[number]) => {
-      candidateCount++
-      candidates.push(candidate)
-      if (candidates.length > 128) {
-        rank()
-        candidates.length = 128
-      }
-    }
-    for (let i = 0; i < records.length; i++) {
-      if (i % 128 === 0) {
+    type RankedRow = { row: RecordEntry; score: number; terms: Set<string> }
+    const byScore = (a: RankedRow, b: RankedRow) =>
+      b.score - a.score || b.row.ordinal - a.row.ordinal
+    let ranked: RankedRow[] = []
+    let scanned = 0,
+      eligible = 0
+    for (const id of rowIds) {
+      if (scanned++ % 128 === 0) {
         options.signal?.throwIfAborted()
         await new Promise<void>((r) => setImmediate(r))
       }
-      const row = records[i],
-        m = row.message
+      const position = id - firstRow
+      const row = records[position]
+      if (!row) continue
+      const m = row.message
       if (
         m.id === options.excludeId ||
         m.role === 'system' ||
         (controls.afterSequence !== undefined
           ? (m.contextSequence ?? row.ordinal + 1) <= controls.afterSequence
           : row.ordinal < controls.afterOrdinal) ||
-        controls.forgotten.includes(m.id)
+        forgotten.has(m.id)
       )
         continue
       if (
@@ -577,16 +610,35 @@ export class ContextMemoryStore {
         m.contextResult.projectRoot !== options.projectRoot
       )
         continue
-      const lower = m.content.toLowerCase(),
-        matches = words.filter((w) => lower.includes(w)),
-        score =
-          matches.length * 8 +
-          (row.salient && m.role === 'user' ? 12 : 0) +
-          (i >= records.length - 12 ? 3 : 0)
+      const terms = matched.get(id) ?? new Set<string>()
+      const score =
+        tokens.reduce((sum, token) => sum + tokenScore(token, (term) => terms.has(term)), 0) +
+        (row.salient && m.role === 'user' ? 12 : 0) +
+        (position >= records.length - RECENT_ROWS ? 3 : 0)
       if (score === 0) continue
+      if (covered.has(m.id)) {
+        duplicateSourceMessages++
+        duplicateEstimatedTokensAvoided += Math.ceil(Math.min(m.content.length, 1800) / 3)
+        if (!m.contextResult) continue
+      }
+      eligible++
+      ranked.push({ row, score, terms })
+      // Amortized top-K: compacting at twice K keeps memory fixed and sorts rarely.
+      if (ranked.length >= MAX_RANKED_ROWS * 2)
+        ranked = ranked.sort(byScore).slice(0, MAX_RANKED_ROWS)
+    }
+    ranked = ranked.sort(byScore).slice(0, MAX_RANKED_ROWS)
+    const candidates: Array<{ fact: MemoryFact; score: number; message?: ChatMessage }> = []
+    let candidateCount = eligible - ranked.length
+    const add = (candidate: (typeof candidates)[number]) => {
+      candidateCount++
+      candidates.push(candidate)
+    }
+    for (const { row, score, terms } of ranked) {
+      const m = row.message
       let start = 0
-      const positions = matches.map((w) => lower.indexOf(w)).filter((n) => n >= 0)
-      if (positions.length) start = Math.max(0, Math.min(...positions) - 200)
+      const offset = terms.size ? firstMatchOffset(m.content, terms) : -1
+      if (offset >= 0) start = Math.max(0, offset - 200)
       else if (row.salient) start = Math.max(0, m.content.search(salient) - 120)
       const excerpt = m.content.slice(start, start + 1800)
       if (sensitive.test(excerpt)) continue
@@ -606,10 +658,6 @@ export class ContextMemoryStore {
       }
       if (!covered.has(m.id))
         add({ fact, score: score + row.ordinal / Math.max(1, e.total), message: m })
-      else {
-        duplicateSourceMessages++
-        duplicateEstimatedTokensAvoided += Math.ceil(excerpt.length / 3)
-      }
       // A structured task receipt contributes observed outcome/obligation state
       // absent from raw conversational content, so it remains eligible.
       if (m.contextResult) {
@@ -630,7 +678,7 @@ export class ContextMemoryStore {
     }
     const pins: typeof candidates = []
     for (const p of controls.pinned)
-      if (!controls.forgotten.includes(p.id) && !sensitive.test(p.text))
+      if (!forgotten.has(p.id) && !sensitive.test(p.text))
         pins.push({
           fact: {
             id: p.id,
@@ -709,6 +757,7 @@ export class ContextMemoryStore {
       selectedIds: selected.map((f) => f.id),
       sourceIds: selected.map((f) => digest(f.sourceId)),
       estimatedTokens: Math.ceil(text.length / 3),
+      rankingVersion: RECALL_RANKING_VERSION,
       duplicateSourceMessages,
       duplicateEstimatedTokensAvoided,
       omittedPinnedFacts: pins.length - selected.filter((f) => f.kind === 'pinned').length,

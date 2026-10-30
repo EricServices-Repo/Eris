@@ -65,6 +65,8 @@ export type MemoryManifest = {
   selectedIds: string[]
   sourceIds: string[]
   estimatedTokens: number
+  /** Lexical ranking that produced this selection. */
+  rankingVersion?: number
   /** Matching raw sources already covered by admitted complete recent turns. */
   duplicateSourceMessages?: number
   /** Character estimate of avoided candidate text, not measured backend tokens. */
@@ -111,7 +113,12 @@ export type ContextPage = {
   beforeContentOffset?: number
   metadataOmitted?: number
   done: boolean
-  records: Array<{ ordinal: number; message: import('./settings-schema').ChatMessage }>
+  records: Array<{
+    ordinal: number
+    message: import('./settings-schema').ChatMessage
+    /** Normalized recall terms, prepared in the worker so main never tokenizes a page. */
+    terms?: string[]
+  }>
   omitted: number
   corruptRecords?: number
   corruptOrdinals?: number[]

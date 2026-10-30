@@ -11,6 +11,7 @@ import type { AppSettings, ChatThread } from '../../../src/shared/settings-schem
 import {
   ContextMemorySettingsSchema,
   type ContextHeader,
+  type ContextPage,
   type MemoryControls
 } from '../../../src/shared/context-memory'
 const pending = new Map<string, SharedHydration>()
@@ -98,9 +99,7 @@ export async function warmConversationMemory(
       complete = false,
       corruptRecords = seed?.corruptRecords ?? 0
     const corruptOrdinals = new Set<number>(seed?.corruptOrdinals ?? [])
-    const records: Array<{ ordinal: number; message: ChatThread['messages'][number] }> = [
-      ...(seed?.records ?? [])
-    ]
+    const records: ContextPage['records'] = [...(seed?.records ?? [])]
     for (
       let pages = 0;
       pages < Math.ceil(Math.min(config.maxMessages, policy.maxMessages) / 500) + 1;
