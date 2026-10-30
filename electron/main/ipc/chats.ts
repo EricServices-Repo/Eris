@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import {
-  conversationContext,
+  inspectConversationMemory,
   warmConversationMemory,
   saveMemoryControls,
   invalidateConversationMemory
@@ -67,7 +67,7 @@ export function registerChatsIpc(): void {
     if (!(await getChat(root, id, { limit: 1 }))) throw new Error('Chat not found')
     if (controls) await saveMemoryControls(root, id, controls)
     if (evict) invalidateConversationMemory(root, id)
-    return (await conversationContext(root, id, query, getResolvedSettings(root))).inspection
+    return inspectConversationMemory(root, id, query, getResolvedSettings(root))
   })
   ipcMain.handle('chats:list', () => listChats(appState.currentWorkspace))
   ipcMain.handle(

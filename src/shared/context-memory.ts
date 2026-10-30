@@ -58,6 +58,8 @@ export type MemoryManifest = {
 }
 export type MemoryPrompt = { text: string; manifest: MemoryManifest; allowRemote: boolean }
 export type MemoryInspection = {
+  /** True only when controls were read from the durable source for this inspection. */
+  controlsAvailable?: boolean
   manifest: MemoryManifest
   facts: MemoryFact[]
   controls: MemoryControls

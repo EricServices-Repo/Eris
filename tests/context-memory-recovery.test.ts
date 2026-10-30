@@ -2,11 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+vi.mock('worker_threads', async () => ({
+  ...(await vi.importActual<typeof import('worker_threads')>('worker_threads')),
+  parentPort: null
+}))
 vi.mock('../electron/main/services/workspace-worker-client', () => ({ workspaceRequest: vi.fn() }))
 import { workspaceRequest } from '../electron/main/services/workspace-worker-client'
-import { ChatDatabase } from '../electron/main/services/chat-database'
+import { ChatDatabase, closeChatDatabases } from '../electron/main/services/chat-database'
+import { handleWorkspaceRequest } from '../electron/main/workspace-worker'
+import type { WorkspaceRequest } from '../electron/main/services/workspace-worker-protocol'
 import {
   conversationContext,
+  inspectConversationMemory,
   invalidateConversationMemory,
   memoryKey,
   saveMemoryControls,
@@ -32,19 +39,18 @@ function save(id: string, count = 1001) {
     }))
   })
 }
+const dispatchContextRequest = async (req: WorkspaceRequest) =>
+  (await handleWorkspaceRequest({ ...req, dir: folder } as WorkspaceRequest)) as never
 beforeEach(() => {
   contextMemoryStore.clear()
   contextMemoryStore.configure(settings().agent.contextMemory)
   folder = mkdtempSync(join(tmpdir(), 'eris-memory-'))
   db = new ChatDatabase(folder)
-  vi.mocked(workspaceRequest).mockImplementation(async (req) => {
-    if (req.type === 'context-controls') return db.memoryControls(req.id, req.write) as never
-    if (req.type === 'context-page') return db.contextPage(req.id, req.before) as never
-    throw Error('Unexpected request')
-  })
+  vi.mocked(workspaceRequest).mockImplementation(dispatchContextRequest)
 })
 afterEach(() => {
   contextMemoryStore.clear()
+  closeChatDatabases()
   db.close()
   rmSync(folder, { recursive: true, force: true })
 })
@@ -95,7 +101,7 @@ describe('canonical context hydration', () => {
         })
         return db.contextPage('t') as never
       }
-      throw Error('Unexpected')
+      return dispatchContextRequest(req)
     })
     const warming = warmConversationMemory(null, 't', settings())
     while (!release) await new Promise<void>((r) => setImmediate(r))
@@ -120,7 +126,7 @@ describe('canonical context hydration', () => {
           })
         return page as never
       }
-      throw Error('Unexpected')
+      return dispatchContextRequest(req)
     })
     const result = await conversationContext(null, 't', 'receipt', settings())
     expect(result.prompt.manifest.totalMessages).toBe(1002)
@@ -155,8 +161,96 @@ it('does not inherit remote-sharing policy from another workspace warming concur
       contextMemoryStore.configure({ ...own.agent.contextMemory, shareWithRemoteModels: true })
       return page as never
     }
-    throw Error('Unexpected request')
+    return dispatchContextRequest(req)
   })
   const result = await conversationContext(null, 't', 'checkout', own)
   expect(result.prompt.allowRemote).toBe(false)
+})
+
+it('inspects durable controls and cutoff counts while recall is disabled', async () => {
+  save('t', 4)
+  const saved = {
+    ...emptyMemoryControls(),
+    forgotten: ['0'],
+    pinned: [{ id: 'old', text: 'Saved note' }],
+    afterOrdinal: 2
+  }
+  db.memoryControls('t', saved)
+  const config = settings()
+  config.agent.contextMemory.enabled = false
+  const inspected = await inspectConversationMemory(null, 't', '', config)
+  expect(inspected.controls).toMatchObject(saved)
+  expect(inspected.controlsAvailable).toBe(true)
+  expect(inspected.manifest).toMatchObject({
+    coverage: 'disabled',
+    totalMessages: 4,
+    retainedMessages: 0
+  })
+  await saveMemoryControls(null, 't', {
+    ...inspected.controls,
+    pinned: [...inspected.controls.pinned, { id: 'new', text: 'New note' }]
+  })
+  expect(db.memoryControls('t')).toMatchObject({ forgotten: ['0'], afterOrdinal: 2 })
+  expect(db.memoryControls('t').pinned.map((p) => p.id)).toEqual(['old', 'new'])
+  invalidateConversationMemory(null, 't')
+  db.close()
+  db = new ChatDatabase(folder)
+  config.agent.contextMemory.enabled = true
+  expect((await inspectConversationMemory(null, 't', 'note', config)).controls.pinned).toHaveLength(
+    2
+  )
+})
+it('preserves editable canonical controls when hydration fails', async () => {
+  save('t', 3)
+  db.memoryControls('t', {
+    ...emptyMemoryControls(),
+    forgotten: ['0'],
+    pinned: [{ id: 'old', text: 'Saved note' }]
+  })
+  vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+    if (req.type === 'context-page') throw Error('Hydration unavailable')
+    return dispatchContextRequest(req)
+  })
+  const inspected = await inspectConversationMemory(null, 't', 'note', settings())
+  expect(inspected.controlsAvailable).toBe(true)
+  expect(inspected.controls.pinned[0]?.id).toBe('old')
+  expect(inspected.manifest).toMatchObject({
+    coverage: 'unavailable',
+    totalMessages: 3,
+    reason: 'Hydration unavailable'
+  })
+})
+it('fails closed when canonical controls cannot be read', async () => {
+  save('t', 1)
+  vi.mocked(workspaceRequest).mockRejectedValue(Error('Controls unavailable'))
+  await expect(inspectConversationMemory(null, 't', '', settings())).rejects.toThrow(
+    'Controls unavailable'
+  )
+})
+
+it('inspects canonical controls while two background hydrations occupy all slots', async () => {
+  save('t', 2)
+  db.save({ ...db.get('t')!, id: 'warm-a' })
+  db.save({ ...db.get('t')!, id: 'warm-b' })
+  db.memoryControls('t', { ...emptyMemoryControls(), pinned: [{ id: 'p', text: 'Saved note' }] })
+  const releases: Array<() => void> = []
+  vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+    if (req.type === 'context-page' && req.id !== 't')
+      await new Promise<void>((resolve) => releases.push(resolve))
+    return dispatchContextRequest(req)
+  })
+  const warms = [
+    warmConversationMemory(null, 'warm-a', settings()),
+    warmConversationMemory(null, 'warm-b', settings())
+  ]
+  while (releases.length < 2) await new Promise<void>((resolve) => setImmediate(resolve))
+  try {
+    const inspected = await inspectConversationMemory(null, 't', 'note', settings())
+    expect(inspected.manifest.coverage).toBe('unavailable')
+    expect(inspected.controlsAvailable).toBe(true)
+    expect(inspected.controls.pinned[0]?.id).toBe('p')
+  } finally {
+    releases.forEach((release) => release())
+    await Promise.all(warms)
+  }
 })

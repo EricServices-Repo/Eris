@@ -126,3 +126,41 @@ export async function saveMemoryControls(
   contextMemoryStore.setControls(memoryKey(root, id), saved)
   return saved
 }
+
+/** Inspection controls belong to SQLite, even when optional RAM recall is off or unavailable. */
+export async function inspectConversationMemory(
+  root: string | null,
+  id: string,
+  query: string,
+  settings: AppSettings
+) {
+  const [controls, thread] = await Promise.all([
+    workspaceRequest({ type: 'context-controls', dir: dir(root), id }),
+    workspaceRequest({ type: 'chat-get', dir: dir(root), id, page: { limit: 1 } })
+  ])
+  if (!thread) throw new Error('Chat not found')
+  let inspection
+  let failure: string | undefined
+  try {
+    inspection = (await conversationContext(root, id, query, settings)).inspection
+  } catch (error) {
+    invalidateConversationMemory(root, id)
+    inspection = (await contextMemoryStore.select(memoryKey(root, id), query)).inspection
+    failure = error instanceof Error ? error.message : 'Conversation recall unavailable'
+  }
+  return {
+    ...inspection,
+    controls,
+    controlsAvailable: true,
+    manifest: {
+      ...inspection.manifest,
+      ...(inspection.manifest.retainedMessages === 0
+        ? {
+            totalMessages: thread.messageCount ?? thread.messages.length,
+            revision: thread.contextRevision ?? 0
+          }
+        : {}),
+      ...(failure ? { reason: failure } : {})
+    }
+  }
+}
