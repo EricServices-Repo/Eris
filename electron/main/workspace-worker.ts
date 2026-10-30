@@ -25,7 +25,12 @@ export async function handleWorkspaceRequest(request: WorkspaceRequest): Promise
     case 'context-header':
       return chatDatabase(request.dir).contextHeader(request.id)
     case 'context-page':
-      return chatDatabase(request.dir).contextPage(request.id, request.before)
+      return chatDatabase(request.dir).contextPage(
+        request.id,
+        request.before,
+        undefined,
+        request.beforeContentOffset
+      )
     case 'context-controls':
       return chatDatabase(request.dir).contextControls(
         request.id,

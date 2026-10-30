@@ -170,17 +170,58 @@ describe('RAM context durable recovery', () => {
     db.save({ ...db.get('thread')!, messages: thread(2).messages })
     expect(db.contextPage('thread')!.revision).toBeGreaterThan(revision + 1)
   })
-  it('advances over oversized rows, reports omitted coverage and strips reasoning and image assets', () => {
+  it('chunks oversized content without loading thinking or image metadata into recall', () => {
     db = new ChatDatabase(dir)
     const input = thread(3)
-    input.messages[1]!.content = 'x'.repeat(4000)
-    input.messages[2]!.thinking = 'private trace'
+    input.messages[1]!.content = '界😀\n"'.repeat(1000)
+    input.messages[2]!.thinking = 'private trace'.repeat(200000)
+    input.messages[2]!.assets = [{ metadata: 'image metadata'.repeat(200000) }] as never
     db.save(input)
-    const page = db.contextPage('thread', undefined, 1000)!
-    expect(page.omitted).toBe(1)
+    const pages = []
+    let before: number | undefined, offset: number | undefined
+    for (let i = 0; i < 100; i++) {
+      const page = db.contextPage('thread', before, 1000, offset)!
+      pages.push(page)
+      expect(page.omitted).toBe(0)
+      expect(Buffer.byteLength(JSON.stringify(page.records))).toBeLessThanOrEqual(1000)
+      expect(JSON.stringify(page)).not.toContain('private trace')
+      expect(JSON.stringify(page)).not.toContain('image metadata')
+      if (page.done) break
+      before = page.before
+      offset = page.beforeContentOffset
+    }
+    expect(pages.at(-1)?.done).toBe(true)
+    const records = pages
+      .flatMap((page) => page.records)
+      .sort(
+        (a, b) =>
+          a.ordinal - b.ordinal ||
+          (a.message.contextContentOffset ?? 0) - (b.message.contextContentOffset ?? 0)
+      )
+    expect(
+      records
+        .filter((row) => row.ordinal === 1)
+        .map((row) => row.message.content)
+        .join('')
+    ).toBe(input.messages[1]!.content)
+    expect(records.filter((row) => row.ordinal === 2)[0]?.message.content).toBe('Message 2')
+    expect(db.get('thread')!.messages[2]!.thinking).toBe(input.messages[2]!.thinking)
+  })
+  it('preserves a short useful answer behind a multi-megabyte thinking trace', () => {
+    db = new ChatDatabase(dir)
+    const input = thread(1)
+    input.messages[0] = {
+      ...input.messages[0]!,
+      role: 'assistant',
+      content: 'Remember: booking currency CAD',
+      thinking: 't'.repeat(2000000)
+    }
+    db.save(input)
+    const page = db.contextPage('thread')!
+    expect(page.records[0]?.message.content).toContain('currency CAD')
+    expect(page.omitted).toBe(0)
     expect(page.done).toBe(true)
-    expect(page.records.map((r) => r.ordinal)).toEqual([0, 2])
-    expect(JSON.stringify(page)).not.toContain('private trace')
+    expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThan(2000)
   })
   it('recovers explicit controls on restart, validates them and removes them with deleted conversations', () => {
     db = new ChatDatabase(dir)

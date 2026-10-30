@@ -5,6 +5,8 @@ const ContextRecordSchema = z.object({
   role: z.enum(['system', 'user', 'assistant']),
   content: z.string(),
   createdAt: z.number().finite().default(0),
+  contextContentOffset: z.number().int().nonnegative().optional(),
+  contextContentLength: z.number().int().nonnegative().optional(),
   contextSequence: z.number().int().nonnegative().optional(),
   agentId: z.string().max(256).optional(),
   agentName: z.string().max(512).optional(),

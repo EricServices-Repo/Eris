@@ -359,10 +359,15 @@ export class ChatDatabase {
       return this.get(id, { limit: 60 })!
     })
   }
-  contextPage(id: string, before?: number, maxBytes = 2000000): ContextPage | null {
+  contextPage(
+    id: string,
+    before?: number,
+    maxBytes = 2000000,
+    beforeContentOffset?: number
+  ): ContextPage | null {
     this.db.exec('BEGIN')
     try {
-      const page = this.readContextPage(id, before, maxBytes)
+      const page = this.readContextPage(id, before, maxBytes, beforeContentOffset)
       this.db.exec('COMMIT')
       return page
     } catch (error) {
@@ -370,7 +375,12 @@ export class ChatDatabase {
       throw error
     }
   }
-  private readContextPage(id: string, before?: number, maxBytes = 2000000): ContextPage | null {
+  private readContextPage(
+    id: string,
+    before?: number,
+    maxBytes = 2000000,
+    beforeContentOffset?: number
+  ): ContextPage | null {
     const header = this.db.prepare('SELECT * FROM conversations WHERE id=?').get(id) as
       Header | undefined
     if (!header) return null
@@ -381,23 +391,69 @@ export class ChatDatabase {
       omitted = 0,
       corruptRecords = 0
     const corruptOrdinals: number[] = []
-    // Bound each transfer independently of huge archived messages. Oversize rows advance coverage explicitly.
+    // SQLite parses the canonical JSON inside the worker. Only a normalized,
+    // bounded content projection crosses into JS/IPC; traces/assets never do.
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 512 || maxBytes > 2000000)
+      throw new Error('Context page byte cap must be between 512 and 2000000')
+    if (
+      beforeContentOffset !== undefined &&
+      (!Number.isSafeInteger(beforeContentOffset) || beforeContentOffset <= 0)
+    )
+      throw new Error('Invalid context content cursor')
+    const rowEnd = beforeContentOffset === undefined ? end - 1 : end
+    const text = "json_extract(body,'$.content')"
+    const contentEnd = `min(length(${text}), CASE WHEN ordinal=$end THEN coalesce($offset,length(${text})) ELSE length(${text}) END)`
+    const contentStart = `max(0,${contentEnd}-$chunk)`
+    const bounded = (field: string, cap: number) =>
+      `CASE WHEN length(CAST(json_extract(body,'$.${field}') AS BLOB))<=${cap} THEN json_extract(body,'$.${field}') ELSE NULL END`
+    const projection = `CASE WHEN json_valid(body) THEN CASE WHEN json_type(body,'$.content')='text' THEN json_object(
+      'id',${bounded('id', 1024)},'role',${bounded('role', 64)},
+      'content',substr(${text},${contentStart}+1,${contentEnd}-${contentStart}),
+      'createdAt',CASE WHEN json_type(body,'$.createdAt') IS NULL THEN 0 WHEN json_type(body,'$.createdAt') IN ('integer','real') THEN json_extract(body,'$.createdAt') ELSE NULL END,
+      'agentId',${bounded('agentId', 1024)},'agentName',${bounded('agentName', 2048)},'model',${bounded('model', 2048)},
+      'contextResult',CASE WHEN length(CAST(json_extract(body,'$.contextResult') AS BLOB))<=$receipt THEN json_extract(body,'$.contextResult') ELSE NULL END,
+      'contextContentOffset',${contentStart},'contextContentLength',length(${text})
+    ) ELSE NULL END ELSE NULL END`
+    let nextContentOffset: number | undefined,
+      metadataOmitted = 0
     for (const row of this.db
       .prepare(
-        'SELECT ordinal,contextSequence,CASE WHEN length(CAST(body AS BLOB))<=? THEN body ELSE NULL END AS body FROM messages WHERE threadId=? AND ordinal<? ORDER BY ordinal DESC LIMIT 500'
+        `SELECT ordinal,contextSequence,${projection} AS body,
+      CASE WHEN json_valid(body) THEN length(CAST(json_extract(body,'$.contextResult') AS BLOB))>$receipt ELSE 0 END AS metadataOmitted
+      FROM messages WHERE threadId=$id AND ordinal<=$end ORDER BY ordinal DESC LIMIT 500`
       )
-      .iterate(maxBytes, id, end)) {
+      .iterate({
+        $id: id,
+        $end: rowEnd,
+        $offset: beforeContentOffset ?? null,
+        $chunk: Math.max(1, Math.min(32768, Math.floor(maxBytes / 12))),
+        $receipt: Math.min(65536, Math.floor(maxBytes / 8))
+      })) {
       const body = row.body === null ? null : String(row.body)
       if (body && bytes + Buffer.byteLength(body) > maxBytes && records.length) break
       cursor = Number(row.ordinal)
-      if (!body) {
+      if (!body || Buffer.byteLength(body) > maxBytes) {
         omitted++
+        if (!body) {
+          corruptRecords++
+          corruptOrdinals.push(cursor)
+        }
         continue
       }
       bytes += Buffer.byteLength(body)
       let message: ChatMessage | null = null
       try {
-        message = contextRecord(JSON.parse(body))
+        const value = JSON.parse(body)
+        for (const optional of ['agentId', 'agentName', 'model', 'contextResult'])
+          if (value[optional] === null) delete value[optional]
+        if (
+          value.contextContentOffset === 0 &&
+          value.contextContentLength === [...value.content].length
+        ) {
+          delete value.contextContentOffset
+          delete value.contextContentLength
+        }
+        message = contextRecord(value)
       } catch {
         /* Preserve corrupt JSON for repair. */
       }
@@ -407,17 +463,24 @@ export class ChatDatabase {
         corruptOrdinals.push(cursor)
         continue
       }
+      metadataOmitted += Number(row.metadataOmitted ?? 0)
       records.push({
         ordinal: cursor,
         message: { ...message, contextSequence: Number(row.contextSequence) }
       })
+      if (message.contextContentOffset) {
+        nextContentOffset = message.contextContentOffset
+        break // Continue this source before advancing to the preceding ordinal.
+      }
     }
     return {
       revision: header.contextRevision,
       sourceEpoch: this.sourceEpoch(id),
       messageCount: header.messageCount,
       before: cursor,
-      done: cursor === 0,
+      done: cursor === 0 && nextContentOffset === undefined,
+      beforeContentOffset: nextContentOffset,
+      metadataOmitted,
       records: records.reverse(),
       omitted,
       corruptRecords,
