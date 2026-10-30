@@ -27,7 +27,11 @@ export async function handleWorkspaceRequest(request: WorkspaceRequest): Promise
     case 'context-page':
       return chatDatabase(request.dir).contextPage(request.id, request.before)
     case 'context-controls':
-      return chatDatabase(request.dir).contextControls(request.id, request.write)
+      return chatDatabase(request.dir).contextControls(
+        request.id,
+        request.write,
+        request.expectedSource
+      )
     case 'chat-list':
       return chatDatabase(request.dir).list()
     case 'chat-get':

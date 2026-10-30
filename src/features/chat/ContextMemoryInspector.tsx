@@ -2,7 +2,13 @@ import { useState } from 'react'
 import { useDialogFocus } from '@/hooks/useDialogFocus'
 import type { MemoryControls, MemoryInspection } from '@/shared/context-memory'
 
-export function ContextMemoryInspector({ threadId }: { threadId: string }) {
+export function ContextMemoryInspector({
+  threadId,
+  workspacePath = null
+}: {
+  threadId: string
+  workspacePath?: string | null
+}) {
   const [open, setOpen] = useState(false),
     [query, setQuery] = useState(''),
     [note, setNote] = useState('')
@@ -14,7 +20,16 @@ export function ContextMemoryInspector({ threadId }: { threadId: string }) {
     setBusy(true)
     setError('')
     try {
-      setSnapshot(await window.ide.inspectContextMemory({ id: threadId, query, controls, evict }))
+      setSnapshot(
+        await window.ide.inspectContextMemory({
+          id: threadId,
+          workspacePath,
+          snapshotHandle: snapshot?.snapshotHandle,
+          query,
+          controls,
+          evict
+        })
+      )
     } catch (e) {
       setError(String(e))
       setSnapshot(null)

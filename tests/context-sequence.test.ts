@@ -135,3 +135,32 @@ it('migrates old SQLite rows and cutoffs transactionally and keeps future source
   expect(db.get('t')!.messages[0].contextSequence).toBe(4)
   expect((await recall()).prompt.text).toContain('CAD')
 })
+
+it('RAM-CTX-009 checks inspector source identity inside the controls transaction', () => {
+  db = new ChatDatabase(dir)
+  save([message('old')])
+  const source = db!.contextHeader('t')!
+  db!.append('t', message('new'))
+  expect(() =>
+    db!.contextControls(
+      't',
+      { ...emptyMemoryControls(), pinned: [{ id: 'p', text: 'Old snapshot' }] },
+      source
+    )
+  ).toThrow('STALE_CONTEXT_INSPECTION')
+  expect(db!.contextControls('t').pinned).toEqual([])
+  const replacement = db!.contextHeader('t')!
+  db!.remove('t')
+  save([message('replacement')])
+  expect(() => db!.contextControls('t', emptyMemoryControls(), replacement)).toThrow(
+    'STALE_CONTEXT_INSPECTION'
+  )
+  const current = db!.contextHeader('t')!
+  expect(
+    db!.contextControls(
+      't',
+      { ...emptyMemoryControls(), pinned: [{ id: 'p', text: 'Current snapshot' }] },
+      current
+    ).pinned[0].text
+  ).toBe('Current snapshot')
+})

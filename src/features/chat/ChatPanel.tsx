@@ -223,6 +223,7 @@ interface SlashItem {
 }
 
 interface Props {
+  workspacePath?: string | null
   activeThread: ChatThread | null
   onLoadEarlier?: () => Promise<void>
   routeLabel: string | null
@@ -407,6 +408,7 @@ function DelegationCards({ items }: { items: ChatDelegation[] }) {
 }
 
 export function ChatPanel({
+  workspacePath = null,
   activeThread,
   onLoadEarlier,
   routeLabel,
@@ -732,7 +734,11 @@ export function ChatPanel({
       <div className="panel-header agent-header">
         <span>{activeThread?.title || 'Agent'}</span>
         {activeThread && (
-          <ContextMemoryInspector key={activeThread.id} threadId={activeThread.id} />
+          <ContextMemoryInspector
+            key={`${workspacePath ?? 'global'}:${activeThread.id}`}
+            threadId={activeThread.id}
+            workspacePath={workspacePath}
+          />
         )}
         <div className="mode-toggle" role="group" aria-label="Task permissions">
           <button

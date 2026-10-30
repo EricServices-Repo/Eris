@@ -972,6 +972,7 @@ export default function App() {
             ) : (
               <Suspense fallback={<div className="welcome">Loading chat…</div>}>
                 <ChatPanel
+                  workspacePath={workspacePath}
                   activeThread={activeThread}
                   onLoadEarlier={loadEarlier}
                   routeLabel={routeLabel}

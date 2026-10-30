@@ -11,7 +11,13 @@ export type WorkspaceRequest =
   | { type: 'load-index'; indexPath: string }
   | { type: 'context-header'; dir: string; id: string }
   | { type: 'context-page'; dir: string; id: string; before?: number }
-  | { type: 'context-controls'; dir: string; id: string; write?: MemoryControls }
+  | {
+      type: 'context-controls'
+      dir: string
+      id: string
+      write?: MemoryControls
+      expectedSource?: ContextHeader
+    }
   | { type: 'chat-list'; dir: string }
   | { type: 'chat-get'; dir: string; id: string; page?: ChatPage }
   | { type: 'chat-save'; dir: string; thread: ChatThread }
