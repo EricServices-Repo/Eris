@@ -7,6 +7,7 @@ import { contextMemoryStore } from './context-memory-store'
 import type { AppSettings, ChatThread } from '../../../src/shared/settings-schema'
 import {
   ContextMemorySettingsSchema,
+  type ContextHeader,
   type MemoryControls
 } from '../../../src/shared/context-memory'
 const pending = new Map<string, SharedHydration>()
@@ -153,13 +154,15 @@ export async function conversationContext(
 export async function saveMemoryControls(
   root: string | null,
   id: string,
-  controls: MemoryControls
+  controls: MemoryControls,
+  expectedSource?: ContextHeader
 ) {
   const saved = await workspaceRequest({
     type: 'context-controls',
     dir: dir(root),
     id,
-    write: controls
+    write: controls,
+    expectedSource
   })
   contextMemoryStore.setControls(memoryKey(root, id), saved)
   return saved

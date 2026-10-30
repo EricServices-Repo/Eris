@@ -121,8 +121,24 @@ export class ChatDatabase {
       .run(JSON.stringify(raw), id)
   }
   /** Bind legacy ordinal cutoffs once while the canonical snapshot is locked. */
-  contextControls(id: string, write?: MemoryControls): MemoryControls {
+  contextControls(
+    id: string,
+    write?: MemoryControls,
+    expectedSource?: ContextHeader
+  ): MemoryControls {
     return this.transaction(() => {
+      if (expectedSource) {
+        const current = this.contextHeader(id)
+        if (
+          !current ||
+          current.revision !== expectedSource.revision ||
+          current.messageCount !== expectedSource.messageCount ||
+          current.sourceEpoch !== expectedSource.sourceEpoch
+        )
+          throw new Error(
+            'STALE_CONTEXT_INSPECTION: Conversation changed. Reopen conversation memory before editing controls.'
+          )
+      }
       this.bindLegacyCutoff(id)
       if (write) {
         const parsed = MemoryControlsSchema.parse(write)

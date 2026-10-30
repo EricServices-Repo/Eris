@@ -1,3 +1,6 @@
+import { randomUUID } from 'crypto'
+import { userDataRoot } from '../services/paths'
+import type { ContextHeader } from '../../../src/shared/context-memory'
 import { z } from 'zod'
 import {
   inspectConversationMemory,
@@ -47,6 +50,20 @@ function chatWorkspace(requested: string | null | undefined): string | null {
 }
 
 export function registerChatsIpc(): void {
+  const inspections = new Map<
+    string,
+    {
+      root: string | null
+      workspaceId: string | null
+      epoch: number
+      profile: string
+      threadId: string
+      source: ContextHeader
+      controlsRevision: number
+      sender: unknown
+      expires: number
+    }
+  >()
   ipcMain.handle('contextMemory:inspect', async (event, raw: unknown) => {
     if (
       !appState.mainWindow ||
@@ -54,8 +71,10 @@ export function registerChatsIpc(): void {
       event.senderFrame !== event.sender.mainFrame
     )
       throw new Error('Unauthorized context inspection')
-    const { id, query, controls, evict } = z
+    const { id, query, controls, evict, workspacePath, snapshotHandle } = z
       .object({
+        workspacePath: z.string().max(4096).nullable().optional(),
+        snapshotHandle: z.string().uuid().optional(),
         id: z.string().min(1).max(256),
         query: z.string().max(4000).default(''),
         controls: MemoryControlsSchema.optional(),
@@ -64,10 +83,74 @@ export function registerChatsIpc(): void {
       .strict()
       .parse(raw)
     const root = appState.currentWorkspace
-    if (!(await getChat(root, id, { limit: 1 }))) throw new Error('Chat not found')
-    if (controls) await saveMemoryControls(root, id, controls)
+    const epoch = appState.workspaceEpoch
+    const workspaceId = root ? getWorkspaceByPath(root)?.id : null
+    const profile = userDataRoot()
+    const stale = () =>
+      new Error(
+        'STALE_CONTEXT_INSPECTION: Workspace or conversation changed. Reopen conversation memory.'
+      )
+    const eligible = () =>
+      appState.currentWorkspace === root &&
+      appState.workspaceEpoch === epoch &&
+      userDataRoot() === profile &&
+      (!root || getWorkspaceByPath(root)?.id === workspaceId)
+    if ((root && !workspaceId) || (workspacePath !== undefined && workspacePath !== root))
+      throw stale()
+    const lease = snapshotHandle ? inspections.get(snapshotHandle) : undefined
+    if ((controls || evict) && !lease) throw stale()
+    if (
+      snapshotHandle &&
+      (!lease ||
+        lease.root !== root ||
+        lease.workspaceId !== workspaceId ||
+        lease.epoch !== epoch ||
+        lease.profile !== profile ||
+        lease.threadId !== id ||
+        lease.sender !== event.sender ||
+        lease.expires < Date.now())
+    )
+      throw stale()
+    const thread = await getChat(root, id, { limit: 1 })
+    if (!thread) throw new Error('Chat not found')
+    if (!eligible()) throw stale()
+    const source: ContextHeader = {
+      revision: thread.contextRevision ?? 0,
+      messageCount: thread.messageCount ?? thread.messages.length,
+      sourceEpoch: thread.contextEpoch ?? ''
+    }
+    if (
+      lease &&
+      (lease.source.revision !== source.revision ||
+        lease.source.messageCount !== source.messageCount ||
+        lease.source.sourceEpoch !== source.sourceEpoch)
+    )
+      throw stale()
+    if (controls) {
+      if ((controls.revision ?? 0) !== lease!.controlsRevision) throw stale()
+      await saveMemoryControls(root, id, controls, lease!.source)
+    }
+    if (!eligible()) throw stale()
     if (evict) invalidateConversationMemory(root, id)
-    return inspectConversationMemory(root, id, query, getResolvedSettings(root))
+    const inspection = await inspectConversationMemory(root, id, query, getResolvedSettings(root))
+    if (!eligible()) throw stale()
+    for (const [handle, value] of inspections)
+      if (value.expires < Date.now()) inspections.delete(handle)
+    if (inspections.size >= 128) inspections.delete(inspections.keys().next().value!)
+    const handle = randomUUID()
+    inspections.set(handle, {
+      root,
+      workspaceId: workspaceId ?? null,
+      epoch,
+      profile,
+      threadId: id,
+      source,
+      controlsRevision: inspection.controls.revision ?? 0,
+      sender: event.sender,
+      expires: Date.now() + 10 * 60000
+    })
+    if (snapshotHandle) inspections.delete(snapshotHandle)
+    return { ...inspection, snapshotHandle: handle }
   })
   ipcMain.handle('chats:list', () => listChats(appState.currentWorkspace))
   ipcMain.handle(

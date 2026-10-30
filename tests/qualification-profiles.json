@@ -29,6 +29,7 @@
         "tests/chat-router.test.ts",
         "tests/chat-stream-diagnostics.test.ts",
         "tests/chat-stream.test.ts",
+        "tests/context-inspector-ipc.test.ts",
         "tests/context-continuity.test.ts",
         "tests/command-approval.test.ts",
         "tests/debug-runs.test.ts",

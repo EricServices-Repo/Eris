@@ -70,6 +70,8 @@ export type MemoryManifest = {
 }
 export type MemoryPrompt = { text: string; manifest: MemoryManifest; allowRemote: boolean }
 export type MemoryInspection = {
+  /** Opaque main-owned handle binding controls to the inspected namespace and source. */
+  snapshotHandle?: string
   /** True only when controls were read from the durable source for this inspection. */
   controlsAvailable?: boolean
   manifest: MemoryManifest
