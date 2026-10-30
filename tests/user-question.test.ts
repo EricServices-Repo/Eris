@@ -11,6 +11,7 @@ import {
   looksLikeClarifyingQuestion,
   looksLikeTaskComplete,
   projectDescriptionReady,
+  rejectedReplyReason,
   shouldKeepWorking
 } from '../electron/main/services/agent/heuristics'
 
@@ -69,21 +70,19 @@ describe('requestUserQuestion', () => {
 describe('looksLikeClarifyingQuestion', () => {
   it('detects a blocking choice question', () => {
     expect(
-      looksLikeClarifyingQuestion(
-        'Should I use React or Vue for this UI before I continue?'
-      )
+      looksLikeClarifyingQuestion('Should I use React or Vue for this UI before I continue?')
     ).toBe(true)
   })
 
   it('ignores finished summaries', () => {
-    expect(
-      looksLikeClarifyingQuestion('Done. Summary: added the login form and tests.')
-    ).toBe(false)
+    expect(looksLikeClarifyingQuestion('Done. Summary: added the login form and tests.')).toBe(
+      false
+    )
   })
 
   it('does not treat workspace-info asks as clarifying questions', () => {
     const bad =
-      'Sure, I\'ll review the project folder. Could you please provide the structure of the project folder and any relevant files so I can understand the current state of the calculator app?'
+      "Sure, I'll review the project folder. Could you please provide the structure of the project folder and any relevant files so I can understand the current state of the calculator app?"
     expect(looksLikeAsksForWorkspaceInfo(bad)).toBe(true)
     expect(looksLikeClarifyingQuestion(bad)).toBe(false)
     expect(looksLikeTaskComplete(bad)).toBe(false)
@@ -106,9 +105,9 @@ describe('project description', () => {
   it('is not a defect review', () => {
     expect(isReviewOnlyGoal('Review this project, what does it do?')).toBe(false)
     expect(isReviewOnlyGoal('code review this PR')).toBe(true)
-    expect(
-      isReviewOnlyGoal('review the airbnb website, what 3 improvements should we make?')
-    ).toBe(true)
+    expect(isReviewOnlyGoal('review the airbnb website, what 3 improvements should we make?')).toBe(
+      true
+    )
     expect(isReviewOnlyGoal('review the project folder, make improvements to the calculator')).toBe(
       false
     )
@@ -163,5 +162,15 @@ describe('project description', () => {
         actions: ['Read README.md']
       })
     ).toBe(true)
+  })
+})
+
+describe('rejected reply reasons', () => {
+  it('names why a reply was rejected without repeating it', () => {
+    const prose = 'The project could use better error handling and more tests overall.'
+    expect(rejectedReplyReason(prose, [])).toBe('no-source-evidence')
+    expect(rejectedReplyReason(prose, ['Read src/retry.ts'])).toBe('not-complete')
+    expect(rejectedReplyReason(prose, ['Read .eris/notes.md'])).toBe('no-source-evidence')
+    expect(rejectedReplyReason('   ', [])).toBe('tool-text-only')
   })
 })

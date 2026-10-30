@@ -16,6 +16,7 @@ const harness = vi.hoisted(() => ({
   transcripts: [] as Array<Array<{ role: string; content: string; tool_calls?: unknown[] }>>,
   requestModes: [] as Array<{ constrained: boolean; sessionKey?: string }>,
   releasedSessions: [] as string[],
+  retrievedPaths: [] as string[],
   verifyCalls: 0,
   verifyResults: [] as Array<{
     ok: boolean
@@ -85,6 +86,16 @@ vi.mock('../electron/main/services/workspace-search', () => ({
   retrieveContextAsync: async () => ({ ok: true, paths: [], detail: '' }),
   workspaceGlob: () => ({ ok: true, detail: '' }),
   workspaceGrep: async () => ({ ok: true, detail: '' })
+}))
+
+vi.mock('../electron/main/services/workspace-intelligence', async (original) => ({
+  ...(await original<typeof import('../electron/main/services/workspace-intelligence')>()),
+  inspectWorkspace: async () => ({
+    ok: true,
+    paths: harness.retrievedPaths,
+    detail: '',
+    reasons: []
+  })
 }))
 
 vi.mock('../electron/main/services/code-index', () => ({
@@ -430,6 +441,81 @@ describe('chat agent complex smoke test', () => {
       harness.prompts.some((prompt) => prompt.includes('Thinking is finished. Write the reply'))
     ).toBe(true)
     expect(harness.replies).toHaveLength(0)
+  })
+
+  describe('a review model that will not call tools', () => {
+    const PROSE = 'The project could use better error handling and more tests overall.'
+    const FINDINGS =
+      '1. Make MAX_RETRIES configurable in src/retry.ts.\n2. Add jitter to retryDelay in src/retry.ts.'
+    const review = () =>
+      drain(
+        runAgentWithWorkspaceTools({
+          workspacePath,
+          settings: getDefaults(),
+          model: 'builtin:composer-lite',
+          messages: [{ role: 'user', content: 'Review the project, confirm 5 enhancements to do' }],
+          temperature: 0,
+          getSecret: () => null,
+          mode: 'agent',
+          turnPlan: { ...workspaceQuestionPlan(), intent: 'review', toolPolicy: 'read' },
+          mcp: 'off'
+        })
+      )
+    afterEach(() => {
+      harness.retrievedPaths = []
+    })
+    it('forces a tool call until a source file has been read', async () => {
+      harness.replies.push(
+        PROSE,
+        JSON.stringify({ name: 'read_file', path: 'src/retry.ts' }),
+        FINDINGS
+      )
+      const events = await review()
+      expectCompleted(events)
+      expect(harness.requestModes.slice(0, 3).map((mode) => mode.constrained)).toEqual([
+        false,
+        true,
+        false
+      ])
+      expect(lastAnswer(events)).toContain('jitter')
+    })
+    it('reads the retrieved files itself and finishes the review', async () => {
+      harness.retrievedPaths = ['src/retry.ts']
+      harness.replies.push(...Array.from({ length: 6 }, () => PROSE), FINDINGS)
+      const events = await review()
+      expectCompleted(events)
+      expect(lastAnswer(events)).toContain('jitter')
+      expect(
+        events.some(
+          (event) =>
+            event.type === 'tool' && event.tool.name === 'read_file' && event.tool.status === 'ok'
+        )
+      ).toBe(true)
+      expect(
+        harness.transcripts
+          .at(-1)!
+          .map((message) => message.content)
+          .join('\n')
+      ).toContain('MAX_RETRIES')
+    })
+    it('says no files were inspected when there is nothing to read', async () => {
+      harness.replies.push(...Array.from({ length: 16 }, () => PROSE))
+      const events = await review()
+      expect(lastAnswer(events)).toMatch(/without using a tool, so no project files were inspected/)
+      expect(lastAnswer(events)).not.toContain('actionable next step')
+    })
+    it('keeps the same model on one role instead of rerouting', async () => {
+      harness.replies.push(...Array.from({ length: 16 }, () => PROSE))
+      const events = await review()
+      expect(events.some((event) => event.type === 'adapt' && event.kind === 'reroute')).toBe(false)
+    })
+    it('still blocks a review whose only retrieved file cannot be read', async () => {
+      harness.retrievedPaths = ['src/missing.ts']
+      harness.replies.push(...Array.from({ length: 16 }, () => PROSE))
+      const events = await review()
+      expect(lastAnswer(events)).toMatch(/could(n’t|n't) complete/)
+      expect(lastAnswer(events)).not.toContain('jitter')
+    })
   })
 
   it('gives a stalled edit a bounded recovery window that can reach a real change', async () => {

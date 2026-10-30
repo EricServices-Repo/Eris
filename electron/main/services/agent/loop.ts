@@ -90,6 +90,7 @@ import {
   looksLikeDegenerateLoop,
   isUnfinishedWorkNarration,
   pathNeedsProjectVerify,
+  rejectedReplyReason,
   shouldKeepWorking,
   toolFingerprint
 } from './heuristics'
@@ -157,6 +158,7 @@ import { AgentWorkflow } from './workflow'
 
 /** Consecutive rounds with zero mutation → stronger finish nudge (never stops the run). */
 const MAX_NO_PROGRESS = 8
+const MAX_RETRIEVED_READS = 3
 /**
  * Steps a run may take without new evidence or effects. Unlike noProgressStreak,
  * rerouting is not progress. One explicit recovery window is allowed before blocking.
@@ -961,6 +963,12 @@ async function* runAgentInternal(options: {
           : `Do not edit files. Read the sources that answer the user, then reply in plain sentences and cite paths.`
   const answerNext = describeProject ? describeProjectNext : chatReply ? chatReplyNext : ''
   const sourceReads: Array<{ path: string; text: string }> = []
+  /** A review or plan cannot finish on prose; it needs a source file read first. */
+  const awaitingSourceEvidence = () =>
+    ['review', 'plan'].includes(workflow.contract.intent) &&
+    workflow.contract.requiresWorkspaceEvidence &&
+    !sourceReads.length
+  let rejectedReplies = 0
   const observedWorkspaceReads = new Map<string, Set<'file' | 'notebook'>>()
   const workspaceReadKey = (path: string): string | null => {
     try {
@@ -1281,7 +1289,18 @@ async function* runAgentInternal(options: {
         trigger,
         agentId: plan.agentId
       })
-    if (decision.kind === 'reroute' && decision.nextPlan) {
+    // A new role on the same model repeats the failure and spends the recovery budget.
+    const sameModelRetry =
+      decision.kind === 'reroute' &&
+      decision.nextPlan?.models.tools === workerModel &&
+      awaitingSourceEvidence()
+    if (sameModelRetry)
+      appendTaskEvent(task.taskId, 'reroute-skipped', {
+        reason: 'same-model-without-evidence',
+        trigger,
+        agentId: plan.agentId
+      })
+    if (decision.kind === 'reroute' && decision.nextPlan && !sameModelRetry) {
       const fromAgent = plan.agentId
       plan = {
         ...decision.nextPlan,
@@ -1356,7 +1375,9 @@ async function* runAgentInternal(options: {
     const reason =
       mode === 'ask'
         ? `Ask mode stays read-only while ${plan.agentName} recovers. ${trigger}.`
-        : `${plan.agentName} is correcting the failed tool request using the current task context.`
+        : awaitingSourceEvidence()
+          ? `${plan.agentName} is retrying with a required tool call.`
+          : `${plan.agentName} is correcting the failed tool request using the current task context.`
     consecutiveToolErrors = 0
     noProgressStreak = 0
     verifyFailures = Math.max(0, verifyFailures - 1)
@@ -1703,6 +1724,39 @@ async function* runAgentInternal(options: {
     yield* postFinalAnswer(answer)
   }
 
+  /** The retrieved leads, read through the normal tool path when the model will not. */
+  function* readRetrievedSources(): Generator<AgentRunnerEvent, void, unknown> {
+    if (!toolAllowedByPolicy('read_file', plan.toolPolicy, false)) return
+    for (const path of (retrieved?.paths ?? []).slice(0, MAX_RETRIEVED_READS)) {
+      const id = `t${toolExecRounds}_auto_read_${sourceReads.length}`
+      const call: ToolCall = { id, name: 'read_file', args: { path }, raw: '' }
+      yield { type: 'tool', tool: { id, name: 'read_file', path, status: 'running', detail: '' } }
+      const result = executeTool(workspacePath, call)
+      noteObservation(call, result)
+      workflow.noteTool({ ...result, name: call.name })
+      yield { type: 'evidence', evidence: gateway.record(`${task.taskId}:${id}`, call, result) }
+      if (result.ok && result.path) {
+        recordWorkspaceRead(result.path, 'file')
+        sourceReads.push({
+          path: result.path,
+          text: result.detail.slice(0, AGENT_HANDOFF_CHARS)
+        })
+        actionLog.push(`Read ${result.path}`)
+        appendToolObservation(workerMessages, 'read_file', result.detail, { path })
+      }
+      yield {
+        type: 'tool',
+        tool: {
+          id,
+          name: 'read_file',
+          path,
+          status: result.ok ? 'ok' : 'error',
+          detail: result.detail.slice(0, AGENT_HANDOFF_CHARS)
+        }
+      }
+    }
+  }
+
   /** Internal framing and truncated code never reach the user as a finished answer. */
   async function* postFinalAnswer(draft: string): AsyncGenerator<AgentRunnerEvent, void, unknown> {
     const final = await finalizeAnswer(draft, {
@@ -1767,6 +1821,7 @@ async function* runAgentInternal(options: {
         lastProgressStep = step
       } else if (step - lastProgressStep >= MAX_STEPS_WITHOUT_EVIDENCE) {
         const idleSteps = step - lastProgressStep
+        if (awaitingSourceEvidence()) yield* readRetrievedSources()
         appendTaskEvent(task.taskId, 'no-progress-detected', {
           steps: idleSteps,
           rerouteCount,
@@ -1809,7 +1864,7 @@ async function* runAgentInternal(options: {
           })
           noProgressStreak = 0
           consecutiveToolErrors = 0
-          constrainNextToolCall = !answerTask
+          constrainNextToolCall = !answerTask || awaitingSourceEvidence()
           // An explicit bounded grace window, not fabricated evidence. Reroutes cannot reset it.
           lastProgressStep = step
           continue
@@ -1837,7 +1892,9 @@ async function* runAgentInternal(options: {
               : 'No file changes were made. ') +
             (lastFailure
               ? `The last tool failure was: ${lastFailure}`
-              : 'The model did not produce an actionable next step.'),
+              : rejectedReplies && !successfulObservations.size
+                ? `The model replied ${rejectedReplies} time${rejectedReplies === 1 ? '' : 's'} without using a tool, so no project files were inspected.`
+                : 'The model did not produce an actionable next step.'),
           replace: true
         }
         return
@@ -1885,8 +1942,7 @@ async function* runAgentInternal(options: {
         constrainNextToolCall &&
         localConstrainEnabled &&
         !disableRetryGrammar &&
-        !reviewOnly &&
-        !chatReply &&
+        ((!reviewOnly && !chatReply) || awaitingSourceEvidence()) &&
         isNativeGgufRef(workerModel)
       constrainNextToolCall = false
       const visibleToolNamesThisStep = new Set(openaiTools.map((tool) => tool.function.name))
@@ -2145,6 +2201,15 @@ async function* runAgentInternal(options: {
           looksLikeDegenerateLoop(assistantText)
 
         if (keepGoing) {
+          rejectedReplies++
+          // Length and reason only: the reply may repeat private recall.
+          appendTaskEvent(task.taskId, 'model-reply-rejected', {
+            step,
+            model: workerModel,
+            chars: assistantText.length,
+            constrained: constrainThisTurn,
+            reason: rejectedReplyReason(assistantText, actionLog)
+          })
           noProgressStreak++
           // Next turn, force a valid tool-call JSON on the local model.
           constrainNextToolCall = true

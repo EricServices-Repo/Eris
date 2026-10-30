@@ -247,6 +247,19 @@ export function shouldKeepWorking(opts: {
   return false
 }
 
+/** Why a reply without tool calls did not end the run. Never includes its text. */
+export function rejectedReplyReason(assistantText: string, actions: string[]): string {
+  const note = stripToolBlocks(assistantText).trim()
+  if (!note) return 'tool-text-only'
+  if (looksLikeRefusal(assistantText)) return 'refusal'
+  if (looksLikeAsksForWorkspaceInfo(assistantText)) return 'asks-for-workspace-info'
+  if (talksAboutToolsWithoutCalling(assistantText)) return 'describes-tools'
+  if (looksLikeDegenerateLoop(assistantText)) return 'degenerate-loop'
+  if (isUnfinishedWorkNarration(note)) return 'unfinished-work'
+  if (!actions.some((action) => /^Read (?!\.eris\/)/.test(action))) return 'no-source-evidence'
+  return 'not-complete'
+}
+
 export function toolFingerprint(calls: ToolCall[]): string {
   const canonical = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(canonical)

@@ -109,6 +109,33 @@ describe('AG-052 follow-ups resolve against the prior turn', () => {
     expect(follow.scope.projectRoot).toBe(first.scope.projectRoot)
   })
 
+  it('treats confirming a counted list as a reference to the prior recommendations', () => {
+    const root = workspace({ 'src/retry.ts': 'export const MAX_RETRIES = 3\n' })
+    const first = completeChatTurnTask(
+      createTaskContract({ workspacePath: root, text: 'Review src/retry.ts', plan: plan({}) }),
+      { answer: review, changedFiles: [], terminal: 'complete' }
+    )
+    const follow = createTaskContract({
+      workspacePath: root,
+      text: 'Review the project, confirm 2 enhancements to do',
+      plan: plan({}),
+      priorTask: first,
+      history: [{ role: 'assistant', content: review }]
+    })
+    expect(follow.recommendations.map((item) => item.id)).toEqual(
+      first.result!.offeredRecommendations.map((item) => item.id)
+    )
+    expect(follow.continuation).toMatchObject({ recommendationSource: 'prior-task' })
+    const fresh = createTaskContract({
+      workspacePath: root,
+      text: 'Review the project and recommend 2 enhancements',
+      plan: plan({}),
+      priorTask: first,
+      history: [{ role: 'assistant', content: review }]
+    })
+    expect(fresh.recommendations).toEqual([])
+  })
+
   it('falls back to the prior answer for threads saved before results existed', () => {
     const follow = createTaskContract({
       workspacePath: null,
