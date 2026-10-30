@@ -400,6 +400,20 @@ export class ChatDatabase {
       return this.get(id, { limit: 60 })!
     })
   }
+  scopeContextSource(id: string, messageId: string, projectRoot: string | null): boolean {
+    return this.transaction(() => {
+      const updated = this.db
+        .prepare(
+          "UPDATE messages SET body=json_set(body,'$.contextProjectRoot',?) WHERE threadId=? AND id=? AND json_valid(body) AND json_extract(body,'$.role')='user' AND json_extract(body,'$.contextProjectRoot') IS NOT ?"
+        )
+        .run(projectRoot, id, messageId, projectRoot)
+      if (updated.changes)
+        this.db
+          .prepare('UPDATE conversations SET contextRevision=contextRevision+1 WHERE id=?')
+          .run(id)
+      return Boolean(updated.changes)
+    })
+  }
   contextPage(
     id: string,
     before?: number,
@@ -452,6 +466,7 @@ export class ChatDatabase {
       'content',substr(${text},${contentStart}+1,${contentEnd}-${contentStart}),
       'createdAt',CASE WHEN json_type(body,'$.createdAt') IS NULL THEN 0 WHEN json_type(body,'$.createdAt') IN ('integer','real') THEN json_extract(body,'$.createdAt') ELSE NULL END,
       'agentId',${bounded('agentId', 1024)},'agentName',${bounded('agentName', 2048)},'model',${bounded('model', 2048)},
+      'contextProjectRoot',json_extract(body,'$.contextProjectRoot'),
       'contextResult',CASE WHEN length(CAST(json_extract(body,'$.contextResult') AS BLOB))<=$receipt THEN json_extract(body,'$.contextResult') ELSE NULL END,
       'contextContentOffset',${contentStart},'contextContentLength',length(${text})
     ) ELSE NULL END ELSE NULL END`
@@ -485,7 +500,13 @@ export class ChatDatabase {
       let message: ChatMessage | null = null
       try {
         const value = JSON.parse(body)
-        for (const optional of ['agentId', 'agentName', 'model', 'contextResult'])
+        for (const optional of [
+          'agentId',
+          'agentName',
+          'model',
+          'contextResult',
+          'contextProjectRoot'
+        ])
           if (value[optional] === null) delete value[optional]
         if (
           value.contextContentOffset === 0 &&

@@ -23,6 +23,13 @@ export type WorkspaceRequest =
   | { type: 'chat-save'; dir: string; thread: ChatThread }
   | { type: 'chat-delete'; dir: string; id: string }
   | { type: 'chat-append'; dir: string; id: string; message: ChatMessage; model?: string }
+  | {
+      type: 'context-source-scope'
+      dir: string
+      id: string
+      messageId: string
+      projectRoot: string | null
+    }
   | { type: 'shutdown' }
 export type WorkspaceResult<T extends WorkspaceRequest> = T extends { type: 'context-header' }
   ? ContextHeader | null

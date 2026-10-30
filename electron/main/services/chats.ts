@@ -131,3 +131,20 @@ export function loadWorkspaceRules(workspacePath: string | null): string {
   }
   return value
 }
+
+/** Main-owned task resolution records source scope without changing the user's text. */
+export async function scopeChatSource(
+  root: string | null,
+  id: string,
+  messageId: string,
+  projectRoot: string | null
+) {
+  const changed = await workspaceRequest({
+    type: 'context-source-scope',
+    dir: chatsDir(root),
+    id,
+    messageId,
+    projectRoot
+  })
+  if (changed) invalidateConversationMemory(root, id)
+}
