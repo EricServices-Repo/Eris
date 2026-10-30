@@ -19,9 +19,11 @@ export type MemoryFact = {
   status: 'user-stated' | 'unverified' | 'observed'
   projectRoot?: string | null
 }
+export const CONTEXT_CONTROLS_CONFLICT = 'CONTEXT_CONTROLS_CONFLICT' as const
 export const MemoryControlsSchema = z
   .object({
     version: z.literal(1),
+    revision: z.number().int().nonnegative().optional(),
     forgotten: z.array(z.string().min(1).max(256)).max(10000),
     pinned: z
       .array(

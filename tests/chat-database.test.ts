@@ -48,6 +48,59 @@ describe('transactional chat storage', () => {
       messageCount: 2
     })
   })
+  it('rejects stale controls across independent connections and supports safe retry', () => {
+    db = new ChatDatabase(dir)
+    db.save(thread(2))
+    const other = new ChatDatabase(dir)
+    try {
+      const a = db.memoryControls('thread'),
+        b = other.memoryControls('thread')
+      const first = db.memoryControls('thread', { ...a, pinned: [{ id: 'a', text: 'A' }] })
+      expect(first.revision).toBe(1)
+      expect(() =>
+        other.memoryControls('thread', { ...b, pinned: [{ id: 'b', text: 'B' }] })
+      ).toThrow('CONTEXT_CONTROLS_CONFLICT')
+      expect(other.memoryControls('thread').pinned.map((p) => p.id)).toEqual(['a'])
+      const latest = other.memoryControls('thread')
+      const second = other.memoryControls('thread', {
+        ...latest,
+        pinned: [...latest.pinned, { id: 'b', text: 'B' }]
+      })
+      expect(second.revision).toBe(2)
+      expect(db.memoryControls('thread').pinned.map((p) => p.id)).toEqual(['a', 'b'])
+      expect(
+        other.memoryControls('thread', {
+          ...latest,
+          pinned: [...latest.pinned, { id: 'b', text: 'B' }]
+        })
+      ).toEqual(second)
+      expect(() => db!.memoryControls('thread', { ...a, afterOrdinal: 2 })).toThrow(
+        'CONTEXT_CONTROLS_CONFLICT'
+      )
+      expect(db.memoryControls('thread').afterOrdinal).toBe(0)
+      db.close()
+      db = new ChatDatabase(dir)
+      expect(db.memoryControls('thread').revision).toBe(2)
+    } finally {
+      other.close()
+    }
+  })
+  it('rejects stale controls for a deleted and recreated conversation', () => {
+    db = new ChatDatabase(dir)
+    db.save(thread(1))
+    const stale = db.memoryControls('thread', {
+      version: 1,
+      forgotten: [],
+      pinned: [],
+      afterOrdinal: 1
+    })
+    db.remove('thread')
+    db.save(thread(0))
+    expect(() =>
+      db!.memoryControls('thread', { ...stale, pinned: [{ id: 'p', text: 'Old view' }] })
+    ).toThrow('CONTEXT_CONTROLS_CONFLICT')
+    expect(db.memoryControls('thread').pinned).toEqual([])
+  })
   it('imports legacy history once, preserves the original, and never resurrects deleted chats', () => {
     const legacy = JSON.stringify(thread(140))
     writeFileSync(join(dir, 'thread.json'), legacy)
@@ -140,7 +193,7 @@ describe('RAM context durable recovery', () => {
     db.memoryControls('thread', controls)
     db.close()
     db = new ChatDatabase(dir)
-    expect(db.memoryControls('thread')).toEqual(controls)
+    expect(db.memoryControls('thread')).toEqual({ ...controls, revision: 1 })
     expect(() => db!.memoryControls('thread', { ...controls, afterOrdinal: -1 })).toThrow()
     db.remove('thread')
     db.save(thread(0))

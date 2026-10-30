@@ -1,6 +1,7 @@
 import {
   emptyMemoryControls,
   MemoryControlsSchema,
+  CONTEXT_CONTROLS_CONFLICT,
   type MemoryControls,
   type ContextPage
 } from '../../../src/shared/context-memory'
@@ -263,12 +264,36 @@ export class ChatDatabase {
     if (write) write = MemoryControlsSchema.parse(write)
     if (!this.db.prepare('SELECT 1 FROM conversations WHERE id=?').get(id))
       throw new Error('Chat not found')
-    if (write)
-      this.db
+    if (write) {
+      const expectedRevision = write.revision ?? 0
+      const committedPayload = MemoryControlsSchema.parse({
+        ...write,
+        revision: expectedRevision + 1
+      })
+      // One SQLite statement checks and writes under the writer lock. A stale
+      // revision must never win even when callers use separate worker connections.
+      const result = this.db
         .prepare(
-          'INSERT INTO context_controls(threadId,body) VALUES (?,?) ON CONFLICT(threadId) DO UPDATE SET body=excluded.body'
+          `
+        INSERT INTO context_controls(threadId,body)
+        SELECT ?,json_set(?, '$.revision',1)
+        WHERE ?=0 OR EXISTS(SELECT 1 FROM context_controls WHERE threadId=?)
+        ON CONFLICT(threadId) DO UPDATE SET body=json_set(excluded.body,'$.revision',
+          COALESCE(json_extract(context_controls.body,'$.revision'),0)+1)
+        WHERE COALESCE(json_extract(context_controls.body,'$.revision'),0)=?
+      `
         )
-        .run(id, JSON.stringify(write))
+        .run(id, JSON.stringify(committedPayload), expectedRevision, id, expectedRevision)
+      if (Number(result.changes) === 0) {
+        const current = this.memoryControls(id)
+        const { revision: _requestedRevision, ...requested } = write
+        const { revision: _currentRevision, ...saved } = current
+        if (JSON.stringify(requested) === JSON.stringify(saved)) return current // idempotent retry
+        throw new Error(
+          `${CONTEXT_CONTROLS_CONFLICT}: Memory controls changed in another view. Reload RAM from saved history, then retry your action.`
+        )
+      }
+    }
     const row = this.db.prepare('SELECT body FROM context_controls WHERE threadId=?').get(id)
     if (!row) return emptyMemoryControls()
     return MemoryControlsSchema.parse(JSON.parse(String(row.body)))
