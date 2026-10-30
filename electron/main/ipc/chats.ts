@@ -1,3 +1,6 @@
+import { noteEvidenceChange } from '../services/context-evidence-epochs'
+import { isPathInside } from '../services/workspace-fs'
+import { resolve } from 'path'
 import { randomUUID } from 'crypto'
 import { userDataRoot } from '../services/paths'
 import type { ContextHeader } from '../../../src/shared/context-memory'
@@ -50,6 +53,20 @@ function chatWorkspace(requested: string | null | undefined): string | null {
 }
 
 export function registerChatsIpc(): void {
+  ipcMain.on('contextMemory:documentChanged', (event, path: unknown, dirty: unknown) => {
+    const root = appState.currentWorkspace
+    if (
+      !root ||
+      event.sender !== appState.mainWindow?.webContents ||
+      event.senderFrame !== appState.mainWindow.webContents.mainFrame ||
+      typeof path !== 'string' ||
+      path.length > 4096 ||
+      typeof dirty !== 'boolean'
+    )
+      return
+    const abs = resolve(root, path)
+    if (isPathInside(root, abs)) noteEvidenceChange(root, abs, dirty)
+  })
   const inspections = new Map<
     string,
     {

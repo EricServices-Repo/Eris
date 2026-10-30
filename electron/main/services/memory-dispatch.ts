@@ -1,3 +1,5 @@
+import { invalidEvidenceItems } from './context-evidence'
+import { evidenceEpochMatches } from './context-evidence-epochs'
 import { createHash } from 'crypto'
 import { isNativeGgufRef } from './builtin-model'
 import { memoryKey, warmConversationMemory } from './context-memory'
@@ -21,7 +23,7 @@ type EvidenceLease = {
   token: string
   revoked: Set<string>
   /** Set once a model has received an item; digests the messages that predate it. */
-  exposure: { clean: Set<string>; intent: unknown } | null
+  exposure: { clean: Set<string>; intent: unknown; items: Set<string> } | null
 }
 const leases = new Set<EvidenceLease>()
 export const DERIVED_WITHHELD_NOTICE =
@@ -79,6 +81,8 @@ function settle(lease: EvidenceLease): number {
       : contextMemoryStore.ineligible(lease.key, lease.items)
   lease.token = token
   for (const item of stale) lease.revoked.add(item.id)
+  for (const item of lease.items)
+    if (item.dependencies && !evidenceEpochMatches(item.dependencies)) lease.revoked.add(item.id)
   const added = lease.revoked.size - before
   if (added)
     appendTaskEvent(lease.taskId, 'memory-revoked', {
@@ -114,7 +118,20 @@ function recordExposure(lease: EvidenceLease, messages: Array<{ content?: unknow
   )
   if (!exposed) return
   const user = messages.filter((message) => (message as { role?: unknown }).role === 'user')
-  lease.exposure = { clean: new Set(messages.map(digest)), intent: user[user.length - 1] }
+  lease.exposure = {
+    clean: new Set(messages.map(digest)),
+    intent: user[user.length - 1],
+    items: new Set(
+      lease.items
+        .filter((item) =>
+          messages.some(
+            ({ content }) =>
+              typeof content === 'string' && content.includes(memoryItemMarker(item.line))
+          )
+        )
+        .map((item) => item.id)
+    )
+  }
 }
 
 /**
@@ -122,7 +139,11 @@ function recordExposure(lease: EvidenceLease, messages: Array<{ content?: unknow
  * carry no sentence-level lineage, so everything after exposure is treated as dependent.
  * Compiled system prompts stay because their memory items were already removed.
  */
-function withoutDerived<T extends { content?: unknown }>(lease: EvidenceLease, messages: T[]): T[] {
+function withoutDerived<T extends { content?: unknown }>(
+  lease: EvidenceLease,
+  messages: T[],
+  notice = DERIVED_WITHHELD_NOTICE
+): T[] {
   const { clean, intent } = lease.exposure!
   const kept = messages.filter(
     (message) => clean.has(digest(message)) || 'contextBundle' in message
@@ -136,7 +157,7 @@ function withoutDerived<T extends { content?: unknown }>(lease: EvidenceLease, m
   return [
     ...kept,
     ...(hasUser || !intent ? [] : [intent as T]),
-    { role: 'system', content: DERIVED_WITHHELD_NOTICE } as unknown as T
+    { role: 'system', content: notice } as unknown as T
   ]
 }
 
@@ -149,9 +170,18 @@ export async function withEligibleMemory<T extends { content?: unknown }>(
   model: string
 ): Promise<{ messages: T[]; revoked: boolean }> {
   if (!leases.size) return { messages, revoked: false }
-  await Promise.all([...leases].map(reloadIfCleared))
+  let dependenciesRevoked = false
+  await Promise.all(
+    [...leases].map(async (lease) => {
+      await reloadIfCleared(lease)
+      for (const id of await invalidEvidenceItems(lease.root, lease.items)) {
+        if (!lease.revoked.has(id)) dependenciesRevoked = true
+        lease.revoked.add(id)
+      }
+    })
+  )
   let outbound = messages
-  let revoked = false
+  let revoked = dependenciesRevoked
   for (const lease of leases) {
     if (settle(lease)) revoked = true
     const remoteBlocked = !lease.allowRemote && !isNativeGgufRef(model)
@@ -162,13 +192,25 @@ export async function withEligibleMemory<T extends { content?: unknown }>(
       if (typeof message.content !== 'string') return message
       let content = removed.reduce((text, item) => withoutItem(text, item.line), message.content)
       if (everything) content = content.replace(MEMORY_PROMPT_HEADER, '')
-      return content === message.content ? message : { ...message, content }
+      const cleaned = content === message.content ? message : { ...message, content }
+      if (
+        (message as { role?: unknown }).role === 'system' &&
+        lease.exposure?.clean.has(digest(message))
+      )
+        lease.exposure.clean.add(digest(cleaned))
+      return cleaned
     })
   }
   for (const lease of leases) {
     recordExposure(lease, outbound)
     if (lease.exposure && !lease.allowRemote && !isNativeGgufRef(model))
       outbound = withoutDerived(lease, outbound)
+    else if (lease.exposure && [...lease.revoked].some((id) => lease.exposure!.items.has(id)))
+      outbound = withoutDerived(
+        lease,
+        outbound,
+        'Earlier steps used recalled source evidence that is no longer eligible. Inspect current files and verify again; their prior results are withheld.'
+      )
   }
   return { messages: outbound, revoked }
 }

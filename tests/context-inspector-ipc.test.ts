@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { emptyMemoryControls, type MemoryControls } from '../src/shared/context-memory'
 const h = vi.hoisted(() => ({
   handlers: new Map<string, (event: unknown, raw: unknown) => Promise<unknown>>(),
+  notifications: new Map<string, (event: unknown, path: unknown, dirty: unknown) => void>(),
   controls: {} as MemoryControls,
   revision: 1,
   sourceEpoch: 'source-A',
@@ -10,6 +11,8 @@ const h = vi.hoisted(() => ({
 vi.mock('electron', async (original) => ({
   ...(await original<typeof import('electron')>()),
   ipcMain: {
+    on: (name: string, handler: (event: unknown, path: unknown, dirty: unknown) => void) =>
+      h.notifications.set(name, handler),
     handle: (name: string, handler: (event: unknown, raw: unknown) => Promise<unknown>) =>
       h.handlers.set(name, handler)
   }
@@ -45,6 +48,7 @@ vi.mock('../electron/main/services/context-memory', () => ({
     processLogicalBytes: 0
   }))
 }))
+import { evidenceEpoch } from '../electron/main/services/context-evidence-epochs'
 import { appState } from '../electron/main/app-state'
 import { registerChatsIpc } from '../electron/main/ipc/chats'
 import { getChat } from '../electron/main/services/chats'
@@ -150,4 +154,15 @@ describe('RAM-CTX-009 inspector snapshot binding', () => {
     ).rejects.toThrow('STALE_CONTEXT_INSPECTION')
     expect(saveMemoryControls).not.toHaveBeenCalled()
   })
+})
+
+it('accepts document invalidation only from the current main frame and workspace', () => {
+  const notify = h.notifications.get('contextMemory:documentChanged')!
+  const before = evidenceEpoch('/A', ['app.ts'])
+  notify({ sender: {}, senderFrame: {} }, '/A/app.ts', true)
+  notify({ sender, senderFrame: {} }, '/A/app.ts', true)
+  notify(event, '/B/app.ts', true)
+  expect(evidenceEpoch('/A', ['app.ts'])).toEqual(before)
+  notify(event, '/A/app.ts', true)
+  expect(evidenceEpoch('/A', ['app.ts']).dirty).toBe(true)
 })

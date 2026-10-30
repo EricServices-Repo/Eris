@@ -1,6 +1,7 @@
 import { ThreadWorkingStateSchema } from './thread-working-state'
 import { z } from 'zod'
 import type { ChatMessage } from './settings-schema'
+import { ContextEvidenceSchema } from './context-evidence'
 const ContextRecordSchema = z.object({
   id: z.string().min(1).max(256),
   role: z.enum(['system', 'user', 'assistant']),
@@ -19,6 +20,7 @@ const ContextRecordSchema = z.object({
       taskId: z.string().min(1).max(256),
       terminal: z.string().min(1).max(64),
       projectRoot: z.string().max(4096).nullable(),
+      dependencies: ContextEvidenceSchema.optional(),
       changedFiles: z.array(z.string().max(4096)).max(10000)
     })
     .optional()

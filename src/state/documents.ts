@@ -1,3 +1,11 @@
+const notifyChange = (path: string, dirty: boolean) => {
+  const renderer = (
+    globalThis as {
+      window?: { ide?: { notifyDocumentChange?: (path: string, dirty: boolean) => void } }
+    }
+  ).window
+  renderer?.ide?.notifyDocumentChange?.(path, dirty)
+}
 type DocumentTab = { path: string; content: string; dirty: boolean }
 type Document = { content: string; dirty: boolean; version: number; read?: () => string }
 const documents = new Map<string, Document>()
@@ -17,6 +25,7 @@ export function documentMatches(
 }
 export function seedDocument(tab: DocumentTab): void {
   const previous = documents.get(tab.path)
+  if (tab.dirty || previous?.dirty) notifyChange(tab.path, tab.dirty)
   documents.set(tab.path, {
     content: tab.content,
     dirty: tab.dirty,
@@ -24,6 +33,7 @@ export function seedDocument(tab: DocumentTab): void {
   })
 }
 export function updateDocument(path: string, content: string): void {
+  notifyChange(path, true)
   const previous = documents.get(path)
   documents.set(path, { ...previous, content, dirty: true, version: (previous?.version ?? 0) + 1 })
 }
@@ -44,9 +54,11 @@ export function bindDocument(path: string, read: () => string): () => void {
   }
 }
 export function forgetDocument(path: string): void {
+  if (documents.get(path)?.dirty) notifyChange(path, false)
   documents.delete(path)
 }
 export function markDocumentChanged(path: string): boolean {
+  notifyChange(path, true)
   const previous = documents.get(path) ?? { content: '', dirty: false, version: 0 }
   documents.set(path, { ...previous, dirty: true, version: previous.version + 1 })
   return !previous.dirty

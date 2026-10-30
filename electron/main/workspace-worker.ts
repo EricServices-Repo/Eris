@@ -1,3 +1,4 @@
+import { captureContextEvidence, validateContextEvidence } from './services/context-evidence-worker'
 import { parentPort } from 'worker_threads'
 import { readFileSync } from 'fs'
 import { listTree, readTextFile } from './services/files'
@@ -11,6 +12,10 @@ export async function handleWorkspaceRequest(request: WorkspaceRequest): Promise
       return listTree(request.root, 0, request.maxDepth)
     case 'read':
       return readTextFile(request.path)
+    case 'context-evidence-capture':
+      return captureContextEvidence(request.root, request.paths)
+    case 'context-evidence-validate':
+      return validateContextEvidence(request.root, request.snapshots)
     case 'index':
       return scanWorkspaceIndex(request.root, request.indexPath)
     case 'patch-index':

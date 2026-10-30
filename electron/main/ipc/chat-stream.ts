@@ -1,5 +1,6 @@
 import { ThreadWorkingStateBuilder } from '../services/thread-working-state'
 import { pendingCommandApprovals } from '../services/command-approval'
+import { captureReceiptEvidence } from '../services/context-evidence'
 import { pendingUserQuestions } from '../services/user-question'
 import { chatPublisher, replayChatJob } from '../services/chat-events'
 import {
@@ -195,6 +196,13 @@ export function registerChatStreamIpc(): void {
             )
             if (!content && !replyAssets.length) return true
             try {
+              const selectedPaths = [...new Set([...evidencePaths, ...memoryFiles])]
+              let dependencies =
+                workspacePath && (selectedPaths.length || observedCheck)
+                  ? await captureReceiptEvidence(workspacePath, selectedPaths)
+                  : undefined
+              if (dependencies && !selectedPaths.length)
+                dependencies = { ...dependencies, complete: false }
               await appendChatMessage(workspacePath, contextThreadId, {
                 id: `${requestId}:assistant`,
                 role: 'assistant',
@@ -210,6 +218,7 @@ export function registerChatStreamIpc(): void {
                   workingState: workingState?.snapshot(terminal),
                   taskId: requestId,
                   terminal,
+                  dependencies,
                   projectRoot: turnPlan?.task?.scope.projectRoot ?? null,
                   changedFiles: memoryFiles.slice(0, 200)
                 }
@@ -442,6 +451,8 @@ export function registerChatStreamIpc(): void {
           let finalAnswer = ''
           const outcomeEvidence = new OutcomeEvidence()
           /** Accumulated for project memory even when no checkpoint/run record exists. */
+          const evidencePaths = new Set<string>()
+          let observedCheck = false
           let memoryFiles: string[] = []
           let memoryActions: string[] = []
           // #10 opt-in agent telemetry
@@ -603,6 +614,9 @@ export function registerChatStreamIpc(): void {
                 })) {
                   workingState?.observe(evt)
                   noteFirstAgentOutput(evt)
+                  if (evt.type === 'diff' && evidencePaths.size < 32)
+                    evidencePaths.add(evt.diff.path)
+                  if (evt.type === 'tool' && evt.tool.name === 'verify') observedCheck = true
                   if (evt.type === 'thinking') {
                     pendingThinking += evt.text
                     scheduleStreamFlush()
@@ -888,6 +902,10 @@ export function registerChatStreamIpc(): void {
             })) {
               workingState?.observe(evt)
               noteFirstAgentOutput(evt)
+              if (evt.type === 'evidence' && evt.evidence.path && evidencePaths.size < 32)
+                evidencePaths.add(evt.evidence.path)
+              if (evt.type === 'diff' && evidencePaths.size < 32) evidencePaths.add(evt.diff.path)
+              if (evt.type === 'tool' && evt.tool.name === 'verify') observedCheck = true
               if (evt.type === 'thinking') {
                 pendingThinking += evt.text
                 scheduleStreamFlush()
