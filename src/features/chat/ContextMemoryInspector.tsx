@@ -157,6 +157,7 @@ export function ContextMemoryInspector({ threadId }: { threadId: string }) {
                   void refresh({
                     ...controls,
                     afterOrdinal: snapshot.manifest.totalMessages,
+                    afterSequence: undefined,
                     pinned: []
                   })
               }}

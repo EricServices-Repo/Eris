@@ -55,6 +55,8 @@ Reducing settings trims already warm entries. Oldest retained messages leave RAM
 
 ## Hydration and consistency
 
+Conversation sources now also have database-assigned monotonic `contextSequence` values. Rewind and content replacement never reuse these source identities. Legacy ordinal cutoffs are bound to an `afterSequence` before a rewrite, and production context-control reads/writes use a locked canonical binding. Clearing older history rebinds its visible ordinal boundary; pin/exclusion edits retain the original stable cutoff. Existing rows and controls migrate transactionally, and old-format rows remain readable by the upgraded runtime. Older binaries do not understand the new control metadata; do not run pre-upgrade control writers against the migrated database. Server-owned sequence/revision metadata is excluded from the user-control content limit and remains included in actual RAM accounting.
+
 Each conversation has a monotonic `contextRevision`. Appends and saved rewrites increment it independently of timestamps. Retrying the same message ID does not add another row or advance the revision.
 
 Each context page:

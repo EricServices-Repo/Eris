@@ -295,6 +295,8 @@ export interface ChatDelegation {
 }
 
 export interface ChatMessage {
+  /** Canonical nonreused source sequence, assigned only by the chat database. */
+  contextSequence?: number
   assets?: GeneratedImageAsset[]
   id: string
   role: 'system' | 'user' | 'assistant'
@@ -324,6 +326,7 @@ export interface ChatThread {
   messageOffset?: number
   messageCount?: number
   contextRevision?: number
+  contextSequence?: number
   updatedAt: number
   createdAt: number
 }
