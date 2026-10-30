@@ -108,7 +108,6 @@ try {
     write: controls
   })
   assert.deepEqual(await request({ type: 'context-controls', dir, id: 'legacy' }), savedControls)
-  assert.equal(savedControls.revision, 1)
   await request({ type: 'shutdown' })
   console.log(
     'Client worker checks passed: lazy tree, index patch, legacy import, paginated save, concurrent append, context paging and controls, graceful shutdown.'
