@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.3 — 2026-10-30
+
+- Improve RAM context recall, isolate workspace policies, prioritize foreground chat and current source evidence, and avoid duplicate recent history.
+
 ## 0.6.2 — 2026-10-30
 
 - Rebuild with agent tool recovery, safer and faster history recall, reliable memory controls, and a cleaner chat and editor layout.
