@@ -99,6 +99,8 @@ Additional recalled history is sent to native local model references (`local:` a
 
 The Context IPC endpoint accepts only the main application's main frame, derives workspace scope in main, checks the thread exists and validates bounded control input. It never accepts an arbitrary filesystem path from the inspector.
 
+Controls carry an optional revision for legacy compatibility; absent revision means the initial revision zero. SQLite checks the expected revision atomically, increments successful writes, and rejects stale changes with `CONTEXT_CONTROLS_CONFLICT`. Identical retries return the committed state without adding a revision. The inspector can reload saved state and retry instead of overwriting another edit.
+
 ## User controls
 
 The chat header's **Context** button opens a keyboard-accessible inspector with focus ownership, Escape dismissal and focus restoration.
