@@ -22,6 +22,7 @@ import {
 } from '../electron/main/services/context-memory'
 import { contextMemoryStore } from '../electron/main/services/context-memory-store'
 import { getDefaults } from '../electron/main/services/settings'
+import * as profileSettings from '../electron/main/services/settings'
 import { emptyMemoryControls } from '../src/shared/context-memory'
 let db: ChatDatabase, folder: string
 const settings = () => {
@@ -506,6 +507,8 @@ describe('RAM-CTX-004 growing context capacity', () => {
     )
     expect(contextMemoryStore.logicalBytes).toBeLessThanOrEqual(8 * 1024 ** 2)
     save('other', 1)
+    // Warm-thread slots are profile-wide allocator settings, not workspace policy.
+    vi.spyOn(profileSettings, 'getResolvedSettings').mockReturnValue(config)
     config.agent.contextMemory.warmThreads = 1
     await conversationContext(null, 'other', 'Discussion', config)
     expect(contextMemoryStore.has(memoryKey(null, 'bytes'))).toBe(false)

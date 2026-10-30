@@ -27,6 +27,63 @@ function install(store: ContextMemoryStore, key: string, messages: ChatMessage[]
     store.token(key)
   )
 }
+describe('RAM-CTX-017 immutable request policy', () => {
+  it('keeps opposing workspace sharing and prompt budgets independent during cooperative scans', async () => {
+    const store = new ContextMemoryStore()
+    const rows = Array.from({ length: 1000 }, (_, i) =>
+      message(String(i), 'Remember: private currency CAD ' + i)
+    )
+    install(store, 'a', rows)
+    install(store, 'b', rows)
+    const local = { ...store.config, shareWithRemoteModels: false, promptTokens: 128 }
+    const remote = { ...store.config, shareWithRemoteModels: true, promptTokens: 1024 }
+    const token = store.token('a')
+    const a = store.select('a', 'currency', { policy: local })
+    local.shareWithRemoteModels = true // caller mutation after entry cannot relax the snapshot
+    store.configureNamespace('b', { ...remote, maxMessages: 500 })
+    store.configure({ ...store.config, shareWithRemoteModels: true, promptTokens: 2048 })
+    const b = store.select('b', 'currency', { policy: remote })
+    const [first, second] = await Promise.all([a, b])
+    expect(store.token('a')).toBe(token)
+    expect(first.prompt.text).toContain('CAD')
+    expect(first.prompt.text.length).toBeLessThanOrEqual(128 * 3)
+    expect(first.prompt.allowRemote).toBe(false)
+    expect(second.prompt.text.length).toBeGreaterThan(first.prompt.text.length)
+    expect(second.prompt.allowRemote).toBe(true)
+  })
+  it('keeps warm selections coherent across bounded registry rollover and rejects stale cold leases', async () => {
+    const store = new ContextMemoryStore()
+    install(store, 'warm', [message('source', 'Remember: currency CAD')])
+    store.configureNamespace('warm', store.config)
+    const token = store.token('warm')
+    const coldLease = store.token('cold')
+    const pending = store.select('warm', 'currency')
+    for (let i = 0; i < 1000; i++) {
+      const key = 'other-' + i
+      store.configureNamespace(key, { ...store.config, shareWithRemoteModels: i % 2 === 0 })
+      store.token(key)
+    }
+    expect(store.token('warm')).toBe(token)
+    expect((await pending).prompt.text).toContain('CAD')
+    expect(
+      store.install(
+        'cold',
+        { revision: 1, total: 0, records: [], controls: emptyMemoryControls(), partial: false },
+        coldLease
+      )
+    ).toBe(false)
+  })
+  it('disabling a namespace leaves other cached and in-flight selections usable', async () => {
+    const store = new ContextMemoryStore()
+    install(store, 'a', [message('a', 'Remember: currency CAD')])
+    install(store, 'b', [message('b', 'private')])
+    const a = store.select('a', 'currency')
+    store.configureNamespace('b', { ...store.config, enabled: false })
+    expect((await a).prompt.text).toContain('CAD')
+    expect(store.has('b')).toBe(false)
+  })
+})
+
 describe('RAM-CTX-013 cache record validation', () => {
   it('keeps valid facts searchable and exposes corrupt source positions', async () => {
     const store = new ContextMemoryStore()
