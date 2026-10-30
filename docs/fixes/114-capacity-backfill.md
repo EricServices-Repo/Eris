@@ -1,0 +1,3 @@
+# Capacity expansion backfill (#114)
+
+A partial resident entry records when its message or effective byte capacity has increased. The next bounded warm request seeds hydration from the retained tail and fetches older pages, keeping the current tail selectable until publication. A successful installation consumes that expansion request even when coverage remains partial; unchanged limits do not repeatedly reload. Revision/epoch/generation checks fence concurrent appends. Lower limits trim immediately. Increasing warm-thread slots allows evicted histories to hydrate normally without evicting the other warm thread. Backfill currently runs on the next warm/recall request, not through a speculative background scheduler.

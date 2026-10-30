@@ -45,8 +45,10 @@ export async function warmConversationMemory(
     contextMemoryStore.clear(key)
     return
   }
-  if (contextMemoryStore.matchesSource(key, header)) return
-  if (contextMemoryStore.has(key)) contextMemoryStore.clear(key)
+  const current = contextMemoryStore.matchesSource(key, header)
+  const seed = current ? contextMemoryStore.backfillSeed(key) : undefined
+  if (current && !seed) return
+  if (contextMemoryStore.has(key) && !seed) contextMemoryStore.clear(key)
   const existing = pending.get(key)
   if (existing) {
     await existing
@@ -57,13 +59,19 @@ export async function warmConversationMemory(
     config = { ...contextMemoryStore.config }
   const run = (async () => {
     const controls = await workspaceRequest({ type: 'context-controls', dir: dir(root), id })
-    let before: number | undefined,
-      revision: number | undefined,
-      sourceEpoch: string | undefined,
-      total = 0,
-      bytes = 0,
+    let before: number | undefined = seed?.before,
+      revision: number | undefined = seed?.revision,
+      sourceEpoch: string | undefined = seed?.sourceEpoch,
+      total = seed?.total ?? 0,
+      bytes =
+        seed?.records.reduce(
+          (n, r) => n + Buffer.byteLength(JSON.stringify(r.message)) * 4 + 512,
+          0
+        ) ?? 0,
       partial = false
-    const records: Array<{ ordinal: number; message: ChatThread['messages'][number] }> = []
+    const records: Array<{ ordinal: number; message: ChatThread['messages'][number] }> = [
+      ...(seed?.records ?? [])
+    ]
     for (let pages = 0; pages < Math.ceil(config.maxMessages / 500) + 1; pages++) {
       signal?.throwIfAborted()
       if (token !== contextMemoryStore.token(key)) return
@@ -72,8 +80,11 @@ export async function warmConversationMemory(
       if (
         revision !== undefined &&
         (revision !== page.revision || sourceEpoch !== page.sourceEpoch)
-      )
+      ) {
+        // A backfill must not leave its older seed eligible after a canonical rewrite/append.
+        if (seed && token === contextMemoryStore.token(key)) contextMemoryStore.clear(key)
         return // concurrent transcript mutation; next request retries, never publish a mixed snapshot
+      }
       revision = page.revision
       sourceEpoch = page.sourceEpoch
       total = page.messageCount
