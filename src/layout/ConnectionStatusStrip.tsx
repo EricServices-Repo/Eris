@@ -20,6 +20,7 @@ export function buildConnectionIssues(input: {
   accountError?: string | null
   entitlement?: UsageEntitlement | null
   cloudHealth?: CloudHealth | null
+  modelsError?: string | null
   modelsOk?: boolean | null
   composerReady?: boolean | null
   onOpenAccount: () => void
@@ -54,7 +55,16 @@ export function buildConnectionIssues(input: {
 
   // Cloud Agents status lives in the status bar only (no top banner on timeout/offline).
 
-  if (input.modelsOk === false) {
+  if (input.modelsError && input.modelsOk !== true) {
+    issues.push({
+      id: 'models',
+      tone: 'warn',
+      title: 'Could not check models',
+      detail: 'Open Models and refresh to retry. Installed models have not been removed.',
+      actionLabel: 'Models',
+      onAction: input.onOpenModels
+    })
+  } else if (input.modelsOk === false) {
     issues.push({
       id: 'models',
       tone: 'warn',

@@ -276,6 +276,8 @@ interface Props {
   routeLabel: string | null
   composerReady: boolean
   /** True when any chat backend is ready (builtin or Ollama/API connection). */
+  modelsKnown?: boolean
+  modelsError?: string | null
   modelsOk?: boolean
   streaming: boolean
   chatError: string | null
@@ -465,6 +467,8 @@ export function ChatPanel({
   routeLabel,
   composerReady,
   modelsOk = false,
+  modelsKnown = true,
+  modelsError = null,
   streaming,
   chatError,
   delegations = [],
@@ -931,7 +935,21 @@ export function ChatPanel({
         </div>
       )}
 
-      {!composerReady && !modelsOk && (
+      {!composerReady && !modelsOk && (!modelsKnown || modelsError) && (
+        <div className="composer-banner" role="status">
+          <span>
+            {modelsError
+              ? 'Could not check models. Open Models and refresh to retry.'
+              : 'Checking installed models…'}
+          </span>
+          {modelsError && (
+            <button className="btn" onClick={onOpenModelsSettings}>
+              Open Models
+            </button>
+          )}
+        </div>
+      )}
+      {modelsKnown && !modelsError && !composerReady && !modelsOk && (
         <div className="composer-banner">
           <span>
             Download a <strong>Local model</strong> or <strong>Composer Lite</strong> in Settings →

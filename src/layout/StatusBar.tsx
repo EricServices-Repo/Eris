@@ -14,6 +14,8 @@ interface Props {
   routeLabel: string | null
   composerReady: boolean
   modelsOk: boolean
+  modelsKnown?: boolean
+  modelsError?: string | null
   cloudHealth?: CloudHealth | null
   entitlement?: UsageEntitlement | null
   accountNeedsReauth?: boolean
@@ -77,6 +79,8 @@ export function StatusBar({
   routeLabel,
   composerReady,
   modelsOk,
+  modelsKnown = true,
+  modelsError = null,
   cloudHealth = null,
   entitlement = null,
   accountNeedsReauth = false,
@@ -94,7 +98,14 @@ export function StatusBar({
   const cloudReady = isCloudAgentsReady(cloudHealth)
   const preferCloud = shouldUseCloudAgents(cloudHealth)
   const cloudTitle = `${cloudAgentsStatusLabel(cloudHealth)}\n${CLOUD_AGENTS_BASE_URL} (TLS)\nOpen Settings → Agent for metrics`
-  const models = modelsLight(composerReady, modelsOk)
+  const models =
+    !modelsOk && (modelsError || !modelsKnown)
+      ? {
+          tone: 'warn',
+          label: modelsError ? 'Model check failed' : 'Checking models',
+          title: modelsError || 'Checking installed models…'
+        }
+      : modelsLight(composerReady, modelsOk)
 
   let cloudLabel = 'Checking…'
   if (!cloudHealth) cloudLabel = 'Checking…'

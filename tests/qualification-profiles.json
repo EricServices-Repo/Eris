@@ -120,6 +120,7 @@
       "tests/llama-session.test.ts",
       "tests/local-model.test.ts",
       "tests/model-catalog-light.test.ts",
+      "tests/model-status-preload.test.ts",
       "tests/model-download-progress.test.ts",
       "tests/ollama.test.ts",
       "tests/paths.test.ts",
