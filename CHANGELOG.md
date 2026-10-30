@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.5 — 2026-10-30
+
+- Improve context memory pressure protection, scoped decisions, unfinished-task recall, stale evidence checks, and durable context recovery.
+
 ## 0.6.4 — 2026-10-30
 
 - Tighten RAM context privacy and accuracy: bind memory to registered workspaces, recheck recall at dispatch, keep local-only recall from remote models within a run, and record what was actually sent. Add Unicode and code-aware recall, coherent evidence packing, byte-bounded chat history, memory previews with source navigation, memory reservations, and a context release gate.
