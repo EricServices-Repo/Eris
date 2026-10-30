@@ -1,7 +1,9 @@
-import { mkdirSync, writeFileSync } from 'fs'
-import { dirname } from 'path'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
+import { dirname, join } from 'path'
+import { tmpdir } from 'os'
+import { setWorkspaceTrusted } from '../electron/main/services/workspace-trust'
 import { describe, expect, it } from 'vitest'
-import { userSettingsPath } from '../electron/main/services/paths'
+import { userSettingsPath, workspaceSettingsPath } from '../electron/main/services/paths'
 import { McpServerSchema, SettingsSchema } from '../src/shared/settings-schema'
 import {
   getDefaults,
@@ -31,8 +33,15 @@ describe('settings defaults', () => {
 
   it('preserves MCP environment records while rejecting non-string values', () => {
     const server = {
-      id: 'example', name: 'Example', enabled: true, transport: 'stdio',
-      command: 'node', args: [], url: '', env: { EXAMPLE_MODE: 'local' }, notes: ''
+      id: 'example',
+      name: 'Example',
+      enabled: true,
+      transport: 'stdio',
+      command: 'node',
+      args: [],
+      url: '',
+      env: { EXAMPLE_MODE: 'local' },
+      notes: ''
     }
     expect(McpServerSchema.parse(server).env).toEqual({ EXAMPLE_MODE: 'local' })
     expect(McpServerSchema.safeParse({ ...server, env: { EXAMPLE_MODE: 7 } }).success).toBe(false)
@@ -92,14 +101,32 @@ describe('settings migrations', () => {
     writeUserSettings({
       models: {
         connections: [
-          { id: 'builtin', name: 'B', type: 'builtin', enabled: true, baseUrl: '', apiKeyRef: '', models: [] },
-          { id: 'o', name: 'Ollama', type: 'openai-compatible', enabled: true, baseUrl: 'http://localhost:11434/v1', apiKeyRef: '', models: ['qwen3'] }
+          {
+            id: 'builtin',
+            name: 'B',
+            type: 'builtin',
+            enabled: true,
+            baseUrl: '',
+            apiKeyRef: '',
+            models: []
+          },
+          {
+            id: 'o',
+            name: 'Ollama',
+            type: 'openai-compatible',
+            enabled: true,
+            baseUrl: 'http://localhost:11434/v1',
+            apiKeyRef: '',
+            models: ['qwen3']
+          }
         ]
       }
     })
     const s = getResolvedSettings(null)
     const builtin = s.models.connections.find((c) => c.id === 'builtin')!
-    expect(builtin.models).toEqual(expect.arrayContaining(['builtin:composer-lite', 'builtin:composer']))
+    expect(builtin.models).toEqual(
+      expect.arrayContaining(['builtin:composer-lite', 'builtin:composer'])
+    )
     expect(s.models.connections.find((c) => c.id === 'o')!.provider).toBe('custom')
   })
 
@@ -107,7 +134,15 @@ describe('settings migrations', () => {
     writeUserSettings({
       models: {
         connections: [
-          { id: 'builtin', name: 'B', type: 'builtin', enabled: true, baseUrl: '', apiKeyRef: '', models: [] },
+          {
+            id: 'builtin',
+            name: 'B',
+            type: 'builtin',
+            enabled: true,
+            baseUrl: '',
+            apiKeyRef: '',
+            models: []
+          },
           {
             id: 'oa',
             name: 'OpenAI',
@@ -127,9 +162,8 @@ describe('settings migrations', () => {
   })
 
   it('persists legacy connection type migration to disk', async () => {
-    const { migrateLegacyConnectionTypesInUserSettings } = await import(
-      '../electron/main/services/settings'
-    )
+    const { migrateLegacyConnectionTypesInUserSettings } =
+      await import('../electron/main/services/settings')
     const { readFileSync } = await import('fs')
     const { userSettingsPath } = await import('../electron/main/services/paths')
     writeUserSettings({
@@ -154,5 +188,56 @@ describe('settings migrations', () => {
     }
     expect(disk.models.connections[0]!.type).toBe('openai-compatible')
     expect(disk.models.connections[0]!.provider).toBe('ollama')
+  })
+})
+
+describe('RAM-CTX-034 user-owned remote recall ceiling', () => {
+  const workspace = (share?: boolean) => {
+    const root = mkdtempSync(join(tmpdir(), 'eris-recall-ceiling-'))
+    mkdirSync(dirname(workspaceSettingsPath(root)), { recursive: true })
+    writeFileSync(
+      workspaceSettingsPath(root),
+      JSON.stringify({ agent: { contextMemory: { shareWithRemoteModels: share } } })
+    )
+    return root
+  }
+  it.each([false, true])(
+    'a workspace cannot raise the absent/false user ceiling, trusted=%s',
+    (trusted) => {
+      const root = workspace(true)
+      setWorkspaceTrusted(root, trusted)
+      for (const value of [undefined, false]) {
+        writeUserSettings({ agent: { contextMemory: { shareWithRemoteModels: value } } })
+        expect(getResolvedSettings(root).agent.contextMemory.shareWithRemoteModels).toBe(false)
+      }
+    }
+  )
+  it.each([false, true])(
+    'explicit profile opt-in works and repositories can only restrict it, trusted=%s',
+    (trusted) => {
+      for (const [preference, expected] of [
+        [undefined, true],
+        [true, true],
+        [false, false]
+      ] as const) {
+        const root = workspace(preference)
+        setWorkspaceTrusted(root, trusted)
+        writeUserSettings({ agent: { contextMemory: { shareWithRemoteModels: true } } })
+        expect(getResolvedSettings(root).agent.contextMemory.shareWithRemoteModels).toBe(expected)
+      }
+    }
+  )
+  it('uses the same ceiling after imported profile data, reset, and workspace UI writes', () => {
+    const root = workspace(true)
+    setWorkspaceTrusted(root, true)
+    writeUserSettings({ agent: { contextMemory: { shareWithRemoteModels: 'true' } } })
+    expect(getResolvedSettings(root).agent.contextMemory.shareWithRemoteModels).toBe(false)
+    setSettings('user', { agent: { contextMemory: { shareWithRemoteModels: true } } }, root)
+    expect(getResolvedSettings(root).agent.contextMemory.shareWithRemoteModels).toBe(true)
+    setSettings('user', { agent: { contextMemory: { shareWithRemoteModels: false } } }, root)
+    expect(
+      setSettings('workspace', { agent: { contextMemory: { shareWithRemoteModels: true } } }, root)
+        .agent.contextMemory.shareWithRemoteModels
+    ).toBe(false)
   })
 })

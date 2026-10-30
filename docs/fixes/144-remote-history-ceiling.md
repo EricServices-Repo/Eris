@@ -1,0 +1,3 @@
+# Remote history disclosure ceiling (#144)
+
+Only an explicit boolean true in the user/profile settings permits older recalled history to be sent remotely. Workspace trust and workspace settings cannot grant this permission. A workspace false restricts it, including when the workspace is untrusted; an absent workspace value inherits the user maximum. Imported malformed values fail closed. Settings shows the resolved permission and explains which scope can enable it. Existing recent conversation disclosure and destination gating remain unchanged. Request-scoped policy isolation is tracked separately in #127.

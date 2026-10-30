@@ -181,7 +181,7 @@ export function settingFields(agentIds: string[]): SettingField[] {
     },
     {
       cat: 'agent',
-      hint: 'Off by default. Existing recent chat history still goes to the selected model.',
+      hint: 'Off by default. Enable in User settings to permit sharing; workspace settings can only turn it off. The resolved value is the effective permission. Existing recent chat history still goes to the selected model.',
       label: 'Allow older recalled context in remote model requests',
       path: ['agent', 'contextMemory', 'shareWithRemoteModels'],
       type: 'boolean'
