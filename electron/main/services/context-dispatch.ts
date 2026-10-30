@@ -1,13 +1,7 @@
 import { createHash } from 'crypto'
 import { isNativeGgufRef } from './builtin-model'
 import { appendTaskEvent } from './task-ledger'
-import { contextBudgetTokens } from './agent/context-budget'
-import {
-  compileTaskContext,
-  countContextItems,
-  memoryForDestination
-} from './agent/context-compiler'
-import { createTaskContract } from './task-intake'
+import { countContextItems } from './agent/context-compiler'
 import {
   type ContextBundle,
   type ContextBundleItem,
@@ -16,6 +10,9 @@ import {
   type MemoryPrompt
 } from '../../../src/shared/context-memory'
 import type { AppSettings } from '../../../src/shared/settings-schema'
+import { contextBudgetTokens } from './agent/context-budget'
+import { compileTaskContext, memoryForDestination } from './agent/context-compiler'
+import { createTaskContract } from './task-intake'
 
 const MAX_REMEMBERED = 64
 const latest = new Map<string, ContextDispatch>()
