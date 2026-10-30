@@ -1,3 +1,4 @@
+import { HydrationScheduler } from '../electron/main/services/context-hydration-scheduler'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'fs'
@@ -61,6 +62,63 @@ afterEach(() => {
   db.close()
   rmSync(folder, { recursive: true, force: true })
 })
+describe('RAM-CTX-019 bounded foreground scheduler', () => {
+  it('bounds saturation, sheds speculative work, promotes coalesced work and cancels queued work', async () => {
+    const scheduler = new HydrationScheduler()
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const signal = new AbortController()
+    const first = scheduler.run('active', 'a', 'background', signal.signal, () => held)
+    const queued = Array.from({ length: 8 }, (_, i) =>
+      scheduler.run(String(i), 'b', 'background', signal.signal, async () => {})
+    )
+    const outcomes = Promise.allSettled(queued)
+    expect(scheduler.counts).toEqual({ active: 1, queued: 8 })
+    await expect(
+      scheduler.run('overflow', 'b', 'background', signal.signal, async () => {})
+    ).rejects.toThrow('full')
+    await scheduler.run('chat', 'c', 'foreground', signal.signal, async () => {})
+    scheduler.promote('0')
+    await queued[0]
+    signal.abort()
+    release()
+    await first
+    expect((await outcomes).some((result) => result.status === 'rejected')).toBe(true)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(scheduler.counts).toEqual({ active: 0, queued: 0 })
+  })
+  it('rotates namespaces at equal priority without releasing an active cancelled RPC early', async () => {
+    const scheduler = new HydrationScheduler()
+    const order: string[] = []
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const abort = new AbortController()
+    const first = scheduler.run('a0', 'a', 'background', abort.signal, () => held)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const signal = new AbortController().signal
+    const requests = [
+      ['a1', 'a'],
+      ['a2', 'a'],
+      ['b1', 'b'],
+      ['b2', 'b']
+    ].map(([key, namespace]) =>
+      scheduler.run(key, namespace, 'background', signal, async () => {
+        order.push(key)
+      })
+    )
+    abort.abort()
+    expect(scheduler.counts.active).toBe(1)
+    expect(order).toEqual([])
+    release()
+    await Promise.all([first, ...requests])
+    expect(order).toEqual(['b1', 'a1', 'b2', 'a2'])
+  })
+})
+
 describe('RAM-CTX-014 independent hydration consumers', () => {
   it.each([0, 1])(
     'cancels consumer %i promptly without failing the other',
@@ -212,7 +270,7 @@ describe('RAM-CTX-018 optional recall deadline', () => {
     const rejected = expect(request).rejects.toMatchObject({ name: 'AbortError' })
     abort.abort()
     await rejected
-    release()
+    release?.()
   })
 })
 
@@ -424,14 +482,14 @@ it('fails closed when canonical controls cannot be read', async () => {
   )
 })
 
-it('inspects canonical controls while two background hydrations occupy all slots', async () => {
+it('reserves a foreground slot while background hydrations are held', async () => {
   save('t', 2)
   db.save({ ...db.get('t')!, id: 'warm-a' })
   db.save({ ...db.get('t')!, id: 'warm-b' })
   db.memoryControls('t', { ...emptyMemoryControls(), pinned: [{ id: 'p', text: 'Saved note' }] })
   const releases: Array<() => void> = []
   vi.mocked(workspaceRequest).mockImplementation(async (req) => {
-    if (req.type === 'context-page' && req.id !== 't')
+    if (req.type === 'context-page' && req.id === 'warm-a')
       await new Promise<void>((resolve) => releases.push(resolve))
     return dispatchContextRequest(req)
   })
@@ -439,10 +497,10 @@ it('inspects canonical controls while two background hydrations occupy all slots
     warmConversationMemory(null, 'warm-a', settings()),
     warmConversationMemory(null, 'warm-b', settings())
   ]
-  while (releases.length < 2) await new Promise<void>((resolve) => setImmediate(resolve))
+  while (releases.length < 1) await new Promise<void>((resolve) => setImmediate(resolve))
   try {
     const inspected = await inspectConversationMemory(null, 't', 'note', settings())
-    expect(inspected.manifest.coverage).toBe('unavailable')
+    expect(inspected.manifest.coverage).toBe('complete')
     expect(inspected.controlsAvailable).toBe(true)
     expect(inspected.controls.pinned[0]?.id).toBe('p')
   } finally {
