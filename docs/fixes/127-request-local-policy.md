@@ -5,3 +5,5 @@ Foreground recall captures validated enabled/disclosure/prompt policy before its
 The namespace capacity registry is bounded to 256 keys; eviction clears the affected namespace. Opposing workspace policies retain independent prompt limits and disclosure flags during concurrent scans. Policy changes do not revoke requests already sent; dispatch-time revocation remains #125.
 
 Validation: `npx vitest run tests/context-memory.test.ts tests/context-memory-recovery.test.ts`. Includes opposing policy concurrency, caller mutation, independent disable and existing expansion/cancellation/privacy regressions. No live inference or hardware measurements.
+
+Registry rollover also evicts only cold-key generation leases and assigns fresh monotonic leases on reacquisition, avoiding both ABA installation and process-wide epoch resets. A 1,000-namespace stress fixture keeps a warm selection coherent while rejecting an old evicted cold lease.

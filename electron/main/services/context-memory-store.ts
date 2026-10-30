@@ -56,8 +56,13 @@ export class ContextMemoryStore {
   private epoch = 0
   private bump(key: string) {
     if (this.generations.size >= 256 && !this.generations.has(key)) {
-      this.generations.clear()
-      this.epoch++
+      // Forget only a cold key. Reacquiring a forgotten key gets a fresh,
+      // monotonic lease, preventing ABA without resetting unrelated namespaces.
+      const victim =
+        [...this.generations.keys()].find((candidate) => !this.entries.has(candidate)) ??
+        this.generations.keys().next().value!
+      this.generations.delete(victim)
+      this.entries.delete(victim)
     }
     this.generations.set(key, ++this.counter)
   }
@@ -96,7 +101,9 @@ export class ContextMemoryStore {
   configureNamespace(key: string, policy: ContextMemorySettings) {
     const previous = this.namespaces.get(key)
     if (this.namespaces.size >= 256 && !previous) {
-      const oldest = this.namespaces.keys().next().value!
+      const oldest =
+        [...this.namespaces.keys()].find((candidate) => !this.entries.has(candidate)) ??
+        this.namespaces.keys().next().value!
       this.clear(oldest)
       this.namespaces.delete(oldest)
     }
@@ -136,7 +143,8 @@ export class ContextMemoryStore {
     return [...this.entries.values()].reduce((sum, e) => sum + e.bytes, 0)
   }
   generation(key: string) {
-    return this.generations.get(key) ?? 0
+    if (!this.generations.has(key)) this.bump(key)
+    return this.generations.get(key)!
   }
   has(key: string) {
     this.expire()
