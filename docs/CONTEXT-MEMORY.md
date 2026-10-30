@@ -53,6 +53,10 @@ The RAM budgets use conservative logical accounting: four times the UTF-8 serial
 
 Reducing settings trims already warm entries. Oldest retained messages leave RAM first when a thread exceeds its limit. Least recently used conversations leave RAM when the global or warm-thread limit is exceeded. Idle entries are swept approximately once per minute and also expire on access. The detailed transcript remains on disk.
 
+## Canonical continuity validation
+
+Warm lookups now validate a lightweight canonical header through the context worker. Entries are reused only when transcript revision, count and durable source epoch match. Conversation recreation gets a new epoch. Append merging rejects revision/count discontinuities and changed overlapping records instead of claiming the new revision with stale text. Source pages carry epoch identity so mixed-incarnation hydration is discarded. This is bounded metadata validation, not a full transcript read or the future durable outbox/index architecture.
+
 ## Hydration and consistency
 
 Conversation sources now also have database-assigned monotonic `contextSequence` values. Rewind and content replacement never reuse these source identities. Legacy ordinal cutoffs are bound to an `afterSequence` before a rewrite, and production context-control reads/writes use a locked canonical binding. Clearing older history rebinds its visible ordinal boundary; pin/exclusion edits retain the original stable cutoff. Existing rows and controls migrate transactionally, and old-format rows remain readable by the upgraded runtime. Older binaries do not understand the new control metadata; do not run pre-upgrade control writers against the migrated database. Server-owned sequence/revision metadata is excluded from the user-control content limit and remains included in actual RAM accounting.

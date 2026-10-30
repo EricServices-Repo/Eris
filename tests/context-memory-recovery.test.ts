@@ -80,7 +80,8 @@ describe('canonical context hydration', () => {
     expect(result.prompt.manifest.retainedMessages).toBe(10001)
     const calls = vi.mocked(workspaceRequest).mock.calls.length
     await conversationContext(null, 't', 'checkout', settings())
-    expect(vi.mocked(workspaceRequest).mock.calls).toHaveLength(calls)
+    expect(vi.mocked(workspaceRequest).mock.calls).toHaveLength(calls + 1)
+    expect(vi.mocked(workspaceRequest).mock.calls.at(-1)?.[0].type).toBe('context-header')
     await saveMemoryControls(null, 't', {
       ...emptyMemoryControls(),
       pinned: [{ id: 'p', text: 'Test money rounding' }]

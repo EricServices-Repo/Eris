@@ -293,6 +293,12 @@ describe('canonical RAM history at the production chat IPC boundary', () => {
       prompt: 'rental icon',
       createdAt: 1
     }
+    const worker = await import('../electron/main/services/workspace-worker-client')
+    vi.spyOn(worker, 'workspaceRequest').mockImplementation(async (req) => {
+      if (req.type === 'context-header')
+        return { revision: 1, messageCount: 1000, sourceEpoch: 'scripted-history' } as never
+      throw Error('Unexpected worker request')
+    })
     const key = memoryKey(root, threadId)
     contextMemoryStore.configure(getResolvedSettings(root).agent.contextMemory)
     contextMemoryStore.install(
@@ -300,6 +306,7 @@ describe('canonical RAM history at the production chat IPC boundary', () => {
       {
         revision: 1,
         total: 1000,
+        sourceEpoch: 'scripted-history',
         records: messages.map((message, ordinal) => ({ ordinal, message })),
         controls: emptyMemoryControls(),
         partial: false
