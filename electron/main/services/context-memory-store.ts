@@ -497,15 +497,16 @@ export class ContextMemoryStore {
       sourceIds: selected.map((f) => digest(f.sourceId)),
       estimatedTokens: Math.ceil(text.length / 3),
       omittedPinnedFacts: pins.length - selected.filter((f) => f.kind === 'pinned').length,
-      omittedFacts: Math.max(0, candidateCount - selected.length),
-      ...(candidateCount > 0 && !selected.length
-        ? {
-            reason:
-              'Recall budget too small for eligible evidence; increase the recalled context token budget.'
-          }
-        : {})
+      omittedFacts: Math.max(0, candidateCount - selected.length)
     }
 
+    if (candidateCount > 0 && !selected.length)
+      manifest.reason = [
+        manifest.reason,
+        'Recall budget too small for eligible evidence; increase the recalled context token budget.'
+      ]
+        .filter(Boolean)
+        .join(' ')
     return {
       prompt: { text, manifest, allowRemote: this.config.shareWithRemoteModels },
       inspection: { manifest, facts: selected, controls, processLogicalBytes: this.logicalBytes }
