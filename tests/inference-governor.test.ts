@@ -107,3 +107,48 @@ describe('main-process inference accounting', () => {
     })
   })
 })
+
+describe('RAM-CTX-020 shared host pressure', () => {
+  it('releases optional history before admitting foreground memory and never forces a minimum at zero headroom', async () => {
+    let free = 90,
+      ownedBytes = 40
+    const g = new InferenceGovernor(() => ({ total: 100, free, reserve: 10 }))
+    const limits: number[] = []
+    g.registerOptionalMemory({
+      ledger: () => ({ ownedBytes, reservedBytes: 0, pinnedBytes: 0 }),
+      limit: (n) => {
+        limits.push(n)
+        ownedBytes = Math.min(ownedBytes, n)
+      }
+    })
+    const lease = await g.acquire({ ...request('text', 75), gpu: false })
+    expect(ownedBytes).toBeLessThanOrEqual(15)
+    free = 10
+    expect(g.refreshMemoryPressure().pressure).toBe('critical')
+    expect(limits.at(-1)).toBe(0)
+    expect(ownedBytes).toBe(0)
+    lease.release()
+  })
+  it('distinguishes pending peaks from confirmed materialized bytes and uses hysteresis', async () => {
+    let free = 100
+    const g = new InferenceGovernor(() => ({ total: 100, free, reserve: 10 }))
+    const lease = await g.acquire({ ...request('text', 60), gpu: false })
+    expect(g.refreshMemoryPressure().pendingNativeBytes).toBe(60)
+    free = 40 // allocation is now represented in OS free memory
+    lease.markMaterialized()
+    expect(g.refreshMemoryPressure()).toMatchObject({
+      pendingNativeBytes: 0,
+      materializedNativeBytes: 60,
+      pressure: 'normal'
+    })
+    free = 10
+    expect(g.refreshMemoryPressure().pressure).toBe('critical')
+    free = 11
+    expect(g.refreshMemoryPressure().pressure).toBe('critical')
+    free = 16
+    expect(g.refreshMemoryPressure().pressure).toBe('constrained')
+    free = 19
+    expect(g.refreshMemoryPressure().pressure).toBe('normal')
+    lease.release()
+  })
+})

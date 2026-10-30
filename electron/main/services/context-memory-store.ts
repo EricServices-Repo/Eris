@@ -100,6 +100,15 @@ export class ContextMemoryStore {
     string,
     Pick<ContextMemorySettings, 'maxMessages' | 'maxThreadMiB' | 'enabled'>
   >()
+  private pressureLimit = Infinity
+  setPressureLimit(bytes: number) {
+    this.pressureLimit = Math.max(0, bytes)
+    if (bytes === 0) this.dropAll()
+    else this.evict()
+  }
+  private get envelopeBytes() {
+    return Math.min(this.pressureLimit, this.config.maxMemoryMiB * 1024 ** 2)
+  }
   private counter = 0
   private epoch = 0
   private bump(key: string) {
@@ -208,7 +217,7 @@ export class ContextMemoryStore {
       ownedBytes,
       reservedBytes,
       pinnedBytes,
-      envelopeBytes: this.config.maxMemoryMiB * 1024 ** 2
+      envelopeBytes: this.envelopeBytes
     }
   }
   private get committedBytes() {
@@ -225,7 +234,7 @@ export class ContextMemoryStore {
       grow: (more) => {
         if (!this.reservations.has(reservation)) return false
         this.makeRoom(key, more)
-        if (this.committedBytes + more > this.config.maxMemoryMiB * 1024 ** 2) return false
+        if (this.committedBytes + more > this.envelopeBytes) return false
         held += more
         return true
       },
@@ -240,7 +249,7 @@ export class ContextMemoryStore {
     return null
   }
   private makeRoom(protect: string, bytes: number) {
-    const limit = this.config.maxMemoryMiB * 1024 ** 2
+    const limit = this.envelopeBytes
     const coldest = [...this.entries.entries()]
       .filter(([key]) => key !== protect)
       .sort((a, b) => a[1].at - b[1].at)
@@ -554,10 +563,7 @@ export class ContextMemoryStore {
       a[0] === protect ? 1 : b[0] === protect ? -1 : a[1].at - b[1].at
     )
     for (const [key] of order) {
-      if (
-        this.entries.size <= this.config.warmThreads &&
-        this.committedBytes <= this.config.maxMemoryMiB * 1024 ** 2
-      )
+      if (this.entries.size <= this.config.warmThreads && this.committedBytes <= this.envelopeBytes)
         break
       this.entries.delete(key)
     }
