@@ -8,6 +8,7 @@ import {
 } from '../services/chat-submission'
 import { foregroundTasks } from '../services/foreground-tasks'
 import { getChat, appendChatMessage } from '../services/chats'
+import { compactHistory } from '../services/chat-prompt'
 import { conversationContext } from '../services/context-memory'
 import { appendTaskEvent } from '../services/task-ledger'
 import type { MemoryPrompt } from '../../../src/shared/context-memory'
@@ -255,7 +256,8 @@ export function registerChatStreamIpc(): void {
               payload.prompt.history = recent.messages
                 .filter((m) => m.id !== `${requestId}:user` && m.role !== 'system')
                 .slice(-20)
-                .map(({ role, content, agentId, agentName }) => ({
+                .map(({ id, role, content, agentId, agentName }) => ({
+                  id,
                   role,
                   content,
                   agentId,
@@ -350,6 +352,10 @@ export function registerChatStreamIpc(): void {
                 settings,
                 {
                   excludeId: `${requestId}:user`,
+                  coveredSourceIds: compactHistory(
+                    payload.prompt.history,
+                    turnPlan.mode === 'agent' ? 6000 : 24000
+                  ).coveredSourceIds,
                   projectRoot: turnPlan.task?.scope.projectRoot ?? null,
                   signal: controller.signal
                 }

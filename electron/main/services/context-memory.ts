@@ -182,6 +182,7 @@ export async function conversationContext(
   query: string,
   settings: AppSettings,
   options: {
+    coveredSourceIds?: readonly string[]
     excludeId?: string
     projectRoot?: string | null
     tokens?: number

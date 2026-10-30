@@ -65,6 +65,10 @@ export type MemoryManifest = {
   selectedIds: string[]
   sourceIds: string[]
   estimatedTokens: number
+  /** Matching raw sources already covered by admitted complete recent turns. */
+  duplicateSourceMessages?: number
+  /** Character estimate of avoided candidate text, not measured backend tokens. */
+  duplicateEstimatedTokensAvoided?: number
   corruptRecords?: number
   corruptOrdinals?: number[]
   omittedFacts: number
