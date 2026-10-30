@@ -6,6 +6,7 @@ export const ContextMemorySettingsSchema = z.object({
   maxMessages: z.number().int().min(500).max(100000).default(25000),
   warmThreads: z.number().int().min(1).max(16).default(8),
   idleMinutes: z.number().int().min(1).max(120).default(30),
+  foregroundDeadlineMs: z.number().int().min(25).max(2000).default(150),
   promptTokens: z.number().int().min(128).max(4096).default(1024),
   shareWithRemoteModels: z.boolean().default(false)
 })

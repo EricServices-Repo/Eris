@@ -276,6 +276,34 @@ export class ContextMemoryStore {
   trimIdle() {
     this.clear()
   }
+  /** No scan or hydration: optional recall can fail closed while recent canonical history proceeds. */
+  unavailable(key: string, reason: string, allowRemote = false) {
+    const entry = this.entries.get(key)
+    const manifest: MemoryManifest = {
+      version: 1,
+      revision: entry?.revision ?? 0,
+      generation: entry?.generation ?? this.counter,
+      totalMessages: entry?.total ?? 0,
+      retainedMessages: entry?.records.length ?? 0,
+      firstOrdinal: entry?.records[0]?.ordinal ?? 0,
+      logicalBytes: entry?.bytes ?? 0,
+      coverage: entry ? 'partial' : 'unavailable',
+      selectedIds: [],
+      sourceIds: [],
+      estimatedTokens: 0,
+      omittedFacts: 0,
+      reason
+    }
+    return {
+      prompt: { text: '', manifest, allowRemote },
+      inspection: {
+        manifest,
+        facts: [] as MemoryFact[],
+        controls: emptyMemoryControls(),
+        processLogicalBytes: this.logicalBytes
+      }
+    }
+  }
   async select(
     key: string,
     query: string,
