@@ -71,12 +71,13 @@ export function registerChatsIpc(): void {
       event.senderFrame !== event.sender.mainFrame
     )
       throw new Error('Unauthorized context inspection')
-    const { id, query, controls, evict, workspacePath, snapshotHandle } = z
+    const { id, query, controls, evict, workspacePath, snapshotHandle, model } = z
       .object({
         workspacePath: z.string().max(4096).nullable().optional(),
         snapshotHandle: z.string().uuid().optional(),
         id: z.string().min(1).max(256),
         query: z.string().max(4000).default(''),
+        model: z.string().max(256).optional(),
         controls: MemoryControlsSchema.optional(),
         evict: z.boolean().optional()
       })
@@ -132,7 +133,13 @@ export function registerChatsIpc(): void {
     }
     if (!eligible()) throw stale()
     if (evict) invalidateConversationMemory(root, id)
-    const inspection = await inspectConversationMemory(root, id, query, getResolvedSettings(root))
+    const inspection = await inspectConversationMemory(
+      root,
+      id,
+      query,
+      getResolvedSettings(root),
+      model
+    )
     if (!eligible()) throw stale()
     for (const [handle, value] of inspections)
       if (value.expires < Date.now()) inspections.delete(handle)

@@ -8,6 +8,7 @@ import { chatStream, setAnswerBuffer } from '@/state/chat-stream'
 import { useStore } from '@/state/store'
 import { computeLineChanges } from '@/features/editor/diff-client'
 import { FileTree } from '@/features/workspace/FileTree'
+import { HistoricalMessages } from '@/features/chat/ChatPanel'
 import type { editor } from 'monaco-editor'
 
 declare global {
@@ -126,9 +127,31 @@ function Fixture() {
     </>
   )
 }
+const sourceMessages = Array.from({ length: 1000 }, (_, index) => ({
+  id: `source-${index}`,
+  role: 'user' as const,
+  content: `Message ${index}`,
+  createdAt: index
+}))
+let revealSource = (_key: string) => {}
+function SourceFixture() {
+  const [target, setTarget] = useState<{ key: string; request: number } | null>(null)
+  revealSource = (key) => setTarget({ key, request: 1 })
+  return (
+    <div id="source-scroll" data-virtual-scroll style={{ height: 300, overflow: 'auto' }}>
+      <HistoricalMessages
+        messages={sourceMessages}
+        onOpenPath={() => {}}
+        streaming={false}
+        revealMessage={target}
+      />
+    </div>
+  )
+}
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <Fixture />
+    <SourceFixture />
   </StrictMode>
 )
 window.clientCheck = async () => {
@@ -155,6 +178,13 @@ window.clientCheck = async () => {
   assert(anchor, 'Evicting older rows lost the row being read')
   const drift = anchor!.getBoundingClientRect().top - evicting.getBoundingClientRect().top
   assert(Math.abs(drift) < 1, `Evicting older rows moved the reader by ${drift}px`)
+  const source = '#source-scroll [data-virtual-key="source-900"]'
+  assert(!document.querySelector(source), 'Source row was mounted before it was opened')
+  revealSource('source-900')
+  await tick()
+  await tick()
+  await tick()
+  assert(document.querySelector(source), 'Opening a recalled source did not reveal its message')
   assert(Number(directoryRequests) === 0, 'Collapsed folders were loaded eagerly')
   document.querySelector<HTMLButtonElement>('#tree-check button')!.click()
   await tick()

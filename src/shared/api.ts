@@ -351,6 +351,7 @@ export interface IdeApi {
     snapshotHandle?: string
     id: string
     query?: string
+    model?: string
     controls?: import('./context-memory').MemoryControls
     evict?: boolean
   }) => Promise<import('./context-memory').MemoryInspection>

@@ -9,6 +9,8 @@ import {
 } from 'react'
 import type { ChatThread } from '@/shared/settings-schema'
 import {
+  pageAround,
+  windowAt,
   addEarlierPage,
   addLaterPage,
   boundTail,
@@ -119,6 +121,22 @@ export function useChatThreads() {
     )
   }, [])
   const jumpToLatest = useCallback(() => setHistoryWindow(emptyHistoryWindow()), [])
+  /** Load only the page holding a recalled source and return its message id to reveal. */
+  const openMessage = useCallback(async (ordinal: number) => {
+    const current = activeThreadRef.current
+    if (!current) return null
+    const tailStart = current.messageOffset ?? 0
+    if (ordinal >= tailStart) {
+      setHistoryWindow(emptyHistoryWindow())
+      return current.messages[ordinal - tailStart]?.id ?? null
+    }
+    const generation = selection.current
+    const page = await window.ide.getChat(current.id, pageAround(ordinal, tailStart))
+    if (!page || generation !== selection.current) return null
+    const start = page.messageOffset ?? 0
+    setHistoryWindow(windowAt(current.id, start, page.messages))
+    return page.messages[ordinal - start]?.id ?? null
+  }, [])
 
   return {
     threads,
@@ -131,6 +149,7 @@ export function useChatThreads() {
     loadEarlier,
     loadNewer,
     jumpToLatest,
+    openMessage,
     history
   }
 }
