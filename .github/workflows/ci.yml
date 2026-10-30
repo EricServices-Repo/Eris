@@ -86,6 +86,9 @@ jobs:
       - name: Responsive chat and editor UX acceptance
         run: npm run check:ux
 
+      - name: Scripted RAM-context release gate
+        run: npm run check:context
+
       - name: Scripted chat and workspace performance budgets
         run: npm run check:performance
 

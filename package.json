@@ -53,6 +53,7 @@
     "pretest:agents": "npm run prepare:owned-command",
     "pretest:dev-app": "npm run prepare:owned-command",
     "check:performance": "vite build --config checks/vite.config.ts && vite build --config checks/vite.performance-node.config.ts && electron scripts/check-performance.cjs --gate",
+    "check:context": "vite build --config checks/vite.performance-node.config.ts && node --expose-gc scripts/check-context-gate.cjs",
     "check:ux": "vite build --config checks/vite.config.ts && electron scripts/check-ux.cjs",
     "check:accessibility": "vite build --config checks/vite.config.ts && electron scripts/check-accessibility.cjs"
   },
