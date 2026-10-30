@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.6 — 2026-10-30
+
+- Fix installed local models appearing unavailable during startup and restore workspace worker loading.
+
 ## 0.6.5 — 2026-10-30
 
 - Improve context memory pressure protection, scoped decisions, unfinished-task recall, stale evidence checks, and durable context recovery.
