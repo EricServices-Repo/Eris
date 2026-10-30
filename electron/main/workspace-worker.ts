@@ -5,7 +5,7 @@ import { scanWorkspaceIndex, patchWorkspaceIndex } from './services/workspace-in
 import { chatDatabase, closeChatDatabases } from './services/chat-database'
 import type { WorkspaceRequest } from './services/workspace-worker-protocol'
 
-async function handle(request: WorkspaceRequest): Promise<unknown> {
+export async function handleWorkspaceRequest(request: WorkspaceRequest): Promise<unknown> {
   switch (request.type) {
     case 'tree':
       return listTree(request.root, 0, request.maxDepth)
@@ -45,7 +45,7 @@ let queue = Promise.resolve()
 parentPort?.on('message', ({ id, request }: { id: number; request: WorkspaceRequest }) => {
   queue = queue.then(async () => {
     try {
-      parentPort?.postMessage({ id, result: await handle(request) })
+      parentPort?.postMessage({ id, result: await handleWorkspaceRequest(request) })
     } catch (error) {
       parentPort?.postMessage({ id, error: error instanceof Error ? error.message : String(error) })
     }
