@@ -162,8 +162,9 @@ export class InferenceGovernor {
     if (row.requestedBytes + reserved + optionalTotal > Math.max(0, memory.total - memory.reserve))
       return 'Waiting for reserved host/unified memory'
     if (
+      (this.active.size || optional.reservedBytes || optional.pinnedBytes) &&
       row.requestedBytes + pendingNative + optional.reservedBytes >
-      Math.max(0, memory.free - memory.reserve)
+        Math.max(0, memory.free - memory.reserve)
     )
       return 'Waiting for available host memory'
     if (!row.gpu) return null
