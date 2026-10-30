@@ -54,7 +54,12 @@ function Fixture() {
         style={{ height: 500, overflow: 'auto', display: 'block' }}
       >
         <div className="chat-messages">
-          <HistoricalMessages messages={messages} onOpenPath={() => {}} streaming={false} />
+          <HistoricalMessages
+            searchOpen
+            messages={messages}
+            onOpenPath={() => {}}
+            streaming={false}
+          />
         </div>
       </div>
       <Stream />

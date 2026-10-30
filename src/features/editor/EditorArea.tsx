@@ -1,3 +1,4 @@
+import { PanelActions } from '@/components/PanelActions'
 import { LanguageTools } from './LanguageTools'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { monaco } from 'react-monaco-editor'
@@ -455,80 +456,84 @@ export function EditorArea({
 
   return (
     <div className="editor-area">
-      <div className="tabs">
-        {tabs.map((tab) => (
-          <button
-            key={tab.path}
-            className={`tab ${tab.path === activePath ? 'active' : ''}`}
-            onClick={() => onSelect(tab.path)}
-            title={tab.path}
-          >
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{tab.name}</span>
-            {tab.dirty && <span className="dirty">●</span>}
-            <span
-              role="button"
-              tabIndex={0}
-              style={{ marginLeft: 6, opacity: 0.6 }}
-              onClick={(e) => {
-                e.stopPropagation()
-                onClose(tab.path)
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
+      <div className="editor-header">
+        <div className="tabs">
+          {tabs.map((tab) => (
+            <button
+              key={tab.path}
+              className={`tab ${tab.path === activePath ? 'active' : ''}`}
+              onClick={() => onSelect(tab.path)}
+              title={tab.path}
+            >
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{tab.name}</span>
+              {tab.dirty && <span className="dirty">●</span>}
+              <span
+                role="button"
+                tabIndex={0}
+                style={{ marginLeft: 6, opacity: 0.6 }}
+                onClick={(e) => {
                   e.stopPropagation()
                   onClose(tab.path)
-                }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.stopPropagation()
+                    onClose(tab.path)
+                  }
+                }}
+              >
+                ×
+              </span>
+            </button>
+          ))}
+        </div>
+        <PanelActions label="Editor actions">
+          <div className="editor-ai-actions">
+            <button
+              type="button"
+              className="btn"
+              disabled={!active}
+              onClick={() => {
+                setEditOpen(true)
+                setEditError(null)
               }}
             >
-              ×
-            </span>
-          </button>
-        ))}
-        <div className="editor-ai-actions">
-          <button
-            type="button"
-            className="btn"
-            disabled={!active}
-            onClick={() => {
-              setEditOpen(true)
-              setEditError(null)
-            }}
-          >
-            Edit ⌘K
-          </button>
-          <button
-            type="button"
-            className="btn"
-            disabled={!active}
-            onClick={() => void requestTabComplete()}
-          >
-            Complete ⌥\
-          </button>
-          <button
-            type="button"
-            className="btn"
-            disabled={!active}
-            title="Refresh TypeScript diagnostics"
-            onClick={() => active && void applyDiagnostics(active.path)}
-          >
-            Diagnose
-          </button>
-          {completeHint && <span className="editor-ai-hint">{completeHint}</span>}
-        </div>
+              Edit ⌘K
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={!active}
+              onClick={() => void requestTabComplete()}
+            >
+              Complete ⌥\
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={!active}
+              title="Refresh TypeScript diagnostics"
+              onClick={() => active && void applyDiagnostics(active.path)}
+            >
+              Diagnose
+            </button>
+            {completeHint && <span className="editor-ai-hint">{completeHint}</span>}
+          </div>
+          {active && (
+            <LanguageTools
+              key={active.path}
+              path={active.path}
+              text={active.content}
+              position={() => {
+                const p = editorRef.current?.getPosition()
+                return { line: (p?.lineNumber ?? 1) - 1, character: (p?.column ?? 1) - 1 }
+              }}
+              freeze={(locked) => editorRef.current?.updateOptions({ readOnly: locked })}
+              onApplied={(content) => onChange(active.path, content)}
+            />
+          )}
+        </PanelActions>
       </div>
-      {active && (
-        <LanguageTools
-          key={active.path}
-          path={active.path}
-          text={active.content}
-          position={() => {
-            const p = editorRef.current?.getPosition()
-            return { line: (p?.lineNumber ?? 1) - 1, character: (p?.column ?? 1) - 1 }
-          }}
-          freeze={(locked) => editorRef.current?.updateOptions({ readOnly: locked })}
-          onApplied={(content) => onChange(active.path, content)}
-        />
-      )}
       {showPatchBar && pendingPatch && (
         <div className="inline-patch-bar">
           <strong>Agent change</strong>

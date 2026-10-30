@@ -7495,3 +7495,129 @@ button:disabled {
 .context-memory-dialog small {
   color: var(--text-secondary);
 }
+
+/* Compact panel chrome: reserve horizontal space for the conversation and files. */
+.panel-header.agent-header > span:first-child {
+  flex: 1 1 0;
+}
+.chat-header-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+.chat-mode-select {
+  width: 82px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+}
+.chat-header-actions .chat-find-button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+}
+.panel-actions {
+  position: relative;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: normal;
+  letter-spacing: normal;
+}
+.panel-actions > summary {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  list-style: none;
+  cursor: pointer;
+}
+.panel-actions > summary::-webkit-details-marker { display: none; }
+.panel-actions > summary:hover,
+.panel-actions[open] > summary { background: var(--bg-hover); color: var(--text); }
+.panel-actions-content {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 15;
+  width: min(280px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  box-shadow: 0 12px 36px #0006;
+}
+.panel-actions-content > .btn { width: 100%; text-align: left; }
+.panel-actions-content > .subtitle { margin: 0; line-height: 1.5; }
+.chat-history-search {
+  position: static;
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+}
+.chat-history-search label { flex: 1 1 120px; min-width: 0; }
+.chat-history-search input { width: 100%; max-width: none; min-width: 0; }
+.chat-history-search .btn { padding: 4px 6px; min-height: 28px; }
+.chat-history-search [role='status'] { font-size: 11px; color: var(--text-muted); }
+.message-details,
+.task-history-details { font-size: 12px; color: var(--text-muted); }
+.message-details { margin-top: 10px; }
+.message-details > summary,
+.task-history-details > summary { cursor: pointer; padding: 4px 0; }
+.message-model { overflow-wrap: anywhere; }
+.message-details .thinking-block { margin-top: 8px; }
+.task-history-details { padding: 0 4px; margin-bottom: 12px; }
+.msg-reroute .btn { margin: 6px 6px 0 0; }
+.msg-feedback { opacity: 0.55; }
+.msg:hover .msg-feedback,
+.msg:focus-within .msg-feedback { opacity: 1; }
+.editor-header {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  background: #171a20;
+  border-bottom: 1px solid var(--border);
+  padding-right: 8px;
+}
+.editor-header > .tabs {
+  flex: 1 1 0;
+  min-width: 0;
+  border-bottom: 0;
+  align-items: center;
+}
+.editor-header .tab { flex: 0 0 auto; }
+.editor-header .editor-ai-actions {
+  margin: 0;
+  padding: 0 0 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+}
+.editor-ai-hint { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.language-tool-fields { display: flex; flex-direction: column; gap: 8px; }
+.language-tools { min-width: 0; max-height: 55vh; overflow: auto; }
+.language-tools .subtitle { line-height: 1.5; overflow-wrap: anywhere; }
+.language-tools input { width: 100%; box-sizing: border-box; min-width: 0; padding: 7px; }
+.language-tools pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.thinking-preview,
+.thinking-status-inline { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Anchor editor menus to the panel, even when its tab strip is very narrow. */
+.editor-header { position: relative; }
+.editor-header > .panel-actions { position: static; }
+.editor-header > .panel-actions > .panel-actions-content {
+  right: 8px;
+  max-width: calc(100% - 16px);
+}

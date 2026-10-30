@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2 — 2026-10-30
+
+- Rebuild with agent tool recovery, safer and faster history recall, reliable memory controls, and a cleaner chat and editor layout.
+
 ## 0.6.1 — 2026-10-29
 
 - Add bounded RAM chat context with durable memory controls, stable history cutoffs, conflict-safe updates, and canonical cache continuity checks.

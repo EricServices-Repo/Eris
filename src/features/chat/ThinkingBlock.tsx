@@ -31,8 +31,8 @@ export function ThinkingBlock({
   defaultOpen = false,
   live = false
 }: Props) {
-  // Live: keep the compact panel open. Historical: collapsed by default.
-  const [open, setOpen] = useState(defaultOpen || live)
+  // Progress remains visible in the summary; tool logs are opened on demand.
+  const [open, setOpen] = useState(defaultOpen)
   const [showLog, setShowLog] = useState(false)
   const logRef = useRef<HTMLPreElement>(null)
   const hasTools = tools.length > 0
@@ -47,16 +47,15 @@ export function ThinkingBlock({
   const hiddenToolCount = Math.max(0, tools.length - recentTools.length)
 
   useEffect(() => {
-    if (live) setOpen(true)
-    else if (!defaultOpen) setOpen(false)
-  }, [live, defaultOpen])
+    setOpen(defaultOpen)
+  }, [defaultOpen])
 
   useEffect(() => {
     if (!showLog || !live || !logRef.current) return
     logRef.current.scrollTop = logRef.current.scrollHeight
   }, [thinking, showLog, live])
 
-  if (!hasThinking && !hasTools) return null
+  if (!hasThinking && !hasTools && !status?.trim()) return null
 
   return (
     <div className={`thinking-block ${open ? 'open' : ''} ${live ? 'live' : ''}`}>
@@ -83,18 +82,14 @@ export function ThinkingBlock({
         ) : live && !status?.trim() ? (
           <span className="thinking-preview">Working…</span>
         ) : null}
-        {steps.length > 0 && !live && (
-          <span className="thinking-step-count">{steps.length}</span>
-        )}
+        {steps.length > 0 && !live && <span className="thinking-step-count">{steps.length}</span>}
       </button>
 
       {open && (
         <div className="thinking-body">
           {hasTools && (
             <div className="tool-activity">
-              {hiddenToolCount > 0 && (
-                <div className="tool-status">+{hiddenToolCount} earlier</div>
-              )}
+              {hiddenToolCount > 0 && <div className="tool-status">+{hiddenToolCount} earlier</div>}
               {recentTools.map((t) => (
                 <div
                   key={t.id}
