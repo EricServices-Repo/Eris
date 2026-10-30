@@ -243,7 +243,12 @@ describe('canonical RAM history at the production chat IPC boundary', () => {
     const messages = Array.from({ length: 1000 }, (_, i) => ({
       id: String(i),
       role: 'user' as const,
-      content: i === 2 ? 'Remember: currency is EUR for checkout' : `Message ${i}`,
+      content:
+        i === 2
+          ? 'Remember: currency is EUR for checkout'
+          : i === 999
+            ? 'Recent checkout currency discussion'
+            : `Message ${i}`,
       createdAt: 1
     }))
     const thread = {
@@ -315,6 +320,11 @@ describe('canonical RAM history at the production chat IPC boundary', () => {
     )
     runner.script = async function* (opts) {
       expect(opts.conversationMemory?.text).toContain('EUR')
+      expect(opts.conversationMemory?.text).not.toContain('Recent checkout currency discussion')
+      expect(opts.conversationMemory?.manifest.duplicateSourceMessages).toBe(6)
+      expect(opts.messages.some((m) => m.content === 'Recent checkout currency discussion')).toBe(
+        true
+      )
       expect(opts.messages.some((m) => m.content === 'Message 0')).toBe(false)
       expect(opts.messages.at(-1)?.content).toBe('What currency should checkout use?')
       yield { type: 'asset', asset: image }

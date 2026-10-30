@@ -337,6 +337,7 @@ export class ContextMemoryStore {
     key: string,
     query: string,
     options: {
+      coveredSourceIds?: readonly string[]
       excludeId?: string
       projectRoot?: string | null
       tokens?: number
@@ -399,6 +400,9 @@ export class ContextMemoryStore {
           )
       )
     ].slice(0, 24)
+    const covered = new Set(options.coveredSourceIds ?? [])
+    let duplicateSourceMessages = 0,
+      duplicateEstimatedTokensAvoided = 0
     const candidates: Array<{ fact: MemoryFact; score: number; message?: ChatMessage }> = []
     let candidateCount = 0
     const rank = () =>
@@ -460,7 +464,14 @@ export class ContextMemoryStore {
         status: m.role === 'user' ? 'user-stated' : 'unverified',
         projectRoot: m.contextResult?.projectRoot
       }
-      add({ fact, score: score + row.ordinal / Math.max(1, e.total), message: m })
+      if (!covered.has(m.id))
+        add({ fact, score: score + row.ordinal / Math.max(1, e.total), message: m })
+      else {
+        duplicateSourceMessages++
+        duplicateEstimatedTokensAvoided += Math.ceil(excerpt.length / 3)
+      }
+      // A structured task receipt contributes observed outcome/obligation state
+      // absent from raw conversational content, so it remains eligible.
       if (m.contextResult) {
         const r = m.contextResult
         add({
@@ -553,6 +564,8 @@ export class ContextMemoryStore {
       selectedIds: selected.map((f) => f.id),
       sourceIds: selected.map((f) => digest(f.sourceId)),
       estimatedTokens: Math.ceil(text.length / 3),
+      duplicateSourceMessages,
+      duplicateEstimatedTokensAvoided,
       omittedPinnedFacts: pins.length - selected.filter((f) => f.kind === 'pinned').length,
       omittedFacts: Math.max(0, candidateCount - selected.length),
       corruptRecords: e.corruptRecords,

@@ -45,6 +45,31 @@ describe('RAM-CTX-013 cache record validation', () => {
   })
 })
 
+describe('RAM-CTX-032 source coverage', () => {
+  it('frees recall budget for older sources while preserving structured receipts and distinct repeated wording', async () => {
+    const store = new ContextMemoryStore()
+    const recent = {
+      ...message('recent', 'Remember: checkout currency CAD'),
+      contextResult: {
+        taskId: 'task',
+        terminal: 'done',
+        changedFiles: ['currency.ts'],
+        projectRoot: null
+      }
+    }
+    install(store, 'thread', [message('old', 'Remember: checkout currency CAD'), recent])
+    const result = await store.select('thread', 'checkout currency', {
+      coveredSourceIds: ['recent']
+    })
+    expect(result.inspection.facts.some((f) => f.sourceId === 'old')).toBe(true)
+    expect(
+      result.inspection.facts.filter((f) => f.sourceId === 'recent').map((f) => f.kind)
+    ).toEqual(['task-result'])
+    expect(result.prompt.manifest.duplicateSourceMessages).toBe(1)
+    expect(result.prompt.manifest.duplicateEstimatedTokensAvoided).toBeGreaterThan(0)
+  })
+})
+
 describe('detailed RAM conversation history', () => {
   it('retains 25,000 complete messages and recalls a buried decision within the prompt budget', async () => {
     const store = new ContextMemoryStore()

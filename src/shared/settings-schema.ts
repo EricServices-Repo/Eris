@@ -492,6 +492,8 @@ export interface ChatPromptInput {
   /** content set when the file is open in a tab; otherwise main reads from disk */
   attachments: Array<{ path: string; name: string; language?: string; content?: string }>
   history: Array<{
+    /** Canonical source identity, assigned by main for persisted chat turns. */
+    id?: string
     role: 'user' | 'assistant' | 'system'
     content: string
     agentId?: string

@@ -42,7 +42,7 @@ function workspaceDiscussions(
 export function compactHistory(
   history: ChatPromptInput['history'],
   maxChars: number
-): { recent: ChatPromptInput['history']; summary: string } {
+): { recent: ChatPromptInput['history']; summary: string; coveredSourceIds: string[] } {
   const messages = history.filter(
     (message) => message.role === 'user' || message.role === 'assistant'
   )
@@ -75,7 +75,12 @@ export function compactHistory(
     .filter(Boolean)
     .join('\n')
     .slice(-Math.min(2200, Math.floor(maxChars / 3)))
-  return { recent: selected, summary }
+  // A shortened turn/summary does not cover the complete source. Never suppress
+  // its unrepresented history merely because a prefix was admitted.
+  const coveredSourceIds = tail.flatMap((message) =>
+    message.id && message.content.length <= perMessage ? [message.id] : []
+  )
+  return { recent: selected, summary, coveredSourceIds }
 }
 
 function fence(label: string, path: string, language: string, content: string, max: number) {
