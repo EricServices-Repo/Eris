@@ -1,3 +1,4 @@
+import { abortable, SharedHydration } from './context-hydration'
 import { createHash } from 'crypto'
 import { userDataRoot, userChatsDir, workspaceChatsDir } from './paths'
 import { realpathAllowMissing } from './workspace-fs'
@@ -8,7 +9,7 @@ import {
   ContextMemorySettingsSchema,
   type MemoryControls
 } from '../../../src/shared/context-memory'
-const pending = new Map<string, Promise<void>>()
+const pending = new Map<string, SharedHydration>()
 const idleSweep = setInterval(() => contextMemoryStore.sweep(), 60000)
 idleSweep.unref()
 export const memoryKey = (root: string | null, thread: string) =>
@@ -17,7 +18,9 @@ export const memoryKey = (root: string | null, thread: string) =>
     .digest('hex')
 const dir = (root: string | null) => (root ? workspaceChatsDir(root) : userChatsDir())
 export function invalidateConversationMemory(root: string | null, id: string) {
-  contextMemoryStore.clear(memoryKey(root, id))
+  const key = memoryKey(root, id)
+  pending.get(key)?.controller.abort()
+  contextMemoryStore.clear(key)
 }
 export function updateConversationMemory(root: string | null, thread: ChatThread) {
   contextMemoryStore.append(
@@ -40,7 +43,10 @@ export async function warmConversationMemory(
   )
   const key = memoryKey(root, id)
   if (!contextMemoryStore.config.enabled) return
-  const header = await workspaceRequest({ type: 'context-header', dir: dir(root), id })
+  signal?.throwIfAborted()
+  const header = await abortable(workspaceRequest({ type: 'context-header', dir: dir(root), id }), [
+    signal
+  ])
   if (!header) {
     contextMemoryStore.clear(key)
     return
@@ -51,13 +57,13 @@ export async function warmConversationMemory(
   if (contextMemoryStore.has(key) && !seed) contextMemoryStore.clear(key)
   const existing = pending.get(key)
   if (existing) {
-    await existing
+    await existing.wait(signal)
     return
   }
   if (pending.size >= 2) return
   const token = contextMemoryStore.token(key),
     config = { ...contextMemoryStore.config }
-  const run = (async () => {
+  const load = new SharedHydration(async (loadSignal) => {
     const controls = await workspaceRequest({ type: 'context-controls', dir: dir(root), id })
     let before: number | undefined = seed?.before,
       revision: number | undefined = seed?.revision,
@@ -73,9 +79,10 @@ export async function warmConversationMemory(
       ...(seed?.records ?? [])
     ]
     for (let pages = 0; pages < Math.ceil(config.maxMessages / 500) + 1; pages++) {
-      signal?.throwIfAborted()
+      loadSignal.throwIfAborted()
       if (token !== contextMemoryStore.token(key)) return
       const page = await workspaceRequest({ type: 'context-page', dir: dir(root), id, before })
+      loadSignal.throwIfAborted()
       if (!page) return
       if (
         revision !== undefined &&
@@ -105,19 +112,21 @@ export async function warmConversationMemory(
       }
       await new Promise<void>((r) => setImmediate(r))
     }
+    loadSignal.throwIfAborted()
     if (revision !== undefined)
       contextMemoryStore.install(
         key,
         { revision, sourceEpoch, total, records, controls, partial },
         token
       )
-  })()
-  pending.set(key, run)
-  try {
-    await run
-  } finally {
-    if (pending.get(key) === run) pending.delete(key)
-  }
+  })
+  pending.set(key, load)
+  void load.done
+    .finally(() => {
+      if (pending.get(key) === load) pending.delete(key)
+    })
+    .catch(() => {})
+  await load.wait(signal)
 }
 export async function conversationContext(
   root: string | null,
