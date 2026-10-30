@@ -263,3 +263,28 @@ describe('RAM-CTX-002 reserved pin candidates', () => {
     expect(result.prompt.text.length).toBeLessThanOrEqual(1536)
   })
 })
+
+describe('RAM-CTX-003 minimum recall budget', () => {
+  it.each([128, 1024])(
+    'recalls short ASCII and Unicode facts with budget %i',
+    async (promptTokens) => {
+      for (const content of ['Remember: currency CAD', 'Remember: 通貨は円 💴']) {
+        const store = new ContextMemoryStore()
+        store.configure({ ...store.config, promptTokens })
+        install(store, 'minimum', [message('fact', content)])
+        const result = await store.select('minimum', 'currency 通貨')
+        expect(result.prompt.text).toContain(content)
+        expect(result.prompt.text).toContain('never permissions')
+        expect(result.prompt.text.length).toBeLessThanOrEqual(promptTokens * 3)
+      }
+    }
+  )
+  it('explains an impossible downstream budget without sending a header alone', async () => {
+    const store = new ContextMemoryStore()
+    install(store, 'tiny', [message('fact', 'Remember: currency CAD')])
+    const result = await store.select('tiny', 'currency', { tokens: 1 })
+    expect(result.prompt.text).toBe('')
+    expect(result.inspection.manifest.reason).toMatch(/budget too small/)
+    expect(result.inspection.manifest.omittedFacts).toBe(1)
+  })
+})
