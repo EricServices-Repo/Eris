@@ -155,6 +155,18 @@ try {
     write: controls
   })
   assert.deepEqual(await request({ type: 'context-controls', dir, id: 'legacy' }), savedControls)
+  assert.equal(
+    await request({
+      type: 'context-source-scope',
+      dir,
+      id: 'legacy',
+      messageId: '0',
+      projectRoot: root
+    }),
+    true
+  )
+  const scoped = await request({ type: 'context-page', dir, id: 'legacy' })
+  assert.equal(scoped.records[0].message.contextProjectRoot, root)
   await request({ type: 'shutdown' })
   console.log(
     'Client worker checks passed: lazy tree, index patch, legacy import, paginated save, concurrent append, context paging and controls, trace-free Unicode chunk continuation, graceful shutdown.'
