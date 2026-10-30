@@ -1,5 +1,10 @@
 import type { InferenceSnapshot } from '../../../src/shared/inference'
 import { freemem, totalmem } from 'os'
+export type ContextPressure = 'normal' | 'constrained' | 'critical'
+export interface OptionalMemoryOwner {
+  ledger(): { ownedBytes: number; reservedBytes: number; pinnedBytes: number }
+  limit(bytes: number, pressure: ContextPressure): void
+}
 export type InferenceWorkload = 'text' | 'image' | 'embedding' | 'index'
 export interface InferenceDevice {
   id: string
@@ -29,6 +34,8 @@ export type InferenceLease = {
   deviceId: string | null
   deviceBytes: number
   waitMs: number
+  /** Confirm allocations now represented by system free memory, never inferred from elapsed time. */
+  markMaterialized: (bytes?: number) => void
   release: () => void
 }
 type Row = InferenceOptions & {
@@ -39,6 +46,7 @@ type Row = InferenceOptions & {
   priority: number
   deviceBytes: number
   queuedAt: number
+  materializedBytes: number
   admittedAt?: number
   deadline: number
   resolve: (lease: InferenceLease) => void
@@ -48,7 +56,55 @@ type Row = InferenceOptions & {
 }
 /** One main-process owner. Worker threads must acquire through their parent, not a separate module instance. */
 export class InferenceGovernor {
+  private optional?: OptionalMemoryOwner
+  private pressure: ContextPressure = 'normal'
   private sequence = 0
+  registerOptionalMemory(owner: OptionalMemoryOwner) {
+    this.optional = owner
+    this.refreshMemoryPressure()
+    return () => {
+      if (this.optional === owner) this.optional = undefined
+    }
+  }
+  refreshMemoryPressure(extraPending = 0) {
+    const memory = this.memory()
+    const rows = [...this.active.values()]
+    const pending =
+      rows.reduce((n, r) => n + Math.max(0, r.requestedBytes - r.materializedBytes), 0) +
+      extraPending
+    const peak = rows.reduce((n, r) => n + r.requestedBytes, 0) + extraPending
+    const ledger = this.optional?.ledger() ?? { ownedBytes: 0, reservedBytes: 0, pinnedBytes: 0 }
+    // Owned/pinned allocations are already reflected in free; only pending
+    // native bytes are subtracted there. Total capacity still counts each owner.
+    const headroom = Math.max(0, memory.free - memory.reserve - pending)
+    const was = this.pressure
+    this.pressure =
+      headroom === 0
+        ? 'critical'
+        : was === 'critical' && headroom < memory.total * 0.02
+          ? 'critical'
+          : headroom < memory.total * (was === 'normal' ? 0.05 : 0.08)
+            ? 'constrained'
+            : 'normal'
+    const allowance = Math.max(
+      0,
+      Math.min(
+        memory.total - memory.reserve - peak,
+        headroom + ledger.ownedBytes + ledger.pinnedBytes
+      )
+    )
+    const limit =
+      this.pressure === 'critical'
+        ? 0
+        : Math.floor(allowance * (this.pressure === 'constrained' ? 0.25 : 0.5))
+    this.optional?.limit(limit, this.pressure)
+    return {
+      pressure: this.pressure,
+      optionalLimitBytes: limit,
+      pendingNativeBytes: pending,
+      materializedNativeBytes: rows.reduce((n, r) => n + r.materializedBytes, 0)
+    }
+  }
   private pending: Row[] = []
   private active = new Map<number, Row>()
   private devices: InferenceDevice[] = []
@@ -97,9 +153,19 @@ export class InferenceGovernor {
   private reason(row: Row): string | null {
     const memory = this.memory(),
       reserved = [...this.active.values()].reduce((n, r) => n + r.requestedBytes, 0)
-    if (row.requestedBytes + reserved > Math.max(0, memory.total - memory.reserve))
+    const optional = this.optional?.ledger() ?? { ownedBytes: 0, reservedBytes: 0, pinnedBytes: 0 }
+    const optionalTotal = optional.ownedBytes + optional.reservedBytes + optional.pinnedBytes
+    const pendingNative = [...this.active.values()].reduce(
+      (n, r) => n + r.requestedBytes - r.materializedBytes,
+      0
+    )
+    if (row.requestedBytes + reserved + optionalTotal > Math.max(0, memory.total - memory.reserve))
       return 'Waiting for reserved host/unified memory'
-    if (this.active.size && row.requestedBytes > Math.max(0, memory.free - memory.reserve))
+    if (
+      (this.active.size || optional.reservedBytes || optional.pinnedBytes) &&
+      row.requestedBytes + pendingNative + optional.reservedBytes >
+        Math.max(0, memory.free - memory.reserve)
+    )
       return 'Waiting for available host memory'
     if (!row.gpu) return null
     // Backends may use more devices than their reported primary; retain global GPU exclusivity until an exact assignment is confirmed.
@@ -150,6 +216,7 @@ export class InferenceGovernor {
         exclusiveGpu: options.exclusiveGpu !== false,
         priority: options.priority ?? (options.workload === 'text' ? 20 : 10),
         deviceBytes: Math.ceil(options.deviceBytes ?? 0),
+        materializedBytes: 0,
         queuedAt: this.now(),
         deadline: this.now() + Math.max(1, Math.min(600000, options.waitTimeoutMs ?? 120000)),
         resolve,
@@ -198,6 +265,7 @@ export class InferenceGovernor {
           : b.priority - a.priority || a.id - b.id)
     )
     for (const row of [...this.pending]) {
+      this.refreshMemoryPressure(row.requestedBytes)
       const reason = this.reason(row)
       if (reason) {
         row.reason = reason
@@ -222,11 +290,21 @@ export class InferenceGovernor {
         deviceId: row.deviceId ?? null,
         deviceBytes: row.deviceBytes,
         waitMs: time - row.queuedAt,
+        markMaterialized: (bytes = row.requestedBytes) => {
+          if (released || !Number.isFinite(bytes) || bytes < 0) return
+          if (row.materializedBytes >= Math.min(bytes, row.requestedBytes)) return
+          row.materializedBytes = Math.min(
+            row.requestedBytes,
+            Math.max(row.materializedBytes, bytes)
+          )
+          this.refreshMemoryPressure()
+        },
         release: () => {
           if (released) return
           released = true
           this.active.delete(row.id)
           this.note(row, 'released', 'Reservation released; physical cleanup remains runtime-owned')
+          this.refreshMemoryPressure()
           this.drain()
         }
       })
@@ -243,6 +321,7 @@ export class InferenceGovernor {
     return {
       version: 1,
       platform: process.platform,
+      contextPressure: { ...this.refreshMemoryPressure(), ledger: this.optional?.ledger() },
       memory: {
         ...this.memory(),
         reservationSource:
@@ -282,3 +361,7 @@ const governor = new InferenceGovernor()
 export const acquireInferenceLease = (options: InferenceOptions) => governor.acquire(options)
 export const inferenceGovernorStatus = () => governor.status()
 export const updateInferenceDevices = (devices: InferenceDevice[]) => governor.setDevices(devices)
+
+export const registerOptionalContextMemory = (owner: OptionalMemoryOwner) =>
+  governor.registerOptionalMemory(owner)
+export const refreshContextMemoryPressure = () => governor.refreshMemoryPressure()

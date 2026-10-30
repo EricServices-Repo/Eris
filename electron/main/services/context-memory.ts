@@ -1,4 +1,5 @@
 import { HydrationScheduler, type HydrationPriority } from './context-hydration-scheduler'
+import { registerOptionalContextMemory, refreshContextMemoryPressure } from './inference-governor'
 import { SharedHydration } from './context-hydration'
 import { createHash } from 'crypto'
 import { userDataRoot, userChatsDir, workspaceChatsDir } from './paths'
@@ -18,7 +19,17 @@ import {
 } from '../../../src/shared/context-memory'
 const pending = new Map<string, SharedHydration>()
 const scheduler = new HydrationScheduler()
-const idleSweep = setInterval(() => contextMemoryStore.sweep(), 60000)
+registerOptionalContextMemory({
+  ledger: () => contextMemoryStore.ledger,
+  limit: (bytes, pressure) => {
+    contextMemoryStore.setPressureLimit(bytes)
+    if (pressure === 'critical') for (const load of pending.values()) load.controller.abort()
+  }
+})
+const idleSweep = setInterval(() => {
+  refreshContextMemoryPressure()
+  contextMemoryStore.sweep()
+}, 5000)
 idleSweep.unref()
 export const memoryKey = (root: string | null, thread: string) =>
   createHash('sha256')
@@ -63,6 +74,7 @@ export async function warmConversationMemory(
   const key = memoryKey(root, id)
   contextMemoryStore.configureNamespace(key, policy)
   if (!policy.enabled || !contextMemoryStore.config.enabled) return
+  if (refreshContextMemoryPressure().pressure === 'critical') return
   signal?.throwIfAborted()
   const existing = pending.get(key)
   if (existing) {
@@ -112,6 +124,7 @@ export async function warmConversationMemory(
         pages < Math.ceil(Math.min(config.maxMessages, policy.maxMessages) / 500) + 1;
         pages++
       ) {
+        refreshContextMemoryPressure()
         loadSignal.throwIfAborted()
         if (token !== contextMemoryStore.token(key)) return
         // Charge the next transfer before asking for it; what fits so far is still useful.
@@ -223,6 +236,12 @@ export async function conversationContext(
 ) {
   const policy = ContextMemorySettingsSchema.parse(settings.agent.contextMemory ?? {})
   options.signal?.throwIfAborted()
+  if (policy.enabled && refreshContextMemoryPressure().pressure === 'critical')
+    return contextMemoryStore.unavailable(
+      memoryKey(root, id),
+      'Host memory is critically constrained; optional RAM recall is paused. Recent canonical messages remain available.',
+      policy.shareWithRemoteModels
+    )
   if (options.projectRoot !== undefined) rememberTaskScope(memoryKey(root, id), options.projectRoot)
   const deadline = new AbortController()
   const timer = setTimeout(() => deadline.abort(), policy.foregroundDeadlineMs)
