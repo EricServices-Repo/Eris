@@ -98,7 +98,7 @@ window.runPerformance = async (baseline) => {
   scroll.dispatchEvent(new Event('scroll'))
   await tick()
   await tick()
-  // Rows mount a frame or more after a scroll; a loaded runner can take longer than two.
+  // Rows mount a frame or more after a scroll.
   const firstVisible = () =>
     [...rows()].find(
       (node) => node.getBoundingClientRect().bottom > scroll.getBoundingClientRect().top + 5
@@ -114,6 +114,8 @@ window.runPerformance = async (baseline) => {
         ...previous
       ])
     )
+    // A hidden window may never deliver the native scroll from the list's own adjustment.
+    scroll.dispatchEvent(new Event('scroll'))
     await tick()
     await tick()
     await until(
