@@ -116,7 +116,13 @@ export function looksLikeTaskComplete(text: string): boolean {
   ) {
     return false
   }
-  if ((t.match(/^\s*\d+\.\s+/gm) || []).length >= 3) return false
+  // Completed work is often summarized as a numbered list. Reject a plan,
+  // not the list formatting itself; observed mutations/verification gate success.
+  if (
+    (t.match(/^\s*\d+\.\s+/gm) || []).length >= 3 &&
+    !/\b(done|completed|finished|created|updated|implemented)\b/i.test(t)
+  )
+    return false
   // Require an actual completion signal — short prose alone used to match and
   // let review runs stop on "please provide the project structure?"
   return /\b(done|complete|completed|finished|created|updated|ready|all set|implemented|here'?s what|working|findings|reviewed|looks good|issues?:)\b/i.test(
@@ -179,6 +185,13 @@ export function pathNeedsProjectVerify(path: string | undefined | null): boolean
   return true
 }
 
+/** A promise to inspect files is progress narration, not the requested answer. */
+export function isUnfinishedWorkNarration(text: string): boolean {
+  return /(?:^|\n)\s*(?:I (?:still )?need to (?:read|inspect|check|review|look|gather|examine)|I(?: will| shall|'ll|’ll) (?:now )?(?:read|inspect|check|review|look|gather|examine)|Let me (?:now )?(?:read|inspect|check|review|look|gather|examine))\b/i.test(
+    stripToolBlocks(text).trim()
+  )
+}
+
 /** Workspace task still needs tool work — keep the loop alive. */
 export function shouldKeepWorking(opts: {
   needsTools: boolean
@@ -208,6 +221,7 @@ export function shouldKeepWorking(opts: {
     if (parseToolCalls(assistantText).length > 0) return true
     const note = stripToolBlocks(assistantText).trim()
     const readSource = actions.some((action) => /^Read (?!\.eris\/)/.test(action))
+    if (isUnfinishedWorkNarration(note)) return true
     if (note.length >= 40 && (readSource || inspectRounds >= 1)) return false
     return true
   }

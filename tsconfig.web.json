@@ -19,7 +19,7 @@
   },
   "include": [
     "src/**/*", "checks/capabilities-renderer.tsx",
-    "checks/client-renderer.tsx",
+    "checks/client-renderer.tsx", "checks/ux-renderer.tsx",
     "checks/performance-renderer.tsx", "checks/accessibility-renderer.tsx"
   ]
 }

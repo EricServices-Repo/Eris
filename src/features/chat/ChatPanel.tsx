@@ -1,3 +1,4 @@
+import { PanelActions } from '@/components/PanelActions'
 import { ContextMemoryInspector } from './ContextMemoryInspector'
 import { useRequestFocus } from '@/hooks/useDialogFocus'
 import { ChatTaskTimeline } from './TaskTimeline'
@@ -54,12 +55,16 @@ export const HistoricalMessages = memo(function HistoricalMessages({
   messages,
   onOpenPath,
   onRerouteLast,
-  streaming
+  streaming,
+  searchOpen = false,
+  onCloseSearch
 }: {
   messages: ChatMessage[]
   onOpenPath: (path: string) => void
   onRerouteLast?: (route: 'tools' | 'answer') => void
   streaming: boolean
+  searchOpen?: boolean
+  onCloseSearch?: () => void
 }) {
   const visible = useMemo(() => messages.filter((message) => message.role !== 'system'), [messages])
   const [query, setQuery] = useState(''),
@@ -113,41 +118,64 @@ export const HistoricalMessages = memo(function HistoricalMessages({
   }, [visible])
   return (
     <>
-      <div className="chat-history-search" role="search" aria-label="Search loaded conversation">
-        <label>
-          Search loaded messages{' '}
-          <input
-            data-history-search
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                navigate(e.shiftKey ? -1 : 1)
-              }
-            }}
-          />
-        </label>
-        <button type="button" className="btn" disabled={!hits.length} onClick={() => navigate(-1)}>
-          Previous
-        </button>
-        <button
-          type="button"
-          className="btn"
-          data-history-next
-          disabled={!hits.length}
-          onClick={() => navigate(1)}
-        >
-          Next
-        </button>
-        <span role="status">
-          {searching
-            ? 'Searching…'
-            : query
-              ? `${hits.length} matches${match >= 0 ? ` · ${match + 1}` : ''}`
-              : 'All loaded history is searchable'}
-        </span>
-      </div>
+      {searchOpen && (
+        <div className="chat-history-search" role="search" aria-label="Search loaded conversation">
+          <label>
+            <span className="sr-only">Search loaded messages</span>
+            <input
+              autoFocus
+              placeholder="Find in conversation…"
+              data-history-search
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  onCloseSearch?.()
+                }
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  navigate(e.shiftKey ? -1 : 1)
+                }
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            className="btn"
+            disabled={!hits.length}
+            onClick={() => navigate(-1)}
+          >
+            Previous
+          </button>
+          <button
+            type="button"
+            className="btn"
+            data-history-next
+            disabled={!hits.length}
+            onClick={() => navigate(1)}
+          >
+            Next
+          </button>
+          <span role="status">
+            {searching
+              ? 'Searching…'
+              : query
+                ? `${hits.length} matches${match >= 0 ? ` · ${match + 1}` : ''}`
+                : 'Loaded history'}
+          </span>
+          {onCloseSearch && (
+            <button
+              type="button"
+              className="btn"
+              aria-label="Close conversation search"
+              onClick={onCloseSearch}
+            >
+              ×
+            </button>
+          )}
+        </div>
+      )}
       <VirtualList
         preserveInteraction
         semanticLabel="Conversation messages"
@@ -157,17 +185,7 @@ export const HistoricalMessages = memo(function HistoricalMessages({
         renderItem={(message, index) => (
           <div className={`chat-message-row ${message.role}`} style={{ paddingBottom: 12 }}>
             <div className={`msg ${message.role}`}>
-              <span className="role">
-                {message.role}
-                {message.agentName ? ` · ${message.agentName}` : ''}
-                {message.model ? ` · ${message.model}` : ''}
-              </span>
-              {message.role === 'assistant' && message.thinking && (
-                <ThinkingBlock thinking={message.thinking} defaultOpen={false} />
-              )}
-              {message.role === 'assistant' && message.delegations?.length ? (
-                <DelegationCards items={message.delegations} />
-              ) : null}
+              <span className="role">{message.role}</span>
               {message.role === 'assistant' ? (
                 message.content && (
                   <div className="msg-summary">
@@ -180,6 +198,20 @@ export const HistoricalMessages = memo(function HistoricalMessages({
               {message.assets?.map((asset) => (
                 <ImageMessage key={asset.id} asset={asset} />
               ))}
+              {message.role === 'assistant' &&
+              (message.thinking ||
+                message.model ||
+                message.agentName ||
+                message.delegations?.length) ? (
+                <details className="message-details">
+                  <summary>Run details</summary>
+                  <p className="message-model">
+                    {[message.agentName, message.model].filter(Boolean).join(' · ')}
+                  </p>
+                  {message.thinking && <ThinkingBlock thinking={message.thinking} defaultOpen />}
+                  {!!message.delegations?.length && <DelegationCards items={message.delegations} />}
+                </details>
+              ) : null}
               {message.role === 'assistant' && (
                 <AnswerFeedback message={message} question={questions.get(message.id) || ''} />
               )}
@@ -187,8 +219,8 @@ export const HistoricalMessages = memo(function HistoricalMessages({
                 index === visible.length - 1 &&
                 !streaming &&
                 onRerouteLast && (
-                  <div className="msg-reroute">
-                    <span>Wrong route?</span>
+                  <details className="msg-reroute message-details">
+                    <summary>Adjust routing</summary>
                     <button
                       type="button"
                       className="btn btn-link"
@@ -203,7 +235,7 @@ export const HistoricalMessages = memo(function HistoricalMessages({
                     >
                       Just a question
                     </button>
-                  </div>
+                  </details>
                 )}
             </div>
           </div>
@@ -452,6 +484,13 @@ export function ChatPanel({
   liveSessionSteps = []
 }: Props) {
   const { thinkingBuffer, answerBuffer, agentStatus, toolActivity } = useStore(chatStream)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const searchButton = useRef<HTMLButtonElement>(null)
+  const closeSearch = () => {
+    setSearchOpen(false)
+    searchButton.current?.focus()
+  }
+  useEffect(() => setSearchOpen(false), [activeThread?.id])
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
@@ -728,33 +767,66 @@ export function ChatPanel({
   }
 
   return (
-    <div className="agent-center">
+    <div
+      className="agent-center"
+      onKeyDown={(event) => {
+        if (
+          (event.metaKey || event.ctrlKey) &&
+          event.key.toLowerCase() === 'f' &&
+          activeThread?.messages.length
+        ) {
+          event.preventDefault()
+          setSearchOpen(true)
+        }
+      }}
+    >
       <div className="panel-header agent-header">
-        <span>{activeThread?.title || 'Agent'}</span>
-        {activeThread && (
-          <ContextMemoryInspector key={activeThread.id} threadId={activeThread.id} />
-        )}
-        <div className="mode-toggle" role="group" aria-label="Task permissions">
-          <button
-            type="button"
-            className={`mode-btn ${chatMode === 'ask' ? 'active' : ''}`}
-            onClick={() => onChatModeChange('ask')}
-            title="Ask: answer questions without changing workspace files"
+        <span title={activeThread?.title || 'Agent'}>{activeThread?.title || 'Agent'}</span>
+        <div className="chat-header-actions">
+          <select
+            className="chat-mode-select"
+            aria-label="Task permissions"
+            value={chatMode}
+            onChange={(e) => onChatModeChange(e.target.value as ChatMode)}
           >
-            Ask · read only
-          </button>
+            <option value="ask">Ask</option>
+            <option value="agent">Agent</option>
+          </select>
           <button
+            ref={searchButton}
             type="button"
-            className={`mode-btn ${chatMode === 'agent' ? 'active' : ''}`}
-            onClick={() => onChatModeChange('agent')}
-            title="Agent: inspect and change workspace files; command execution may require approval"
+            className="btn btn-ghost chat-find-button"
+            aria-label="Find in conversation"
+            title="Find in conversation"
+            aria-expanded={searchOpen}
+            disabled={!activeThread?.messages.length}
+            onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
           >
-            Agent · can edit
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              aria-hidden="true"
+            >
+              <circle cx="10.5" cy="10.5" r="6.5" />
+              <path d="m16 16 4.5 4.5" />
+            </svg>
           </button>
+          <PanelActions label="Chat options">
+            <button className="btn" onClick={onNewChat}>
+              New chat
+            </button>
+            {activeThread && (
+              <ContextMemoryInspector key={activeThread.id} threadId={activeThread.id} />
+            )}
+            <p className="subtitle">
+              Ask reads your project. Agent can edit files and request permission to run commands.
+            </p>
+          </PanelActions>
         </div>
-        <button className="btn" onClick={onNewChat} title="New chat">
-          New chat
-        </button>
       </div>
 
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
@@ -928,6 +1000,9 @@ export function ChatPanel({
               {historyError && <div role="alert">{historyError}</div>}
               <ChatTaskTimeline threadId={activeThread?.id ?? null} />
               <HistoricalMessages
+                key={activeThread?.id ?? 'empty'}
+                searchOpen={searchOpen}
+                onCloseSearch={closeSearch}
                 messages={activeThread?.messages ?? EMPTY_MESSAGES}
                 onOpenPath={onOpenPath}
                 onRerouteLast={onRerouteLast}
