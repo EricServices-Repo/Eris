@@ -9,6 +9,7 @@ import {
   streamBuiltinChat
 } from './builtin-model'
 import { withEligibleMemory } from './memory-dispatch'
+import { reportContextDispatch } from './context-dispatch'
 import { isLocalRef, resolveExactLocalRef } from './local-model'
 import {
   streamOpenAICompatible,
@@ -63,6 +64,7 @@ export async function* streamModelChat(
   const request = { ...options, messages }
   const scope = activeDiagnosticsScope()
   if (scope) {
+    reportContextDispatch({ compiled: options.messages, outbound: messages, ...request })
     yield* scope.adapter.stream({ ...request, purpose: request.purpose ?? 'agent' })
     return
   }
@@ -99,10 +101,10 @@ export async function* streamProviderChat(
     capabilities.outputCap = Math.min(capabilities.outputCap, options.maxOutputTokens)
   }
   const protocol = capabilities.tools
-  const inputMessages = options.messages.map((message) => ({
-    ...message,
-    content: message.content ?? ''
-  })) as ModelMessage[]
+  const inputMessages = options.messages.map((message) => {
+    const { contextBundle: _accounting, ...wire } = message as ModelMessage
+    return { ...wire, content: wire.content ?? '' }
+  }) as ModelMessage[]
   if (protocol === 'text-tools' && options.tools?.length)
     inputMessages.splice(1, 0, {
       role: 'system',
@@ -120,6 +122,12 @@ export async function* streamProviderChat(
     protocol,
     contextWindow: capabilities.contextCeiling,
     outputReserve: capabilities.outputReserve
+  })
+  reportContextDispatch({
+    compiled: options.messages,
+    outbound: compiled,
+    adapted: true,
+    ...options
   })
   const inputEstimate =
     estimateMessagesTokens(

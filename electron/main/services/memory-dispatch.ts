@@ -5,6 +5,7 @@ import { getResolvedSettings } from './settings'
 import { appendTaskEvent } from './task-ledger'
 import {
   ContextMemorySettingsSchema,
+  memoryItemMarker,
   type MemoryPrompt,
   type MemoryPromptItem
 } from '../../../src/shared/context-memory'
@@ -83,7 +84,7 @@ function settle(lease: EvidenceLease): number {
 
 /** Removes a rendered item, including one the compiler cut off at its input budget. */
 function withoutItem(content: string, line: string) {
-  const marker = line.slice(0, line.indexOf('] ') + 2)
+  const marker = memoryItemMarker(line)
   for (let at = content.indexOf(marker); at >= 0; at = content.indexOf(marker, at)) {
     let end = marker.length
     while (end < line.length && content[at + end] === line[end]) end++

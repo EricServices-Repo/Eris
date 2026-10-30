@@ -80,13 +80,65 @@ export type MemoryPromptItem = {
   id: string
   sourceId: string
   kind: MemoryFact['kind']
+  ordinal: number
+  /** Unicode-unit position of the excerpt in its source message. Absent for pins and receipts. */
+  span?: { offset: number; length: number }
   text: string
   line: string
+}
+/** The identifying prefix of a rendered item; it is unique to the item's source and kind. */
+export const memoryItemMarker = (line: string) => line.slice(0, line.indexOf('] ') + 2)
+export type ContextItemStatus = 'sent' | 'truncated' | 'omitted'
+export type ContextItemReason =
+  | 'fits-budget'
+  | 'input-budget'
+  | 'duplicate-evidence'
+  | 'destination-policy'
+  | 'provider-budget'
+  | 'revoked-at-dispatch'
+/** Digests and positions only: this record is logged, so it never carries source text. */
+export type ContextBundleItem = {
+  id: string
+  sourceDigest: string
+  kind: MemoryFact['kind']
+  ordinal: number
+  span?: { offset: number; length: number }
+  digest: string
+  chars: number
+  sentChars: number
+  status: ContextItemStatus
+  reason: ContextItemReason
+}
+export type ContextBundleCounts = Record<ContextItemStatus, number> & { selected: number }
+export type ContextBundle = {
+  version: 1
+  taskId: string
+  /** Memory namespace, so a later inspection can find its conversation's last request. */
+  namespace?: string
+  tokenizer: { method: 'characters'; tokenizer: 'none'; charsPerToken: 3 }
+  counts: ContextBundleCounts
+  items: ContextBundleItem[]
+}
+/** What one model request actually carried, measured after provider adaptation. */
+export type ContextDispatch = {
+  version: 1
+  taskId: string
+  model: string
+  destination: 'local' | 'remote'
+  /** False when a diagnostics adapter received the request before provider adaptation. */
+  adapted: boolean
+  requestDigest: string
+  counts: ContextBundleCounts
+  /** Present on a run's first dispatch and whenever an item's status changes. */
+  items?: ContextBundleItem[]
+  at: number
 }
 export type MemoryPrompt = {
   text: string
   manifest: MemoryManifest
   allowRemote: boolean
+  /** Namespace this prompt was selected from. */
+  namespace?: string
   items?: MemoryPromptItem[]
   /** Revocation state at selection; dispatch compares it before sending these items. */
   evidenceToken?: string
@@ -100,6 +152,8 @@ export type MemoryInspection = {
   facts: MemoryFact[]
   controls: MemoryControls
   processLogicalBytes: number
+  /** The latest actual model request for this conversation, when one ran this session. */
+  lastDispatch?: ContextDispatch
 }
 export type ContextHeader = { revision: number; messageCount: number; sourceEpoch: string }
 export type ContextPage = {

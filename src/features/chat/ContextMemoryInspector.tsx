@@ -95,6 +95,14 @@ export function ContextMemoryInspector({
                 revision {snapshot.manifest.revision}
               </p>
             )}
+            {snapshot?.lastDispatch && (
+              <p>
+                Last request to {snapshot.lastDispatch.model} ({snapshot.lastDispatch.destination}):{' '}
+                {snapshot.lastDispatch.counts.sent} of {snapshot.lastDispatch.counts.selected}{' '}
+                recalled items sent in full, {snapshot.lastDispatch.counts.truncated} shortened,{' '}
+                {snapshot.lastDispatch.counts.omitted} left out.
+              </p>
+            )}
             <form
               onSubmit={(e) => {
                 e.preventDefault()

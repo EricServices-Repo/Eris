@@ -3,6 +3,13 @@ import {
   interpretationOf,
   type TaskContract
 } from '../../../../src/shared/task-contract'
+import type {
+  ContextBundle,
+  ContextBundleItem,
+  MemoryPrompt,
+  MemoryPromptItem
+} from '../../../../src/shared/context-memory'
+import { isNativeGgufRef } from '../builtin-model'
 import type { AgentChatMessage } from './types'
 import type { ToolCallProtocol } from '../tool-protocol'
 import { createHash } from 'crypto'
@@ -162,10 +169,71 @@ export interface ContextBudget {
 
 export const SYSTEM_CONTEXT_SHARE = 0.55
 
+const hash = (value: string) => createHash('sha256').update(value).digest('hex')
+
+/** Recall a destination may receive. Blocked items stay listed so omissions have a reason. */
+export function memoryForDestination(prompt: MemoryPrompt | undefined, model: string) {
+  const allowed = isNativeGgufRef(model) || Boolean(prompt?.allowRemote)
+  return {
+    memory: allowed ? prompt?.text : undefined,
+    memoryItems: prompt?.items ?? [],
+    memoryBlocked: !allowed,
+    memoryNamespace: prompt?.namespace
+  }
+}
+
+export function countContextItems(items: readonly ContextBundleItem[]) {
+  const counts = { selected: items.length, sent: 0, truncated: 0, omitted: 0 }
+  for (const item of items) counts[item.status]++
+  return counts
+}
+
+/** Place each selected item against the characters of the memory block that survived. */
+function bundleItems(input: {
+  items: readonly MemoryPromptItem[]
+  memory: string
+  includedChars: number
+  blocked: boolean
+  duplicate: boolean
+}): ContextBundleItem[] {
+  let cursor = 0
+  return input.items.map((item) => {
+    const start = input.memory.indexOf(item.line, cursor)
+    const end = start + item.line.length
+    if (start >= 0) cursor = end
+    const sentChars =
+      input.blocked || input.duplicate || start < 0
+        ? 0
+        : Math.min(item.line.length, Math.max(0, input.includedChars - start))
+    return {
+      id: item.id,
+      sourceDigest: hash(item.sourceId),
+      kind: item.kind,
+      ordinal: item.ordinal,
+      ...(item.span ? { span: item.span } : {}),
+      digest: hash(item.line),
+      chars: item.line.length,
+      sentChars,
+      status: sentChars === item.line.length ? 'sent' : sentChars > 0 ? 'truncated' : 'omitted',
+      reason: input.blocked
+        ? 'destination-policy'
+        : input.duplicate
+          ? 'duplicate-evidence'
+          : sentChars === item.line.length
+            ? 'fits-budget'
+            : 'input-budget'
+    }
+  })
+}
+
 export function compileTaskContext(input: {
   task: TaskContract
   guidance: string
   memory?: string
+  memoryItems?: readonly MemoryPromptItem[]
+  /** Items were selected but this destination may not receive them. */
+  memoryBlocked?: boolean
+  memoryNamespace?: string
   project: string
   retrieval: string
   maxInputTokens: number
@@ -176,6 +244,7 @@ export function compileTaskContext(input: {
   message: AgentChatMessage
   blocks: ContextManifestBlock[]
   budget: ContextBudget
+  bundle: ContextBundle
 } {
   const taskText = JSON.stringify(modelFacingTask(input.task))
   const protocol = taskProtocol(input.task, input.toolsAvailable !== false, input.toolProtocol)
@@ -276,9 +345,26 @@ export function compileTaskContext(input: {
     })
   }
   const content = chosen.map((block) => block.content).join('\n\n')
+  const memoryBlock = manifest.find((block) => block.kind === 'memory')
+  const items = bundleItems({
+    items: input.memoryItems ?? [],
+    memory: input.memory ?? '',
+    includedChars: memoryBlock?.chars ?? 0,
+    blocked: Boolean(input.memoryBlocked),
+    duplicate: duplicateBlocks > 0 && !memoryBlock?.chars
+  })
+  const bundle: ContextBundle = {
+    version: 1,
+    taskId: input.task.taskId,
+    ...(input.memoryNamespace ? { namespace: input.memoryNamespace } : {}),
+    tokenizer: { method: 'characters', tokenizer: 'none', charsPerToken: 3 },
+    counts: countContextItems(items),
+    items
+  }
   return {
-    message: { role: 'system', content },
+    message: { role: 'system', content, contextBundle: bundle },
     blocks: manifest,
+    bundle,
     budget: {
       method: 'characters',
       tokenizer: 'none',

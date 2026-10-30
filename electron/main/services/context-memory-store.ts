@@ -669,10 +669,20 @@ export class ContextMemoryStore {
       if (room < minimumChars) continue
       const excerpt = c.fact.text.slice(0, Math.min(1200, room))
       text += prefix + excerpt + '\n'
+      const within = c.message?.content.indexOf(excerpt) ?? -1
       items.push({
         id: c.fact.id,
         sourceId: c.fact.sourceId,
         kind: c.fact.kind,
+        ordinal: c.fact.ordinal,
+        ...(within >= 0
+          ? {
+              span: {
+                offset: (c.message?.contextContentOffset ?? 0) + within,
+                length: excerpt.length
+              }
+            }
+          : {}),
         text: excerpt,
         line: prefix + excerpt + '\n'
       })
@@ -731,7 +741,14 @@ export class ContextMemoryStore {
         .filter(Boolean)
         .join(' ')
     return {
-      prompt: { text, manifest, allowRemote: policy.shareWithRemoteModels, items, evidenceToken },
+      prompt: {
+        text,
+        manifest,
+        allowRemote: policy.shareWithRemoteModels,
+        namespace: key,
+        items,
+        evidenceToken
+      },
       inspection: { manifest, facts: selected, controls, processLogicalBytes: this.logicalBytes }
     }
   }
