@@ -1,3 +1,4 @@
+import { filterEvidenceMemory } from './context-evidence'
 import { HydrationScheduler, type HydrationPriority } from './context-hydration-scheduler'
 import { SharedHydration } from './context-hydration'
 import { createHash } from 'crypto'
@@ -234,11 +235,22 @@ export async function conversationContext(
     await warmConversationMemory(root, id, settings, signal)
     if (contextMemoryStore.config.enabled && !contextMemoryStore.has(memoryKey(root, id)))
       await warmConversationMemory(root, id, settings, signal)
-    return await contextMemoryStore.select(memoryKey(root, id), query, {
+    const result = await contextMemoryStore.select(memoryKey(root, id), query, {
       ...options,
       signal,
       policy
     })
+    const prompt = await filterEvidenceMemory(root, result.prompt, signal)
+    return {
+      prompt,
+      inspection: {
+        ...result.inspection,
+        manifest: prompt.manifest,
+        facts: result.inspection.facts.filter((fact) =>
+          prompt.manifest.selectedIds.includes(fact.id)
+        )
+      }
+    }
   } catch (error) {
     options.signal?.throwIfAborted() // User cancellation is not a recall fallback.
     if (!deadline.signal.aborted) throw error

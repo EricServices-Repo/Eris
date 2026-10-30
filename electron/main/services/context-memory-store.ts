@@ -769,7 +769,8 @@ export class ContextMemoryStore {
             status: 'observed',
             projectRoot: r.projectRoot
           },
-          score: score + 4
+          score: score + 4,
+          message: m
         })
       }
     }
@@ -816,6 +817,7 @@ export class ContextMemoryStore {
       text += prefix + excerpt + '\n'
       const within = c.message?.content.indexOf(excerpt) ?? -1
       items.push({
+        dependencies: c.message?.contextResult?.dependencies,
         id: c.fact.id,
         sourceId: c.fact.sourceId,
         kind: c.fact.kind,

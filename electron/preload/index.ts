@@ -125,6 +125,8 @@ const api: IdeApi = {
   getWorkspaceTrust: () => ipcRenderer.invoke('workspace:trustStatus'),
   setWorkspaceTrust: (trusted) => ipcRenderer.invoke('workspace:setTrust', trusted),
   listChats: () => ipcRenderer.invoke('chats:list'),
+  notifyDocumentChange: (path, dirty) =>
+    ipcRenderer.send('contextMemory:documentChanged', path, dirty),
   inspectContextMemory: (input) => ipcRenderer.invoke('contextMemory:inspect', input),
   getChat: (id, page) => ipcRenderer.invoke('chats:get', id, page),
   appendChatMessage: (id, message, model, workspacePath) =>

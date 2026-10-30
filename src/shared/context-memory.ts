@@ -79,6 +79,7 @@ export type MemoryManifest = {
 }
 /** One recalled unit exactly as rendered into a prompt, so it can be traced or removed later. */
 export type MemoryPromptItem = {
+  dependencies?: import('./context-evidence').ContextEvidence
   id: string
   sourceId: string
   kind: MemoryFact['kind']

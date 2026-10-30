@@ -346,6 +346,7 @@ export interface IdeApi {
   getWorkspaceTrust: () => Promise<WorkspaceTrustStatus>
   setWorkspaceTrust: (trusted: boolean) => Promise<boolean>
   listChats: () => Promise<ChatThread[]>
+  notifyDocumentChange: (path: string, dirty: boolean) => void
   inspectContextMemory: (input: {
     workspacePath?: string | null
     snapshotHandle?: string

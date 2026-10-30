@@ -315,6 +315,7 @@ export interface ChatMessage {
     terminal: string
     projectRoot: string | null
     changedFiles: string[]
+    dependencies?: import('./context-evidence').ContextEvidence
   }
   /** Specialists Composer handed this turn to. */
   delegations?: ChatDelegation[]
