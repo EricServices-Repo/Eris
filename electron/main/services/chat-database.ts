@@ -65,31 +65,6 @@ export class ChatDatabase {
       throw error
     }
   }
-  private sourceEpoch(id: string): string {
-    const known = this.db
-      .prepare('SELECT epoch FROM context_source_epochs WHERE threadId=?')
-      .get(id)
-    if (known) return String(known.epoch)
-    this.db
-      .prepare(
-        'INSERT OR IGNORE INTO context_source_epochs(threadId,epoch) SELECT id,lower(hex(randomblob(16))) FROM conversations WHERE id=?'
-      )
-      .run(id)
-    const row = this.db.prepare('SELECT epoch FROM context_source_epochs WHERE threadId=?').get(id)
-    if (!row) throw new Error('Chat not found')
-    return String(row.epoch)
-  }
-  contextHeader(id: string): ContextHeader | null {
-    const header = this.db
-      .prepare('SELECT contextRevision,messageCount FROM conversations WHERE id=?')
-      .get(id)
-    if (!header) return null
-    return {
-      revision: Number(header.contextRevision),
-      messageCount: Number(header.messageCount),
-      sourceEpoch: this.sourceEpoch(id)
-    }
-  }
   close(): void {
     this.db.close()
   }
@@ -128,6 +103,31 @@ export class ChatDatabase {
       )
     this.db.prepare('INSERT OR IGNORE INTO migrations(name) VALUES (?)').run('legacy-json')
   }
+  private sourceEpoch(id: string): string {
+    const known = this.db
+      .prepare('SELECT epoch FROM context_source_epochs WHERE threadId=?')
+      .get(id)
+    if (known) return String(known.epoch)
+    this.db
+      .prepare(
+        'INSERT OR IGNORE INTO context_source_epochs(threadId,epoch) SELECT id,lower(hex(randomblob(16))) FROM conversations WHERE id=?'
+      )
+      .run(id)
+    const row = this.db.prepare('SELECT epoch FROM context_source_epochs WHERE threadId=?').get(id)
+    if (!row) throw new Error('Chat not found')
+    return String(row.epoch)
+  }
+  contextHeader(id: string): ContextHeader | null {
+    const header = this.db
+      .prepare('SELECT contextRevision,messageCount FROM conversations WHERE id=?')
+      .get(id)
+    if (!header) return null
+    return {
+      revision: Number(header.contextRevision),
+      messageCount: Number(header.messageCount),
+      sourceEpoch: this.sourceEpoch(id)
+    }
+  }
   list(): ChatThread[] {
     return (
       this.db.prepare('SELECT * FROM conversations ORDER BY updatedAt DESC').all() as Header[]
@@ -137,6 +137,7 @@ export class ChatDatabase {
     const header = this.db.prepare('SELECT * FROM conversations WHERE id = ?').get(id) as
       Header | undefined
     if (!header) return null
+    Object.assign(header, { contextEpoch: this.sourceEpoch(id) })
     const end = Math.max(
       0,
       Math.min(header.messageCount, Math.floor(page?.before ?? header.messageCount))
@@ -153,7 +154,6 @@ export class ChatDatabase {
       .all(id, start, end)
     return {
       ...header,
-      contextEpoch: this.sourceEpoch(id),
       messages: rows.map((row) => JSON.parse(String(row.body))),
       messageOffset: start
     }
