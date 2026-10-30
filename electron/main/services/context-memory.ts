@@ -236,6 +236,12 @@ export async function conversationContext(
 ) {
   const policy = ContextMemorySettingsSchema.parse(settings.agent.contextMemory ?? {})
   options.signal?.throwIfAborted()
+  if (policy.enabled && refreshContextMemoryPressure().pressure === 'critical')
+    return contextMemoryStore.unavailable(
+      memoryKey(root, id),
+      'Host memory is critically constrained; optional RAM recall is paused. Recent canonical messages remain available.',
+      policy.shareWithRemoteModels
+    )
   if (options.projectRoot !== undefined) rememberTaskScope(memoryKey(root, id), options.projectRoot)
   const deadline = new AbortController()
   const timer = setTimeout(() => deadline.abort(), policy.foregroundDeadlineMs)
