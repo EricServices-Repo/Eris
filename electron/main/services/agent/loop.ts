@@ -2422,10 +2422,11 @@ async function* runAgentInternal(options: {
         }
         const partial = unresolvedDelegationNote()
         if (prose.length >= 40 && !isToolLogReply(prose)) {
-          workflow.complete()
-          yield { type: 'status', text: partial ? 'Done · partial specialist results' : 'Done' }
-          yield { type: 'answer', text: prose, replace: true }
-          if (partial) yield { type: 'answer', text: `\n\n${partial}` }
+          yield* postFinalAnswer(prose)
+          if (partial) {
+            yield { type: 'status', text: 'Done · partial specialist results' }
+            yield { type: 'answer', text: `\n\n${partial}` }
+          }
           return
         }
         yield* finishChatAnswer(assistantText)

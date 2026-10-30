@@ -493,6 +493,27 @@ describe('chat agent complex smoke test', () => {
           .join('\n')
       ).toContain('MAX_RETRIES')
     })
+    it('answers again when the model asks what it meant after reading sources', async () => {
+      const unsure =
+        "I'm sorry, but I'm not sure what you're asking for. Could you please provide more context or clarify your question?"
+      harness.replies.push(
+        JSON.stringify({ name: 'read_file', path: 'src/retry.ts' }),
+        unsure,
+        FINDINGS
+      )
+      const answered = await review()
+      expectCompleted(answered)
+      expect(lastAnswer(answered)).toContain('jitter')
+      harness.replies.push(
+        JSON.stringify({ name: 'read_file', path: 'src/retry.ts' }),
+        unsure,
+        unsure
+      )
+      const stuck = await review()
+      expect(stuck.some((event) => event.type === 'progress' && event.incomplete === true)).toBe(
+        true
+      )
+    })
     it('marks a synthesis stopped as a repeat loop as partial', async () => {
       const loop = Array.from(
         { length: 12 },

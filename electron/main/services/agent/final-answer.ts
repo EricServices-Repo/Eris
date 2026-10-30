@@ -61,6 +61,11 @@ function protocolProblems(text: string, goal: string, task?: FinalAnswerOptions[
   ).checks.some((check) => PROTOCOL_CHECKS.has(check.id) && check.severity === 'fail')
 }
 
+const evades = (text: string) =>
+  assessDeliverable(text).checks.some(
+    (check) => check.id === 'refusal' || check.id === 'clarification-request'
+  )
+
 /**
  * Last step before an answer is shown. Internal framing is cut off or answered
  * again from the original goal once; a reply that stops mid-code gets one bounded
@@ -82,33 +87,35 @@ export async function finalizeAnswer(
     })
     return { text, incomplete, repaired, rawOutput: answer }
   }
+  const answerAgain = () =>
+    collectModelText({
+      settings: options.settings,
+      model: options.model,
+      temperature: options.temperature,
+      signal: options.signal,
+      getSecret: options.getSecret,
+      messages: [
+        { role: 'system', content: REANSWER_SYSTEM },
+        {
+          role: 'user',
+          content:
+            options.goal.slice(0, AGENT_HANDOFF_CHARS * 2) +
+            (options.evidence
+              ? `\n\nProject sources that were read:\n${options.evidence.slice(0, AGENT_HANDOFF_CHARS * 2)}`
+              : '')
+        }
+      ]
+    }).catch((error: unknown) => {
+      if (options.signal?.aborted) throw error
+      return ''
+    })
   if (protocolProblems(text, options.goal, options.task)) {
     const stripped = stripProtocolTail(text)
     if (stripped && !protocolProblems(stripped, options.goal, options.task)) {
       text = stripped
       repaired.push('protocol-tail-removed')
     } else {
-      const again = await collectModelText({
-        settings: options.settings,
-        model: options.model,
-        temperature: options.temperature,
-        signal: options.signal,
-        getSecret: options.getSecret,
-        messages: [
-          { role: 'system', content: REANSWER_SYSTEM },
-          {
-            role: 'user',
-            content:
-              options.goal.slice(0, AGENT_HANDOFF_CHARS * 2) +
-              (options.evidence
-                ? `\n\nProject sources that were read:\n${options.evidence.slice(0, AGENT_HANDOFF_CHARS * 2)}`
-                : '')
-          }
-        ]
-      }).catch((error: unknown) => {
-        if (options.signal?.aborted) throw error
-        return ''
-      })
+      const again = await answerAgain()
       if (again.trim() && !protocolProblems(again, options.goal, options.task)) {
         text = again.trim()
         repaired.push('re-answered-from-goal')
@@ -119,6 +126,14 @@ export async function finalizeAnswer(
   }
 
   if (options.truncated) return finish(text + TRUNCATED_NOTE, true, repaired)
+  // With sources in hand, asking the user what they meant is not an answer.
+  if (options.evidence && evades(text)) {
+    const again = await answerAgain()
+    if (!again.trim() || evades(again) || protocolProblems(again, options.goal, options.task))
+      return finish(text, true, repaired)
+    text = again.trim()
+    repaired.push('re-answered-evasion')
+  }
   if (assembledSyntax(text, options.goal).state === 'invalid')
     return finish(text + INCOMPLETE_CODE_NOTE, true, repaired)
   if (
