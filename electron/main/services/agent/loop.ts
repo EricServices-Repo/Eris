@@ -1,3 +1,4 @@
+import { createHash } from 'crypto'
 import { activeDiagnosticsScope } from '../model-transport'
 import { pinEvidence, saveEvidenceOwner } from '../evidence-records'
 import { appendToolObservation } from '../model-protocol'
@@ -87,6 +88,7 @@ import {
   looksLikeAsksForWorkspaceInfo,
   looksLikeClarifyingQuestion,
   looksLikeDegenerateLoop,
+  isUnfinishedWorkNarration,
   pathNeedsProjectVerify,
   shouldKeepWorking,
   toolFingerprint
@@ -157,7 +159,7 @@ import { AgentWorkflow } from './workflow'
 const MAX_NO_PROGRESS = 8
 /**
  * Steps a run may take without new evidence or effects. Unlike noProgressStreak,
- * this is never reset by a reroute or recovery nudge: changing roles is not progress.
+ * rerouting is not progress. One explicit recovery window is allowed before blocking.
  */
 const MAX_STEPS_WITHOUT_EVIDENCE = 6
 /** Stop after this many failed verify rounds (mid-loop + final). */
@@ -907,14 +909,26 @@ async function* runAgentInternal(options: {
       workerMessages: workerMessages.map((m) => ({ ...m }))
     }
   }
-  /**
-   * Distinct successful evidence plus every workspace mutation (filesTouched gains an
-   * entry per mutation). Repeated reads, listings and failures add nothing.
-   */
+  // Breadcrumb labels omit ranges and result content; they cannot measure progress.
+  // Retain digests only, not another copy of source text. Failed/skipped calls never count.
+  const successfulObservations = new Set<string>()
+  const noteObservation = (call: ToolCall, result: ToolExecutionResult): void => {
+    if (!result.ok) return
+    successfulObservations.add(
+      createHash('sha256')
+        .update(toolFingerprint([call]))
+        .update('\0')
+        .update(result.path ?? '')
+        .update('\0')
+        .update(result.detail)
+        .digest('hex')
+    )
+  }
   const progressFingerprint = () =>
-    `${new Set(actionLog.filter((entry) => !/^(?:Failed|Stopped|Verify failed)\b/.test(entry))).size}|${filesTouched.length}|${verifyPassedOnce}`
+    `${successfulObservations.size}|${filesTouched.length}|${verifyPassedOnce}`
   let lastProgressKey = ''
   let lastProgressStep = 0
+  let stagnationRecoveries = 0
   /** Invalid calls already rejected in this run, by name and exact arguments. */
   const rejectedCallSignatures = new Set<string>()
   let mutationsSinceVerify = 0
@@ -1025,6 +1039,9 @@ async function* runAgentInternal(options: {
   // worker is the built-in GGUF model, force valid tool-call JSON via a grammar.
   const localConstrainEnabled = options.settings.agent.constrainLocalToolCalls !== false
   let constrainNextToolCall = false
+  // A grammar that yields no visible output must not poison every subsequent retry.
+  let disableRetryGrammar = false
+  let consecutiveEmptyReplies = 0
 
   // Discovery changes the next request's schemas; record what was added and its size.
   // The prompt budget is recomputed from openaiTools before every compaction check.
@@ -1472,7 +1489,7 @@ async function* runAgentInternal(options: {
   })
 
   // Loop until done, abort, or hard budgets.
-  const chatReadBudget = 4
+  const chatReadBudget = reviewOnly ? 12 : 4
   let latestAssistant = ''
   const webSearchNudge = (): AgentChatMessage => ({
     role: 'system',
@@ -1596,7 +1613,8 @@ async function* runAgentInternal(options: {
     yield { type: 'answer', text: answer, replace: true }
   }
   async function* finishChatAnswer(
-    latest: string
+    latest: string,
+    forceSynthesis = false
   ): AsyncGenerator<AgentRunnerEvent, void, unknown> {
     const outcome = workflow.evaluateOutcome({
       workspaceMutated,
@@ -1621,7 +1639,12 @@ async function* runAgentInternal(options: {
       return
     }
     const existing = proseOutsideTools(latest)
-    if (existing.length >= 40 && !isToolLogReply(existing)) {
+    if (
+      !forceSynthesis &&
+      existing.length >= 40 &&
+      !isToolLogReply(existing) &&
+      !isUnfinishedWorkNarration(existing)
+    ) {
       yield* postFinalAnswer(existing)
       return
     }
@@ -1662,6 +1685,23 @@ async function* runAgentInternal(options: {
       ? `Changed ${changed.slice(0, 8).join(', ')}.`
       : searched || answerFromProjectFiles(sourceReads)
     const answer = postedAnswer(reply, fallback) || clean || 'Done.'
+    if (isUnfinishedWorkNarration(answer)) {
+      workflow.block('The model returned a plan to continue instead of findings.')
+      yield {
+        type: 'progress',
+        step,
+        actionLog: [...actionLog],
+        filesTouched: [...filesTouched],
+        incomplete: true
+      }
+      yield { type: 'status', text: 'Blocked · no findings returned' }
+      yield {
+        type: 'answer',
+        text: `I inspected ${[...new Set(sourceReads.map((read) => read.path))].join(', ') || 'the available workspace evidence'}, but the model did not return usable findings. No completed review is being claimed.`,
+        replace: true
+      }
+      return
+    }
     yield* postFinalAnswer(answer)
   }
 
@@ -1691,7 +1731,10 @@ async function* runAgentInternal(options: {
         incomplete: true
       }
       yield { type: 'status', text: 'Incomplete · answer needs review' }
-    } else yield { type: 'status', text: 'Done' }
+    } else {
+      workflow.complete()
+      yield { type: 'status', text: 'Done' }
+    }
     yield { type: 'answer', text: final.text, replace: true }
   }
 
@@ -1725,24 +1768,57 @@ async function* runAgentInternal(options: {
         lastProgressKey = progressKey
         lastProgressStep = step
       } else if (step - lastProgressStep >= MAX_STEPS_WITHOUT_EVIDENCE) {
-        const stopNote = `Stopped after ${step - lastProgressStep} steps without new evidence or changes.`
-        actionLog.push(stopNote)
-        appendTaskEvent(task.taskId, 'no-progress-stop', {
-          steps: step - lastProgressStep,
+        const idleSteps = step - lastProgressStep
+        appendTaskEvent(task.taskId, 'no-progress-detected', {
+          steps: idleSteps,
           rerouteCount,
-          agentId: plan.agentId
+          agentId: plan.agentId,
+          observations: successfulObservations.size,
+          recoveryAttempts: stagnationRecoveries
         })
-        // A read-only task can still answer from what it has (or say what is missing);
-        // more retries of the same failing step would only spend the budget.
-        if (!task.authority.edit && task.authority.execute === 'none') {
-          yield {
-            type: 'thinking',
-            text: '\n\n— No new evidence after several steps; answering from what is known…\n'
-          }
-          yield* finishChatAnswer(latestAssistant)
+        // A review may have command permission; that is not an obligation to edit.
+        const answerTask = ['answer', 'review', 'plan'].includes(task.deliverable)
+        const outcome = workflow.evaluateOutcome({
+          workspaceMutated,
+          codeMutated,
+          verifyPassed: verifyPassedOnce,
+          filesTouched
+        })
+        if (answerTask && outcome.ok) {
+          yield { type: 'status', text: 'Preparing findings from inspected sources…' }
+          yield* finishChatAnswer('', true)
           return
         }
+        if (stagnationRecoveries < 1) {
+          stagnationRecoveries++
+          appendTaskEvent(task.taskId, 'no-progress-recovery', { step, idleSteps })
+          yield { type: 'status', text: 'Recovering the next task step…' }
+          for await (const evt of compactWorkerContext({ force: true, skipLiteSummary: true }))
+            yield evt
+          workerMessages.push({
+            role: 'system',
+            content:
+              `RECOVERY: The last attempts added no new evidence or changes. Do not repeat them. ` +
+              `Continue the original request with one different, permitted, concrete action. ` +
+              `Read the relevant source before editing; correct failed tool arguments rather than repeating them. ` +
+              `Do not ask for files that are available in the workspace. ` +
+              `Preserve existing changes and authority limits.\n` +
+              `Last failures: ${actionLog
+                .filter((entry) => entry.startsWith('Failed'))
+                .slice(-3)
+                .join(' · ')}\n` +
+              `Task: ${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}`
+          })
+          noProgressStreak = 0
+          consecutiveToolErrors = 0
+          constrainNextToolCall = !answerTask
+          // An explicit bounded grace window, not fabricated evidence. Reroutes cannot reset it.
+          lastProgressStep = step
+          continue
+        }
+        const stopNote = 'The agent could not find a valid next action after recovery.'
         workflow.block(stopNote)
+        appendTaskEvent(task.taskId, 'no-progress-stop', { step, idleSteps, stagnationRecoveries })
         yield {
           type: 'progress',
           step,
@@ -1751,10 +1827,19 @@ async function* runAgentInternal(options: {
           incomplete: true
         }
         yield emitSessionStep(stopNote)
-        yield { type: 'status', text: 'Incomplete · no progress' }
+        yield { type: 'status', text: 'Blocked · recovery exhausted' }
+        const changed = [...new Set(filesTouched)]
+        const lastFailure = actionLog.filter((entry) => entry.startsWith('Failed')).at(-1)
         yield {
           type: 'answer',
-          text: `${buildWorkSummary(originalUserGoal, actionLog, latestAssistant)}\n\n${stopNote} This run is incomplete.`,
+          text:
+            `I couldn’t complete this request after trying to recover the agent. ` +
+            (changed.length
+              ? `Changes already made are preserved: ${changed.join(', ')}. `
+              : 'No file changes were made. ') +
+            (lastFailure
+              ? `The last tool failure was: ${lastFailure}`
+              : 'The model did not produce an actionable next step.'),
           replace: true
         }
         return
@@ -1801,6 +1886,7 @@ async function* runAgentInternal(options: {
       const constrainThisTurn =
         constrainNextToolCall &&
         localConstrainEnabled &&
+        !disableRetryGrammar &&
         !reviewOnly &&
         !chatReply &&
         isNativeGgufRef(workerModel)
@@ -1837,6 +1923,73 @@ async function* runAgentInternal(options: {
         nativeFromStream && nativeFromStream.length > 0
           ? nativeFromStream
           : parseToolCalls(assistantText)
+
+      if (!assistantText.trim() && toolCalls.length === 0) {
+        consecutiveEmptyReplies++
+        appendTaskEvent(task.taskId, 'empty-model-response', {
+          step,
+          model: workerModel,
+          constrained: constrainThisTurn,
+          attempt: consecutiveEmptyReplies,
+          codeMutated,
+          filesTouched: filesTouched.length
+        })
+        if (consecutiveEmptyReplies <= 2) {
+          // Never persist empty assistant turns, reroute an identical request, or
+          // keep applying the grammar that may have caused the empty completion.
+          disableRetryGrammar = true
+          constrainNextToolCall = false
+          releaseGgufSession()
+          for (let i = workerMessages.length - 1; i >= 0; i--) {
+            const message = workerMessages[i]!
+            if (
+              message.role === 'assistant' &&
+              !message.content.trim() &&
+              !message.tool_calls?.length
+            )
+              workerMessages.splice(i, 1)
+          }
+          if (consecutiveEmptyReplies === 1)
+            for await (const evt of compactWorkerContext({ force: true, skipLiteSummary: true }))
+              yield evt
+          workerMessages.push({
+            role: 'system',
+            content:
+              `EMPTY_RESPONSE_RECOVERY: Your last response contained no text or tool calls. ` +
+              `The local session has been reset. Answer without a forced JSON grammar. ` +
+              `Do not repeat completed file writes. Inspect existing files if more work is needed. ` +
+              `If the requested implementation is complete, return a factual summary of what was implemented and any unverified parts; ` +
+              `otherwise emit one permitted tool call for the next missing step. ` +
+              `A completion summary will still be checked against observed changes and verification.\n` +
+              `Existing changes: ${[...new Set(filesTouched)].join(', ') || 'none'}\n` +
+              `Original request: ${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}`
+          })
+          yield { type: 'status', text: 'Retrying empty model response with a fresh session…' }
+          continue
+        }
+        const reason = 'The model returned empty responses after two fresh-session retries.'
+        workflow.block(reason)
+        yield {
+          type: 'progress',
+          step,
+          actionLog: [...actionLog],
+          filesTouched: [...filesTouched],
+          incomplete: true
+        }
+        yield emitSessionStep(reason)
+        yield { type: 'status', text: 'Blocked · empty model responses' }
+        yield {
+          type: 'answer',
+          text:
+            reason +
+            (filesTouched.length
+              ? ' Existing changes are preserved, but the implementation has not been confirmed complete.'
+              : ' No file changes were made.'),
+          replace: true
+        }
+        return
+      }
+      consecutiveEmptyReplies = 0
 
       toolCalls.forEach((call, index) => {
         call.id ??= `${task.taskId}:${step}:${index}`
@@ -1903,6 +2056,7 @@ async function* runAgentInternal(options: {
             args: { path: '.', maxDepth: 3 },
             raw: ''
           })
+          noteObservation({ name: 'tree', args: { path: '.', maxDepth: 3 }, raw: '' }, treeResult)
           lastTreeResult = treeResult.detail
           lastInspectResult = treeResult.detail
           inspectRounds++
@@ -2194,7 +2348,6 @@ async function* runAgentInternal(options: {
           if (partial) yield { type: 'answer', text: `\n\n${partial}` }
           return
         }
-        workflow.complete()
         yield* finishChatAnswer(assistantText)
         if (partial) yield { type: 'answer', text: `\n\n${partial}` }
         return
@@ -3794,6 +3947,7 @@ async function* runAgentInternal(options: {
               workflow.invalidateVerification()
             }
           }
+          noteObservation(call, result)
           workflow.noteTool({ ...result, name: call.name })
           yield { type: 'evidence', evidence: gateway.record(`${task.taskId}:${id}`, call, result) }
           if (call.name === 'run' || call.name === 'git_sync' || mcpTool) {
