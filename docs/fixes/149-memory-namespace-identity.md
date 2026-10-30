@@ -15,4 +15,4 @@ Defined behavior:
 
 Known limit: overwriting `chats.sqlite` in place, keeping its inode and birth time, is not detectable this way. It is also unsafe for any open SQLite handle.
 
-Validation: `npx vitest run tests/context-memory-identity.test.ts`. Scripted coverage of re-registration, symlink aliases, asserted metadata, profile separation, diverged copies with matching epochs, handle reopen, WAL replay and stale control edits. Deterministic Node checks only; no packaged, live-model or hardware run. Windows file identity was not exercised.
+Validation: `npx vitest run tests/context-memory-identity.test.ts`. Scripted coverage of re-registration, symlink aliases, asserted metadata, profile separation, diverged copies with matching epochs, handle reopen, WAL replay and stale control edits. Deterministic Node checks only; no packaged, live-model or hardware run. The two tests that replace a database under an open handle are POSIX-only, because Windows refuses to remove an open file, which also means that scenario cannot occur there. Handle-closed replacement runs on Windows in CI.

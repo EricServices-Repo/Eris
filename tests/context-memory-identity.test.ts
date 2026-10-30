@@ -120,6 +120,8 @@ describe('memory namespace registration', () => {
   })
 })
 
+// Windows refuses to remove a database with an open handle, so only POSIX can replace one live.
+const whileOpen = it.skipIf(process.platform === 'win32')
 describe('database incarnation', () => {
   /** Stage a copy that shares thread ID, stored epoch and revision, then swap it in. */
   function replaceWithDivergedCopy(text: string) {
@@ -142,7 +144,7 @@ describe('database incarnation', () => {
     expect(after.prompt.text).toContain('REPLACEMENT-B')
     expect(after.prompt.text).not.toContain('PRIVATE-A')
   })
-  it('reopens a replaced file instead of serving the old handle', () => {
+  whileOpen('reopens a replaced file instead of serving the old handle', () => {
     const first = chatDatabase(chats)
     first.save(thread('Original text'))
     const replacement = join(parent, 'replacement')
@@ -156,7 +158,7 @@ describe('database incarnation', () => {
     expect(reopened).not.toBe(first)
     expect(reopened.get('copied-thread')?.messages[0]?.content).toBe('Replacement text')
   })
-  it('keeps a journal delivered with the replacement database', () => {
+  whileOpen('keeps a journal delivered with the replacement database', () => {
     const first = new ChatDatabase(chats)
     first.save(thread('Original text'))
     const delivered = Buffer.from('delivered journal')
