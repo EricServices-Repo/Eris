@@ -106,9 +106,10 @@ describe('canonical context hydration', () => {
     })
     const warming = warmConversationMemory(null, 't', settings())
     while (!release) await new Promise<void>((r) => setImmediate(r))
+    const cancelled = expect(warming).rejects.toMatchObject({ name: 'AbortError' })
     invalidateConversationMemory(null, 't')
     release()
-    await warming
+    await cancelled
     expect(contextMemoryStore.has(memoryKey(null, 't'))).toBe(false)
   })
   it('retries mixed-revision reads and publishes only one consistent snapshot', async () => {
@@ -254,4 +255,82 @@ it('inspects canonical controls while two background hydrations occupy all slots
     releases.forEach((release) => release())
     await Promise.all(warms)
   }
+})
+
+describe('RAM-CTX-014 independent hydration consumers', () => {
+  it.each([0, 1])(
+    'cancels consumer %i promptly without failing the other',
+    async (cancelledIndex) => {
+      save('shared')
+      let release!: () => void
+      let entered!: () => void
+      const pageEntered = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let pages = 0
+      vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+        if (req.type === 'context-page' && ++pages === 1) {
+          entered()
+          await held
+        }
+        return dispatchContextRequest(req)
+      })
+      const signals = [new AbortController(), new AbortController()]
+      const first = warmConversationMemory(null, 'shared', settings(), signals[0].signal)
+      await pageEntered
+      const second = warmConversationMemory(null, 'shared', settings(), signals[1].signal)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const pending = [first, second]
+      const cancelled = expect(pending[cancelledIndex]).rejects.toMatchObject({
+        name: 'AbortError'
+      })
+      signals[cancelledIndex].abort()
+      await cancelled // must detach before the page is released
+      release()
+      await pending[1 - cancelledIndex]
+      expect(
+        (await conversationContext(null, 'shared', 'checkout', settings())).prompt.text
+      ).toContain('CAD')
+    }
+  )
+  it('last consumer cancellation prevents late installation, then a later load succeeds', async () => {
+    save('cancelled')
+    let release!: () => void
+    vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+      if (req.type === 'context-page' && !release)
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+      return dispatchContextRequest(req)
+    })
+    const controller = new AbortController()
+    const load = warmConversationMemory(null, 'cancelled', settings(), controller.signal)
+    while (!release) await new Promise<void>((resolve) => setImmediate(resolve))
+    const cancelled = expect(load).rejects.toMatchObject({ name: 'AbortError' })
+    controller.abort()
+    await cancelled
+    release()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(contextMemoryStore.has(memoryKey(null, 'cancelled'))).toBe(false)
+    await warmConversationMemory(null, 'cancelled', settings())
+    expect(contextMemoryStore.has(memoryKey(null, 'cancelled'))).toBe(true)
+  })
+  it('shares worker failure and releases admission for a retry', async () => {
+    save('failed')
+    vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+      if (req.type === 'context-page') throw new Error('worker failed')
+      return dispatchContextRequest(req)
+    })
+    const outcomes = await Promise.allSettled([
+      warmConversationMemory(null, 'failed', settings()),
+      warmConversationMemory(null, 'failed', settings())
+    ])
+    expect(outcomes.map((result) => result.status)).toEqual(['rejected', 'rejected'])
+    vi.mocked(workspaceRequest).mockImplementation(dispatchContextRequest)
+    await warmConversationMemory(null, 'failed', settings())
+    expect(contextMemoryStore.has(memoryKey(null, 'failed'))).toBe(true)
+  })
 })
