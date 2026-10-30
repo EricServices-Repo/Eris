@@ -126,6 +126,12 @@ it('makes typed pending state searchable even when the assistant reply only says
     },
     store.token('t')
   )
+  const resumed = await store.select('t', 'Continue where we left off; what remains?')
+  expect(
+    resumed.inspection.facts.some(
+      (f) => f.kind === 'task-result' && f.text.includes('npm test: failed')
+    )
+  ).toBe(true)
   const result = await store.select('t', 'pending booking tests')
   expect(
     result.inspection.facts.some(

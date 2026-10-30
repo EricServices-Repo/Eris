@@ -51,6 +51,9 @@ type ThreadEntry = {
 const digest = (value: string) => createHash('sha256').update(value).digest('hex')
 const sensitive =
   /\b(?:api[_-]?key|password|passwd|authorization|secret|token)\s*[:=]\s*\S+|\bBearer\s+\S+/i
+const unfinished = (message: ChatMessage) =>
+  message.contextResult?.workingState &&
+  !/^(?:done|complete)$/.test(message.contextResult.workingState.terminal)
 const salient =
   /\b(?:remember|must|always|never|do not|only|decision|prefer|constraint|instead|unfinished|pending)\b/i
 const clean = (m: ChatMessage): ChatMessage => ({
@@ -345,7 +348,7 @@ export class ContextMemoryStore {
             ordinal,
             message: m,
             bytes: size(m) + termSize(rowTerms),
-            salient: salient.test(m.content),
+            salient: salient.test(m.content) || Boolean(unfinished(m)),
             terms: rowTerms
           }
         ]
@@ -480,7 +483,7 @@ export class ContextMemoryStore {
         ordinal,
         message,
         bytes: size(message) + termSize(terms),
-        salient: salient.test(message.content),
+        salient: salient.test(message.content) || Boolean(unfinished(message)),
         terms
       }
       // New ordinals follow everything retained, so row IDs stay in position order.
@@ -674,6 +677,7 @@ export class ContextMemoryStore {
       revision = e.revision,
       records = e.records,
       controls = structuredClone(e.controls)
+    const resume = /\b(?:resume|continue|remaining|unfinished|left off|what remains)\b/i.test(query)
     const tokens = recallQuery(query)
     const forgotten = new Set(controls.forgotten)
     const firstRow = e.firstRow
@@ -719,6 +723,7 @@ export class ContextMemoryStore {
       const score =
         tokens.reduce((sum, token) => sum + tokenScore(token, (term) => terms.has(term)), 0) +
         (row.salient && m.role === 'user' ? 12 : 0) +
+        (resume && unfinished(m) ? 15 : 0) +
         (position >= records.length - RECENT_ROWS ? 3 : 0)
       if (score === 0) continue
       if (covered.has(m.id)) {
