@@ -3,6 +3,7 @@ import { AGENT_HANDOFF_CHARS } from '../../../../src/shared/agent-orchestration'
 import { truncateForModel } from './prompts'
 import { collectModelText } from './stream'
 import type { AgentChatMessage } from './types'
+import { contextUnits } from '../../../../src/shared/token-estimate'
 
 /** Keep this many non-system messages verbatim after compaction. */
 const COMPACT_TAIL_MESSAGES = 5
@@ -32,7 +33,7 @@ export function buildWorkSummary(goal: string, actions: string[], workerNote: st
 function estimateTokens(messages: AgentChatMessage[]): number {
   let chars = 0
   for (const m of messages)
-    chars += m.content.length + JSON.stringify(m.tool_calls ?? []).length + 8
+    chars += contextUnits(m.content) + JSON.stringify(m.tool_calls ?? []).length + 8
   return Math.ceil(chars / 3)
 }
 
