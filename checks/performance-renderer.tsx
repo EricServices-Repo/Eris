@@ -103,6 +103,10 @@ window.runPerformance = async (baseline) => {
     [...rows()].find(
       (node) => node.getBoundingClientRect().bottom > scroll.getBoundingClientRect().top + 5
     )
+  // Programmatic scroll changes in hidden Electron windows may emit no native event.
+  // Keep this deterministic: the virtualizer must reconcile its own adjustments.
+  const suppressScroll = (event: Event) => event.stopImmediatePropagation()
+  scroll.addEventListener('scroll', suppressScroll, true)
   for (let page = 0; page < 5; page++) {
     await until(() => !!firstVisible(), `a visible row before page ${page}`)
     const anchor = firstVisible()!,
@@ -114,8 +118,6 @@ window.runPerformance = async (baseline) => {
         ...previous
       ])
     )
-    // A hidden window may never deliver the native scroll from the list's own adjustment.
-    scroll.dispatchEvent(new Event('scroll'))
     await tick()
     await tick()
     await until(
@@ -126,6 +128,7 @@ window.runPerformance = async (baseline) => {
     anchorErrors.push(Math.abs(after.getBoundingClientRect().top - y))
     counts.push(rows().length)
   }
+  scroll.removeEventListener('scroll', suppressScroll, true)
   const button = scroll.querySelector<HTMLButtonElement>('.msg-feedback button')
   button?.focus()
   const focused = document.activeElement
