@@ -161,6 +161,7 @@ describe('hydration lifecycle', () => {
   })
   afterEach(() => {
     closeChatDatabases()
+    db.close()
     rmSync(dir, { recursive: true, force: true })
   })
   it('holds no reservation after a normal load', async () => {

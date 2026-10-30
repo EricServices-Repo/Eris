@@ -72,6 +72,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   closeChatDatabases()
+  db.close()
   rmSync(dir, { recursive: true, force: true })
 })
 
