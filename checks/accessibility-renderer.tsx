@@ -234,7 +234,6 @@ window.accessibilityCheck = async () => {
   composer.focus()
   return {
     contextInspector: true,
-    pinDraftRetention: true,
 
     approvalSafeFocus: true,
     approvalReturn: true,
@@ -243,6 +242,7 @@ window.accessibilityCheck = async () => {
     modalReturn: true,
     reviewScoped: true,
     editorInputOwned: true,
-    undoReachable: true
+    undoReachable: true,
+    pinDraftRetention: true
   }
 }
