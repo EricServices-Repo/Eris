@@ -8,7 +8,8 @@ import {
   type ContextPage
 } from '../../../src/shared/context-memory'
 import { DatabaseSync } from 'node:sqlite'
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'fs'
+import { createHash } from 'crypto'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'fs'
 import { join } from 'path'
 import type { ChatThread, ChatMessage } from '../../../src/shared/settings-schema'
 import type { ChatPage } from './workspace-worker-protocol'
@@ -25,11 +26,31 @@ type Header = {
 }
 
 /** Runs in the chat worker. Legacy transcripts remain untouched after import. */
+/**
+ * Identity of the physical database file. SQLite content, including thread IDs and
+ * stored source epochs, travels with a copy, so only the file itself can tell a
+ * replacement from the database a cached snapshot was read from.
+ */
+function databaseFileIdentity(path: string): string | null {
+  try {
+    const file = statSync(path, { bigint: true })
+    return createHash('sha256')
+      .update(`${file.dev}:${file.ino}:${file.birthtimeNs}`)
+      .digest('hex')
+      .slice(0, 16)
+  } catch {
+    return null
+  }
+}
 export class ChatDatabase {
   private db: DatabaseSync
+  private readonly file: string
+  private readonly incarnation: string
+  private readonly journal: string | null
   constructor(dir: string) {
     mkdirSync(dir, { recursive: true })
-    this.db = new DatabaseSync(join(dir, 'chats.sqlite'))
+    this.file = join(dir, 'chats.sqlite')
+    this.db = new DatabaseSync(this.file)
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY, title TEXT NOT NULL, model TEXT NOT NULL,
@@ -48,6 +69,7 @@ export class ChatDatabase {
         epoch TEXT NOT NULL
       );
     `)
+    this.incarnation = databaseFileIdentity(this.file) ?? ''
     this.transaction(() => {
       if (
         !(
@@ -68,6 +90,21 @@ export class ChatDatabase {
       this.db.close()
       throw error
     }
+    this.journal = databaseFileIdentity(`${this.file}-wal`)
+  }
+  /** True once this handle no longer reads the file at its path. */
+  replaced(): boolean {
+    return databaseFileIdentity(this.file) !== this.incarnation
+  }
+  /**
+   * SQLite will not checkpoint a moved database, and would replay the WAL left behind
+   * onto the file now at this path. A journal delivered with the replacement stays.
+   */
+  retire(): void {
+    this.close()
+    if (this.journal === null || databaseFileIdentity(`${this.file}-wal`) !== this.journal) return
+    rmSync(`${this.file}-wal`, { force: true })
+    rmSync(`${this.file}-shm`, { force: true })
   }
   private migrateContextSequences(): void {
     this.transaction(() => {
@@ -197,6 +234,9 @@ export class ChatDatabase {
     this.db.prepare('INSERT OR IGNORE INTO migrations(name) VALUES (?)').run('legacy-json')
   }
   private sourceEpoch(id: string): string {
+    return `${this.incarnation}:${this.threadEpoch(id)}`
+  }
+  private threadEpoch(id: string): string {
     const known = this.db
       .prepare('SELECT epoch FROM context_source_epochs WHERE threadId=?')
       .get(id)
@@ -538,6 +578,12 @@ export function closeChatDatabases(): void {
 }
 export function chatDatabase(dir: string): ChatDatabase {
   let database = databases.get(dir)
+  if (database?.replaced()) {
+    // Never keep serving, or writing to, a file that left this path.
+    database.retire()
+    databases.delete(dir)
+    database = undefined
+  }
   if (!database) {
     // Opening the DB creates its directory; no full transcript reads on later opens.
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
