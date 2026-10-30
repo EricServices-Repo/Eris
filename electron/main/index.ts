@@ -1,3 +1,4 @@
+import { workspaceRequest } from './services/workspace-worker-client'
 import { stopDebug } from './services/debug-service'
 import { foregroundTasks } from './services/foreground-tasks'
 import { flushChatJobs } from './services/chat-job-controller'
@@ -95,12 +96,22 @@ app.whenReady().then(() => {
           `(async()=>{
         const version=await window.ide.getAppVersion()
         const credentials=await window.ide.getCredentialStatus()
+        const catalog=await window.ide.modelsStatus()
         const invalid=await window.ide.streamChat({requestId:'smoke-invalid',model:'invalid',unexpected:true})
-        return {version,credentials,invalid,rendererMounted:Boolean(document.getElementById('root')?.childElementCount),nodeIsolated:typeof window.require==='undefined'}
+        return {version,credentials,invalid,catalogChecked:Array.isArray(catalog.models),rendererMounted:Boolean(document.getElementById('root')?.childElementCount),nodeIsolated:typeof window.require==='undefined'}
       })()`
         )
-        .then((result) => {
+        .then(async (result) => {
+          // Exercise the built worker, where accidental Electron imports cannot run.
+          const tree = await workspaceRequest({
+            type: 'tree',
+            root: process.env.ERIS_SMOKE_ROOT!,
+            maxDepth: 0
+          })
+          result.workerReady = Array.isArray(tree)
           const ok =
+            result.workerReady &&
+            result.catalogChecked &&
             result.rendererMounted &&
             result.nodeIsolated &&
             result.invalid === false &&

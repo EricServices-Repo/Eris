@@ -2,7 +2,7 @@ import { createHash } from 'crypto'
 import { execFileSync } from 'child_process'
 import { openSync, closeSync, readSync, fstatSync, realpathSync, statSync } from 'fs'
 import { relative, resolve } from 'path'
-import { isPathInside } from './workspace-fs'
+import { isPathInside } from './workspace-boundary'
 import { ContextEvidenceSchema, type ContextEvidence } from '../../../src/shared/context-evidence'
 const repository = (root: string) => {
   try {

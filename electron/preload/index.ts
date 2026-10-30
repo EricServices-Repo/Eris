@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
 import type { IdeApi } from '../../src/shared/api'
 
+import { readModelStatus } from './model-status'
 import { privilegedChannel } from '../../src/shared/privileged-ipc'
 
 // Preserve the public API while every privileged channel gets an explicit root envelope.
@@ -87,7 +88,8 @@ const api: IdeApi = {
   writeFile: (path, content) => ipcRenderer.invoke('fs:write', path, content),
   pickFiles: () => ipcRenderer.invoke('fs:pickFiles'),
   inferenceAdmission: () => ipcRenderer.invoke('models:admission'),
-  modelsStatus: (opts) => ipcRenderer.invoke('models:status', opts ?? {}),
+  modelsStatus: (opts) =>
+    readModelStatus((channel, ...args) => ipcRenderer.invoke(channel, ...args), opts),
   warmLocalModel: (modelRef) => ipcRenderer.invoke('models:warmLocal', modelRef),
   builtinModelStatus: () => ipcRenderer.invoke('models:builtinStatus'),
   downloadBuiltinModel: (id) => ipcRenderer.invoke('models:downloadBuiltin', id ?? 'composer-lite'),

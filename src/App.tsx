@@ -223,6 +223,8 @@ export default function App() {
 
   const {
     models,
+    modelsKnown,
+    modelsError,
     selectedModel,
     setSelectedModel,
     ollamaOk,
@@ -867,7 +869,8 @@ export default function App() {
           accountError: accountStatusError,
           entitlement,
           cloudHealth,
-          modelsOk: ollamaOk,
+          modelsOk: modelsKnown ? ollamaOk : null,
+          modelsError,
           composerReady,
           onOpenAccount: () => openSettings('account'),
           onOpenUsage: () => openSettings('usage'),
@@ -986,6 +989,8 @@ export default function App() {
                   routeLabel={routeLabel}
                   composerReady={composerReady}
                   modelsOk={ollamaOk}
+                  modelsKnown={modelsKnown}
+                  modelsError={modelsError}
                   streaming={streaming}
                   chatError={chatError}
                   delegations={delegations}
@@ -1522,6 +1527,8 @@ export default function App() {
         routeLabel={routeLabel}
         composerReady={composerReady}
         modelsOk={ollamaOk}
+        modelsKnown={modelsKnown}
+        modelsError={modelsError}
         cloudHealth={cloudHealth}
         entitlement={entitlement}
         accountNeedsReauth={accountNeedsReauth}
@@ -1553,6 +1560,7 @@ export default function App() {
               setSettingsOpen(false)
               setSettingsCategory(undefined)
               setStartCreateSkill(false)
+              void refreshModels()
               void refreshSkills()
             }}
             onChanged={(resolved) => {

@@ -1,3 +1,5 @@
+import { isPathInside } from './workspace-boundary'
+export { isPathInside, realpathAllowMissing } from './workspace-boundary'
 import {
   publishWorkspaceText,
   journalMutation,
@@ -9,7 +11,6 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
-  realpathSync,
   renameSync,
   statSync,
   rmdirSync,
@@ -49,36 +50,6 @@ export function assertWorkspaceRoot(workspacePath: string | null): string {
   if (!workspacePath) throw new WorkspaceFsError('No workspace is open')
   if (!existsSync(workspacePath)) throw new WorkspaceFsError('Workspace folder does not exist')
   return resolve(workspacePath)
-}
-
-function realpathOrSelf(p: string): string {
-  try {
-    return realpathSync(p)
-  } catch {
-    return resolve(p)
-  }
-}
-
-/** Realpath of the path, or of its nearest existing ancestor joined with the missing tail. */
-export function realpathAllowMissing(p: string): string {
-  const abs = resolve(p)
-  const tail: string[] = []
-  let cur = abs
-  while (!existsSync(cur)) {
-    const parent = dirname(cur)
-    if (parent === cur) return abs
-    tail.unshift(basename(cur))
-    cur = parent
-  }
-  return join(realpathOrSelf(cur), ...tail)
-}
-
-/** True when target is root or inside it after resolving symlinks. */
-export function isPathInside(root: string, target: string): boolean {
-  const realRoot = realpathOrSelf(root)
-  const realTarget = realpathAllowMissing(target)
-  const rel = relative(realRoot, realTarget)
-  return rel === '' || (!rel.startsWith('..') && !rel.startsWith(sep) && !/^[a-zA-Z]:/.test(rel))
 }
 
 /**

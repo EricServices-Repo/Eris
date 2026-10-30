@@ -1,3 +1,5 @@
+import { useModels } from '@/hooks/useModels'
+import type { ModelsStatus } from '@/shared/settings-schema'
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ChatPanel, type ChatMode } from '@/features/chat/ChatPanel'
@@ -112,7 +114,82 @@ function assert(v: unknown, reason: string): asserts v {
   if (!v) throw new Error(reason)
 }
 const button = (label: string) => document.querySelector<HTMLElement>(`[aria-label="${label}"]`)!
+async function checkModelReadiness() {
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  let snapshot: ReturnType<typeof useModels> | undefined
+  function ModelsFixture() {
+    snapshot = useModels(null)
+    return null
+  }
+  root.render(<ModelsFixture />)
+  await tick()
+  const current = () => snapshot!
+  assert(!current().modelsKnown, 'Startup must distinguish unknown from an empty catalog')
+  const ready: ModelsStatus = {
+    ok: true,
+    builtin: [],
+    models: [{ name: 'builtin:composer-lite', source: 'builtin', ready: true }],
+    connections: []
+  }
+  Object.assign(window.ide, {
+    modelsStatus: async () => ready,
+    listAgents: async () => {
+      throw new Error('Project agents unavailable')
+    }
+  })
+  try {
+    await current().refreshModels()
+    await tick()
+    assert(
+      current().ollamaOk && current().modelsKnown,
+      'Agent listing failures must not hide ready models'
+    )
+    Object.assign(window.ide, {
+      modelsStatus: async () => {
+        throw new Error('IPC unavailable')
+      }
+    })
+    await current().refreshModels()
+    await tick()
+    assert(
+      current().ollamaOk && current().modelsError,
+      'Failed refresh must preserve the last ready catalog'
+    )
+    let oldResponse!: (status: ModelsStatus) => void
+    Object.assign(window.ide, {
+      modelsStatus: () =>
+        new Promise<ModelsStatus>((resolve) => {
+          oldResponse = resolve
+        })
+    })
+    const older = current().refreshModels()
+    Object.assign(window.ide, { modelsStatus: async () => ready })
+    await current().refreshModels()
+    oldResponse({ ok: false, builtin: [], models: [], connections: [] })
+    await older
+    await tick()
+    assert(
+      current().ollamaOk && !current().modelsError,
+      'Stale refresh must not overwrite a newer ready catalog'
+    )
+    Object.assign(window.ide, {
+      modelsStatus: async () => ({ ok: false, builtin: [], models: [], connections: [] })
+    })
+    await current().refreshModels()
+    await tick()
+    assert(
+      current().modelsKnown && !current().ollamaOk,
+      'A successful empty catalog must still disable chat'
+    )
+  } finally {
+    root.unmount()
+    host.remove()
+  }
+}
 window.uxCheck = async () => {
+  await checkModelReadiness()
   await tick()
   assert(!document.querySelector('[data-history-search]'), 'Search must be hidden initially')
   assert(
@@ -174,6 +251,7 @@ window.uxCheck = async () => {
     assert(editor.getBoundingClientRect().height < 64, `Editor toolbar too tall at ${width}`)
   }
   return {
+    modelReadiness: true,
     responsiveHeaders: true,
     optionalSearch: true,
     searchFocusReturn: true,
