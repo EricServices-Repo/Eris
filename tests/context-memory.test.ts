@@ -223,3 +223,43 @@ it('excludes pinned source IDs from preview and model-bound memory', async () =>
   })
   expect((await pending).prompt.text).toBe('')
 })
+
+describe('RAM-CTX-002 reserved pin candidates', () => {
+  it('retains an eligible pin when 200 lexical matches outrank it', async () => {
+    const store = new ContextMemoryStore()
+    const query = Array.from({ length: 24 }, (_, i) => `term${i}`).join(' ')
+    install(
+      store,
+      'pins',
+      Array.from({ length: 200 }, (_, i) => message(String(i), query))
+    )
+    store.setControls('pins', {
+      ...emptyMemoryControls(),
+      pinned: [{ id: 'constraint', text: 'Always use CAD for checkout' }]
+    })
+    const result = await store.select('pins', query)
+    expect(result.inspection.facts.some((f) => f.sourceId === 'constraint')).toBe(true)
+    expect(result.inspection.facts.some((f) => f.kind !== 'pinned')).toBe(true)
+    expect(result.prompt.text).toContain('never permissions')
+    expect(result.prompt.text.length).toBeLessThanOrEqual(store.config.promptTokens * 3)
+  })
+  it('bounds 100 pins and explains omissions while retaining transcript evidence', async () => {
+    const store = new ContextMemoryStore()
+    store.configure({ ...store.config, promptTokens: 512 })
+    install(store, 'pins', [message('history', 'Remember: checkout validation needs tests')])
+    store.setControls('pins', {
+      ...emptyMemoryControls(),
+      pinned: Array.from({ length: 100 }, (_, i) => ({
+        id: `p${i}`,
+        text: `Pin ${i}: use a confirmed convention for checkout`
+      })),
+      forgotten: ['p0']
+    })
+    const result = await store.select('pins', 'checkout')
+    expect(result.inspection.facts.some((f) => f.sourceId === 'p0')).toBe(false)
+    expect(result.inspection.facts.some((f) => f.sourceId === 'history')).toBe(true)
+    expect(result.inspection.manifest.omittedPinnedFacts).toBeGreaterThan(0)
+    expect(result.inspection.facts.filter((f) => f.kind === 'pinned').length).toBeLessThanOrEqual(8)
+    expect(result.prompt.text.length).toBeLessThanOrEqual(1536)
+  })
+})
