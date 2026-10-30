@@ -274,6 +274,7 @@ export class ChatDatabase {
       throw new Error('Invalid context change cursor')
     return {
       status: this.contextChangeStatus(),
+      capabilities: this.contextCapabilities(),
       events: this.db
         .prepare('SELECT * FROM context_changes WHERE sequence>? ORDER BY sequence LIMIT ?')
         .all(after, limit)

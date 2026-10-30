@@ -99,6 +99,8 @@ try {
   assert.equal(replay.complete, true)
   const changes = await request({ type: 'context-changes', dir, after: 0, limit: 2 })
   assert.equal(changes.events.length, 2)
+  assert.equal(changes.capabilities.journal, 'wal')
+  assert.equal(typeof changes.capabilities.fts5, 'boolean')
   const context = await request({ type: 'context-page', dir, id: 'legacy' })
   assert.equal(context.records.length, 156)
   assert.equal(context.revision, full.contextRevision)
