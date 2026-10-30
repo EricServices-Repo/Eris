@@ -65,6 +65,7 @@ export type MemoryManifest = {
   sourceIds: string[]
   estimatedTokens: number
   omittedFacts: number
+  omittedPinnedFacts?: number
   reason?: string
 }
 export type MemoryPrompt = { text: string; manifest: MemoryManifest; allowRemote: boolean }
