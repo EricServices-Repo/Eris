@@ -291,15 +291,17 @@ export class ChatDatabase {
   }
   contextHeader(id: string): ContextHeader | null {
     const header = this.db
-      .prepare('SELECT contextRevision,messageCount FROM conversations WHERE id=?')
+      .prepare(
+        `SELECT c.contextRevision,c.messageCount,s.epoch,CASE WHEN k.body IS NULL THEN 0 WHEN json_valid(k.body) THEN COALESCE(json_extract(k.body,'$.revision'),0) ELSE -1 END AS controlsRevision FROM conversations c LEFT JOIN context_controls k ON k.threadId=c.id LEFT JOIN context_source_epochs s ON s.threadId=c.id WHERE c.id=?`
+      )
       .get(id)
     if (!header) return null
     return {
-      controlsRevision: this.memoryControls(id).revision ?? 0,
+      controlsRevision: Number(header.controlsRevision),
       derivation: this.contextChangeStatus(),
       revision: Number(header.contextRevision),
       messageCount: Number(header.messageCount),
-      sourceEpoch: this.sourceEpoch(id)
+      sourceEpoch: `${this.incarnation}:${String(header.epoch)}`
     }
   }
   list(): ChatThread[] {

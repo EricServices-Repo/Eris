@@ -152,6 +152,7 @@ export type ContextDispatch = {
   at: number
 }
 export type MemoryPrompt = {
+  sourceVersion?: ContextHeader
   text: string
   manifest: MemoryManifest
   allowRemote: boolean

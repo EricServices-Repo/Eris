@@ -168,6 +168,18 @@ export async function warmConversationMemory(
         await new Promise<void>((r) => setImmediate(r))
       }
       loadSignal.throwIfAborted()
+      const finalHeader = await workspaceRequest({ type: 'context-header', dir: dir(root), id })
+      loadSignal.throwIfAborted()
+      if (
+        !finalHeader ||
+        finalHeader.revision !== revision ||
+        finalHeader.sourceEpoch !== sourceEpoch ||
+        (finalHeader.controlsRevision !== undefined &&
+          finalHeader.controlsRevision !== (controls.revision ?? 0))
+      ) {
+        if (token === contextMemoryStore.token(key)) contextMemoryStore.clear(key)
+        return
+      }
       if (revision !== undefined)
         contextMemoryStore.install(
           key,

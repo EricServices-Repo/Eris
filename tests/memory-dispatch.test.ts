@@ -153,6 +153,20 @@ describe('memory eligibility at dispatch', () => {
     expect(sent).toContain('PRIVATE-A')
     expect(sent).toContain('KEPT-B')
   })
+  it('observes controls committed by an independent writer after selection without main invalidation', async () => {
+    const prompt = await recall()
+    expect(prompt.sourceVersion).toBeDefined()
+    lease(prompt)
+    const other = new ChatDatabase(folder)
+    try {
+      other.contextControls('t', { ...emptyMemoryControls(), forgotten: ['a'] })
+    } finally {
+      other.close()
+    }
+    const sent = await dispatch(prompt)
+    expect(sent).not.toContain('PRIVATE-A')
+    expect(sent).toContain('KEPT-B')
+  })
   it('removes an item truncated by the compiler budget', async () => {
     const prompt = await recall()
     lease(prompt)

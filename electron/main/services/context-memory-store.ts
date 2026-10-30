@@ -890,6 +890,14 @@ export class ContextMemoryStore {
         .join(' ')
     return {
       prompt: {
+        sourceVersion: e.sourceEpoch
+          ? {
+              revision: e.revision,
+              messageCount: e.total,
+              sourceEpoch: e.sourceEpoch,
+              controlsRevision: e.controls.revision ?? 0
+            }
+          : undefined,
         text,
         manifest,
         allowRemote: policy.shareWithRemoteModels,
