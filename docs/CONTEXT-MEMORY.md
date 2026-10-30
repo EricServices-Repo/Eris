@@ -115,6 +115,8 @@ Users can:
 - Reload the RAM snapshot from the saved transcript.
 - Disable RAM recall or change its limits in Settings → Agent.
 
+The inspector reads canonical controls independently of optional RAM availability. Disabling recall or a failed hydration preserves editable pins/exclusions and the canonical cutoff message count; a controls read failure disables editing instead of fabricating empty state.
+
 These controls preserve the visible transcript. Excluding additional older recall does not delete the ordinary recent conversation window or erase secrets from existing chat history. Deleting the conversation removes its durable recall controls through the database foreign-key cascade and invalidates the RAM copy.
 
 ## Relationship to existing memory and diagnostics

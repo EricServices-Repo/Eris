@@ -123,6 +123,7 @@ window.accessibilityCheck = async () => {
               }
             ],
         controls,
+        controlsAvailable: true,
         processLogicalBytes: 12 * 1024 ** 2
       }
     }

@@ -17,11 +17,12 @@ export function ContextMemoryInspector({ threadId }: { threadId: string }) {
       setSnapshot(await window.ide.inspectContextMemory({ id: threadId, query, controls, evict }))
     } catch (e) {
       setError(String(e))
+      setSnapshot(null)
     } finally {
       setBusy(false)
     }
   }
-  const controls = snapshot?.controls
+  const controls = snapshot?.controlsAvailable ? snapshot.controls : undefined
   return (
     <>
       <button
