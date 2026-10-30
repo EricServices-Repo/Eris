@@ -99,6 +99,49 @@ try {
   assert.equal(context.records.length, 156)
   assert.equal(context.revision, full.contextRevision)
   assert.equal(context.done, true)
+  // Recall's projection/cursor contract must also survive a real built-worker transfer.
+  const content = 'Remember: booking currency CAD. ' + '界😀 conversation '.repeat(6000)
+  await request({
+    type: 'chat-save',
+    dir,
+    thread: {
+      id: 'chunked',
+      title: 'Chunked',
+      model: 'local:test',
+      createdAt: 1,
+      updatedAt: 1,
+      messages: [
+        {
+          id: 'source',
+          role: 'assistant',
+          content,
+          thinking: 'private trace'.repeat(200000),
+          createdAt: 1
+        }
+      ]
+    }
+  })
+  let before, beforeContentOffset
+  const chunks = []
+  for (let i = 0; i < 20; i++) {
+    const page = await request({
+      type: 'context-page',
+      dir,
+      id: 'chunked',
+      before,
+      beforeContentOffset
+    })
+    assert.equal(page.omitted, 0)
+    assert.ok(Buffer.byteLength(JSON.stringify(page)) < 2000000)
+    assert.ok(!JSON.stringify(page).includes('private trace'))
+    chunks.unshift(...page.records)
+    if (page.done) break
+    before = page.before
+    beforeContentOffset = page.beforeContentOffset
+  }
+  assert.equal(chunks.map((row) => row.message.content).join(''), content)
+  assert.equal(chunks[0].message.contextContentOffset, 0)
+  assert.ok(chunks.length > 1)
   const controls = {
     version: 1,
     forgotten: ['0'],
@@ -114,7 +157,7 @@ try {
   assert.deepEqual(await request({ type: 'context-controls', dir, id: 'legacy' }), savedControls)
   await request({ type: 'shutdown' })
   console.log(
-    'Client worker checks passed: lazy tree, index patch, legacy import, paginated save, concurrent append, context paging and controls, graceful shutdown.'
+    'Client worker checks passed: lazy tree, index patch, legacy import, paginated save, concurrent append, context paging and controls, trace-free Unicode chunk continuation, graceful shutdown.'
   )
 } finally {
   await worker.terminate()

@@ -67,6 +67,7 @@ export async function warmConversationMemory(
   const load = new SharedHydration(async (loadSignal) => {
     const controls = await workspaceRequest({ type: 'context-controls', dir: dir(root), id })
     let before: number | undefined = seed?.before,
+      beforeContentOffset: number | undefined = seed?.beforeContentOffset,
       revision: number | undefined = seed?.revision,
       sourceEpoch: string | undefined = seed?.sourceEpoch,
       total = seed?.total ?? 0,
@@ -76,6 +77,7 @@ export async function warmConversationMemory(
           0
         ) ?? 0,
       partial = false,
+      complete = false,
       corruptRecords = seed?.corruptRecords ?? 0
     const corruptOrdinals = new Set<number>(seed?.corruptOrdinals ?? [])
     const records: Array<{ ordinal: number; message: ChatThread['messages'][number] }> = [
@@ -84,7 +86,13 @@ export async function warmConversationMemory(
     for (let pages = 0; pages < Math.ceil(config.maxMessages / 500) + 1; pages++) {
       loadSignal.throwIfAborted()
       if (token !== contextMemoryStore.token(key)) return
-      const page = await workspaceRequest({ type: 'context-page', dir: dir(root), id, before })
+      const page = await workspaceRequest({
+        type: 'context-page',
+        dir: dir(root),
+        id,
+        before,
+        beforeContentOffset
+      })
       loadSignal.throwIfAborted()
       if (!page) return
       if (
@@ -99,7 +107,8 @@ export async function warmConversationMemory(
       sourceEpoch = page.sourceEpoch
       total = page.messageCount
       before = page.before
-      partial ||= page.omitted > 0
+      beforeContentOffset = page.beforeContentOffset
+      partial ||= page.omitted > 0 || (page.metadataOmitted ?? 0) > 0
       const overlappingCorruption = (page.corruptOrdinals ?? []).filter((ordinal) =>
         corruptOrdinals.has(ordinal)
       ).length
@@ -111,7 +120,10 @@ export async function warmConversationMemory(
         (n, r) => n + Buffer.byteLength(JSON.stringify(r.message)) * 4 + 512,
         0
       )
-      if (page.done) break
+      if (page.done) {
+        complete = true
+        break
+      }
       if (
         bytes >= Math.min(config.maxThreadMiB, config.maxMemoryMiB) * 1024 ** 2 ||
         records.length >= config.maxMessages
@@ -131,7 +143,7 @@ export async function warmConversationMemory(
           total,
           records,
           controls,
-          partial,
+          partial: partial || !complete,
           corruptRecords,
           corruptOrdinals: [...corruptOrdinals]
         },

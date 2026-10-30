@@ -295,6 +295,9 @@ export interface ChatDelegation {
 }
 
 export interface ChatMessage {
+  /** Recall-only chunk position in Unicode code points; canonical rendering remains intact. */
+  contextContentOffset?: number
+  contextContentLength?: number
   /** Canonical nonreused source sequence, assigned only by the chat database. */
   contextSequence?: number
   assets?: GeneratedImageAsset[]

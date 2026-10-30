@@ -88,6 +88,9 @@ export type ContextPage = {
   revision: number
   messageCount: number
   before: number
+  /** Continue the same ordinal before this Unicode code-point offset. */
+  beforeContentOffset?: number
+  metadataOmitted?: number
   done: boolean
   records: Array<{ ordinal: number; message: import('./settings-schema').ChatMessage }>
   omitted: number

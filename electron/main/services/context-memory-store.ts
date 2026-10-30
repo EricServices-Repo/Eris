@@ -40,6 +40,8 @@ const clean = (m: ChatMessage): ChatMessage => ({
   agentName: m.agentName,
   model: m.model,
   contextSequence: m.contextSequence,
+  contextContentOffset: m.contextContentOffset,
+  contextContentLength: m.contextContentLength,
   contextResult: m.contextResult ? structuredClone(m.contextResult) : undefined
 })
 const size = (m: ChatMessage) => Buffer.byteLength(JSON.stringify(m), 'utf8') * 4 + 512
@@ -132,7 +134,11 @@ export class ContextMemoryStore {
         }
         return [{ ordinal, message: m, bytes: size(m), salient: salient.test(m.content) }]
       })
-      .sort((a, b) => a.ordinal - b.ordinal)
+      .sort(
+        (a, b) =>
+          a.ordinal - b.ordinal ||
+          (a.message.contextContentOffset ?? 0) - (b.message.contextContentOffset ?? 0)
+      )
     const entry: ThreadEntry = {
       revision: input.revision,
       sourceEpoch: input.sourceEpoch,
@@ -176,6 +182,7 @@ export class ContextMemoryStore {
       sourceEpoch: entry.sourceEpoch,
       total: entry.total,
       before: entry.records[0]?.ordinal ?? entry.total,
+      beforeContentOffset: entry.records[0]?.message.contextContentOffset || undefined,
       corruptRecords: entry.corruptRecords,
       corruptOrdinals: entry.corruptOrdinals,
       records: entry.records.map(({ ordinal, message }) => ({ ordinal, message }))
@@ -213,6 +220,12 @@ export class ContextMemoryStore {
       this.bump(key)
       return
     }
+    // Chunked snapshots must be reconstructed on append; merging by ordinal
+    // alone would silently discard sibling chunks or compare a chunk with a full rendering body.
+    if (entry.records.some((r) => r.message.contextContentLength !== undefined)) {
+      this.clear(key)
+      return
+    }
     const existing = new Map(entry.records.map((r) => [r.ordinal, r]))
     for (let i = 0; i < tail.length; i++) {
       const old = existing.get(offset + i)
@@ -240,7 +253,11 @@ export class ContextMemoryStore {
         salient: salient.test(message.content)
       })
     }
-    entry.records = [...existing.values()].sort((a, b) => a.ordinal - b.ordinal)
+    entry.records = [...existing.values()].sort(
+      (a, b) =>
+        a.ordinal - b.ordinal ||
+        (a.message.contextContentOffset ?? 0) - (b.message.contextContentOffset ?? 0)
+    )
     entry.total = total
     entry.revision = revision
     entry.generation = ++this.counter
@@ -313,7 +330,7 @@ export class ContextMemoryStore {
       revision: entry?.revision ?? 0,
       generation: entry?.generation ?? this.counter,
       totalMessages: entry?.total ?? 0,
-      retainedMessages: entry?.records.length ?? 0,
+      retainedMessages: entry ? new Set(entry.records.map((r) => r.ordinal)).size : 0,
       firstOrdinal: entry?.records[0]?.ordinal ?? 0,
       logicalBytes: entry?.bytes ?? 0,
       coverage: entry ? 'partial' : 'unavailable',
@@ -447,7 +464,7 @@ export class ContextMemoryStore {
       const excerpt = m.content.slice(start, start + 1800)
       if (sensitive.test(excerpt)) continue
       const fact: MemoryFact = {
-        id: digest(m.id + ':' + start),
+        id: digest(m.id + ':' + (m.contextContentOffset ?? 0) + ':' + start),
         sourceId: m.id,
         ordinal: row.ordinal,
         kind:
@@ -546,7 +563,7 @@ export class ContextMemoryStore {
       revision,
       generation,
       totalMessages: e.total,
-      retainedMessages: records.length,
+      retainedMessages: new Set(records.map((r) => r.ordinal)).size,
       firstOrdinal: records[0]?.ordinal ?? e.total,
       logicalBytes: e.bytes,
       coverage: e.partial || records.length < e.total ? 'partial' : 'complete',

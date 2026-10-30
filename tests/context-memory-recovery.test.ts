@@ -233,6 +233,38 @@ it('keeps excluded pins excluded after RAM eviction and database restart', async
   expect(db.get('t')!.messageCount).toBe(1)
 })
 
+describe('RAM-CTX-012 normalized content hydration', () => {
+  it('recalls short trace-heavy text and a decision in an older content chunk through the real worker', async () => {
+    save('chunked', 2)
+    const thread = db.get('chunked')!
+    thread.messages[0].content = 'Remember: checkout currency CAD. ' + 'ordinary text '.repeat(8000)
+    thread.messages[1].thinking = 'private reasoning '.repeat(150000)
+    thread.messages[1].content = 'Remember: invoice language French'
+    db.save(thread)
+    const recalled = await conversationContext(
+      null,
+      'chunked',
+      'checkout currency invoice',
+      settings()
+    )
+    expect(recalled.prompt.text).toContain('currency CAD')
+    expect(recalled.prompt.text).toContain('language French')
+    expect(recalled.prompt.text).not.toContain('private reasoning')
+    expect(recalled.prompt.manifest).toMatchObject({
+      retainedMessages: 2,
+      totalMessages: 2,
+      coverage: 'complete'
+    })
+    expect(
+      vi
+        .mocked(workspaceRequest)
+        .mock.calls.some(
+          ([req]) => req.type === 'context-page' && req.beforeContentOffset !== undefined
+        )
+    ).toBe(true)
+  })
+})
+
 describe('canonical context hydration', () => {
   it('hydrates 10,001 saved messages, keeps them warm and reconstructs after RAM eviction', async () => {
     save('t', 10001)

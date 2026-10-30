@@ -10,7 +10,7 @@ export type WorkspaceRequest =
   | { type: 'patch-index'; root: string; indexPath: string; paths: string[] }
   | { type: 'load-index'; indexPath: string }
   | { type: 'context-header'; dir: string; id: string }
-  | { type: 'context-page'; dir: string; id: string; before?: number }
+  | { type: 'context-page'; dir: string; id: string; before?: number; beforeContentOffset?: number }
   | {
       type: 'context-controls'
       dir: string
