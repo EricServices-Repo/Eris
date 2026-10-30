@@ -55,6 +55,7 @@
         "tests/tool-parsing.test.ts",
         "tests/user-question.test.ts",
         "tests/web-grounding.test.ts",
+        "tests/recall-quality.test.ts",
         "tests/owned-command.test.ts",
         "tests/evidence-storage.test.ts",
         "tests/file-mutations.test.ts",

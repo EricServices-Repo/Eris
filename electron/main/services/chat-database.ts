@@ -1,4 +1,5 @@
 import { contextRecord } from '../../../src/shared/context-record'
+import { recallTerms } from '../../../src/shared/recall-terms'
 import {
   emptyMemoryControls,
   MemoryControlsSchema,
@@ -466,7 +467,8 @@ export class ChatDatabase {
       metadataOmitted += Number(row.metadataOmitted ?? 0)
       records.push({
         ordinal: cursor,
-        message: { ...message, contextSequence: Number(row.contextSequence) }
+        message: { ...message, contextSequence: Number(row.contextSequence) },
+        terms: recallTerms(message.content)
       })
       if (message.contextContentOffset) {
         nextContentOffset = message.contextContentOffset
