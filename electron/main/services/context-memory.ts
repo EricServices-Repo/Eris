@@ -2,6 +2,7 @@ import { abortable, SharedHydration } from './context-hydration'
 import { createHash } from 'crypto'
 import { userDataRoot, userChatsDir, workspaceChatsDir } from './paths'
 import { realpathAllowMissing } from './workspace-fs'
+import { getResolvedSettings } from './settings'
 import { workspaceRequest } from './workspace-worker-client'
 import { contextMemoryStore } from './context-memory-store'
 import type { AppSettings, ChatThread } from '../../../src/shared/settings-schema'
@@ -39,11 +40,13 @@ export async function warmConversationMemory(
   settings: AppSettings,
   signal?: AbortSignal
 ) {
-  contextMemoryStore.configure(
-    settings.agent.contextMemory ?? ContextMemorySettingsSchema.parse({})
-  )
+  const policy = ContextMemorySettingsSchema.parse(settings.agent.contextMemory ?? {})
+  // Only profile settings govern the process allocator. Workspace disclosure,
+  // scope and prompt budgets must never reconfigure another request.
+  contextMemoryStore.configure(getResolvedSettings(null).agent.contextMemory)
   const key = memoryKey(root, id)
-  if (!contextMemoryStore.config.enabled) return
+  contextMemoryStore.configureNamespace(key, policy)
+  if (!policy.enabled || !contextMemoryStore.config.enabled) return
   signal?.throwIfAborted()
   const header = await abortable(workspaceRequest({ type: 'context-header', dir: dir(root), id }), [
     signal
@@ -81,7 +84,11 @@ export async function warmConversationMemory(
     const records: Array<{ ordinal: number; message: ChatThread['messages'][number] }> = [
       ...(seed?.records ?? [])
     ]
-    for (let pages = 0; pages < Math.ceil(config.maxMessages / 500) + 1; pages++) {
+    for (
+      let pages = 0;
+      pages < Math.ceil(Math.min(config.maxMessages, policy.maxMessages) / 500) + 1;
+      pages++
+    ) {
       loadSignal.throwIfAborted()
       if (token !== contextMemoryStore.token(key)) return
       const page = await workspaceRequest({ type: 'context-page', dir: dir(root), id, before })
@@ -113,8 +120,9 @@ export async function warmConversationMemory(
       )
       if (page.done) break
       if (
-        bytes >= Math.min(config.maxThreadMiB, config.maxMemoryMiB) * 1024 ** 2 ||
-        records.length >= config.maxMessages
+        bytes >=
+          Math.min(config.maxThreadMiB, policy.maxThreadMiB, config.maxMemoryMiB) * 1024 ** 2 ||
+        records.length >= Math.min(config.maxMessages, policy.maxMessages)
       ) {
         partial = true
         break
@@ -170,8 +178,11 @@ export async function conversationContext(
     await warmConversationMemory(root, id, settings, signal)
     if (contextMemoryStore.config.enabled && !contextMemoryStore.has(memoryKey(root, id)))
       await warmConversationMemory(root, id, settings, signal)
-    contextMemoryStore.configure(policy)
-    return await contextMemoryStore.select(memoryKey(root, id), query, { ...options, signal })
+    return await contextMemoryStore.select(memoryKey(root, id), query, {
+      ...options,
+      signal,
+      policy
+    })
   } catch (error) {
     options.signal?.throwIfAborted() // User cancellation is not a recall fallback.
     if (!deadline.signal.aborted) throw error
