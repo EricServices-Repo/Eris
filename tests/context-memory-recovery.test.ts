@@ -24,7 +24,12 @@ import { contextMemoryStore } from '../electron/main/services/context-memory-sto
 import { getDefaults } from '../electron/main/services/settings'
 import { emptyMemoryControls } from '../src/shared/context-memory'
 let db: ChatDatabase, folder: string
-const settings = () => structuredClone(getDefaults())
+const settings = () => {
+  const value = structuredClone(getDefaults())
+  // Bulk hydration tests deliberately inspect full archives, not the ordinary send deadline.
+  value.agent.contextMemory.foregroundDeadlineMs = 2000
+  return value
+}
 function save(id: string, count = 1001) {
   db.save({
     id,
@@ -130,6 +135,83 @@ describe('RAM-CTX-014 independent hydration consumers', () => {
     vi.mocked(workspaceRequest).mockImplementation(dispatchContextRequest)
     await warmConversationMemory(null, 'failed', settings())
     expect(contextMemoryStore.has(memoryKey(null, 'failed'))).toBe(true)
+  })
+})
+
+describe('RAM-CTX-018 optional recall deadline', () => {
+  afterEach(() => vi.useRealTimers())
+  it('returns recent-only fallback before a held cold worker is released', async () => {
+    save('deadline', 3)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let release!: () => void
+    vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+      if (req.type === 'context-header')
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+      return dispatchContextRequest(req)
+    })
+    const config = settings()
+    config.agent.contextMemory.foregroundDeadlineMs = 25
+    const request = conversationContext(null, 'deadline', 'checkout', config)
+    await vi.advanceTimersByTimeAsync(26)
+    const result = await request
+    expect(result.prompt.text).toBe('')
+    expect(result.prompt.manifest.reason).toContain('25 ms deadline')
+    expect(result.prompt.manifest.coverage).toBe('unavailable')
+    expect(db.get('deadline')!.messages).toHaveLength(3)
+    release()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+  })
+  it('detaches foreground recall without cancelling an admitted background backfill', async () => {
+    save('partial', 1001)
+    const config = settings()
+    config.agent.contextMemory.maxMessages = 500
+    await warmConversationMemory(null, 'partial', config)
+    config.agent.contextMemory.maxMessages = 1000
+    config.agent.contextMemory.foregroundDeadlineMs = 25
+    let release!: () => void
+    vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+      if (req.type === 'context-page')
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+      return dispatchContextRequest(req)
+    })
+    const background = warmConversationMemory(null, 'partial', config)
+    while (!release) await new Promise<void>((resolve) => setImmediate(resolve))
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const foreground = conversationContext(null, 'partial', 'checkout', config)
+    await vi.advanceTimersByTimeAsync(26)
+    const result = await foreground
+    expect(result.prompt.text).toBe('')
+    expect(result.prompt.manifest.retainedMessages).toBe(500)
+    expect(result.prompt.manifest.coverage).toBe('partial')
+    release()
+    await background
+    expect(
+      (await contextMemoryStore.select(memoryKey(null, 'partial'), 'Discussion')).inspection
+        .manifest.retainedMessages
+    ).toBe(1000)
+  })
+  it('propagates user abort rather than silently continuing to model dispatch', async () => {
+    save('abort', 3)
+    let release!: () => void
+    vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+      if (req.type === 'context-header')
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+      return dispatchContextRequest(req)
+    })
+    const abort = new AbortController()
+    const request = conversationContext(null, 'abort', 'checkout', settings(), {
+      signal: abort.signal
+    })
+    const rejected = expect(request).rejects.toMatchObject({ name: 'AbortError' })
+    abort.abort()
+    await rejected
+    release()
   })
 })
 

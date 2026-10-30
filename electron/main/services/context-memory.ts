@@ -158,15 +158,31 @@ export async function conversationContext(
     signal?: AbortSignal
   } = {}
 ) {
-  await warmConversationMemory(root, id, settings, options.signal)
-  if (contextMemoryStore.config.enabled && !contextMemoryStore.has(memoryKey(root, id)))
-    await warmConversationMemory(root, id, settings, options.signal)
-  // A different workspace may have warmed while this request awaited worker I/O.
-  // Reapply this request's policy before selection; later changes fence the snapshot.
-  contextMemoryStore.configure(
-    settings.agent.contextMemory ?? ContextMemorySettingsSchema.parse({})
-  )
-  return contextMemoryStore.select(memoryKey(root, id), query, options)
+  const policy = ContextMemorySettingsSchema.parse(settings.agent.contextMemory ?? {})
+  options.signal?.throwIfAborted()
+  const deadline = new AbortController()
+  const timer = setTimeout(() => deadline.abort(), policy.foregroundDeadlineMs)
+  timer.unref?.()
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, deadline.signal])
+    : deadline.signal
+  try {
+    await warmConversationMemory(root, id, settings, signal)
+    if (contextMemoryStore.config.enabled && !contextMemoryStore.has(memoryKey(root, id)))
+      await warmConversationMemory(root, id, settings, signal)
+    contextMemoryStore.configure(policy)
+    return await contextMemoryStore.select(memoryKey(root, id), query, { ...options, signal })
+  } catch (error) {
+    options.signal?.throwIfAborted() // User cancellation is not a recall fallback.
+    if (!deadline.signal.aborted) throw error
+    return contextMemoryStore.unavailable(
+      memoryKey(root, id),
+      `Optional conversation recall reached its ${policy.foregroundDeadlineMs} ms deadline; using canonical recent history only. Resident coverage is shown; no historical facts were selected.`,
+      policy.shareWithRemoteModels
+    )
+  } finally {
+    clearTimeout(timer)
+  }
 }
 export async function saveMemoryControls(
   root: string | null,

@@ -174,6 +174,13 @@ export function settingFields(agentIds: string[]): SettingField[] {
     },
     {
       cat: 'agent',
+      hint: 'Maximum optional recall wait before sending with canonical recent history only. Range: 25–2000 ms.',
+      label: 'Historical recall deadline (ms)',
+      path: ['agent', 'contextMemory', 'foregroundDeadlineMs'],
+      type: 'number'
+    },
+    {
+      cat: 'agent',
       hint: 'Selected evidence also fits the model input window. Range: 128–4096.',
       label: 'Recalled context token budget (estimate)',
       path: ['agent', 'contextMemory', 'promptTokens'],
