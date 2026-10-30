@@ -1,18 +1,65 @@
 import { createHash } from 'crypto'
 import { isNativeGgufRef } from './builtin-model'
 import { appendTaskEvent } from './task-ledger'
-import { countContextItems } from './agent/context-compiler'
+import { contextBudgetTokens } from './agent/context-budget'
+import {
+  compileTaskContext,
+  countContextItems,
+  memoryForDestination
+} from './agent/context-compiler'
+import { createTaskContract } from './task-intake'
 import {
   type ContextBundle,
   type ContextBundleItem,
-  type ContextDispatch
+  type ContextDispatch,
+  type ContextPreview,
+  type MemoryPrompt
 } from '../../../src/shared/context-memory'
+import type { AppSettings } from '../../../src/shared/settings-schema'
 
 const MAX_REMEMBERED = 64
 const latest = new Map<string, ContextDispatch>()
 const reported = new WeakMap<ContextBundle, string>()
 
 export const lastContextDispatch = (namespace: string) => latest.get(namespace)
+
+/**
+ * What the shared compiler would send a destination. Project rules are unknown until a
+ * turn runs, so a real request has the same or less room than this.
+ */
+export function previewContextDispatch(input: {
+  prompt: MemoryPrompt
+  model: string
+  query: string
+  root: string | null
+  settings: AppSettings
+}): ContextPreview {
+  const { model, prompt, settings } = input
+  const { bundle } = compileTaskContext({
+    task: createTaskContract({
+      workspacePath: input.root,
+      text: input.query || 'Preview',
+      plan: {
+        intent: 'answer',
+        agentId: 'chat',
+        agentName: 'Chat',
+        models: { chat: model, tools: model },
+        toolPolicy: 'none'
+      } as unknown as Parameters<typeof createTaskContract>[0]['plan']
+    }),
+    guidance: '',
+    ...memoryForDestination(prompt, model),
+    project: '',
+    retrieval: '',
+    maxInputTokens: contextBudgetTokens(settings, model)
+  })
+  return {
+    model,
+    destination: isNativeGgufRef(model) ? 'local' : 'remote',
+    counts: bundle.counts,
+    items: bundle.items.map(({ id, status, reason }) => ({ id, status, reason }))
+  }
+}
 
 type WireMessage = { content?: unknown; contextBundle?: ContextBundle }
 const textOf = (messages: readonly WireMessage[]) =>

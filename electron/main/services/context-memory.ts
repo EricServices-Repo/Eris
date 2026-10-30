@@ -7,9 +7,10 @@ import { registeredWorkspaceId } from './workspace'
 import { getResolvedSettings } from './settings'
 import { workspaceRequest } from './workspace-worker-client'
 import { contextMemoryStore } from './context-memory-store'
-import { lastContextDispatch } from './context-dispatch'
+import { lastContextDispatch, previewContextDispatch } from './context-dispatch'
 import type { AppSettings, ChatThread } from '../../../src/shared/settings-schema'
 import {
+  type ContextPreview,
   ContextMemorySettingsSchema,
   type ContextHeader,
   type ContextPage,
@@ -184,6 +185,14 @@ export async function warmConversationMemory(
     .catch(() => {})
   await load.wait(signal)
 }
+/** Remembered per conversation so an inspection matches the turn's resolved task scope. */
+const taskScopes = new Map<string, string | null>()
+function rememberTaskScope(key: string, projectRoot: string | null) {
+  taskScopes.delete(key)
+  taskScopes.set(key, projectRoot)
+  if (taskScopes.size > 64) taskScopes.delete(taskScopes.keys().next().value!)
+}
+
 export async function conversationContext(
   root: string | null,
   id: string,
@@ -199,6 +208,7 @@ export async function conversationContext(
 ) {
   const policy = ContextMemorySettingsSchema.parse(settings.agent.contextMemory ?? {})
   options.signal?.throwIfAborted()
+  if (options.projectRoot !== undefined) rememberTaskScope(memoryKey(root, id), options.projectRoot)
   const deadline = new AbortController()
   const timer = setTimeout(() => deadline.abort(), policy.foregroundDeadlineMs)
   timer.unref?.()
@@ -248,17 +258,24 @@ export async function inspectConversationMemory(
   root: string | null,
   id: string,
   query: string,
-  settings: AppSettings
+  settings: AppSettings,
+  model?: string
 ) {
   const [controls, thread] = await Promise.all([
     workspaceRequest({ type: 'context-controls', dir: dir(root), id }),
     workspaceRequest({ type: 'chat-get', dir: dir(root), id, page: { limit: 1 } })
   ])
   if (!thread) throw new Error('Chat not found')
+  const projectRoot = taskScopes.get(memoryKey(root, id))
   let inspection
+  let preview: ContextPreview | undefined
   let failure: string | undefined
   try {
-    inspection = (await conversationContext(root, id, query, settings)).inspection
+    const selected = await conversationContext(root, id, query, settings, { projectRoot })
+    inspection = selected.inspection
+    // Auto selects its model per turn, so there is no destination to preview.
+    if (model && model !== 'auto')
+      preview = previewContextDispatch({ prompt: selected.prompt, model, query, root, settings })
   } catch (error) {
     invalidateConversationMemory(root, id)
     inspection = (await contextMemoryStore.select(memoryKey(root, id), query)).inspection
@@ -269,6 +286,8 @@ export async function inspectConversationMemory(
     controls,
     controlsAvailable: true,
     lastDispatch: lastContextDispatch(memoryKey(root, id)),
+    projectRoot,
+    preview,
     manifest: {
       ...inspection.manifest,
       ...(inspection.manifest.retainedMessages === 0

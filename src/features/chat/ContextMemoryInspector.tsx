@@ -1,17 +1,28 @@
 import { useRef, useState } from 'react'
 import { useDialogFocus } from '@/hooks/useDialogFocus'
-import type { MemoryControls, MemoryInspection } from '@/shared/context-memory'
+import type { ContextItemReason, MemoryControls, MemoryInspection } from '@/shared/context-memory'
 import { useInspectorRequests } from '@/hooks/useInspectorRequests'
+
+const OMISSION: Partial<Record<ContextItemReason, string>> = {
+  'destination-policy': 'not shared with remote models',
+  'input-budget': 'no room in this model’s budget',
+  'duplicate-evidence': 'already in the request'
+}
 
 export function ContextMemoryInspector({
   threadId,
   workspacePath = null,
-  rendererBytes
+  rendererBytes,
+  model,
+  onOpenMessage
 }: {
   threadId: string
   workspacePath?: string | null
   /** Estimated pages held by this window, separate from main-process recall memory. */
   rendererBytes?: number
+  /** Destination a preview is compiled for; Auto has none until a turn resolves it. */
+  model?: string
+  onOpenMessage?: (ordinal: number) => void
 }) {
   const draftRevision = useRef(0)
   const [open, setOpen] = useState(false),
@@ -41,6 +52,7 @@ export function ContextMemoryInspector({
             workspacePath,
             snapshotHandle: snapshot?.snapshotHandle,
             query,
+            model,
             controls,
             evict
           })
@@ -60,6 +72,13 @@ export function ContextMemoryInspector({
     }
   }
   const controls = snapshot?.controlsAvailable ? snapshot.controls : undefined
+  const sendState = (id: string) => {
+    const item = snapshot?.preview?.items.find((entry) => entry.id === id)
+    if (!item) return ''
+    return item.status === 'omitted'
+      ? ` · not sent: ${OMISSION[item.reason] ?? 'not selected for this request'}`
+      : ' · would be sent'
+  }
   return (
     <>
       <button
@@ -136,6 +155,16 @@ export function ContextMemoryInspector({
                 retrying.
               </p>
             )}
+            {snapshot?.preview ? (
+              <p role="status">
+                For {snapshot.preview.model} ({snapshot.preview.destination}):{' '}
+                {snapshot.preview.counts.sent} sent, {snapshot.preview.counts.omitted} not sent.
+                Project rules also use the budget, so a real request can send less.
+              </p>
+            ) : (
+              snapshot && <p role="status">Choose a model to preview what it would receive.</p>
+            )}
+            {snapshot?.projectRoot && <p>Scoped to {snapshot.projectRoot}.</p>}
             <ul>
               {snapshot?.facts.map((f) => (
                 <li key={f.id}>
@@ -145,7 +174,19 @@ export function ContextMemoryInspector({
                   <p style={{ whiteSpace: 'pre-wrap' }}>{f.text}</p>
                   <small>
                     Source {f.sourceId} · message {f.ordinal + 1}
+                    {sendState(f.id)}
                   </small>
+                  {onOpenMessage && (
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        close()
+                        onOpenMessage(f.ordinal)
+                      }}
+                    >
+                      Open message {f.ordinal + 1}
+                    </button>
+                  )}
                   {controls && (
                     <button
                       className="btn"

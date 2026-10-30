@@ -54,6 +54,14 @@ export function addLaterPage(
   while (pages.length > 1 && bytes > maxBytes) bytes -= pages.shift()!.bytes
   return { ...window, pages, bytes }
 }
+/** Replace the window with the one page holding a message, however far away it is. */
+export const windowAt = (threadId: string, start: number, messages: ChatMessage[]): HistoryWindow =>
+  addEarlierPage(emptyHistoryWindow(threadId), start, messages)
+/** Page bounds that centre an ordinal without reading past the live tail. */
+export function pageAround(ordinal: number, tailStart: number) {
+  const before = Math.min(ordinal + HISTORY_PAGE_MESSAGES / 2, tailStart)
+  return { before, limit: HISTORY_PAGE_MESSAGES }
+}
 /**
  * What the transcript should show. The live tail is omitted while evicted pages
  * separate it from the window, so a gap is never presented as adjacent messages.

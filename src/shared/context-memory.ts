@@ -156,6 +156,16 @@ export type MemoryInspection = {
   processLogicalBytes: number
   /** The latest actual model request for this conversation, when one ran this session. */
   lastDispatch?: ContextDispatch
+  /** Task scope recall used; undefined until a turn in this session has resolved one. */
+  projectRoot?: string | null
+  /** The shared compiler's decision for each fact at the selected destination. */
+  preview?: ContextPreview
+}
+export type ContextPreview = {
+  model: string
+  destination: 'local' | 'remote'
+  counts: ContextBundleCounts
+  items: Array<Pick<ContextBundleItem, 'id' | 'status' | 'reason'>>
 }
 export type ContextHeader = { revision: number; messageCount: number; sourceEpoch: string }
 export type ContextPage = {

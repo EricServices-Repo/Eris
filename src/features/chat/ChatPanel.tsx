@@ -58,7 +58,8 @@ export const HistoricalMessages = memo(function HistoricalMessages({
   onRerouteLast,
   streaming,
   searchOpen = false,
-  onCloseSearch
+  onCloseSearch,
+  revealMessage = null
 }: {
   messages: ChatMessage[]
   onOpenPath: (path: string) => void
@@ -66,6 +67,7 @@ export const HistoricalMessages = memo(function HistoricalMessages({
   streaming: boolean
   searchOpen?: boolean
   onCloseSearch?: () => void
+  revealMessage?: { key: string; request: number } | null
 }) {
   const visible = useMemo(() => messages.filter((message) => message.role !== 'system'), [messages])
   const [query, setQuery] = useState(''),
@@ -95,6 +97,13 @@ export const HistoricalMessages = memo(function HistoricalMessages({
       controller.abort()
     }
   }, [visible, query])
+  useEffect(() => {
+    if (revealMessage)
+      setReveal((previous) => ({
+        key: revealMessage.key,
+        request: (previous?.request ?? 0) + 1
+      }))
+  }, [revealMessage])
   const navigate = (direction: number) => {
     if (!hits.length) return
     window.getSelection()?.removeAllRanges()
@@ -263,6 +272,7 @@ interface Props {
   onJumpToLatest?: () => void
   /** Older pages plus the live tail, as produced by historyView. */
   history?: ReturnType<typeof historyView>
+  onOpenMessage?: (ordinal: number) => Promise<string | null>
   routeLabel: string | null
   composerReady: boolean
   /** True when any chat backend is ready (builtin or Ollama/API connection). */
@@ -451,6 +461,7 @@ export function ChatPanel({
   onLoadNewer,
   onJumpToLatest,
   history,
+  onOpenMessage,
   routeLabel,
   composerReady,
   modelsOk = false,
@@ -495,6 +506,7 @@ export function ChatPanel({
 }: Props) {
   const { thinkingBuffer, answerBuffer, agentStatus, toolActivity } = useStore(chatStream)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [revealMessage, setRevealMessage] = useState<{ key: string; request: number } | null>(null)
   const searchButton = useRef<HTMLButtonElement>(null)
   const closeSearch = () => {
     setSearchOpen(false)
@@ -841,6 +853,19 @@ export function ChatPanel({
                 key={`${workspacePath ?? 'global'}:${activeThread.id}`}
                 threadId={activeThread.id}
                 workspacePath={workspacePath}
+                rendererBytes={history?.bytes}
+                model={selectedModel}
+                onOpenMessage={
+                  onOpenMessage &&
+                  ((ordinal) =>
+                    void onOpenMessage(ordinal).then((key) => {
+                      if (key)
+                        setRevealMessage((previous) => ({
+                          key,
+                          request: (previous?.request ?? 0) + 1
+                        }))
+                    }))
+                }
               />
             )}
             <p className="subtitle">
@@ -1018,6 +1043,7 @@ export function ChatPanel({
                 key={activeThread?.id ?? 'empty'}
                 searchOpen={searchOpen}
                 onCloseSearch={closeSearch}
+                revealMessage={revealMessage}
                 messages={history?.messages ?? activeThread?.messages ?? EMPTY_MESSAGES}
                 onOpenPath={onOpenPath}
                 onRerouteLast={onRerouteLast}

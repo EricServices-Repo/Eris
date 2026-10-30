@@ -273,6 +273,7 @@ export default function App() {
     loadEarlier,
     loadNewer,
     jumpToLatest,
+    openMessage,
     history
   } = useChatThreads()
 
@@ -980,6 +981,7 @@ export default function App() {
                   onLoadEarlier={loadEarlier}
                   onLoadNewer={loadNewer}
                   onJumpToLatest={jumpToLatest}
+                  onOpenMessage={openMessage}
                   history={history}
                   routeLabel={routeLabel}
                   composerReady={composerReady}
