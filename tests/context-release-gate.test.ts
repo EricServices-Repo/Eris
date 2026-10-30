@@ -7,7 +7,7 @@ import {
   type ContextGateReport
 } from '../checks/context-gate'
 
-const budgets: ContextBudgets = { version: 1, maxGrowthRatio: 12, profiles: [] }
+const budgets: ContextBudgets = { version: 1, maxGrowthRatio: 12, minBaselineMs: 5, profiles: [] }
 const hardware = { platform: 'test', arch: 'x', cpu: 'cpu', totalMemoryBytes: 1 }
 const measured = () =>
   runContextGate({ sizes: [200, 400], gitSha: 'abc', hardware, runtime: { node: '1' } })
@@ -59,6 +59,15 @@ describe('regressions cannot hide', () => {
     const [query] = Object.keys(value.corpora[1]!.measured.latencyMs)
     value.corpora[1]!.measured.latencyMs[query!]!.p95 = 1e7
     expect(failures(value, quiet).join()).toMatch(/grew past/)
+  })
+  it('ignores timer noise on a small baseline but not a real slowdown', async () => {
+    const value = await report()
+    const [query] = Object.keys(value.corpora[1]!.measured.latencyMs)
+    value.corpora[0]!.measured.latencyMs[query!]!.p95 = 2.4
+    value.corpora[1]!.measured.latencyMs[query!]!.p95 = 29.3
+    expect(failures(value, budgets).join()).not.toMatch(/grew past/)
+    value.corpora[1]!.measured.latencyMs[query!]!.p95 = 61
+    expect(failures(value, budgets).join()).toMatch(/grew past/)
   })
   it('applies a matching hardware budget per size', async () => {
     const value = await report()

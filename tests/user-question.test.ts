@@ -11,6 +11,8 @@ import {
   looksLikeClarifyingQuestion,
   looksLikeTaskComplete,
   projectDescriptionReady,
+  rejectedReplyReason,
+  looksLikeDegenerateLoop,
   shouldKeepWorking
 } from '../electron/main/services/agent/heuristics'
 
@@ -69,21 +71,19 @@ describe('requestUserQuestion', () => {
 describe('looksLikeClarifyingQuestion', () => {
   it('detects a blocking choice question', () => {
     expect(
-      looksLikeClarifyingQuestion(
-        'Should I use React or Vue for this UI before I continue?'
-      )
+      looksLikeClarifyingQuestion('Should I use React or Vue for this UI before I continue?')
     ).toBe(true)
   })
 
   it('ignores finished summaries', () => {
-    expect(
-      looksLikeClarifyingQuestion('Done. Summary: added the login form and tests.')
-    ).toBe(false)
+    expect(looksLikeClarifyingQuestion('Done. Summary: added the login form and tests.')).toBe(
+      false
+    )
   })
 
   it('does not treat workspace-info asks as clarifying questions', () => {
     const bad =
-      'Sure, I\'ll review the project folder. Could you please provide the structure of the project folder and any relevant files so I can understand the current state of the calculator app?'
+      "Sure, I'll review the project folder. Could you please provide the structure of the project folder and any relevant files so I can understand the current state of the calculator app?"
     expect(looksLikeAsksForWorkspaceInfo(bad)).toBe(true)
     expect(looksLikeClarifyingQuestion(bad)).toBe(false)
     expect(looksLikeTaskComplete(bad)).toBe(false)
@@ -106,9 +106,9 @@ describe('project description', () => {
   it('is not a defect review', () => {
     expect(isReviewOnlyGoal('Review this project, what does it do?')).toBe(false)
     expect(isReviewOnlyGoal('code review this PR')).toBe(true)
-    expect(
-      isReviewOnlyGoal('review the airbnb website, what 3 improvements should we make?')
-    ).toBe(true)
+    expect(isReviewOnlyGoal('review the airbnb website, what 3 improvements should we make?')).toBe(
+      true
+    )
     expect(isReviewOnlyGoal('review the project folder, make improvements to the calculator')).toBe(
       false
     )
@@ -163,5 +163,54 @@ describe('project description', () => {
         actions: ['Read README.md']
       })
     ).toBe(true)
+  })
+})
+
+describe('repeat loop detection', () => {
+  const item = (n: number, name: string) =>
+    [
+      `### ${n}. **${name}**`,
+      '**Path:** `public/js/main.js`',
+      `**Issue:** ${name} is missing from the site.`,
+      '',
+      '```javascript',
+      `function ${name}() {`,
+      '  if (ready) {',
+      '    return true',
+      '  }',
+      '}',
+      '```',
+      '',
+      '---'
+    ].join('\n')
+  it('leaves a long structured list alone', () => {
+    const names = ['search', 'pagination', 'caching', 'validation', 'logging', 'alerts', 'tests']
+    const list = names.map((name, index) => item(index + 1, name)).join('\n')
+    for (let end = 1; end <= list.length; end++)
+      expect(looksLikeDegenerateLoop(list.slice(0, end))).toBe(false)
+  })
+  it('leaves repeated markup in a code block alone', () => {
+    const page = Array.from({ length: 12 }, (_, n) => `<p>row ${n}</p>\n</div>`).join('\n')
+    expect(looksLikeDegenerateLoop(`\`\`\`html\n${page}\n\`\`\``)).toBe(false)
+  })
+  it('still stops a repeated sentence', () => {
+    const line = 'The same finding repeats here forever and ever.'
+    expect(looksLikeDegenerateLoop(Array.from({ length: 12 }, () => line).join('\n'))).toBe(true)
+  })
+  it('still stops repeated code', () => {
+    const line = 'console.log("the same statement again and again");'
+    expect(looksLikeDegenerateLoop(`\`\`\`js\n${Array(12).fill(line).join('\n')}`)).toBe(true)
+  })
+})
+
+describe('rejected reply reasons', () => {
+  it('names why a reply was rejected without repeating it', () => {
+    const prose = 'The project could use better error handling and more tests overall.'
+    expect(rejectedReplyReason(prose, [])).toBe('no-source-evidence')
+    expect(rejectedReplyReason(prose, ['Read src/retry.ts'])).toBe('not-complete')
+    expect(rejectedReplyReason(prose, ['Read .eris/notes.md'])).toBe('no-source-evidence')
+    expect(rejectedReplyReason('   ', [])).toBe('tool-text-only')
+    const list = [1, 2, 3, 4, 5].map((n) => `${n}. Add test coverage for module ${n}`).join('\n')
+    expect(rejectedReplyReason(list, [])).toBe('no-source-evidence')
   })
 })

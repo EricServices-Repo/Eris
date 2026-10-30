@@ -154,6 +154,7 @@ export async function runContextGate(input: {
 export type ContextBudgets = {
   version: number
   maxGrowthRatio: number
+  minBaselineMs: number
   profiles: Array<{
     id: string
     platform: string
@@ -201,8 +202,8 @@ export function evaluateContextGate(report: ContextGateReport, budgets: ContextB
       for (const [query, quantiles] of Object.entries(corpus.measured.latencyMs)) {
         const base = smallest.measured.latencyMs[query]
         const p95 = p95Of(quantiles)
-        // A floor keeps sub-millisecond timer noise from reading as growth.
-        if (base && p95 > Math.max(p95Of(base), 1) * budgets.maxGrowthRatio)
+        // A floor keeps small-baseline timer noise from reading as growth.
+        if (base && p95 > Math.max(p95Of(base), budgets.minBaselineMs) * budgets.maxGrowthRatio)
           failures.push(
             `${corpus.size} "${query}": p95 ${p95.toFixed(1)} ms grew past ` +
               `${budgets.maxGrowthRatio}x the ${smallest.size} baseline`

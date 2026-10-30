@@ -25,6 +25,9 @@ const CONTINUE_CODE =
 export const INCOMPLETE_CODE_NOTE =
   '\n\n_The code above stopped before it was complete; treat it as a partial draft._'
 
+export const TRUNCATED_NOTE =
+  '\n\n_The model repeated itself and was stopped, so this reply is partial._'
+
 export const PROTOCOL_BLOCKER =
   'I couldn’t produce a usable answer: the model returned internal tool instructions instead of a response. ' +
   'Retry the request, or rephrase it.'
@@ -39,6 +42,8 @@ export interface FinalAnswerOptions {
   goal: string
   /** The conversation the answer was generated in, for a code continuation. */
   messages: AgentChatMessage[]
+  /** The stream was cut off, so the draft is partial however well-formed it looks. */
+  truncated?: boolean
   /** Source text the worker actually read, offered again to a re-answer. */
   onPresentation?: (audit: {
     raw: string
@@ -55,6 +60,11 @@ function protocolProblems(text: string, goal: string, task?: FinalAnswerOptions[
     deliverableContext(goal, task?.interpretation?.artifact, task?.interpretation?.language)
   ).checks.some((check) => PROTOCOL_CHECKS.has(check.id) && check.severity === 'fail')
 }
+
+const evades = (text: string) =>
+  assessDeliverable(text).checks.some(
+    (check) => check.id === 'refusal' || check.id === 'clarification-request'
+  )
 
 /**
  * Last step before an answer is shown. Internal framing is cut off or answered
@@ -77,33 +87,35 @@ export async function finalizeAnswer(
     })
     return { text, incomplete, repaired, rawOutput: answer }
   }
+  const answerAgain = () =>
+    collectModelText({
+      settings: options.settings,
+      model: options.model,
+      temperature: options.temperature,
+      signal: options.signal,
+      getSecret: options.getSecret,
+      messages: [
+        { role: 'system', content: REANSWER_SYSTEM },
+        {
+          role: 'user',
+          content:
+            options.goal.slice(0, AGENT_HANDOFF_CHARS * 2) +
+            (options.evidence
+              ? `\n\nProject sources that were read:\n${options.evidence.slice(0, AGENT_HANDOFF_CHARS * 2)}`
+              : '')
+        }
+      ]
+    }).catch((error: unknown) => {
+      if (options.signal?.aborted) throw error
+      return ''
+    })
   if (protocolProblems(text, options.goal, options.task)) {
     const stripped = stripProtocolTail(text)
     if (stripped && !protocolProblems(stripped, options.goal, options.task)) {
       text = stripped
       repaired.push('protocol-tail-removed')
     } else {
-      const again = await collectModelText({
-        settings: options.settings,
-        model: options.model,
-        temperature: options.temperature,
-        signal: options.signal,
-        getSecret: options.getSecret,
-        messages: [
-          { role: 'system', content: REANSWER_SYSTEM },
-          {
-            role: 'user',
-            content:
-              options.goal.slice(0, AGENT_HANDOFF_CHARS * 2) +
-              (options.evidence
-                ? `\n\nProject sources that were read:\n${options.evidence.slice(0, AGENT_HANDOFF_CHARS * 2)}`
-                : '')
-          }
-        ]
-      }).catch((error: unknown) => {
-        if (options.signal?.aborted) throw error
-        return ''
-      })
+      const again = await answerAgain()
       if (again.trim() && !protocolProblems(again, options.goal, options.task)) {
         text = again.trim()
         repaired.push('re-answered-from-goal')
@@ -113,6 +125,15 @@ export async function finalizeAnswer(
     }
   }
 
+  if (options.truncated) return finish(text + TRUNCATED_NOTE, true, repaired)
+  // With sources in hand, asking the user what they meant is not an answer.
+  if (options.evidence && evades(text)) {
+    const again = await answerAgain()
+    if (!again.trim() || evades(again) || protocolProblems(again, options.goal, options.task))
+      return finish(text, true, repaired)
+    text = again.trim()
+    repaired.push('re-answered-evasion')
+  }
   if (assembledSyntax(text, options.goal).state === 'invalid')
     return finish(text + INCOMPLETE_CODE_NOTE, true, repaired)
   if (
