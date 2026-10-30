@@ -1,3 +1,4 @@
+import { contextRecord } from '../../../src/shared/context-record'
 import {
   emptyMemoryControls,
   MemoryControlsSchema,
@@ -377,7 +378,9 @@ export class ChatDatabase {
       records: ContextPage['records'] = []
     let bytes = 0,
       cursor = end,
-      omitted = 0
+      omitted = 0,
+      corruptRecords = 0
+    const corruptOrdinals: number[] = []
     // Bound each transfer independently of huge archived messages. Oversize rows advance coverage explicitly.
     for (const row of this.db
       .prepare(
@@ -392,21 +395,21 @@ export class ChatDatabase {
         continue
       }
       bytes += Buffer.byteLength(body)
-      const message = JSON.parse(body)
-      // Model reasoning traces and asset payloads are not context-history entries.
+      let message: ChatMessage | null = null
+      try {
+        message = contextRecord(JSON.parse(body))
+      } catch {
+        /* Preserve corrupt JSON for repair. */
+      }
+      if (!message) {
+        omitted++
+        corruptRecords++
+        corruptOrdinals.push(cursor)
+        continue
+      }
       records.push({
         ordinal: cursor,
-        message: {
-          id: message.id,
-          role: message.role,
-          content: message.content,
-          createdAt: message.createdAt,
-          contextSequence: Number(row.contextSequence),
-          agentId: message.agentId,
-          agentName: message.agentName,
-          model: message.model,
-          contextResult: message.contextResult
-        }
+        message: { ...message, contextSequence: Number(row.contextSequence) }
       })
     }
     return {
@@ -416,7 +419,9 @@ export class ChatDatabase {
       before: cursor,
       done: cursor === 0,
       records: records.reverse(),
-      omitted
+      omitted,
+      corruptRecords,
+      corruptOrdinals
     }
   }
   memoryControls(id: string, write?: MemoryControls): MemoryControls {

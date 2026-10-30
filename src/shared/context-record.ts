@@ -1,0 +1,25 @@
+import { z } from 'zod'
+import type { ChatMessage } from './settings-schema'
+const ContextRecordSchema = z.object({
+  id: z.string().min(1).max(256),
+  role: z.enum(['system', 'user', 'assistant']),
+  content: z.string(),
+  createdAt: z.number().finite().default(0),
+  contextSequence: z.number().int().nonnegative().optional(),
+  agentId: z.string().max(256).optional(),
+  agentName: z.string().max(512).optional(),
+  model: z.string().max(512).optional(),
+  contextResult: z
+    .object({
+      taskId: z.string().min(1).max(256),
+      terminal: z.string().min(1).max(64),
+      projectRoot: z.string().max(4096).nullable(),
+      changedFiles: z.array(z.string().max(4096)).max(10000)
+    })
+    .optional()
+})
+/** Trace/assets are deliberately not part of the recall projection. Invalid rows remain on disk. */
+export function contextRecord(value: unknown): ChatMessage | null {
+  const parsed = ContextRecordSchema.safeParse(value)
+  return parsed.success ? parsed.data : null
+}
