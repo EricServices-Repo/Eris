@@ -1,11 +1,52 @@
-import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction
+} from 'react'
 import type { ChatThread } from '@/shared/settings-schema'
+import {
+  addEarlierPage,
+  addLaterPage,
+  boundTail,
+  emptyHistoryWindow,
+  historyView,
+  HISTORY_PAGE_MESSAGES,
+  windowEnd,
+  windowStart
+} from '@/shared/chat-history-window'
 
 export function useChatThreads() {
   const [threads, updateThreads] = useState<ChatThread[]>([])
-  const [activeThread, setActiveThread] = useState<ChatThread | null>(null)
+  const [activeThread, setBoundedThread] = useState<ChatThread | null>(null)
   const activeThreadRef = useRef<ChatThread | null>(null)
   activeThreadRef.current = activeThread
+  const [storedWindow, setHistoryWindow] = useState(emptyHistoryWindow)
+  const historyWindow =
+    storedWindow.threadId === activeThread?.id
+      ? storedWindow
+      : emptyHistoryWindow(activeThread?.id ?? null)
+  const historyWindowRef = useRef(historyWindow)
+  historyWindowRef.current = historyWindow
+  const history = useMemo(
+    () => historyView(historyWindow, activeThread),
+    [historyWindow, activeThread]
+  )
+  const setActiveThread: Dispatch<SetStateAction<ChatThread | null>> = useCallback((next) => {
+    setBoundedThread((previous) => {
+      const value = typeof next === 'function' ? next(previous) : next
+      return value && boundTail(value)
+    })
+  }, [])
+  // A new message belongs after the tail, so a reader parked in old pages returns to it.
+  const tailLength = activeThread?.messages.length
+  useEffect(() => {
+    if (historyView(historyWindowRef.current, activeThreadRef.current).gap)
+      setHistoryWindow(emptyHistoryWindow())
+  }, [tailLength])
 
   const selection = useRef(0)
   const setThreads: Dispatch<SetStateAction<ChatThread[]>> = useCallback((next) => {
@@ -45,20 +86,39 @@ export function useChatThreads() {
   )
   const loadEarlier = useCallback(async () => {
     const current = activeThreadRef.current
-    if (!current?.messageOffset) return
+    if (!current) return
+    const before = windowStart(historyWindowRef.current) ?? current.messageOffset ?? 0
+    if (!before) return
     const generation = selection.current
-    const page = await window.ide.getChat(current.id, { before: current.messageOffset, limit: 60 })
+    const page = await window.ide.getChat(current.id, {
+      before,
+      limit: HISTORY_PAGE_MESSAGES
+    })
     if (!page || generation !== selection.current) return
-    setActiveThread((latest) =>
-      latest?.id === current.id && latest.messageOffset === current.messageOffset
-        ? {
-            ...latest,
-            messageOffset: page.messageOffset,
-            messages: [...page.messages, ...latest.messages]
-          }
+    setHistoryWindow((latest) => {
+      const base = latest.threadId === current.id ? latest : emptyHistoryWindow(current.id)
+      if ((windowStart(base) ?? current.messageOffset ?? 0) !== before) return latest
+      return addEarlierPage(base, page.messageOffset ?? 0, page.messages)
+    })
+  }, [])
+  /** Reload pages evicted between the window and the live tail. */
+  const loadNewer = useCallback(async () => {
+    const current = activeThreadRef.current
+    const end = windowEnd(historyWindowRef.current)
+    if (!current || end === undefined) return
+    const tailStart = current.messageOffset ?? 0
+    if (end >= tailStart) return
+    const generation = selection.current
+    const limit = Math.min(HISTORY_PAGE_MESSAGES, tailStart - end)
+    const page = await window.ide.getChat(current.id, { before: end + limit, limit })
+    if (!page || generation !== selection.current) return
+    setHistoryWindow((latest) =>
+      latest.threadId === current.id && windowEnd(latest) === end
+        ? addLaterPage(latest, end, page.messages)
         : latest
     )
   }, [])
+  const jumpToLatest = useCallback(() => setHistoryWindow(emptyHistoryWindow()), [])
 
   return {
     threads,
@@ -68,6 +128,9 @@ export function useChatThreads() {
     activeThreadRef,
     refreshChats,
     selectThread,
-    loadEarlier
+    loadEarlier,
+    loadNewer,
+    jumpToLatest,
+    history
   }
 }

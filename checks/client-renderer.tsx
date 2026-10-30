@@ -44,6 +44,7 @@ const initial = { '/a.ts': 'const first = 1\nconst second = 2', '/b.ts': 'const 
 for (const [path, content] of Object.entries(initial)) seedDocument({ path, content, dirty: false })
 let switchFile: (path: keyof typeof initial) => void
 let changeExternal: () => void
+let evictRows: () => void
 let parentRenders = 0
 let editorMounts = 0
 let mounted: editor.IStandaloneCodeEditor
@@ -57,6 +58,8 @@ function Fixture() {
   const [path, setPath] = useState<keyof typeof initial>('/a.ts')
   const [contents, setContents] = useState(initial)
   const [dirty, setDirty] = useState<Record<string, boolean>>({})
+  const [evictable, setEvictable] = useState(() => Array.from({ length: 400 }, (_, i) => i))
+  evictRows = () => setEvictable((rows) => rows.slice(100))
   switchFile = setPath
   changeExternal = () => {
     seedDocument({ path: '/b.ts', content: 'external replacement', dirty: false })
@@ -80,6 +83,22 @@ function Fixture() {
           estimate={40}
           renderItem={(item) => (
             <div data-row={item} style={{ height: 30 + (item % 4) * 10 }}>
+              Message {item}
+            </div>
+          )}
+        />
+      </div>
+      <div
+        id="virtual-evict"
+        data-virtual-scroll
+        style={{ height: 400, width: 500, overflow: 'auto' }}
+      >
+        <VirtualList
+          items={evictable}
+          itemKey={key}
+          estimate={40}
+          renderItem={(item) => (
+            <div data-evict-row={item} style={{ height: 40 }}>
               Message {item}
             </div>
           )}
@@ -124,6 +143,18 @@ window.clientCheck = async () => {
   await tick()
   assert(scroll.querySelector('[data-row="9999"]'), 'Virtual scrolling did not reach the final row')
   assert(count() < 100, 'Scrolling grew the live DOM')
+  const evicting = document.getElementById('virtual-evict')!
+  evicting.scrollTop = 200 * 40
+  evicting.dispatchEvent(new Event('scroll'))
+  await tick()
+  await tick()
+  evictRows()
+  await tick()
+  await tick()
+  const anchor = evicting.querySelector<HTMLElement>('[data-evict-row="200"]')
+  assert(anchor, 'Evicting older rows lost the row being read')
+  const drift = anchor!.getBoundingClientRect().top - evicting.getBoundingClientRect().top
+  assert(Math.abs(drift) < 1, `Evicting older rows moved the reader by ${drift}px`)
   assert(Number(directoryRequests) === 0, 'Collapsed folders were loaded eagerly')
   document.querySelector<HTMLButtonElement>('#tree-check button')!.click()
   await tick()

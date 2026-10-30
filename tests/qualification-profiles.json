@@ -91,6 +91,7 @@
       "tests/background-job-detail.test.ts",
       "tests/bug-report-sanitize.test.ts",
       "tests/chat-database.test.ts",
+      "tests/chat-history-window.test.ts",
       "tests/chat-pages.test.ts",
       "tests/cloud-agents.test.ts",
       "tests/code-index-patch.test.ts",

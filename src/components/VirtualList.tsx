@@ -41,7 +41,7 @@ export function VirtualList<T>({
   const [revision, setRevision] = useState(0)
   const [viewport, setViewport] = useState({ top: 0, height: 800 })
   const adjustment = useRef({ follow: false, delta: 0 })
-  const previousFirstKey = useRef<string | undefined>()
+  const previousLayout = useRef<{ keys: string[]; offsets: number[] }>({ keys: [], offsets: [] })
   const keys = useMemo(() => items.map(itemKey), [items, itemKey])
   const offsets = useMemo(() => {
     const result = [0]
@@ -190,9 +190,17 @@ export function VirtualList<T>({
   useLayoutEffect(() => {
     const scroll = container.current?.closest<HTMLElement>('[data-virtual-scroll]')
     if (!scroll) return
-    const inserted = previousFirstKey.current ? keys.indexOf(previousFirstKey.current) : 0
+    const previous = previousLayout.current
+    const inserted = previous.keys.length ? keys.indexOf(previous.keys[0]!) : 0
     if (inserted > 0) scroll.scrollTop += offsets[inserted]!
-    previousFirstKey.current = keys[0]
+    else if (inserted < 0) {
+      // Rows left the top of the list: the kept rows move up by their old height.
+      const present = new Set(keys)
+      const kept = previous.keys.findIndex((key) => present.has(key))
+      if (kept > 0)
+        scroll.scrollTop -= previous.offsets[kept]! - offsets[keys.indexOf(previous.keys[kept]!)]!
+    }
+    previousLayout.current = { keys, offsets }
     if (adjustment.current.follow) scroll.scrollTop = scroll.scrollHeight
     else if (adjustment.current.delta) scroll.scrollTop += adjustment.current.delta
     adjustment.current = { follow: false, delta: 0 }

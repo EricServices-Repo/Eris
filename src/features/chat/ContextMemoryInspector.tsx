@@ -5,10 +5,13 @@ import { useInspectorRequests } from '@/hooks/useInspectorRequests'
 
 export function ContextMemoryInspector({
   threadId,
-  workspacePath = null
+  workspacePath = null,
+  rendererBytes
 }: {
   threadId: string
   workspacePath?: string | null
+  /** Estimated pages held by this window, separate from main-process recall memory. */
+  rendererBytes?: number
 }) {
   const draftRevision = useRef(0)
   const [open, setOpen] = useState(false),
@@ -113,6 +116,12 @@ export function ContextMemoryInspector({
               This preview depends on the question. Actual model context can be smaller because of
               its input window. Extra recall is local only unless enabled in Settings → Agent.
             </p>
+            {rendererBytes !== undefined && (
+              <p>
+                This window holds an estimated {(rendererBytes / 1024 ** 2).toFixed(1)} MiB of
+                loaded messages, separate from the recall memory above.
+              </p>
+            )}
             {error && (
               <p role="alert">
                 {error} Your note draft is preserved. Preview again to reload controls before
