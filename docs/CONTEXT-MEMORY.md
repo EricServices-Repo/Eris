@@ -53,6 +53,10 @@ The RAM budgets use conservative logical accounting: four times the UTF-8 serial
 
 Reducing settings trims already warm entries. Oldest retained messages leave RAM first when a thread exceeds its limit. Least recently used conversations leave RAM when the global or warm-thread limit is exceeded. Idle entries are swept approximately once per minute and also expire on access. The detailed transcript remains on disk.
 
+## Canonical continuity validation
+
+Warm lookups now validate a lightweight canonical header through the context worker. Entries are reused only when transcript revision, count and durable source epoch match. Conversation recreation gets a new epoch. Append merging rejects revision/count discontinuities and changed overlapping records instead of claiming the new revision with stale text. Source pages carry epoch identity so mixed-incarnation hydration is discarded. This is bounded metadata validation, not a full transcript read or the future durable outbox/index architecture.
+
 ## Hydration and consistency
 
 Each conversation has a monotonic `contextRevision`. Appends and saved rewrites increment it independently of timestamps. Retrying the same message ID does not add another row or advance the revision.

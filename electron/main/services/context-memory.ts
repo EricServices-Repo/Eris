@@ -25,7 +25,8 @@ export function updateConversationMemory(root: string | null, thread: ChatThread
     thread.contextRevision ?? 0,
     thread.messageCount ?? thread.messages.length,
     thread.messages,
-    thread.messageOffset ?? 0
+    thread.messageOffset ?? 0,
+    thread.contextEpoch
   )
 }
 export async function warmConversationMemory(
@@ -38,7 +39,14 @@ export async function warmConversationMemory(
     settings.agent.contextMemory ?? ContextMemorySettingsSchema.parse({})
   )
   const key = memoryKey(root, id)
-  if (!contextMemoryStore.config.enabled || contextMemoryStore.has(key)) return
+  if (!contextMemoryStore.config.enabled) return
+  const header = await workspaceRequest({ type: 'context-header', dir: dir(root), id })
+  if (!header) {
+    contextMemoryStore.clear(key)
+    return
+  }
+  if (contextMemoryStore.matchesSource(key, header)) return
+  if (contextMemoryStore.has(key)) contextMemoryStore.clear(key)
   const existing = pending.get(key)
   if (existing) {
     await existing
@@ -51,6 +59,7 @@ export async function warmConversationMemory(
     const controls = await workspaceRequest({ type: 'context-controls', dir: dir(root), id })
     let before: number | undefined,
       revision: number | undefined,
+      sourceEpoch: string | undefined,
       total = 0,
       bytes = 0,
       partial = false
@@ -60,8 +69,13 @@ export async function warmConversationMemory(
       if (token !== contextMemoryStore.token(key)) return
       const page = await workspaceRequest({ type: 'context-page', dir: dir(root), id, before })
       if (!page) return
-      if (revision !== undefined && revision !== page.revision) return // concurrent transcript mutation; next request retries, never publish a mixed snapshot
+      if (
+        revision !== undefined &&
+        (revision !== page.revision || sourceEpoch !== page.sourceEpoch)
+      )
+        return // concurrent transcript mutation; next request retries, never publish a mixed snapshot
       revision = page.revision
+      sourceEpoch = page.sourceEpoch
       total = page.messageCount
       before = page.before
       partial ||= page.omitted > 0
@@ -81,7 +95,11 @@ export async function warmConversationMemory(
       await new Promise<void>((r) => setImmediate(r))
     }
     if (revision !== undefined)
-      contextMemoryStore.install(key, { revision, total, records, controls, partial }, token)
+      contextMemoryStore.install(
+        key,
+        { revision, sourceEpoch, total, records, controls, partial },
+        token
+      )
   })()
   pending.set(key, run)
   try {

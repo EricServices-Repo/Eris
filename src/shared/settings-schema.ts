@@ -316,6 +316,8 @@ export interface ChatMessage {
 }
 
 export interface ChatThread {
+  /** Durable source incarnation; replaced conversations must not inherit old RAM. */
+  contextEpoch?: string
   id: string
   title: string
   model: string

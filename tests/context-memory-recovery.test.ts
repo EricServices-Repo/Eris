@@ -38,6 +38,7 @@ beforeEach(() => {
   folder = mkdtempSync(join(tmpdir(), 'eris-memory-'))
   db = new ChatDatabase(folder)
   vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+    if (req.type === 'context-header') return db.contextHeader(req.id) as never
     if (req.type === 'context-controls') return db.memoryControls(req.id, req.write) as never
     if (req.type === 'context-page') return db.contextPage(req.id, req.before) as never
     throw Error('Unexpected request')
@@ -56,7 +57,8 @@ describe('canonical context hydration', () => {
     expect(result.prompt.manifest.retainedMessages).toBe(10001)
     const calls = vi.mocked(workspaceRequest).mock.calls.length
     await conversationContext(null, 't', 'checkout', settings())
-    expect(vi.mocked(workspaceRequest).mock.calls).toHaveLength(calls)
+    expect(vi.mocked(workspaceRequest).mock.calls).toHaveLength(calls + 1)
+    expect(vi.mocked(workspaceRequest).mock.calls.at(-1)?.[0].type).toBe('context-header')
     await saveMemoryControls(null, 't', {
       ...emptyMemoryControls(),
       pinned: [{ id: 'p', text: 'Test money rounding' }]
@@ -70,6 +72,7 @@ describe('canonical context hydration', () => {
     save('t')
     let release: (() => void) | undefined
     vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+      if (req.type === 'context-header') return db.contextHeader(req.id) as never
       if (req.type === 'context-controls') return emptyMemoryControls() as never
       if (req.type === 'context-page') {
         await new Promise<void>((r) => {
@@ -90,6 +93,7 @@ describe('canonical context hydration', () => {
     save('t')
     let pages = 0
     vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+      if (req.type === 'context-header') return db.contextHeader(req.id) as never
       if (req.type === 'context-controls') return emptyMemoryControls() as never
       if (req.type === 'context-page') {
         const page = db.contextPage('t', req.before)
@@ -131,6 +135,7 @@ it('does not inherit remote-sharing policy from another workspace warming concur
   const own = settings()
   own.agent.contextMemory.shareWithRemoteModels = false
   vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+    if (req.type === 'context-header') return db.contextHeader(req.id) as never
     if (req.type === 'context-controls') return emptyMemoryControls() as never
     if (req.type === 'context-page') {
       const page = db.contextPage('t', req.before)

@@ -2,6 +2,7 @@ import {
   emptyMemoryControls,
   MemoryControlsSchema,
   type MemoryControls,
+  type ContextHeader,
   type ContextPage
 } from '../../../src/shared/context-memory'
 import { DatabaseSync } from 'node:sqlite'
@@ -39,6 +40,10 @@ export class ChatDatabase {
       );
       CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY);
       CREATE INDEX IF NOT EXISTS message_identity ON messages(threadId, id);
+      CREATE TABLE IF NOT EXISTS context_source_epochs (
+        threadId TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+        epoch TEXT NOT NULL
+      );
     `)
     this.transaction(() => {
       if (
@@ -58,6 +63,31 @@ export class ChatDatabase {
     } catch (error) {
       this.db.close()
       throw error
+    }
+  }
+  private sourceEpoch(id: string): string {
+    const known = this.db
+      .prepare('SELECT epoch FROM context_source_epochs WHERE threadId=?')
+      .get(id)
+    if (known) return String(known.epoch)
+    this.db
+      .prepare(
+        'INSERT OR IGNORE INTO context_source_epochs(threadId,epoch) SELECT id,lower(hex(randomblob(16))) FROM conversations WHERE id=?'
+      )
+      .run(id)
+    const row = this.db.prepare('SELECT epoch FROM context_source_epochs WHERE threadId=?').get(id)
+    if (!row) throw new Error('Chat not found')
+    return String(row.epoch)
+  }
+  contextHeader(id: string): ContextHeader | null {
+    const header = this.db
+      .prepare('SELECT contextRevision,messageCount FROM conversations WHERE id=?')
+      .get(id)
+    if (!header) return null
+    return {
+      revision: Number(header.contextRevision),
+      messageCount: Number(header.messageCount),
+      sourceEpoch: this.sourceEpoch(id)
     }
   }
   close(): void {
@@ -123,6 +153,7 @@ export class ChatDatabase {
       .all(id, start, end)
     return {
       ...header,
+      contextEpoch: this.sourceEpoch(id),
       messages: rows.map((row) => JSON.parse(String(row.body))),
       messageOffset: start
     }
@@ -171,7 +202,7 @@ export class ChatDatabase {
     this.db
       .prepare('DELETE FROM messages WHERE threadId = ? AND ordinal >= ?')
       .run(next.id, next.messageCount)
-    return next
+    return { ...next, contextEpoch: this.sourceEpoch(next.id) }
   }
   save(thread: ChatThread): ChatThread {
     return this.transaction(() => this.write(thread))
@@ -252,6 +283,7 @@ export class ChatDatabase {
     }
     return {
       revision: header.contextRevision,
+      sourceEpoch: this.sourceEpoch(id),
       messageCount: header.messageCount,
       before: cursor,
       done: cursor === 0,

@@ -13,6 +13,7 @@ import {
 type RecordEntry = { ordinal: number; message: ChatMessage; bytes: number; salient: boolean }
 type ThreadEntry = {
   revision: number
+  sourceEpoch?: string
   generation: number
   total: number
   records: RecordEntry[]
@@ -94,6 +95,7 @@ export class ContextMemoryStore {
     key: string,
     input: {
       revision: number
+      sourceEpoch?: string
       total: number
       records: Array<{ ordinal: number; message: ChatMessage }>
       controls: MemoryControls
@@ -111,6 +113,7 @@ export class ContextMemoryStore {
       .sort((a, b) => a.ordinal - b.ordinal)
     const entry: ThreadEntry = {
       revision: input.revision,
+      sourceEpoch: input.sourceEpoch,
       total: input.total,
       records,
       controls: structuredClone(input.controls),
@@ -124,17 +127,60 @@ export class ContextMemoryStore {
     this.evict(key)
     return this.entries.has(key)
   }
-  append(key: string, revision: number, total: number, tail: ChatMessage[], offset: number) {
+  matchesSource(
+    key: string,
+    header: import('../../../src/shared/context-memory').ContextHeader
+  ): boolean {
     const entry = this.entries.get(key)
-    if (entry && revision <= entry.revision) return
-    this.bump(key)
-    if (!entry) return
-    // Appends can merge a returned tail only when it covers every intervening ordinal.
-    if (offset > entry.total) {
+    return Boolean(
+      entry &&
+      entry.revision === header.revision &&
+      entry.total === header.messageCount &&
+      entry.sourceEpoch === header.sourceEpoch
+    )
+  }
+  append(
+    key: string,
+    revision: number,
+    total: number,
+    tail: ChatMessage[],
+    offset: number,
+    sourceEpoch?: string
+  ) {
+    const entry = this.entries.get(key)
+    if (
+      entry &&
+      sourceEpoch !== undefined &&
+      entry.sourceEpoch !== undefined &&
+      sourceEpoch !== entry.sourceEpoch
+    ) {
       this.clear(key)
       return
     }
+    if (entry && revision < entry.revision) return // older queued reply; canonical header is checked before use
+    if (
+      entry &&
+      (total < entry.total ||
+        revision - entry.revision !== total - entry.total ||
+        offset > entry.total)
+    ) {
+      this.clear(key)
+      return
+    }
+    if (!entry) {
+      this.bump(key)
+      return
+    }
     const existing = new Map(entry.records.map((r) => [r.ordinal, r]))
+    for (let i = 0; i < tail.length; i++) {
+      const old = existing.get(offset + i)
+      if (old && JSON.stringify(old.message) !== JSON.stringify(clean(tail[i]))) {
+        this.clear(key)
+        return
+      }
+    }
+    if (revision === entry.revision) return
+    this.bump(key)
     for (let i = 0; i < tail.length; i++) {
       const ordinal = offset + i
       if (ordinal < entry.total) continue

@@ -63,7 +63,9 @@ export type MemoryInspection = {
   controls: MemoryControls
   processLogicalBytes: number
 }
+export type ContextHeader = { revision: number; messageCount: number; sourceEpoch: string }
 export type ContextPage = {
+  sourceEpoch?: string
   revision: number
   messageCount: number
   before: number

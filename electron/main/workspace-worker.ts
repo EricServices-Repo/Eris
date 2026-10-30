@@ -22,6 +22,8 @@ async function handle(request: WorkspaceRequest): Promise<unknown> {
         return null
       }
     }
+    case 'context-header':
+      return chatDatabase(request.dir).contextHeader(request.id)
     case 'context-page':
       return chatDatabase(request.dir).contextPage(request.id, request.before)
     case 'context-controls':
