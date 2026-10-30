@@ -13,6 +13,7 @@ import {
 import { seedProjectAgents } from './agents'
 import { ensureSkillsDirs } from './skills'
 import { ensureWorkspaceContext } from './workspace-context'
+import { realpathAllowMissing } from './workspace-fs'
 
 export interface AppState {
   workspaces: WorkspaceRecord[]
@@ -205,6 +206,18 @@ export function getWorkspaceById(id: string): WorkspaceRecord | null {
 
 export function getWorkspaceByPath(path: string): WorkspaceRecord | null {
   return getAppState().workspaces.find((w) => w.path === path) ?? null
+}
+
+/**
+ * Main-owned registration behind a root, read only from profile state so copied
+ * `.eris` metadata cannot assert one. Aliases of a folder share its oldest record.
+ */
+export function registeredWorkspaceId(path: string): string | null {
+  const canonical = realpathAllowMissing(path)
+  const [owner] = getAppState()
+    .workspaces.filter((workspace) => realpathAllowMissing(workspace.path) === canonical)
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+  return owner?.id ?? null
 }
 
 export function rememberWorkspace(

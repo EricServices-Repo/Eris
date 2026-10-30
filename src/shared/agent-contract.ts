@@ -337,7 +337,10 @@ export function asksForRecommendations(text: string): boolean {
   }
   return (
     /\bwhat\b[\s\S]{0,48}\bimprov/i.test(t) ||
-    /\b(list|suggest|recommend)\b[\s\S]{0,40}\b(improvements?|changes?|ideas)\b/i.test(t) ||
+    /\b(list|suggest|recommend)\b[\s\S]{0,40}\b(improvements?|enhancements?|changes?|ideas)\b/i.test(
+      t
+    ) ||
+    /\bconfirm\b[\s\S]{0,24}\b(improvements?|enhancements?)\b/i.test(t) ||
     (/\breview\b/i.test(t) && /\bwhat\b[\s\S]{0,48}\b(improv|should we)\b/i.test(t))
   )
 }

@@ -1,3 +1,5 @@
+import { HydrationScheduler } from '../electron/main/services/context-hydration-scheduler'
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -21,9 +23,15 @@ import {
 } from '../electron/main/services/context-memory'
 import { contextMemoryStore } from '../electron/main/services/context-memory-store'
 import { getDefaults } from '../electron/main/services/settings'
+import * as profileSettings from '../electron/main/services/settings'
 import { emptyMemoryControls } from '../src/shared/context-memory'
 let db: ChatDatabase, folder: string
-const settings = () => structuredClone(getDefaults())
+const settings = () => {
+  const value = structuredClone(getDefaults())
+  // Bulk hydration tests deliberately inspect full archives, not the ordinary send deadline.
+  value.agent.contextMemory.foregroundDeadlineMs = 2000
+  return value
+}
 function save(id: string, count = 1001) {
   db.save({
     id,
@@ -54,6 +62,218 @@ afterEach(() => {
   db.close()
   rmSync(folder, { recursive: true, force: true })
 })
+describe('RAM-CTX-019 bounded foreground scheduler', () => {
+  it('bounds saturation, sheds speculative work, promotes coalesced work and cancels queued work', async () => {
+    const scheduler = new HydrationScheduler()
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const signal = new AbortController()
+    const first = scheduler.run('active', 'a', 'background', signal.signal, () => held)
+    const queued = Array.from({ length: 8 }, (_, i) =>
+      scheduler.run(String(i), 'b', 'background', signal.signal, async () => {})
+    )
+    const outcomes = Promise.allSettled(queued)
+    expect(scheduler.counts).toEqual({ active: 1, queued: 8 })
+    await expect(
+      scheduler.run('overflow', 'b', 'background', signal.signal, async () => {})
+    ).rejects.toThrow('full')
+    await scheduler.run('chat', 'c', 'foreground', signal.signal, async () => {})
+    scheduler.promote('0')
+    await queued[0]
+    signal.abort()
+    release()
+    await first
+    expect((await outcomes).some((result) => result.status === 'rejected')).toBe(true)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(scheduler.counts).toEqual({ active: 0, queued: 0 })
+  })
+  it('rotates namespaces at equal priority without releasing an active cancelled RPC early', async () => {
+    const scheduler = new HydrationScheduler()
+    const order: string[] = []
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const abort = new AbortController()
+    const first = scheduler.run('a0', 'a', 'background', abort.signal, () => held)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const signal = new AbortController().signal
+    const requests = [
+      ['a1', 'a'],
+      ['a2', 'a'],
+      ['b1', 'b'],
+      ['b2', 'b']
+    ].map(([key, namespace]) =>
+      scheduler.run(key, namespace, 'background', signal, async () => {
+        order.push(key)
+      })
+    )
+    abort.abort()
+    expect(scheduler.counts.active).toBe(1)
+    expect(order).toEqual([])
+    release()
+    await Promise.all([first, ...requests])
+    expect(order).toEqual(['b1', 'a1', 'b2', 'a2'])
+  })
+})
+
+describe('RAM-CTX-014 independent hydration consumers', () => {
+  it.each([0, 1])(
+    'cancels consumer %i promptly without failing the other',
+    async (cancelledIndex) => {
+      save('shared')
+      let release!: () => void
+      let entered!: () => void
+      const pageEntered = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let pages = 0
+      vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+        if (req.type === 'context-page' && ++pages === 1) {
+          entered()
+          await held
+        }
+        return dispatchContextRequest(req)
+      })
+      const signals = [new AbortController(), new AbortController()]
+      const first = warmConversationMemory(null, 'shared', settings(), signals[0].signal)
+      await pageEntered
+      const second = warmConversationMemory(null, 'shared', settings(), signals[1].signal)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const pending = [first, second]
+      const cancelled = expect(pending[cancelledIndex]).rejects.toMatchObject({
+        name: 'AbortError'
+      })
+      signals[cancelledIndex].abort()
+      await cancelled // must detach before the page is released
+      release()
+      await pending[1 - cancelledIndex]
+      expect(
+        (await conversationContext(null, 'shared', 'checkout', settings())).prompt.text
+      ).toContain('CAD')
+    }
+  )
+  it('last consumer cancellation prevents late installation, then a later load succeeds', async () => {
+    save('cancelled')
+    let release!: () => void
+    vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+      if (req.type === 'context-page' && !release)
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+      return dispatchContextRequest(req)
+    })
+    const controller = new AbortController()
+    const load = warmConversationMemory(null, 'cancelled', settings(), controller.signal)
+    while (!release) await new Promise<void>((resolve) => setImmediate(resolve))
+    const cancelled = expect(load).rejects.toMatchObject({ name: 'AbortError' })
+    controller.abort()
+    await cancelled
+    release()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(contextMemoryStore.has(memoryKey(null, 'cancelled'))).toBe(false)
+    await warmConversationMemory(null, 'cancelled', settings())
+    expect(contextMemoryStore.has(memoryKey(null, 'cancelled'))).toBe(true)
+  })
+  it('shares worker failure and releases admission for a retry', async () => {
+    save('failed')
+    vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+      if (req.type === 'context-page') throw new Error('worker failed')
+      return dispatchContextRequest(req)
+    })
+    const outcomes = await Promise.allSettled([
+      warmConversationMemory(null, 'failed', settings()),
+      warmConversationMemory(null, 'failed', settings())
+    ])
+    expect(outcomes.map((result) => result.status)).toEqual(['rejected', 'rejected'])
+    vi.mocked(workspaceRequest).mockImplementation(dispatchContextRequest)
+    await warmConversationMemory(null, 'failed', settings())
+    expect(contextMemoryStore.has(memoryKey(null, 'failed'))).toBe(true)
+  })
+})
+
+describe('RAM-CTX-018 optional recall deadline', () => {
+  afterEach(() => vi.useRealTimers())
+  it('returns recent-only fallback before a held cold worker is released', async () => {
+    save('deadline', 3)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let release!: () => void
+    vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+      if (req.type === 'context-header')
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+      return dispatchContextRequest(req)
+    })
+    const config = settings()
+    config.agent.contextMemory.foregroundDeadlineMs = 25
+    const request = conversationContext(null, 'deadline', 'checkout', config)
+    await vi.advanceTimersByTimeAsync(26)
+    const result = await request
+    expect(result.prompt.text).toBe('')
+    expect(result.prompt.manifest.reason).toContain('25 ms deadline')
+    expect(result.prompt.manifest.coverage).toBe('unavailable')
+    expect(db.get('deadline')!.messages).toHaveLength(3)
+    release()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+  })
+  it('detaches foreground recall without cancelling an admitted background backfill', async () => {
+    save('partial', 1001)
+    const config = settings()
+    config.agent.contextMemory.maxMessages = 500
+    await warmConversationMemory(null, 'partial', config)
+    config.agent.contextMemory.maxMessages = 1000
+    config.agent.contextMemory.foregroundDeadlineMs = 25
+    let release!: () => void
+    vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+      if (req.type === 'context-page')
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+      return dispatchContextRequest(req)
+    })
+    const background = warmConversationMemory(null, 'partial', config)
+    while (!release) await new Promise<void>((resolve) => setImmediate(resolve))
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const foreground = conversationContext(null, 'partial', 'checkout', config)
+    await vi.advanceTimersByTimeAsync(26)
+    const result = await foreground
+    expect(result.prompt.text).toBe('')
+    expect(result.prompt.manifest.retainedMessages).toBe(500)
+    expect(result.prompt.manifest.coverage).toBe('partial')
+    release()
+    await background
+    expect(
+      (await contextMemoryStore.select(memoryKey(null, 'partial'), 'Discussion')).inspection
+        .manifest.retainedMessages
+    ).toBe(1000)
+  })
+  it('propagates user abort rather than silently continuing to model dispatch', async () => {
+    save('abort', 3)
+    let release!: () => void
+    vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+      if (req.type === 'context-header')
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+      return dispatchContextRequest(req)
+    })
+    const abort = new AbortController()
+    const request = conversationContext(null, 'abort', 'checkout', settings(), {
+      signal: abort.signal
+    })
+    const rejected = expect(request).rejects.toMatchObject({ name: 'AbortError' })
+    abort.abort()
+    await rejected
+    release?.()
+  })
+})
+
 it('keeps excluded pins excluded after RAM eviction and database restart', async () => {
   save('t', 1)
   await saveMemoryControls(null, 't', {
@@ -70,6 +290,38 @@ it('keeps excluded pins excluded after RAM eviction and database restart', async
   expect(result.inspection.controls.pinned).toHaveLength(1)
   expect(result.inspection.facts.some((f) => f.sourceId === 'p')).toBe(false)
   expect(db.get('t')!.messageCount).toBe(1)
+})
+
+describe('RAM-CTX-012 normalized content hydration', () => {
+  it('recalls short trace-heavy text and a decision in an older content chunk through the real worker', async () => {
+    save('chunked', 2)
+    const thread = db.get('chunked')!
+    thread.messages[0].content = 'Remember: checkout currency CAD. ' + 'ordinary text '.repeat(8000)
+    thread.messages[1].thinking = 'private reasoning '.repeat(150000)
+    thread.messages[1].content = 'Remember: invoice language French'
+    db.save(thread)
+    const recalled = await conversationContext(
+      null,
+      'chunked',
+      'checkout currency invoice',
+      settings()
+    )
+    expect(recalled.prompt.text).toContain('currency CAD')
+    expect(recalled.prompt.text).toContain('language French')
+    expect(recalled.prompt.text).not.toContain('private reasoning')
+    expect(recalled.prompt.manifest).toMatchObject({
+      retainedMessages: 2,
+      totalMessages: 2,
+      coverage: 'complete'
+    })
+    expect(
+      vi
+        .mocked(workspaceRequest)
+        .mock.calls.some(
+          ([req]) => req.type === 'context-page' && req.beforeContentOffset !== undefined
+        )
+    ).toBe(true)
+  })
 })
 
 describe('canonical context hydration', () => {
@@ -106,9 +358,10 @@ describe('canonical context hydration', () => {
     })
     const warming = warmConversationMemory(null, 't', settings())
     while (!release) await new Promise<void>((r) => setImmediate(r))
+    const cancelled = expect(warming).rejects.toMatchObject({ name: 'AbortError' })
     invalidateConversationMemory(null, 't')
     release()
-    await warming
+    await cancelled
     expect(contextMemoryStore.has(memoryKey(null, 't'))).toBe(false)
   })
   it('retries mixed-revision reads and publishes only one consistent snapshot', async () => {
@@ -229,14 +482,14 @@ it('fails closed when canonical controls cannot be read', async () => {
   )
 })
 
-it('inspects canonical controls while two background hydrations occupy all slots', async () => {
+it('reserves a foreground slot while background hydrations are held', async () => {
   save('t', 2)
   db.save({ ...db.get('t')!, id: 'warm-a' })
   db.save({ ...db.get('t')!, id: 'warm-b' })
   db.memoryControls('t', { ...emptyMemoryControls(), pinned: [{ id: 'p', text: 'Saved note' }] })
   const releases: Array<() => void> = []
   vi.mocked(workspaceRequest).mockImplementation(async (req) => {
-    if (req.type === 'context-page' && req.id !== 't')
+    if (req.type === 'context-page' && req.id === 'warm-a')
       await new Promise<void>((resolve) => releases.push(resolve))
     return dispatchContextRequest(req)
   })
@@ -244,14 +497,121 @@ it('inspects canonical controls while two background hydrations occupy all slots
     warmConversationMemory(null, 'warm-a', settings()),
     warmConversationMemory(null, 'warm-b', settings())
   ]
-  while (releases.length < 2) await new Promise<void>((resolve) => setImmediate(resolve))
+  while (releases.length < 1) await new Promise<void>((resolve) => setImmediate(resolve))
   try {
     const inspected = await inspectConversationMemory(null, 't', 'note', settings())
-    expect(inspected.manifest.coverage).toBe('unavailable')
+    expect(inspected.manifest.coverage).toBe('complete')
     expect(inspected.controlsAvailable).toBe(true)
     expect(inspected.controls.pinned[0]?.id).toBe('p')
   } finally {
     releases.forEach((release) => release())
     await Promise.all(warms)
   }
+})
+
+describe('RAM-CTX-004 growing context capacity', () => {
+  it('backfills a partial tail once, fetching only older pages while keeping recent context available', async () => {
+    save('growing', 1001)
+    const config = settings()
+    config.agent.contextMemory.maxMessages = 500
+    expect(
+      (await conversationContext(null, 'growing', 'checkout', config)).inspection.manifest
+        .retainedMessages
+    ).toBe(500)
+    const beforeCalls = vi.mocked(workspaceRequest).mock.calls.length
+    config.agent.contextMemory.maxMessages = 1000
+    let retainedWhileLoading = 0
+    vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+      if (req.type === 'context-page')
+        retainedWhileLoading = (
+          await contextMemoryStore.select(memoryKey(null, 'growing'), 'Discussion')
+        ).inspection.manifest.retainedMessages
+      return dispatchContextRequest(req)
+    })
+    const result = await conversationContext(null, 'growing', 'checkout', config)
+    expect(retainedWhileLoading).toBe(500)
+    expect(result.inspection.manifest.retainedMessages).toBe(1000)
+    const pages = vi
+      .mocked(workspaceRequest)
+      .mock.calls.slice(beforeCalls)
+      .map(([req]) => req)
+      .filter((req) => req.type === 'context-page')
+    expect(pages).toHaveLength(1)
+    expect(pages[0]).toMatchObject({ before: 501 })
+    const calls = vi.mocked(workspaceRequest).mock.calls.length
+    await conversationContext(null, 'growing', 'checkout', config)
+    expect(vi.mocked(workspaceRequest).mock.calls).toHaveLength(calls + 1)
+    config.agent.contextMemory.maxMessages = 500
+    expect(
+      (await conversationContext(null, 'growing', 'checkout', config)).inspection.manifest
+        .retainedMessages
+    ).toBe(500)
+  })
+  it('backfills after byte-budget growth and reloads an evicted thread when warm slots grow', async () => {
+    save('bytes', 1001)
+    const thread = db.get('bytes')!
+    thread.messages = thread.messages.map((m) => ({
+      ...m,
+      content: 'Discussion ' + 'x'.repeat(3000)
+    }))
+    db.save(thread)
+    const config = settings()
+    config.agent.contextMemory.maxThreadMiB = 4
+    const small = await conversationContext(null, 'bytes', 'Discussion', config)
+    config.agent.contextMemory.maxThreadMiB = 8
+    const larger = await conversationContext(null, 'bytes', 'Discussion', config)
+    expect(larger.inspection.manifest.retainedMessages).toBeGreaterThan(
+      small.inspection.manifest.retainedMessages
+    )
+    expect(contextMemoryStore.logicalBytes).toBeLessThanOrEqual(8 * 1024 ** 2)
+    save('other', 1)
+    // Warm-thread slots are profile-wide allocator settings, not workspace policy.
+    vi.spyOn(profileSettings, 'getResolvedSettings').mockReturnValue(config)
+    config.agent.contextMemory.warmThreads = 1
+    await conversationContext(null, 'other', 'Discussion', config)
+    expect(contextMemoryStore.has(memoryKey(null, 'bytes'))).toBe(false)
+    config.agent.contextMemory.warmThreads = 2
+    await conversationContext(null, 'bytes', 'Discussion', config)
+    expect(contextMemoryStore.has(memoryKey(null, 'other'))).toBe(true)
+    expect(contextMemoryStore.has(memoryKey(null, 'bytes'))).toBe(true)
+  })
+  it('never publishes a backfill over a concurrent canonical append', async () => {
+    save('append', 1001)
+    const config = settings()
+    config.agent.contextMemory.maxMessages = 500
+    await conversationContext(null, 'append', 'checkout', config)
+    config.agent.contextMemory.maxMessages = 1500
+    let changed = false
+    vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+      if (req.type === 'context-page' && !changed) {
+        changed = true
+        db.append('append', {
+          id: 'late',
+          role: 'user',
+          content: 'Remember: checkout uses SEK',
+          createdAt: 2
+        })
+      }
+      return dispatchContextRequest(req)
+    })
+    const current = await conversationContext(null, 'append', 'checkout', config)
+    expect(current.prompt.text).toContain('SEK')
+    expect(current.inspection.manifest.totalMessages).toBe(1002)
+  })
+})
+
+it('RAM-CTX-013 hydrates valid records around corrupt rows and retains explicit coverage gaps', async () => {
+  save('mixed', 3)
+  const raw = new DatabaseSync(join(folder, 'chats.sqlite'))
+  raw.prepare('UPDATE messages SET body=? WHERE threadId=? AND ordinal=0').run('{broken', 'mixed')
+  raw.close()
+  const result = await conversationContext(null, 'mixed', 'checkout', settings())
+  expect(result.prompt.text).toContain('CAD')
+  expect(result.inspection.manifest.corruptRecords).toBe(1)
+  expect(result.inspection.manifest.coverage).toBe('partial')
+  const expanded = settings()
+  expanded.agent.contextMemory.maxMessages *= 2
+  const backfilled = await conversationContext(null, 'mixed', 'checkout', expanded)
+  expect(backfilled.inspection.manifest.corruptRecords).toBe(1)
+  expect(backfilled.inspection.manifest.reason).toContain('corrupt')
 })

@@ -1,4 +1,6 @@
+import { ThreadWorkingStateBuilder } from '../services/thread-working-state'
 import { pendingCommandApprovals } from '../services/command-approval'
+import { captureReceiptEvidence } from '../services/context-evidence'
 import { pendingUserQuestions } from '../services/user-question'
 import { chatPublisher, replayChatJob } from '../services/chat-events'
 import {
@@ -7,8 +9,10 @@ import {
   validateSubmissionPaths
 } from '../services/chat-submission'
 import { foregroundTasks } from '../services/foreground-tasks'
-import { getChat, appendChatMessage } from '../services/chats'
+import { getChat, appendChatMessage, scopeChatSource } from '../services/chats'
+import { compactHistory } from '../services/chat-prompt'
 import { conversationContext } from '../services/context-memory'
+import { leaseMemoryEvidence } from '../services/memory-dispatch'
 import { appendTaskEvent } from '../services/task-ledger'
 import type { MemoryPrompt } from '../../../src/shared/context-memory'
 import { flushTaskLedger } from '../services/task-ledger'
@@ -139,6 +143,7 @@ export function registerChatStreamIpc(): void {
         if (workspacePath !== appState.currentWorkspace)
           throw new Error('The workspace changed while this task was queued.')
         markChatJobRunning(payload.requestId)
+        let releaseMemoryEvidence = (): void => undefined
         try {
           const requestReceivedAt = Date.now()
           // Renderer planning happens before this IPC request; fallback planning below
@@ -180,6 +185,7 @@ export function registerChatStreamIpc(): void {
           }
           const contextThreadId = payload.threadId ?? payload.prompt?.threadId
           let conversationMemory: MemoryPrompt | undefined
+          let workingState: ThreadWorkingStateBuilder | undefined
           const persistReply = async (terminal: string) => {
             if (!contextThreadId) return true
             const { content, thinking } = finalizePostedAnswer(
@@ -190,6 +196,13 @@ export function registerChatStreamIpc(): void {
             )
             if (!content && !replyAssets.length) return true
             try {
+              const selectedPaths = [...new Set([...evidencePaths, ...memoryFiles])]
+              let dependencies =
+                workspacePath && (selectedPaths.length || observedCheck)
+                  ? await captureReceiptEvidence(workspacePath, selectedPaths)
+                  : undefined
+              if (dependencies && !selectedPaths.length)
+                dependencies = { ...dependencies, complete: false }
               await appendChatMessage(workspacePath, contextThreadId, {
                 id: `${requestId}:assistant`,
                 role: 'assistant',
@@ -202,8 +215,10 @@ export function registerChatStreamIpc(): void {
                 agentId: replyAgentId ?? turnPlan?.agentId,
                 agentName: replyAgentName,
                 contextResult: {
+                  workingState: workingState?.snapshot(terminal),
                   taskId: requestId,
                   terminal,
+                  dependencies,
                   projectRoot: turnPlan?.task?.scope.projectRoot ?? null,
                   changedFiles: memoryFiles.slice(0, 200)
                 }
@@ -255,7 +270,8 @@ export function registerChatStreamIpc(): void {
               payload.prompt.history = recent.messages
                 .filter((m) => m.id !== `${requestId}:user` && m.role !== 'system')
                 .slice(-20)
-                .map(({ role, content, agentId, agentName }) => ({
+                .map(({ id, role, content, agentId, agentName }) => ({
+                  id,
                   role,
                   content,
                   agentId,
@@ -329,6 +345,7 @@ export function registerChatStreamIpc(): void {
             const contract = await resolveChatTurnContract(turnInput, turnPlan)
             turnPlan = contract.plan
             saveTask(contract.task)
+            workingState = new ThreadWorkingStateBuilder(contract.task, `${requestId}:assistant`)
             publish('chat:task', { requestId, task: contract.task })
           } catch (error) {
             publish('chat:error', {
@@ -343,6 +360,12 @@ export function registerChatStreamIpc(): void {
           }
           if (contextThreadId && payload.prompt) {
             try {
+              await scopeChatSource(
+                workspacePath,
+                contextThreadId,
+                `${requestId}:user`,
+                turnPlan.task?.scope.projectRoot ?? null
+              )
               const recalled = await conversationContext(
                 workspacePath,
                 contextThreadId,
@@ -350,11 +373,21 @@ export function registerChatStreamIpc(): void {
                 settings,
                 {
                   excludeId: `${requestId}:user`,
+                  coveredSourceIds: compactHistory(
+                    payload.prompt.history,
+                    turnPlan.mode === 'agent' ? 6000 : 24000
+                  ).coveredSourceIds,
                   projectRoot: turnPlan.task?.scope.projectRoot ?? null,
                   signal: controller.signal
                 }
               )
               conversationMemory = recalled.prompt
+              releaseMemoryEvidence = leaseMemoryEvidence({
+                root: workspacePath,
+                threadId: contextThreadId,
+                taskId: requestId,
+                prompt: recalled.prompt
+              })
               appendTaskEvent(requestId, 'memory-selected', recalled.prompt.manifest)
             } catch (error) {
               if (controller.signal.aborted) throw error
@@ -418,6 +451,8 @@ export function registerChatStreamIpc(): void {
           let finalAnswer = ''
           const outcomeEvidence = new OutcomeEvidence()
           /** Accumulated for project memory even when no checkpoint/run record exists. */
+          const evidencePaths = new Set<string>()
+          let observedCheck = false
           let memoryFiles: string[] = []
           let memoryActions: string[] = []
           // #10 opt-in agent telemetry
@@ -577,7 +612,11 @@ export function registerChatStreamIpc(): void {
                   getSecret,
                   signal: controller.signal
                 })) {
+                  workingState?.observe(evt)
                   noteFirstAgentOutput(evt)
+                  if (evt.type === 'diff' && evidencePaths.size < 32)
+                    evidencePaths.add(evt.diff.path)
+                  if (evt.type === 'tool' && evt.tool.name === 'verify') observedCheck = true
                   if (evt.type === 'thinking') {
                     pendingThinking += evt.text
                     scheduleStreamFlush()
@@ -829,6 +868,7 @@ export function registerChatStreamIpc(): void {
                   timeoutMs: USER_QUESTION_TIMEOUT_MS,
                   signal: appState.chatAbort?.signal
                 })
+                workingState?.question(question, outcome.kind === 'reply')
                 logInfo('User question', {
                   requestId,
                   kind: outcome.kind,
@@ -860,7 +900,12 @@ export function registerChatStreamIpc(): void {
                 return null
               }
             })) {
+              workingState?.observe(evt)
               noteFirstAgentOutput(evt)
+              if (evt.type === 'evidence' && evt.evidence.path && evidencePaths.size < 32)
+                evidencePaths.add(evt.evidence.path)
+              if (evt.type === 'diff' && evidencePaths.size < 32) evidencePaths.add(evt.diff.path)
+              if (evt.type === 'tool' && evt.tool.name === 'verify') observedCheck = true
               if (evt.type === 'thinking') {
                 pendingThinking += evt.text
                 scheduleStreamFlush()
@@ -1128,6 +1173,7 @@ export function registerChatStreamIpc(): void {
             }
           }
         } finally {
+          releaseMemoryEvidence()
           if (appState.chatAbort === controller) {
             appState.chatStreamActive = false
             appState.activeChatRequestId = null

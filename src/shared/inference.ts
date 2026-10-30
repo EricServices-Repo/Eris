@@ -1,4 +1,11 @@
 export interface InferenceSnapshot {
+  contextPressure?: {
+    pressure: 'normal' | 'constrained' | 'critical'
+    optionalLimitBytes: number
+    pendingNativeBytes: number
+    materializedNativeBytes: number
+    ledger?: { ownedBytes: number; reservedBytes: number; pinnedBytes: number }
+  }
   version: number
   platform: string
   memory: { total: number; free: number; reserve: number; reservationSource: string }

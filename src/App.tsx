@@ -270,7 +270,11 @@ export default function App() {
     activeThreadRef,
     refreshChats,
     selectThread,
-    loadEarlier
+    loadEarlier,
+    loadNewer,
+    jumpToLatest,
+    openMessage,
+    history
   } = useChatThreads()
 
   const {
@@ -972,8 +976,13 @@ export default function App() {
             ) : (
               <Suspense fallback={<div className="welcome">Loading chat…</div>}>
                 <ChatPanel
+                  workspacePath={workspacePath}
                   activeThread={activeThread}
                   onLoadEarlier={loadEarlier}
+                  onLoadNewer={loadNewer}
+                  onJumpToLatest={jumpToLatest}
+                  onOpenMessage={openMessage}
+                  history={history}
                   routeLabel={routeLabel}
                   composerReady={composerReady}
                   modelsOk={ollamaOk}

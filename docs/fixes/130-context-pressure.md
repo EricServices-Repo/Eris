@@ -1,0 +1,9 @@
+# #130 — shared host-memory admission for optional context
+
+The main inference governor registers the context store as an optional owner. It exposes owned, reserved and pinned estimates alongside pending versus explicitly materialized native reservations. System free memory already reflects owned/pinned context and confirmed native allocations; only pending transfers/reservations are subtracted again. Total capacity counts each controlled owner once. Text runtimes confirm materialization on first model output; unconfirmed image/index peaks remain conservatively pending until release.
+
+Every inference admission first shrinks optional history. Context pressure has normal/constrained/critical states, with 2%/8% recovery hysteresis. At zero headroom the effective history envelope is zero, speculative hydrations are aborted and cache ownership is released synchronously. Periodic sampling runs every five seconds, with additional samples before warms/pages and model admission. In-flight transfers/pinned selections retain ownership until their existing cleanup, so physical memory release is not falsely claimed. Foreground inference waits if unreleased reservations still prevent safe admission.
+
+Validation: `npx vitest run tests/inference-governor.test.ts tests/context-memory-reservations.test.ts tests/context-memory-recovery.test.ts`. Deterministic low-headroom and pending/materialized accounting fixtures. Mac unified-memory and Windows host/VRAM hardware stress remain separate unexecuted acceptance; no OOM or RSS guarantee is inferred from estimates.
+
+The first native workload retains its existing backend load preflight: this change does not substitute macOS `freemem` for reclaimable memory or prevent reuse of a cached model. Concurrent native work and unreleased context transfers/pins still pass the shared free-headroom check. Optional history alone has no forced allocation at low headroom.

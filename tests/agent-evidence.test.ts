@@ -144,6 +144,66 @@ describe('AG-051 requested stack against the project stack', () => {
   })
 })
 
+describe('RAM-CTX-031 fresh evidence allocation', () => {
+  it.each([2048, 4096, 8192])(
+    'keeps current code ahead of large historical memory at %i tokens',
+    (maxInputTokens) => {
+      const task = createTaskContract({
+        workspacePath: project(SAMPLE),
+        text: 'Fix divide in index.js',
+        plan: plan({ intent: 'edit', toolPolicy: 'full' })
+      })
+      const input = {
+        task,
+        guidance: '',
+        project: 'Current project uses JavaScript.',
+        retrieval: 'index.js: if (b === 0) throw new Error("zero")',
+        maxInputTokens
+      }
+      const baseline = compileTaskContext(input)
+      const recalled = compileTaskContext({ ...input, memory: 'OLD '.repeat(20000) })
+      expect(recalled.blocks.find((b) => b.kind === 'retrieval')?.status).toBe('included')
+      expect(recalled.message.content).toContain('b === 0')
+      expect(recalled.budget.optionalAllocation.policy).toBe('fresh-first')
+      expect(recalled.budget.optionalAllocation.freshChars).toBe(
+        baseline.budget.optionalAllocation.freshChars
+      )
+      expect(recalled.budget.optionalAllocation.historicalChars).toBeLessThanOrEqual(
+        recalled.budget.optionalAllocation.historicalCapChars
+      )
+      expect(recalled.budget.usedChars).toBeLessThanOrEqual(recalled.budget.maxChars)
+    }
+  )
+  it('reserves no source capacity for generic questions and deduplicates identical evidence blocks', () => {
+    const task = createTaskContract({
+      workspacePath: null,
+      text: 'Explain recursion',
+      plan: plan({})
+    })
+    const generic = compileTaskContext({
+      task,
+      guidance: '',
+      memory: 'remember '.repeat(3000),
+      project: '',
+      retrieval: '',
+      maxInputTokens: 2048
+    })
+    expect(generic.budget.optionalAllocation.policy).toBe('conversation-first')
+    expect(generic.budget.optionalAllocation.historicalChars).toBeGreaterThan(500)
+    const scoped = { ...task, scope: { ...task.scope, applicability: 'selected-project' as const } }
+    const duplicate = compileTaskContext({
+      task: scoped,
+      guidance: '',
+      memory: 'same source',
+      project: 'same source',
+      retrieval: 'same source',
+      maxInputTokens: 4096
+    })
+    expect(duplicate.budget.optionalAllocation.duplicateBlocks).toBe(2)
+    expect(duplicate.message.content.match(/same source/g)).toHaveLength(1)
+  })
+})
+
 describe('AG-048/AG-049 context accounting and admission', () => {
   const task = () =>
     createTaskContract({

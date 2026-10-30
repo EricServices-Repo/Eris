@@ -20,6 +20,7 @@ import { chatStream } from '@/state/chat-stream'
 import { useStore } from '@/state/store'
 import { VirtualList } from '@/components/VirtualList'
 import { searchLoadedHistory } from '@/shared/chat-history-search'
+import type { historyView } from '@/shared/chat-history-window'
 
 export type { ToolActivityItem }
 export type ChatMode = 'ask' | 'agent'
@@ -57,7 +58,8 @@ export const HistoricalMessages = memo(function HistoricalMessages({
   onRerouteLast,
   streaming,
   searchOpen = false,
-  onCloseSearch
+  onCloseSearch,
+  revealMessage = null
 }: {
   messages: ChatMessage[]
   onOpenPath: (path: string) => void
@@ -65,6 +67,7 @@ export const HistoricalMessages = memo(function HistoricalMessages({
   streaming: boolean
   searchOpen?: boolean
   onCloseSearch?: () => void
+  revealMessage?: { key: string; request: number } | null
 }) {
   const visible = useMemo(() => messages.filter((message) => message.role !== 'system'), [messages])
   const [query, setQuery] = useState(''),
@@ -94,6 +97,13 @@ export const HistoricalMessages = memo(function HistoricalMessages({
       controller.abort()
     }
   }, [visible, query])
+  useEffect(() => {
+    if (revealMessage)
+      setReveal((previous) => ({
+        key: revealMessage.key,
+        request: (previous?.request ?? 0) + 1
+      }))
+  }, [revealMessage])
   const navigate = (direction: number) => {
     if (!hits.length) return
     window.getSelection()?.removeAllRanges()
@@ -255,8 +265,14 @@ interface SlashItem {
 }
 
 interface Props {
+  workspacePath?: string | null
   activeThread: ChatThread | null
   onLoadEarlier?: () => Promise<void>
+  onLoadNewer?: () => Promise<void>
+  onJumpToLatest?: () => void
+  /** Older pages plus the live tail, as produced by historyView. */
+  history?: ReturnType<typeof historyView>
+  onOpenMessage?: (ordinal: number) => Promise<string | null>
   routeLabel: string | null
   composerReady: boolean
   /** True when any chat backend is ready (builtin or Ollama/API connection). */
@@ -439,8 +455,13 @@ function DelegationCards({ items }: { items: ChatDelegation[] }) {
 }
 
 export function ChatPanel({
+  workspacePath = null,
   activeThread,
   onLoadEarlier,
+  onLoadNewer,
+  onJumpToLatest,
+  history,
+  onOpenMessage,
   routeLabel,
   composerReady,
   modelsOk = false,
@@ -485,6 +506,7 @@ export function ChatPanel({
 }: Props) {
   const { thinkingBuffer, answerBuffer, agentStatus, toolActivity } = useStore(chatStream)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [revealMessage, setRevealMessage] = useState<{ key: string; request: number } | null>(null)
   const searchButton = useRef<HTMLButtonElement>(null)
   const closeSearch = () => {
     setSearchOpen(false)
@@ -493,6 +515,13 @@ export function ChatPanel({
   useEffect(() => setSearchOpen(false), [activeThread?.id])
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
+  const loadHistory = (load: () => Promise<void>) => {
+    setLoadingHistory(true)
+    setHistoryError(null)
+    void load()
+      .catch((error) => setHistoryError(String(error)))
+      .finally(() => setLoadingHistory(false))
+  }
   const [draft, setDraft] = useState('')
   const [dragging, setDragging] = useState(false)
   const [slashIndex, setSlashIndex] = useState(0)
@@ -820,7 +849,24 @@ export function ChatPanel({
               New chat
             </button>
             {activeThread && (
-              <ContextMemoryInspector key={activeThread.id} threadId={activeThread.id} />
+              <ContextMemoryInspector
+                key={`${workspacePath ?? 'global'}:${activeThread.id}`}
+                threadId={activeThread.id}
+                workspacePath={workspacePath}
+                rendererBytes={history?.bytes}
+                model={selectedModel}
+                onOpenMessage={
+                  onOpenMessage &&
+                  ((ordinal) =>
+                    void onOpenMessage(ordinal).then((key) => {
+                      if (key)
+                        setRevealMessage((previous) => ({
+                          key,
+                          request: (previous?.request ?? 0) + 1
+                        }))
+                    }))
+                }
+              />
             )}
             <p className="subtitle">
               Ask reads your project. Agent can edit files and request permission to run commands.
@@ -982,17 +1028,11 @@ export function ChatPanel({
             </div>
           ) : (
             <div className="chat-messages">
-              {!!activeThread?.messageOffset && onLoadEarlier && (
+              {!!(history?.start ?? activeThread?.messageOffset) && onLoadEarlier && (
                 <button
                   className="btn"
                   disabled={loadingHistory}
-                  onClick={() => {
-                    setLoadingHistory(true)
-                    setHistoryError(null)
-                    void onLoadEarlier()
-                      .catch((error) => setHistoryError(String(error)))
-                      .finally(() => setLoadingHistory(false))
-                  }}
+                  onClick={() => loadHistory(onLoadEarlier)}
                 >
                   {loadingHistory ? 'Loading…' : 'Load earlier messages'}
                 </button>
@@ -1003,11 +1043,26 @@ export function ChatPanel({
                 key={activeThread?.id ?? 'empty'}
                 searchOpen={searchOpen}
                 onCloseSearch={closeSearch}
-                messages={activeThread?.messages ?? EMPTY_MESSAGES}
+                revealMessage={revealMessage}
+                messages={history?.messages ?? activeThread?.messages ?? EMPTY_MESSAGES}
                 onOpenPath={onOpenPath}
                 onRerouteLast={onRerouteLast}
                 streaming={streaming}
               />
+              {history?.gap && onLoadNewer && (
+                <div className="chat-history-gap">
+                  <button
+                    className="btn"
+                    disabled={loadingHistory}
+                    onClick={() => loadHistory(onLoadNewer)}
+                  >
+                    {loadingHistory ? 'Loading…' : 'Load newer messages'}
+                  </button>
+                  <button className="btn" onClick={onJumpToLatest}>
+                    Jump to latest
+                  </button>
+                </div>
+              )}
               {streaming && (
                 <div className="msg assistant">
                   <span className="role">

@@ -1553,7 +1553,10 @@ export async function* streamBuiltinChat(options: {
     // Fall back to in-process on worker failures (including sequence races).
     if (!preferInProcess) {
       try {
-        yield* streamBuiltinChatViaWorker({ ...options, entry, path })
+        for await (const chunk of streamBuiltinChatViaWorker({ ...options, entry, path })) {
+          lease.markMaterialized?.()
+          yield chunk
+        }
         return
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
@@ -1578,7 +1581,10 @@ export async function* streamBuiltinChat(options: {
       }
     }
 
-    yield* streamBuiltinChatInProcess({ ...options, entry, path })
+    for await (const chunk of streamBuiltinChatInProcess({ ...options, entry, path })) {
+      lease.markMaterialized?.()
+      yield chunk
+    }
   } finally {
     lease.release()
   }

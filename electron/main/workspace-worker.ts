@@ -1,3 +1,4 @@
+import { captureContextEvidence, validateContextEvidence } from './services/context-evidence-worker'
 import { parentPort } from 'worker_threads'
 import { readFileSync } from 'fs'
 import { listTree, readTextFile } from './services/files'
@@ -11,6 +12,10 @@ export async function handleWorkspaceRequest(request: WorkspaceRequest): Promise
       return listTree(request.root, 0, request.maxDepth)
     case 'read':
       return readTextFile(request.path)
+    case 'context-evidence-capture':
+      return captureContextEvidence(request.root, request.paths)
+    case 'context-evidence-validate':
+      return validateContextEvidence(request.root, request.snapshots)
     case 'index':
       return scanWorkspaceIndex(request.root, request.indexPath)
     case 'patch-index':
@@ -22,12 +27,28 @@ export async function handleWorkspaceRequest(request: WorkspaceRequest): Promise
         return null
       }
     }
-    case 'context-header':
-      return chatDatabase(request.dir).contextHeader(request.id)
+    case 'context-replay':
+      return chatDatabase(request.dir).replayContextChanges(request.limit)
+    case 'context-changes':
+      return chatDatabase(request.dir).contextChanges(request.after, request.limit)
+    case 'context-header': {
+      const db = chatDatabase(request.dir)
+      db.replayContextChanges()
+      return db.contextHeader(request.id)
+    }
     case 'context-page':
-      return chatDatabase(request.dir).contextPage(request.id, request.before)
+      return chatDatabase(request.dir).contextPage(
+        request.id,
+        request.before,
+        undefined,
+        request.beforeContentOffset
+      )
     case 'context-controls':
-      return chatDatabase(request.dir).contextControls(request.id, request.write)
+      return chatDatabase(request.dir).contextControls(
+        request.id,
+        request.write,
+        request.expectedSource
+      )
     case 'chat-list':
       return chatDatabase(request.dir).list()
     case 'chat-get':
@@ -38,6 +59,12 @@ export async function handleWorkspaceRequest(request: WorkspaceRequest): Promise
       return chatDatabase(request.dir).remove(request.id)
     case 'chat-append':
       return chatDatabase(request.dir).append(request.id, request.message, request.model)
+    case 'context-source-scope':
+      return chatDatabase(request.dir).scopeContextSource(
+        request.id,
+        request.messageId,
+        request.projectRoot
+      )
     case 'shutdown':
       closeChatDatabases()
       return true

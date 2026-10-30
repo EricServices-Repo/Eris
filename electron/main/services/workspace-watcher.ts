@@ -1,3 +1,4 @@
+import { noteEvidenceChange } from './context-evidence-epochs'
 import { watch, type FSWatcher } from 'fs'
 import { createRequire } from 'module'
 import { basename, relative, resolve, sep } from 'path'
@@ -49,8 +50,8 @@ export function shouldIgnoreErisRel(rel: string): boolean {
     n.includes('/.eris/cache/') ||
     n.includes('/.eris/checkpoints/') ||
     n.includes('/.eris/runs/') ||
-    n.includes('/.eris/sessions/')
-    || n.includes('/.eris/chats/')
+    n.includes('/.eris/sessions/') ||
+    n.includes('/.eris/chats/')
   ) {
     return true
   }
@@ -160,6 +161,7 @@ export function stopWorkspaceWatcher(): void {
 
 function onRawEvent(root: string, absPath: string, eventType: string): void {
   if (!watchedPath || !handler || watchedPath !== root) return
+  noteEvidenceChange(root, absPath)
   if (isSuppressed(absPath)) return
   const rel = relative(root, absPath).split(sep).join('/')
   if (!rel || rel.startsWith('..')) return

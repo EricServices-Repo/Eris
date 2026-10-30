@@ -10,6 +10,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         'workspace-performance': resolve('checks/workspace-performance.ts'),
+        'context-gate': resolve('checks/context-gate.ts'),
         'workspace-worker': resolve('electron/main/workspace-worker.ts')
       },
       output: {

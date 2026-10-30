@@ -43,6 +43,21 @@ try {
   const tree = await request({ type: 'tree', root, maxDepth: 0 })
   assert.equal(tree[0].name, 'src')
   assert.equal(tree[0].children, undefined)
+  const evidence = await request({
+    type: 'context-evidence-capture',
+    root,
+    paths: ['src/nested/b.ts']
+  })
+  assert.equal(evidence.complete, true)
+  assert.deepEqual(
+    await request({ type: 'context-evidence-validate', root, snapshots: [evidence] }),
+    [true]
+  )
+  await writeFile(join(root, 'src', 'nested', 'b.ts'), 'export function beta() { return 3 }')
+  assert.deepEqual(
+    await request({ type: 'context-evidence-validate', root, snapshots: [evidence] }),
+    [false]
+  )
   const indexPath = join(root, '.eris', 'code-index.json')
   const indexed = await request({ type: 'index', root, indexPath })
   assert.ok(indexed.symbols.some((symbol) => symbol.name === 'alpha'))
@@ -95,10 +110,59 @@ try {
   assert.equal(full.messages.length, 156)
   assert.equal(full.messages[0].content, 'Message 0')
   assert.equal(await readFile(join(dir, 'legacy.json'), 'utf8'), original)
+  const replay = await request({ type: 'context-replay', dir, limit: 500 })
+  assert.equal(replay.complete, true)
+  const changes = await request({ type: 'context-changes', dir, after: 0, limit: 2 })
+  assert.equal(changes.events.length, 2)
+  assert.equal(changes.capabilities.journal, 'wal')
+  assert.equal(typeof changes.capabilities.fts5, 'boolean')
   const context = await request({ type: 'context-page', dir, id: 'legacy' })
   assert.equal(context.records.length, 156)
   assert.equal(context.revision, full.contextRevision)
   assert.equal(context.done, true)
+  // Recall's projection/cursor contract must also survive a real built-worker transfer.
+  const content = 'Remember: booking currency CAD. ' + '界😀 conversation '.repeat(6000)
+  await request({
+    type: 'chat-save',
+    dir,
+    thread: {
+      id: 'chunked',
+      title: 'Chunked',
+      model: 'local:test',
+      createdAt: 1,
+      updatedAt: 1,
+      messages: [
+        {
+          id: 'source',
+          role: 'assistant',
+          content,
+          thinking: 'private trace'.repeat(200000),
+          createdAt: 1
+        }
+      ]
+    }
+  })
+  let before, beforeContentOffset
+  const chunks = []
+  for (let i = 0; i < 20; i++) {
+    const page = await request({
+      type: 'context-page',
+      dir,
+      id: 'chunked',
+      before,
+      beforeContentOffset
+    })
+    assert.equal(page.omitted, 0)
+    assert.ok(Buffer.byteLength(JSON.stringify(page)) < 2000000)
+    assert.ok(!JSON.stringify(page).includes('private trace'))
+    chunks.unshift(...page.records)
+    if (page.done) break
+    before = page.before
+    beforeContentOffset = page.beforeContentOffset
+  }
+  assert.equal(chunks.map((row) => row.message.content).join(''), content)
+  assert.equal(chunks[0].message.contextContentOffset, 0)
+  assert.ok(chunks.length > 1)
   const controls = {
     version: 1,
     forgotten: ['0'],
@@ -112,9 +176,21 @@ try {
     write: controls
   })
   assert.deepEqual(await request({ type: 'context-controls', dir, id: 'legacy' }), savedControls)
+  assert.equal(
+    await request({
+      type: 'context-source-scope',
+      dir,
+      id: 'legacy',
+      messageId: '0',
+      projectRoot: root
+    }),
+    true
+  )
+  const scoped = await request({ type: 'context-page', dir, id: 'legacy' })
+  assert.equal(scoped.records[0].message.contextProjectRoot, root)
   await request({ type: 'shutdown' })
   console.log(
-    'Client worker checks passed: lazy tree, index patch, legacy import, paginated save, concurrent append, context paging and controls, graceful shutdown.'
+    'Client worker checks passed: lazy tree, index patch, legacy import, paginated save, concurrent append, context paging and controls, trace-free Unicode chunk continuation, graceful shutdown.'
   )
 } finally {
   await worker.terminate()

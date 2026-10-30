@@ -1,4 +1,11 @@
 import {
+  installContextChangeLog,
+  replayContextChanges,
+  contextDerivationStatus
+} from './context-change-log'
+import { contextRecord } from '../../../src/shared/context-record'
+import { recallTerms } from '../../../src/shared/recall-terms'
+import {
   emptyMemoryControls,
   MemoryControlsSchema,
   CONTEXT_CONTROLS_CONFLICT,
@@ -7,7 +14,8 @@ import {
   type ContextPage
 } from '../../../src/shared/context-memory'
 import { DatabaseSync } from 'node:sqlite'
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'fs'
+import { createHash } from 'crypto'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'fs'
 import { join } from 'path'
 import type { ChatThread, ChatMessage } from '../../../src/shared/settings-schema'
 import type { ChatPage } from './workspace-worker-protocol'
@@ -24,11 +32,31 @@ type Header = {
 }
 
 /** Runs in the chat worker. Legacy transcripts remain untouched after import. */
+/**
+ * Identity of the physical database file. SQLite content, including thread IDs and
+ * stored source epochs, travels with a copy, so only the file itself can tell a
+ * replacement from the database a cached snapshot was read from.
+ */
+function databaseFileIdentity(path: string): string | null {
+  try {
+    const file = statSync(path, { bigint: true })
+    return createHash('sha256')
+      .update(`${file.dev}:${file.ino}:${file.birthtimeNs}`)
+      .digest('hex')
+      .slice(0, 16)
+  } catch {
+    return null
+  }
+}
 export class ChatDatabase {
   private db: DatabaseSync
+  private readonly file: string
+  private readonly incarnation: string
+  private readonly journal: string | null
   constructor(dir: string) {
     mkdirSync(dir, { recursive: true })
-    this.db = new DatabaseSync(join(dir, 'chats.sqlite'))
+    this.file = join(dir, 'chats.sqlite')
+    this.db = new DatabaseSync(this.file)
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY, title TEXT NOT NULL, model TEXT NOT NULL,
@@ -47,6 +75,7 @@ export class ChatDatabase {
         epoch TEXT NOT NULL
       );
     `)
+    this.incarnation = databaseFileIdentity(this.file) ?? ''
     this.transaction(() => {
       if (
         !(
@@ -61,12 +90,28 @@ export class ChatDatabase {
       'CREATE TABLE IF NOT EXISTS context_controls(threadId TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,body TEXT NOT NULL)'
     )
     this.migrateContextSequences()
+    this.transaction(() => installContextChangeLog(this.db))
     try {
       this.importLegacy(dir)
     } catch (error) {
       this.db.close()
       throw error
     }
+    this.journal = databaseFileIdentity(`${this.file}-wal`)
+  }
+  /** True once this handle no longer reads the file at its path. */
+  replaced(): boolean {
+    return databaseFileIdentity(this.file) !== this.incarnation
+  }
+  /**
+   * SQLite will not checkpoint a moved database, and would replay the WAL left behind
+   * onto the file now at this path. A journal delivered with the replacement stays.
+   */
+  retire(): void {
+    this.close()
+    if (this.journal === null || databaseFileIdentity(`${this.file}-wal`) !== this.journal) return
+    rmSync(`${this.file}-wal`, { force: true })
+    rmSync(`${this.file}-shm`, { force: true })
   }
   private migrateContextSequences(): void {
     this.transaction(() => {
@@ -121,8 +166,24 @@ export class ChatDatabase {
       .run(JSON.stringify(raw), id)
   }
   /** Bind legacy ordinal cutoffs once while the canonical snapshot is locked. */
-  contextControls(id: string, write?: MemoryControls): MemoryControls {
+  contextControls(
+    id: string,
+    write?: MemoryControls,
+    expectedSource?: ContextHeader
+  ): MemoryControls {
     return this.transaction(() => {
+      if (expectedSource) {
+        const current = this.contextHeader(id)
+        if (
+          !current ||
+          current.revision !== expectedSource.revision ||
+          current.messageCount !== expectedSource.messageCount ||
+          current.sourceEpoch !== expectedSource.sourceEpoch
+        )
+          throw new Error(
+            'STALE_CONTEXT_INSPECTION: Conversation changed. Reopen conversation memory before editing controls.'
+          )
+      }
       this.bindLegacyCutoff(id)
       if (write) {
         const parsed = MemoryControlsSchema.parse(write)
@@ -180,6 +241,9 @@ export class ChatDatabase {
     this.db.prepare('INSERT OR IGNORE INTO migrations(name) VALUES (?)').run('legacy-json')
   }
   private sourceEpoch(id: string): string {
+    return `${this.incarnation}:${this.threadEpoch(id)}`
+  }
+  private threadEpoch(id: string): string {
     const known = this.db
       .prepare('SELECT epoch FROM context_source_epochs WHERE threadId=?')
       .get(id)
@@ -193,15 +257,51 @@ export class ChatDatabase {
     if (!row) throw new Error('Chat not found')
     return String(row.epoch)
   }
+  replayContextChanges(limit = 128) {
+    return this.transaction(() => replayContextChanges(this.db, limit))
+  }
+  contextChangeStatus() {
+    return contextDerivationStatus(this.db)
+  }
+  contextChanges(after = 0, limit = 128) {
+    if (
+      !Number.isSafeInteger(after) ||
+      after < 0 ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 500
+    )
+      throw new Error('Invalid context change cursor')
+    return {
+      status: this.contextChangeStatus(),
+      capabilities: this.contextCapabilities(),
+      events: this.db
+        .prepare('SELECT * FROM context_changes WHERE sequence>? ORDER BY sequence LIMIT ?')
+        .all(after, limit)
+    }
+  }
+  contextCapabilities() {
+    return {
+      journal: String(this.db.prepare('PRAGMA journal_mode').get()!.journal_mode),
+      fts5: Boolean(
+        this.db.prepare("SELECT sqlite_compileoption_used('ENABLE_FTS5') AS supported").get()!
+          .supported
+      )
+    }
+  }
   contextHeader(id: string): ContextHeader | null {
     const header = this.db
-      .prepare('SELECT contextRevision,messageCount FROM conversations WHERE id=?')
+      .prepare(
+        `SELECT c.contextRevision,c.messageCount,s.epoch,CASE WHEN k.body IS NULL THEN 0 WHEN json_valid(k.body) THEN COALESCE(json_extract(k.body,'$.revision'),0) ELSE -1 END AS controlsRevision FROM conversations c LEFT JOIN context_controls k ON k.threadId=c.id LEFT JOIN context_source_epochs s ON s.threadId=c.id WHERE c.id=?`
+      )
       .get(id)
     if (!header) return null
     return {
+      controlsRevision: Number(header.controlsRevision),
+      derivation: this.contextChangeStatus(),
       revision: Number(header.contextRevision),
       messageCount: Number(header.messageCount),
-      sourceEpoch: this.sourceEpoch(id)
+      sourceEpoch: `${this.incarnation}:${String(header.epoch)}`
     }
   }
   list(): ChatThread[] {
@@ -342,10 +442,29 @@ export class ChatDatabase {
       return this.get(id, { limit: 60 })!
     })
   }
-  contextPage(id: string, before?: number, maxBytes = 2000000): ContextPage | null {
+  scopeContextSource(id: string, messageId: string, projectRoot: string | null): boolean {
+    return this.transaction(() => {
+      const updated = this.db
+        .prepare(
+          "UPDATE messages SET body=json_set(body,'$.contextProjectRoot',?) WHERE threadId=? AND id=? AND json_valid(body) AND json_extract(body,'$.role')='user' AND json_extract(body,'$.contextProjectRoot') IS NOT ?"
+        )
+        .run(projectRoot, id, messageId, projectRoot)
+      if (updated.changes)
+        this.db
+          .prepare('UPDATE conversations SET contextRevision=contextRevision+1 WHERE id=?')
+          .run(id)
+      return Boolean(updated.changes)
+    })
+  }
+  contextPage(
+    id: string,
+    before?: number,
+    maxBytes = 2000000,
+    beforeContentOffset?: number
+  ): ContextPage | null {
     this.db.exec('BEGIN')
     try {
-      const page = this.readContextPage(id, before, maxBytes)
+      const page = this.readContextPage(id, before, maxBytes, beforeContentOffset)
       this.db.exec('COMMIT')
       return page
     } catch (error) {
@@ -353,7 +472,12 @@ export class ChatDatabase {
       throw error
     }
   }
-  private readContextPage(id: string, before?: number, maxBytes = 2000000): ContextPage | null {
+  private readContextPage(
+    id: string,
+    before?: number,
+    maxBytes = 2000000,
+    beforeContentOffset?: number
+  ): ContextPage | null {
     const header = this.db.prepare('SELECT * FROM conversations WHERE id=?').get(id) as
       Header | undefined
     if (!header) return null
@@ -361,46 +485,111 @@ export class ChatDatabase {
       records: ContextPage['records'] = []
     let bytes = 0,
       cursor = end,
-      omitted = 0
-    // Bound each transfer independently of huge archived messages. Oversize rows advance coverage explicitly.
+      omitted = 0,
+      corruptRecords = 0
+    const corruptOrdinals: number[] = []
+    // SQLite parses the canonical JSON inside the worker. Only a normalized,
+    // bounded content projection crosses into JS/IPC; traces/assets never do.
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 512 || maxBytes > 2000000)
+      throw new Error('Context page byte cap must be between 512 and 2000000')
+    if (
+      beforeContentOffset !== undefined &&
+      (!Number.isSafeInteger(beforeContentOffset) || beforeContentOffset <= 0)
+    )
+      throw new Error('Invalid context content cursor')
+    const rowEnd = beforeContentOffset === undefined ? end - 1 : end
+    const text = "json_extract(body,'$.content')"
+    const contentEnd = `min(length(${text}), CASE WHEN ordinal=$end THEN coalesce($offset,length(${text})) ELSE length(${text}) END)`
+    const contentStart = `max(0,${contentEnd}-$chunk)`
+    const bounded = (field: string, cap: number) =>
+      `CASE WHEN length(CAST(json_extract(body,'$.${field}') AS BLOB))<=${cap} THEN json_extract(body,'$.${field}') ELSE NULL END`
+    const projection = `CASE WHEN json_valid(body) THEN CASE WHEN json_type(body,'$.content')='text' THEN json_object(
+      'id',${bounded('id', 1024)},'role',${bounded('role', 64)},
+      'content',substr(${text},${contentStart}+1,${contentEnd}-${contentStart}),
+      'createdAt',CASE WHEN json_type(body,'$.createdAt') IS NULL THEN 0 WHEN json_type(body,'$.createdAt') IN ('integer','real') THEN json_extract(body,'$.createdAt') ELSE NULL END,
+      'agentId',${bounded('agentId', 1024)},'agentName',${bounded('agentName', 2048)},'model',${bounded('model', 2048)},
+      'contextProjectRoot',json_extract(body,'$.contextProjectRoot'),
+      'contextResult',CASE WHEN length(CAST(json_extract(body,'$.contextResult') AS BLOB))<=$receipt THEN json_extract(body,'$.contextResult') ELSE NULL END,
+      'contextContentOffset',${contentStart},'contextContentLength',length(${text})
+    ) ELSE NULL END ELSE NULL END`
+    let nextContentOffset: number | undefined,
+      metadataOmitted = 0
     for (const row of this.db
       .prepare(
-        'SELECT ordinal,contextSequence,CASE WHEN length(CAST(body AS BLOB))<=? THEN body ELSE NULL END AS body FROM messages WHERE threadId=? AND ordinal<? ORDER BY ordinal DESC LIMIT 500'
+        `SELECT ordinal,contextSequence,${projection} AS body,
+      CASE WHEN json_valid(body) THEN length(CAST(json_extract(body,'$.contextResult') AS BLOB))>$receipt ELSE 0 END AS metadataOmitted
+      FROM messages WHERE threadId=$id AND ordinal<=$end ORDER BY ordinal DESC LIMIT 500`
       )
-      .iterate(maxBytes, id, end)) {
+      .iterate({
+        $id: id,
+        $end: rowEnd,
+        $offset: beforeContentOffset ?? null,
+        $chunk: Math.max(1, Math.min(32768, Math.floor(maxBytes / 12))),
+        $receipt: Math.min(65536, Math.floor(maxBytes / 8))
+      })) {
       const body = row.body === null ? null : String(row.body)
       if (body && bytes + Buffer.byteLength(body) > maxBytes && records.length) break
       cursor = Number(row.ordinal)
-      if (!body) {
+      if (!body || Buffer.byteLength(body) > maxBytes) {
         omitted++
+        if (!body) {
+          corruptRecords++
+          corruptOrdinals.push(cursor)
+        }
         continue
       }
       bytes += Buffer.byteLength(body)
-      const message = JSON.parse(body)
-      // Model reasoning traces and asset payloads are not context-history entries.
+      let message: ChatMessage | null = null
+      try {
+        const value = JSON.parse(body)
+        for (const optional of [
+          'agentId',
+          'agentName',
+          'model',
+          'contextResult',
+          'contextProjectRoot'
+        ])
+          if (value[optional] === null) delete value[optional]
+        if (
+          value.contextContentOffset === 0 &&
+          value.contextContentLength === [...value.content].length
+        ) {
+          delete value.contextContentOffset
+          delete value.contextContentLength
+        }
+        message = contextRecord(value)
+      } catch {
+        /* Preserve corrupt JSON for repair. */
+      }
+      if (!message) {
+        omitted++
+        corruptRecords++
+        corruptOrdinals.push(cursor)
+        continue
+      }
+      metadataOmitted += Number(row.metadataOmitted ?? 0)
       records.push({
         ordinal: cursor,
-        message: {
-          id: message.id,
-          role: message.role,
-          content: message.content,
-          createdAt: message.createdAt,
-          contextSequence: Number(row.contextSequence),
-          agentId: message.agentId,
-          agentName: message.agentName,
-          model: message.model,
-          contextResult: message.contextResult
-        }
+        message: { ...message, contextSequence: Number(row.contextSequence) },
+        terms: recallTerms(message.content)
       })
+      if (message.contextContentOffset) {
+        nextContentOffset = message.contextContentOffset
+        break // Continue this source before advancing to the preceding ordinal.
+      }
     }
     return {
       revision: header.contextRevision,
       sourceEpoch: this.sourceEpoch(id),
       messageCount: header.messageCount,
       before: cursor,
-      done: cursor === 0,
+      done: cursor === 0 && nextContentOffset === undefined,
+      beforeContentOffset: nextContentOffset,
+      metadataOmitted,
       records: records.reverse(),
-      omitted
+      omitted,
+      corruptRecords,
+      corruptOrdinals
     }
   }
   memoryControls(id: string, write?: MemoryControls): MemoryControls {
@@ -454,6 +643,12 @@ export function closeChatDatabases(): void {
 }
 export function chatDatabase(dir: string): ChatDatabase {
   let database = databases.get(dir)
+  if (database?.replaced()) {
+    // Never keep serving, or writing to, a file that left this path.
+    database.retire()
+    databases.delete(dir)
+    database = undefined
+  }
   if (!database) {
     // Opening the DB creates its directory; no full transcript reads on later opens.
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })

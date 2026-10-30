@@ -1,33 +1,91 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useDialogFocus } from '@/hooks/useDialogFocus'
-import type { MemoryControls, MemoryInspection } from '@/shared/context-memory'
+import type { ContextItemReason, MemoryControls, MemoryInspection } from '@/shared/context-memory'
+import { useInspectorRequests } from '@/hooks/useInspectorRequests'
 
-export function ContextMemoryInspector({ threadId }: { threadId: string }) {
+const OMISSION: Partial<Record<ContextItemReason, string>> = {
+  'destination-policy': 'not shared with remote models',
+  'input-budget': 'no room in this model’s budget',
+  'duplicate-evidence': 'already in the request'
+}
+
+export function ContextMemoryInspector({
+  threadId,
+  workspacePath = null,
+  rendererBytes,
+  model,
+  onOpenMessage
+}: {
+  threadId: string
+  workspacePath?: string | null
+  /** Estimated pages held by this window, separate from main-process recall memory. */
+  rendererBytes?: number
+  /** Destination a preview is compiled for; Auto has none until a turn resolves it. */
+  model?: string
+  onOpenMessage?: (ordinal: number) => void
+}) {
+  const draftRevision = useRef(0)
   const [open, setOpen] = useState(false),
     [query, setQuery] = useState(''),
     [note, setNote] = useState('')
   const [snapshot, setSnapshot] = useState<MemoryInspection | null>(null),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false)
-  const focus = useDialogFocus(() => setOpen(false))
+  const requests = useInspectorRequests(JSON.stringify([workspacePath, threadId]))
+  const close = () => {
+    requests.invalidate()
+    setBusy(false)
+    setOpen(false)
+  }
+  const focus = useDialogFocus(close)
   const refresh = async (controls?: MemoryControls, evict = false) => {
+    const ticket = requests.begin(Boolean(controls) || evict)
+    if (!ticket) return false
     setBusy(true)
     setError('')
     try {
-      setSnapshot(await window.ide.inspectContextMemory({ id: threadId, query, controls, evict }))
+      setSnapshot(
+        await requests.guard(
+          ticket,
+          window.ide.inspectContextMemory({
+            id: threadId,
+            workspacePath,
+            snapshotHandle: snapshot?.snapshotHandle,
+            query,
+            model,
+            controls,
+            evict
+          })
+        )
+      )
+      return true
     } catch (e) {
+      if (!requests.current(ticket)) return false
       setError(String(e))
       setSnapshot(null)
+      return false
     } finally {
-      setBusy(false)
+      if (requests.current(ticket)) {
+        requests.finish(ticket)
+        setBusy(false)
+      }
     }
   }
   const controls = snapshot?.controlsAvailable ? snapshot.controls : undefined
+  const sendState = (id: string) => {
+    const item = snapshot?.preview?.items.find((entry) => entry.id === id)
+    if (!item) return ''
+    return item.status === 'omitted'
+      ? ` · not sent: ${OMISSION[item.reason] ?? 'not selected for this request'}`
+      : ' · would be sent'
+  }
   return (
     <>
       <button
         className="btn"
         onClick={() => {
+          requests.invalidate()
+          setSnapshot(null)
           setOpen(true)
           void refresh()
         }}
@@ -59,6 +117,24 @@ export function ContextMemoryInspector({ threadId }: { threadId: string }) {
                 revision {snapshot.manifest.revision}
               </p>
             )}
+            {snapshot?.manifest.derivation && (
+              <p role="status">
+                Source catalog:{' '}
+                {snapshot.manifest.derivation.complete
+                  ? 'up to date'
+                  : `${snapshot.manifest.derivation.pending} changes pending`}
+                . Watermark {snapshot.manifest.derivation.watermark}/
+                {snapshot.manifest.derivation.highWatermark}. Archive search coverage is separate.
+              </p>
+            )}
+            {snapshot?.lastDispatch && (
+              <p>
+                Last request to {snapshot.lastDispatch.model} ({snapshot.lastDispatch.destination}):{' '}
+                {snapshot.lastDispatch.counts.sent} of {snapshot.lastDispatch.counts.selected}{' '}
+                recalled items sent in full, {snapshot.lastDispatch.counts.truncated} shortened,{' '}
+                {snapshot.lastDispatch.counts.omitted} left out.
+              </p>
+            )}
             <form
               onSubmit={(e) => {
                 e.preventDefault()
@@ -77,7 +153,28 @@ export function ContextMemoryInspector({ threadId }: { threadId: string }) {
               This preview depends on the question. Actual model context can be smaller because of
               its input window. Extra recall is local only unless enabled in Settings → Agent.
             </p>
-            {error && <p role="alert">{error}</p>}
+            {rendererBytes !== undefined && (
+              <p>
+                This window holds an estimated {(rendererBytes / 1024 ** 2).toFixed(1)} MiB of
+                loaded messages, separate from the recall memory above.
+              </p>
+            )}
+            {error && (
+              <p role="alert">
+                {error} Your note draft is preserved. Preview again to reload controls before
+                retrying.
+              </p>
+            )}
+            {snapshot?.preview ? (
+              <p role="status">
+                For {snapshot.preview.model} ({snapshot.preview.destination}):{' '}
+                {snapshot.preview.counts.sent} sent, {snapshot.preview.counts.omitted} not sent.
+                Project rules also use the budget, so a real request can send less.
+              </p>
+            ) : (
+              snapshot && <p role="status">Choose a model to preview what it would receive.</p>
+            )}
+            {snapshot?.projectRoot && <p>Scoped to {snapshot.projectRoot}.</p>}
             <ul>
               {snapshot?.facts.map((f) => (
                 <li key={f.id}>
@@ -87,7 +184,19 @@ export function ContextMemoryInspector({ threadId }: { threadId: string }) {
                   <p style={{ whiteSpace: 'pre-wrap' }}>{f.text}</p>
                   <small>
                     Source {f.sourceId} · message {f.ordinal + 1}
+                    {sendState(f.id)}
                   </small>
+                  {onOpenMessage && (
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        close()
+                        onOpenMessage(f.ordinal)
+                      }}
+                    >
+                      Open message {f.ordinal + 1}
+                    </button>
+                  )}
                   {controls && (
                     <button
                       className="btn"
@@ -108,16 +217,28 @@ export function ContextMemoryInspector({ threadId }: { threadId: string }) {
             <form
               onSubmit={(e) => {
                 e.preventDefault()
-                if (controls && note.trim())
+                if (controls && note.trim()) {
+                  const submittedRevision = draftRevision.current
+                  const submittedText = note.trim()
                   void refresh({
                     ...controls,
-                    pinned: [...controls.pinned, { id: crypto.randomUUID(), text: note.trim() }]
-                  }).then(() => setNote(''))
+                    pinned: [...controls.pinned, { id: crypto.randomUUID(), text: submittedText }]
+                  }).then((saved) => {
+                    if (saved && draftRevision.current === submittedRevision) setNote('')
+                  })
+                }
               }}
             >
               <label>
                 Pin an important note
-                <textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} />
+                <textarea
+                  value={note}
+                  onChange={(e) => {
+                    draftRevision.current++
+                    setNote(e.target.value)
+                  }}
+                  maxLength={2000}
+                />
               </label>
               <button
                 className="btn"
@@ -167,7 +288,7 @@ export function ContextMemoryInspector({ threadId }: { threadId: string }) {
             <button className="btn" disabled={busy} onClick={() => void refresh(undefined, true)}>
               Reload RAM from saved history
             </button>
-            <button className="btn" onClick={() => setOpen(false)}>
+            <button className="btn" onClick={close}>
               Close
             </button>
           </section>

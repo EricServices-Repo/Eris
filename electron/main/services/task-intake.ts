@@ -318,7 +318,7 @@ export function createTaskContract(input: {
   // Follow-ups resolve against the recommendation objects the prior turn recorded;
   // older threads fall back to reading the prior answer's prose.
   const refersToPrior =
-    /\b(those|these|them|recommended|suggested|recommendations?|all of (?:it|them)|items?\s*#?\d|#\d|(?:first|second|third|fourth|fifth|last)\s+(?:one|item|recommendation|suggestion|fix|two|three)|the\s+[\w-]+(?:\s+[\w-]+){0,3}\s+(?:one|recommendation|suggestion))\b/i.test(
+    /\b(those|these|them|recommended|suggested|recommendations?|confirm\s+(?:the\s+|all\s+)?(?:\d+|two|three|four|five|six|seven|eight|nine|ten)\s+(?:improvements?|enhancements?|changes|fixes|ideas)|all of (?:it|them)|items?\s*#?\d|#\d|(?:first|second|third|fourth|fifth|last)\s+(?:one|item|recommendation|suggestion|fix|two|three)|the\s+[\w-]+(?:\s+[\w-]+){0,3}\s+(?:one|recommendation|suggestion))\b/i.test(
       input.text
     )
   const offered = input.priorTask?.result?.offeredRecommendations ?? []

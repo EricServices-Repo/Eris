@@ -169,6 +169,7 @@ export async function captureQuestion(
   let incomplete = false
   // Ledger events arrive before the request they describe; attach them to it.
   let pendingContext: unknown
+  let pendingDispatch: unknown
   let pendingToolManifest: unknown
   const adapter: ModelAdapter = {
     kind: live ? 'live' : 'scripted',
@@ -195,6 +196,7 @@ export async function captureQuestion(
         toolChoice: request.toolChoice,
         schema: request.builtinJsonSchema,
         ...(request.purpose === 'agent' && pendingContext ? { context: pendingContext } : {}),
+        ...(request.purpose === 'agent' && pendingDispatch ? { dispatch: pendingDispatch } : {}),
         ...(request.purpose === 'agent' && pendingToolManifest
           ? { toolManifest: pendingToolManifest }
           : {})
@@ -280,6 +282,7 @@ export async function captureQuestion(
         onBlockedEffect: (kind, detail) => result.events.push(`Blocked ${kind}: ${detail}`),
         onTaskEvent: (event) => {
           if (event.type === 'context-compiled') pendingContext = event.data
+          else if (event.type === 'context-dispatched') pendingDispatch = event.data
           else if (event.type === 'tool-manifest') pendingToolManifest = event.data
           else if (event.type === 'route-decision') result.routeDecision = event.data
           else if (event.type === 'retrieval') result.retrieval = event.data

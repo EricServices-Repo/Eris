@@ -346,9 +346,13 @@ export interface IdeApi {
   getWorkspaceTrust: () => Promise<WorkspaceTrustStatus>
   setWorkspaceTrust: (trusted: boolean) => Promise<boolean>
   listChats: () => Promise<ChatThread[]>
+  notifyDocumentChange: (path: string, dirty: boolean) => void
   inspectContextMemory: (input: {
+    workspacePath?: string | null
+    snapshotHandle?: string
     id: string
     query?: string
+    model?: string
     controls?: import('./context-memory').MemoryControls
     evict?: boolean
   }) => Promise<import('./context-memory').MemoryInspection>

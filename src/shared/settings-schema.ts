@@ -295,6 +295,11 @@ export interface ChatDelegation {
 }
 
 export interface ChatMessage {
+  /** Resolved scope recorded by main for a user declaration, never inferred from its prose. */
+  contextProjectRoot?: string | null
+  /** Recall-only chunk position in Unicode code points; canonical rendering remains intact. */
+  contextContentOffset?: number
+  contextContentLength?: number
   /** Canonical nonreused source sequence, assigned only by the chat database. */
   contextSequence?: number
   assets?: GeneratedImageAsset[]
@@ -308,10 +313,12 @@ export interface ChatMessage {
   agentName?: string
   model?: string
   contextResult?: {
+    workingState?: import('./thread-working-state').ThreadWorkingState
     taskId: string
     terminal: string
     projectRoot: string | null
     changedFiles: string[]
+    dependencies?: import('./context-evidence').ContextEvidence
   }
   /** Specialists Composer handed this turn to. */
   delegations?: ChatDelegation[]
@@ -492,6 +499,8 @@ export interface ChatPromptInput {
   /** content set when the file is open in a tab; otherwise main reads from disk */
   attachments: Array<{ path: string; name: string; language?: string; content?: string }>
   history: Array<{
+    /** Canonical source identity, assigned by main for persisted chat turns. */
+    id?: string
     role: 'user' | 'assistant' | 'system'
     content: string
     agentId?: string

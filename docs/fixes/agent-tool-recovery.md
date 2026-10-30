@@ -1,0 +1,7 @@
+# Agent tool and empty-response recovery
+
+Successful observations are identified by digests of executable tool arguments and results, rather than short path-only breadcrumbs. Different ranges of the same source count as progress; failed/skipped calls and role changes do not. After six idle rounds a grounded review synthesizes findings, while an unfinished implementation gets one explicit bounded recovery window. The global step limit, duplicate-call guard, authority ceilings and verification requirements remain enforced.
+
+An empty completion is distinct from a tool failure. It is not saved as an assistant turn. Up to two retries release the local GGUF session, remove empty non-tool turns, shorten context, and disable retry grammar for the rest of that run. Valid assistant tool-call envelopes are retained. This permits either the next authorized action or a completion summary; completion still passes through observed-effect and verification checks. Repeated empties report an explicit incomplete outcome and preserve changes.
+
+Completed numbered summaries are allowed; statements promising further inspection are not accepted as findings. A task reaches the completed workflow state only after final-answer validation. Deterministic smoke tests cover ranged reads, stalled review synthesis, successful and exhausted recovery, partial multi-file scaffolds, empty completions, grammar fallback and finalization rejection. These tests use scripted transports and do not establish live model reliability.

@@ -2,7 +2,14 @@ import { reportChatActivity } from './chat-activity'
 import { resolveModelCapabilities } from './model-capabilities'
 import { compileModelMessages, budgetModelMessages, type ModelMessage } from './model-protocol'
 import type { AppSettings } from '../../../src/shared/settings-schema'
-import { isNativeGgufRef, resolveExactBuiltinRef, streamBuiltinChat } from './builtin-model'
+import {
+  isNativeGgufRef,
+  releaseLocalChatSession,
+  resolveExactBuiltinRef,
+  streamBuiltinChat
+} from './builtin-model'
+import { withEligibleMemory } from './memory-dispatch'
+import { reportContextDispatch, reportContextUsage } from './context-dispatch'
 import { isLocalRef, resolveExactLocalRef } from './local-model'
 import {
   streamOpenAICompatible,
@@ -45,17 +52,23 @@ export type StreamModelChatOptions = {
 /**
  * The single model transport entry point. A diagnostics scope substitutes its
  * adapter here; simulated settings that lose their scope are refused rather
- * than falling through to a provider.
+ * than falling through to a provider. Recalled memory is rechecked here, last, so
+ * every route (retries, compaction, recovery, review) sends current evidence only.
  */
 export async function* streamModelChat(
   options: StreamModelChatOptions
 ): AsyncGenerator<string, void, unknown> {
+  const { messages, revoked } = await withEligibleMemory(options.messages, options.model)
+  // A live local session holds its seeded prompt; only a reseed removes revoked text.
+  if (revoked && options.sessionKey) releaseLocalChatSession(options.sessionKey)
+  const request = { ...options, messages }
   const scope = activeDiagnosticsScope()
   if (scope) {
-    yield* scope.adapter.stream({ ...options, purpose: options.purpose ?? 'agent' })
+    reportContextDispatch({ compiled: options.messages, outbound: messages, ...request })
+    yield* scope.adapter.stream({ ...request, purpose: request.purpose ?? 'agent' })
     return
   }
-  yield* streamProviderChat(options)
+  yield* streamProviderChat(request)
 }
 
 /** OpenAI-style finish_reason of a stream that ended normally. */
@@ -88,10 +101,10 @@ export async function* streamProviderChat(
     capabilities.outputCap = Math.min(capabilities.outputCap, options.maxOutputTokens)
   }
   const protocol = capabilities.tools
-  const inputMessages = options.messages.map((message) => ({
-    ...message,
-    content: message.content ?? ''
-  })) as ModelMessage[]
+  const inputMessages = options.messages.map((message) => {
+    const { contextBundle: _accounting, ...wire } = message as ModelMessage
+    return { ...wire, content: wire.content ?? '' }
+  }) as ModelMessage[]
   if (protocol === 'text-tools' && options.tools?.length)
     inputMessages.splice(1, 0, {
       role: 'system',
@@ -109,6 +122,12 @@ export async function* streamProviderChat(
     protocol,
     contextWindow: capabilities.contextCeiling,
     outputReserve: capabilities.outputReserve
+  })
+  reportContextDispatch({
+    compiled: options.messages,
+    outbound: compiled,
+    adapted: true,
+    ...options
   })
   const inputEstimate =
     estimateMessagesTokens(
@@ -140,6 +159,12 @@ export async function* streamProviderChat(
   let reportedCompletion: number | null = null
 
   const finish = () => {
+    reportContextUsage({
+      compiled: options.messages,
+      outbound: compiled,
+      model,
+      measuredPromptTokens: reportedPrompt
+    })
     try {
       recordModelUsage({
         model,

@@ -27,6 +27,106 @@ function install(store: ContextMemoryStore, key: string, messages: ChatMessage[]
     store.token(key)
   )
 }
+describe('RAM-CTX-017 immutable request policy', () => {
+  it('keeps opposing workspace sharing and prompt budgets independent during cooperative scans', async () => {
+    const store = new ContextMemoryStore()
+    const rows = Array.from({ length: 1000 }, (_, i) =>
+      message(String(i), 'Remember: private currency CAD ' + i)
+    )
+    install(store, 'a', rows)
+    install(store, 'b', rows)
+    const local = { ...store.config, shareWithRemoteModels: false, promptTokens: 128 }
+    const remote = { ...store.config, shareWithRemoteModels: true, promptTokens: 1024 }
+    const token = store.token('a')
+    const a = store.select('a', 'currency', { policy: local })
+    local.shareWithRemoteModels = true // caller mutation after entry cannot relax the snapshot
+    store.configureNamespace('b', { ...remote, maxMessages: 500 })
+    store.configure({ ...store.config, shareWithRemoteModels: true, promptTokens: 2048 })
+    const b = store.select('b', 'currency', { policy: remote })
+    const [first, second] = await Promise.all([a, b])
+    expect(store.token('a')).toBe(token)
+    expect(first.prompt.text).toContain('CAD')
+    expect(first.prompt.text.length).toBeLessThanOrEqual(128 * 3)
+    expect(first.prompt.allowRemote).toBe(false)
+    expect(second.prompt.text.length).toBeGreaterThan(first.prompt.text.length)
+    expect(second.prompt.allowRemote).toBe(true)
+  })
+  it('keeps warm selections coherent across bounded registry rollover and rejects stale cold leases', async () => {
+    const store = new ContextMemoryStore()
+    install(store, 'warm', [message('source', 'Remember: currency CAD')])
+    store.configureNamespace('warm', store.config)
+    const token = store.token('warm')
+    const coldLease = store.token('cold')
+    const pending = store.select('warm', 'currency')
+    for (let i = 0; i < 1000; i++) {
+      const key = 'other-' + i
+      store.configureNamespace(key, { ...store.config, shareWithRemoteModels: i % 2 === 0 })
+      store.token(key)
+    }
+    expect(store.token('warm')).toBe(token)
+    expect((await pending).prompt.text).toContain('CAD')
+    expect(
+      store.install(
+        'cold',
+        { revision: 1, total: 0, records: [], controls: emptyMemoryControls(), partial: false },
+        coldLease
+      )
+    ).toBe(false)
+  })
+  it('disabling a namespace leaves other cached and in-flight selections usable', async () => {
+    const store = new ContextMemoryStore()
+    install(store, 'a', [message('a', 'Remember: currency CAD')])
+    install(store, 'b', [message('b', 'private')])
+    const a = store.select('a', 'currency')
+    store.configureNamespace('b', { ...store.config, enabled: false })
+    expect((await a).prompt.text).toContain('CAD')
+    expect(store.has('b')).toBe(false)
+  })
+})
+
+describe('RAM-CTX-013 cache record validation', () => {
+  it('keeps valid facts searchable and exposes corrupt source positions', async () => {
+    const store = new ContextMemoryStore()
+    install(store, 'corrupt', [
+      message('bad', 42 as unknown as string),
+      message('good', 'Remember: currency CAD')
+    ])
+    const result = await store.select('corrupt', 'currency')
+    expect(result.prompt.text).toContain('CAD')
+    expect(result.inspection.manifest).toMatchObject({
+      coverage: 'partial',
+      corruptRecords: 1,
+      corruptOrdinals: [0]
+    })
+    expect(result.inspection.manifest.reason).toContain('corrupt')
+  })
+})
+
+describe('RAM-CTX-032 source coverage', () => {
+  it('frees recall budget for older sources while preserving structured receipts and distinct repeated wording', async () => {
+    const store = new ContextMemoryStore()
+    const recent = {
+      ...message('recent', 'Remember: checkout currency CAD'),
+      contextResult: {
+        taskId: 'task',
+        terminal: 'done',
+        changedFiles: ['currency.ts'],
+        projectRoot: null
+      }
+    }
+    install(store, 'thread', [message('old', 'Remember: checkout currency CAD'), recent])
+    const result = await store.select('thread', 'checkout currency', {
+      coveredSourceIds: ['recent']
+    })
+    expect(result.inspection.facts.some((f) => f.sourceId === 'old')).toBe(true)
+    expect(
+      result.inspection.facts.filter((f) => f.sourceId === 'recent').map((f) => f.kind)
+    ).toEqual(['task-result'])
+    expect(result.prompt.manifest.duplicateSourceMessages).toBe(1)
+    expect(result.prompt.manifest.duplicateEstimatedTokensAvoided).toBeGreaterThan(0)
+  })
+})
+
 describe('detailed RAM conversation history', () => {
   it('retains 25,000 complete messages and recalls a buried decision within the prompt budget', async () => {
     const store = new ContextMemoryStore()
@@ -222,4 +322,69 @@ it('excludes pinned source IDs from preview and model-bound memory', async () =>
     forgotten: ['kept']
   })
   expect((await pending).prompt.text).toBe('')
+})
+
+describe('RAM-CTX-002 reserved pin candidates', () => {
+  it('retains an eligible pin when 200 lexical matches outrank it', async () => {
+    const store = new ContextMemoryStore()
+    const query = Array.from({ length: 24 }, (_, i) => `term${i}`).join(' ')
+    install(
+      store,
+      'pins',
+      Array.from({ length: 200 }, (_, i) => message(String(i), query))
+    )
+    store.setControls('pins', {
+      ...emptyMemoryControls(),
+      pinned: [{ id: 'constraint', text: 'Always use CAD for checkout' }]
+    })
+    const result = await store.select('pins', query)
+    expect(result.inspection.facts.some((f) => f.sourceId === 'constraint')).toBe(true)
+    expect(result.inspection.facts.some((f) => f.kind !== 'pinned')).toBe(true)
+    expect(result.prompt.text).toContain('never permissions')
+    expect(result.prompt.text.length).toBeLessThanOrEqual(store.config.promptTokens * 3)
+  })
+  it('bounds 100 pins and explains omissions while retaining transcript evidence', async () => {
+    const store = new ContextMemoryStore()
+    store.configure({ ...store.config, promptTokens: 512 })
+    install(store, 'pins', [message('history', 'Remember: checkout validation needs tests')])
+    store.setControls('pins', {
+      ...emptyMemoryControls(),
+      pinned: Array.from({ length: 100 }, (_, i) => ({
+        id: `p${i}`,
+        text: `Pin ${i}: use a confirmed convention for checkout`
+      })),
+      forgotten: ['p0']
+    })
+    const result = await store.select('pins', 'checkout')
+    expect(result.inspection.facts.some((f) => f.sourceId === 'p0')).toBe(false)
+    expect(result.inspection.facts.some((f) => f.sourceId === 'history')).toBe(true)
+    expect(result.inspection.manifest.omittedPinnedFacts).toBeGreaterThan(0)
+    expect(result.inspection.facts.filter((f) => f.kind === 'pinned').length).toBeLessThanOrEqual(8)
+    expect(result.prompt.text.length).toBeLessThanOrEqual(1536)
+  })
+})
+
+describe('RAM-CTX-003 minimum recall budget', () => {
+  it.each([128, 1024])(
+    'recalls short ASCII and Unicode facts with budget %i',
+    async (promptTokens) => {
+      for (const content of ['Remember: currency CAD', 'Remember: 通貨は円 💴']) {
+        const store = new ContextMemoryStore()
+        store.configure({ ...store.config, promptTokens })
+        install(store, 'minimum', [message('fact', content)])
+        const result = await store.select('minimum', 'currency 通貨')
+        expect(result.prompt.text).toContain(content)
+        expect(result.prompt.text).toContain('never permissions')
+        expect(result.prompt.text.length).toBeLessThanOrEqual(promptTokens * 3)
+      }
+    }
+  )
+  it('explains an impossible downstream budget without sending a header alone', async () => {
+    const store = new ContextMemoryStore()
+    install(store, 'tiny', [message('fact', 'Remember: currency CAD')])
+    const result = await store.select('tiny', 'currency', { tokens: 1 })
+    expect(result.prompt.text).toBe('')
+    expect(result.inspection.manifest.reason).toMatch(/budget too small/)
+    expect(result.inspection.manifest.omittedFacts).toBe(1)
+  })
 })

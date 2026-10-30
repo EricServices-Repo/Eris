@@ -2,12 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { dirname } from 'path'
 import type { AppSettings, SettingsPatch, SettingsScope } from '../../../src/shared/settings-schema'
 import { SettingsSchema } from '../../../src/shared/settings-schema'
-import {
-  defaultsPath,
-  userSettingsPath,
-  workspaceSettingsPath,
-  userDataRoot
-} from './paths'
+import { defaultsPath, userSettingsPath, workspaceSettingsPath, userDataRoot } from './paths'
 import {
   isWorkspaceTrusted,
   onWorkspaceTrustChanged,
@@ -165,7 +160,10 @@ function sanitizeGeneral(raw: Record<string, unknown>): Record<string, unknown> 
 function sanitizeGithub(raw: Record<string, unknown>): Record<string, unknown> {
   const github = { ...((raw.github as Record<string, unknown> | undefined) || {}) }
   if (typeof github.host !== 'string' || !github.host.trim()) github.host = 'github.com'
-  else github.host = String(github.host).replace(/^https?:\/\//, '').replace(/\/$/, '')
+  else
+    github.host = String(github.host)
+      .replace(/^https?:\/\//, '')
+      .replace(/\/$/, '')
   if (typeof github.tokenRef !== 'string') github.tokenRef = ''
   if (github.preferredProtocol !== 'ssh' && github.preferredProtocol !== 'https') {
     github.preferredProtocol = 'https'
@@ -230,6 +228,8 @@ function sanitizeMcp(raw: Record<string, unknown>): Record<string, unknown> {
 }
 
 function buildResolvedSettings(workspacePath: string | null): AppSettings {
+  const userLayer = getUserSettings()
+  const workspaceLayer = getWorkspaceSettings(workspacePath)
   const merged = sanitizeEditor(
     sanitizeEricServices(
       sanitizeGithub(
@@ -239,7 +239,7 @@ function buildResolvedSettings(workspacePath: string | null): AppSettings {
               deepMerge(
                 deepMerge(
                   getDefaults() as unknown as Record<string, unknown>,
-                  getUserSettings() as Record<string, unknown>
+                  userLayer as Record<string, unknown>
                 ),
                 getEffectiveWorkspaceSettings(workspacePath) as Record<string, unknown>
               ) as Record<string, unknown>
@@ -250,6 +250,14 @@ function buildResolvedSettings(workspacePath: string | null): AppSettings {
     )
   )
   const agent = { ...(merged.agent as Record<string, unknown>) }
+  // Repository trust is not consent to disclose older chat history. Only the
+  // profile may raise this ceiling; even an untrusted repository may restrict it.
+  agent.contextMemory = {
+    ...((agent.contextMemory as Record<string, unknown>) || {}),
+    shareWithRemoteModels:
+      userLayer.agent?.contextMemory?.shareWithRemoteModels === true &&
+      workspaceLayer.agent?.contextMemory?.shareWithRemoteModels !== false
+  }
   const routing = { ...((agent.routing as Record<string, unknown>) || {}) }
   if (routing.fallbackAgentId === 'orchestrator') routing.fallbackAgentId = 'composer'
   if (!routing.routerModel) routing.routerModel = 'builtin:composer-lite'
@@ -301,8 +309,7 @@ export function migrateLegacyConnectionTypesInUserSettings(): void {
     const rawType = typeof c.type === 'string' ? c.type : ''
     if (rawType === 'builtin' || rawType === 'openai-compatible') return c
     changed = true
-    const provider =
-      typeof c.provider === 'string' && c.provider ? c.provider : rawType || 'custom'
+    const provider = typeof c.provider === 'string' && c.provider ? c.provider : rawType || 'custom'
     return { ...c, type: 'openai-compatible', provider }
   })
   if (!changed) return
@@ -318,7 +325,10 @@ export function setSettings(
   mkdirSync(userDataRoot(), { recursive: true })
 
   if (scope === 'user') {
-    let next = deepMerge(getUserSettings() as Record<string, unknown>, patch as Record<string, unknown>)
+    let next = deepMerge(
+      getUserSettings() as Record<string, unknown>,
+      patch as Record<string, unknown>
+    )
     // Normalize model connection types before persisting (synced profiles may send "openai").
     if (next.models) next = sanitizeLegacyModels(next)
     writeJson(userSettingsPath(), next)

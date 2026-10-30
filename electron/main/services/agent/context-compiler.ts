@@ -3,8 +3,21 @@ import {
   interpretationOf,
   type TaskContract
 } from '../../../../src/shared/task-contract'
+import type {
+  ContextBundle,
+  ContextBundleItem,
+  MemoryPrompt,
+  MemoryPromptItem
+} from '../../../../src/shared/context-memory'
+import { isNativeGgufRef } from '../builtin-model'
 import type { AgentChatMessage } from './types'
 import type { ToolCallProtocol } from '../tool-protocol'
+import {
+  CHARS_PER_TOKEN,
+  contextUnits,
+  fitAtBoundary,
+  NON_ASCII_CHARS_PER_TOKEN
+} from '../../../../src/shared/token-estimate'
 import { createHash } from 'crypto'
 import { basename, relative } from 'path'
 
@@ -141,6 +154,8 @@ export interface ContextBudget {
   method: 'characters'
   tokenizer: 'none'
   charsPerToken: 3
+  /** Non-ASCII text is budgeted at one token per code unit. */
+  nonAsciiCharsPerToken: 1
   uncertainty: string
   /** Input tokens available to this request after tool schemas were subtracted by the caller. */
   inputTokens: number
@@ -151,14 +166,91 @@ export interface ContextBudget {
   maxChars: number
   usedChars: number
   estimatedTokens: number
+  optionalAllocation: {
+    policy: 'fresh-first' | 'conversation-first'
+    historicalCapChars: number
+    freshChars: number
+    historicalChars: number
+    duplicateBlocks: number
+  }
 }
 
 export const SYSTEM_CONTEXT_SHARE = 0.55
+
+const hash = (value: string) => createHash('sha256').update(value).digest('hex')
+
+/** Recall a destination may receive. Blocked items stay listed so omissions have a reason. */
+export function memoryForDestination(prompt: MemoryPrompt | undefined, model: string) {
+  const allowed = isNativeGgufRef(model) || Boolean(prompt?.allowRemote)
+  return {
+    memory: allowed ? prompt?.text : undefined,
+    memoryItems: prompt?.items ?? [],
+    memoryBlocked: !allowed,
+    memoryNamespace: prompt?.namespace
+  }
+}
+
+export function countContextItems(items: readonly ContextBundleItem[]) {
+  const counts = { selected: items.length, sent: 0, truncated: 0, omitted: 0 }
+  for (const item of items) counts[item.status]++
+  return counts
+}
+
+/** Keep whole recalled items in priority order; a later smaller item may still fit. */
+function packMemory(memory: string, items: readonly MemoryPromptItem[], units: number) {
+  if (!items.length) return { text: fitAtBoundary(memory, units), kept: new Set<string>() }
+  const header = memory.slice(0, Math.max(0, memory.indexOf(items[0]!.line)))
+  let text = header
+  let used = contextUnits(header)
+  const kept = new Set<string>()
+  for (const item of items) {
+    const cost = contextUnits(item.line)
+    if (used + cost > units) continue
+    text += item.line
+    used += cost
+    kept.add(item.id)
+  }
+  return { text: kept.size ? text : '', kept }
+}
+
+/** Account for each selected item against what the memory block kept. */
+function bundleItems(input: {
+  items: readonly MemoryPromptItem[]
+  kept: ReadonlySet<string>
+  blocked: boolean
+  duplicate: boolean
+}): ContextBundleItem[] {
+  return input.items.map((item) => {
+    const sent = input.kept.has(item.id)
+    return {
+      id: item.id,
+      sourceDigest: hash(item.sourceId),
+      kind: item.kind,
+      ordinal: item.ordinal,
+      ...(item.span ? { span: item.span } : {}),
+      digest: hash(item.line),
+      chars: item.line.length,
+      sentChars: sent ? item.line.length : 0,
+      status: sent ? 'sent' : 'omitted',
+      reason: input.blocked
+        ? 'destination-policy'
+        : input.duplicate
+          ? 'duplicate-evidence'
+          : sent
+            ? 'fits-budget'
+            : 'input-budget'
+    }
+  })
+}
 
 export function compileTaskContext(input: {
   task: TaskContract
   guidance: string
   memory?: string
+  memoryItems?: readonly MemoryPromptItem[]
+  /** Items were selected but this destination may not receive them. */
+  memoryBlocked?: boolean
+  memoryNamespace?: string
   project: string
   retrieval: string
   maxInputTokens: number
@@ -169,6 +261,7 @@ export function compileTaskContext(input: {
   message: AgentChatMessage
   blocks: ContextManifestBlock[]
   budget: ContextBudget
+  bundle: ContextBundle
 } {
   const taskText = JSON.stringify(modelFacingTask(input.task))
   const protocol = taskProtocol(input.task, input.toolsAvailable !== false, input.toolProtocol)
@@ -194,22 +287,68 @@ export function compileTaskContext(input: {
   // Leave the remaining input window for conversation, tools and source evidence.
   if (!Number.isFinite(input.maxInputTokens) || input.maxInputTokens <= 0)
     throw new Error('The model input context budget must be a positive finite number.')
-  const maxChars = Math.floor(input.maxInputTokens * 3 * SYSTEM_CONTEXT_SHARE)
+  const maxChars = Math.floor(input.maxInputTokens * CHARS_PER_TOKEN * SYSTEM_CONTEXT_SHARE)
+  const freshFirst =
+    evidenceRequirementFor(input.task.scope.applicability) !== 'none' &&
+    Boolean(input.project || input.retrieval)
+  // Current source leads outrank historical excerpts for project-dependent work.
+  // The remaining 45% of input stays reserved for recent turns and tool results.
+  // Generic questions reserve nothing for unrelated source evidence.
+  const ordered = freshFirst
+    ? [
+        ...blocks.filter((b) => b.required),
+        ...blocks.filter((b) => b.kind === 'retrieval'),
+        ...blocks.filter((b) => b.kind === 'project'),
+        ...blocks.filter((b) => b.kind === 'memory')
+      ]
+    : blocks
+  const mandatoryChars = blocks
+    .filter((b) => b.required)
+    .reduce((n, b) => n + contextUnits(b.content) + 2, -2)
+  const historicalCapChars = Math.max(
+    0,
+    Math.floor((maxChars - mandatoryChars) * (freshFirst ? 0.4 : 1))
+  )
+  let duplicateBlocks = 0
+  const seenEvidence = new Set<string>()
   let remaining = maxChars
+  let keptMemory: ReadonlySet<string> = new Set()
   const chosen: ContextBlock[] = []
   const manifest: ContextManifestBlock[] = []
   const digest = (value: string) => createHash('sha256').update(value).digest('hex')
-  for (const block of blocks) {
+  for (const block of ordered) {
     const separator = chosen.length ? 2 : 0
     const available = Math.max(0, remaining - separator)
-    if (block.required && block.content.length > available)
+    if (block.required && contextUnits(block.content) > available)
       throw new Error(
         'The task contract and instructions exceed this model context. Reduce attached instructions or increase the context window.'
       )
-    const content = block.required ? block.content : block.content.slice(0, available)
+    const raw =
+      block.kind === 'memory'
+        ? input.memory
+        : block.kind === 'project'
+          ? input.project
+          : block.kind === 'retrieval'
+            ? input.retrieval
+            : ''
+    const identity = raw?.trim()
+    const duplicate = !block.required && Boolean(identity && seenEvidence.has(identity))
+    if (duplicate) duplicateBlocks++
+    if (identity) seenEvidence.add(identity)
+    const cap = block.kind === 'memory' ? Math.min(available, historicalCapChars) : available
+    const packed =
+      block.kind === 'memory' && !duplicate
+        ? packMemory(block.content, input.memoryItems ?? [], cap)
+        : null
+    if (packed) keptMemory = packed.kept
+    const content = duplicate
+      ? ''
+      : block.required
+        ? block.content
+        : (packed?.text ?? fitAtBoundary(block.content, cap))
     if (content) {
       chosen.push({ ...block, content })
-      remaining -= content.length + separator
+      remaining -= contextUnits(content) + separator
     }
     manifest.push({
       kind: block.kind,
@@ -233,21 +372,53 @@ export function compileTaskContext(input: {
     })
   }
   const content = chosen.map((block) => block.content).join('\n\n')
+  const estimatedTokens = Math.ceil(contextUnits(content) / CHARS_PER_TOKEN)
+  const memoryBlock = manifest.find((block) => block.kind === 'memory')
+  const items = bundleItems({
+    items: input.memoryItems ?? [],
+    kept: keptMemory,
+    blocked: Boolean(input.memoryBlocked),
+    duplicate: duplicateBlocks > 0 && !memoryBlock?.chars
+  })
+  const bundle: ContextBundle = {
+    version: 1,
+    taskId: input.task.taskId,
+    ...(input.memoryNamespace ? { namespace: input.memoryNamespace } : {}),
+    tokenizer: {
+      method: 'characters',
+      tokenizer: 'none',
+      charsPerToken: CHARS_PER_TOKEN,
+      nonAsciiCharsPerToken: NON_ASCII_CHARS_PER_TOKEN
+    },
+    counts: countContextItems(items),
+    items
+  }
   return {
-    message: { role: 'system', content },
+    message: { role: 'system', content, contextBundle: bundle },
     blocks: manifest,
+    bundle,
     budget: {
       method: 'characters',
       tokenizer: 'none',
-      charsPerToken: 3,
+      charsPerToken: CHARS_PER_TOKEN,
+      nonAsciiCharsPerToken: NON_ASCII_CHARS_PER_TOKEN,
       uncertainty:
-        'Character estimate; actual tokenizer counts vary with language and code density.',
+        'Conservative character estimate; actual tokenizer counts vary with language and code density.',
       inputTokens: input.maxInputTokens,
       systemShare: SYSTEM_CONTEXT_SHARE,
-      reservedForConversationTokens: input.maxInputTokens - Math.ceil(content.length / 3),
+      reservedForConversationTokens: input.maxInputTokens - estimatedTokens,
       maxChars,
-      usedChars: content.length,
-      estimatedTokens: Math.ceil(content.length / 3)
+      usedChars: contextUnits(content),
+      estimatedTokens,
+      optionalAllocation: {
+        policy: freshFirst ? 'fresh-first' : 'conversation-first',
+        historicalCapChars,
+        freshChars: manifest
+          .filter((b) => b.kind === 'project' || b.kind === 'retrieval')
+          .reduce((n, b) => n + b.chars, 0),
+        historicalChars: manifest.find((b) => b.kind === 'memory')?.chars ?? 0,
+        duplicateBlocks
+      }
     }
   }
 }

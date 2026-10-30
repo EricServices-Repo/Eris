@@ -90,6 +90,7 @@ import {
   looksLikeDegenerateLoop,
   isUnfinishedWorkNarration,
   pathNeedsProjectVerify,
+  rejectedReplyReason,
   shouldKeepWorking,
   toolFingerprint
 } from './heuristics'
@@ -120,7 +121,7 @@ import {
   type TaskContract
 } from '../../../../src/shared/task-contract'
 import { artifactResponseContract } from '../../../../src/shared/task-interpretation'
-import { compileTaskContext } from './context-compiler'
+import { compileTaskContext, memoryForDestination } from './context-compiler'
 import { executionPlanFor } from '../execution-plan'
 import { lintExecutionPlan } from './workflow-lint'
 import { appendTaskEvent } from '../task-ledger'
@@ -157,6 +158,7 @@ import { AgentWorkflow } from './workflow'
 
 /** Consecutive rounds with zero mutation → stronger finish nudge (never stops the run). */
 const MAX_NO_PROGRESS = 8
+const MAX_RETRIEVED_READS = 3
 /**
  * Steps a run may take without new evidence or effects. Unlike noProgressStreak,
  * rerouting is not progress. One explicit recovery window is allowed before blocking.
@@ -609,10 +611,7 @@ async function* runAgentInternal(options: {
       task,
       toolsAvailable: false,
       guidance: tips.join('\n\n'),
-      memory:
-        isNativeGgufRef(chatModel) || options.conversationMemory?.allowRemote
-          ? options.conversationMemory?.text
-          : undefined,
+      ...memoryForDestination(options.conversationMemory, chatModel),
       project: priorSystem,
       retrieval: '',
       maxInputTokens: contextBudgetTokens(options.settings, chatModel)
@@ -622,7 +621,8 @@ async function* runAgentInternal(options: {
       agentId: plan.agentId,
       model: chatModel,
       blocks: compiled.blocks,
-      budget: compiled.budget
+      budget: compiled.budget,
+      bundle: compiled.bundle
     })
     const askMessages = [
       compiled.message,
@@ -963,6 +963,12 @@ async function* runAgentInternal(options: {
           : `Do not edit files. Read the sources that answer the user, then reply in plain sentences and cite paths.`
   const answerNext = describeProject ? describeProjectNext : chatReply ? chatReplyNext : ''
   const sourceReads: Array<{ path: string; text: string }> = []
+  /** A review or plan cannot finish on prose; it needs a source file read first. */
+  const awaitingSourceEvidence = () =>
+    ['review', 'plan'].includes(workflow.contract.intent) &&
+    workflow.contract.requiresWorkspaceEvidence &&
+    !sourceReads.length
+  let rejectedReplies = 0
   const observedWorkspaceReads = new Map<string, Set<'file' | 'notebook'>>()
   const workspaceReadKey = (path: string): string | null => {
     try {
@@ -1038,7 +1044,7 @@ async function* runAgentInternal(options: {
   // #4 grammar-constrained local tool calls: when a retry needs a tool and the
   // worker is the built-in GGUF model, force valid tool-call JSON via a grammar.
   const localConstrainEnabled = options.settings.agent.constrainLocalToolCalls !== false
-  let constrainNextToolCall = false
+  let constrainNextToolCall = awaitingSourceEvidence()
   // A grammar that yields no visible output must not poison every subsequent retry.
   let disableRetryGrammar = false
   let consecutiveEmptyReplies = 0
@@ -1283,7 +1289,18 @@ async function* runAgentInternal(options: {
         trigger,
         agentId: plan.agentId
       })
-    if (decision.kind === 'reroute' && decision.nextPlan) {
+    // A new role on the same model repeats the failure and spends the recovery budget.
+    const sameModelRetry =
+      decision.kind === 'reroute' &&
+      decision.nextPlan?.models.tools === workerModel &&
+      awaitingSourceEvidence()
+    if (sameModelRetry)
+      appendTaskEvent(task.taskId, 'reroute-skipped', {
+        reason: 'same-model-without-evidence',
+        trigger,
+        agentId: plan.agentId
+      })
+    if (decision.kind === 'reroute' && decision.nextPlan && !sameModelRetry) {
       const fromAgent = plan.agentId
       plan = {
         ...decision.nextPlan,
@@ -1358,7 +1375,9 @@ async function* runAgentInternal(options: {
     const reason =
       mode === 'ask'
         ? `Ask mode stays read-only while ${plan.agentName} recovers. ${trigger}.`
-        : `${plan.agentName} is correcting the failed tool request using the current task context.`
+        : awaitingSourceEvidence()
+          ? `${plan.agentName} is retrying with a required tool call.`
+          : `${plan.agentName} is correcting the failed tool request using the current task context.`
     consecutiveToolErrors = 0
     noProgressStreak = 0
     verifyFailures = Math.max(0, verifyFailures - 1)
@@ -1666,6 +1685,7 @@ async function* runAgentInternal(options: {
     })
     yield { type: 'answer', text: '', replace: true }
     let reply = ''
+    let truncated = false
     for await (const evt of streamThinkingText({
       ...options,
       model: workerModel,
@@ -1677,7 +1697,10 @@ async function* runAgentInternal(options: {
     })) {
       if (evt.kind === 'thinking') {
         if (evt.text) yield { type: 'answer', text: evt.text }
-      } else reply = evt.full
+      } else {
+        reply = evt.full
+        truncated = evt.aborted === 'loop'
+      }
     }
     const clean = proseOutsideTools(reply)
     const searched = actionLog.find((entry) => entry.startsWith('Searched the web'))
@@ -1702,12 +1725,49 @@ async function* runAgentInternal(options: {
       }
       return
     }
-    yield* postFinalAnswer(answer)
+    yield* postFinalAnswer(answer, truncated)
+  }
+
+  /** The retrieved leads, read through the normal tool path when the model will not. */
+  function* readRetrievedSources(): Generator<AgentRunnerEvent, void, unknown> {
+    if (!toolAllowedByPolicy('read_file', plan.toolPolicy, false)) return
+    for (const path of (retrieved?.paths ?? []).slice(0, MAX_RETRIEVED_READS)) {
+      const id = `t${toolExecRounds}_auto_read_${sourceReads.length}`
+      const call: ToolCall = { id, name: 'read_file', args: { path }, raw: '' }
+      yield { type: 'tool', tool: { id, name: 'read_file', path, status: 'running', detail: '' } }
+      const result = executeTool(workspacePath, call)
+      noteObservation(call, result)
+      workflow.noteTool({ ...result, name: call.name })
+      yield { type: 'evidence', evidence: gateway.record(`${task.taskId}:${id}`, call, result) }
+      if (result.ok && result.path) {
+        recordWorkspaceRead(result.path, 'file')
+        sourceReads.push({
+          path: result.path,
+          text: result.detail.slice(0, AGENT_HANDOFF_CHARS)
+        })
+        actionLog.push(`Read ${result.path}`)
+        appendToolObservation(workerMessages, 'read_file', result.detail, { path })
+      }
+      yield {
+        type: 'tool',
+        tool: {
+          id,
+          name: 'read_file',
+          path,
+          status: result.ok ? 'ok' : 'error',
+          detail: result.detail.slice(0, AGENT_HANDOFF_CHARS)
+        }
+      }
+    }
   }
 
   /** Internal framing and truncated code never reach the user as a finished answer. */
-  async function* postFinalAnswer(draft: string): AsyncGenerator<AgentRunnerEvent, void, unknown> {
+  async function* postFinalAnswer(
+    draft: string,
+    truncated = false
+  ): AsyncGenerator<AgentRunnerEvent, void, unknown> {
     const final = await finalizeAnswer(draft, {
+      truncated,
       settings: options.settings,
       model: workerModel,
       temperature: options.temperature,
@@ -1731,7 +1791,10 @@ async function* runAgentInternal(options: {
         incomplete: true
       }
       yield { type: 'status', text: 'Incomplete · answer needs review' }
-    } else yield { type: 'status', text: 'Done' }
+    } else {
+      workflow.complete()
+      yield { type: 'status', text: 'Done' }
+    }
     yield { type: 'answer', text: final.text, replace: true }
   }
 
@@ -1766,6 +1829,7 @@ async function* runAgentInternal(options: {
         lastProgressStep = step
       } else if (step - lastProgressStep >= MAX_STEPS_WITHOUT_EVIDENCE) {
         const idleSteps = step - lastProgressStep
+        if (awaitingSourceEvidence()) yield* readRetrievedSources()
         appendTaskEvent(task.taskId, 'no-progress-detected', {
           steps: idleSteps,
           rerouteCount,
@@ -1808,7 +1872,7 @@ async function* runAgentInternal(options: {
           })
           noProgressStreak = 0
           consecutiveToolErrors = 0
-          constrainNextToolCall = !answerTask
+          constrainNextToolCall = !answerTask || awaitingSourceEvidence()
           // An explicit bounded grace window, not fabricated evidence. Reroutes cannot reset it.
           lastProgressStep = step
           continue
@@ -1836,7 +1900,9 @@ async function* runAgentInternal(options: {
               : 'No file changes were made. ') +
             (lastFailure
               ? `The last tool failure was: ${lastFailure}`
-              : 'The model did not produce an actionable next step.'),
+              : rejectedReplies && !successfulObservations.size
+                ? `The model replied ${rejectedReplies} time${rejectedReplies === 1 ? '' : 's'} without using a tool, so no project files were inspected.`
+                : 'The model did not produce an actionable next step.'),
           replace: true
         }
         return
@@ -1884,11 +1950,19 @@ async function* runAgentInternal(options: {
         constrainNextToolCall &&
         localConstrainEnabled &&
         !disableRetryGrammar &&
-        !reviewOnly &&
-        !chatReply &&
+        ((!reviewOnly && !chatReply) || awaitingSourceEvidence()) &&
         isNativeGgufRef(workerModel)
       constrainNextToolCall = false
       const visibleToolNamesThisStep = new Set(openaiTools.map((tool) => tool.function.name))
+      /** Once the tree is known, a forced call has to open a file rather than list again. */
+      const grammarToolNames = () => {
+        const names = [...visibleToolNamesThisStep]
+        return awaitingSourceEvidence() &&
+          inspectRounds &&
+          visibleToolNamesThisStep.has('read_file')
+          ? ['read_file']
+          : names
+      }
       for await (const evt of streamThinkingText({
         ...options,
         model: workerModel,
@@ -1898,7 +1972,7 @@ async function* runAgentInternal(options: {
         builtinJsonSchema: constrainThisTurn
           ? toolCallJsonSchema(
               mcpTools.map((tool) => tool.fqName),
-              openaiTools.map((tool) => tool.function.name),
+              grammarToolNames(),
               true
             )
           : undefined,
@@ -2144,6 +2218,15 @@ async function* runAgentInternal(options: {
           looksLikeDegenerateLoop(assistantText)
 
         if (keepGoing) {
+          rejectedReplies++
+          // Length and reason only: the reply may repeat private recall.
+          appendTaskEvent(task.taskId, 'model-reply-rejected', {
+            step,
+            model: workerModel,
+            chars: assistantText.length,
+            constrained: constrainThisTurn,
+            reason: rejectedReplyReason(assistantText, actionLog)
+          })
           noProgressStreak++
           // Next turn, force a valid tool-call JSON on the local model.
           constrainNextToolCall = true
@@ -2339,13 +2422,13 @@ async function* runAgentInternal(options: {
         }
         const partial = unresolvedDelegationNote()
         if (prose.length >= 40 && !isToolLogReply(prose)) {
-          workflow.complete()
-          yield { type: 'status', text: partial ? 'Done · partial specialist results' : 'Done' }
-          yield { type: 'answer', text: prose, replace: true }
-          if (partial) yield { type: 'answer', text: `\n\n${partial}` }
+          yield* postFinalAnswer(prose)
+          if (partial) {
+            yield { type: 'status', text: 'Done · partial specialist results' }
+            yield { type: 'answer', text: `\n\n${partial}` }
+          }
           return
         }
-        workflow.complete()
         yield* finishChatAnswer(assistantText)
         if (partial) yield { type: 'answer', text: `\n\n${partial}` }
         return
@@ -4102,6 +4185,7 @@ async function* runAgentInternal(options: {
               tool: {
                 id: `verify_${toolExecRounds}`,
                 name: 'verify',
+                path: verified.command,
                 status: verified.ok ? 'ok' : 'error',
                 detail: verified.detail.slice(0, AGENT_HANDOFF_CHARS)
               }

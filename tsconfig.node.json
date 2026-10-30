@@ -22,6 +22,8 @@
     "checks/quality/cases.json",
     "resources/agents.json",
     "src/features/chat/thinking-summary.ts",
+    "checks/context-gate.ts",
+    "checks/context-recall-labels.ts",
     "tests/**/*",
     "vitest.config.ts",
     "electron.dev.config.ts",

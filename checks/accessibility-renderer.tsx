@@ -15,6 +15,7 @@ declare global {
   }
 }
 let open: (v: boolean) => void, nested: (v: boolean) => void, approval: (v: boolean) => void
+let changeMemoryNamespace: (value: string | null) => void
 let undoCount = 0
 const diffs: PendingDiff[] = [
   {
@@ -43,6 +44,8 @@ function Fixture() {
   const [modal, setModal] = useState(false),
     [palette, setPalette] = useState(false),
     [pending, setPending] = useState(false)
+  const [memoryNamespace, setMemoryNamespace] = useState<string | null>(null)
+  changeMemoryNamespace = setMemoryNamespace
   open = setModal
   nested = setPalette
   approval = setPending
@@ -50,7 +53,11 @@ function Fixture() {
     <>
       <textarea data-chat-composer aria-label="Chat message" />
       <Approval active={pending} />
-      <ContextMemoryInspector threadId="memory-fixture" />
+      <ContextMemoryInspector
+        key={memoryNamespace ?? 'global'}
+        threadId="memory-fixture"
+        workspacePath={memoryNamespace}
+      />
       <div className="monaco-editor">
         <div role="textbox" contentEditable suppressContentEditableWarning>
           editor
@@ -223,6 +230,7 @@ window.accessibilityCheck = async () => {
     !memory.textContent?.includes('checkout must use CAD'),
     'Source exclusion refreshes preview'
   )
+  await (await import('./context-pin-draft-check')).checkPinDraftRetention(memory)
   key(document.activeElement!, 'Escape')
   await tick()
   assert(
@@ -230,9 +238,13 @@ window.accessibilityCheck = async () => {
     'Escape closes memory inspector'
   )
   assert(document.activeElement === contextButton, 'Memory inspector returns focus to opener')
+  await (
+    await import('./context-request-order-check')
+  ).checkInspectorRequestOrdering((value) => flushSync(() => changeMemoryNamespace(value)))
   composer.focus()
   return {
     contextInspector: true,
+    inspectorRequestOrdering: true,
 
     approvalSafeFocus: true,
     approvalReturn: true,
@@ -241,6 +253,7 @@ window.accessibilityCheck = async () => {
     modalReturn: true,
     reviewScoped: true,
     editorInputOwned: true,
-    undoReachable: true
+    undoReachable: true,
+    pinDraftRetention: true
   }
 }

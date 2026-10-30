@@ -18,7 +18,7 @@
     "types": ["vite/client"]
   },
   "include": [
-    "src/**/*", "checks/capabilities-renderer.tsx",
+    "src/**/*", "checks/context-*-check.ts", "checks/capabilities-renderer.tsx",
     "checks/client-renderer.tsx", "checks/ux-renderer.tsx",
     "checks/performance-renderer.tsx", "checks/accessibility-renderer.tsx"
   ]

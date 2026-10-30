@@ -1,3 +1,4 @@
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
@@ -169,17 +170,58 @@ describe('RAM context durable recovery', () => {
     db.save({ ...db.get('thread')!, messages: thread(2).messages })
     expect(db.contextPage('thread')!.revision).toBeGreaterThan(revision + 1)
   })
-  it('advances over oversized rows, reports omitted coverage and strips reasoning and image assets', () => {
+  it('chunks oversized content without loading thinking or image metadata into recall', () => {
     db = new ChatDatabase(dir)
     const input = thread(3)
-    input.messages[1]!.content = 'x'.repeat(4000)
-    input.messages[2]!.thinking = 'private trace'
+    input.messages[1]!.content = '界😀\n"'.repeat(1000)
+    input.messages[2]!.thinking = 'private trace'.repeat(200000)
+    input.messages[2]!.assets = [{ metadata: 'image metadata'.repeat(200000) }] as never
     db.save(input)
-    const page = db.contextPage('thread', undefined, 1000)!
-    expect(page.omitted).toBe(1)
+    const pages = []
+    let before: number | undefined, offset: number | undefined
+    for (let i = 0; i < 100; i++) {
+      const page = db.contextPage('thread', before, 1000, offset)!
+      pages.push(page)
+      expect(page.omitted).toBe(0)
+      expect(Buffer.byteLength(JSON.stringify(page.records))).toBeLessThanOrEqual(1000)
+      expect(JSON.stringify(page)).not.toContain('private trace')
+      expect(JSON.stringify(page)).not.toContain('image metadata')
+      if (page.done) break
+      before = page.before
+      offset = page.beforeContentOffset
+    }
+    expect(pages.at(-1)?.done).toBe(true)
+    const records = pages
+      .flatMap((page) => page.records)
+      .sort(
+        (a, b) =>
+          a.ordinal - b.ordinal ||
+          (a.message.contextContentOffset ?? 0) - (b.message.contextContentOffset ?? 0)
+      )
+    expect(
+      records
+        .filter((row) => row.ordinal === 1)
+        .map((row) => row.message.content)
+        .join('')
+    ).toBe(input.messages[1]!.content)
+    expect(records.filter((row) => row.ordinal === 2)[0]?.message.content).toBe('Message 2')
+    expect(db.get('thread')!.messages[2]!.thinking).toBe(input.messages[2]!.thinking)
+  })
+  it('preserves a short useful answer behind a multi-megabyte thinking trace', () => {
+    db = new ChatDatabase(dir)
+    const input = thread(1)
+    input.messages[0] = {
+      ...input.messages[0]!,
+      role: 'assistant',
+      content: 'Remember: booking currency CAD',
+      thinking: 't'.repeat(2000000)
+    }
+    db.save(input)
+    const page = db.contextPage('thread')!
+    expect(page.records[0]?.message.content).toContain('currency CAD')
+    expect(page.omitted).toBe(0)
     expect(page.done).toBe(true)
-    expect(page.records.map((r) => r.ordinal)).toEqual([0, 2])
-    expect(JSON.stringify(page)).not.toContain('private trace')
+    expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThan(2000)
   })
   it('recovers explicit controls on restart, validates them and removes them with deleted conversations', () => {
     db = new ChatDatabase(dir)
@@ -198,5 +240,44 @@ describe('RAM context durable recovery', () => {
     db.remove('thread')
     db.save(thread(0))
     expect(db.memoryControls('thread').pinned).toEqual([])
+  })
+})
+
+describe('RAM-CTX-013 malformed context records', () => {
+  it('skips malformed JSON, field types, and receipt shapes without changing canonical rows', () => {
+    db = new ChatDatabase(dir)
+    db.save(thread(6))
+    const raw = new DatabaseSync(join(dir, 'chats.sqlite'))
+    const bad = [
+      '{broken',
+      JSON.stringify({ id: '1', role: 'user', content: 42 }),
+      JSON.stringify({ id: '2', role: 'unsupported', content: 'Bad role' }),
+      JSON.stringify({
+        id: '3',
+        role: 'assistant',
+        content: 'False receipt',
+        contextResult: { taskId: 'fake' }
+      })
+    ]
+    for (const [ordinal, body] of bad.entries())
+      raw
+        .prepare('UPDATE messages SET body=? WHERE threadId=? AND ordinal=?')
+        .run(body, 'thread', ordinal)
+    raw
+      .prepare('UPDATE messages SET body=? WHERE threadId=? AND ordinal=4')
+      .run(
+        JSON.stringify({ id: 'legacy', role: 'user', content: 'Remember: currency CAD' }),
+        'thread'
+      )
+    const page = db.contextPage('thread')!
+    expect(page.records.map((r) => r.message.id)).toEqual(['legacy', '5'])
+    expect(page.records[0].message.createdAt).toBe(0)
+    expect(page.corruptRecords).toBe(4)
+    expect(page.corruptOrdinals?.slice().sort()).toEqual([0, 1, 2, 3])
+    expect(page.done).toBe(true)
+    expect(
+      raw.prepare('SELECT body FROM messages WHERE threadId=? AND ordinal=0').get('thread')?.body
+    ).toBe('{broken')
+    raw.close()
   })
 })

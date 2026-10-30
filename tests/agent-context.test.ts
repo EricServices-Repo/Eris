@@ -142,6 +142,19 @@ describe('agent context boundaries', () => {
   })
 })
 
+describe('RAM-CTX-032 admitted recent units', () => {
+  it('covers complete canonical turns, but not shortened turns or summary-only sources', () => {
+    const history = Array.from({ length: 10 }, (_, i) => ({
+      id: String(i),
+      role: 'user' as const,
+      content: i === 8 ? 'x'.repeat(2000) : 'same wording'
+    }))
+    const compacted = compactHistory(history, 600)
+    expect(compacted.coveredSourceIds).toEqual(['4', '5', '6', '7', '9'])
+    expect(compacted.recent.map((m) => m.id)).toEqual(['4', '5', '6', '7', '8', '9'])
+  })
+})
+
 describe('memory at model boundaries', () => {
   it('compiles recalled evidence for local models, omits it for remote workers and honors explicit opt-in', () => {
     const folder = mkdtempSync(join(tmpdir(), 'eris-private-context-'))

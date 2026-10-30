@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.5 — 2026-10-30
+
+- Improve context memory pressure protection, scoped decisions, unfinished-task recall, stale evidence checks, and durable context recovery.
+
+## 0.6.4 — 2026-10-30
+
+- Tighten RAM context privacy and accuracy: bind memory to registered workspaces, recheck recall at dispatch, keep local-only recall from remote models within a run, and record what was actually sent. Add Unicode and code-aware recall, coherent evidence packing, byte-bounded chat history, memory previews with source navigation, memory reservations, and a context release gate.
+
+## 0.6.3 — 2026-10-30
+
+- Improve RAM context recall, isolate workspace policies, prioritize foreground chat and current source evidence, and avoid duplicate recent history.
+
+## 0.6.2 — 2026-10-30
+
+- Rebuild with agent tool recovery, safer and faster history recall, reliable memory controls, and a cleaner chat and editor layout.
+
 ## 0.6.1 — 2026-10-29
 
 - Add bounded RAM chat context with durable memory controls, stable history cutoffs, conflict-safe updates, and canonical cache continuity checks.
