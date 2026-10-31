@@ -22,7 +22,7 @@ import type {
   BuiltinModelManifestEntry,
   BuiltinModelStatus
 } from '../../../src/shared/settings-schema'
-import { builtinModelsDir, modelsManifestPath } from './paths'
+import { builtinModelsDir, isSharedModelPath, modelReadPath, modelsManifestPath } from './paths'
 import { logError, logInfo, logWarn } from './logger'
 import {
   attachIdleTimeout,
@@ -40,7 +40,7 @@ import { getResolvedSettings } from './settings'
 import { clearLoadedModel, recordLoadedModel } from './model-runtime'
 import {
   allocationFacts,
-  contextCreateOptions,
+  createContextWithVramFallback,
   contextLimits,
   REPLY_MAX_TOKENS,
   isMemoryError,
@@ -116,10 +116,12 @@ function readVerifiedSidecar(modelPath: string): string | null {
 }
 
 function writeVerifiedSidecar(modelPath: string, sha256: string): void {
+  if (isSharedModelPath(modelPath)) return
   writeFileSync(verifiedSidecarPath(modelPath), `${sha256}\n`, 'utf8')
 }
 
 function unlinkQuiet(path: string): void {
+  if (isSharedModelPath(path)) return
   try {
     if (existsSync(path)) unlinkSync(path)
   } catch {
@@ -261,7 +263,7 @@ export function findBuiltinEntry(idOrRef: string): BuiltinModelManifestEntry | n
 }
 
 export function localModelPath(entry: BuiltinModelManifestEntry): string {
-  return join(builtinModelsDir(), entry.filename)
+  return modelReadPath('builtin', entry.filename)
 }
 
 /** File looks like a complete GGUF of the expected size (not HTML / truncated / corrupt). */
@@ -410,7 +412,12 @@ export async function verifyBuiltinModel(id: string): Promise<{
   if (!ggufMetadataLooksSane(path)) {
     unlinkQuiet(path)
     unlinkQuiet(verifiedSidecarPath(path))
-    return { ok: false, error: 'Corrupt GGUF metadata — file removed. Re-download.' }
+    return {
+      ok: false,
+      error: isSharedModelPath(path)
+        ? 'Shared Eris model is corrupt. Repair it in Eris.'
+        : 'Corrupt GGUF metadata — file removed. Re-download.'
+    }
   }
   const digest = await sha256File(path)
   if (entry.sha256 && digest !== entry.sha256.toLowerCase()) {
@@ -420,7 +427,9 @@ export async function verifyBuiltinModel(id: string): Promise<{
       ok: false,
       digest,
       expected: entry.sha256,
-      error: 'Checksum mismatch — file removed. Re-download.'
+      error: isSharedModelPath(path)
+        ? 'Shared Eris model checksum mismatch. Repair it in Eris.'
+        : 'Checksum mismatch — file removed. Re-download.'
     }
   }
   writeVerifiedSidecar(path, digest)
@@ -430,7 +439,7 @@ export async function verifyBuiltinModel(id: string): Promise<{
 export function deleteBuiltinModel(id: string): boolean {
   const entry = readManifest().builtinModels.find((m) => m.id === id)
   if (!entry) return false
-  const target = localModelPath(entry)
+  const target = join(builtinModelsDir(), entry.filename)
   if (runtime?.modelPath === target) {
     void disposeRuntime()
   }
@@ -460,8 +469,8 @@ export async function downloadBuiltinModel(
   if (!entry) throw new Error(`Unknown built-in model: ${id}`)
 
   mkdirSync(builtinModelsDir(), { recursive: true })
-  const target = localModelPath(entry)
-  if (isValidModelFile(target, entry)) {
+  const target = join(builtinModelsDir(), entry.filename)
+  if (isValidModelFile(localModelPath(entry), entry)) {
     return getBuiltinStatuses().find((s) => s.id === id)!
   }
 
@@ -862,18 +871,6 @@ async function loadModelForVram(llama: any, modelPath: string, contextMax: numbe
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function createContextForVram(model: any, plan: { min: number; max: number }): Promise<any> {
-  try {
-    return await model.createContext(contextCreateOptions(plan.min, plan.max, true))
-  } catch (err) {
-    logWarn('Quantized KV cache failed; retrying with the default cache', {
-      error: err instanceof Error ? err.message : String(err)
-    })
-    return await model.createContext(contextCreateOptions(plan.min, plan.max, false))
-  }
-}
-
 async function ensureRuntimeInProcess(
   modelPath: string,
   entry: BuiltinModelManifestEntry
@@ -947,7 +944,18 @@ async function ensureRuntimeInProcess(
         .catch(() => undefined)
     }
 
-    const context = await createContextForVram(model, plan)
+    let context
+    try {
+      context = await createContextWithVramFallback((options) => model.createContext(options), plan)
+    } catch (error) {
+      // This model was not installed in runtime yet, so runtime disposal cannot free it.
+      try {
+        await model.dispose?.()
+      } catch {
+        // Keep the original allocation error.
+      }
+      throw error
+    }
     runtime = { modelPath, llama, model, context }
     const facts = allocationFacts(model, context)
     recordLoadedModel({ ...facts, ref: entry.ref, contextSize: facts.contextSize ?? plan.max })
@@ -989,6 +997,10 @@ async function ensureWorkerModel(
       `${entry.displayName} file is missing or corrupted. Open Settings → Models and download it again.`
     )
   }
+  // The worker disposes its previous model before attempting this load.
+  // Never retain its measured capacity/path if replacement allocation fails.
+  workerModelPath = null
+  clearLoadedModel()
   const requestId = `load-${Date.now()}`
   const preferEgpu = getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
   const { status: gpuStatus } = await applyLlamaGpuPreference(preferEgpu)

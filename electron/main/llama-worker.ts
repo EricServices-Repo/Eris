@@ -5,7 +5,7 @@
 
 import {
   allocationFacts,
-  contextCreateOptions,
+  createContextWithVramFallback,
   isMemoryError,
   modelLoadOptions
 } from './services/vram-fit'
@@ -130,11 +130,7 @@ async function ensureContext(): Promise<void> {
   if (context) return
   if (!model) throw new Error('Model not loaded')
   const plan = { min: contextMin, max: contextMax }
-  try {
-    context = await model.createContext(contextCreateOptions(plan.min, plan.max, true))
-  } catch {
-    context = await model.createContext(contextCreateOptions(plan.min, plan.max, false))
-  }
+  context = await createContextWithVramFallback((options) => model.createContext(options), plan)
   loadedContextSize = typeof context.contextSize === 'number' ? context.contextSize : contextMax
 }
 
@@ -216,6 +212,8 @@ async function handleLoad(
     modelPath = path
     post({ type: 'loaded', requestId, gpu: llama?.gpu ?? null, ...allocationFacts(model, context) })
   } catch (err) {
+    // A failed context allocation must not leave model weights occupying VRAM.
+    await disposeAll()
     post({
       type: 'load-error',
       requestId,

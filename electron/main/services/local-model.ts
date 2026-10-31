@@ -25,7 +25,7 @@ import type {
   LocalModelManifestEntry,
   LocalModelStatus
 } from '../../../src/shared/settings-schema'
-import { localModelsDir, modelsManifestPath } from './paths'
+import { localModelsDir, modelReadDirs, modelReadPath, modelsManifestPath } from './paths'
 import { logError, logInfo, logWarn } from './logger'
 import {
   attachIdleTimeout,
@@ -99,8 +99,7 @@ function extrasCatalogPath(): string {
   return join(localModelsDir(), 'catalog-extra.json')
 }
 
-function readExtrasCatalog(): LocalModelManifestEntry[] {
-  const path = extrasCatalogPath()
+function readExtrasCatalog(path = extrasCatalogPath()): LocalModelManifestEntry[] {
   if (!existsSync(path)) return []
   try {
     const raw = JSON.parse(readFileSync(path, 'utf8')) as {
@@ -114,11 +113,14 @@ function readExtrasCatalog(): LocalModelManifestEntry[] {
 
 function writeExtrasCatalog(entries: LocalModelManifestEntry[]): void {
   mkdirSync(localModelsDir(), { recursive: true })
+  // Replace legacy catalog symlinks rather than writing through them into Eris.
+  const temporary = `${extrasCatalogPath()}.tmp`
   writeFileSync(
-    extrasCatalogPath(),
+    temporary,
     `${JSON.stringify({ version: 1, localModels: entries }, null, 2)}\n`,
     'utf8'
   )
+  renameSync(temporary, extrasCatalogPath())
 }
 
 function upsertExtraEntry(entry: LocalModelManifestEntry): void {
@@ -134,7 +136,9 @@ function removeExtraEntry(id: string): void {
 
 export function listLocalCatalog(): LocalModelManifestEntry[] {
   const builtIn = readManifest().localModels ?? []
-  const extras = readExtrasCatalog()
+  const extras = modelReadDirs('local').flatMap((dir) =>
+    readExtrasCatalog(join(dir, 'catalog-extra.json'))
+  )
   const seen = new Set(builtIn.map((m) => m.id))
   const merged = [...builtIn]
   for (const e of extras) {
@@ -271,7 +275,7 @@ export function findLocalEntry(idOrRef: string): LocalModelManifestEntry | null 
 }
 
 export function localModelFilePath(entry: LocalModelManifestEntry): string {
-  return join(localModelsDir(), entry.filename)
+  return modelReadPath('local', entry.filename)
 }
 
 /** Adapt a local catalog entry for the shared GGUF chat runtime. */
@@ -399,7 +403,7 @@ export function cancelLocalDownload(): void {
 export function deleteLocalModel(id: string): LocalModelStatus | null {
   const entry = findLocalEntry(id)
   if (!entry) return null
-  const path = localModelFilePath(entry)
+  const path = join(localModelsDir(), entry.filename)
   unlinkQuiet(path)
   unlinkQuiet(verifiedSidecarPath(path))
   unlinkQuiet(stablePartialPath(path))
@@ -432,10 +436,10 @@ export async function downloadLocalModel(
   const entry = findLocalEntry(id)
   if (!entry) throw new Error(`Unknown local model: ${id}`)
 
-  const target = localModelFilePath(entry)
+  const target = join(localModelsDir(), entry.filename)
   mkdirSync(localModelsDir(), { recursive: true })
 
-  if (isValidLocalFile(target, entry)) {
+  if (isValidLocalFile(localModelFilePath(entry), entry)) {
     return getLocalStatuses().find((s) => s.id === entry.id)!
   }
 
