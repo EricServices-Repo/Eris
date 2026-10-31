@@ -20,6 +20,7 @@ import {
   ContextMemoryStore,
   contextMemoryStore
 } from '../electron/main/services/context-memory-store'
+import { RecallIndex, MAX_MATCHED_ROWS } from '../electron/main/services/context-recall-index'
 import { getDefaults } from '../electron/main/services/settings'
 import {
   ContextMemorySettingsSchema,
@@ -208,4 +209,70 @@ describe('hydration lifecycle', () => {
     expect(contextMemoryStore.has(memoryKey(null, 't'))).toBe(false)
     held!.release()
   })
+})
+
+// RAM-CTX-021: never allow invalid byte counts or uncharged selection arenas.
+describe('bounded selection allocation', () => {
+  it('rejects invalid admission/growth without changing the ledger', () => {
+    const store = small()
+    for (const bytes of [-1, NaN, Infinity, 0.5]) expect(store.reserve('a', bytes)).toBeNull()
+    const held = store.reserve('a', 1000)!
+    for (const bytes of [-1, NaN, Infinity, 0.5]) expect(held.grow(bytes)).toBe(false)
+    expect(store.ledger.reservedBytes).toBe(1000)
+    held.release()
+    expect(store.ledger.reservedBytes).toBe(0)
+  })
+  it('charges scratch before yielding and releases it on successful selection', async () => {
+    const store = small()
+    store.install('a', page('a', 1000), store.token('a'))
+    const selecting = store.select('a', 'x')
+    expect(store.ledger.reservedBytes).toBeGreaterThanOrEqual(4 * MiB)
+    expect(committed(store)).toBeLessThanOrEqual(envelope(store))
+    await selecting
+    expect(store.ledger.reservedBytes).toBe(0)
+  })
+  it('falls back without selecting when scratch admission is exhausted', async () => {
+    const store = small()
+    store.install('a', page('a', 1000), store.token('a'))
+    const held = store.reserve('a', 14 * MiB)!
+    const result = await store.select('a', 'x')
+    expect(result.prompt.text).toBe('')
+    expect(result.prompt.manifest.reason).toContain('scratch')
+    expect(store.has('a')).toBe(true)
+    held.release()
+  })
+  it('releases both snapshot and scratch ownership after cancellation', async () => {
+    const store = small()
+    store.install('a', page('a', 1000), store.token('a'))
+    const controller = new AbortController()
+    const selecting = store.select('a', 'x', { signal: controller.signal })
+    store.clear('a')
+    expect(store.ledger.pinnedBytes).toBeGreaterThan(0)
+    controller.abort()
+    await expect(selecting).rejects.toThrow()
+    expect(store.ledger.pinnedBytes).toBe(0)
+    expect(store.ledger.reservedBytes).toBe(0)
+  })
+})
+
+it('bounds broad index queries before materializing a match map', () => {
+  const index = new RecallIndex()
+  for (let i = 0; i < 8000; i++) index.add(i, [`term-${Math.floor(i / 1000)}`])
+  const found = index.match(Array.from({ length: 100 }, (_, i) => `term-${i}`))
+  expect(found.size).toBe(MAX_MATCHED_ROWS)
+  expect([...found.values()].every((terms) => terms.size <= 24)).toBe(true)
+})
+
+it('bounds oversized query analysis and reports its partial query coverage', async () => {
+  const store = small()
+  store.install('a', page('a', 1000), store.token('a'))
+  const selected = await store.select('a', '決済'.repeat(50000))
+  expect(selected.prompt.manifest.reason).toContain('first 8192 query characters')
+  expect(store.ledger.reservedBytes).toBe(0)
+})
+it('invalidates the warm projection for an oversized raw append so the worker must chunk it', () => {
+  const store = small()
+  store.install('a', page('a', 1000), store.token('a'))
+  store.append('a', 2, 2, [message('large', '決済'.repeat(20000))], 1)
+  expect(store.has('a')).toBe(false)
 })

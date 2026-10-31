@@ -1,5 +1,7 @@
 /** Newest postings read per query term, so a common word cannot make a query scale with history. */
 const MAX_TERM_ROWS = 2048
+export const MAX_MATCHED_ROWS = 4096
+const MAX_QUERY_TERMS = 24
 /** Inverted term index over a thread's retained rows. Row IDs only ever increase. */
 export class RecallIndex {
   private postings = new Map<string, number[]>()
@@ -13,12 +15,12 @@ export class RecallIndex {
   /** Rows matching any term, each with the terms it matched. */
   match(terms: readonly string[]) {
     const matches = new Map<number, Set<string>>()
-    for (const term of terms) {
+    for (const term of terms.slice(0, MAX_QUERY_TERMS)) {
       const rows = this.postings.get(term) ?? []
       for (let i = rows.length - 1; i >= Math.max(0, rows.length - MAX_TERM_ROWS); i--) {
         const found = matches.get(rows[i]!)
         if (found) found.add(term)
-        else matches.set(rows[i]!, new Set([term]))
+        else if (matches.size < MAX_MATCHED_ROWS) matches.set(rows[i]!, new Set([term]))
       }
     }
     return matches

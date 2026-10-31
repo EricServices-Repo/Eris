@@ -233,13 +233,20 @@ export class ContextMemoryStore {
   }
   /** Admit a transient allocation, evicting other cold threads to make room. */
   reserve(key: string, bytes: number): ContextReservation | null {
+    if (!Number.isSafeInteger(bytes) || bytes < 0) return null
     let held = 0
     const reservation: ContextReservation = {
       get bytes() {
         return held
       },
       grow: (more) => {
-        if (!this.reservations.has(reservation)) return false
+        if (
+          !this.reservations.has(reservation) ||
+          !Number.isSafeInteger(more) ||
+          more < 0 ||
+          !Number.isSafeInteger(held + more)
+        )
+          return false
         this.makeRoom(key, more)
         if (this.committedBytes + more > this.envelopeBytes) return false
         held += more
@@ -465,6 +472,12 @@ export class ContextMemoryStore {
       this.bump(key)
       return
     }
+    // Oversized new sources must come back through the worker's bounded chunks,
+    // rather than bypassing selection scratch bounds through a raw live append.
+    if (tail.some((message) => message.content.length > 32768)) {
+      this.drop(key)
+      return
+    }
     // Chunked snapshots must be reconstructed on append; merging by ordinal
     // alone would silently discard sibling chunks or compare a chunk with a full rendering body.
     if (entry.records.some((r) => r.message.contextContentLength !== undefined)) {
@@ -667,12 +680,43 @@ export class ContextMemoryStore {
           processLogicalBytes: this.logicalBytes
         }
       }
+    // Admit the bounded match/rank arena, control copy, and materialized excerpts
+    // before creating them. The resident snapshot is separately pinned below.
+    const scratch = this.reserve(
+      key,
+      8 * 1024 ** 2 + controlSize(e.controls) * 2 + e.records.length * 16
+    )
+    if (!scratch)
+      return this.unavailable(
+        key,
+        'Optional recall scratch space was not admitted; using recent canonical history.',
+        policy.shareWithRemoteModels
+      )
+    const deadline = AbortSignal.timeout(Math.max(1, policy.foregroundDeadlineMs))
+    const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline
     e.at = this.now()
     const release = this.pin(e)
     try {
-      return await this.selectFrom(e, key, query, options, policy, evidenceToken, empty)
+      const result = await this.selectFrom(
+        e,
+        key,
+        query.slice(0, 8192),
+        { ...options, signal },
+        policy,
+        evidenceToken,
+        empty
+      )
+      if (query.length > 8192)
+        result.prompt.manifest.reason = [
+          result.prompt.manifest.reason,
+          'Only the first 8192 query characters were analyzed within the scratch budget.'
+        ]
+          .filter(Boolean)
+          .join(' ')
+      return result
     } finally {
       release()
+      scratch.release()
     }
   }
   private pin(entry: ThreadEntry) {
@@ -910,6 +954,7 @@ export class ContextMemoryStore {
       seen.add(identity)
       if (selected.length >= 24) break
     }
+    options.signal?.throwIfAborted()
     if (this.entries.get(key) !== e || e.generation !== generation) {
       return {
         prompt: {
