@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.8 — 2026-10-31
+
+- Rebuild with merged memory pressure, resident model accounting, durable recall, allocated context budgeting, and compaction summary improvements.
+
 ## 0.6.7 — 2026-10-31
 
 - Repair development-release qualification and update vulnerable glob matching to the patched engine with legacy packaging compatibility.
