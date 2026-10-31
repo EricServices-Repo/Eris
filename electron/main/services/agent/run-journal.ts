@@ -2,6 +2,7 @@ import { createHash } from 'crypto'
 import {
   contextMemoryStore,
   sensitive as sensitiveText,
+  type ContextMemoryStore,
   type ContextReservation
 } from '../context-memory-store'
 
@@ -81,9 +82,12 @@ export class RunJournal {
   private stopPressure: () => void
   residentBytes = 0
 
-  constructor(private identity: { runId: string; taskId: string; memoryKey: string }) {
+  constructor(
+    private identity: { runId: string; taskId: string; memoryKey: string },
+    private store: ContextMemoryStore = contextMemoryStore
+  ) {
     open.add(this)
-    this.stopPressure = contextMemoryStore.onPressure(() => this.shed())
+    this.stopPressure = store.onPressure(() => this.shed())
   }
 
   /** Never throws: a journal problem must not cost the run its tool result. */
@@ -121,10 +125,10 @@ export class RunJournal {
         globalBytes() + cost > GLOBAL_JOURNAL_MAX_BYTES)
     )
       this.evictOldest('over-budget')
-    let reservation = this.fits(cost) ? contextMemoryStore.reserve(memoryKey, cost) : null
+    let reservation = this.fits(cost) ? this.store.reserve(memoryKey, cost) : null
     while (!reservation && this.resident.size) {
       this.evictOldest('over-budget')
-      reservation = this.fits(cost) ? contextMemoryStore.reserve(memoryKey, cost) : null
+      reservation = this.fits(cost) ? this.store.reserve(memoryKey, cost) : null
     }
     if (!reservation) return this.omit(entry, 'over-budget')
     this.resident.set(entry.ref, { chunks: chunksOf(bytes), reservation, cost })
@@ -168,7 +172,7 @@ export class RunJournal {
 
   /** Give memory back when pressure rises, keeping a marker for each entry. */
   private shed() {
-    while (this.resident.size && contextMemoryStore.overEnvelopeBytes > 0)
+    while (this.resident.size && this.store.overEnvelopeBytes > 0)
       this.evictOldest('memory-pressure')
   }
 

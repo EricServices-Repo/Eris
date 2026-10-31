@@ -11,7 +11,10 @@ import {
   trustLabel
 } from '../electron/main/services/agent/run-journal'
 import { ContextMemorySettingsSchema } from '../src/shared/context-memory'
-import { contextMemoryStore } from '../electron/main/services/context-memory-store'
+import {
+  ContextMemoryStore,
+  contextMemoryStore
+} from '../electron/main/services/context-memory-store'
 
 const journals: RunJournal[] = []
 const journal = (runId = 'run-1') => {
@@ -163,6 +166,16 @@ describe('RunJournal accounting', () => {
       status: 'omitted',
       entry: { omitted: 'memory-pressure' }
     })
+  })
+
+  it('accounts against the store it was given', async () => {
+    const store = new ContextMemoryStore()
+    const target = new RunJournal({ runId: 'own', taskId: 't', memoryKey: 'k' }, store)
+    journals.push(target)
+    const before = contextMemoryStore.ledger.reservedBytes
+    await append(target, 'x'.repeat(1000))
+    expect(store.ledger.reservedBytes).toBe(target.residentBytes)
+    expect(contextMemoryStore.ledger.reservedBytes).toBe(before)
   })
 
   it('stops listening once closed', async () => {
