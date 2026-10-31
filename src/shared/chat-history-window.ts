@@ -15,11 +15,9 @@ export const emptyHistoryWindow = (threadId: string | null = null): HistoryWindo
   pages: [],
   bytes: 0
 })
-/** UTF-16 storage of the retained strings; a stable estimate, not a heap measurement. */
-export const messageBytes = (message: ChatMessage) =>
-  (message.content.length + (message.thinking?.length ?? 0)) * 2 +
-  (message.assets?.length ?? 0) * 256 +
-  512
+/** Conservative serialized UTF-16 estimate, including nested traces, assets and tool metadata.
+ * These are retained renderer objects, not only the strings painted by the virtual list. */
+export const messageBytes = (message: ChatMessage) => JSON.stringify(message).length * 2 + 512
 const pageOf = (start: number, messages: ChatMessage[]): HistoryPage => ({
   start,
   messages,
@@ -37,8 +35,13 @@ export function addEarlierPage(
   messages: ChatMessage[],
   maxBytes = HISTORY_WINDOW_BYTES
 ): HistoryWindow {
-  const pages = [pageOf(start, messages), ...window.pages]
-  let bytes = window.bytes + pages[0]!.bytes
+  let kept = messages.length
+  let incoming = messages.reduce((sum, message) => sum + messageBytes(message), 0)
+  while (kept > 1 && incoming > maxBytes) incoming -= messageBytes(messages[--kept]!)
+  const pages = [pageOf(start, messages.slice(0, kept)), ...window.pages]
+  // A shortened page is no longer adjacent to the old window.
+  if (kept !== messages.length) pages.splice(1)
+  let bytes = (kept === messages.length ? window.bytes : 0) + pages[0]!.bytes
   while (pages.length > 1 && bytes > maxBytes) bytes -= pages.pop()!.bytes
   return { ...window, pages, bytes }
 }
@@ -49,8 +52,12 @@ export function addLaterPage(
   messages: ChatMessage[],
   maxBytes = HISTORY_WINDOW_BYTES
 ): HistoryWindow {
-  const pages = [...window.pages, pageOf(start, messages)]
-  let bytes = window.bytes + pages[pages.length - 1]!.bytes
+  let dropped = 0
+  let incoming = messages.reduce((sum, message) => sum + messageBytes(message), 0)
+  while (messages.length - dropped > 1 && incoming > maxBytes)
+    incoming -= messageBytes(messages[dropped++]!)
+  const pages = [...(dropped ? [] : window.pages), pageOf(start + dropped, messages.slice(dropped))]
+  let bytes = (dropped ? 0 : window.bytes) + pages[pages.length - 1]!.bytes
   while (pages.length > 1 && bytes > maxBytes) bytes -= pages.shift()!.bytes
   return { ...window, pages, bytes }
 }
@@ -85,7 +92,7 @@ export function historyView(window: HistoryWindow, tail: ChatThread | null | und
 export function boundTail(thread: ChatThread, maxBytes = TAIL_BYTES): ChatThread {
   let bytes = thread.messages.reduce((sum, message) => sum + messageBytes(message), 0)
   let dropped = 0
-  while (bytes > maxBytes && thread.messages.length - dropped > HISTORY_PAGE_MESSAGES)
+  while (bytes > maxBytes && thread.messages.length - dropped > 1)
     bytes -= messageBytes(thread.messages[dropped++]!)
   if (!dropped) return thread
   return {

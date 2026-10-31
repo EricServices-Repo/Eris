@@ -221,6 +221,10 @@ export function MemoryPanel({
               </div>
             )}
             <p className="memory-detail">
+              Renderer history (estimated): {memoryBytes(usage.rendererHistoryBytes)}. This separate
+              owner reduces the available conversation cache budget.
+            </p>
+            <p className="memory-detail">
               Main process RAM (RSS): {memoryBytes(usage.process.rss)} · JavaScript heap used:{' '}
               {memoryBytes(usage.process.heapUsed)}. Excludes renderer, model workers, and GPU
               memory; includes more than conversation memory.

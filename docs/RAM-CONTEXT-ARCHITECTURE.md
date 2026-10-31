@@ -1450,3 +1450,7 @@ These references support platform constraints; the design choices, budgets and t
 - [SQLite WAL behavior](https://www.sqlite.org/wal.html): reader/writer/checkpoint behavior informs bounded transactions and background index work.
 
 Review date: 2026-10-29. Source code remains the authority for what Eris currently implements.
+
+
+### RAM-CTX-033 follow-up: complete renderer residency accounting
+Renderer history estimates include the complete serialized message (including hidden metadata), not just visible content. Old-page insertion narrows oversized pages to contiguous reloadable ranges; live tails no longer retain at least sixty oversized messages. One indivisible message may exceed the page budget: it remains intact, is fully charged, and its canonical content is never silently truncated. This is an explicit largest-source exception, not a hard heap limit. Renderer-reported bytes reduce the main optional cache envelope; Settings shows that owner separately. The report is main-frame-only and is cleared on hook disposal. No transcript content crosses the accounting IPC.

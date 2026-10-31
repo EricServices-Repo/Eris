@@ -37,6 +37,15 @@ export function useChatThreads() {
     () => historyView(historyWindow, activeThread),
     [historyWindow, activeThread]
   )
+  useEffect(() => {
+    window.ide.reportRendererHistoryBytes?.(history.bytes)
+  }, [history.bytes])
+  useEffect(
+    () => () => {
+      window.ide.reportRendererHistoryBytes?.(0)
+    },
+    []
+  )
   const setActiveThread: Dispatch<SetStateAction<ChatThread | null>> = useCallback((next) => {
     setBoundedThread((previous) => {
       const value = typeof next === 'function' ? next(previous) : next

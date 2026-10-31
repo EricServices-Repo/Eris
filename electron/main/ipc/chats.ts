@@ -58,6 +58,19 @@ function chatWorkspace(requested: string | null | undefined): string | null {
 }
 
 export function registerChatsIpc(): void {
+  ipcMain.on('contextMemory:rendererHistory', (event, bytes: unknown) => {
+    if (
+      !appState.mainWindow ||
+      event.sender !== appState.mainWindow.webContents ||
+      event.senderFrame !== event.sender.mainFrame ||
+      typeof bytes !== 'number' ||
+      !Number.isSafeInteger(bytes) ||
+      bytes < 0 ||
+      bytes > 2 ** 31
+    )
+      return
+    contextMemoryStore.setRendererHistoryBytes(bytes)
+  })
   ipcMain.handle('contextMemory:usage', async (event, raw: unknown): Promise<MemoryUsageStatus> => {
     if (
       !appState.mainWindow ||
@@ -92,6 +105,7 @@ export function registerChatsIpc(): void {
       projectMemory: profile.projectMemory,
       effectivePolicy: getResolvedSettings(root).agent.contextMemory,
       cache: contextMemoryStore.usage(activeThreadId ? memoryKey(root, activeThreadId) : undefined),
+      rendererHistoryBytes: contextMemoryStore.rendererHistoryBytes,
       process: { rss, heapUsed },
       archive,
       archiveError
