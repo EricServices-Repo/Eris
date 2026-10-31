@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.7 — 2026-10-31
+
+- Improve memory settings, incremental history and archive recall; add stateful Eris-Dev memory testing and stricter context qualification. Rebuild Eris and Eris-Dev for macOS.
+
 ## 0.6.6 — 2026-10-30
 
 - Fix installed local models appearing unavailable during startup and restore workspace worker loading.

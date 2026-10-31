@@ -47,6 +47,7 @@ export type WorkspaceRequest =
       query: string
       projectRoot?: string | null
     }
+  | { type: 'chat-close'; dir: string }
   | { type: 'chat-list'; dir: string }
   | { type: 'chat-get'; dir: string; id: string; page?: ChatPage }
   | { type: 'chat-save'; dir: string; thread: ChatThread }
