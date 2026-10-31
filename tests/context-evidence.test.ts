@@ -1,3 +1,4 @@
+import type { AppSettings } from '../src/shared/settings-schema'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 vi.mock('../electron/main/services/workspace-worker-client', () => ({ workspaceRequest: vi.fn() }))
 import { workspaceRequest } from '../electron/main/services/workspace-worker-client'
@@ -19,6 +20,8 @@ import {
   evidenceEpochMatches,
   noteEvidenceChange
 } from '../electron/main/services/context-evidence-epochs'
+
+const DISPATCH_SETTINGS = { models: { connections: [] } } as unknown as AppSettings
 let root: string
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'eris-evidence-deps-'))
@@ -118,13 +121,15 @@ it('drops stale recalled code at actual dispatch while keeping preferences and r
       { role: 'system', content: prompt.text },
       { role: 'user', content: 'Review current code' }
     ]
-    expect((await withEligibleMemory(request, 'builtin:test.gguf')).messages[0].content).toContain(
-      'SENTINEL_SOURCE'
-    )
+    expect(
+      (await withEligibleMemory(request, 'builtin:test.gguf', DISPATCH_SETTINGS)).messages[0]
+        .content
+    ).toContain('SENTINEL_SOURCE')
     writeFileSync(join(root, 'app.ts'), 'changed after selection')
     const sent = await withEligibleMemory(
       [...request, { role: 'assistant', content: 'COMPACTED_STALE_PROOF: tests still pass.' }],
-      'builtin:test.gguf'
+      'builtin:test.gguf',
+      DISPATCH_SETTINGS
     )
     expect(sent.revoked).toBe(true)
     expect(JSON.stringify(sent.messages)).not.toContain('SENTINEL_SOURCE')

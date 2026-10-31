@@ -227,6 +227,27 @@ function sanitizeMcp(raw: Record<string, unknown>): Record<string, unknown> {
   return { ...raw, mcp }
 }
 
+/** Repository trust is not consent to disclose history: only the profile can approve. */
+function withUserRecallApprovals(models: unknown, userLayer: SettingsPatch): unknown {
+  const connections = (models as { connections?: unknown } | undefined)?.connections
+  if (!Array.isArray(connections)) return models
+  const approved = new Map(
+    (userLayer.models?.connections ?? []).map((connection) => [
+      connection?.id,
+      connection?.recallApprovedUrl
+    ])
+  )
+  return {
+    ...(models as Record<string, unknown>),
+    connections: connections.map((connection: Record<string, unknown>) => {
+      const { recallApprovedUrl, ...rest } = connection
+      return recallApprovedUrl && approved.get(connection.id as string) === recallApprovedUrl
+        ? connection
+        : rest
+    })
+  }
+}
+
 function buildResolvedSettings(workspacePath: string | null): AppSettings {
   const userLayer = getUserSettings()
   const workspaceLayer = getWorkspaceSettings(workspacePath)
@@ -264,6 +285,7 @@ function buildResolvedSettings(workspacePath: string | null): AppSettings {
   agent.routing = routing
   delete agent.subagents
   merged.agent = agent
+  merged.models = withUserRecallApprovals(merged.models, userLayer)
   const parsed = SettingsSchema.safeParse(merged)
   if (parsed.success) return parsed.data
   // Never throw into IPC — a bad synced profile must not brick boot.

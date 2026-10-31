@@ -1,5 +1,5 @@
 import { abortable } from './context-hydration'
-import { isNativeGgufRef } from './builtin-model'
+import { modelDestination } from './model-destination'
 import { recommendationSources, referenceItemDigest } from './recommendation-catalog'
 import { workspaceRequest } from './workspace-worker-client'
 import { userChatsDir, workspaceChatsDir } from './paths'
@@ -32,6 +32,9 @@ export async function bindTaskReferences(input: {
   const catalog = recommendationSources(input.root, input.threadId)
   if (!catalog.length && !explicit.length) return undefined // legacy recent-history path
   const recent = new Set(input.recentSourceIds ?? [])
+  const allModelsLocal = input.models.every(
+    (model) => modelDestination(input.settings, model).recallAllowed
+  )
   const allRecent = catalog.every((source) => recent.has(source.messageId))
   const remotePolicy = allRecent
     ? 'recent'
@@ -74,7 +77,7 @@ export async function bindTaskReferences(input: {
       'Referenced sources were deleted, rewritten, excluded, or are unavailable. Clarify before editing.'
     )
   if (!explicit.length && eligible.length !== 1) {
-    if (remotePolicy === 'local-only' && input.models.some((model) => !isNativeGgufRef(model)))
+    if (remotePolicy === 'local-only' && !allModelsLocal)
       return fail(
         'Older recommendation sources are local-only. Choose a local model or explicitly enable remote recall.'
       )
@@ -120,7 +123,7 @@ export async function bindTaskReferences(input: {
     )
   // Narrow the destination ceiling to the sources actually selected.
   const policy = sources.every((source) => recent.has(source.messageId)) ? 'recent' : remotePolicy
-  if (policy === 'local-only' && input.models.some((model) => !isNativeGgufRef(model)))
+  if (policy === 'local-only' && !allModelsLocal)
     return fail(
       'Older recommendation sources are local-only. Choose a local model or explicitly enable remote recall.'
     )
@@ -151,8 +154,11 @@ export async function assertTaskReferences(
     (!current.agent.contextMemory.enabled || !settings.agent.contextMemory.enabled)
   )
     throw new Error('Historical recall is disabled for these recommendation sources.')
+  const recallAllowed =
+    modelDestination(settings, model).recallAllowed &&
+    modelDestination(current, model).recallAllowed
   if (
-    !isNativeGgufRef(model) &&
+    !recallAllowed &&
     (binding.remotePolicy === 'local-only' ||
       (binding.remotePolicy === 'opt-in' &&
         (!settings.agent.contextMemory.shareWithRemoteModels ||

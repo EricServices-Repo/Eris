@@ -7,6 +7,7 @@ export type ContextDerivationStatus = {
   complete: boolean
 }
 import { z } from 'zod'
+import type { ContextDestinationLabel } from './model-destination'
 export const ContextMemorySettingsSchema = z.object({
   enabled: z.boolean().default(true),
   maxMemoryMiB: z.number().int().min(16).max(512).default(128),
@@ -148,7 +149,7 @@ export type ContextDispatch = {
   version: 1
   taskId: string
   model: string
-  destination: 'local' | 'remote'
+  destination: ContextDestinationLabel
   /** False when a diagnostics adapter received the request before provider adaptation. */
   adapted: boolean
   requestDigest: string
@@ -199,7 +200,7 @@ export type ContextPreview = {
   taskRevision?: number
   projectRoot?: string | null
   model: string
-  destination: 'local' | 'remote'
+  destination: ContextDestinationLabel
   counts: ContextBundleCounts
   items: Array<Pick<ContextBundleItem, 'id' | 'status' | 'reason'>>
 }

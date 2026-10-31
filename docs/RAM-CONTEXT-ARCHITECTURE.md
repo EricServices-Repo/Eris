@@ -896,7 +896,7 @@ A child task that fails still returns any actual effects and verification failur
 
 ### 15.3 Model switches and backend identity
 
-Model dispatch uses a validated destination descriptor: provider/connection, resolved model revision, locality/capability provenance and tokenizer/protocol profile. Current `local:`/`builtin:` prefix behavior remains baseline compatibility; the target must not trust a user-controlled connection label saying “local.”
+Model dispatch uses a validated destination descriptor: provider/connection, resolved model revision, locality/capability provenance and tokenizer/protocol profile. `modelDestination()` classifies each destination as `in-process`, `loopback` or `remote` from the resolved connection URL and does not trust a user-controlled connection label saying “local.” See `docs/fixes/219-loopback-recall.md`.
 
 Recompile or reject a bundle when the selected backend has a smaller context, different protocol or stricter disclosure ceiling. Include model/tokenizer/protocol versions in prompt-cache keys. Never reuse a local-private bundle for remote recovery without reevaluating every item's policy.
 

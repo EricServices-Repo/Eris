@@ -54,7 +54,12 @@ export const ModelConnectionSchema = z.object({
   baseUrl: z.string(),
   /** Key name in local secrets.json, never raw secret in settings JSON */
   apiKeyRef: z.string(),
-  models: z.array(z.string())
+  models: z.array(z.string()),
+  /**
+   * Base URL the user approved for recall. It covers that exact URL only, so editing
+   * the address ends the approval. Only the user profile may set it.
+   */
+  recallApprovedUrl: z.string().optional()
 })
 
 export const McpServerSchema = z.object({

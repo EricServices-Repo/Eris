@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { isLoopbackUrl } from '@/shared/model-destination'
 import type { AppSettings, ModelConnection, ModelsStatus } from '@/shared/settings-schema'
 
 export type ConnectionPreset = {
@@ -71,6 +72,7 @@ const PRESETS: ConnectionPreset[] = [
 
 type Draft = {
   toolProtocol?: ModelConnection['toolProtocol']
+  recallApproved: boolean
   id: string
   name: string
   provider: string
@@ -88,6 +90,7 @@ function toDraft(conn: ModelConnection, hasStoredKey: boolean): Draft {
     id: conn.id,
     name: conn.name,
     toolProtocol: conn.toolProtocol,
+    recallApproved: Boolean(conn.baseUrl) && conn.recallApprovedUrl === conn.baseUrl,
     provider: conn.provider || 'custom',
     baseUrl: conn.baseUrl,
     enabled: conn.enabled,
@@ -150,6 +153,7 @@ export function ModelConnectionsPanel({
     setError(null)
     setInfo(null)
     setDraft({
+      recallApproved: false,
       id: `conn-${preset.provider}-${Date.now().toString(36)}`,
       name: preset.name,
       provider: preset.provider,
@@ -193,6 +197,7 @@ export function ModelConnectionsPanel({
       if (draft.apiKey) {
         await window.ide.setSecret(apiKeyRef, draft.apiKey)
       }
+      const baseUrl = draft.baseUrl.trim().replace(/\/$/, '')
       const nextConn: ModelConnection = {
         id: draft.id,
         name: draft.name.trim(),
@@ -200,9 +205,10 @@ export function ModelConnectionsPanel({
         provider: draft.provider || 'custom',
         toolProtocol: draft.toolProtocol ?? 'native-tools',
         enabled: draft.enabled,
-        baseUrl: draft.baseUrl.trim().replace(/\/$/, ''),
+        baseUrl,
         apiKeyRef,
-        models: parseModels(draft.modelsText)
+        models: parseModels(draft.modelsText),
+        ...(draft.recallApproved && !isLoopbackUrl(baseUrl) ? { recallApprovedUrl: baseUrl } : {})
       }
       const others = resolved.models.connections.filter((c) => c.id !== draft.id)
       // Keep builtin first
@@ -459,6 +465,16 @@ export function ModelConnectionsPanel({
             />
             <span>Enabled for chat</span>
           </label>
+          {draft.baseUrl.trim() && !isLoopbackUrl(draft.baseUrl.trim()) && (
+            <label className="providers-enable-row">
+              <input
+                type="checkbox"
+                checked={draft.recallApproved}
+                onChange={(e) => setDraft({ ...draft, recallApproved: e.target.checked })}
+              />
+              <span>Send recalled conversation history to this address</span>
+            </label>
+          )}
           {(error || info) && (
             <div className="models-inline-msg" data-tone={error ? 'danger' : 'ok'}>
               {error || info}

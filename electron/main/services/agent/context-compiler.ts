@@ -11,6 +11,8 @@ import type {
   MemoryPromptItem
 } from '../../../../src/shared/context-memory'
 import { isNativeGgufRef } from '../../../../src/shared/model-destination'
+import type { AppSettings } from '../../../../src/shared/settings-schema'
+import { modelDestination } from '../model-destination'
 import type { AgentChatMessage } from './types'
 import type { ToolCallProtocol } from '../tool-protocol'
 import {
@@ -181,9 +183,14 @@ export const SYSTEM_CONTEXT_SHARE = 0.55
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 
 /** Recall a destination may receive. Blocked items stay listed so omissions have a reason. */
-export function memoryForDestination(prompt: MemoryPrompt | undefined, model: string) {
+export function memoryForDestination(
+  prompt: MemoryPrompt | undefined,
+  model: string,
+  settings?: AppSettings
+) {
   const allowed =
     isNativeGgufRef(model) ||
+    (settings ? modelDestination(settings, model).recallAllowed : false) ||
     (model === SIMULATED_MODEL_REF && activeDiagnosticsScope()?.mode === 'simulated') ||
     Boolean(prompt?.allowRemote)
   return {

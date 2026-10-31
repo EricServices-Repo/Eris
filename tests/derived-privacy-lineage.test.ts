@@ -15,7 +15,7 @@ vi.mock('../electron/main/services/model-catalog', async (original) => ({
   ...(await original<typeof import('../electron/main/services/model-catalog')>()),
   resolveConnectionForModel: () => ({
     type: 'openai-compatible',
-    baseUrl: 'http://127.0.0.1:1',
+    baseUrl: 'https://remote.invalid',
     name: 'test'
   })
 }))

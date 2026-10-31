@@ -1,7 +1,6 @@
 import { invalidEvidenceItems } from './context-evidence'
 import { evidenceEpochMatches } from './context-evidence-epochs'
 import { createHash } from 'crypto'
-import { isNativeGgufRef } from './builtin-model'
 import { memoryKey, warmConversationMemory } from './context-memory'
 import { contextMemoryStore, MEMORY_PROMPT_HEADER } from './context-memory-store'
 import { workspaceRequest } from './workspace-worker-client'
@@ -9,6 +8,8 @@ import { userChatsDir, workspaceChatsDir } from './paths'
 import { abortable } from './context-hydration'
 import type { ContextHeader } from '../../../src/shared/context-memory'
 import { getResolvedSettings } from './settings'
+import { modelDestination } from './model-destination'
+import type { AppSettings } from '../../../src/shared/settings-schema'
 import { appendTaskEvent } from './task-ledger'
 import {
   ContextMemorySettingsSchema,
@@ -242,9 +243,17 @@ function withoutDerived<T extends { content?: unknown }>(
  */
 export async function withEligibleMemory<T extends { content?: unknown }>(
   messages: T[],
-  model: string
+  model: string,
+  settings: AppSettings
 ): Promise<{ messages: T[]; revoked: boolean }> {
   if (!leases.size) return { messages, revoked: false }
+  /** Needs both the request's settings and current ones, so a revoked approval applies. */
+  const recallBlocked = (lease: EvidenceLease) =>
+    !lease.allowRemote &&
+    !(
+      modelDestination(settings, model).recallAllowed &&
+      modelDestination(getResolvedSettings(lease.root), model).recallAllowed
+    )
   let dependenciesRevoked = false
   await Promise.all(
     [...leases].map(async (lease) => {
@@ -259,7 +268,7 @@ export async function withEligibleMemory<T extends { content?: unknown }>(
   let revoked = dependenciesRevoked
   for (const lease of leases) {
     if (settle(lease)) revoked = true
-    const remoteBlocked = !lease.allowRemote && !isNativeGgufRef(model)
+    const remoteBlocked = recallBlocked(lease)
     const removed = lease.items.filter((item) => remoteBlocked || lease.revoked.has(item.id))
     if (!removed.length) continue
     const everything = removed.length === lease.items.length
@@ -278,8 +287,7 @@ export async function withEligibleMemory<T extends { content?: unknown }>(
   }
   for (const lease of leases) {
     recordExposure(lease, outbound)
-    if (lease.exposure && !lease.allowRemote && !isNativeGgufRef(model))
-      outbound = withoutDerived(lease, outbound)
+    if (lease.exposure && recallBlocked(lease)) outbound = withoutDerived(lease, outbound)
     else if (lease.exposure && [...lease.revoked].some((id) => lease.exposure!.items.has(id)))
       outbound = withoutDerived(
         lease,

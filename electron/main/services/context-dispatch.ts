@@ -1,5 +1,4 @@
 import { createHash } from 'crypto'
-import { isNativeGgufRef } from './builtin-model'
 import { appendTaskEvent } from './task-ledger'
 import { countContextItems } from './agent/context-compiler'
 import { estimateContextTokens } from '../../../src/shared/token-estimate'
@@ -19,6 +18,8 @@ import {
   type ContextCompilationSnapshot
 } from './agent/context-compiler'
 import { resolveModelCapabilities } from './model-capabilities'
+import { modelDestination } from './model-destination'
+import { destinationLabel } from '../../../src/shared/model-destination'
 import { createTaskContract } from './task-intake'
 
 const MAX_REMEMBERED = 64
@@ -74,7 +75,7 @@ export function previewContextDispatch(input: {
   })
   const { bundle } = compileTaskContext({
     ...(snapshot ?? { task: fallbackTask, guidance: '', project: '', retrieval: '' }),
-    ...memoryForDestination(prompt, model),
+    ...memoryForDestination(prompt, model, settings),
     maxInputTokens: Math.min(
       snapshot?.maxInputTokens ?? Infinity,
       contextBudgetTokens(settings, model)
@@ -86,7 +87,7 @@ export function previewContextDispatch(input: {
     ...(snapshot ? { taskId: snapshot.task.taskId, taskRevision: snapshot.task.revision } : {}),
     projectRoot: snapshot ? snapshot.task.scope.projectRoot : input.projectRoot,
     model,
-    destination: isNativeGgufRef(model) ? 'local' : 'remote',
+    destination: destinationLabel(modelDestination(settings, model).locality),
     counts: bundle.counts,
     items: bundle.items.map(({ id, status, reason }) => ({ id, status, reason }))
   }
@@ -121,6 +122,7 @@ export function reportContextDispatch(input: {
   compiled: readonly WireMessage[]
   outbound: readonly WireMessage[]
   model: string
+  settings: AppSettings
   tools?: unknown
   adapted?: boolean
 }): void {
@@ -147,7 +149,7 @@ export function reportContextDispatch(input: {
     version: 1,
     taskId: bundle.taskId,
     model: input.model,
-    destination: isNativeGgufRef(input.model) ? 'local' : 'remote',
+    destination: destinationLabel(modelDestination(input.settings, input.model).locality),
     adapted: Boolean(input.adapted),
     requestDigest: createHash('sha256')
       .update(JSON.stringify([input.outbound, input.tools ?? null]))

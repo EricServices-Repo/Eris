@@ -46,6 +46,8 @@ import * as profileSettings from '../electron/main/services/settings'
 import { emptyMemoryControls, type MemoryPrompt } from '../src/shared/context-memory'
 import type { AppSettings } from '../src/shared/settings-schema'
 
+const DISPATCH_SETTINGS = { models: { connections: [] } } as unknown as AppSettings
+
 const LOCAL = 'builtin:test.gguf'
 const REMOTE = 'openai:gpt-test'
 let db: ChatDatabase, folder: string, release: () => void
@@ -225,7 +227,7 @@ describe('memory eligibility at dispatch', () => {
       getSecret: () => null,
       skipLiteSummary: true
     })
-    const { messages } = await withEligibleMemory(compacted.messages, LOCAL)
+    const { messages } = await withEligibleMemory(compacted.messages, LOCAL, DISPATCH_SETTINGS)
     expect(JSON.stringify(messages)).not.toContain('PRIVATE-A')
   })
   it('treats memory-pressure eviction as a cache event, not a revocation', async () => {
@@ -284,7 +286,7 @@ describe('memory destination at dispatch', () => {
 
 it('leaves unrelated requests untouched while no memory is leased', async () => {
   const messages = [{ role: 'user', content: 'Hello' }]
-  expect((await withEligibleMemory(messages, REMOTE)).messages).toBe(messages)
+  expect((await withEligibleMemory(messages, REMOTE, DISPATCH_SETTINGS)).messages).toBe(messages)
 })
 
 // RAM-CTX-016: compiler metadata is accounting, never evidence of clean lineage.
@@ -300,7 +302,7 @@ describe('derived compiler and native-call privacy', () => {
       },
       { role: 'user', content: 'What about checkout?' }
     ]
-    await withEligibleMemory(original, LOCAL)
+    await withEligibleMemory(original, LOCAL, DISPATCH_SETTINGS)
     const recovered = await withEligibleMemory(
       [
         {
@@ -312,7 +314,8 @@ describe('derived compiler and native-call privacy', () => {
         { role: 'assistant', content: 'Specialist aggregation PRIVATE-A' },
         { role: 'user', content: 'Outcome review PRIVATE-A' }
       ],
-      REMOTE
+      REMOTE,
+      DISPATCH_SETTINGS
     )
     expect(JSON.stringify(recovered.messages)).not.toContain('PRIVATE-A')
     expect(
@@ -331,7 +334,7 @@ describe('derived compiler and native-call privacy', () => {
       { role: 'assistant', content: '' },
       { role: 'user', content: 'Continue' }
     ]
-    await withEligibleMemory(original, LOCAL)
+    await withEligibleMemory(original, LOCAL, DISPATCH_SETTINGS)
     const outgoing = await withEligibleMemory(
       [
         ...original.slice(0, 1),
@@ -349,7 +352,8 @@ describe('derived compiler and native-call privacy', () => {
         { role: 'tool', content: 'Derived tool result PRIVATE-A', tool_call_id: 'new' },
         original[2]
       ],
-      REMOTE
+      REMOTE,
+      DISPATCH_SETTINGS
     )
     expect(JSON.stringify(outgoing.messages)).not.toContain('PRIVATE-A')
     expect(outgoing.messages.some((message) => 'tool_calls' in message)).toBe(false)
@@ -362,7 +366,8 @@ describe('derived compiler and native-call privacy', () => {
         { role: 'system', content: prompt.text, contextBundle: { taskId: 'parent' } },
         { role: 'user', content: 'Continue' }
       ],
-      LOCAL
+      LOCAL,
+      DISPATCH_SETTINGS
     )
     await expect(
       withEligibleMemory(
@@ -370,7 +375,8 @@ describe('derived compiler and native-call privacy', () => {
           { role: 'system', content: 'Child task PRIVATE-A', contextBundle: { taskId: 'child' } },
           { role: 'user', content: 'Review PRIVATE-A' }
         ],
-        REMOTE
+        REMOTE,
+        DISPATCH_SETTINGS
       )
     ).rejects.toThrow(/different task/)
   })
