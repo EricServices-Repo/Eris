@@ -124,6 +124,7 @@ import {
 } from '../../../../src/shared/task-contract'
 import { artifactResponseContract } from '../../../../src/shared/task-interpretation'
 import { compileTaskContext, memoryForDestination } from './context-compiler'
+import { RunJournal, trustLabel } from './run-journal'
 import { executionPlanFor } from '../execution-plan'
 import { lintExecutionPlan } from './workflow-lint'
 import { appendTaskEvent } from '../task-ledger'
@@ -898,6 +899,11 @@ async function* runAgentInternal(options: {
   let step = 0
   const maxStepsPerRun = options.settings.agent.maxStepsPerRun ?? 60
   let verifyFailures = 0
+  const runJournal = new RunJournal({
+    runId: options.jobId ?? task.taskId,
+    taskId: task.taskId,
+    memoryKey: options.conversationMemory?.namespace ?? task.taskId
+  })
 
   const emitSessionStep = (summary?: string): AgentRunnerEvent => {
     const opThrough = getCheckpointOpCount(workspacePath, checkpoint.id)
@@ -4118,8 +4124,16 @@ async function* runAgentInternal(options: {
               result.path ? ` ${result.path}` : ''
             }\n`
           }
+          // Before truncation: this is the only full copy compaction can leave behind.
+          const journaled = await runJournal.append({
+            toolName: call.name,
+            toolCallId: call.id!,
+            args: call.args,
+            content: result.detail
+          })
+          appendTaskEvent(task.taskId, 'run-journal-entry', journaled)
           resultParts.push(
-            `TOOL_RESULT ${call.name}${result.path ? ` path=${result.path}` : ''}:\n${truncateForModel(result.detail)}` +
+            `TOOL_RESULT ${call.name}${result.path ? ` path=${result.path}` : ''}${trustLabel(journaled.trust)}:\n${truncateForModel(result.detail)}` +
               (result.ok ? '' : `\nRECOVERY: ${toolFailureRecovery(call.name, result.detail)}`)
           )
         } finally {
@@ -4286,6 +4300,7 @@ async function* runAgentInternal(options: {
       yield emitSessionStep()
     }
   } finally {
+    runJournal.close()
     releaseGgufSession()
   }
 }

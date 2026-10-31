@@ -55,7 +55,7 @@ type ThreadEntry = {
   corruptOrdinals: number[]
 }
 const digest = (value: string) => createHash('sha256').update(value).digest('hex')
-const sensitive =
+export const sensitive =
   /\b(?:api[_-]?key|password|passwd|authorization|secret|token)\s*[:=]\s*\S+|\bBearer\s+\S+/i
 const unfinished = (message: ChatMessage) =>
   message.contextResult?.workingState &&
@@ -112,13 +112,23 @@ export class ContextMemoryStore {
     return this.rendererBytes
   }
   private pressureLimit = Infinity
+  private pressureListeners = new Set<() => void>()
   /** Returns the logical bytes this released, for eviction diagnostics. */
   setPressureLimit(bytes: number) {
     const before = this.logicalBytes
     this.pressureLimit = Math.max(0, bytes)
     if (bytes === 0) this.dropAll()
     else this.evict()
+    for (const listener of [...this.pressureListeners]) listener()
     return Math.max(0, before - this.logicalBytes)
+  }
+  /** Owners of reservations that outlive a request can give them back under pressure. */
+  onPressure(listener: () => void) {
+    this.pressureListeners.add(listener)
+    return () => void this.pressureListeners.delete(listener)
+  }
+  get overEnvelopeBytes() {
+    return Math.max(0, this.committedBytes - this.envelopeBytes)
   }
   private get envelopeBytes() {
     return Math.max(
