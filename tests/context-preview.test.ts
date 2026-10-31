@@ -20,7 +20,11 @@ import {
   compileTaskContext,
   memoryForDestination
 } from '../electron/main/services/agent/context-compiler'
-import { previewContextDispatch } from '../electron/main/services/context-dispatch'
+import {
+  clearContextPreviewSnapshots,
+  reportContextDispatch,
+  previewContextDispatch
+} from '../electron/main/services/context-dispatch'
 import { contextBudgetTokens } from '../electron/main/services/agent/context-budget'
 import { createTaskContract } from '../electron/main/services/task-intake'
 import { getDefaults } from '../electron/main/services/settings'
@@ -52,6 +56,7 @@ const row = (id: string, content: string) => ({
 let dir: string
 let db: ChatDatabase
 beforeEach(() => {
+  clearContextPreviewSnapshots()
   dir = mkdtempSync(join(tmpdir(), 'eris-preview-'))
   contextMemoryStore.clear()
   contextMemoryStore.configure(settings().agent.contextMemory)
@@ -168,4 +173,91 @@ describe('bounded source navigation', () => {
     expect(view.messages).toHaveLength(HISTORY_PAGE_MESSAGES)
     expect(view.messages.map((message) => message.id)).toContain('m1000')
   })
+})
+
+// RAM-CTX-035: compare against an actual task compilation, not a second synthetic answer.
+it('previews actual task authority, guidance, evidence and effective input reservation', async () => {
+  const value = settings()
+  const { prompt } = await conversationContext(null, 't', 'checkout', value)
+  const realTask = createTaskContract({
+    workspacePath: null,
+    text: 'checkout',
+    plan: {
+      intent: 'edit',
+      agentId: 'composer',
+      models: { chat: LOCAL, tools: LOCAL },
+      toolPolicy: 'edit',
+      mode: 'agent'
+    } as never
+  })
+  const real = compileTaskContext({
+    task: realTask,
+    guidance: 'Required project instructions. '.repeat(80),
+    project: 'Current project evidence. '.repeat(60),
+    retrieval: 'Fresh retrieval. '.repeat(60),
+    ...memoryForDestination(prompt, LOCAL),
+    maxInputTokens: 2500,
+    toolsAvailable: true,
+    toolProtocol: 'text-tools'
+  })
+  reportContextDispatch({ compiled: [real.message], outbound: [real.message], model: LOCAL })
+  const preview = previewContextDispatch({
+    prompt,
+    model: LOCAL,
+    query: 'checkout',
+    root: null,
+    settings: value
+  })
+  expect(preview).toMatchObject({
+    basis: 'last-compilation',
+    taskId: realTask.taskId,
+    taskRevision: realTask.revision
+  })
+  expect(preview.items).toEqual(
+    real.bundle.items.map(({ id, status, reason }) => ({ id, status, reason }))
+  )
+  expect(preview.counts).toEqual(real.bundle.counts)
+  expect(
+    previewContextDispatch({
+      prompt,
+      model: LOCAL,
+      query: 'different question',
+      root: null,
+      settings: value
+    }).basis
+  ).toBe('estimate')
+  expect(
+    previewContextDispatch({
+      prompt,
+      model: REMOTE,
+      query: 'checkout',
+      root: null,
+      settings: value
+    }).counts.sent
+  ).toBe(0)
+  expect(JSON.stringify(preview)).not.toContain(PRIVATE)
+})
+it('expires a snapshot rather than presenting old instructions as current', async () => {
+  const value = settings()
+  const { prompt } = await conversationContext(null, 't', 'checkout', value)
+  const task = createTaskContract({
+    workspacePath: null,
+    text: 'checkout',
+    plan: { intent: 'answer', toolPolicy: 'none', models: { chat: LOCAL, tools: LOCAL } } as never
+  })
+  const real = compileTaskContext({
+    task,
+    guidance: '',
+    project: '',
+    retrieval: '',
+    ...memoryForDestination(prompt, LOCAL),
+    maxInputTokens: 8000
+  })
+  reportContextDispatch({ compiled: [real.message], outbound: [real.message], model: LOCAL })
+  const now = Date.now()
+  vi.spyOn(Date, 'now').mockReturnValue(now + 120001)
+  expect(
+    previewContextDispatch({ prompt, model: LOCAL, query: 'checkout', root: null, settings: value })
+      .basis
+  ).toBe('estimate')
 })

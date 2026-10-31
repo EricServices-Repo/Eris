@@ -243,7 +243,7 @@ function bundleItems(input: {
   })
 }
 
-export function compileTaskContext(input: {
+export interface CompileTaskContextInput {
   task: TaskContract
   guidance: string
   memory?: string
@@ -257,7 +257,15 @@ export function compileTaskContext(input: {
   /** False for answer-only turns: the request carries no tool definitions. */
   toolsAvailable?: boolean
   toolProtocol?: ToolCallProtocol
-}): {
+}
+export type ContextCompilationSnapshot = Omit<
+  CompileTaskContextInput,
+  'memory' | 'memoryItems' | 'memoryBlocked' | 'memoryNamespace'
+>
+const compilations = new WeakMap<ContextBundle, ContextCompilationSnapshot>()
+export const contextCompilationFor = (bundle: ContextBundle) => compilations.get(bundle)
+
+export function compileTaskContext(input: CompileTaskContextInput): {
   message: AgentChatMessage
   blocks: ContextManifestBlock[]
   budget: ContextBudget
@@ -392,6 +400,23 @@ export function compileTaskContext(input: {
     },
     counts: countContextItems(items),
     items
+  }
+  // Exclude the explicit recalled memory block and item objects. At most 128 Ki characters of compiler inputs
+  // may become an inspectable snapshot; larger compilations remain estimate-only.
+  const taskJson = JSON.stringify(input.task)
+  if (
+    taskJson.length + input.guidance.length + input.project.length + input.retrieval.length <=
+    128 * 1024
+  ) {
+    compilations.set(bundle, {
+      task: JSON.parse(taskJson),
+      guidance: input.guidance,
+      project: input.project,
+      retrieval: input.retrieval,
+      maxInputTokens: input.maxInputTokens,
+      toolsAvailable: input.toolsAvailable,
+      toolProtocol: input.toolProtocol
+    })
   }
   return {
     message: { role: 'system', content, contextBundle: bundle },

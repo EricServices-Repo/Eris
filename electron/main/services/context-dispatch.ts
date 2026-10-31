@@ -12,18 +12,36 @@ import {
 } from '../../../src/shared/context-memory'
 import type { AppSettings } from '../../../src/shared/settings-schema'
 import { contextBudgetTokens } from './agent/context-budget'
-import { compileTaskContext, memoryForDestination } from './agent/context-compiler'
+import {
+  contextCompilationFor,
+  compileTaskContext,
+  memoryForDestination,
+  type ContextCompilationSnapshot
+} from './agent/context-compiler'
+import { resolveModelCapabilities } from './model-capabilities'
 import { createTaskContract } from './task-intake'
 
 const MAX_REMEMBERED = 64
 const latest = new Map<string, ContextDispatch>()
 const reported = new WeakMap<ContextBundle, string>()
+// Eight bounded compiler snapshots, maximum ~2 MiB of source characters, expire
+// after two minutes. Recalled memory is intentionally excluded from this cache.
+const snapshots = new Map<string, { input: ContextCompilationSnapshot; at: number }>()
+export const clearContextPreviewSnapshots = () => snapshots.clear()
+export function contextPreviewScope(namespace: string): string | null | undefined {
+  const snapshot = snapshots.get(namespace)
+  if (!snapshot || Date.now() - snapshot.at > 120000) {
+    snapshots.delete(namespace)
+    return undefined
+  }
+  return snapshot.input.task.scope.projectRoot
+}
 
 export const lastContextDispatch = (namespace: string) => latest.get(namespace)
 
 /**
- * What the shared compiler would send a destination. Project rules are unknown until a
- * turn runs, so a real request has the same or less room than this.
+ * Recompile using an actual task snapshot when query and scope match. Without a
+ * matching compilation, return an explicitly labeled upper-bound estimate.
  */
 export function previewContextDispatch(input: {
   prompt: MemoryPrompt
@@ -31,27 +49,42 @@ export function previewContextDispatch(input: {
   query: string
   root: string | null
   settings: AppSettings
+  projectRoot?: string | null
 }): ContextPreview {
   const { model, prompt, settings } = input
+  if (prompt.namespace) contextPreviewScope(prompt.namespace) // expire stale snapshots
+  const candidate = prompt.namespace ? snapshots.get(prompt.namespace)?.input : undefined
+  const snapshot =
+    candidate &&
+    candidate.task.originalText.trim() === input.query.trim() &&
+    candidate.task.scope.workspaceRoot === input.root &&
+    (input.projectRoot === undefined || candidate.task.scope.projectRoot === input.projectRoot)
+      ? candidate
+      : undefined
+  const fallbackTask = createTaskContract({
+    workspacePath: input.root,
+    text: input.query || 'Preview',
+    plan: {
+      intent: 'answer',
+      agentId: 'chat',
+      agentName: 'Chat',
+      models: { chat: model, tools: model },
+      toolPolicy: 'none'
+    } as unknown as Parameters<typeof createTaskContract>[0]['plan']
+  })
   const { bundle } = compileTaskContext({
-    task: createTaskContract({
-      workspacePath: input.root,
-      text: input.query || 'Preview',
-      plan: {
-        intent: 'answer',
-        agentId: 'chat',
-        agentName: 'Chat',
-        models: { chat: model, tools: model },
-        toolPolicy: 'none'
-      } as unknown as Parameters<typeof createTaskContract>[0]['plan']
-    }),
-    guidance: '',
+    ...(snapshot ?? { task: fallbackTask, guidance: '', project: '', retrieval: '' }),
     ...memoryForDestination(prompt, model),
-    project: '',
-    retrieval: '',
-    maxInputTokens: contextBudgetTokens(settings, model)
+    maxInputTokens: Math.min(
+      snapshot?.maxInputTokens ?? Infinity,
+      contextBudgetTokens(settings, model)
+    ),
+    toolProtocol: resolveModelCapabilities(settings, model).tools
   })
   return {
+    basis: snapshot ? 'last-compilation' : 'estimate',
+    ...(snapshot ? { taskId: snapshot.task.taskId, taskRevision: snapshot.task.revision } : {}),
+    projectRoot: snapshot ? snapshot.task.scope.projectRoot : input.projectRoot,
     model,
     destination: isNativeGgufRef(model) ? 'local' : 'remote',
     counts: bundle.counts,
@@ -93,6 +126,12 @@ export function reportContextDispatch(input: {
 }): void {
   const bundle = input.compiled.find((message) => message.contextBundle)?.contextBundle
   if (!bundle) return
+  const snapshot = contextCompilationFor(bundle)
+  if (snapshot && bundle.namespace) {
+    snapshots.delete(bundle.namespace)
+    snapshots.set(bundle.namespace, { input: snapshot, at: Date.now() })
+    while (snapshots.size > 8) snapshots.delete(snapshots.keys().next().value!)
+  }
   const built = textOf(input.compiled)
   const wire = textOf(input.outbound)
   const items = bundle.items.map((item): ContextBundleItem => {
