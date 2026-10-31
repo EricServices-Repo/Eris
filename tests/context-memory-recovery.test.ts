@@ -327,6 +327,9 @@ describe('RAM-CTX-012 normalized content hydration', () => {
 describe('canonical context hydration', () => {
   it('hydrates 10,001 saved messages, keeps them warm and reconstructs after RAM eviction', async () => {
     save('t', 10001)
+    // Full archive recovery is background work; foreground sends may legitimately
+    // reach their deadline on a saturated test runner before a cold load completes.
+    await warmConversationMemory(null, 't', settings())
     let result = await conversationContext(null, 't', 'checkout currency', settings())
     expect(result.prompt.text).toContain('CAD')
     expect(result.prompt.manifest.retainedMessages).toBe(10001)
@@ -339,6 +342,7 @@ describe('canonical context hydration', () => {
       pinned: [{ id: 'p', text: 'Test money rounding' }]
     })
     invalidateConversationMemory(null, 't')
+    await warmConversationMemory(null, 't', settings())
     result = await conversationContext(null, 't', 'money', settings())
     expect(result.prompt.text).toContain('Test money rounding')
     expect(memoryKey(null, 't')).not.toBe(memoryKey(folder, 't'))

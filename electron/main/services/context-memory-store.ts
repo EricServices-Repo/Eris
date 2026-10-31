@@ -472,6 +472,12 @@ export class ContextMemoryStore {
       this.bump(key)
       return
     }
+    // Oversized new sources must come back through the worker's bounded chunks,
+    // rather than bypassing selection scratch bounds through a raw live append.
+    if (tail.some((message) => message.content.length > 32768)) {
+      this.drop(key)
+      return
+    }
     // Chunked snapshots must be reconstructed on append; merging by ordinal
     // alone would silently discard sibling chunks or compare a chunk with a full rendering body.
     if (entry.records.some((r) => r.message.contextContentLength !== undefined)) {
@@ -678,7 +684,7 @@ export class ContextMemoryStore {
     // before creating them. The resident snapshot is separately pinned below.
     const scratch = this.reserve(
       key,
-      4 * 1024 ** 2 + controlSize(e.controls) * 2 + e.records.length * 16
+      8 * 1024 ** 2 + controlSize(e.controls) * 2 + e.records.length * 16
     )
     if (!scratch)
       return this.unavailable(
@@ -691,15 +697,23 @@ export class ContextMemoryStore {
     e.at = this.now()
     const release = this.pin(e)
     try {
-      return await this.selectFrom(
+      const result = await this.selectFrom(
         e,
         key,
-        query,
+        query.slice(0, 8192),
         { ...options, signal },
         policy,
         evidenceToken,
         empty
       )
+      if (query.length > 8192)
+        result.prompt.manifest.reason = [
+          result.prompt.manifest.reason,
+          'Only the first 8192 query characters were analyzed within the scratch budget.'
+        ]
+          .filter(Boolean)
+          .join(' ')
+      return result
     } finally {
       release()
       scratch.release()

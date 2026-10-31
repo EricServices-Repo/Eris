@@ -262,3 +262,17 @@ it('bounds broad index queries before materializing a match map', () => {
   expect(found.size).toBe(MAX_MATCHED_ROWS)
   expect([...found.values()].every((terms) => terms.size <= 24)).toBe(true)
 })
+
+it('bounds oversized query analysis and reports its partial query coverage', async () => {
+  const store = small()
+  store.install('a', page('a', 1000), store.token('a'))
+  const selected = await store.select('a', '決済'.repeat(50000))
+  expect(selected.prompt.manifest.reason).toContain('first 8192 query characters')
+  expect(store.ledger.reservedBytes).toBe(0)
+})
+it('invalidates the warm projection for an oversized raw append so the worker must chunk it', () => {
+  const store = small()
+  store.install('a', page('a', 1000), store.token('a'))
+  store.append('a', 2, 2, [message('large', '決済'.repeat(20000))], 1)
+  expect(store.has('a')).toBe(false)
+})
