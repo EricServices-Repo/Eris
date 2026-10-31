@@ -542,9 +542,15 @@ describe('RAM-CTX-004 growing context capacity', () => {
       .filter((req) => req.type === 'context-page')
     expect(pages).toHaveLength(1)
     expect(pages[0]).toMatchObject({ before: 501 })
-    const calls = vi.mocked(workspaceRequest).mock.calls.length
+    const calls = vi
+      .mocked(workspaceRequest)
+      .mock.calls.filter(([req]) => req.type !== 'context-archive-search').length
     await conversationContext(null, 'growing', 'checkout', config)
-    expect(vi.mocked(workspaceRequest).mock.calls).toHaveLength(calls + 1)
+    expect(
+      vi
+        .mocked(workspaceRequest)
+        .mock.calls.filter(([req]) => req.type !== 'context-archive-search')
+    ).toHaveLength(calls + 1)
     config.agent.contextMemory.maxMessages = 500
     expect(
       (await conversationContext(null, 'growing', 'checkout', config)).inspection.manifest
@@ -618,4 +624,18 @@ it('RAM-CTX-013 hydrates valid records around corrupt rows and retains explicit 
   const backfilled = await conversationContext(null, 'mixed', 'checkout', expanded)
   expect(backfilled.inspection.manifest.corruptRecords).toBe(1)
   expect(backfilled.inspection.manifest.reason).toContain('corrupt')
+})
+
+it('recalls an eligible evicted source through the archive without widening the warm cache', async () => {
+  save('archived', 1001)
+  const config = settings()
+  config.agent.contextMemory.maxMessages = 500
+  await warmConversationMemory(null, 'archived', config)
+  const result = await conversationContext(null, 'archived', 'checkout currency CAD', config)
+  expect(result.prompt.text).toContain('CAD')
+  expect(result.prompt.manifest.archive?.backend).toBe('sqlite-postings')
+  expect(result.prompt.sourceVersion?.messageCount).toBe(1001)
+  expect(result.prompt.namespace).toBe(memoryKey(null, 'archived'))
+  expect(result.prompt.manifest.retainedMessages).toBe(500)
+  expect(contextMemoryStore.ledger.reservedBytes).toBe(0)
 })

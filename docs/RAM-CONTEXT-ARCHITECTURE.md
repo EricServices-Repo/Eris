@@ -407,6 +407,8 @@ A context-change outbox is committed with each canonical mutation. The memory wo
 
 ### 9.4 Archive search without a raw-text replica
 
+Implementation status and acceptance limits: [134 implementation notes](fixes/134-durable-context-archive.md).
+
 Prefer a capability-probed SQLite FTS5 contentless index over a second unbounded in-memory inverted index. Index bounded message chunks and join candidate row IDs with scope/version metadata. Materialize exact source text only after candidates pass eligibility checks.
 
 Store chunk offsets and source references outside the FTS index. The canonical transcript remains the source text. Contentless indexing/deletion behavior depends on the packaged SQLite version; probe required features and test delete/update paths. A supported fallback may use a worker-owned external-content design, but must document its canonical-content contract and avoid accidental full transcript copies.
