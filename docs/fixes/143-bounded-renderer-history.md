@@ -25,3 +25,8 @@ Validation:
 - `npx vite build --config checks/vite.config.ts && npx electron scripts/check-client-renderer.cjs`: real Electron renderer. A row 200 rows down stays within 1 px when 100 rows above it are evicted. With the `VirtualList` change reverted, the same check fails with "Evicting older rows lost the row being read".
 
 No packaged, live-model or hardware run.
+
+
+
+### RAM-CTX-033 follow-up: complete renderer residency accounting
+Renderer history estimates include the complete serialized message (including hidden metadata), not just visible content. Old-page insertion narrows oversized pages to contiguous reloadable ranges; live tails no longer retain at least sixty oversized messages. One indivisible message may exceed the page budget: it remains intact, is fully charged, and its canonical content is never silently truncated. This is an explicit largest-source exception, not a hard heap limit. Renderer-reported bytes reduce the main optional cache envelope; Settings shows that owner separately. The report is main-frame-only and is cleared on hook disposal. No transcript content crosses the accounting IPC.

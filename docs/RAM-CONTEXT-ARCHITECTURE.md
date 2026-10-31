@@ -992,6 +992,8 @@ Preview uses a sandboxed snapshot and the same selection/compiler logic. It must
 
 ### 18.4 Chat history UX
 
+Implementation status and acceptance limits: [143 implementation notes](fixes/143-bounded-renderer-history.md).
+
 Use stable IDs and paged/virtualized rendering. Bound the renderer history-page cache to the 8 MiB share of the recent-text pool in the 128 MiB profile, not merely the number of DOM nodes. Evict offscreen pages with a stable scroll anchor and reloadable cursors. Sidebar thread lists retain metadata only, without hidden full message arrays for every conversation. Avoid retaining equivalent message arrays in multiple stores or closures. Searching visible messages and searching the durable archive are separate actions with clear coverage. Jumping to a search hit loads a bounded page around the original source, not every intervening page.
 
 The composer and active task continue while optional memory is warming. Show memory degradation in the inspector/diagnostics; avoid adding verbose internal retrieval logs to every assistant reply. Explain a missing reference only when it materially blocks the requested action.
@@ -1450,7 +1452,3 @@ These references support platform constraints; the design choices, budgets and t
 - [SQLite WAL behavior](https://www.sqlite.org/wal.html): reader/writer/checkpoint behavior informs bounded transactions and background index work.
 
 Review date: 2026-10-29. Source code remains the authority for what Eris currently implements.
-
-
-### RAM-CTX-033 follow-up: complete renderer residency accounting
-Renderer history estimates include the complete serialized message (including hidden metadata), not just visible content. Old-page insertion narrows oversized pages to contiguous reloadable ranges; live tails no longer retain at least sixty oversized messages. One indivisible message may exceed the page budget: it remains intact, is fully charged, and its canonical content is never silently truncated. This is an explicit largest-source exception, not a hard heap limit. Renderer-reported bytes reduce the main optional cache envelope; Settings shows that owner separately. The report is main-frame-only and is cleared on hook disposal. No transcript content crosses the accounting IPC.

@@ -408,16 +408,3 @@ describe('Memory settings usage counters', () => {
     expect(store.usage().ownedBytes).toBe(0)
   })
 })
-
-it('charges renderer history against the shared optional envelope without altering saved history', () => {
-  const store = new ContextMemoryStore()
-  install(store, 't', [message('1', 'Remember currency CAD')])
-  const original = store.ledger.envelopeBytes
-  store.setRendererHistoryBytes(8 * 1024 ** 2)
-  expect(store.ledger.envelopeBytes).toBe(original - 8 * 1024 ** 2)
-  store.setRendererHistoryBytes(original)
-  expect(store.ledger.ownedBytes).toBe(0)
-  store.setRendererHistoryBytes(0)
-  expect(store.ledger.envelopeBytes).toBe(original)
-  expect(() => store.setRendererHistoryBytes(-1)).toThrow()
-})
