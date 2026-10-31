@@ -72,18 +72,39 @@ export function compileModelMessages(
   })
 }
 
+/** Conservative wire estimate, including roles, call IDs, JSON escaping and message framing. */
+export function estimateModelMessagesTokens(messages: readonly ChatRequestMessage[]): number {
+  return Math.ceil(
+    messages.reduce(
+      (sum, message) =>
+        sum +
+        contextUnits(
+          JSON.stringify({
+            role: message.role,
+            content: message.content,
+            ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
+            ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {})
+          })
+        ) +
+        16,
+      0
+    ) / 3
+  )
+}
+
 /** Pinned system instructions and complete recent exchanges survive budgeting. */
 export function budgetModelMessages(
   messages: ModelMessage[],
-  maxTokens: number
+  maxTokens: number,
+  protocol: ModelCapabilities['protocol'] = 'native-tools'
 ): { messages: ModelMessage[]; estimatedTokens: number } {
+  if (!Number.isFinite(maxTokens) || maxTokens <= 0)
+    throw new Error('The model context budget must be positive and finite.')
+  // Budget the actual adapter representation: text tool envelopes add tokens and
+  // native calls include argument strings and IDs. Count schemas separately once.
   const size = (items: ModelMessage[]) =>
-    Math.ceil(
-      items.reduce(
-        (sum, item) =>
-          sum + contextUnits(item.content) + JSON.stringify(item.tool_calls ?? []).length + 16,
-        0
-      ) / 3
+    estimateModelMessagesTokens(
+      compileModelMessages(items, { protocol, contextWindow: Infinity, outputReserve: 0 })
     )
   const pinned = messages.filter((message) => message.role === 'system')
   if (size(pinned) >= maxTokens)

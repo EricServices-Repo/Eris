@@ -1,0 +1,7 @@
+# RAM-CTX-029: wire context budget
+
+The shared compiler already packs whole recalled items, prioritizes fresh project evidence, protects required authority, and records estimated versus provider-measured usage. The remaining transport gap is closed by accounting after native/text tool adaptation: role metadata, call IDs, JSON escapes, Unicode arguments and text envelopes count toward the message input estimate. Native tool schemas are charged once with the same Unicode-aware estimator; text schemas remain explicit system messages. No minimum floor can create input capacity after schema reservation exhausts it.
+
+Budgeting preserves tool call/result pairs and the current user request. Requests whose required protocol/authority cannot fit fail before provider dispatch. Recovery models resolve their own configured capacity and protocol on every call. This is conservative character/serialization accounting, not a claim of exact tokenizer counts or a measured live-model token guarantee. Provider usage remains a separate measurement. Native GGUF inference also enforces its own tokenizer/context allocation; unknown remote templates retain uncertainty.
+
+Verification: context-packing regressions cover dense schemas and arguments, exact estimate boundaries for both protocols, invalid budgets, output-free preflight rejection, whole memory items, required overflow, tool-pair preservation, and smaller recovery models. No live provider call is needed for these scripted tests.

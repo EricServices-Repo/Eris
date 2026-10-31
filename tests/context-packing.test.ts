@@ -25,7 +25,11 @@ import {
   compileTaskContext,
   memoryForDestination
 } from '../electron/main/services/agent/context-compiler'
-import { budgetModelMessages } from '../electron/main/services/model-protocol'
+import {
+  budgetModelMessages,
+  compileModelMessages,
+  estimateModelMessagesTokens
+} from '../electron/main/services/model-protocol'
 import { streamProviderChat } from '../electron/main/services/chat-runtime'
 import { getDefaults } from '../electron/main/services/settings'
 import { reportContextUsage } from '../electron/main/services/context-dispatch'
@@ -249,4 +253,76 @@ describe('estimated and measured usage', () => {
     })
     expect(JSON.stringify(usage(1))).not.toContain('fact')
   })
+})
+
+// RAM-CTX-029: final adapter serialization is part of the input envelope.
+describe('wire context accounting', () => {
+  it('counts dense native tool arguments and all wire metadata', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'c',
+            type: 'function',
+            function: { name: 'read', arguments: JSON.stringify({ value: '決済'.repeat(200) }) }
+          }
+        ]
+      },
+      { role: 'tool', tool_call_id: 'c', content: 'ok' },
+      { role: 'user', content: 'Continue' }
+    ] as Parameters<typeof budgetModelMessages>[0]
+    expect(() => budgetModelMessages(messages, 300)).toThrow(/context budget/)
+    const result = budgetModelMessages(messages, 2000, 'text-tools')
+    const wire = compileModelMessages(result.messages, {
+      protocol: 'text-tools',
+      contextWindow: 4096,
+      outputReserve: 1000
+    })
+    expect(result.estimatedTokens).toBe(estimateModelMessagesTokens(wire))
+  })
+  it('rejects invalid or fully consumed input budgets rather than inventing capacity', () => {
+    for (const limit of [0, -1, NaN, Infinity])
+      expect(() => budgetModelMessages([{ role: 'user', content: 'hello' }], limit)).toThrow(
+        /positive and finite/
+      )
+  })
+  it('counts text tool envelopes before accepting a request', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{ id: 'x', type: 'function', function: { name: 'r', arguments: '{}' } }]
+      },
+      { role: 'tool', tool_call_id: 'x', content: 'ok' },
+      { role: 'user', content: 'Continue' }
+    ] as Parameters<typeof budgetModelMessages>[0]
+    for (const protocol of ['native-tools', 'text-tools'] as const) {
+      const exact = budgetModelMessages(messages, 4096, protocol).estimatedTokens
+      expect(() => budgetModelMessages(messages, exact - 1, protocol)).toThrow(/context budget/)
+      expect(budgetModelMessages(messages, exact, protocol).estimatedTokens).toBe(exact)
+    }
+  })
+})
+
+it('rejects a schema that consumes the input window before contacting the provider', async () => {
+  const settings = structuredClone(getDefaults())
+  settings.models.contextWindow = 512
+  h.provider.length = 0
+  const stream = streamProviderChat({
+    settings,
+    model: 'openai:gpt-test',
+    temperature: 0,
+    messages: [{ role: 'user', content: 'Hello' }],
+    tools: [
+      {
+        type: 'function',
+        function: { name: 'read', description: '決済'.repeat(2000), parameters: { type: 'object' } }
+      }
+    ],
+    getSecret: () => null
+  })
+  await expect(stream.next()).rejects.toThrow(/context|budget/i)
+  expect(h.provider).toHaveLength(0)
 })

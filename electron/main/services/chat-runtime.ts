@@ -1,6 +1,7 @@
 import { reportChatActivity } from './chat-activity'
 import { resolveModelCapabilities } from './model-capabilities'
 import { compileModelMessages, budgetModelMessages, type ModelMessage } from './model-protocol'
+import { estimateContextTokens } from '../../../src/shared/token-estimate'
 import type { AppSettings } from '../../../src/shared/settings-schema'
 import {
   isNativeGgufRef,
@@ -113,10 +114,13 @@ export async function* streamProviderChat(
         JSON.stringify(options.tools.map((tool) => tool.function))
     })
   const schemaTokens =
-    protocol === 'text-tools' ? 0 : Math.ceil(JSON.stringify(options.tools ?? []).length / 3)
+    protocol === 'text-tools' || !options.tools?.length
+      ? 0
+      : estimateContextTokens(JSON.stringify(options.tools))
   const budgeted = budgetModelMessages(
     inputMessages,
-    Math.max(512, capabilities.promptBudget - schemaTokens)
+    capabilities.promptBudget - schemaTokens,
+    protocol
   )
   const compiled = compileModelMessages(budgeted.messages, {
     protocol,
