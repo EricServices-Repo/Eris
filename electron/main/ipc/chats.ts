@@ -1,3 +1,8 @@
+import { contextMemoryStore } from '../services/context-memory-store'
+import { memoryKey } from '../services/context-memory'
+import { userChatsDir, workspaceChatsDir } from '../services/paths'
+import { workspaceRequest } from '../services/workspace-worker-client'
+import type { MemoryUsageStatus } from '../../../src/shared/memory-usage'
 import { noteEvidenceChange } from '../services/context-evidence-epochs'
 import { isPathInside } from '../services/workspace-fs'
 import { resolve } from 'path'
@@ -53,6 +58,45 @@ function chatWorkspace(requested: string | null | undefined): string | null {
 }
 
 export function registerChatsIpc(): void {
+  ipcMain.handle('contextMemory:usage', async (event, raw: unknown): Promise<MemoryUsageStatus> => {
+    if (
+      !appState.mainWindow ||
+      event.sender !== appState.mainWindow.webContents ||
+      event.senderFrame !== event.sender.mainFrame
+    )
+      throw new Error('Unauthorized memory usage request')
+    const { activeThreadId } = z
+      .object({ activeThreadId: z.string().min(1).max(256).nullable().optional() })
+      .strict()
+      .parse(raw)
+    const root = appState.currentWorkspace
+    const epoch = appState.workspaceEpoch
+    let archive: MemoryUsageStatus['archive'] = null
+    let archiveError: string | null = null
+    try {
+      archive = await workspaceRequest({
+        type: 'chat-storage-usage',
+        dir: root ? workspaceChatsDir(root) : userChatsDir()
+      })
+    } catch {
+      archiveError = 'Saved history usage is temporarily unavailable.'
+    }
+    if (epoch !== appState.workspaceEpoch || root !== appState.currentWorkspace)
+      throw new Error('Workspace changed; refresh memory usage')
+    const profile = getResolvedSettings(null).agent
+    const { rss, heapUsed } = process.memoryUsage()
+    return {
+      at: Date.now(),
+      scope: root ? 'workspace' : 'profile',
+      config: profile.contextMemory,
+      projectMemory: profile.projectMemory,
+      effectivePolicy: getResolvedSettings(root).agent.contextMemory,
+      cache: contextMemoryStore.usage(activeThreadId ? memoryKey(root, activeThreadId) : undefined),
+      process: { rss, heapUsed },
+      archive,
+      archiveError
+    }
+  })
   ipcMain.on('contextMemory:documentChanged', (event, path: unknown, dirty: unknown) => {
     const root = appState.currentWorkspace
     if (

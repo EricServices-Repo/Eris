@@ -1,3 +1,6 @@
+import { MemoryPanel } from '@/features/settings/panels/MemoryPanel'
+import { ContextMemorySettingsSchema } from '@/shared/context-memory'
+import type { MemoryUsageStatus } from '@/shared/memory-usage'
 import { useModels } from '@/hooks/useModels'
 import type { ModelsStatus } from '@/shared/settings-schema'
 import { useState } from 'react'
@@ -188,7 +191,117 @@ async function checkModelReadiness() {
     host.remove()
   }
 }
+async function checkMemorySettings() {
+  const host = document.createElement('div')
+  host.style.width = '620px'
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  const config = ContextMemorySettingsSchema.parse({})
+  const usage: MemoryUsageStatus = {
+    at: Date.now(),
+    scope: 'workspace',
+    config,
+    projectMemory: 'ask',
+    effectivePolicy: config,
+    cache: {
+      activeBytes: 1024,
+      historicalBytes: 2048,
+      ownedBytes: 3072,
+      reservedBytes: 256,
+      pinnedBytes: 512,
+      envelopeBytes: 128 * 1024 ** 2,
+      warmConversations: 2
+    },
+    process: { rss: 80 * 1024 ** 2, heapUsed: 20 * 1024 ** 2 },
+    archive: {
+      initialized: true,
+      conversations: 7,
+      messages: 40,
+      databaseBytes: 4096,
+      journalBytes: 2048
+    },
+    archiveError: null
+  }
+  let requested: string | null | undefined
+  let saves = 0
+  let savedBudget = 0
+  let fail = false
+  Object.assign(window.ide, {
+    getMemoryUsage: async ({ activeThreadId }: { activeThreadId?: string | null }) => {
+      requested = activeThreadId
+      if (fail) throw new Error('Fixture unavailable')
+      return usage
+    },
+    setSettings: async (
+      scope: string,
+      patch: { agent: { contextMemory: { maxMemoryMiB: number } } }
+    ) => {
+      assert(scope === 'user', 'Memory form must always save profile settings')
+      saves++
+      savedBudget = patch.agent.contextMemory.maxMemoryMiB
+      usage.config = { ...config, maxMemoryMiB: savedBudget }
+      return {} as never
+    }
+  })
+  try {
+    root.render(<MemoryPanel activeThreadId="active-fixture" onChanged={() => {}} />)
+    await tick()
+    await tick()
+    assert(requested === 'active-fixture', 'Memory usage must identify the selected conversation')
+    assert(host.textContent?.includes('1.0 KiB'), 'Active memory must be displayed')
+    assert(host.textContent?.includes('2.0 KiB'), 'Historical memory must be displayed separately')
+    assert(host.textContent?.includes('6.0 KiB'), 'Archive must include database and journal sizes')
+    assert(host.textContent?.includes('7 chats'), 'Durable archive counts must be shown')
+    const budget = host.querySelector<HTMLInputElement>('#memory-maxMemoryMiB')!
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    setter.call(budget, '256')
+    budget.dispatchEvent(new Event('input', { bubbles: true }))
+    await tick()
+    const refreshButton = [...host.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Refresh'
+    )!
+    refreshButton.click()
+    await tick()
+    await tick()
+    assert(budget.value === '256' && saves === 0, 'Usage polling must preserve unsaved changes')
+    host
+      .querySelector('form')!
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await tick()
+    await tick()
+    assert(
+      Number(saves) === 1 && savedBudget === 256,
+      'Validated defaults must save once with the edited budget'
+    )
+    setter.call(budget, '')
+    budget.dispatchEvent(new Event('input', { bubbles: true }))
+    await tick()
+    host
+      .querySelector('form')!
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await tick()
+    assert(Number(saves) === 1, 'Empty numeric values must not be saved as zero')
+    fail = true
+    refreshButton.click()
+    await tick()
+    await tick()
+    assert(
+      host.querySelector('[role=alert]')?.textContent?.includes('Last successful'),
+      'Failed refresh must mark old figures as stale'
+    )
+    for (const width of [320, 620]) {
+      host.style.width = `${width}px`
+      await tick()
+      assert(host.scrollWidth <= host.clientWidth + 1, `Memory settings overflow at ${width}`)
+    }
+  } finally {
+    root.unmount()
+    host.remove()
+  }
+}
 window.uxCheck = async () => {
+  await checkMemorySettings()
+
   await checkModelReadiness()
   await tick()
   assert(!document.querySelector('[data-history-search]'), 'Search must be hidden initially')
@@ -251,6 +364,7 @@ window.uxCheck = async () => {
     assert(editor.getBoundingClientRect().height < 64, `Editor toolbar too tall at ${width}`)
   }
   return {
+    memorySettings: true,
     modelReadiness: true,
     responsiveHeaders: true,
     optionalSearch: true,

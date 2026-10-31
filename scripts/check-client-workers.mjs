@@ -65,6 +65,8 @@ try {
   const patched = await request({ type: 'patch-index', root, indexPath, paths: ['src/a.ts'] })
   assert.deepEqual(patched.files, ['src/nested/b.ts'])
   const dir = join(root, '.eris', 'chats')
+  const emptyUsage = await request({ type: 'chat-storage-usage', dir })
+  assert.equal(emptyUsage.initialized, false)
   await mkdir(dir, { recursive: true })
   const legacy = {
     id: 'legacy',
@@ -107,6 +109,12 @@ try {
   assert.equal(sourceHeader.revision, full.contextRevision)
   assert.equal(sourceHeader.sourceEpoch, full.contextEpoch)
   assert.ok(sourceHeader.sourceEpoch)
+  const usage = await request({ type: 'chat-storage-usage', dir })
+  assert.equal(usage.initialized, true)
+  assert.equal(usage.conversations, 1)
+  assert.equal(usage.messages, 156)
+  assert.ok(usage.databaseBytes > 0)
+  assert.ok(usage.journalBytes >= 0)
   assert.equal(full.messages.length, 156)
   assert.equal(full.messages[0].content, 'Message 0')
   assert.equal(await readFile(join(dir, 'legacy.json'), 'utf8'), original)

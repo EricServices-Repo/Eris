@@ -3,7 +3,7 @@ import { parentPort } from 'worker_threads'
 import { readFileSync } from 'fs'
 import { listTree, readTextFile } from './services/files'
 import { scanWorkspaceIndex, patchWorkspaceIndex } from './services/workspace-index-job'
-import { chatDatabase, closeChatDatabases } from './services/chat-database'
+import { chatDatabase, closeChatDatabases, chatStorageUsage } from './services/chat-database'
 import type { WorkspaceRequest } from './services/workspace-worker-protocol'
 
 export async function handleWorkspaceRequest(request: WorkspaceRequest): Promise<unknown> {
@@ -51,6 +51,8 @@ export async function handleWorkspaceRequest(request: WorkspaceRequest): Promise
         request.write,
         request.expectedSource
       )
+    case 'chat-storage-usage':
+      return chatStorageUsage(request.dir)
     case 'chat-list':
       return chatDatabase(request.dir).list()
     case 'chat-get':

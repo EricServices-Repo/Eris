@@ -1,5 +1,10 @@
+import { workspaceRequest } from '../electron/main/services/workspace-worker-client'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { emptyMemoryControls, type MemoryControls } from '../src/shared/context-memory'
+import {
+  ContextMemorySettingsSchema,
+  emptyMemoryControls,
+  type MemoryControls
+} from '../src/shared/context-memory'
 const h = vi.hoisted(() => ({
   handlers: new Map<string, (event: unknown, raw: unknown) => Promise<unknown>>(),
   notifications: new Map<string, (event: unknown, path: unknown, dirty: unknown) => void>(),
@@ -32,8 +37,14 @@ vi.mock('../electron/main/services/workspace', () => ({
     id: path === '/A' ? h.workspaceId : 'registered-B'
   })
 }))
-vi.mock('../electron/main/services/settings', () => ({ getResolvedSettings: () => ({}) }))
+vi.mock('../electron/main/services/workspace-worker-client', () => ({ workspaceRequest: vi.fn() }))
+vi.mock('../electron/main/services/settings', () => ({
+  getResolvedSettings: () => ({
+    agent: { contextMemory: ContextMemorySettingsSchema.parse({}), projectMemory: 'ask' }
+  })
+}))
 vi.mock('../electron/main/services/context-memory', () => ({
+  memoryKey: (root: string | null, id: string) => `${root}:${id}`,
   warmConversationMemory: vi.fn(),
   invalidateConversationMemory: vi.fn(),
   saveMemoryControls: vi.fn(async (_root: string, _id: string, controls: MemoryControls) => {
@@ -165,4 +176,59 @@ it('accepts document invalidation only from the current main frame and workspace
   expect(evidenceEpoch('/A', ['app.ts'])).toEqual(before)
   notify(event, '/A/app.ts', true)
   expect(evidenceEpoch('/A', ['app.ts']).dirty).toBe(true)
+})
+
+describe('Read-only memory usage IPC', () => {
+  const read = (raw: unknown = {}, source: unknown = event) =>
+    h.handlers.get('contextMemory:usage')!(source, raw) as Promise<
+      import('../src/shared/memory-usage').MemoryUsageStatus
+    >
+  it('restricts sender, frame and input before reading history', async () => {
+    await expect(read({}, { sender: {}, senderFrame: {} })).rejects.toThrow('Unauthorized')
+    await expect(read({}, { ...event, senderFrame: {} })).rejects.toThrow('Unauthorized')
+    await expect(read({ workspacePath: '/untrusted' })).rejects.toThrow()
+    await expect(read({ activeThreadId: '' })).rejects.toThrow()
+    expect(workspaceRequest).not.toHaveBeenCalled()
+  })
+  it('returns metadata without requesting transcript pages or warming memory', async () => {
+    vi.mocked(workspaceRequest).mockResolvedValueOnce({
+      initialized: true,
+      conversations: 2,
+      messages: 3,
+      databaseBytes: 4096,
+      journalBytes: 20
+    } as never)
+    const result = await read({ activeThreadId: 'same' })
+    expect(result.scope).toBe('workspace')
+    expect(result.archive?.messages).toBe(3)
+    expect(result.process.rss).toBeGreaterThan(0)
+    expect(result.cache.activeBytes).toBe(0)
+    expect(workspaceRequest).toHaveBeenCalledTimes(1)
+    expect(workspaceRequest).toHaveBeenCalledWith({
+      type: 'chat-storage-usage',
+      dir: expect.any(String)
+    })
+    expect(getChat).not.toHaveBeenCalled()
+  })
+  it('reports archive failures independently from RAM counters', async () => {
+    vi.mocked(workspaceRequest).mockRejectedValueOnce(new Error('private filesystem detail'))
+    const result = await read()
+    expect(result.archive).toBeNull()
+    expect(result.archiveError).toBe('Saved history usage is temporarily unavailable.')
+    expect(result.cache.warmConversations).toBe(0)
+    expect(result.archiveError).not.toContain('private')
+  })
+  it('rejects telemetry read against a workspace switched during the worker request', async () => {
+    let release!: () => void
+    vi.mocked(workspaceRequest).mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return {} as never
+    })
+    const pending = read()
+    appState.currentWorkspace = '/B'
+    release()
+    await expect(pending).rejects.toThrow('Workspace changed')
+  })
 })

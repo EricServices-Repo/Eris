@@ -347,6 +347,9 @@ export interface IdeApi {
   setWorkspaceTrust: (trusted: boolean) => Promise<boolean>
   listChats: () => Promise<ChatThread[]>
   notifyDocumentChange: (path: string, dirty: boolean) => void
+  getMemoryUsage: (input: {
+    activeThreadId?: string | null
+  }) => Promise<import('./memory-usage').MemoryUsageStatus>
   inspectContextMemory: (input: {
     workspacePath?: string | null
     snapshotHandle?: string

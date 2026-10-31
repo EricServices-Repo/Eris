@@ -17,7 +17,7 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
   },
   {
     label: 'AI',
-    items: ['providers', 'usage', 'agent', 'subagents', 'skills']
+    items: ['providers', 'usage', 'memory', 'agent', 'subagents', 'skills']
   },
   {
     label: 'Project',
@@ -40,6 +40,7 @@ export const SETTINGS_LABELS: Record<Category, string> = {
   imageModels: 'Image Models',
   providers: 'Providers',
   usage: 'Usage',
+  memory: 'Memory',
   agent: 'Agent',
   subagents: 'Subagents',
   skills: 'Skills',
@@ -62,6 +63,7 @@ export const SETTINGS_SUBTITLES: Record<Category, string> = {
   imageModels: 'Configure image generation and download local Diffusers models',
   providers: 'Optional cloud APIs and local servers (LM Studio, Ollama)',
   usage: 'Plan limits and 30-day model usage',
+  memory: 'Conversation RAM, saved history, recall, and privacy',
   agent: 'Routing, Cloud Agents, and background jobs',
   subagents: 'Project specialists in .eris/agents.json',
   skills: 'Skill files that teach specialized workflows',
@@ -126,6 +128,7 @@ export const SETTINGS_PAGE_KEYWORDS: Record<Category, string[]> = {
     'connection'
   ],
   usage: ['quota', 'limits', 'tokens', 'upgrade'],
+  memory: ['ram', 'history', 'cache', 'recall', 'memory', 'storage', 'budget', 'privacy'],
   agent: ['routing', 'cloud', 'background', 'approval'],
   subagents: ['specialist', 'orchestrator', 'agents.json'],
   skills: ['skill', 'workflow', 'SKILL.md'],

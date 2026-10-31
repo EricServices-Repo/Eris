@@ -10,6 +10,7 @@ export type Category =
   | 'imageModels'
   | 'providers'
   | 'usage'
+  | 'memory'
   | 'agent'
   | 'subagents'
   | 'skills'
@@ -123,7 +124,7 @@ export function settingFields(agentIds: string[]): SettingField[] {
       options: ['ask', 'auto']
     },
     {
-      cat: 'agent',
+      cat: 'memory',
       label: 'Project memory',
       hint: 'auto = write .eris/context.md after agent runs; ask = confirm in chat; off = never',
       path: ['agent', 'projectMemory'],
@@ -131,63 +132,63 @@ export function settingFields(agentIds: string[]): SettingField[] {
       options: ['auto', 'ask', 'off']
     },
     {
-      cat: 'agent',
+      cat: 'memory',
       hint: 'Retains detailed saved history for recall on later messages.',
       label: 'Keep detailed conversation history in RAM',
       path: ['agent', 'contextMemory', 'enabled'],
       type: 'boolean'
     },
     {
-      cat: 'agent',
+      cat: 'memory',
       hint: 'Conservative logical accounting, not a hard process RSS limit. Range: 16–512.',
       label: 'Conversation RAM budget (MiB, logical estimate)',
       path: ['agent', 'contextMemory', 'maxMemoryMiB'],
       type: 'number'
     },
     {
-      cat: 'agent',
+      cat: 'memory',
       hint: 'Each conversation is limited by this and the global budget. Range: 4–128.',
       label: 'RAM budget per conversation (MiB)',
       path: ['agent', 'contextMemory', 'maxThreadMiB'],
       type: 'number'
     },
     {
-      cat: 'agent',
+      cat: 'memory',
       hint: 'Full transcripts stay on disk when older messages are evicted. Range: 500–100000.',
       label: 'Maximum retained messages per conversation',
       path: ['agent', 'contextMemory', 'maxMessages'],
       type: 'number'
     },
     {
-      cat: 'agent',
+      cat: 'memory',
       hint: 'Least recently used conversations are evicted first. Range: 1–16.',
       label: 'Maximum warm conversations',
       path: ['agent', 'contextMemory', 'warmThreads'],
       type: 'number'
     },
     {
-      cat: 'agent',
+      cat: 'memory',
       hint: 'Idle RAM entries expire; saved history remains available. Range: 1–120.',
       label: 'Evict idle conversations after minutes',
       path: ['agent', 'contextMemory', 'idleMinutes'],
       type: 'number'
     },
     {
-      cat: 'agent',
+      cat: 'memory',
       hint: 'Maximum optional recall wait before sending with canonical recent history only. Range: 25–2000 ms.',
       label: 'Historical recall deadline (ms)',
       path: ['agent', 'contextMemory', 'foregroundDeadlineMs'],
       type: 'number'
     },
     {
-      cat: 'agent',
+      cat: 'memory',
       hint: 'Selected evidence also fits the model input window. Range: 128–4096.',
       label: 'Recalled context token budget (estimate)',
       path: ['agent', 'contextMemory', 'promptTokens'],
       type: 'number'
     },
     {
-      cat: 'agent',
+      cat: 'memory',
       hint: 'Off by default. Enable in User settings to permit sharing; workspace settings can only turn it off. The resolved value is the effective permission. Existing recent chat history still goes to the selected model.',
       label: 'Allow older recalled context in remote model requests',
       path: ['agent', 'contextMemory', 'shareWithRemoteModels'],

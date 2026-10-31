@@ -388,3 +388,23 @@ describe('RAM-CTX-003 minimum recall budget', () => {
     expect(result.inspection.manifest.omittedFacts).toBe(1)
   })
 })
+
+describe('Memory settings usage counters', () => {
+  it('separates active and historical caches without hydrating or touching recency', () => {
+    const store = new ContextMemoryStore()
+    install(store, 'active', [message('1', 'Use CAD')])
+    install(store, 'other', [message('2', 'History in another workspace')])
+    const before = store.ledger
+    const usage = store.usage('active')
+    expect(usage.activeBytes).toBeGreaterThan(0)
+    expect(usage.historicalBytes).toBeGreaterThan(0)
+    expect(usage.activeBytes + usage.historicalBytes).toBe(before.ownedBytes)
+    expect(usage.warmConversations).toBe(2)
+    expect(store.usage('missing').activeBytes).toBe(0)
+    expect(store.usage('missing').historicalBytes).toBe(before.ownedBytes)
+    expect(store.ledger).toEqual(before)
+    store.clear()
+    expect(store.usage().warmConversations).toBe(0)
+    expect(store.usage().ownedBytes).toBe(0)
+  })
+})

@@ -203,6 +203,17 @@ export class ContextMemoryStore {
     )
       this.bump(key)
   }
+  /** Metadata only: never warms or reads a transcript. Cache spans all workspaces. */
+  usage(activeKey?: string) {
+    const ledger = this.ledger
+    const activeBytes = activeKey ? (this.entries.get(activeKey)?.bytes ?? 0) : 0
+    return {
+      ...ledger,
+      activeBytes,
+      historicalBytes: ledger.ownedBytes - activeBytes,
+      warmConversations: this.entries.size
+    }
+  }
   get logicalBytes() {
     return [...this.entries.values()].reduce((sum, e) => sum + e.bytes, 0)
   }

@@ -1,9 +1,9 @@
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { ChatDatabase } from '../electron/main/services/chat-database'
+import { ChatDatabase, chatStorageUsage } from '../electron/main/services/chat-database'
 import type { ChatThread } from '../src/shared/settings-schema'
 
 let dir: string
@@ -278,6 +278,33 @@ describe('RAM-CTX-013 malformed context records', () => {
     expect(
       raw.prepare('SELECT body FROM messages WHERE threadId=? AND ordinal=0').get('thread')?.body
     ).toBe('{broken')
+    raw.close()
+  })
+})
+
+describe('Saved history storage telemetry', () => {
+  it('never creates an archive or imports legacy transcripts when inspecting usage', () => {
+    const missing = join(dir, 'absent')
+    expect(chatStorageUsage(missing).initialized).toBe(false)
+    expect(existsSync(missing)).toBe(false)
+    writeFileSync(join(dir, 'legacy.json'), JSON.stringify(thread(3)))
+    expect(chatStorageUsage(dir).initialized).toBe(false)
+    expect(existsSync(join(dir, 'chats.sqlite'))).toBe(false)
+  })
+  it('counts durable headers without parsing message bodies and reflects deletes', () => {
+    db = new ChatDatabase(dir)
+    db.save(thread(3))
+    db.save({ ...thread(2), id: 'another' })
+    const raw = new DatabaseSync(join(dir, 'chats.sqlite'))
+    raw.prepare('UPDATE messages SET body=? WHERE threadId=?').run('{broken', 'thread')
+    const before = raw.prepare('SELECT body FROM messages WHERE threadId=?').all('thread')
+    const usage = chatStorageUsage(dir)
+    expect(usage).toMatchObject({ initialized: true, conversations: 2, messages: 5 })
+    expect(usage.databaseBytes).toBeGreaterThan(0)
+    expect(usage.journalBytes).toBeGreaterThanOrEqual(0)
+    expect(raw.prepare('SELECT body FROM messages WHERE threadId=?').all('thread')).toEqual(before)
+    db.remove('another')
+    expect(db.storageUsage()).toMatchObject({ conversations: 1, messages: 3 })
     raw.close()
   })
 })

@@ -51,7 +51,48 @@ function databaseFileIdentity(path: string): string | null {
     return null
   }
 }
+function storageUsage(
+  db: DatabaseSync,
+  file: string
+): import('../../../src/shared/memory-usage').ArchiveMemoryUsage {
+  const row = db
+    .prepare(
+      'SELECT COUNT(*) AS conversations, COALESCE(SUM(messageCount), 0) AS messages FROM conversations'
+    )
+    .get() as { conversations: number; messages: number }
+  const size = (path: string) => {
+    try {
+      return statSync(path).size
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0
+      throw error
+    }
+  }
+  return {
+    initialized: true,
+    ...row,
+    databaseBytes: size(file),
+    journalBytes: size(`${file}-wal`) + size(`${file}-shm`)
+  }
+}
+/** Metadata-only read: never creates, migrates, imports or hydrates chat history. */
+export function chatStorageUsage(
+  dir: string
+): import('../../../src/shared/memory-usage').ArchiveMemoryUsage {
+  const file = join(dir, 'chats.sqlite')
+  if (!existsSync(file))
+    return { initialized: false, conversations: 0, messages: 0, databaseBytes: 0, journalBytes: 0 }
+  const db = new DatabaseSync(file, { readOnly: true })
+  try {
+    return storageUsage(db, file)
+  } finally {
+    db.close()
+  }
+}
 export class ChatDatabase {
+  storageUsage() {
+    return storageUsage(this.db, this.file)
+  }
   private db: DatabaseSync
   private readonly file: string
   private readonly incarnation: string
