@@ -33,7 +33,9 @@ async function main() {
   for (const note of result.notEvaluated) console.log(`Not evaluated: ${note}`)
   console.log(`Report: ${file}`)
   if (!result.pass) throw new Error(`Context gate failed:\n${result.failures.join('\n')}`)
-  console.log('Context release gate passed')
+  console.log(
+    'Deterministic RAM-context gate passed; release certification requires separate packaged/live evidence'
+  )
 }
 main().catch((error) => {
   console.error(error.message)

@@ -9,7 +9,7 @@ import type {
   MemoryPrompt,
   MemoryPromptItem
 } from '../../../../src/shared/context-memory'
-import { isNativeGgufRef } from '../builtin-model'
+import { isNativeGgufRef } from '../../../../src/shared/model-destination'
 import type { AgentChatMessage } from './types'
 import type { ToolCallProtocol } from '../tool-protocol'
 import {

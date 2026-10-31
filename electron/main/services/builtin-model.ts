@@ -340,9 +340,7 @@ export function isBuiltinRef(model: string): boolean {
 }
 
 /** Built-in Composer or user-downloaded local GGUF (runs via node-llama-cpp). */
-export function isNativeGgufRef(model: string): boolean {
-  return model.startsWith('builtin:') || model.startsWith('local:')
-}
+export { isNativeGgufRef } from '../../../src/shared/model-destination'
 
 export async function ensureComposerDownloaded(
   onProgress?: (status: BuiltinModelStatus) => void,

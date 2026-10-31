@@ -1,6 +1,7 @@
 {
-  "version": 1,
+  "version": 2,
   "maxGrowthRatio": 12,
   "minBaselineMs": 5,
+  "minContextAccuracy": 0.95,
   "profiles": []
 }

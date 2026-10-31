@@ -1450,3 +1450,6 @@ These references support platform constraints; the design choices, budgets and t
 - [SQLite WAL behavior](https://www.sqlite.org/wal.html): reader/writer/checkpoint behavior informs bounded transactions and background index work.
 
 Review date: 2026-10-29. Source code remains the authority for what Eris currently implements.
+
+### RAM-CTX-037: release qualification is distinct from deterministic CI
+The v2 context gate measures append/queue/selection/compilation phases, samples logical reservation peaks, and requires labeled facts to survive into compiled model inputs. A packaged qualification CLI isolates its data and stamps source/lock/runtime/entry identity. Release publishing now requires exact-source macOS and Windows reports, measured hardware profiles, complete workload/sample denominators and a same-weight/same-backend paired live comparison with actual source-send coverage. Empty profiles and missing evidence intentionally prevent release certification. See `docs/fixes/147-context-release-gates.md` for the collection protocol and explicit measurement limits.

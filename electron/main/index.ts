@@ -2,7 +2,11 @@ import { workspaceRequest } from './services/workspace-worker-client'
 import { stopDebug } from './services/debug-service'
 import { foregroundTasks } from './services/foreground-tasks'
 import { flushChatJobs } from './services/chat-job-controller'
-import { mkdirSync, writeFileSync } from 'fs'
+import { mkdirSync, writeFileSync, mkdtempSync, rmSync, readFileSync } from 'fs'
+import { tmpdir, cpus, totalmem } from 'os'
+import { join, dirname } from 'path'
+import { createHash } from 'crypto'
+declare const __ERIS_SOURCE_IDENTITY__: { gitSha: string; dirty: boolean; lockSha256: string }
 import { stopLocalImageProcesses } from './services/local-image-model'
 import { setDefaultResultOrder } from 'dns'
 import { app, BrowserWindow, protocol } from 'electron'
@@ -56,7 +60,52 @@ if (smokeTest) {
   app.setPath('appData', process.env.ERIS_SMOKE_ROOT!)
   app.setPath('userData', process.env.ERIS_SMOKE_ROOT!)
 }
-app.whenReady().then(() => {
+const contextQualification = process.argv.includes('--eris-context-qualification')
+const qualificationRoot = contextQualification
+  ? mkdtempSync(join(tmpdir(), 'eris-context-qualification-'))
+  : null
+if (qualificationRoot) {
+  app.setPath('appData', qualificationRoot)
+  app.setPath('userData', qualificationRoot)
+}
+app.whenReady().then(async () => {
+  if (contextQualification) {
+    let code = 0
+    try {
+      if (!process.env.ERIS_CONTEXT_OUTPUT) throw new Error('ERIS_CONTEXT_OUTPUT is required')
+      const { runContextGate } = await import('../../checks/context-gate')
+      const report = await runContextGate({
+        gitSha: __ERIS_SOURCE_IDENTITY__.gitSha,
+        hardware: {
+          platform: process.platform,
+          arch: process.arch,
+          cpu: cpus()[0]?.model,
+          totalMemoryBytes: totalmem()
+        },
+        runtime: {
+          node: process.versions.node,
+          electron: process.versions.electron,
+          packaged: String(app.isPackaged),
+          appVersion: app.getVersion(),
+          sourceDirty: String(__ERIS_SOURCE_IDENTITY__.dirty),
+          lockSha256: __ERIS_SOURCE_IDENTITY__.lockSha256,
+          entrySha256: createHash('sha256')
+            .update(readFileSync(join(__dirname, 'index.js')))
+            .digest('hex')
+        }
+      })
+      mkdirSync(dirname(process.env.ERIS_CONTEXT_OUTPUT), { recursive: true })
+      writeFileSync(process.env.ERIS_CONTEXT_OUTPUT, JSON.stringify(report, null, 2))
+    } catch (error) {
+      console.error('Context qualification failed', error)
+      code = 1
+    } finally {
+      await disposeWorkspaceWorkers()
+      if (qualificationRoot) rmSync(qualificationRoot, { recursive: true, force: true })
+      app.exit(code)
+    }
+    return
+  }
   if (process.platform === 'win32') {
     app.setAppUserModelId('app.eris.ide')
   }
