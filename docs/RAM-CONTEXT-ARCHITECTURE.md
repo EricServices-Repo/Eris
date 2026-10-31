@@ -1025,6 +1025,8 @@ A test can compare selection and actual dispatch digests to detect a model/backe
 
 ### 19.3 Eris-Dev modes
 
+Implementation status and acceptance limits: [146 implementation notes](fixes/146-stateful-memory-replay.md).
+
 Provide four explicit modes:
 
 1. **Independent routing:** existing stateless question cases with fresh context per case.
@@ -1450,10 +1452,3 @@ These references support platform constraints; the design choices, budgets and t
 - [SQLite WAL behavior](https://www.sqlite.org/wal.html): reader/writer/checkpoint behavior informs bounded transactions and background index work.
 
 Review date: 2026-10-29. Source code remains the authority for what Eris currently implements.
-
-### RAM-CTX-036: explicit stateful Eris-Dev memory episodes
-Eris-Dev defaults to independent questions. The run controls can opt into stateful episodes (2–10,000 questions per episode) or deliberately simulated cache pressure on alternate turns. Capture mode records model-facing requests without inventing answers; optional imported `memory.scriptedResponse` is explicitly corpus data. Live mode uses observed answers and the existing per-case call/deadline limits and batches of ten. An optional explicitly selected second model takes over halfway through each episode. Remote recall requires a separate opt-in; canonical recent history still follows the selected destination.
-
-Each episode owns a separate SQLite namespace under its run attempt. Worker-backed canonical paging, production ContextMemoryStore selection, the task compiler, and actual dispatch events are reused. Production chat stores are never consulted. Exported memory evidence includes revision, controls revision, policy/corpus/model fingerprints, expected and retrieved source IDs, dispatched source digests, missing historical-source IDs, estimated bytes/tokens, selection duration, actual provider-call counts and explicit pressure injection. Diagnostic transport captures are labeled pre-adaptation; live provider dispatch replaces that record when observed. Expected IDs use `question-id:u`, `question-id:a`, or `question-id:seed:index`. Recent canonical messages excluded from optional recall are not certified by the historical-source marker denominator; tests intended to measure historical recall must bury the labeled source outside twelve recent messages.
-
-Resume reconstructs only the active episode from validated committed case files, one result at a time. Interrupted attempts never become conversation evidence. Corpus/config/model fingerprint changes refuse resume. Rewind and forgetting are explicit corpus `memory.rewindMessages` / `memory.forgottenSourceIds` actions, not natural-language authority. Attempts close their worker-owned database before cleanup. Existing raw-versus-sanitized export controls apply to request content; no additional raw memory dump is emitted. This mode does not certify file-edit continuity across resumed disposable workspaces, live answer quality, or real OS/unified-memory pressure.
