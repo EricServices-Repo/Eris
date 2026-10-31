@@ -225,6 +225,69 @@ function buildResumeMessage(options: {
   }
 }
 
+/** Smallest share worth sending; below this a message is omitted, oldest first. */
+const SUMMARY_MIN_MESSAGE_CHARS = 240
+/** The newest message weighs this much relative to the oldest. */
+const SUMMARY_NEWEST_WEIGHT = 2
+
+function excerptForSummary(content: string, chars: number): string {
+  if (content.length <= chars) return content
+  const marker = '\n[shortened for this summary]\n'
+  const keep = Math.max(0, chars - marker.length)
+  // Tool output usually ends with its result, so keep both ends.
+  const head = Math.ceil(keep * 0.6)
+  return content.slice(0, head) + marker + content.slice(content.length - (keep - head))
+}
+
+/**
+ * Spend the summarizer's input across the whole range, weighted linearly toward newer
+ * messages. Filling newest first rolls anything a short message leaves unused to older
+ * ones. Reports what it could not include, because a model cannot disclose text it
+ * never received.
+ */
+export function buildSummaryTranscript(
+  messages: AgentChatMessage[],
+  maxChars = AGENT_HANDOFF_CHARS * 3
+): { transcript: string; omittedMessages: number; shortenedMessages: number } {
+  const useful = messages.filter((message) => message.content.trim())
+  // The oldest share is 1/1.5 of an even one, so this keeps every share above the minimum.
+  const evenShareRatio = (1 + SUMMARY_NEWEST_WEIGHT) / 2
+  const capacity = Math.max(1, Math.floor(maxChars / (SUMMARY_MIN_MESSAGE_CHARS * evenShareRatio)))
+  const included = useful.slice(-capacity)
+  const weight = (index: number) =>
+    1 + ((SUMMARY_NEWEST_WEIGHT - 1) * index) / Math.max(1, included.length - 1)
+  let unspentWeight = included.reduce((sum, _, index) => sum + weight(index), 0)
+  const parts: string[] = []
+  let remaining = maxChars
+  let shortenedMessages = 0
+  for (let index = included.length - 1; index >= 0; index--) {
+    const message = included[index]!
+    const label = `${message.role.toUpperCase()}:\n`
+    const separator = 2
+    const share = Math.floor((remaining * weight(index)) / unspentWeight)
+    const chars = Math.min(AGENT_HANDOFF_CHARS, share) - label.length - separator
+    const excerpt = excerptForSummary(message.content, chars)
+    if (excerpt.length < message.content.length) shortenedMessages++
+    parts.unshift(label + excerpt)
+    remaining -= label.length + excerpt.length + separator
+    unspentWeight -= weight(index)
+  }
+  return {
+    transcript: parts.join('\n\n'),
+    omittedMessages: useful.length - included.length,
+    shortenedMessages
+  }
+}
+
+function summaryCoverageNote(omittedMessages: number, shortenedMessages: number): string {
+  if (!omittedMessages && !shortenedMessages) return ''
+  const gaps = [
+    omittedMessages ? `${omittedMessages} oldest compacted messages were not included` : '',
+    shortenedMessages ? `${shortenedMessages} were shortened` : ''
+  ].filter(Boolean)
+  return `\n[Summary input was incomplete: ${gaps.join('; ')}. Treat missing details as unknown.]`
+}
+
 async function summarizeMiddleWithLite(options: {
   settings: AppSettings
   liteModel: string
@@ -237,10 +300,7 @@ async function summarizeMiddleWithLite(options: {
   getSecret: (key: string) => string | null
   temperature: number
 }): Promise<string> {
-  const transcript = options.middle
-    .map((m) => `${m.role.toUpperCase()}:\n${m.content.slice(0, AGENT_HANDOFF_CHARS)}`)
-    .join('\n\n')
-    .slice(0, AGENT_HANDOFF_CHARS * 3)
+  const { transcript, omittedMessages, shortenedMessages } = buildSummaryTranscript(options.middle)
 
   if (!transcript.trim()) {
     return buildFallbackProgressSummary(
@@ -292,8 +352,15 @@ async function summarizeMiddleWithLite(options: {
       getSecret: options.getSecret,
       purpose: 'compaction'
     })
-    if (summary.length >= 40)
-      return markUnverifiedExecutionClaims(summary, options.actionLog).slice(0, AGENT_HANDOFF_CHARS)
+    if (summary.length >= 40) {
+      const note = summaryCoverageNote(omittedMessages, shortenedMessages)
+      return (
+        markUnverifiedExecutionClaims(summary, options.actionLog).slice(
+          0,
+          AGENT_HANDOFF_CHARS - note.length
+        ) + note
+      )
+    }
   } catch {
     // fall through
   }
