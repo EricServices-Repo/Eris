@@ -1,3 +1,4 @@
+import { assertTaskReferences } from '../reference-binding'
 import { createHash } from 'crypto'
 import { activeDiagnosticsScope } from '../model-transport'
 import { pinEvidence, saveEvidenceOwner } from '../evidence-records'
@@ -2280,6 +2281,7 @@ async function* runAgentInternal(options: {
         if (codeMutated) {
           workflow.transition('verifying')
           yield { type: 'status', text: 'Final verify…' }
+          await assertTaskReferences(task, options.settings, workerModel)
           const finalVerify = await runVerify(executionRoot!, options.signal, {
             preferTypecheck: false,
             allowInstall: true,
@@ -2626,6 +2628,7 @@ async function* runAgentInternal(options: {
         }
       }
       for (let i = 0; i < toolCalls.length; i++) {
+        await assertTaskReferences(task, options.settings, workerModel)
         throwIfAborted(options.signal)
         const call = toolCalls[i]
         const id = `${task.taskId}:t${toolExecRounds}_${i}`
@@ -4167,6 +4170,7 @@ async function* runAgentInternal(options: {
           yield { type: 'status', text: 'Verifying (typecheck/tests)…' }
           yield { type: 'thinking', text: '\n\n— Running verify (typecheck/tests)…\n' }
           // Mid-loop: typecheck-first, never npm install (keeps agent moving).
+          await assertTaskReferences(task, options.settings, workerModel)
           const verified = await runVerify(executionRoot!, options.signal, {
             preferTypecheck: true,
             allowInstall: false

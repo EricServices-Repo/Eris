@@ -1,3 +1,6 @@
+import { createHash as referenceHash } from 'crypto'
+import { extractRecommendations } from '../../../src/shared/recommendations'
+import type { ReferenceSource, ReferenceSourceResult } from '../../../src/shared/reference-binding'
 import {
   installContextChangeLog,
   replayContextChanges,
@@ -303,6 +306,69 @@ export class ChatDatabase {
       messageCount: Number(header.messageCount),
       sourceEpoch: `${this.incarnation}:${String(header.epoch)}`
     }
+  }
+  /** Indexed source-ID lookups only; never hydrate the intervening transcript. */
+  referenceSources(id: string, sources: ReferenceSource[]): ReferenceSourceResult {
+    if (
+      sources.length > 64 ||
+      sources.some((source) => source.messageId.length > 256 || source.items.length > 100)
+    )
+      throw new Error('Reference source budget exceeded')
+    if (!this.contextHeader(id)) return { sourceVersion: null, sources: [] }
+    this.contextControls(id) // Bind any legacy cutoff before opening the source snapshot.
+    return this.transaction(() => {
+      const header = this.contextHeader(id)
+      const raw = this.db.prepare('SELECT body FROM context_controls WHERE threadId=?').get(id)
+      const controls = raw
+        ? MemoryControlsSchema.parse(JSON.parse(String(raw.body)))
+        : emptyMemoryControls()
+      const forgotten = new Set(controls.forgotten)
+      const found: ReferenceSourceResult['sources'] = []
+      let bytes = 0
+      for (const source of sources) {
+        if (forgotten.has(source.messageId)) continue
+        const row = this.db
+          .prepare(
+            `SELECT ordinal,contextSequence,
+          json_extract(body,'$.content') AS content,
+          json_extract(body,'$.contextResult.projectRoot') AS projectRoot
+          FROM messages WHERE threadId=? AND id=? AND json_valid(body)
+          AND json_extract(body,'$.role')='assistant'
+          AND length(json_extract(body,'$.content'))<=65536 LIMIT 1`
+          )
+          .get(id, source.messageId)
+        if (
+          !row ||
+          (controls.afterSequence !== undefined
+            ? Number(row.contextSequence) <= controls.afterSequence
+            : Number(row.ordinal) < controls.afterOrdinal)
+        )
+          continue
+        const projectRoot = row.projectRoot === null ? null : String(row.projectRoot)
+        if (projectRoot !== source.projectRoot) continue
+        const recommendations = extractRecommendations(String(row.content))
+          .slice(0, 100)
+          .filter(
+            (item) =>
+              !forgotten.has(item.id) &&
+              source.items.some(
+                (expected) =>
+                  expected.id === item.id &&
+                  expected.digest ===
+                    referenceHash('sha256')
+                      .update(
+                        JSON.stringify([item.id, item.text, item.targets ?? [], item.section ?? ''])
+                      )
+                      .digest('hex')
+              )
+          )
+        const result = { messageId: source.messageId, projectRoot, recommendations }
+        bytes += Buffer.byteLength(JSON.stringify(result))
+        if (bytes > 1024 ** 2) break
+        found.push(result)
+      }
+      return { sourceVersion: header, sources: found }
+    })
   }
   list(): ChatThread[] {
     return (

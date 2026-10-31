@@ -160,6 +160,7 @@ export interface TaskInterpretation {
 }
 
 export interface TaskContract {
+  referenceBinding?: import('./reference-binding').TaskReferenceBinding
   version: 2
   taskId: string
   parentTaskId?: string
@@ -202,7 +203,7 @@ export interface TaskContract {
     /** Files the prior turn actually changed, for “what did you change?”. */
     changedFiles: string[]
     /** How referenced recommendations were found. */
-    recommendationSource: 'prior-task' | 'prior-answer-prose' | 'none'
+    recommendationSource: 'prior-task' | 'prior-answer-prose' | 'historical-artifact' | 'none'
   }
   /** What this turn produced; recorded after it ends and read by the next turn. */
   result?: TaskTurnResult

@@ -381,6 +381,15 @@ export function compileTaskContext(input: {
     duplicate: duplicateBlocks > 0 && !memoryBlock?.chars
   })
   const bundle: ContextBundle = {
+    ...(input.task.referenceBinding?.status === 'bound'
+      ? {
+          referenceTask: {
+            referenceBinding: input.task.referenceBinding,
+            scope: input.task.scope,
+            threadId: input.task.threadId
+          }
+        }
+      : {}),
     version: 1,
     taskId: input.task.taskId,
     ...(input.memoryNamespace ? { namespace: input.memoryNamespace } : {}),

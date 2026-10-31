@@ -31,6 +31,8 @@ export async function handleWorkspaceRequest(request: WorkspaceRequest): Promise
       return chatDatabase(request.dir).replayContextChanges(request.limit)
     case 'context-changes':
       return chatDatabase(request.dir).contextChanges(request.after, request.limit)
+    case 'context-reference-sources':
+      return chatDatabase(request.dir).referenceSources(request.id, request.sources)
     case 'context-header': {
       const db = chatDatabase(request.dir)
       db.replayContextChanges()

@@ -4,6 +4,7 @@ import type { IndexRecord } from './code-index'
 
 export type ChatPage = { before?: number; limit?: number }
 interface AdditionalWorkspaceResults {
+  'context-reference-sources': import('../../../src/shared/reference-binding').ReferenceSourceResult
   'context-replay': import('../../../src/shared/context-memory').ContextDerivationStatus
   'context-changes': ReturnType<import('./chat-database').ChatDatabase['contextChanges']>
 }
@@ -21,6 +22,12 @@ export type WorkspaceRequest =
   | { type: 'load-index'; indexPath: string }
   | { type: 'context-replay'; dir: string; limit?: number }
   | { type: 'context-changes'; dir: string; after?: number; limit?: number }
+  | {
+      type: 'context-reference-sources'
+      dir: string
+      id: string
+      sources: import('../../../src/shared/reference-binding').ReferenceSource[]
+    }
   | { type: 'context-header'; dir: string; id: string }
   | { type: 'context-page'; dir: string; id: string; before?: number; beforeContentOffset?: number }
   | {

@@ -76,6 +76,35 @@ const task = z
         externalEffects: z.boolean()
       })
       .strict(),
+    referenceBinding: z
+      .object({
+        status: z.enum(['bound', 'ambiguous', 'unavailable']),
+        remotePolicy: z.enum(['recent', 'opt-in', 'local-only']),
+        sources: z
+          .array(
+            z
+              .object({
+                messageId: id,
+                projectRoot: path.nullable(),
+                items: z
+                  .array(z.object({ id, digest: z.string().regex(/^[a-f0-9]{64}$/) }).strict())
+                  .max(100)
+              })
+              .strict()
+          )
+          .max(64),
+        reason: z.string().max(4096).optional(),
+        sourceVersion: z
+          .object({
+            revision: z.number().int(),
+            messageCount: z.number().int(),
+            sourceEpoch: z.string(),
+            controlsRevision: z.number().int().optional()
+          })
+          .optional()
+      })
+      .strict()
+      .optional(),
     recommendations: z.array(recommendation).max(100),
     acceptanceCriteria: z.array(text).max(100),
     interpretation: interpretation.optional(),
