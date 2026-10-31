@@ -38,6 +38,8 @@ export interface InferenceDevice {
 export interface InferenceOptions {
   workload: InferenceWorkload
   requestedBytes: number
+  /** Part of requestedBytes already resident, so already reflected in free memory. */
+  residentBytes?: number
   gpu?: boolean
   exclusiveGpu?: boolean
   priority?: number
@@ -87,26 +89,32 @@ export class InferenceGovernor {
       if (this.optional === owner) this.optional = undefined
     }
   }
-  refreshMemoryPressure(extraPending = 0) {
+  refreshMemoryPressure(extraPending = 0, extraPeak = extraPending) {
     const memory = this.memory()
     const rows = [...this.active.values()]
     const pending =
       rows.reduce((n, r) => n + Math.max(0, r.requestedBytes - r.materializedBytes), 0) +
       extraPending
-    const peak = rows.reduce((n, r) => n + r.requestedBytes, 0) + extraPending
+    const peak = rows.reduce((n, r) => n + r.requestedBytes, 0) + extraPeak
     const ledger = this.optional?.ledger() ?? { ownedBytes: 0, reservedBytes: 0, pinnedBytes: 0 }
     // Owned/pinned allocations are already reflected in free; only pending
     // native bytes are subtracted there. Total capacity still counts each owner.
-    const headroom = Math.max(0, memory.free - (memory.pressureReserve ?? memory.reserve) - pending)
+    const available = Math.max(0, memory.free - (memory.pressureReserve ?? memory.reserve))
+    const headroom = Math.max(0, available - pending)
+    // Only work that has not allocated yet is short. Nothing is wrong now, so make room
+    // for that work without treating it as a host out of memory.
+    const shortfall = available > 0 ? Math.max(0, pending - available) : 0
     const was = this.pressure
     const computed: ContextPressure =
-      headroom === 0
-        ? 'critical'
-        : was === 'critical' && headroom < memory.total * 0.02
+      shortfall > 0
+        ? 'constrained'
+        : headroom === 0
           ? 'critical'
-          : headroom < memory.total * (was === 'normal' ? 0.05 : 0.08)
-            ? 'constrained'
-            : 'normal'
+          : was === 'critical' && headroom < memory.total * 0.02
+            ? 'critical'
+            : headroom < memory.total * (was === 'normal' ? 0.05 : 0.08)
+              ? 'constrained'
+              : 'normal'
     this.pressure = withOsPressure(computed, memory.osPressure, pending)
     const allowance = Math.max(
       0,
@@ -118,7 +126,9 @@ export class InferenceGovernor {
     const limit =
       this.pressure === 'critical'
         ? 0
-        : Math.floor(allowance * (this.pressure === 'constrained' ? 0.25 : 0.5))
+        : shortfall > 0
+          ? Math.max(0, ledger.ownedBytes + ledger.pinnedBytes - shortfall)
+          : Math.floor(allowance * (this.pressure === 'constrained' ? 0.25 : 0.5))
     this.optional?.limit(limit, this.pressure)
     return {
       pressure: this.pressure,
@@ -196,7 +206,7 @@ export class InferenceGovernor {
       return 'Waiting for reserved host/unified memory'
     if (
       (this.active.size || optional.reservedBytes || optional.pinnedBytes) &&
-      row.requestedBytes + pendingNative + optional.reservedBytes >
+      row.requestedBytes - row.materializedBytes + pendingNative + optional.reservedBytes >
         Math.max(0, memory.free - memory.reserve)
     )
       return 'Waiting for available host memory'
@@ -223,6 +233,8 @@ export class InferenceGovernor {
     if (
       !Number.isFinite(options.requestedBytes) ||
       options.requestedBytes < 0 ||
+      !Number.isFinite(options.residentBytes ?? 0) ||
+      (options.residentBytes ?? 0) < 0 ||
       !Number.isFinite(options.deviceBytes ?? 0) ||
       (options.deviceBytes ?? 0) < 0 ||
       !Number.isFinite(options.priority ?? 0) ||
@@ -249,7 +261,10 @@ export class InferenceGovernor {
         exclusiveGpu: options.exclusiveGpu !== false,
         priority: options.priority ?? (options.workload === 'text' ? 20 : 10),
         deviceBytes: Math.ceil(options.deviceBytes ?? 0),
-        materializedBytes: 0,
+        materializedBytes: Math.min(
+          Math.ceil(options.requestedBytes),
+          Math.ceil(options.residentBytes ?? 0)
+        ),
         queuedAt: this.now(),
         deadline: this.now() + Math.max(1, Math.min(600000, options.waitTimeoutMs ?? 120000)),
         resolve,
@@ -298,7 +313,7 @@ export class InferenceGovernor {
           : b.priority - a.priority || a.id - b.id)
     )
     for (const row of [...this.pending]) {
-      this.refreshMemoryPressure(row.requestedBytes)
+      this.refreshMemoryPressure(row.requestedBytes - row.materializedBytes, row.requestedBytes)
       const reason = this.reason(row)
       if (reason) {
         row.reason = reason

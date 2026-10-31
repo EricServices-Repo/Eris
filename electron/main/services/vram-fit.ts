@@ -42,6 +42,32 @@ export type VramBudgetInput = {
   preferredTotalBytes?: number
 }
 
+/** A generation on a loaded model allocates scratch, not another copy of the model. */
+export const GENERATION_SCRATCH_BYTES = 256 * 1024 ** 2
+/** CPU-side cost of a model whose weights and KV cache live on a dedicated GPU. */
+export const DEDICATED_HOST_OVERHEAD_BYTES = 1024 ** 3
+
+/** Peak memory a text model can reach, wherever it ends up. */
+export const textModelPeakBytes = (approxBytes: number) => Math.ceil(approxBytes * 1.25 + 1024 ** 3)
+
+/**
+ * Host memory one text lease charges. A dedicated GPU holding the whole peak keeps it
+ * off the host, and a loaded model is already reflected in measured free memory. Until
+ * load reports its actual offload, a model that may spill is charged in full.
+ */
+export function textHostReservation(options: {
+  peakBytes: number
+  deviceBytes: number
+  loaded: boolean
+}): { requestedBytes: number; residentBytes: number } {
+  const offloaded = options.deviceBytes >= options.peakBytes
+  const requestedBytes = offloaded ? DEDICATED_HOST_OVERHEAD_BYTES : options.peakBytes
+  return {
+    requestedBytes,
+    residentBytes: options.loaded ? Math.max(0, requestedBytes - GENERATION_SCRATCH_BYTES) : 0
+  }
+}
+
 export function inferenceBudgetBytes(input: VramBudgetInput): number {
   const sharedFree = input.vramShareFreeBytes ?? 0
   if (sharedFree > 0) return sharedFree

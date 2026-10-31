@@ -109,10 +109,13 @@ export class ContextMemoryStore {
     return this.rendererBytes
   }
   private pressureLimit = Infinity
+  /** Returns the logical bytes this released, for eviction diagnostics. */
   setPressureLimit(bytes: number) {
+    const before = this.logicalBytes
     this.pressureLimit = Math.max(0, bytes)
     if (bytes === 0) this.dropAll()
     else this.evict()
+    return Math.max(0, before - this.logicalBytes)
   }
   private get envelopeBytes() {
     return Math.max(
@@ -648,7 +651,7 @@ export class ContextMemoryStore {
       this.evict(key)
     }
   }
-  private trim(e: ThreadEntry, key: string) {
+  private trim(e: ThreadEntry, key: string, maxBytes = Infinity) {
     const limits = this.namespaces.get(key)
     const cap =
       Math.min(
@@ -664,7 +667,7 @@ export class ContextMemoryStore {
     let removed = 0
     while (
       removed < e.records.length &&
-      (e.records.length - removed > maxMessages || e.bytes > cap)
+      (e.records.length - removed > maxMessages || e.bytes > Math.min(cap, maxBytes))
     ) {
       e.bytes -= e.records.get(removed)!.bytes
       removed++
@@ -704,9 +707,18 @@ export class ContextMemoryStore {
     const order = [...this.entries.entries()].sort((a, b) =>
       a[0] === protect ? 1 : b[0] === protect ? -1 : a[1].at - b[1].at
     )
-    for (const [key] of order) {
+    for (const [key, entry] of order) {
       if (this.entries.size <= this.config.warmThreads && this.committedBytes <= this.envelopeBytes)
         break
+      const excess = this.committedBytes - this.envelopeBytes
+      // The newest thread is the last to go, and it gives up only its oldest rows.
+      if (key === order.at(-1)![0] && excess > 0 && excess < entry.bytes) {
+        this.trim(entry, key, entry.bytes - excess)
+        entry.backfill = true
+        this.bump(key)
+        entry.generation = ++this.counter
+        break
+      }
       this.entries.delete(key)
     }
   }
