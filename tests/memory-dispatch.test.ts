@@ -286,3 +286,92 @@ it('leaves unrelated requests untouched while no memory is leased', async () => 
   const messages = [{ role: 'user', content: 'Hello' }]
   expect((await withEligibleMemory(messages, REMOTE)).messages).toBe(messages)
 })
+
+// RAM-CTX-016: compiler metadata is accounting, never evidence of clean lineage.
+describe('derived compiler and native-call privacy', () => {
+  it('withholds recompiled recovery/project text and restores sanitized original authority', async () => {
+    const prompt = await recall()
+    lease(prompt)
+    const original = [
+      {
+        role: 'system',
+        content: `Keep the original scope.\n${prompt.text}`,
+        contextBundle: { taskId: 'task' }
+      },
+      { role: 'user', content: 'What about checkout?' }
+    ]
+    await withEligibleMemory(original, LOCAL)
+    const recovered = await withEligibleMemory(
+      [
+        {
+          role: 'system',
+          content: 'Recompiled project summary PRIVATE-A',
+          contextBundle: { taskId: 'task' }
+        },
+        original[1],
+        { role: 'assistant', content: 'Specialist aggregation PRIVATE-A' },
+        { role: 'user', content: 'Outcome review PRIVATE-A' }
+      ],
+      REMOTE
+    )
+    expect(JSON.stringify(recovered.messages)).not.toContain('PRIVATE-A')
+    expect(
+      recovered.messages.some((message) => message.content.includes('Keep the original scope.'))
+    ).toBe(true)
+    expect(recovered.messages.some((message) => message.content === 'What about checkout?')).toBe(
+      true
+    )
+    expect(h.events.some((event) => event.type === 'derived-context-withheld')).toBe(true)
+  })
+  it('does not treat new private native-call arguments as a clean empty assistant message', async () => {
+    const prompt = await recall()
+    lease(prompt)
+    const original = [
+      { role: 'system', content: prompt.text },
+      { role: 'assistant', content: '' },
+      { role: 'user', content: 'Continue' }
+    ]
+    await withEligibleMemory(original, LOCAL)
+    const outgoing = await withEligibleMemory(
+      [
+        ...original.slice(0, 1),
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'new',
+              type: 'function',
+              function: { name: 'lookup', arguments: '{"secret":"PRIVATE-A"}' }
+            }
+          ]
+        },
+        { role: 'tool', content: 'Derived tool result PRIVATE-A', tool_call_id: 'new' },
+        original[2]
+      ],
+      REMOTE
+    )
+    expect(JSON.stringify(outgoing.messages)).not.toContain('PRIVATE-A')
+    expect(outgoing.messages.some((message) => 'tool_calls' in message)).toBe(false)
+  })
+  it('blocks cross-task recovery rather than replacing a child permission ceiling with the parent task', async () => {
+    const prompt = await recall()
+    lease(prompt)
+    await withEligibleMemory(
+      [
+        { role: 'system', content: prompt.text, contextBundle: { taskId: 'parent' } },
+        { role: 'user', content: 'Continue' }
+      ],
+      LOCAL
+    )
+    await expect(
+      withEligibleMemory(
+        [
+          { role: 'system', content: 'Child task PRIVATE-A', contextBundle: { taskId: 'child' } },
+          { role: 'user', content: 'Review PRIVATE-A' }
+        ],
+        REMOTE
+      )
+    ).rejects.toThrow(/different task/)
+  })
+})
