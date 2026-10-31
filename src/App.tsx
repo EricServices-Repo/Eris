@@ -1551,6 +1551,7 @@ export default function App() {
           }
         >
           <SettingsModal
+            activeThreadId={activeThread?.id ?? null}
             open={settingsOpen}
             hasWorkspace={Boolean(workspacePath)}
             seedResolved={settings}

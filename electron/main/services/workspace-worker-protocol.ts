@@ -5,6 +5,7 @@ import type { IndexRecord } from './code-index'
 export type ChatPage = { before?: number; limit?: number }
 interface AdditionalWorkspaceResults {
   'context-reference-sources': import('../../../src/shared/reference-binding').ReferenceSourceResult
+  'chat-storage-usage': import('../../../src/shared/memory-usage').ArchiveMemoryUsage
   'context-replay': import('../../../src/shared/context-memory').ContextDerivationStatus
   'context-changes': ReturnType<import('./chat-database').ChatDatabase['contextChanges']>
 }
@@ -37,6 +38,7 @@ export type WorkspaceRequest =
       write?: MemoryControls
       expectedSource?: ContextHeader
     }
+  | { type: 'chat-storage-usage'; dir: string }
   | { type: 'chat-list'; dir: string }
   | { type: 'chat-get'; dir: string; id: string; page?: ChatPage }
   | { type: 'chat-save'; dir: string; thread: ChatThread }

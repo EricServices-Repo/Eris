@@ -7627,3 +7627,113 @@ button:disabled {
   right: 8px;
   max-width: calc(100% - 16px);
 }
+
+/* Conversation memory: distinguish estimated RAM from durable history storage. */
+.memory-panel {
+  display: grid;
+  gap: 20px;
+}
+.memory-section {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+}
+.memory-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.memory-section h3 {
+  margin: 0 0 12px;
+}
+.memory-section p,
+.memory-section small {
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+.memory-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+.memory-cards > div {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.memory-cards span {
+  font-size: 12px;
+}
+.memory-cards strong {
+  font-size: 24px;
+  font-weight: 600;
+}
+.memory-detail {
+  font-size: 12px;
+}
+.memory-section progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--accent);
+}
+.memory-fields {
+  border: 0;
+  padding: 0;
+  margin: 16px 0;
+  min-width: 0;
+}
+.memory-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+.memory-field label {
+  font-weight: 500;
+}
+.memory-field p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  max-width: 600px;
+}
+.memory-field input[type='number'],
+.memory-field select {
+  width: 120px;
+  flex-shrink: 0;
+  padding: 8px;
+  border-radius: 8px;
+}
+.memory-field input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+.memory-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+@media (max-width: 640px) {
+  .memory-section {
+    padding: 14px;
+  }
+  .memory-field {
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .memory-field input[type='number'] {
+    width: 90px;
+  }
+}
+
+.memory-trend-bars { display: flex; align-items: end; height: 64px; gap: 3px; border-bottom: 1px solid var(--border); }
+.memory-trend-bars span { display: block; min-width: 2px; flex: 1; background: var(--accent); border-radius: 3px 3px 0 0; }

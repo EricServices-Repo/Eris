@@ -14,6 +14,7 @@ import { GitHubSettingsPanel } from './GitHubSettingsPanel'
 import { EricServicesAccountPanel } from './EricServicesAccountPanel'
 import { UsagePanel } from './UsagePanel'
 import { type Category, SettingRows, setAt, settingFields } from './fields'
+import { MemoryPanel } from './panels/MemoryPanel'
 import { AgentPanel } from './panels/AgentPanel'
 import { ContextPanel, useContextPanelState } from './panels/ContextPanel'
 import { FeedbackPanel } from './panels/FeedbackPanel'
@@ -46,6 +47,7 @@ import {
 interface Props {
   open: boolean
   hasWorkspace: boolean
+  activeThreadId?: string | null
   /** Already-loaded app settings for instant paint before IPC returns. */
   seedResolved?: AppSettings | null
   /** Accepts legacy model page ids and maps them to the new pages. */
@@ -59,6 +61,7 @@ interface Props {
 export function SettingsModal({
   open,
   hasWorkspace,
+  activeThreadId,
   seedResolved = null,
   initialCategory,
   startCreateSkill,
@@ -422,6 +425,15 @@ export function SettingsModal({
           )}
 
           {category === 'usage' && <UsagePanel />}
+          {category === 'memory' && (
+            <MemoryPanel
+              activeThreadId={activeThreadId}
+              onChanged={async (next) => {
+                onChanged(next)
+                await load()
+              }}
+            />
+          )}
 
           {category === 'composer' && (
             <ComposerModelsPanel
