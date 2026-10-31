@@ -65,6 +65,8 @@ const row = (id: string, content: string): ChatMessage => ({
 })
 const task = () =>
   createTaskContract({
+    // Recovery recompiles the same task; child task changes have a separate guard.
+    taskId: 'lineage-task',
     workspacePath: null,
     text: GOAL,
     plan: {

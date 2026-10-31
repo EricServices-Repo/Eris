@@ -1,0 +1,9 @@
+# RAM-CTX-016: derived run-state destination ceiling
+
+The existing request-scoped evidence lease records exposure to recalled items and applies current policy at every shared transport call. Generated messages, compaction summaries, tool results and specialist/review projections produced after exposure are conservatively dependent; they are withheld if the destination is not eligible or an exposed source is revoked. This is request-level provenance, not an assertion that individual generated sentences can be attributed precisely.
+
+Compiled system messages no longer bypass that lineage check merely by carrying a contextBundle accounting record. Recompilation can fold private derived text into task/project fields, so a fresh system message is treated as dependent too. The lease captures a sanitized copy of the pre-exposure authority prompt with recalled items removed. Same-task recovery can restore that clean authority and the original user intent; it does not forward generated summaries as replacement instructions. Cross-task compiled transfers fail explicitly rather than substituting a parent authority prompt for a child's narrower task. Child/review work must be rebuilt from eligible sources or use an eligible local destination.
+
+Clean-message identity now includes native tool calls and call-result IDs, as well as role and content. An empty assistant turn cannot launder new private arguments by matching a previously clean empty answer. Accounting metadata remains separate from source permissions and is stripped by production adapters.
+
+Existing compaction, policy-change, revocation, KV-reseed and dispatch accounting checks are supplemented with recovery/project-prompt laundering, native-call argument laundering, specialist aggregation/outcome-review text and cross-task blocking fixtures. These deterministic tests do not claim observed remote disclosure or sentence-level privacy tracking outside the active run lease.

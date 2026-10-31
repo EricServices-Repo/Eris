@@ -28,7 +28,12 @@ type EvidenceLease = {
   token: string
   revoked: Set<string>
   /** Set once a model has received an item; digests the messages that predate it. */
-  exposure: { clean: Set<string>; intent: unknown; items: Set<string> } | null
+  exposure: {
+    clean: Set<string>
+    intent: unknown
+    items: Set<string>
+    authority?: { role: string; content: string; contextBundle?: { taskId: string } }
+  } | null
 }
 const leases = new Set<EvidenceLease>()
 export const DERIVED_WITHHELD_NOTICE =
@@ -139,7 +144,14 @@ function withoutItem(content: string, line: string) {
 
 const digest = (message: { content?: unknown }) =>
   createHash('sha256')
-    .update(JSON.stringify([(message as { role?: unknown }).role, message.content]))
+    .update(
+      JSON.stringify([
+        (message as { role?: unknown }).role,
+        message.content,
+        (message as { tool_calls?: unknown }).tool_calls,
+        (message as { tool_call_id?: unknown }).tool_call_id
+      ])
+    )
     .digest('hex')
 
 /** Later messages may repeat what the model read, so they inherit its privacy limit. */
@@ -152,7 +164,19 @@ function recordExposure(lease: EvidenceLease, messages: Array<{ content?: unknow
   )
   if (!exposed) return
   const user = messages.filter((message) => (message as { role?: unknown }).role === 'user')
+  const firstSystem = messages.find((message) => (message as { role?: string }).role === 'system')
+  const authority =
+    firstSystem && typeof firstSystem.content === 'string'
+      ? {
+          ...firstSystem,
+          role: 'system',
+          content: lease.items
+            .reduce((text, item) => withoutItem(text, item.line), firstSystem.content)
+            .replace(MEMORY_PROMPT_HEADER, '')
+        }
+      : undefined
   lease.exposure = {
+    authority,
     clean: new Set(messages.map(digest)),
     intent: user[user.length - 1],
     items: new Set(
@@ -171,17 +195,31 @@ function recordExposure(lease: EvidenceLease, messages: Array<{ content?: unknow
 /**
  * Withhold what may derive from private recall. Generated turns, tool output and summaries
  * carry no sentence-level lineage, so everything after exposure is treated as dependent.
- * Compiled system prompts stay because their memory items were already removed.
+ * A newly compiled system prompt is also derived: its project/task text may echo
+ * private evidence. Only the original sanitized authority snapshot may be restored.
  */
 function withoutDerived<T extends { content?: unknown }>(
   lease: EvidenceLease,
   messages: T[],
   notice = DERIVED_WITHHELD_NOTICE
 ): T[] {
-  const { clean, intent } = lease.exposure!
-  const kept = messages.filter(
-    (message) => clean.has(digest(message)) || 'contextBundle' in message
+  const { clean, intent, authority } = lease.exposure!
+  const kept = messages.filter((message) => clean.has(digest(message)))
+  const removedSystems = messages.filter(
+    (message) =>
+      !kept.includes(message) &&
+      (message as { role?: string }).role === 'system' &&
+      'contextBundle' in message
   )
+  if (
+    removedSystems.some((message) => {
+      const taskId = (message as { contextBundle?: { taskId?: string } }).contextBundle?.taskId
+      return taskId && taskId !== authority?.contextBundle?.taskId
+    })
+  )
+    throw new Error(
+      'Derived context cannot be transferred to a different task at this destination. Rebuild the child/review task from eligible sources.'
+    )
   if (kept.length === messages.length) return messages
   appendTaskEvent(lease.taskId, 'derived-context-withheld', {
     withheld: messages.length - kept.length,
@@ -189,6 +227,9 @@ function withoutDerived<T extends { content?: unknown }>(
   })
   const hasUser = kept.some((message) => (message as { role?: unknown }).role === 'user')
   return [
+    ...(kept.some((message) => (message as { role?: string }).role === 'system') || !authority
+      ? []
+      : [authority as unknown as T]),
     ...kept,
     ...(hasUser || !intent ? [] : [intent as T]),
     { role: 'system', content: notice } as unknown as T
