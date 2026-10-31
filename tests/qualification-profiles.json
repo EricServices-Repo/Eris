@@ -75,6 +75,7 @@
         "tests/context-dispatch.test.ts",
         "tests/context-sequence.test.ts",
         "tests/context-release-gate.test.ts",
+        "tests/context-critical-pressure.test.ts",
         "tests/context-memory-recovery.test.ts"
       ],
       "notRun": [

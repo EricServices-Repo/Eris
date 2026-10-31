@@ -9,7 +9,11 @@ import { realpathAllowMissing } from './workspace-fs'
 import { registeredWorkspaceId } from './workspace'
 import { getResolvedSettings } from './settings'
 import { workspaceRequest } from './workspace-worker-client'
-import { contextMemoryStore, ContextMemoryStore } from './context-memory-store'
+import {
+  contextMemoryStore,
+  ContextMemoryStore,
+  RECOVERY_RESERVATION_BYTES
+} from './context-memory-store'
 import {
   contextPreviewScope,
   lastContextDispatch,
@@ -20,6 +24,7 @@ import {
   type ContextPreview,
   type MemoryPrompt,
   type MemoryInspection,
+  type ContextMemorySettings,
   ContextMemorySettingsSchema,
   type ContextHeader,
   type ContextPage,
@@ -236,6 +241,117 @@ export async function warmConversationMemory(
     .catch(() => {})
   await load.wait(signal)
 }
+/**
+ * Recall when RAM cannot be used: pins and durable matches live in SQLite and need only
+ * a small fixed allowance. Each step down still works if the one above it fails.
+ */
+async function recallWithoutRam(
+  root: string | null,
+  id: string,
+  query: string,
+  policy: ContextMemorySettings,
+  options: {
+    coveredSourceIds?: readonly string[]
+    excludeId?: string
+    projectRoot?: string | null
+    tokens?: number
+    signal: AbortSignal
+  }
+): Promise<{ prompt: MemoryPrompt; inspection: MemoryInspection }> {
+  const { signal } = options
+  const key = memoryKey(root, id)
+  const paused = 'Host memory is critically constrained, so optional RAM recall is paused.'
+  const unavailable = (detail: string) =>
+    contextMemoryStore.unavailable(key, `${paused} ${detail}`, policy.shareWithRemoteModels)
+  const reservation = contextMemoryStore.reserveRecovery()
+  if (!reservation) return unavailable('Recent canonical messages remain available.')
+  const temporary = `${key}:pressure`
+  const store = new ContextMemoryStore()
+  store.configure({ ...policy, maxMemoryMiB: 16, maxThreadMiB: 4, maxMessages: 500 })
+  store.setPressureLimit(Math.floor(RECOVERY_RESERVATION_BYTES * 0.75))
+  try {
+    const request = <T>(work: Promise<T>) => abortable(work, [signal])
+    const [controls, header] = await Promise.all([
+      request(workspaceRequest({ type: 'context-controls', dir: dir(root), id })),
+      request(workspaceRequest({ type: 'context-header', dir: dir(root), id }))
+    ])
+    if (!header || (controls.revision ?? 0) !== (header.controlsRevision ?? 0))
+      return unavailable('Recent canonical messages remain available.')
+    const archive = await request(
+      workspaceRequest({
+        type: 'context-archive-search',
+        dir: dir(root),
+        id,
+        query: query.slice(0, 8192),
+        projectRoot: options.projectRoot
+      })
+    ).catch(() => {
+      signal.throwIfAborted() // Pins do not depend on the archive index.
+      return null
+    })
+    const durable =
+      archive?.header?.revision === header.revision &&
+      archive.header.sourceEpoch === header.sourceEpoch
+        ? archive
+        : null
+    const install = (records: NonNullable<typeof archive>['records']) => {
+      store.configureNamespace(temporary, policy)
+      store.install(
+        temporary,
+        {
+          revision: header.revision,
+          sourceEpoch: header.sourceEpoch,
+          total: header.messageCount,
+          records,
+          controls,
+          partial: true
+        },
+        store.token(temporary)
+      )
+    }
+    install(durable?.records ?? [])
+    const tier = durable && store.has(temporary) ? 'durable-and-pins' : 'pins'
+    if (!store.has(temporary)) install([])
+    // At most twelve archive rows and the pins, so the default scratch arena is not needed.
+    const selected = await store.select(temporary, query, {
+      ...options,
+      policy,
+      scratchBytes: 1024 ** 2
+    })
+    if (selected.prompt.manifest.recallTier === 'recent')
+      return unavailable('Recent canonical messages remain available.')
+    Object.assign(selected.prompt, {
+      namespace: key,
+      evidenceToken: contextMemoryStore.revocationToken(key),
+      sourceVersion: header,
+      allowRemote: policy.shareWithRemoteModels
+    })
+    Object.assign(selected.prompt.manifest, {
+      recallTier: tier,
+      ...(durable ? { archive: durable.index } : {}),
+      reason: `${paused} ${tier === 'pins' ? 'Pinned notes' : 'Durable history and pinned notes'} were used instead.`
+    })
+    const prompt = await filterEvidenceMemory(root, selected.prompt, signal)
+    return {
+      prompt,
+      inspection: {
+        ...selected.inspection,
+        manifest: prompt.manifest,
+        facts: selected.inspection.facts.filter((fact) =>
+          prompt.manifest.selectedIds.includes(fact.id)
+        )
+      }
+    }
+  } catch {
+    signal.throwIfAborted()
+    return unavailable(
+      'Pinned notes could not be read. Recent canonical messages remain available.'
+    )
+  } finally {
+    store.clear(temporary)
+    reservation.release()
+  }
+}
 /** Remembered per conversation so an inspection matches the turn's resolved task scope. */
 const taskScopes = new Map<string, string | null>()
 function rememberTaskScope(key: string, projectRoot: string | null) {
@@ -259,12 +375,6 @@ export async function conversationContext(
 ): Promise<{ prompt: MemoryPrompt; inspection: MemoryInspection }> {
   const policy = ContextMemorySettingsSchema.parse(settings.agent.contextMemory ?? {})
   options.signal?.throwIfAborted()
-  if (policy.enabled && refreshContextMemoryPressure().pressure === 'critical')
-    return contextMemoryStore.unavailable(
-      memoryKey(root, id),
-      'Host memory is critically constrained; optional RAM recall is paused. Recent canonical messages remain available.',
-      policy.shareWithRemoteModels
-    )
   if (options.projectRoot !== undefined) rememberTaskScope(memoryKey(root, id), options.projectRoot)
   const deadline = new AbortController()
   const timer = setTimeout(() => deadline.abort(), policy.foregroundDeadlineMs)
@@ -273,6 +383,8 @@ export async function conversationContext(
     ? AbortSignal.any([options.signal, deadline.signal])
     : deadline.signal
   try {
+    if (policy.enabled && refreshContextMemoryPressure().pressure === 'critical')
+      return await recallWithoutRam(root, id, query, policy, { ...options, signal })
     await warmConversationMemory(root, id, settings, signal)
     if (contextMemoryStore.config.enabled && !contextMemoryStore.has(memoryKey(root, id)))
       await warmConversationMemory(root, id, settings, signal)
@@ -288,12 +400,13 @@ export async function conversationContext(
       contextMemoryStore.config.enabled &&
       result.inspection.manifest.coverage !== 'complete'
     ) {
-      const reservation = contextMemoryStore.reserve(key, 16_000_000)
+      const reservation =
+        contextMemoryStore.reserve(key, 16_000_000) ?? contextMemoryStore.reserveRecovery()
       if (reservation) {
         const temporary = `${key}:archive`
         const archiveStore = new ContextMemoryStore()
         archiveStore.configure({ ...policy, maxMemoryMiB: 16, maxThreadMiB: 4, maxMessages: 500 })
-        archiveStore.setPressureLimit(12_000_000)
+        archiveStore.setPressureLimit(Math.floor(reservation.bytes * 0.75))
         try {
           const archive = await abortable(
             workspaceRequest({
@@ -371,6 +484,7 @@ export async function conversationContext(
               ].filter((fact) => admitted.some((item) => item.id === fact.id))
               selected.prompt.manifest.reason = `Durable archive: ${archive.index.backend}; index ${archive.index.complete ? 'complete' : 'partial'} at ordinal ${archive.index.cursor}, chunk offset ${archive.index.contentOffset}. At most 64 candidates and 12 sources materialized.`
               selected.prompt.manifest.archive = archive.index
+              selected.prompt.manifest.recallTier = 'ram'
               const prompt = await filterEvidenceMemory(root, selected.prompt, signal)
               return {
                 prompt,
@@ -392,6 +506,7 @@ export async function conversationContext(
         }
       }
     }
+    result.prompt.manifest.recallTier = 'ram'
     const prompt = await filterEvidenceMemory(root, result.prompt, signal)
     return {
       prompt,
