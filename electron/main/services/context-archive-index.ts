@@ -119,12 +119,20 @@ export function advanceArchiveIndex(db: DatabaseSync, id: string, limit = 32) {
 export function archiveCandidates(db: DatabaseSync, id: string, query: string) {
   const terms = queryTerms(recallQuery(query.slice(0, 8192))).slice(0, 16)
   if (!terms.length) return []
+  // Give every query term its own bounded posting slice. A common term must not
+  // consume the entire arena before a rare identifier is considered.
+  const slices = terms
+    .map(
+      () => `SELECT chunkId FROM (SELECT chunkId FROM context_archive_terms
+    WHERE threadId=? AND term=? ORDER BY chunkId DESC LIMIT 256)`
+    )
+    .join(' UNION ALL ')
   return db
     .prepare(
       `SELECT c.* FROM context_archive_chunks c JOIN (
-    SELECT chunkId,COUNT(*) AS score FROM (SELECT chunkId FROM context_archive_terms WHERE threadId=? AND term IN (${terms.map(() => '?').join(',')}) LIMIT 4096)
+    SELECT chunkId,COUNT(*) AS score FROM (${slices})
     GROUP BY chunkId ORDER BY score DESC,chunkId DESC LIMIT 64
   ) hits ON hits.chunkId=c.chunkId ORDER BY hits.score DESC,c.ordinal DESC`
     )
-    .all(id, ...terms)
+    .all(...terms.flatMap((term) => [id, term]))
 }

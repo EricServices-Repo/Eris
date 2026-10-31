@@ -1,3 +1,4 @@
+import { archiveCandidates } from '../electron/main/services/context-archive-index'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs'
@@ -359,4 +360,26 @@ describe('Bounded durable archive index', () => {
     db.remove('other')
     expect(db.archiveSearch('other', 'uniqueBookingRule').records).toEqual([])
   })
+})
+
+it('reserves candidate capacity for rare identifiers beside very common archive terms', () => {
+  db = new ChatDatabase(dir)
+  const raw = new DatabaseSync(join(dir, 'chats.sqlite'))
+  raw.exec('BEGIN')
+  const chunk = raw.prepare(
+    'INSERT INTO context_archive_chunks(threadId,ordinal,offset,text,sequence) VALUES(?,?,0,?,1) RETURNING chunkId'
+  )
+  const term = raw.prepare('INSERT INTO context_archive_terms VALUES(?,?,?)')
+  for (let i = 0; i < 5000; i++) {
+    const row = chunk.get('t', i, 'commonword')!
+    term.run('t', 'commonword', row.chunkId!)
+  }
+  const rare = chunk.get('t', 5000, 'zebra')!
+  term.run('t', 'zebra', rare.chunkId!)
+  raw.exec('COMMIT')
+  const hits = archiveCandidates(raw, 't', 'commonword zebra')
+  expect(hits.some((hit) => hit.chunkId === rare.chunkId)).toBe(true)
+  expect(hits.length).toBeLessThanOrEqual(64)
+  expect(archiveCandidates(raw, 'other', 'commonword zebra')).toEqual([])
+  raw.close()
 })
