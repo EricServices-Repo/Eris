@@ -43,7 +43,9 @@ import {
   REPLY_MAX_TOKENS,
   isMemoryError,
   localPerformanceContextMax,
-  modelLoadOptions
+  modelLoadOptions,
+  textHostReservation,
+  textModelPeakBytes
 } from './vram-fit'
 import { appState } from '../app-state'
 import {
@@ -942,6 +944,20 @@ async function ensureRuntimeInProcess(
   })
 }
 
+/** Device and host charges for one text lease on this model's current placement. */
+async function textLease(entry: BuiltinModelManifestEntry, path: string) {
+  const peakBytes = textModelPeakBytes(entry.approxBytes)
+  const device = await inferenceDevice(peakBytes)
+  return {
+    ...device,
+    ...textHostReservation({
+      peakBytes,
+      deviceBytes: device.deviceBytes,
+      loaded: workerModelPath === path || runtime?.modelPath === path
+    })
+  }
+}
+
 async function ensureWorkerModel(
   modelPath: string,
   entry: BuiltinModelManifestEntry,
@@ -1457,8 +1473,7 @@ export function warmLocalInference(
       const lease = await acquireInferenceLease({
         workload: 'text',
         owner: entry.ref,
-        ...(await inferenceDevice(Math.ceil(entry.approxBytes * 1.25 + 1024 ** 3))),
-        requestedBytes: Math.ceil(entry.approxBytes * 1.25 + 1024 ** 3),
+        ...(await textLease(entry, path)),
         exclusiveGpu: true,
         priority: 5
       })
@@ -1540,8 +1555,7 @@ export async function* streamBuiltinChat(options: {
   const lease = await acquireInferenceLease({
     workload: 'text',
     owner: entry.ref,
-    ...(await inferenceDevice(Math.ceil(entry.approxBytes * 1.25 + 1024 ** 3))),
-    requestedBytes: Math.ceil(entry.approxBytes * 1.25 + 1024 ** 3),
+    ...(await textLease(entry, path)),
     exclusiveGpu: true,
     priority: 20,
     signal: options.signal
