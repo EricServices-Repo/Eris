@@ -128,6 +128,7 @@ try {
   assert.equal(typeof archive.index.fts5Available, 'boolean')
   assert.ok(archive.index.builtChunks <= 32)
   assert.ok(archive.records.length <= 12)
+  assert.equal(await request({ type: 'chat-close', dir }), true)
   const replay = await request({ type: 'context-replay', dir, limit: 500 })
   assert.equal(replay.complete, true)
   const changes = await request({ type: 'context-changes', dir, after: 0, limit: 2 })
