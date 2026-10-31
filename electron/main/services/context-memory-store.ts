@@ -84,9 +84,12 @@ export type ContextReservation = {
   grow(bytes: number): boolean
   release(): void
 }
+/** The same ceiling a durable archive probe already reserves. */
+export const RECOVERY_RESERVATION_BYTES = 16_000_000
 export class ContextMemoryStore {
   private entries = new Map<string, ThreadEntry>()
   private reservations = new Set<ContextReservation>()
+  private recoveryBytes = 0
   /** Record arrays in use by a selection; charged only once the store has let go of them. */
   private pins = new Map<ContextRowDeque<RecordEntry>, { bytes: number; users: number }>()
   private generations = new Map<string, number>()
@@ -276,6 +279,28 @@ export class ContextMemoryStore {
     if (reservation.grow(bytes)) return reservation
     reservation.release()
     return null
+  }
+  /**
+   * A small allocation that works at any pressure, so recall can still read pins and
+   * durable matches with an empty envelope. Bounded in total, and null beyond that.
+   */
+  reserveRecovery(bytes = RECOVERY_RESERVATION_BYTES): ContextReservation | null {
+    if (this.recoveryBytes + bytes > RECOVERY_RESERVATION_BYTES) return null
+    this.recoveryBytes += bytes
+    let held = bytes
+    const reservation: ContextReservation = {
+      get bytes() {
+        return held
+      },
+      grow: () => false,
+      release: () => {
+        this.recoveryBytes -= held
+        held = 0
+        this.reservations.delete(reservation)
+      }
+    }
+    this.reservations.add(reservation)
+    return reservation
   }
   private makeRoom(protect: string, bytes: number) {
     const limit = this.envelopeBytes
@@ -729,6 +754,7 @@ export class ContextMemoryStore {
       sourceIds: [],
       estimatedTokens: 0,
       omittedFacts: 0,
+      recallTier: 'recent',
       reason
     }
     return {
@@ -751,6 +777,8 @@ export class ContextMemoryStore {
       tokens?: number
       policy?: Readonly<ContextMemorySettings>
       signal?: AbortSignal
+      /** Match and excerpt scratch, for callers selecting from a few known rows. */
+      scratchBytes?: number
     } = {}
   ): Promise<{
     prompt: MemoryPrompt
@@ -788,7 +816,7 @@ export class ContextMemoryStore {
     // before creating them. The resident snapshot is separately pinned below.
     const scratch = this.reserve(
       key,
-      8 * 1024 ** 2 + controlSize(e.controls) * 2 + e.records.length * 16
+      (options.scratchBytes ?? 8 * 1024 ** 2) + controlSize(e.controls) * 2 + e.records.length * 16
     )
     if (!scratch)
       return this.unavailable(

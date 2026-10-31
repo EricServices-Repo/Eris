@@ -85,6 +85,8 @@ export type MemoryManifest = {
   corruptOrdinals?: number[]
   omittedFacts: number
   omittedPinnedFacts?: number
+  /** How far recall had to step down: RAM, then durable search and pins, pins, recent turns. */
+  recallTier?: 'ram' | 'durable-and-pins' | 'pins' | 'recent'
   reason?: string
 }
 /** One recalled unit exactly as rendered into a prompt, so it can be traced or removed later. */
