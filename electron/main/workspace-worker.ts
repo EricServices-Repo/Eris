@@ -38,6 +38,8 @@ export async function handleWorkspaceRequest(request: WorkspaceRequest): Promise
       db.replayContextChanges()
       return db.contextHeader(request.id)
     }
+    case 'context-archive-search':
+      return chatDatabase(request.dir).archiveSearch(request.id, request.query, request.projectRoot)
     case 'context-page':
       return chatDatabase(request.dir).contextPage(
         request.id,

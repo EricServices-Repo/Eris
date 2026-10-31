@@ -75,6 +75,7 @@ export type MemoryManifest = {
   estimatedTokens: number
   /** Lexical ranking that produced this selection. */
   derivation?: ContextDerivationStatus
+  archive?: import('./archive-context').ArchiveContextSearch['index']
   rankingVersion?: number
   /** Matching raw sources already covered by admitted complete recent turns. */
   duplicateSourceMessages?: number

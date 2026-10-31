@@ -118,6 +118,16 @@ try {
   assert.equal(full.messages.length, 156)
   assert.equal(full.messages[0].content, 'Message 0')
   assert.equal(await readFile(join(dir, 'legacy.json'), 'utf8'), original)
+  const archive = await request({
+    type: 'context-archive-search',
+    dir,
+    id: 'legacy',
+    query: 'Message'
+  })
+  assert.equal(archive.index.backend, 'sqlite-postings')
+  assert.equal(typeof archive.index.fts5Available, 'boolean')
+  assert.ok(archive.index.builtChunks <= 32)
+  assert.ok(archive.records.length <= 12)
   const replay = await request({ type: 'context-replay', dir, limit: 500 })
   assert.equal(replay.complete, true)
   const changes = await request({ type: 'context-changes', dir, after: 0, limit: 2 })

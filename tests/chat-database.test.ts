@@ -308,3 +308,55 @@ describe('Saved history storage telemetry', () => {
     raw.close()
   })
 })
+
+describe('Bounded durable archive index', () => {
+  it('retrieves an old source without hydrating the full transcript and survives restart', () => {
+    db = new ChatDatabase(dir)
+    const original = thread(1000)
+    original.messages[0].content = 'Remember bookingConfirmation must use CAD'
+    db.save(original)
+    const found = db.archiveSearch('thread', 'bookingConfirmation')
+    expect(found.records.some((row) => row.message.id === '0')).toBe(true)
+    expect(found.index.builtChunks).toBeLessThanOrEqual(32)
+    expect(found.index.complete).toBe(false)
+    expect(found.records.length).toBeLessThanOrEqual(12)
+    db.close()
+    db = new ChatDatabase(dir)
+    expect(db.archiveSearch('thread', 'bookingConfirmation').records[0]?.message.id).toBe('0')
+  })
+  it('resumes bounded Unicode chunks beyond the first excerpt and filters controls and scope', () => {
+    db = new ChatDatabase(dir)
+    const original = thread(2)
+    original.messages[0].content =
+      'x '.repeat(40000) + '決済通貨はカナダドルです bookingConfirmationCurrency CAD'
+    original.messages[0].contextProjectRoot = '/A'
+    db.save(original)
+    let result = db.archiveSearch('thread', 'bookingConfirmationCurrency', '/A')
+    for (let i = 0; i < 8 && !result.index.complete; i++)
+      result = db.archiveSearch('thread', 'bookingConfirmationCurrency', '/A')
+    expect(result.records.some((row) => row.message.content.includes('CAD'))).toBe(true)
+    expect(result.records[0].message.contextContentOffset).toBeGreaterThan(32768)
+    expect(db.archiveSearch('thread', 'bookingConfirmationCurrency', '/B').records).toEqual([])
+    const controls = db.contextControls('thread')
+    db.contextControls('thread', { ...controls, forgotten: ['0'] })
+    expect(db.archiveSearch('thread', 'bookingConfirmationCurrency', '/A').records).toEqual([])
+  })
+  it('removes stale rewritten/deleted sources from the index and never returns another thread', () => {
+    db = new ChatDatabase(dir)
+    const original = thread(2)
+    original.messages[0].content = 'Remember uniqueBookingRule CAD'
+    db.save(original)
+    expect(db.archiveSearch('thread', 'uniqueBookingRule').records.length).toBe(1)
+    original.messages[0].content = 'Rewritten unrelated body'
+    db.save(original)
+    expect(db.archiveSearch('thread', 'uniqueBookingRule').records).toEqual([])
+    db.save({
+      ...original,
+      id: 'other',
+      messages: [{ ...original.messages[0], content: 'uniqueBookingRule secret' }]
+    })
+    expect(db.archiveSearch('thread', 'uniqueBookingRule').records).toEqual([])
+    db.remove('other')
+    expect(db.archiveSearch('other', 'uniqueBookingRule').records).toEqual([])
+  })
+})

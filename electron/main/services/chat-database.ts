@@ -2,6 +2,11 @@ import { createHash as referenceHash } from 'crypto'
 import { extractRecommendations } from '../../../src/shared/recommendations'
 import type { ReferenceSource, ReferenceSourceResult } from '../../../src/shared/reference-binding'
 import {
+  installArchiveIndex,
+  advanceArchiveIndex,
+  archiveCandidates
+} from './context-archive-index'
+import {
   installContextChangeLog,
   replayContextChanges,
   contextDerivationStatus
@@ -133,6 +138,7 @@ export class ChatDatabase {
     this.db.exec(
       'CREATE TABLE IF NOT EXISTS context_controls(threadId TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,body TEXT NOT NULL)'
     )
+    this.transaction(() => installArchiveIndex(this.db))
     this.migrateContextSequences()
     this.transaction(() => installContextChangeLog(this.db))
     try {
@@ -561,6 +567,81 @@ export class ChatDatabase {
           .prepare('UPDATE conversations SET contextRevision=contextRevision+1 WHERE id=?')
           .run(id)
       return Boolean(updated.changes)
+    })
+  }
+  archiveSearch(
+    id: string,
+    query: string,
+    projectRoot?: string | null
+  ): import('../../../src/shared/archive-context').ArchiveContextSearch {
+    return this.transaction(() => {
+      const header = this.contextHeader(id)
+      if (!header)
+        return {
+          header: null,
+          records: [],
+          index: {
+            version: 1,
+            backend: 'sqlite-postings',
+            fts5Available: this.contextCapabilities().fts5,
+            builtChunks: 0,
+            complete: true,
+            cursor: 0,
+            contentOffset: 0,
+            candidates: 0
+          }
+        }
+      this.bindLegacyCutoff(id)
+      const controls = this.memoryControls(id)
+      const index = advanceArchiveIndex(this.db, id)
+      const candidates = archiveCandidates(this.db, id, query)
+      const records: ContextPage['records'] = []
+      const seen = new Set<string>()
+      for (const row of candidates) {
+        const raw = this.db
+          .prepare(
+            `SELECT contextSequence,CASE WHEN json_valid(body) AND length(json_extract(body,'$.id'))<=1024 AND coalesce(length(json_extract(body,'$.contextProjectRoot')),0)<=4096 AND coalesce(length(CAST(json_extract(body,'$.contextResult') AS BLOB)),0)<=16384 THEN json_object(
+          'id',substr(json_extract(body,'$.id'),1,1024), 'role',json_extract(body,'$.role'),
+          'content',substr(json_extract(body,'$.content'),?,2048), 'createdAt',coalesce(json_extract(body,'$.createdAt'),0),
+          'contextProjectRoot',json_extract(body,'$.contextProjectRoot'),
+          'contextResult',CASE WHEN length(CAST(json_extract(body,'$.contextResult') AS BLOB))<=16384 THEN json_extract(body,'$.contextResult') END) END AS body
+          FROM messages WHERE threadId=? AND ordinal=?`
+          )
+          .get(Number(row.offset) + 1, id, row.ordinal!)
+        if (!raw || Number(raw.contextSequence) !== Number(row.sequence) || !raw.body) continue
+        const value = JSON.parse(String(raw.body))
+        if (value.contextResult === null) delete value.contextResult
+        if (value.contextProjectRoot === null) delete value.contextProjectRoot
+        const message = contextRecord({
+          ...value,
+          contextSequence: Number(raw.contextSequence),
+          contextContentOffset: Number(row.offset)
+        })
+        if (
+          !message ||
+          message.content !== row.text ||
+          message.role === 'system' ||
+          seen.has(message.id) ||
+          controls.forgotten.includes(message.id) ||
+          (controls.afterSequence !== undefined
+            ? Number(raw.contextSequence) <= controls.afterSequence
+            : Number(row.ordinal) < controls.afterOrdinal) ||
+          (projectRoot !== undefined &&
+            ((message.contextProjectRoot !== undefined &&
+              message.contextProjectRoot !== projectRoot) ||
+              (message.contextResult?.projectRoot !== undefined &&
+                message.contextResult.projectRoot !== projectRoot)))
+        )
+          continue
+        seen.add(message.id)
+        records.push({ ordinal: Number(row.ordinal), message, terms: recallTerms(message.content) })
+        if (records.length >= 12) break
+      }
+      return {
+        header: this.contextHeader(id),
+        records: records.sort((a, b) => a.ordinal - b.ordinal),
+        index: { ...index, candidates: candidates.length }
+      }
     })
   }
   contextPage(
