@@ -11,8 +11,15 @@ import { RECALL_RANKING_VERSION } from '../src/shared/recall-terms'
 import { ContextMemorySettingsSchema, emptyMemoryControls } from '../src/shared/context-memory'
 import type { ChatMessage } from '../src/shared/settings-schema'
 import { LABELED } from './context-recall-labels'
+import {
+  evaluateTieredGates,
+  evaluateTieredHardware,
+  measureTieredGates,
+  type TieredHardwareEvidence,
+  type TieredThresholds
+} from './tiered-gates'
 
-export const CONTEXT_GATE_VERSION = 2
+export const CONTEXT_GATE_VERSION = 3
 export const CORPUS_VERSION = 'eris-context-corpus-1'
 export const CORPUS_SIZES = [1000, 10000, 25000, 100000]
 const QUERIES = [
@@ -231,6 +238,7 @@ export async function runContextGate(input: {
       weightsSha256?: string
       cases: number
       completed: number
+      tiered?: TieredHardwareEvidence
       paired?: {
         cases: number
         baselineCorrect: number
@@ -253,6 +261,7 @@ export async function runContextGate(input: {
       'hardware budget certification is evaluated separately'
     ],
     recall: await measureRecall(),
+    tiered: await measureTieredGates(),
     corpora
   }
 }
@@ -262,6 +271,7 @@ export type ContextBudgets = {
   maxGrowthRatio: number
   minBaselineMs: number
   minContextAccuracy?: number
+  tiered?: TieredThresholds
   profiles: Array<{
     id: string
     platform: string
@@ -290,7 +300,7 @@ export function evaluateContextGate(
   budgets: ContextBudgets,
   options: { releaseCandidate?: boolean } = {}
 ) {
-  const failures: string[] = []
+  const failures: string[] = evaluateTieredGates(report.tiered, budgets.tiered)
   const notEvaluated: string[] = []
   if (
     budgets.version !== CONTEXT_GATE_VERSION ||
@@ -484,6 +494,7 @@ export function evaluateContextGate(
       )
         failures.push('Paired context accuracy does not meet the release threshold')
     }
+    failures.push(...evaluateTieredHardware(report.liveModel?.tiered, budgets.tiered))
     if (!/^[0-9a-f]{40}$/.test(report.gitSha))
       failures.push('Release candidate lacks a source commit identity')
     for (const corpus of report.corpora) {
@@ -528,6 +539,9 @@ export function evaluateContextReleaseEvidence(
     reports.some((report) => !['darwin', 'win32'].includes(report.hardware.platform))
   )
     failures.push('Expected exactly one macOS and one Windows report')
+  const hostClasses = new Set(reports.map((report) => report.liveModel?.tiered?.hostClass))
+  if (!hostClasses.has('unified') || !hostClasses.has('dedicated'))
+    failures.push('Tiered evidence must cover one unified and one dedicated host')
   if (new Set(reports.map((report) => report.liveModel?.weightsSha256)).size > 1)
     failures.push('Platform evidence used different model weights')
   if (new Set(reports.map((report) => report.liveModel?.paired?.corpusHash)).size > 1)

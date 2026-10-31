@@ -1,7 +1,16 @@
 {
-  "version": 2,
+  "version": 3,
   "maxGrowthRatio": 12,
   "minBaselineMs": 5,
   "minContextAccuracy": 0.95,
+  "tiered": {
+    "minRecoverableShare": 1,
+    "minPostCompactionRecall": 1,
+    "maxStoreWipesPerTurn": 0,
+    "maxSummaryCallsPerRun": 3,
+    "maxReexecutedToolsPerRun": 3,
+    "maxPromptReevaluationsPerRun": 10,
+    "maxTurnNLatencyRatio": 1.5
+  },
   "profiles": []
 }
