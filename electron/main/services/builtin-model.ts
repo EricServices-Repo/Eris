@@ -37,7 +37,9 @@ import {
 } from './http-download'
 import { applyLlamaGpuPreference, noteLlamaBackend, type LlamaGpuBackend } from './gpu-accel'
 import { getResolvedSettings } from './settings'
+import { clearLoadedModel, recordLoadedModel } from './model-runtime'
 import {
+  allocationFacts,
   contextCreateOptions,
   contextLimits,
   REPLY_MAX_TOKENS,
@@ -650,6 +652,10 @@ type WorkerMsg = {
   text?: string
   error?: string
   termination?: ModelTermination
+  contextSize?: number
+  trainContextSize?: number
+  gpuLayers?: number
+  totalLayers?: number
 }
 
 function workerScriptPath(): string {
@@ -721,6 +727,7 @@ function ensureLlamaChild(): Promise<void> {
             llamaChild = null
             llamaChildReady = null
             workerModelPath = null
+            clearLoadedModel()
             activeChatSessions.clear()
           }
         })
@@ -804,6 +811,7 @@ async function disposeRuntimeUnlocked(): Promise<void> {
     llamaChildReady = null
     workerModelPath = null
   }
+  clearLoadedModel()
   if (!runtime) return
   try {
     await runtime.context?.dispose?.()
@@ -818,15 +826,16 @@ export async function disposeRuntime(): Promise<void> {
   return enqueueRuntime(() => disposeRuntimeUnlocked())
 }
 
-function contextPlan(
+export function contextPlan(
   entry: BuiltinModelManifestEntry,
-  vramBudgetBytes?: number
+  vramBudgetBytes?: number,
+  settingsContext = getResolvedSettings(appState.currentWorkspace).models.contextWindow
 ): { min: number; max: number } {
   const limits = contextLimits({
     tier: entry.tier,
     role: entry.role,
     modelContext: entry.contextWindow,
-    settingsContext: getResolvedSettings(appState.currentWorkspace).models.contextWindow
+    settingsContext
   })
   if (entry.role !== 'local') return limits
   const max = localPerformanceContextMax({
@@ -938,6 +947,8 @@ async function ensureRuntimeInProcess(
 
     const context = await createContextForVram(model, plan)
     runtime = { modelPath, llama, model, context }
+    const facts = allocationFacts(model, context)
+    recordLoadedModel({ ...facts, ref: entry.ref, contextSize: facts.contextSize ?? plan.max })
     return runtime
   })
 }
@@ -993,6 +1004,14 @@ async function ensureWorkerModel(
     throw new Error(result.error || 'Failed to load model in worker')
   }
   workerModelPath = modelPath
+  const { contextSize, trainContextSize, gpuLayers, totalLayers } = result
+  recordLoadedModel({
+    ref: entry.ref,
+    contextSize: contextSize ?? plan.max,
+    trainContextSize,
+    gpuLayers,
+    totalLayers
+  })
 }
 
 type InProcessBudget = Required<

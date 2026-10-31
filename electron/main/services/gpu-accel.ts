@@ -386,6 +386,11 @@ export async function getGpuAccelStatus(preferEgpu = true): Promise<GpuAccelStat
   return status
 }
 
+/** The last measured status, for synchronous budgeting. Null before the first probe. */
+export function lastGpuAccelStatus(): GpuAccelStatus | null {
+  return cached?.status ?? null
+}
+
 export function invalidateGpuAccelCache(): void {
   cached = null
 }

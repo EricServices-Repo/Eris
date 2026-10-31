@@ -1,3 +1,4 @@
+import { contextProvenance } from '../model-capabilities'
 import { loadWorkspaceRules } from '../chats'
 import { loadSkillsPrompt } from '../skills'
 import { findAgent } from '../agents'
@@ -381,6 +382,7 @@ export function buildPreservedWorkerMessages(options: {
       options.inputTokenBudget ?? contextBudgetTokens(options.settings, plan.models.tools)
   })
   appendTaskEvent(task.taskId, 'context-compiled', {
+    context: contextProvenance(options.settings, plan.models.tools),
     revision: task.revision,
     agentId: plan.agentId,
     model: plan.models.tools,
