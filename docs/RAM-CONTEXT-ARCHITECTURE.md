@@ -405,6 +405,8 @@ A context-change outbox is committed with each canonical mutation. The memory wo
 
 ### 9.4 Archive search without a raw-text replica
 
+Implementation status and acceptance limits: [134 implementation notes](fixes/134-durable-context-archive.md).
+
 Prefer a capability-probed SQLite FTS5 contentless index over a second unbounded in-memory inverted index. Index bounded message chunks and join candidate row IDs with scope/version metadata. Materialize exact source text only after candidates pass eligibility checks.
 
 Store chunk offsets and source references outside the FTS index. The canonical transcript remains the source text. Contentless indexing/deletion behavior depends on the packaged SQLite version; probe required features and test delete/update paths. A supported fallback may use a worker-owned external-content design, but must document its canonical-content contract and avoid accidental full transcript copies.
@@ -1450,8 +1452,3 @@ These references support platform constraints; the design choices, budgets and t
 - [SQLite WAL behavior](https://www.sqlite.org/wal.html): reader/writer/checkpoint behavior informs bounded transactions and background index work.
 
 Review date: 2026-10-29. Source code remains the authority for what Eris currently implements.
-
-### RAM-CTX-024: bounded durable archive recall
-Worker-owned SQLite chunk/posting tables keep evicted sources searchable. A portable lexical posting backend is used on both FTS5-enabled and FTS5-unavailable builds; the runtime capability is exported rather than assuming packaged SQLite supports a particular tokenizer. Each probe advances at most 32 overlapping 2,048-codepoint chunks, persists ordinal/content cursors, considers at most 4,096 postings/64 candidates and returns at most twelve source excerpts. Controls and registered task scope filter canonical materialization, and canonical text/sequence must still match the indexed span. Write/delete triggers invalidate affected chunks; restart resumes bounded indexing. An incomplete cursor explicitly means partial coverage, not a claim of whole-archive recall.
-
-When admitted RAM coverage is partial, production recall probes the archive after the normal warm path. It merges only missing sources under the existing evidence token budget. Temporary selection has a 12 MB envelope plus a 4 MB transfer reservation against the global owner; it does not consume a warm-conversation slot. Memory disclosure, canonical header checks, source epochs, and the existing dispatch lease still apply. A rewrite during an active lease may conservatively withhold an archive source absent from the warm cache. Index failures and deadline exhaustion preserve canonical recent-history fallback.
