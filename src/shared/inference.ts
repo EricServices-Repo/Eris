@@ -8,7 +8,15 @@ export interface InferenceSnapshot {
   }
   version: number
   platform: string
-  memory: { total: number; free: number; reserve: number; reservationSource: string }
+  memory: {
+    total: number
+    free: number
+    reserve: number
+    pressureReserve?: number
+    osPressure?: 'normal' | 'warn' | 'critical'
+    source?: 'system-free' | 'macos-vm-counters'
+    reservationSource: string
+  }
   devices: Array<{
     id: string
     name: string
