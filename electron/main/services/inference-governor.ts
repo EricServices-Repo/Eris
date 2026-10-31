@@ -1,9 +1,30 @@
 import type { InferenceSnapshot } from '../../../src/shared/inference'
-import { freemem, totalmem } from 'os'
+import { currentHostMemory, type HostMemorySource, type OsMemoryPressure } from './host-memory'
 export type ContextPressure = 'normal' | 'constrained' | 'critical'
 export interface OptionalMemoryOwner {
   ledger(): { ownedBytes: number; reservedBytes: number; pinnedBytes: number }
   limit(bytes: number, pressure: ContextPressure): void
+}
+export interface HostMemoryReading {
+  total: number
+  free: number
+  /** Held back from admission decisions. */
+  reserve: number
+  /** Held back from optional memory when free is reclaimable-aware; defaults to reserve. */
+  pressureReserve?: number
+  osPressure?: OsMemoryPressure
+  source?: HostMemorySource
+}
+/** The OS outranks our arithmetic, except that pending native work has not reached it yet. */
+function withOsPressure(
+  computed: ContextPressure,
+  os: OsMemoryPressure | undefined,
+  pendingBytes: number
+): ContextPressure {
+  if (os === 'critical') return 'critical'
+  if (os === 'warn') return computed === 'normal' ? 'constrained' : computed
+  if (os === 'normal' && computed === 'critical' && pendingBytes === 0) return 'constrained'
+  return computed
 }
 export type InferenceWorkload = 'text' | 'image' | 'embedding' | 'index'
 export interface InferenceDevice {
@@ -76,9 +97,9 @@ export class InferenceGovernor {
     const ledger = this.optional?.ledger() ?? { ownedBytes: 0, reservedBytes: 0, pinnedBytes: 0 }
     // Owned/pinned allocations are already reflected in free; only pending
     // native bytes are subtracted there. Total capacity still counts each owner.
-    const headroom = Math.max(0, memory.free - memory.reserve - pending)
+    const headroom = Math.max(0, memory.free - (memory.pressureReserve ?? memory.reserve) - pending)
     const was = this.pressure
-    this.pressure =
+    const computed: ContextPressure =
       headroom === 0
         ? 'critical'
         : was === 'critical' && headroom < memory.total * 0.02
@@ -86,6 +107,7 @@ export class InferenceGovernor {
           : headroom < memory.total * (was === 'normal' ? 0.05 : 0.08)
             ? 'constrained'
             : 'normal'
+    this.pressure = withOsPressure(computed, memory.osPressure, pending)
     const allowance = Math.max(
       0,
       Math.min(
@@ -122,11 +144,22 @@ export class InferenceGovernor {
     estimatedDeviceBytes: number
   }> = []
   constructor(
-    private memory = () => ({
-      total: totalmem(),
-      free: freemem(),
-      reserve: Math.max(2 * 1024 ** 3, totalmem() * (process.platform === 'darwin' ? 0.25 : 0.15))
-    }),
+    private memory: () => HostMemoryReading = () => {
+      const host = currentHostMemory()
+      const floor = 2 * 1024 ** 3
+      return {
+        total: host.total,
+        free: host.available,
+        reserve: Math.max(floor, host.total * (process.platform === 'darwin' ? 0.25 : 0.15)),
+        // Reclaimable pages already count as free here, so the larger reserve that
+        // offset macOS's low free-page figure would hold back memory twice.
+        ...(host.source === 'macos-vm-counters'
+          ? { pressureReserve: Math.max(floor, host.total * 0.125) }
+          : {}),
+        ...(host.osPressure ? { osPressure: host.osPressure } : {}),
+        source: host.source
+      }
+    },
     private now = () => Date.now()
   ) {}
   setDevices(devices: InferenceDevice[]) {

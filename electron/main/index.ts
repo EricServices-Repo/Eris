@@ -39,6 +39,8 @@ import { cancelEvalRun } from './services/eval-runner'
 import { disposeRuntime } from './services/builtin-model'
 import { disposeWorkspaceWorkers } from './services/workspace-worker-client'
 import { configureLogger, logInfo, logWarn } from './services/logger'
+import { startHostMemorySampling } from './services/host-memory'
+import { refreshContextMemoryPressure } from './services/inference-governor'
 import { appState } from './app-state'
 import { createWindow, resolveAppIcon } from './window'
 import { buildMenu } from './menu'
@@ -69,6 +71,7 @@ if (qualificationRoot) {
   app.setPath('userData', qualificationRoot)
 }
 app.whenReady().then(async () => {
+  startHostMemorySampling(refreshContextMemoryPressure)
   if (contextQualification) {
     let code = 0
     try {
