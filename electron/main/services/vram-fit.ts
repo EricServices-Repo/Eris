@@ -185,8 +185,7 @@ export function pickGgufForBudget<T extends { path: string; sizeBytes: number }>
   const candidates = files.filter((file) => isWeightFile(file.path))
   if (!candidates.length) return null
 
-  const weightBudget =
-    budgetBytes > 0 ? Math.max(0, budgetBytes - CONTEXT_HEADROOM_BYTES) : 0
+  const weightBudget = budgetBytes > 0 ? Math.max(0, budgetBytes - CONTEXT_HEADROOM_BYTES) : 0
 
   if (weightBudget > 0) {
     for (const quant of QUANT_QUALITY) {
@@ -215,9 +214,7 @@ export function modelLoadOptions(modelPath: string, contextMax: number, relaxed:
     modelPath,
     useMmap: 'auto' as const,
     defaultContextFlashAttention: true as const,
-    gpuLayers: relaxed
-      ? ('auto' as const)
-      : { fitContext: { contextSize: contextMax } }
+    gpuLayers: relaxed ? ('auto' as const) : { fitContext: { contextSize: contextMax } }
   }
 }
 
@@ -266,11 +263,47 @@ export function contextCreateOptions(
   }
 }
 
+/**
+ * The requested minimum is a quality target, not a requirement to fail the chat.
+ * The native allocator already searches min..max. If that entire range fails,
+ * halve the minimum and retry a fixed smaller window, down to 512 tokens.
+ * A default-cache retry is useful for unsupported quantization, but on OOM it
+ * only consumes more memory, so shrink while keeping quantized KV instead.
+ */
+export async function createContextWithVramFallback<T>(
+  create: (options: ReturnType<typeof contextCreateOptions>) => Promise<T>,
+  plan: { min: number; max: number }
+): Promise<T> {
+  let min = Math.max(512, Math.floor(plan.min))
+  let max = Math.max(min, Math.floor(plan.max))
+  for (;;) {
+    try {
+      return await create(contextCreateOptions(min, max, true))
+    } catch (quantizedError) {
+      if (!isMemoryError(quantizedError)) {
+        // Some backends lack quantized KV support. Do not retry unrelated
+        // default-cache failures at every possible size.
+        try {
+          return await create(contextCreateOptions(min, max, false))
+        } catch (defaultError) {
+          if (!isMemoryError(defaultError) || min === 512) throw defaultError
+        }
+      } else if (min === 512) {
+        throw quantizedError
+      }
+      min = Math.max(512, Math.floor(min / 2))
+      max = min
+    }
+  }
+}
+
 export function isMemoryError(err: unknown): boolean {
   const name = err instanceof Error ? err.name : ''
   const message = err instanceof Error ? err.message : String(err)
   return (
     name === 'InsufficientMemoryError' ||
-    /insufficient memory|out of memory|failed to allocate/i.test(message)
+    /insufficient memory|out of memory|failed to allocate|too large for (?:the )?available (?:vram|ram|memory|resources)|not enough (?:vram|ram|memory)/i.test(
+      message
+    )
   )
 }

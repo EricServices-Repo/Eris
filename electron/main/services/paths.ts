@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { existsSync } from 'fs'
-import { dirname, join } from 'path'
+import { dirname, isAbsolute, join, relative, sep } from 'path'
 
 export const APP_DIR_NAME = 'Eris'
 export const WORKSPACE_DIR = '.eris'
@@ -143,4 +143,24 @@ export function builtinModelsDir(): string {
 /** User-downloaded local GGUFs (Settings → Models → Local), separate from Composer builtins. */
 export function localModelsDir(): string {
   return join(userDataRoot(), 'models', 'local')
+}
+
+/** Own downloads first; Eris-Dev can also read Eris weights without privileged symlinks. */
+export function modelReadDirs(kind: 'builtin' | 'local'): string[] {
+  const own = join(userDataRoot(), 'models', kind)
+  return app.getName() === 'Eris-Dev'
+    ? [own, join(app.getPath('appData'), APP_DIR_NAME, 'models', kind)]
+    : [own]
+}
+
+export function modelReadPath(kind: 'builtin' | 'local', filename: string): string {
+  const candidates = modelReadDirs(kind).map((dir) => join(dir, filename))
+  return candidates.find((path) => existsSync(path)) ?? candidates[0]!
+}
+
+/** Borrowed Eris weights and sidecars are read-only from the debug application. */
+export function isSharedModelPath(path: string): boolean {
+  if (app.getName() !== 'Eris-Dev') return false
+  const rel = relative(join(app.getPath('appData'), APP_DIR_NAME, 'models'), path)
+  return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)
 }

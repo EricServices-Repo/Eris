@@ -1,7 +1,7 @@
 import { CredentialStore, electronVault } from '../main/services/credential-store'
 /** Model selection is main-process only. Credentials never cross IPC or enter run manifests. */
 import { app } from 'electron'
-import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync } from 'fs'
+import { readFileSync } from 'fs'
 import { join } from 'path'
 import { createHash } from 'crypto'
 import { getDefaults } from '../main/services/settings'
@@ -17,28 +17,6 @@ const read = (path: string): Record<string, unknown> => {
     return JSON.parse(readFileSync(path, 'utf8'))
   } catch {
     return {}
-  }
-}
-
-/** Reuse installed GGUF files without copying weights or changing Eris's files. */
-function linkInstalledModels() {
-  for (const kind of ['builtin', 'local']) {
-    const source = join(erisRoot(), 'models', kind)
-    const target = join(app.getPath('userData'), 'models', kind)
-    if (!existsSync(source)) continue
-    mkdirSync(target, { recursive: true })
-    for (const entry of readdirSync(source, { withFileTypes: true })) {
-      if (!entry.isFile() || !(entry.name.endsWith('.gguf') || entry.name === 'catalog-extra.json'))
-        continue
-      const destination = join(target, entry.name)
-      if (!existsSync(destination)) {
-        try {
-          symlinkSync(join(source, entry.name), destination, 'file')
-        } catch {
-          /* API models still work when symlinks are unavailable. */
-        }
-      }
-    }
   }
 }
 
@@ -62,7 +40,6 @@ function settings(): AppSettings {
 }
 
 export async function devModels(): Promise<DevModelOption[]> {
-  linkInstalledModels()
   const current = settings()
   const status = await getModelsStatus(current, () => null)
   return status.models
