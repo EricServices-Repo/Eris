@@ -13,6 +13,8 @@ import { userDataRoot } from './paths'
 /** Public issues inbox (created via API — never opens a browser). */
 export const ERIS_FEEDBACK_OWNER = 'EricServices-Repo'
 export const ERIS_FEEDBACK_REPO = 'Eris'
+/** The deployed relay still files in the dedicated feedback inbox. */
+const ERIS_FEEDBACK_INBOXES = new Set(['eris', 'eris-feedback'])
 
 const MAX_LOG_CHARS = 48_000
 const MAX_ISSUE_BODY = 55_000
@@ -291,7 +293,12 @@ async function submitViaEricServices(preview: BugReportPreview): Promise<BugRepo
     return {
       ok: true,
       number: typeof data.number === 'number' ? data.number : undefined,
-      htmlUrl: typeof data.htmlUrl === 'string' ? data.htmlUrl : undefined,
+      htmlUrl:
+        typeof data.htmlUrl === 'string'
+          ? data.htmlUrl
+          : typeof data.html_url === 'string'
+            ? data.html_url
+            : undefined,
       via: 'ericservices'
     }
   } catch (err) {
@@ -302,9 +309,30 @@ async function submitViaEricServices(preview: BugReportPreview): Promise<BugRepo
   }
 }
 
-function isErisIssueUrl(url: string | undefined): boolean {
-  if (!url) return true
-  return /^https:\/\/github\.com\/EricServices-Repo\/Eris\/issues\/\d+$/.test(url)
+/** Only the product repository and its deployed feedback inbox are trusted. */
+function erisIssue(url: string | undefined): { htmlUrl: string; number: number } | null {
+  if (!url) return null
+  try {
+    const parsed = new URL(url)
+    if (
+      parsed.protocol !== 'https:' ||
+      parsed.hostname !== 'github.com' ||
+      parsed.port ||
+      parsed.username ||
+      parsed.password ||
+      parsed.search ||
+      parsed.hash
+    )
+      return null
+    const match = /^\/EricServices-Repo\/([^/]+)\/issues\/([1-9]\d*)\/?$/i.exec(parsed.pathname)
+    if (!match || !ERIS_FEEDBACK_INBOXES.has(match[1]!.toLowerCase())) return null
+    const number = Number(match[2])
+    if (!Number.isSafeInteger(number)) return null
+    const repo = match[1]!.toLowerCase() === 'eris' ? 'Eris' : 'Eris-feedback'
+    return { htmlUrl: `https://github.com/${ERIS_FEEDBACK_OWNER}/${repo}/issues/${number}`, number }
+  } catch {
+    return null
+  }
 }
 
 export async function submitBugReport(input: BugReportInput): Promise<BugReportResult> {
@@ -314,24 +342,27 @@ export async function submitBugReport(input: BugReportInput): Promise<BugReportR
     return {
       ok: false,
       error:
-        'The feedback service is unavailable. Your report was not sent. Please retry or contact support.',
+        'The feedback service could not confirm submission. Your report may already exist; check the Eris feedback inbox before retrying, or contact support.',
       via: 'ericservices'
     }
   if (!relay.ok) return relay
-  if (!relay.htmlUrl || !isErisIssueUrl(relay.htmlUrl))
+  const issue = erisIssue(relay.htmlUrl)
+  if (!issue || (relay.number !== undefined && relay.number !== issue.number))
     return {
       ok: false,
-      error: 'The feedback service did not return a valid Eris issue. Please contact support.',
+      error:
+        'The feedback service did not return a valid Eris issue link. Your report may already exist; contact support before submitting it again.',
       via: 'ericservices'
     }
+  const result = { ...relay, ...issue }
   recordFeedbackHistory({
-    id: `ericservices-${relay.number ?? Date.now()}`,
+    id: `ericservices-${issue.htmlUrl}`,
     title: preview.title,
-    number: relay.number,
-    htmlUrl: relay.htmlUrl,
+    number: issue.number,
+    htmlUrl: issue.htmlUrl,
     via: 'ericservices',
     submittedAt: new Date().toISOString()
   })
-  logInfo('Bug report created via feedback service', { number: relay.number })
-  return relay
+  logInfo('Bug report created via feedback service', { number: issue.number })
+  return result
 }
