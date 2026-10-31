@@ -1048,6 +1048,8 @@ These targets are proposed for the controlled harness, not statements about the 
 
 ### 20.1 Harness conditions
 
+Implementation status and acceptance limits: [147 implementation notes](fixes/147-context-release-gates.md).
+
 Record app/Electron/Node/SQLite versions, CPU/RAM/GPU, power mode, build mode, storage type, background load, selected model, context window, tokenizer method and corpus hash. Use packaged/release-like builds for release gates; development builds may be diagnostic but are not substitutes.
 
 Test 1,000, 10,000, 25,000 and 100,000 messages, with several size distributions: short chat, 2 KiB average coding turns, long code blocks, Unicode and oversized outliers. Stress archives may exceed RAM capacity deliberately. Record complete searchable coverage separately from the hot raw working set.
@@ -1450,6 +1452,3 @@ These references support platform constraints; the design choices, budgets and t
 - [SQLite WAL behavior](https://www.sqlite.org/wal.html): reader/writer/checkpoint behavior informs bounded transactions and background index work.
 
 Review date: 2026-10-29. Source code remains the authority for what Eris currently implements.
-
-### RAM-CTX-037: release qualification is distinct from deterministic CI
-The v2 context gate measures append/queue/selection/compilation phases, samples logical reservation peaks, and requires labeled facts to survive into compiled model inputs. A packaged qualification CLI isolates its data and stamps source/lock/runtime/entry identity. Release publishing now requires exact-source macOS and Windows reports, measured hardware profiles, complete workload/sample denominators and a same-weight/same-backend paired live comparison with actual source-send coverage. Empty profiles and missing evidence intentionally prevent release certification. See `docs/fixes/147-context-release-gates.md` for the collection protocol and explicit measurement limits.
