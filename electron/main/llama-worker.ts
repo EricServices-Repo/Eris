@@ -3,7 +3,12 @@
  * All load/chat work is serialized. Job sessions keep KV warm across agent steps.
  */
 
-import { contextCreateOptions, isMemoryError, modelLoadOptions } from './services/vram-fit'
+import {
+  allocationFacts,
+  contextCreateOptions,
+  isMemoryError,
+  modelLoadOptions
+} from './services/vram-fit'
 import {
   messagesToLlamaHistory,
   nativeStopReason,
@@ -185,7 +190,12 @@ async function handleLoad(
     contextMin = Math.min(contextMax, Math.max(512, minContext ?? contextSize))
     if (modelPath === path && model) {
       if (!context) await ensureContext()
-      post({ type: 'loaded', requestId, gpu: llama?.gpu ?? null })
+      post({
+        type: 'loaded',
+        requestId,
+        gpu: llama?.gpu ?? null,
+        ...allocationFacts(model, context)
+      })
       return
     }
     await disposeAll()
@@ -204,7 +214,7 @@ async function handleLoad(
     }
     await ensureContext()
     modelPath = path
-    post({ type: 'loaded', requestId, gpu: llama?.gpu ?? null })
+    post({ type: 'loaded', requestId, gpu: llama?.gpu ?? null, ...allocationFacts(model, context) })
   } catch (err) {
     post({
       type: 'load-error',

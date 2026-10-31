@@ -221,6 +221,26 @@ export function modelLoadOptions(modelPath: string, contextMax: number, relaxed:
   }
 }
 
+/** The allocation a loaded model and context report; budgets follow this, not the plan. */
+export function allocationFacts(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  model: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any
+): {
+  contextSize?: number
+  trainContextSize?: number
+  gpuLayers?: number
+  totalLayers?: number
+} {
+  return {
+    contextSize: context?.contextSize,
+    trainContextSize: model?.trainContextSize,
+    gpuLayers: model?.gpuLayers,
+    totalLayers: model?.fileInsights?.totalLayers
+  }
+}
+
 export function contextCreateOptions(
   min: number,
   max: number,
