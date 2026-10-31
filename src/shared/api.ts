@@ -346,6 +346,7 @@ export interface IdeApi {
   getWorkspaceTrust: () => Promise<WorkspaceTrustStatus>
   setWorkspaceTrust: (trusted: boolean) => Promise<boolean>
   listChats: () => Promise<ChatThread[]>
+  reportRendererHistoryBytes: (bytes: number) => void
   notifyDocumentChange: (path: string, dirty: boolean) => void
   getMemoryUsage: (input: {
     activeThreadId?: string | null

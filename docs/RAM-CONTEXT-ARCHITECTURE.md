@@ -334,6 +334,8 @@ Failure, abort, worker death and timeout all release reservations exactly once. 
 
 ### 8.1 Recent-turn ring
 
+Implementation status and acceptance limits: [132 implementation notes](fixes/132-incremental-context-history.md).
+
 Keep exact recent turns in a bounded ring/deque rather than rebuilding a map and sorted array on every append. Append is amortized O(1); duplicate lookup uses a bounded message-ID map. Byte counters update from the added/removed record delta.
 
 Preserve chronological role order. A user message, assistant tool call and corresponding tool observation form an indivisible semantic unit for prompt assembly where the backend protocol requires it. Raw UI traces do not substitute for structured tool observations.
@@ -404,6 +406,8 @@ Add versioned relations for fact records, recommendation batches/items, obligati
 A context-change outbox is committed with each canonical mutation. The memory worker applies it idempotently. A crash after transcript commit and before indexing produces an index watermark lag, not lost history. A startup reconciliation replays missing events.
 
 ### 9.4 Archive search without a raw-text replica
+
+Implementation status and acceptance limits: [134 implementation notes](fixes/134-durable-context-archive.md).
 
 Prefer a capability-probed SQLite FTS5 contentless index over a second unbounded in-memory inverted index. Index bounded message chunks and join candidate row IDs with scope/version metadata. Materialize exact source text only after candidates pass eligibility checks.
 
@@ -991,6 +995,8 @@ Provide source navigation to the original message/task and a short explanation o
 Preview uses a sandboxed snapshot and the same selection/compiler logic. It must not mutate the live task or grant actions. Its displayed scope and destination must be explicit. If a preview becomes stale after editing or a policy change, show that state rather than implying it is still the actual sent bundle.
 
 ### 18.4 Chat history UX
+
+Implementation status and acceptance limits: [143 implementation notes](fixes/143-bounded-renderer-history.md).
 
 Use stable IDs and paged/virtualized rendering. Bound the renderer history-page cache to the 8 MiB share of the recent-text pool in the 128 MiB profile, not merely the number of DOM nodes. Evict offscreen pages with a stable scroll anchor and reloadable cursors. Sidebar thread lists retain metadata only, without hidden full message arrays for every conversation. Avoid retaining equivalent message arrays in multiple stores or closures. Searching visible messages and searching the durable archive are separate actions with clear coverage. Jumping to a search hit loads a bounded page around the original source, not every intervening page.
 

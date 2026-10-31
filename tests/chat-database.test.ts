@@ -1,3 +1,4 @@
+import { archiveCandidates } from '../electron/main/services/context-archive-index'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs'
@@ -307,4 +308,78 @@ describe('Saved history storage telemetry', () => {
     expect(db.storageUsage()).toMatchObject({ conversations: 1, messages: 3 })
     raw.close()
   })
+})
+
+describe('Bounded durable archive index', () => {
+  it('retrieves an old source without hydrating the full transcript and survives restart', () => {
+    db = new ChatDatabase(dir)
+    const original = thread(1000)
+    original.messages[0].content = 'Remember bookingConfirmation must use CAD'
+    db.save(original)
+    const found = db.archiveSearch('thread', 'bookingConfirmation')
+    expect(found.records.some((row) => row.message.id === '0')).toBe(true)
+    expect(found.index.builtChunks).toBeLessThanOrEqual(32)
+    expect(found.index.complete).toBe(false)
+    expect(found.records.length).toBeLessThanOrEqual(12)
+    db.close()
+    db = new ChatDatabase(dir)
+    expect(db.archiveSearch('thread', 'bookingConfirmation').records[0]?.message.id).toBe('0')
+  })
+  it('resumes bounded Unicode chunks beyond the first excerpt and filters controls and scope', () => {
+    db = new ChatDatabase(dir)
+    const original = thread(2)
+    original.messages[0].content =
+      'x '.repeat(40000) + '決済通貨はカナダドルです bookingConfirmationCurrency CAD'
+    original.messages[0].contextProjectRoot = '/A'
+    db.save(original)
+    let result = db.archiveSearch('thread', 'bookingConfirmationCurrency', '/A')
+    for (let i = 0; i < 8 && !result.index.complete; i++)
+      result = db.archiveSearch('thread', 'bookingConfirmationCurrency', '/A')
+    expect(result.records.some((row) => row.message.content.includes('CAD'))).toBe(true)
+    expect(result.records[0].message.contextContentOffset).toBeGreaterThan(32768)
+    expect(db.archiveSearch('thread', 'bookingConfirmationCurrency', '/B').records).toEqual([])
+    const controls = db.contextControls('thread')
+    db.contextControls('thread', { ...controls, forgotten: ['0'] })
+    expect(db.archiveSearch('thread', 'bookingConfirmationCurrency', '/A').records).toEqual([])
+  })
+  it('removes stale rewritten/deleted sources from the index and never returns another thread', () => {
+    db = new ChatDatabase(dir)
+    const original = thread(2)
+    original.messages[0].content = 'Remember uniqueBookingRule CAD'
+    db.save(original)
+    expect(db.archiveSearch('thread', 'uniqueBookingRule').records.length).toBe(1)
+    original.messages[0].content = 'Rewritten unrelated body'
+    db.save(original)
+    expect(db.archiveSearch('thread', 'uniqueBookingRule').records).toEqual([])
+    db.save({
+      ...original,
+      id: 'other',
+      messages: [{ ...original.messages[0], content: 'uniqueBookingRule secret' }]
+    })
+    expect(db.archiveSearch('thread', 'uniqueBookingRule').records).toEqual([])
+    db.remove('other')
+    expect(db.archiveSearch('other', 'uniqueBookingRule').records).toEqual([])
+  })
+})
+
+it('reserves candidate capacity for rare identifiers beside very common archive terms', () => {
+  db = new ChatDatabase(dir)
+  const raw = new DatabaseSync(join(dir, 'chats.sqlite'))
+  raw.exec('BEGIN')
+  const chunk = raw.prepare(
+    'INSERT INTO context_archive_chunks(threadId,ordinal,offset,text,sequence) VALUES(?,?,0,?,1) RETURNING chunkId'
+  )
+  const term = raw.prepare('INSERT INTO context_archive_terms VALUES(?,?,?)')
+  for (let i = 0; i < 5000; i++) {
+    const row = chunk.get('t', i, 'commonword')!
+    term.run('t', 'commonword', row.chunkId!)
+  }
+  const rare = chunk.get('t', 5000, 'zebra')!
+  term.run('t', 'zebra', rare.chunkId!)
+  raw.exec('COMMIT')
+  const hits = archiveCandidates(raw, 't', 'commonword zebra')
+  expect(hits.some((hit) => hit.chunkId === rare.chunkId)).toBe(true)
+  expect(hits.length).toBeLessThanOrEqual(64)
+  expect(archiveCandidates(raw, 'other', 'commonword zebra')).toEqual([])
+  raw.close()
 })

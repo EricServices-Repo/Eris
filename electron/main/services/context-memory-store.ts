@@ -1,3 +1,4 @@
+import { ContextRowDeque } from './context-row-deque'
 import { workingStateText } from '../../../src/shared/thread-working-state'
 import { contextRecord } from '../../../src/shared/context-record'
 import {
@@ -35,13 +36,16 @@ type ThreadEntry = {
   sourceEpoch?: string
   generation: number
   total: number
-  records: RecordEntry[]
+  records: ContextRowDeque<RecordEntry>
+  chunked: boolean
+  ordinalCounts: Map<number, number>
+  sourceRows: Map<string, Set<RecordEntry>>
   /** Row ID of records[0]; a row's ID is its position plus this offset. */
   firstRow: number
   decisions: DecisionIndex
   index: RecallIndex
   /** Row IDs of salient rows, ascending. */
-  salientRows: number[]
+  salientRows: ContextRowDeque<number>
   controls: MemoryControls
   bytes: number
   at: number
@@ -58,20 +62,6 @@ const unfinished = (message: ChatMessage) =>
   !/^(?:done|complete)$/.test(message.contextResult.workingState.terminal)
 const salient =
   /\b(?:remember|must|always|never|do not|only|decision|prefer|constraint|instead|unfinished|pending)\b/i
-const clean = (m: ChatMessage): ChatMessage => ({
-  id: m.id,
-  role: m.role,
-  content: m.content,
-  createdAt: m.createdAt,
-  agentId: m.agentId,
-  agentName: m.agentName,
-  model: m.model,
-  contextSequence: m.contextSequence,
-  contextProjectRoot: m.contextProjectRoot,
-  contextContentOffset: m.contextContentOffset,
-  contextContentLength: m.contextContentLength,
-  contextResult: m.contextResult ? structuredClone(m.contextResult) : undefined
-})
 const size = (m: ChatMessage) => Buffer.byteLength(JSON.stringify(m), 'utf8') * 4 + 512
 const termSize = (terms: readonly string[]) =>
   terms.reduce((n, term) => n + term.length * 2 + 16, 48)
@@ -98,7 +88,7 @@ export class ContextMemoryStore {
   private entries = new Map<string, ThreadEntry>()
   private reservations = new Set<ContextReservation>()
   /** Record arrays in use by a selection; charged only once the store has let go of them. */
-  private pins = new Map<RecordEntry[], { bytes: number; users: number }>()
+  private pins = new Map<ContextRowDeque<RecordEntry>, { bytes: number; users: number }>()
   private generations = new Map<string, number>()
   /** Changes only when evidence may have lost eligibility; eviction never touches it. */
   private revocations = new Map<string, number>()
@@ -107,6 +97,17 @@ export class ContextMemoryStore {
     string,
     Pick<ContextMemorySettings, 'maxMessages' | 'maxThreadMiB' | 'enabled'>
   >()
+  private rendererBytes = 0
+  /** Renderer history is a separate owner of the same optional context envelope. */
+  setRendererHistoryBytes(bytes: number) {
+    if (!Number.isSafeInteger(bytes) || bytes < 0)
+      throw new Error('Invalid renderer history charge')
+    this.rendererBytes = bytes
+    this.evict()
+  }
+  get rendererHistoryBytes() {
+    return this.rendererBytes
+  }
   private pressureLimit = Infinity
   setPressureLimit(bytes: number) {
     this.pressureLimit = Math.max(0, bytes)
@@ -114,7 +115,10 @@ export class ContextMemoryStore {
     else this.evict()
   }
   private get envelopeBytes() {
-    return Math.min(this.pressureLimit, this.config.maxMemoryMiB * 1024 ** 2)
+    return Math.max(
+      0,
+      Math.min(this.pressureLimit, this.config.maxMemoryMiB * 1024 ** 2) - this.rendererBytes
+    )
   }
   private counter = 0
   private epoch = 0
@@ -189,9 +193,9 @@ export class ContextMemoryStore {
         (entry.partial || entry.records.length < entry.total)
       )
         entry.backfill = true
-      const before = entry.records
+      const before = entry.records.length
       this.trim(entry, key)
-      if (before !== entry.records) {
+      if (before !== entry.records.length) {
         this.bump(key)
         entry.generation = ++this.counter
       }
@@ -307,14 +311,12 @@ export class ContextMemoryStore {
     const e = this.entries.get(key)
     if (!e) return [...items]
     const { controls } = e
-    const sources = new Map<string, RecordEntry[]>()
-    for (const row of e.records)
-      sources.set(row.message.id, [...(sources.get(row.message.id) ?? []), row])
+    const sources = e.sourceRows
     return items.filter((item) => {
       if (controls.forgotten.includes(item.sourceId)) return true
       if (item.kind === 'pinned')
         return !controls.pinned.some((p) => p.id === item.id && p.text.startsWith(item.text))
-      const rows = sources.get(item.sourceId) ?? []
+      const rows = [...(sources.get(item.sourceId) ?? [])]
       if (!rows.length || rows.some((row) => excludedByCutoff(row, controls))) return true
       if (item.kind === 'decision') return !e.decisions.currentId(item.id)
       return item.kind !== 'task-result' && !rows.some((r) => r.message.content.includes(item.text))
@@ -354,6 +356,58 @@ export class ContextMemoryStore {
     token: string,
     reservation?: ContextReservation
   ) {
+    const work = this.installWork(key, input, token, reservation)
+    let step = work.next()
+    while (!step.done) step = work.next()
+    return step.value
+  }
+  /** Worker pages arrive in order; publish once, yielding between bounded blocks. */
+  async installSegments(
+    key: string,
+    input: Omit<Parameters<ContextMemoryStore['install']>[1], 'records'> & {
+      segments: Parameters<ContextMemoryStore['install']>[1]['records'][]
+    },
+    token: string,
+    reservation?: ContextReservation,
+    signal?: AbortSignal
+  ) {
+    function* rows() {
+      for (const page of input.segments) yield* page
+    }
+    const work = this.installWork(
+      key,
+      { ...input, records: rows(), ordered: true },
+      token,
+      reservation
+    )
+    try {
+      let step = work.next()
+      while (!step.done) {
+        signal?.throwIfAborted()
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        step = work.next()
+      }
+      return step.value
+    } finally {
+      work.return(false)
+    }
+  }
+  private *installWork(
+    key: string,
+    input: {
+      revision: number
+      sourceEpoch?: string
+      total: number
+      records: Iterable<{ ordinal: number; message: ChatMessage; terms?: string[] }>
+      ordered?: boolean
+      controls: MemoryControls
+      partial: boolean
+      corruptRecords?: number
+      corruptOrdinals?: number[]
+    },
+    token: string,
+    reservation?: ContextReservation
+  ) {
     if (
       token !== this.token(key) ||
       !this.config.enabled ||
@@ -363,64 +417,99 @@ export class ContextMemoryStore {
     this.bump(key)
     let corruptRecords = input.corruptRecords ?? 0
     const corruptOrdinals = [...new Set(input.corruptOrdinals ?? [])].slice(0, 100500)
-    const records: RecordEntry[] = input.records
-      .flatMap(({ ordinal, message, terms }) => {
-        const m = contextRecord(message)
-        if (!m || !Number.isSafeInteger(ordinal) || ordinal < 0) {
-          corruptRecords++
-          if (corruptOrdinals.length < 100500) corruptOrdinals.push(ordinal)
-          return []
-        }
-        const rowTerms = m.contextResult?.workingState
-          ? recallTerms(m.content + ' ' + workingStateText(m.contextResult.workingState))
-          : (terms ?? recallTerms(m.content))
-        return [
-          {
-            ordinal,
-            message: m,
-            bytes: size(m) + termSize(rowTerms),
-            salient: salient.test(m.content) || Boolean(unfinished(m)),
-            terms: rowTerms
-          }
-        ]
+    const lease = this.token(key)
+    const records: RecordEntry[] = []
+    let processed = 0
+    for (const { ordinal, message, terms } of input.records) {
+      const m = contextRecord(message)
+      if (!m || !Number.isSafeInteger(ordinal) || ordinal < 0) {
+        corruptRecords++
+        if (corruptOrdinals.length < 100500) corruptOrdinals.push(ordinal)
+        continue
+      }
+      const rowTerms = m.contextResult?.workingState
+        ? recallTerms(m.content + ' ' + workingStateText(m.contextResult.workingState))
+        : (terms ?? recallTerms(m.content))
+      records.push({
+        ordinal,
+        message: m,
+        bytes: size(m) + termSize(rowTerms),
+        salient: salient.test(m.content) || Boolean(unfinished(m)),
+        terms: rowTerms
       })
-      .sort(
+      if (++processed % 64 === 0) yield
+    }
+    if (!input.ordered)
+      records.sort(
         (a, b) =>
           a.ordinal - b.ordinal ||
           (a.message.contextContentOffset ?? 0) - (b.message.contextContentOffset ?? 0)
       )
     const decisions = new DecisionIndex()
-    records.forEach((row) => decisions.add(row.message))
     const index = new RecallIndex()
-    records.forEach((row, position) => index.add(position, row.terms))
     const entry: ThreadEntry = {
       revision: input.revision,
       sourceEpoch: input.sourceEpoch,
       total: input.total,
-      records,
+      records: new ContextRowDeque<RecordEntry>(),
+      chunked: false,
+      ordinalCounts: new Map(),
+      sourceRows: new Map(),
       firstRow: 0,
       decisions,
       index,
-      salientRows: records.flatMap((row, position) => (row.salient ? [position] : [])),
+      salientRows: new ContextRowDeque<number>(),
       controls: structuredClone(input.controls),
       generation: ++this.counter,
-      bytes:
-        decisions.bytes +
-        controlSize(input.controls) +
-        corruptionSize(corruptOrdinals) +
-        records.reduce((n, r) => n + r.bytes, 0),
+      bytes: controlSize(input.controls) + corruptionSize(corruptOrdinals),
       at: this.now(),
       backfill: false,
       corruptRecords,
       corruptOrdinals,
       partial: input.partial || corruptRecords > 0
     }
+    for (const row of records) {
+      index.add(entry.records.length, row.terms)
+      const before = decisions.bytes
+      decisions.add(row.message)
+      entry.bytes += row.bytes + decisions.bytes - before
+      this.trackRow(entry, row)
+      if (++processed % 64 === 0) yield
+    }
+    if (
+      lease !== this.token(key) ||
+      !this.config.enabled ||
+      this.namespaces.get(key)?.enabled === false
+    )
+      return false
     // Ownership moves in one step, so these bytes are never charged twice or not at all.
     reservation?.release()
     this.entries.set(key, entry)
     this.trim(entry, key)
     this.evict(key)
     return this.entries.has(key)
+  }
+  private trackRow(entry: ThreadEntry, row: RecordEntry) {
+    const id = entry.firstRow + entry.records.length
+    entry.records.push(row)
+    entry.chunked ||= row.message.contextContentLength !== undefined
+    entry.ordinalCounts.set(row.ordinal, (entry.ordinalCounts.get(row.ordinal) ?? 0) + 1)
+    const sources = entry.sourceRows.get(row.message.id) ?? new Set<RecordEntry>()
+    sources.add(row)
+    entry.sourceRows.set(row.message.id, sources)
+    if (row.salient) entry.salientRows.push(id)
+  }
+  /** Binary lookup touches log(n) rows, not every retained source on an append. */
+  private ordinalRow(entry: ThreadEntry, ordinal: number) {
+    let lo = 0,
+      hi = entry.records.length
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1
+      if (entry.records.get(mid)!.ordinal < ordinal) lo = mid + 1
+      else hi = mid
+    }
+    const row = entry.records.get(lo)
+    return row?.ordinal === ordinal ? row : undefined
   }
   matchesSource(
     key: string,
@@ -444,8 +533,8 @@ export class ContextMemoryStore {
       revision: entry.revision,
       sourceEpoch: entry.sourceEpoch,
       total: entry.total,
-      before: entry.records[0]?.ordinal ?? entry.total,
-      beforeContentOffset: entry.records[0]?.message.contextContentOffset || undefined,
+      before: entry.records.get(0)?.ordinal ?? entry.total,
+      beforeContentOffset: entry.records.get(0)?.message.contextContentOffset || undefined,
       corruptRecords: entry.corruptRecords,
       corruptOrdinals: entry.corruptOrdinals,
       records: entry.records.map(({ ordinal, message, terms }) => ({ ordinal, message, terms }))
@@ -491,21 +580,21 @@ export class ContextMemoryStore {
     }
     // Chunked snapshots must be reconstructed on append; merging by ordinal
     // alone would silently discard sibling chunks or compare a chunk with a full rendering body.
-    if (entry.records.some((r) => r.message.contextContentLength !== undefined)) {
+    if (entry.chunked) {
       this.drop(key)
       return
     }
-    const existing = new Map(entry.records.map((r) => [r.ordinal, r]))
     for (let i = 0; i < tail.length; i++) {
-      const old = existing.get(offset + i)
-      if (old && JSON.stringify(old.message) !== JSON.stringify(clean(tail[i]))) {
+      const old = this.ordinalRow(entry, offset + i)
+      if (old && JSON.stringify(old.message) !== JSON.stringify(contextRecord(tail[i]))) {
         this.clear(key)
         return
       }
     }
     if (revision === entry.revision) return
     this.bump(key)
-    const appended: RecordEntry[] = []
+    // A selection can retain the prior ring. Copy block references only when actually pinned.
+    if (this.pins.has(entry.records)) entry.records = entry.records.fork()
     for (let i = 0; i < tail.length; i++) {
       const ordinal = offset + i
       if (ordinal < entry.total) continue
@@ -513,6 +602,7 @@ export class ContextMemoryStore {
       if (!message) {
         entry.partial = true
         entry.corruptRecords++
+        entry.bytes += 64
         if (entry.corruptOrdinals.length < 100500) entry.corruptOrdinals.push(ordinal)
         continue
       }
@@ -530,24 +620,18 @@ export class ContextMemoryStore {
         terms
       }
       // New ordinals follow everything retained, so row IDs stay in position order.
-      const id = entry.firstRow + entry.records.length + appended.length
+      const id = entry.firstRow + entry.records.length
       const beforeDecisions = entry.decisions.bytes
       entry.decisions.add(message)
       entry.bytes += entry.decisions.bytes - beforeDecisions
-      appended.push(row)
+      this.trackRow(entry, row)
+      entry.bytes += row.bytes
       entry.index.add(id, terms)
-      if (row.salient) entry.salientRows.push(id)
     }
-    entry.records = [...entry.records, ...appended]
     entry.total = total
     entry.revision = revision
     entry.generation = ++this.counter
     entry.at = this.now()
-    entry.bytes =
-      entry.decisions.bytes +
-      controlSize(entry.controls) +
-      corruptionSize(entry.corruptOrdinals) +
-      entry.records.reduce((n, r) => n + r.bytes, 0)
     this.trim(entry, key)
     this.evict(key)
   }
@@ -582,18 +666,27 @@ export class ContextMemoryStore {
       removed < e.records.length &&
       (e.records.length - removed > maxMessages || e.bytes > cap)
     ) {
-      e.bytes -= e.records[removed].bytes
+      e.bytes -= e.records.get(removed)!.bytes
       removed++
     }
     if (removed) {
       const gone = e.records.slice(0, removed)
-      e.records = e.records.slice(removed)
+      if (this.pins.has(e.records)) e.records = e.records.fork()
+      e.records.drop(removed)
+      for (const row of gone) {
+        const count = e.ordinalCounts.get(row.ordinal)! - 1
+        if (count) e.ordinalCounts.set(row.ordinal, count)
+        else e.ordinalCounts.delete(row.ordinal)
+        const sources = e.sourceRows.get(row.message.id)!
+        sources.delete(row)
+        if (!sources.size) e.sourceRows.delete(row.message.id)
+      }
       e.firstRow += removed
       e.index.prune(
         e.firstRow,
         gone.flatMap((row) => row.terms)
       )
-      e.salientRows = e.salientRows.filter((row) => row >= e.firstRow)
+      while (e.salientRows.length && e.salientRows.get(0)! < e.firstRow) e.salientRows.drop(1)
       e.partial = true
     }
   }
@@ -628,8 +721,8 @@ export class ContextMemoryStore {
       revision: entry?.revision ?? 0,
       generation: entry?.generation ?? this.counter,
       totalMessages: entry?.total ?? 0,
-      retainedMessages: entry ? new Set(entry.records.map((r) => r.ordinal)).size : 0,
-      firstOrdinal: entry?.records[0]?.ordinal ?? 0,
+      retainedMessages: entry ? entry.ordinalCounts.size : 0,
+      firstOrdinal: entry?.records.get(0)?.ordinal ?? 0,
       logicalBytes: entry?.bytes ?? 0,
       coverage: entry ? 'partial' : 'unavailable',
       selectedIds: [],
@@ -776,7 +869,7 @@ export class ContextMemoryStore {
         await new Promise<void>((r) => setImmediate(r))
       }
       const position = id - firstRow
-      const row = records[position]
+      const row = records.get(position)
       if (!row) continue
       const m = row.message
       if (
@@ -987,8 +1080,8 @@ export class ContextMemoryStore {
       revision,
       generation,
       totalMessages: e.total,
-      retainedMessages: new Set(records.map((r) => r.ordinal)).size,
-      firstOrdinal: records[0]?.ordinal ?? e.total,
+      retainedMessages: e.ordinalCounts.size,
+      firstOrdinal: records.get(0)?.ordinal ?? e.total,
       logicalBytes: e.bytes,
       coverage: e.partial || records.length < e.total ? 'partial' : 'complete',
       selectedIds: selected.map((f) => f.id),

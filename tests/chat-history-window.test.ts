@@ -144,8 +144,8 @@ describe('live tail', () => {
     expect(bounded.messageOffset).toBe(thread.messages.length - bounded.messages.length)
     expect(bounded.messages.at(-1)).toBe(thread.messages.at(-1))
   })
-  it('keeps at least a page of recent messages', () => {
-    expect(boundTail(tail(0), 1).messages).toHaveLength(HISTORY_PAGE_MESSAGES)
+  it('keeps an indivisible last message even when it exceeds the budget', () => {
+    expect(boundTail(tail(0), 1).messages).toHaveLength(1)
   })
   it('leaves a thread under budget untouched', () => {
     const thread = tail()
@@ -158,7 +158,7 @@ describe('live tail', () => {
     db.save({ ...tail(0), messages: rows, messageOffset: 0, messageCount: 200 })
     const loaded = db.get('t', { limit: 200 })!
     const bounded = boundTail(loaded, 1)
-    expect(bounded.messageOffset).toBe(200 - HISTORY_PAGE_MESSAGES)
+    expect(bounded.messageOffset).toBe(199)
     db.save({
       ...bounded,
       messages: [...bounded.messages, message(200, 100)],
@@ -169,5 +169,31 @@ describe('live tail', () => {
     expect(ordinals(after.messages)).toEqual(Array.from({ length: 201 }, (_, i) => i))
     db.close()
     rmSync(folder, { recursive: true, force: true })
+  })
+})
+
+describe('Full renderer history accounting', () => {
+  it('charges hidden metadata and evicts below the old sixty-message floor', () => {
+    const rows = Array.from({ length: 60 }, (_, i) => ({
+      ...message(i, 10),
+      thinking: 'x'.repeat(10000)
+    }))
+    const bounded = boundTail({ ...tail(), messages: rows }, 50000)
+    expect(bounded.messages.length).toBeLessThan(60)
+    expect(bounded.messages.reduce((sum, row) => sum + messageBytes(row), 0)).toBeLessThanOrEqual(
+      50000
+    )
+    const metadata = { ...message(1, 10), model: 'x'.repeat(10000) }
+    expect(messageBytes(metadata)).toBeGreaterThan(20000)
+  })
+  it('narrows oversized pages with honest contiguous reload cursors', () => {
+    const rows = Array.from({ length: 60 }, (_, i) => message(i, 2000))
+    const earlier = addEarlierPage(emptyHistoryWindow('t'), 0, rows, 25000)
+    expect(earlier.bytes).toBeLessThanOrEqual(25000)
+    expect(windowEnd(earlier)).toBe(earlier.pages[0].messages.length)
+    const later = addLaterPage(emptyHistoryWindow('t'), 0, rows, 25000)
+    expect(later.bytes).toBeLessThanOrEqual(25000)
+    expect(windowStart(later)).toBe(60 - later.pages[0].messages.length)
+    expect(windowEnd(later)).toBe(60)
   })
 })

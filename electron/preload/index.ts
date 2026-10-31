@@ -129,6 +129,7 @@ const api: IdeApi = {
   listChats: () => ipcRenderer.invoke('chats:list'),
   notifyDocumentChange: (path, dirty) =>
     ipcRenderer.send('contextMemory:documentChanged', path, dirty),
+  reportRendererHistoryBytes: (bytes) => ipcRenderer.send('contextMemory:rendererHistory', bytes),
   getMemoryUsage: (input) => ipcRenderer.invoke('contextMemory:usage', input),
   inspectContextMemory: (input) => ipcRenderer.invoke('contextMemory:inspect', input),
   getChat: (id, page) => ipcRenderer.invoke('chats:get', id, page),

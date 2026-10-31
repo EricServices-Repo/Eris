@@ -276,3 +276,16 @@ it('invalidates the warm projection for an oversized raw append so the worker mu
   store.append('a', 2, 2, [message('large', '決済'.repeat(20000))], 1)
   expect(store.has('a')).toBe(false)
 })
+
+it('charges renderer history against the shared optional envelope without altering saved history', () => {
+  const store = new ContextMemoryStore()
+  store.install('t', page('1', 64), store.token('t'))
+  const original = store.ledger.envelopeBytes
+  store.setRendererHistoryBytes(8 * 1024 ** 2)
+  expect(store.ledger.envelopeBytes).toBe(original - 8 * 1024 ** 2)
+  store.setRendererHistoryBytes(original)
+  expect(store.ledger.ownedBytes).toBe(0)
+  store.setRendererHistoryBytes(0)
+  expect(store.ledger.envelopeBytes).toBe(original)
+  expect(() => store.setRendererHistoryBytes(-1)).toThrow()
+})
