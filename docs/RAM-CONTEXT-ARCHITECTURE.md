@@ -334,6 +334,8 @@ Failure, abort, worker death and timeout all release reservations exactly once. 
 
 ### 8.1 Recent-turn ring
 
+Implementation status and acceptance limits: [132 implementation notes](fixes/132-incremental-context-history.md).
+
 Keep exact recent turns in a bounded ring/deque rather than rebuilding a map and sorted array on every append. Append is amortized O(1); duplicate lookup uses a bounded message-ID map. Byte counters update from the added/removed record delta.
 
 Preserve chronological role order. A user message, assistant tool call and corresponding tool observation form an indivisible semantic unit for prompt assembly where the backend protocol requires it. Raw UI traces do not substitute for structured tool observations.
@@ -1450,8 +1452,3 @@ These references support platform constraints; the design choices, budgets and t
 - [SQLite WAL behavior](https://www.sqlite.org/wal.html): reader/writer/checkpoint behavior informs bounded transactions and background index work.
 
 Review date: 2026-10-29. Source code remains the authority for what Eris currently implements.
-
-### RAM-CTX-022: incremental recent projection and cooperative installation
-Canonical detailed history and UTF-8 chunk decoding remain worker-owned in SQLite; main retains only its admitted bounded evidence projection. Recent rows and lexical postings use immutable 128-row blocks. Uncontended appends touch only new records and bounded blocks, maintain byte/source/ordinal counters incrementally, and prune retired postings without shifting whole arrays. Overlap validation is indexed; chunked sources still invalidate and reload from canonical worker chunks. Active selections retain their immutable ring snapshot; only a pinned ring needs a block-reference fork, charged by the existing snapshot ledger. This exceptional concurrent path is not advertised as constant cost.
-
-Hydration collects ordered worker segments without repeatedly prepending the accumulated transcript. Production installation skips whole-history sorting and yields every 64 normalized/indexed rows, publishing once only if its lease remains valid. Legacy synchronous installation remains for deterministic fixtures. These are structural bounds and scripted validation, not certified absolute main-thread latency on every host. SQLite persistence ordering and source/controls/revision fencing remain authoritative.
