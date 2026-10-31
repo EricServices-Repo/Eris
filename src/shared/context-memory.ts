@@ -187,6 +187,10 @@ export type MemoryInspection = {
   preview?: ContextPreview
 }
 export type ContextPreview = {
+  basis?: 'last-compilation' | 'estimate'
+  taskId?: string
+  taskRevision?: number
+  projectRoot?: string | null
   model: string
   destination: 'local' | 'remote'
   counts: ContextBundleCounts

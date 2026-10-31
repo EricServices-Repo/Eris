@@ -9,7 +9,11 @@ import { registeredWorkspaceId } from './workspace'
 import { getResolvedSettings } from './settings'
 import { workspaceRequest } from './workspace-worker-client'
 import { contextMemoryStore } from './context-memory-store'
-import { lastContextDispatch, previewContextDispatch } from './context-dispatch'
+import {
+  contextPreviewScope,
+  lastContextDispatch,
+  previewContextDispatch
+} from './context-dispatch'
 import type { AppSettings, ChatThread } from '../../../src/shared/settings-schema'
 import {
   type ContextPreview,
@@ -325,7 +329,10 @@ export async function inspectConversationMemory(
     workspaceRequest({ type: 'context-header', dir: dir(root), id })
   ])
   if (!thread) throw new Error('Chat not found')
-  const projectRoot = taskScopes.get(memoryKey(root, id))
+  const scopeKey = memoryKey(root, id)
+  const projectRoot = taskScopes.has(scopeKey)
+    ? taskScopes.get(scopeKey)
+    : contextPreviewScope(scopeKey)
   let inspection
   let preview: ContextPreview | undefined
   let failure: string | undefined
@@ -334,7 +341,14 @@ export async function inspectConversationMemory(
     inspection = selected.inspection
     // Auto selects its model per turn, so there is no destination to preview.
     if (model && model !== 'auto')
-      preview = previewContextDispatch({ prompt: selected.prompt, model, query, root, settings })
+      preview = previewContextDispatch({
+        prompt: selected.prompt,
+        model,
+        query,
+        root,
+        settings,
+        projectRoot
+      })
   } catch (error) {
     invalidateConversationMemory(root, id)
     inspection = (await contextMemoryStore.select(memoryKey(root, id), query)).inspection

@@ -1,0 +1,9 @@
+# RAM-CTX-035: snapshot-bound inspector compilation
+
+The compiler records bounded immutable inputs for each compiled bundle, excluding the explicit recalled memory block and items. Only a dispatched bundle can seed a preview snapshot. Up to eight snapshots retain at most 128 Ki characters of inputs each and expire after two minutes. Larger inputs remain estimate-only. Snapshots are in-process and never exported as source text.
+
+When namespace, question and current resolved project scope match, preview recompiles the current eligible memory with that task's original contract, instructions, project evidence, retrieval and tool availability. The destination's current protocol and configured capacity are applied, capped by the original effective compiler reservation. Required context still fails closed if it cannot fit a smaller model. Recalled items are selected/revalidated anew; local-only disclosure remains blocked for remote destinations. A more recent scope wins over a cached compilation, including an explicitly null scope.
+
+The UI distinguishes `last-compilation` from `estimate`. A new question, missing/expired/oversized snapshot or mismatched scope does not claim production parity. It remains a labeled upper-bound estimate. Last actual dispatch counts remain separate because late revocation, provider budgeting and compaction can still alter an outbound request. Source navigation continues to fetch a bounded page around the selected ordinal.
+
+Verification compares preview decisions with an actual edit-task compilation containing real guidance and evidence, rather than a second synthetic answer task. Regression tests cover expiry, changed question, local/remote destinations, source-text exclusion from preview metadata and prior scope/navigation controls. No live-provider context or platform result is inferred from those deterministic checks.

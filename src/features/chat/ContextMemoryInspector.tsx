@@ -169,7 +169,9 @@ export function ContextMemoryInspector({
               <p role="status">
                 For {snapshot.preview.model} ({snapshot.preview.destination}):{' '}
                 {snapshot.preview.counts.sent} sent, {snapshot.preview.counts.omitted} not sent.
-                Project rules also use the budget, so a real request can send less.
+                {snapshot.preview.basis === 'last-compilation'
+                  ? ` Recompiled with task ${snapshot.preview.taskId}, revision ${snapshot.preview.taskRevision}, and its recorded rules and evidence. Later adapter checks may still remove items.`
+                  : ' Estimate only: no matching recent task compilation is available. Task instructions, project rules and retrieval may reduce the actual context.'}
               </p>
             ) : (
               snapshot && <p role="status">Choose a model to preview what it would receive.</p>
