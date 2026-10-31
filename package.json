@@ -48,6 +48,7 @@
     "prebuild:dev-app": "npm run test:dev-app",
     "check:recovery": "node scripts/run-native-recovery.cjs",
     "check:quality": "node --test checks/quality/harness.test.mjs",
+    "postinstall": "node scripts/minimatch-compat.cjs",
     "prepare:owned-command": "node scripts/build-owned-command.cjs",
     "pretest": "npm run prepare:owned-command",
     "pretest:agents": "npm run prepare:owned-command",
@@ -210,6 +211,7 @@
     "afterPack": "scripts/check-packaged-secrets.cjs"
   },
   "overrides": {
-    "simple-git": "^4.0.2"
+    "simple-git": "^4.0.2",
+    "minimatch": "11.0.1"
   }
 }

@@ -37,3 +37,7 @@ Release workflow builds now depend on this verifier. Upload the two independentl
 Permanent tests cover malformed numeric data, partial matrices, missing packaged/hardware/live evidence, source/platform mismatches, actual compiled recall, transient reservations and positive/negative synthetic validator fixtures. Those fixtures are not packaged or live acceptance results. The performance UI availability guard now names the awaited state and uses a bounded wall-time deadline; the independent latency measurements and budgets remain enforced.
 
 Windows hardware limits, real host-pressure safety and live answer improvement remain unmeasured until qualified evidence is supplied. No assertion that 10,000 cases called a real model is made.
+
+
+## Release rollout correction for 0.6.7
+The original unconditional publishing dependency was deployed before reference profiles or live evidence existed. Pre-1.0 development releases now require deterministic context checks and both packaged platform smoke tests, and publish an explicit `development-scripted-only`, `certified:false` declaration alongside installers. They do not claim measured hardware/live-model certification. Version 1.x+, `require_context_certification`, the `REQUIRE_CONTEXT_CERTIFICATION` repository variable, or any supplied evidence run ID require the unchanged strict verifier; invalid or partial evidence is never silently ignored. This corrects the release pipeline rollout, not the qualification result.
