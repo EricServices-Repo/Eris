@@ -131,9 +131,11 @@ These controls preserve the visible transcript. Excluding additional older recal
 
 `.eris/context.md` remains the existing project-summary/reference mechanism, with its separate auto/ask/off policy. RAM conversation recall does not silently write project summaries or promote assistant claims into project truth. The Summary extractor now handles a Summary section at end of file correctly, and its cache retains at most eight files no larger than 1 MiB each.
 
-Each agent run keeps a `RunJournal` of its full tool results, written before the prompt truncates them and released when the run ends. See `docs/fixes/221-run-journal.md`. Compaction does not use it yet, so it can still discard the prompt's copy. Run-local compaction and native inference sessions remain separate mechanisms. This change leaves native per-run session release intact. There is no cross-turn KV reuse, background summarizer or model swap for memory maintenance.
+Existing run-local compaction and native inference sessions are separate mechanisms. This change leaves native per-run session release intact. There is no cross-turn KV reuse, background summarizer or model swap for memory maintenance.
 
 Eris-Dev's independent question cases do not automatically consume production conversation memory. The shared compiler can expose a `memory` evidence block when supplied by a conversation-aware caller. The deterministic memory suites are included in the agents qualification profile used by normal builds. Live-model quality comparisons remain a separate evaluation; passing scripted tests does not establish that every model follows recalled instructions correctly.
+
+Each agent run also keeps a `RunJournal` of its full tool results, written before the prompt truncates them and released when the run ends. See `docs/fixes/221-run-journal.md`. Compaction does not use it yet, so it can still discard the prompt's copy.
 
 ## Verification and regression coverage
 
