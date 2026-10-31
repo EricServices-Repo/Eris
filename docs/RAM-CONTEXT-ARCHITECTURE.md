@@ -6,6 +6,7 @@
 - Reviewed implementation: `37b3da2e2d8742766d1269754eef115d34ef465e`
 - Primary audience: AI coding agents, architecture reviewers, performance engineers and maintainers
 - Companion: [current implementation](CONTEXT-MEMORY.md), [system architecture](ARCHITECTURE.md)
+- Amended by: [Amendment 001, tiered VRAM and RAM memory](RAM-CONTEXT-AMENDMENT-001.md), which takes precedence where the two disagree
 
 ## 1. How an AI must use this specification
 
