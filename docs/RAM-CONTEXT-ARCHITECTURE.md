@@ -992,6 +992,8 @@ Preview uses a sandboxed snapshot and the same selection/compiler logic. It must
 
 ### 18.4 Chat history UX
 
+Implementation status and acceptance limits: [143 implementation notes](fixes/143-bounded-renderer-history.md).
+
 Use stable IDs and paged/virtualized rendering. Bound the renderer history-page cache to the 8 MiB share of the recent-text pool in the 128 MiB profile, not merely the number of DOM nodes. Evict offscreen pages with a stable scroll anchor and reloadable cursors. Sidebar thread lists retain metadata only, without hidden full message arrays for every conversation. Avoid retaining equivalent message arrays in multiple stores or closures. Searching visible messages and searching the durable archive are separate actions with clear coverage. Jumping to a search hit loads a bounded page around the original source, not every intervening page.
 
 The composer and active task continue while optional memory is warming. Show memory degradation in the inspector/diagnostics; avoid adding verbose internal retrieval logs to every assistant reply. Explain a missing reference only when it materially blocks the requested action.

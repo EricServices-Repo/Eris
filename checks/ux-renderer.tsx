@@ -212,6 +212,7 @@ async function checkMemorySettings() {
       envelopeBytes: 128 * 1024 ** 2,
       warmConversations: 2
     },
+    rendererHistoryBytes: 0,
     process: { rss: 80 * 1024 ** 2, heapUsed: 20 * 1024 ** 2 },
     archive: {
       initialized: true,

@@ -107,6 +107,17 @@ export class ContextMemoryStore {
     string,
     Pick<ContextMemorySettings, 'maxMessages' | 'maxThreadMiB' | 'enabled'>
   >()
+  private rendererBytes = 0
+  /** Renderer history is a separate owner of the same optional context envelope. */
+  setRendererHistoryBytes(bytes: number) {
+    if (!Number.isSafeInteger(bytes) || bytes < 0)
+      throw new Error('Invalid renderer history charge')
+    this.rendererBytes = bytes
+    this.evict()
+  }
+  get rendererHistoryBytes() {
+    return this.rendererBytes
+  }
   private pressureLimit = Infinity
   setPressureLimit(bytes: number) {
     this.pressureLimit = Math.max(0, bytes)
@@ -114,7 +125,10 @@ export class ContextMemoryStore {
     else this.evict()
   }
   private get envelopeBytes() {
-    return Math.min(this.pressureLimit, this.config.maxMemoryMiB * 1024 ** 2)
+    return Math.max(
+      0,
+      Math.min(this.pressureLimit, this.config.maxMemoryMiB * 1024 ** 2) - this.rendererBytes
+    )
   }
   private counter = 0
   private epoch = 0

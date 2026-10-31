@@ -21,6 +21,7 @@ export type MemoryUsageStatus = {
     historicalBytes: number
     warmConversations: number
   }
+  rendererHistoryBytes: number
   process: { rss: number; heapUsed: number }
   archive: ArchiveMemoryUsage | null
   archiveError: string | null
