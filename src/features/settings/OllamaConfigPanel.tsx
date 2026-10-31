@@ -1,11 +1,26 @@
 import { useMemo, useState } from 'react'
-import type { AppSettings, ModelConnection, ModelsStatus } from '@/shared/settings-schema'
+import type {
+  AppSettings,
+  ConnectionModelPlacement,
+  ModelConnection,
+  ModelsStatus
+} from '@/shared/settings-schema'
 
 export const OLLAMA_DEFAULT_URL = 'http://127.0.0.1:11434/v1'
 export const OLLAMA_CONNECTION_ID = 'ollama'
 
 function isOllamaConnection(c: ModelConnection): boolean {
   return c.type !== 'builtin' && (c.provider === 'ollama' || c.id === OLLAMA_CONNECTION_ID)
+}
+
+/** Requested, loaded and placed, so a slow model has a visible cause. */
+function placementText(item: ConnectionModelPlacement): string {
+  const share = item.sizeBytes ? Math.round((item.vramBytes / item.sizeBytes) * 100) : 100
+  const loaded = item.loadedWindow?.toLocaleString() ?? 'not reported'
+  const window = `requested ${item.requestedWindow.toLocaleString()} tokens, loaded ${loaded}`
+  return share < 100
+    ? `${item.model} is partly on CPU (${share}% in VRAM) and will run slower; ${window}.`
+    : `${item.model} is fully in VRAM; ${window}.`
 }
 
 interface Props {
@@ -56,6 +71,16 @@ export function OllamaConfigPanel({
 
   const reachable = Boolean(live?.reachable)
   const enabled = ollama?.enabled !== false
+
+  const placementNotes = (live?.placements ?? []).map((item) => (
+    <div
+      key={item.model}
+      className="models-inline-msg"
+      data-tone={item.vramBytes < item.sizeBytes ? 'danger' : 'ok'}
+    >
+      {placementText(item)}
+    </div>
+  ))
 
   const mergeConnections = (nextOllama: ModelConnection): ModelConnection[] => {
     const others = (resolved.models.connections ?? []).filter((c) => !isOllamaConnection(c))
@@ -227,6 +252,8 @@ export function OllamaConfigPanel({
           </div>
         )}
 
+        {placementNotes}
+
         {(error || (live?.error && !reachable) || info) && (
           <div
             className="models-inline-msg"
@@ -241,6 +268,7 @@ export function OllamaConfigPanel({
 
   return (
     <div className="ollama-config model-connections">
+      {placementNotes}
       <div className="model-connections-intro">
         <div className="ollama-config-title">
           <span className={`status-dot ${reachable && enabled ? 'ok' : ''}`} />
@@ -254,6 +282,21 @@ export function OllamaConfigPanel({
           <strong>Text Models</strong> — they run inside Eris with no separate app.
         </p>
       </div>
+
+      {ollama && (
+        <label className="providers-enable-row">
+          <input
+            type="checkbox"
+            checked={ollama.keepModelLoaded === true}
+            onChange={(e) =>
+              void onSaveConnections(
+                mergeConnections({ ...ollama, keepModelLoaded: e.target.checked })
+              )
+            }
+          />
+          <span>Keep model loaded (otherwise it unloads after 30 minutes idle)</span>
+        </label>
+      )}
 
       <label className="field ollama-url-field">
         <span>Base URL</span>

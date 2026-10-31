@@ -465,6 +465,12 @@ export function ModelConnectionsPanel({
             />
             <span>Enabled for chat</span>
           </label>
+          {(draft.provider === 'lmstudio' || isLoopbackUrl(draft.baseUrl.trim())) && (
+            <p className="model-conn-hint">
+              Unverified window: this server does not report its loaded context size, so Eris
+              budgets for 8,192 tokens at most.
+            </p>
+          )}
           {draft.baseUrl.trim() && !isLoopbackUrl(draft.baseUrl.trim()) && (
             <label className="providers-enable-row">
               <input

@@ -21,6 +21,14 @@ import {
 } from './openai-compatible'
 import { resolveConnectionForModel } from './model-catalog'
 import { modelDestination } from './model-destination'
+import { streamOllamaChat } from './ollama-chat'
+import {
+  ACTIVE_SESSION_KEEP_ALIVE,
+  KEEP_LOADED_INDEFINITELY,
+  observeOllamaPlacement,
+  ollamaRequestWindow,
+  prepareModelWindows
+} from './ollama-runtime'
 import { estimateMessagesTokens, estimateTokens, recordModelUsage } from './usage-stats'
 import {
   activeDiagnosticsScope,
@@ -109,6 +117,7 @@ export async function* streamProviderChat(
     if (task) await assertTaskReferences(task, options.settings, model)
   }
   assertProviderCallAllowed(options.settings, model)
+  await prepareModelWindows(options.settings, [model], options.getSecret, options.signal)
   const capabilities = resolveModelCapabilities(options.settings, model)
   if (options.maxOutputTokens !== undefined) {
     if (!Number.isSafeInteger(options.maxOutputTokens) || options.maxOutputTokens < 1)
@@ -265,7 +274,19 @@ export async function* streamProviderChat(
     provider = connection.provider || connection.name || 'custom'
     const apiKey = connection.apiKeyRef ? options.getSecret(connection.apiKeyRef) : null
     phase('prefill', 'Provider request dispatched; network time is included')
-    for await (const chunk of streamOpenAICompatible({
+    const numCtx = ollamaRequestWindow(connection, model, capabilities.requestedContext)
+    const stream =
+      numCtx === null
+        ? streamOpenAICompatible
+        : (request: Parameters<typeof streamOpenAICompatible>[0]) =>
+            streamOllamaChat({
+              ...request,
+              numCtx,
+              keepAlive: connection.keepModelLoaded
+                ? KEEP_LOADED_INDEFINITELY
+                : ACTIVE_SESSION_KEEP_ALIVE
+            })
+    for await (const chunk of stream({
       baseUrl: connection.baseUrl,
       apiKey,
       model,
@@ -303,6 +324,7 @@ export async function* streamProviderChat(
       yield chunk
     }
     finish()
+    if (numCtx !== null) void observeOllamaPlacement(connection, model, numCtx, apiKey)
   } catch (err) {
     reportChatActivity('integrating', {
       source: 'transport',

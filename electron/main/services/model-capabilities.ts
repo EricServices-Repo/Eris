@@ -3,6 +3,7 @@ import { contextPlan, findBuiltinEntry, isBuiltinRef, isNativeGgufRef } from './
 import { lastGpuAccelStatus } from './gpu-accel'
 import { findLocalEntry, isLocalRef, localEntryAsBuiltin } from './local-model'
 import { loadedModelFacts } from './model-runtime'
+import { serverWindow, serverWindowFacts } from './ollama-runtime'
 import { contextLimits, REPLY_MAX_TOKENS } from './vram-fit'
 import { toolProtocolFor } from './tool-protocol'
 export interface ModelCapabilities {
@@ -12,8 +13,8 @@ export interface ModelCapabilities {
   promptBudget: number
   outputCap: number
   outputReserve: number
-  /** measured-allocation > runtime-plan > configured-ceiling. */
-  contextSource: 'measured-allocation' | 'runtime-plan' | 'configured-ceiling'
+  /** measured-allocation > runtime-plan > unverified-window > configured-ceiling. */
+  contextSource: 'measured-allocation' | 'runtime-plan' | 'unverified-window' | 'configured-ceiling'
   tools: 'native-tools' | 'text-tools'
   jsonSchema: 'grammar' | 'unverified'
   tokenCounting: 'native-tokenizer' | 'character-estimate'
@@ -25,7 +26,7 @@ function nativeEntry(model: string) {
   return local && localEntryAsBuiltin(local)
 }
 /** The best available capacity: what was allocated, else what a load would ask for. */
-function contextCapacity(model: string, requestedContext: number) {
+function contextCapacity(settings: AppSettings, model: string, requestedContext: number) {
   const entry = nativeEntry(model)
   const measured = entry && loadedModelFacts(entry.ref)
   if (measured)
@@ -36,6 +37,8 @@ function contextCapacity(model: string, requestedContext: number) {
         .max,
       contextSource: 'runtime-plan' as const
     }
+  const served = serverWindow(settings, model, requestedContext)
+  if (served) return served
   return {
     contextCeiling: isBuiltinRef(model)
       ? contextLimits({ settingsContext: requestedContext }).max
@@ -46,12 +49,16 @@ function contextCapacity(model: string, requestedContext: number) {
 /** Recorded with each compile, so a report can tell a measurement from a plan. */
 export function contextProvenance(settings: AppSettings, model: string) {
   const { contextCeiling, contextSource } = resolveModelCapabilities(settings, model)
-  return { source: contextSource, tokens: contextCeiling }
+  return {
+    source: contextSource,
+    tokens: contextCeiling,
+    ...serverWindowFacts(settings, model)
+  }
 }
 /** Budgets follow the allocation; settings and the model card only bound what is requested. */
 export function resolveModelCapabilities(settings: AppSettings, model: string): ModelCapabilities {
   const requestedContext = settings.models.contextWindow || 32768
-  const { contextCeiling, contextSource } = contextCapacity(model, requestedContext)
+  const { contextCeiling, contextSource } = contextCapacity(settings, model, requestedContext)
   const native = isNativeGgufRef(model)
   const outputReserve = Math.max(
     128,

@@ -37,7 +37,7 @@ export type OpenAIToolDef = {
   }
 }
 
-async function modelErrorSnippet(response: Response, signal?: AbortSignal): Promise<string> {
+export async function modelErrorSnippet(response: Response, signal?: AbortSignal): Promise<string> {
   const reader = response.body?.getReader()
   if (!reader) return ''
   const abort = () => {
