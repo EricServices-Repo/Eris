@@ -449,3 +449,19 @@ it('keeps ring rows and byte accounting stable across repeated append/evict cycl
   expect(store.ledger.ownedBytes).toBeGreaterThan(0)
   expect(store.ledger.pinnedBytes).toBe(0)
 })
+
+it('preserves warm overlap when canonical metadata property order differs from a live tail', () => {
+  const store = new ContextMemoryStore()
+  const first = {
+    ...message('first', 'Remember booking currency CAD'),
+    agentId: 'coder',
+    model: 'local:test',
+    contextSequence: 1,
+    contextProjectRoot: '/project'
+  }
+  install(store, 't', [first])
+  const second = { ...message('second', 'Follow-up'), contextSequence: 2 }
+  store.append('t', 2, 2, [first, second], 0)
+  expect(store.has('t')).toBe(true)
+  expect(store.usage('t').activeBytes).toBeGreaterThan(0)
+})

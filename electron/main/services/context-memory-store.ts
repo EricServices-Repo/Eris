@@ -62,20 +62,6 @@ const unfinished = (message: ChatMessage) =>
   !/^(?:done|complete)$/.test(message.contextResult.workingState.terminal)
 const salient =
   /\b(?:remember|must|always|never|do not|only|decision|prefer|constraint|instead|unfinished|pending)\b/i
-const clean = (m: ChatMessage): ChatMessage => ({
-  id: m.id,
-  role: m.role,
-  content: m.content,
-  createdAt: m.createdAt,
-  agentId: m.agentId,
-  agentName: m.agentName,
-  model: m.model,
-  contextSequence: m.contextSequence,
-  contextProjectRoot: m.contextProjectRoot,
-  contextContentOffset: m.contextContentOffset,
-  contextContentLength: m.contextContentLength,
-  contextResult: m.contextResult ? structuredClone(m.contextResult) : undefined
-})
 const size = (m: ChatMessage) => Buffer.byteLength(JSON.stringify(m), 'utf8') * 4 + 512
 const termSize = (terms: readonly string[]) =>
   terms.reduce((n, term) => n + term.length * 2 + 16, 48)
@@ -586,7 +572,7 @@ export class ContextMemoryStore {
     }
     for (let i = 0; i < tail.length; i++) {
       const old = this.ordinalRow(entry, offset + i)
-      if (old && JSON.stringify(old.message) !== JSON.stringify(clean(tail[i]))) {
+      if (old && JSON.stringify(old.message) !== JSON.stringify(contextRecord(tail[i]))) {
         this.clear(key)
         return
       }
