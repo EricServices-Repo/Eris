@@ -1,3 +1,4 @@
+import { contextProvenance } from '../model-capabilities'
 import { assertTaskReferences } from '../reference-binding'
 import { createHash } from 'crypto'
 import { activeDiagnosticsScope } from '../model-transport'
@@ -618,6 +619,7 @@ async function* runAgentInternal(options: {
       maxInputTokens: contextBudgetTokens(options.settings, chatModel)
     })
     appendTaskEvent(task.taskId, 'context-compiled', {
+      context: contextProvenance(options.settings, chatModel),
       revision: task.revision,
       agentId: plan.agentId,
       model: chatModel,
