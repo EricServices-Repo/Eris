@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.9 — 2026-10-31
+
+- Rebuild with Windows context allocation recovery and Eris-Dev discovery of shared Eris models without symlink permissions.
+
 ## 0.6.8 — 2026-10-31
 
 - Rebuild with merged memory pressure, resident model accounting, durable recall, allocated context budgeting, and compaction summary improvements.
