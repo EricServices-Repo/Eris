@@ -2,6 +2,8 @@
 
 ## 0.6.7 — 2026-10-31
 
+- Repair development-release qualification and update vulnerable glob matching to the patched engine with legacy packaging compatibility.
+
 - Improve memory settings, incremental history and archive recall; add stateful Eris-Dev memory testing and stricter context qualification. Rebuild Eris and Eris-Dev for macOS.
 
 ## 0.6.6 — 2026-10-30

@@ -1,3 +1,7 @@
+import { createRequire } from 'module'
+const { contextReleasePolicy } = createRequire(import.meta.url)(
+  '../scripts/context-release-policy.cjs'
+)
 import { describe, expect, it } from 'vitest'
 import {
   buildCorpus,
@@ -243,4 +247,44 @@ it('accepts complete validator fixtures and rejects model substitution in paired
   expect(evaluateContextReleaseEvidence(reports, limits, sha).failures.join()).toMatch(
     /changed model/
   )
+})
+
+it('requires real certification for 1.x, explicitly certified runs and any supplied evidence', () => {
+  expect(contextReleasePolicy({ version: '0.6.7' })).toMatchObject({
+    strict: false,
+    qualification: 'development-scripted-only'
+  })
+  expect(contextReleasePolicy({ version: '1.0.1' }).strict).toBe(true)
+  expect(contextReleasePolicy({ version: '0.6.7', requireCertification: true }).strict).toBe(true)
+  expect(contextReleasePolicy({ version: '0.6.7', evidenceRunId: '123' }).strict).toBe(true)
+  expect(() => contextReleasePolicy({ version: 'bad' })).toThrow()
+  expect(() => contextReleasePolicy({ version: '0.6.7', evidenceRunId: 'untrusted' })).toThrow()
+})
+
+it('keeps real legacy glob and asar callers compatible with the patched matching engine', async () => {
+  const require = createRequire(import.meta.url)
+  const mm = require('minimatch')
+  expect(require('minimatch/package.json').version).toBe('11.0.1')
+  expect(mm('src/app.ts', '**/*.ts')).toBe(true)
+  expect(mm.minimatch('src/app.ts', '**/*.ts')).toBe(true)
+  expect(new mm.Minimatch('**/*.node').match('native/addon.node')).toBe(true)
+  expect(mm.defaults({ dot: true })('.hidden/file', '**/*')).toBe(true)
+  expect(require('glob').sync('src/shared/*.ts').length).toBeGreaterThan(10)
+  const fs = require('node:fs'),
+    os = require('node:os'),
+    path = require('node:path')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'eris-patched-asar-'))
+  try {
+    const source = path.join(dir, 'source')
+    fs.mkdirSync(source)
+    fs.writeFileSync(path.join(source, 'app.js'), 'module.exports = 1')
+    fs.writeFileSync(path.join(source, 'addon.node'), 'fixture')
+    const archive = path.join(dir, 'app.asar'),
+      asar = require('@electron/asar')
+    await asar.createPackageWithOptions(source, archive, { unpack: '*.node' })
+    expect(asar.extractFile(archive, 'app.js').toString()).toBe('module.exports = 1')
+    expect(fs.existsSync(`${archive}.unpacked/addon.node`)).toBe(true)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })

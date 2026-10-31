@@ -12,6 +12,10 @@ on:
         description: 'Existing git tag to build and publish (e.g. v0.2.3). Leave empty to use package.json version.'
         required: false
         default: ''
+      require_context_certification:
+        description: 'Require packaged hardware and paired-model certification (always required for 1.x+).'
+        type: boolean
+        default: false
       context_evidence_run_id:
         description: 'Workflow run containing ram-context-release-evidence for this exact source SHA (macOS + Windows packaged reports).'
         required: false
@@ -59,6 +63,16 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: Determine release qualification policy
+        id: policy
+        env:
+          RELEASE_VERSION: ${{ needs.resolve-version.outputs.version }}
+          RELEASE_SOURCE_SHA: ${{ needs.resolve-version.outputs.source_sha }}
+          CONTEXT_EVIDENCE_RUN_ID: ${{ inputs.context_evidence_run_id || vars.RAM_CONTEXT_EVIDENCE_RUN_ID }}
+          REQUIRE_CONTEXT_CERTIFICATION: ${{ inputs.require_context_certification || vars.REQUIRE_CONTEXT_CERTIFICATION }}
+        run: node scripts/context-release-policy.cjs
+      - name: Deterministic RAM-context gate
+        run: npm run check:context
       - name: Download exact-source packaged context evidence
         if: inputs.context_evidence_run_id != '' || vars.RAM_CONTEXT_EVIDENCE_RUN_ID != ''
         uses: actions/download-artifact@v4
@@ -67,8 +81,15 @@ jobs:
           path: out/qualification/release-evidence
           run-id: ${{ inputs.context_evidence_run_id || vars.RAM_CONTEXT_EVIDENCE_RUN_ID }}
           github-token: ${{ github.token }}
-      - name: Refuse unqualified RAM-context releases
+      - name: Verify required context certification
+        if: steps.policy.outputs.strict == 'true'
         run: npm run check:context:release
+      - name: Preserve qualification declaration
+        uses: actions/upload-artifact@v4
+        with:
+          name: context-release-qualification
+          path: out/qualification/context-release-verification.json
+          if-no-files-found: error
 
   build:
     needs: [resolve-version, context-evidence]
@@ -182,6 +203,15 @@ jobs:
             find dist -maxdepth 3 -type f | head -80
             exit 1
           fi
+
+      - name: Download qualification declaration
+        uses: actions/download-artifact@v4
+        with:
+          name: context-release-qualification
+          path: qualification
+      - name: Include qualification declaration
+        shell: bash
+        run: cp qualification/context-release-verification.json release-assets/context-qualification-${{ matrix.platform }}.json
 
       - name: Record artifact provenance
         shell: bash
