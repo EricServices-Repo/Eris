@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 const root = await mkdtemp(join(tmpdir(), 'eris-client-workers-'))
-const worker = new Worker(resolve('out/main/workspace-worker.js'), {
+const worker = new Worker(resolve(process.argv[2] ?? 'out/main/workspace-worker.js'), {
   env: { ...process.env, ERIS_APP_PATH: process.cwd() }
 })
 let sequence = 0
@@ -118,6 +118,7 @@ try {
   assert.equal(full.messages.length, 156)
   assert.equal(full.messages[0].content, 'Message 0')
   assert.equal(await readFile(join(dir, 'legacy.json'), 'utf8'), original)
+  assert.equal(await request({ type: 'chat-close', dir }), true)
   const replay = await request({ type: 'context-replay', dir, limit: 500 })
   assert.equal(replay.complete, true)
   const changes = await request({ type: 'context-changes', dir, after: 0, limit: 2 })

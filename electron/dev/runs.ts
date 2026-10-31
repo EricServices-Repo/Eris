@@ -19,6 +19,10 @@ export interface RunManifest {
   header: DevRunHeader
   questions: DevQuestion[]
   config: {
+    memoryMode?: import('../../src/shared/dev-memory-replay').DevMemoryMode
+    memoryAlternateModel?: string
+    memoryEpisodeSize?: number
+    memoryShareRemote?: boolean
     live?: DevLiveConfig
     context: number
     mode: 'ask' | 'agent'
@@ -79,6 +83,10 @@ const ManifestSchema = z
     questions: z.array(z.object({ id: z.string(), text: z.string() }).passthrough()).max(10000),
     config: z
       .object({
+        memoryMode: z.enum(['independent', 'stateful', 'pressure']).optional(),
+        memoryAlternateModel: z.string().min(1).max(2048).optional(),
+        memoryEpisodeSize: z.number().int().min(2).max(10000).optional(),
+        memoryShareRemote: z.boolean().optional(),
         context: z.number().positive(),
         mode: z.enum(['ask', 'agent']),
         intentReplyMode: z.enum(['fallback', 'malformed', 'timeout']),

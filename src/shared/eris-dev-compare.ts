@@ -304,6 +304,8 @@ export function runCompatibility(
       controlled: []
     }
   const confounders: string[] = []
+  if (JSON.stringify(before.memory ?? null) !== JSON.stringify(after.memory ?? null))
+    confounders.push('memory episode configuration or labeled corpus changed')
   const controlled: string[] = []
   const differs = (a: unknown, b: unknown) => JSON.stringify(a) !== JSON.stringify(b)
   if (differs(before.fixture?.digest, after.fixture.digest))

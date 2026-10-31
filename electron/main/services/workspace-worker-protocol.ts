@@ -39,6 +39,7 @@ export type WorkspaceRequest =
       expectedSource?: ContextHeader
     }
   | { type: 'chat-storage-usage'; dir: string }
+  | { type: 'chat-close'; dir: string }
   | { type: 'chat-list'; dir: string }
   | { type: 'chat-get'; dir: string; id: string; page?: ChatPage }
   | { type: 'chat-save'; dir: string; thread: ChatThread }

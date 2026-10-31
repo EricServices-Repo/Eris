@@ -13,6 +13,7 @@ export type IntentReplyMode = 'fallback' | 'malformed' | 'timeout'
 
 /** One imported question with a content-derived ID that survives reordering and chunking. */
 export interface DevQuestion {
+  memory?: import('zod').infer<typeof import('./dev-memory-replay').DevMemoryCaseSchema>
   /** sha256(text) prefix plus occurrence, e.g. `3f2a9c1b04de-1`. */
   id: string
   text: string
@@ -138,6 +139,7 @@ export type DevTerminationCause =
   | 'worker-exited'
 
 export interface DevResult extends DevSummary {
+  memory?: import('./dev-memory-replay').DevMemoryTrace
   task?: unknown
   requests: DevCapture[]
   /**
@@ -170,6 +172,14 @@ export interface DevResult extends DevSummary {
 }
 
 export interface DevRunHeader {
+  memory?: {
+    mode: import('./dev-memory-replay').DevMemoryMode
+    episodeSize: number
+    shareRemote: boolean
+    alternateModel?: string
+    alternateSettingsDigest?: string
+    corpusHash: string
+  }
   format: typeof CAPTURE_FORMAT
   created: string
   app: {
@@ -305,6 +315,10 @@ export interface DevLiveConfig {
   maxCalls: number
 }
 export interface DevStartInput {
+  memoryMode?: import('./dev-memory-replay').DevMemoryMode
+  memoryAlternateModel?: string
+  memoryEpisodeSize?: number
+  memoryShareRemote?: boolean
   context: number
   mode: 'ask' | 'agent'
   intentReplyMode: IntentReplyMode

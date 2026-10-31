@@ -114,6 +114,12 @@ function App() {
   const [selected, setSelected] = useState(0)
   const [detail, setDetail] = useState<DevResult | null>(null)
   const [context, setContext] = useState(8192)
+  const [memoryMode, setMemoryMode] = useState<'independent' | 'stateful' | 'pressure'>(
+    'independent'
+  )
+  const [memoryAlternateModel, setMemoryAlternateModel] = useState('')
+  const [memoryEpisodeSize, setMemoryEpisodeSize] = useState(10)
+  const [memoryShareRemote, setMemoryShareRemote] = useState(false)
   const [mode, setMode] = useState<'ask' | 'agent'>('agent')
   const [deadline, setDeadline] = useState(180000)
   const [intentReplyMode, setIntentReplyMode] = useState<IntentReplyMode>('fallback')
@@ -250,6 +256,12 @@ function App() {
           context,
           mode,
           intentReplyMode,
+          memoryMode,
+          ...(execution === 'live' && memoryMode !== 'independent' && memoryAlternateModel
+            ? { memoryAlternateModel }
+            : {}),
+          memoryEpisodeSize,
+          memoryShareRemote,
           ...(execution === 'live'
             ? { live: { model, batchSize: 10, timeoutMs: deadline, maxCalls: 12 } }
             : {})
@@ -289,6 +301,10 @@ function App() {
       }
       setContext(opened.header.context)
       setMode(opened.header.mode)
+      setMemoryMode(opened.header.memory?.mode ?? 'independent')
+      setMemoryAlternateModel(opened.header.memory?.alternateModel ?? '')
+      setMemoryEpisodeSize(opened.header.memory?.episodeSize ?? 10)
+      setMemoryShareRemote(opened.header.memory?.shareRemote ?? false)
       setIntentReplyMode(opened.header.intentReplyMode)
       setPreview(null)
       setTab(opened.header.responses === 'live' ? 'answer' : 'request')
@@ -395,6 +411,65 @@ function App() {
           selected model and the explicit budgets below. Host commands remain blocked; correctness
           stays unresolved until independently reviewed.
         </p>
+        <label>
+          Memory testing{' '}
+          <select
+            disabled={locked}
+            value={memoryMode}
+            onChange={(event) => setMemoryMode(event.target.value as typeof memoryMode)}
+          >
+            <option value="independent">Independent questions</option>
+            <option value="stateful">Stateful RAM episodes</option>
+            <option value="pressure">Stateful · simulated cache pressure</option>
+          </select>
+        </label>
+        {memoryMode !== 'independent' && (
+          <>
+            <label>
+              Switch model halfway through each episode{' '}
+              <select
+                disabled={locked || execution !== 'live'}
+                value={memoryAlternateModel}
+                onChange={(event) => setMemoryAlternateModel(event.target.value)}
+              >
+                <option value="">Keep selected model</option>
+                {models
+                  .filter((option) => option.id !== model)
+                  .map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label>
+              Questions per episode{' '}
+              <input
+                type="number"
+                min={2}
+                max={10000}
+                disabled={locked}
+                value={memoryEpisodeSize}
+                onChange={(event) => setMemoryEpisodeSize(Number(event.target.value))}
+              />
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                disabled={locked}
+                checked={memoryShareRemote}
+                onChange={(event) => setMemoryShareRemote(event.target.checked)}
+              />{' '}
+              Allow recalled test history in remote requests
+            </label>
+            <p>
+              Episodes deliberately share prior questions and observed answers. Capture mode uses
+              only explicitly supplied memory.scriptedResponse; no model answer is invented. Source
+              IDs are question-id:u and question-id:a. Simulated pressure clears RAM on alternate
+              turns. File edits across resumed episodes are not replayed.
+            </p>
+          </>
+        )}
         <label>
           Compare model{' '}
           <select
@@ -784,6 +859,7 @@ function App() {
                             <option value="tools">Tool definitions</option>
                             <option value="contract">Task contract</option>
                             <option value="context">Routing and context</option>
+                            <option value="memory">Memory replay evidence</option>
                             <option value="events">Events</option>
                           </select>
                         </label>
@@ -812,17 +888,19 @@ function App() {
                                     }))
                                   : diagnostic === 'contract'
                                     ? detail.task
-                                    : diagnostic === 'context'
-                                      ? {
-                                          routeDecision: detail.routeDecision,
-                                          retrieval: detail.retrieval,
-                                          workflowLint: detail.workflowLint,
-                                          requests: detail.requests.map((r) => ({
-                                            context: r.context,
-                                            toolManifest: r.toolManifest
-                                          }))
-                                        }
-                                      : detail.events,
+                                    : diagnostic === 'memory'
+                                      ? detail.memory
+                                      : diagnostic === 'context'
+                                        ? {
+                                            routeDecision: detail.routeDecision,
+                                            retrieval: detail.retrieval,
+                                            workflowLint: detail.workflowLint,
+                                            requests: detail.requests.map((r) => ({
+                                              context: r.context,
+                                              toolManifest: r.toolManifest
+                                            }))
+                                          }
+                                        : detail.events,
                             null,
                             2
                           )}

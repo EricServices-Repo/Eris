@@ -31,6 +31,7 @@ import { requestInvariantFindings } from '../main/services/agent/request-invaria
 export const CAPTURE_OUTPUT_LIMIT_VERSION = 1
 
 export interface CaptureOptions {
+  conversationMemory?: import('../../src/shared/context-memory').MemoryPrompt
   /** Scenario continuity comes from the actual prior diagnostic turn, never a production thread lookup. */
   threadId?: string
   priorTask?: TaskContract | null
@@ -282,8 +283,11 @@ export async function captureQuestion(
         onBlockedEffect: (kind, detail) => result.events.push(`Blocked ${kind}: ${detail}`),
         onTaskEvent: (event) => {
           if (event.type === 'context-compiled') pendingContext = event.data
-          else if (event.type === 'context-dispatched') pendingDispatch = event.data
-          else if (event.type === 'tool-manifest') pendingToolManifest = event.data
+          else if (event.type === 'context-dispatched') {
+            pendingDispatch = event.data
+            const call = result.requests[result.requests.length - 1]
+            if (call?.purpose === 'agent') call.dispatch = event.data
+          } else if (event.type === 'tool-manifest') pendingToolManifest = event.data
           else if (event.type === 'route-decision') result.routeDecision = event.data
           else if (event.type === 'retrieval') result.retrieval = event.data
           else if (event.type === 'workflow-lint') result.workflowLint = event.data
@@ -341,6 +345,7 @@ export async function captureQuestion(
           getSecret: live?.getSecret ?? (() => null),
           mode,
           turnPlan: plan,
+          conversationMemory: options.conversationMemory,
           mcp: 'off',
           allowDelegate: false,
           approveCommand: async () => false,

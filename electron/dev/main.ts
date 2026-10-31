@@ -1,3 +1,5 @@
+import { DevMemoryReplay, finishMemoryTrace } from './memory-replay'
+import { DevMemoryModeSchema } from '../../src/shared/dev-memory-replay'
 import { qualityStdio } from './quality-stdio'
 import { disposeRuntime } from '../main/services/builtin-model'
 import {
@@ -26,7 +28,7 @@ import {
 } from 'fs/promises'
 import { createHash, randomUUID } from 'crypto'
 import { execFileSync } from 'child_process'
-import { migrateLegacyIdentity, prepareQuestions } from './questions'
+import { migrateLegacyIdentity, prepareQuestions, memoryCorpusDigest } from './questions'
 import { captureQuestion, captureSettings } from './capture'
 import { devModels, connectDevModel, prepareLiveModel, type PreparedLiveModel } from './models'
 import { questionBatches } from './batches'
@@ -314,10 +316,21 @@ async function run(
   startIndex: number,
   workspace: string | null,
   controller: AbortController,
-  live?: PreparedLiveModel
+  live?: PreparedLiveModel,
+  alternateLive?: PreparedLiveModel
 ) {
   const { questions, config } = manifest
   completed = startIndex
+  const memory =
+    config.memoryMode && config.memoryMode !== 'independent'
+      ? new DevMemoryReplay(
+          join(dir, `memory-attempt-${randomUUID()}`),
+          manifest.runId,
+          config.memoryMode,
+          config.memoryEpisodeSize ?? 10,
+          config.memoryShareRemote ?? false
+        )
+      : null
   let progress: RunProgress = {
     ...(readProgress(dir) ?? { completed: 0, rewritten: [], resumedAt: [] }),
     state: 'running',
@@ -326,16 +339,38 @@ async function run(
   }
   writeProgress(dir, progress)
   try {
+    if (memory && startIndex) {
+      const first =
+        Math.floor(startIndex / (config.memoryEpisodeSize ?? 10)) * (config.memoryEpisodeSize ?? 10)
+      for (let index = first; index < startIndex; index++) {
+        const prior = readCaptureRecord(
+          JSON.parse(await readFile(join(dir, `${index}.json`), 'utf8'))
+        )
+        // Replay canonical prior inputs/results one at a time, never reuse an uncommitted interrupted attempt.
+        await memory.prepare(index, questions[index]!, controller.signal)
+        await memory.commit(index, questions[index]!, prior, controller.signal)
+      }
+    }
     for await (const batch of questionBatches(questions.length, startIndex, controller.signal)) {
       emit({ running: true, completed, total: questions.length, batch })
       const batchResults: DevSummary[] = []
       for (const index of batch.indices) {
         if (controller.signal.aborted) break
         const question = questions[index]!
+        const caseLive =
+          memory &&
+          alternateLive &&
+          index % (config.memoryEpisodeSize ?? 10) >=
+            Math.floor((config.memoryEpisodeSize ?? 10) / 2)
+            ? alternateLive
+            : live
         // Every live question gets a fresh fixture, so one answer cannot contaminate the next.
         const caseWorkspace = live ? (await prepareWorkspace()).workspace : workspace
         let result: DevResult
         try {
+          const preparedMemory = memory
+            ? await memory.prepare(index, question, controller.signal)
+            : null
           result = await captureQuestion(
             index,
             question.text,
@@ -344,13 +379,19 @@ async function run(
             config.mode,
             controller.signal,
             {
-              question,
+              question: preparedMemory
+                ? { ...question, history: preparedMemory.history }
+                : question,
+              ...(preparedMemory
+                ? { threadId: preparedMemory.threadId, conversationMemory: preparedMemory.prompt }
+                : {}),
               intentReplyMode: config.intentReplyMode,
-              live,
+              live: caseLive,
               timeoutMs: config.live?.timeoutMs,
               maxCalls: config.live?.maxCalls
             }
           )
+          if (preparedMemory) result.memory = finishMemoryTrace(preparedMemory.trace, result)
         } finally {
           if (live && caseWorkspace)
             await rm(caseWorkspace, { recursive: true, force: true }).catch(() => {})
@@ -367,6 +408,7 @@ async function run(
         }
         batchResults.push(summaryOf(result))
         writeCaseRecord(dir, index, result)
+        if (memory) await memory.commit(index, question, result, controller.signal)
         await appendFile(join(dir, 'requests.jsonl'), JSON.stringify(result) + '\n')
         completed++
         progress = { ...progress, completed, updatedAt: new Date().toISOString() }
@@ -391,6 +433,7 @@ async function run(
   } finally {
     writeProgress(dir, { ...progress, updatedAt: new Date().toISOString() })
     if (workspace) await rm(workspace, { recursive: true, force: true }).catch(() => {})
+    await memory?.dispose().catch((error) => console.error('Memory replay cleanup failed', error))
     active = null
     emit({ running: false, completed, total: questions.length })
   }
@@ -602,6 +645,25 @@ app.whenReady().then(async () => {
         input.live.maxCalls > 20)
     )
       throw new Error('Invalid live model limits.')
+    const memoryMode = DevMemoryModeSchema.parse(input.memoryMode ?? 'independent')
+    if (
+      input.memoryAlternateModel !== undefined &&
+      (typeof input.memoryAlternateModel !== 'string' ||
+        !input.memoryAlternateModel ||
+        input.memoryAlternateModel.length > 2048 ||
+        !input.live ||
+        memoryMode === 'independent')
+    )
+      throw new Error('Alternate memory model requires a stateful live run.')
+    if (
+      input.memoryEpisodeSize !== undefined &&
+      (!Number.isInteger(input.memoryEpisodeSize) ||
+        input.memoryEpisodeSize < 2 ||
+        input.memoryEpisodeSize > 10000)
+    )
+      throw new Error('Memory episode size must be 2–10,000.')
+    if (input.memoryShareRemote !== undefined && typeof input.memoryShareRemote !== 'boolean')
+      throw new Error('Invalid memory disclosure policy')
     const controller = new AbortController()
     active = controller
     let workspace: string | null = null
@@ -612,9 +674,16 @@ app.whenReady().then(async () => {
     try {
       await mkdir(dir, { recursive: true })
       const live = input.live ? await prepareLiveModel(input.live.model, input.context) : undefined
+      const alternateLive = input.memoryAlternateModel
+        ? await prepareLiveModel(input.memoryAlternateModel, input.context!)
+        : undefined
       const prepared = await prepareWorkspace()
       workspace = prepared.workspace
       const config: RunManifest['config'] = {
+        memoryMode,
+        ...(input.memoryAlternateModel ? { memoryAlternateModel: input.memoryAlternateModel } : {}),
+        memoryEpisodeSize: input.memoryEpisodeSize ?? 10,
+        memoryShareRemote: input.memoryShareRemote ?? false,
         ...(input.live
           ? {
               live: {
@@ -637,12 +706,36 @@ app.whenReady().then(async () => {
         questions: corpus.questions,
         config
       }
+      manifest.header.memory = {
+        ...(alternateLive
+          ? { alternateModel: alternateLive.model, alternateSettingsDigest: alternateLive.digest }
+          : {}),
+        mode: memoryMode,
+        episodeSize: config.memoryEpisodeSize!,
+        shareRemote: config.memoryShareRemote!,
+        corpusHash: memoryCorpusDigest(corpus.questions)
+      }
+      if (memoryMode !== 'independent')
+        manifest.header.coverage = {
+          ...manifest.header.coverage,
+          exercised: [
+            ...manifest.header.coverage.exercised,
+            'isolated stateful RAM recall and actual request source tracking'
+          ]
+        }
       if (live) {
         manifest.header.settingsDigest = live.digest
         manifest.header.responses = 'live'
         manifest.header.live = config.live
         manifest.header.coverage = {
-          exercised: [...CAPTURE_COVERAGE.exercised, 'model inference', 'sandbox workspace tools'],
+          exercised: [
+            ...CAPTURE_COVERAGE.exercised,
+            ...(memoryMode !== 'independent'
+              ? ['isolated stateful RAM recall and actual request source tracking']
+              : []),
+            'model inference',
+            'sandbox workspace tools'
+          ],
           notExercised: [
             'answer quality',
             'host command execution',
@@ -657,7 +750,7 @@ app.whenReady().then(async () => {
       runDirectory = dir
       completed = 0
       emit({ running: true, completed, total: corpus.questions.length })
-      void run(dir, manifest, 0, workspace, controller, live)
+      void run(dir, manifest, 0, workspace, controller, live, alternateLive)
     } catch (error) {
       if (workspace) await rm(workspace, { recursive: true, force: true }).catch(() => {})
       await rm(dir, { recursive: true, force: true }).catch(() => {})
@@ -682,9 +775,28 @@ app.whenReady().then(async () => {
       const progress = readProgress(dir)
       if (!manifest || !progress) throw new Error('This run has no resumable manifest.')
       if (progress.state === 'completed') throw new Error('This run already completed.')
+      if (
+        manifest.header.memory &&
+        (manifest.header.memory.mode !== (manifest.config.memoryMode ?? 'independent') ||
+          manifest.header.memory.episodeSize !== (manifest.config.memoryEpisodeSize ?? 10) ||
+          manifest.header.memory.shareRemote !== (manifest.config.memoryShareRemote ?? false) ||
+          (manifest.header.memory.alternateModel ?? null) !==
+            (manifest.config.memoryAlternateModel ?? null) ||
+          manifest.header.memory.corpusHash !== memoryCorpusDigest(manifest.questions))
+      )
+        throw new Error('Memory replay manifest or corpus changed; start a new run.')
       const live = manifest.config.live
         ? await prepareLiveModel(manifest.config.live.model, manifest.config.context)
         : undefined
+      const alternateLive = manifest.config.memoryAlternateModel
+        ? await prepareLiveModel(manifest.config.memoryAlternateModel, manifest.config.context)
+        : undefined
+      if (
+        alternateLive &&
+        (alternateLive.model !== manifest.header.memory?.alternateModel ||
+          alternateLive.digest !== manifest.header.memory?.alternateSettingsDigest)
+      )
+        throw new Error('Alternate memory model changed; start a new run.')
       projectKind = manifest.config.projectKind
       project = manifest.config.project
       const prepared = await prepareWorkspace()
@@ -729,7 +841,7 @@ app.whenReady().then(async () => {
       }
       runDirectory = dir
       started = true
-      void run(dir, manifest, next, workspace, controller, live)
+      void run(dir, manifest, next, workspace, controller, live, alternateLive)
       return { corpus, next, results: done, invalid }
     } finally {
       // Until run() takes the workspace and the lock, this handler owns both.

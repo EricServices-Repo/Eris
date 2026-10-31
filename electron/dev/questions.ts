@@ -1,3 +1,4 @@
+import { DevMemoryCaseSchema } from '../../src/shared/dev-memory-replay'
 import { createHash } from 'crypto'
 import type { DevImportPreview, DevQuestion } from '../../src/shared/eris-dev'
 
@@ -34,6 +35,7 @@ export function variantOf(intentReply: DevQuestion['intentReply'] | undefined): 
 }
 
 type ImportRecord = {
+  memory?: DevQuestion['memory']
   text: string
   sourceLine: number
   sourceId?: string
@@ -66,6 +68,7 @@ function identify(records: ImportRecord[]): DevQuestion[] {
       contentHash: base,
       text: record.text,
       sourceLine: record.sourceLine,
+      ...(record.memory ? { memory: record.memory } : {}),
       ...(variant ? { variant } : {}),
       ...(record.intentReply ? { intentReply: record.intentReply } : {}),
       ...(record.intentReplyMalformed ? { intentReplyMalformed: true } : {}),
@@ -210,7 +213,11 @@ export function prepareQuestions(
         sourceId: sourceIdOf(value, index + 1),
         intentReply: script.reply,
         intentReplyMalformed: script.malformed,
-        history: historyOf(value, index + 1)
+        history: historyOf(value, index + 1),
+        memory:
+          typeof value === 'object' && value !== null && 'memory' in value
+            ? DevMemoryCaseSchema.parse(value.memory)
+            : undefined
       }
     })
     const scripted = records.filter((record) => record.intentReplyMalformed).length
@@ -300,4 +307,28 @@ export function prepareQuestions(
 /** Question text only, for callers that do not need provenance. */
 export function parseQuestions(text: string, extension: string): string[] {
   return prepareQuestions(text, extension).questions.map((question) => question.text)
+}
+
+/** Stable across schema parsing/reordered object keys, without serializing a whole corpus. */
+export function memoryCorpusDigest(questions: readonly DevQuestion[]) {
+  const hash = createHash('sha256')
+  for (const q of questions)
+    hash.update(
+      JSON.stringify([
+        q.id,
+        q.text,
+        q.history ?? [],
+        q.intentReply ? [q.intentReply.intent, q.intentReply.confidence] : null,
+        q.intentReplyMalformed ?? false,
+        q.memory
+          ? [
+              q.memory.expectedSourceIds,
+              q.memory.scriptedResponse ?? null,
+              q.memory.rewindMessages ?? null,
+              q.memory.forgottenSourceIds ?? null
+            ]
+          : null
+      ])
+    )
+  return hash.digest('hex')
 }

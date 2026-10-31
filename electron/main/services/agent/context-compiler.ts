@@ -1,3 +1,4 @@
+import { activeDiagnosticsScope, SIMULATED_MODEL_REF } from '../model-transport'
 import {
   evidenceRequirementFor,
   interpretationOf,
@@ -181,7 +182,10 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 
 /** Recall a destination may receive. Blocked items stay listed so omissions have a reason. */
 export function memoryForDestination(prompt: MemoryPrompt | undefined, model: string) {
-  const allowed = isNativeGgufRef(model) || Boolean(prompt?.allowRemote)
+  const allowed =
+    isNativeGgufRef(model) ||
+    (model === SIMULATED_MODEL_REF && activeDiagnosticsScope()?.mode === 'simulated') ||
+    Boolean(prompt?.allowRemote)
   return {
     memory: allowed ? prompt?.text : undefined,
     memoryItems: prompt?.items ?? [],
