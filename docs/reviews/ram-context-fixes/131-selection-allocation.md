@@ -1,0 +1,9 @@
+# RAM-CTX-021: selection allocation admission
+
+Hydration already reserves page transfers before worker RPCs, holds the charge through late replies and aborts, and atomically transfers installation ownership. Selection already pins immutable record-array snapshots while asynchronous ranking uses them. The remaining uncharged selection arena is now admitted before matching, control copying, ranking and excerpt materialization.
+
+Each selection reserves a conservative 4 MiB scratch estimate plus two control projections and record-reference slots. The inverted index admits at most 24 query terms and 4,096 distinct matched rows before allocating additional match entries. Ranking remains bounded to 256 working candidates and 128 final candidates. These structural bounds keep the arena independent of corpus size. Scratch admission may evict other cold threads but does not discard the thread being read. If no room remains, optional recall returns an explicit admission reason; recent canonical history is unaffected.
+
+Selection has an internal foreground deadline, composed with caller cancellation. Both the pin and scratch reservation are released in finally, including cancellation after the last cooperative yield. Reservation and growth inputs must be finite, nonnegative safe integers; invalid arithmetic cannot reduce or poison the ledger. Owned, reserved and pinned counters remain estimates of controlled ownership and must not be added to process heap/RSS as if they were disjoint physical measurements. Returned prompt ownership and the canonical transcript remain the receiving request/database's responsibility; this does not claim a hard bound on the JavaScript runtime or model memory.
+
+Deterministic verification covers concurrent admission, exhaustion, negative/nonfinite/fractional sizes, successful selection, cancellation after snapshot eviction, worker failure and late replies. No process peak-RSS measurement or hardware certification is implied.
