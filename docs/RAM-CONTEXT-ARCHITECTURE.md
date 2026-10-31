@@ -1056,6 +1056,8 @@ These targets are proposed for the controlled harness, not statements about the 
 
 ### 20.1 Harness conditions
 
+Implementation status and acceptance limits: [147 implementation notes](fixes/147-context-release-gates.md).
+
 Record app/Electron/Node/SQLite versions, CPU/RAM/GPU, power mode, build mode, storage type, background load, selected model, context window, tokenizer method and corpus hash. Use packaged/release-like builds for release gates; development builds may be diagnostic but are not substitutes.
 
 Test 1,000, 10,000, 25,000 and 100,000 messages, with several size distributions: short chat, 2 KiB average coding turns, long code blocks, Unicode and oversized outliers. Stress archives may exceed RAM capacity deliberately. Record complete searchable coverage separately from the hot raw working set.

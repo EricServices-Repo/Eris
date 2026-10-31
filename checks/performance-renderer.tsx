@@ -72,8 +72,9 @@ function Fixture() {
 }
 createRoot(document.getElementById('root')!).render(<Fixture />)
 const quantiles = performanceQuantiles
-const until = async (fn: () => boolean, waitingFor = 'its next state') => {
-  for (let i = 0; i < 150; i++) {
+const until = async (fn: () => boolean, waitingFor: string) => {
+  const deadline = performance.now() + 10000
+  while (performance.now() < deadline) {
     if (fn()) return
     await tick()
   }
@@ -92,7 +93,7 @@ window.runPerformance = async (baseline) => {
   observer.observe({ entryTypes: ['longtask'] })
   scroll.scrollTop = scroll.scrollHeight
   scroll.dispatchEvent(new Event('scroll'))
-  await until(() => !!scroll.querySelector('[data-virtual-key="m9999"]'))
+  await until(() => !!scroll.querySelector('[data-virtual-key="m9999"]'), 'initial tail row m9999')
   counts.push(rows().length)
   scroll.scrollTop = scroll.scrollHeight / 2
   scroll.dispatchEvent(new Event('scroll'))
@@ -180,10 +181,14 @@ window.runPerformance = async (baseline) => {
     setter.call(search, 'needle-7421:')
     search.dispatchEvent(new Event('input', { bubbles: true }))
     await until(
-      () => !!document.querySelector<HTMLButtonElement>('[data-history-next]:not(:disabled)')
+      () => !!document.querySelector<HTMLButtonElement>('[data-history-next]:not(:disabled)'),
+      'loaded-history search match'
     )
     document.querySelector<HTMLButtonElement>('[data-history-next]')!.click()
-    await until(() => !!scroll.querySelector('[data-virtual-key="m7421"]'))
+    await until(
+      () => !!scroll.querySelector('[data-virtual-key="m7421"]'),
+      'revealed search row m7421'
+    )
     historySearchMs = performance.now() - searchAt
     counts.push(rows().length)
     searchPreserved = true

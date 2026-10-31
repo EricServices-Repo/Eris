@@ -2,12 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   buildCorpus,
   evaluateContextGate,
+  evaluateContextReleaseEvidence,
   runContextGate,
   type ContextBudgets,
   type ContextGateReport
 } from '../checks/context-gate'
 
-const budgets: ContextBudgets = { version: 1, maxGrowthRatio: 12, minBaselineMs: 5, profiles: [] }
+const budgets: ContextBudgets = { version: 2, maxGrowthRatio: 12, minBaselineMs: 5, profiles: [] }
 const hardware = { platform: 'test', arch: 'x', cpu: 'cpu', totalMemoryBytes: 1 }
 const measured = () =>
   runContextGate({ sizes: [200, 400], gitSha: 'abc', hardware, runtime: { node: '1' } })
@@ -123,4 +124,123 @@ describe('live claims', () => {
     value.liveModel = live
     expect(failures(value, quiet)).toEqual([])
   })
+})
+
+describe('strict release qualification', () => {
+  it('does not certify scripted CI or an unknown hardware profile as a release', async () => {
+    const result = evaluateContextGate(await report(), budgets, { releaseCandidate: true })
+    expect(result.pass).toBe(false)
+    expect(result.failures.join()).toMatch(/packaged runtime/)
+    expect(result.failures.join()).toMatch(/hardware-matched/)
+    expect(result.failures.join()).toMatch(/frozen-model/)
+    expect(result.failures.join()).toMatch(/all 1k/)
+  })
+  it('rejects invalid numeric samples and duplicate corpus denominators', async () => {
+    const value = await report()
+    const stats = Object.values(value.corpora[0].measured.latencyMs)[0]!
+    stats.p95 = NaN
+    stats.samples[0] = Infinity
+    value.corpora.push(structuredClone(value.corpora[0]))
+    const result = evaluateContextGate(value, budgets)
+    expect(result.pass).toBe(false)
+    expect(result.failures.join()).toMatch(/invalid timing/)
+    expect(result.failures.join()).toMatch(/Duplicate/)
+  })
+  it('gates actually compiled input, not only the selector result', async () => {
+    const value = await report()
+    expect(value.recall.sentCases).toBe(value.recall.cases)
+    expect(value.recall.sentPassed).toBe(value.recall.cases)
+    value.recall.sentPassed--
+    expect(evaluateContextGate(value, budgets).failures.join()).toMatch(/Compiled-input/)
+  })
+  it('records transient reservation peaks and independent append/queue metrics', async () => {
+    const value = await report()
+    for (const corpus of value.corpora) {
+      expect(corpus.estimated.peakLedger.reservedBytes).toBeGreaterThan(0)
+      expect(corpus.estimated.ledger.reservedBytes).toBe(0)
+      expect(corpus.measured.appendMs.samples).toHaveLength(20)
+      expect(corpus.measured.eventLoopQueueMs.samples).toHaveLength(corpus.denominators.queries)
+    }
+  })
+})
+
+it('requires both packaged platforms for the exact release source', async () => {
+  const value = await report()
+  value.hardware.platform = 'darwin'
+  const checked = evaluateContextReleaseEvidence([value], budgets, 'a'.repeat(40))
+  expect(checked.pass).toBe(false)
+  expect(checked.failures.join()).toMatch(/Missing win32/)
+  expect(checked.failures.join()).toMatch(/source SHA mismatch/)
+})
+
+it('accepts complete validator fixtures and rejects model substitution in paired evidence', async () => {
+  // Validator-only fixtures: copied timings are not measured packaged/hardware acceptance.
+  const base = await report()
+  const sha = 'a'.repeat(40),
+    weights = 'b'.repeat(64),
+    corpus = 'c'.repeat(64)
+  const platforms = ['darwin', 'win32']
+  const reports = platforms.map((platform) => {
+    const value = structuredClone(base)
+    value.gitSha = sha
+    value.hardware.platform = platform
+    value.acceptance = 'packaged-scripted'
+    value.runtime = {
+      electron: 'fixture',
+      node: 'fixture',
+      packaged: 'true',
+      sourceDirty: 'false',
+      lockSha256: 'd'.repeat(64),
+      entrySha256: 'e'.repeat(64)
+    }
+    value.corpora = [1000, 10000, 25000, 100000].map((size) => ({
+      ...structuredClone(base.corpora[0]),
+      size,
+      denominators: { ...base.corpora[0].denominators, offered: size }
+    }))
+    value.liveModel = {
+      model: 'frozen',
+      backendFingerprint: `backend-${platform}`,
+      weightsSha256: weights,
+      cases: 20,
+      completed: 20,
+      paired: {
+        cases: 20,
+        baselineCorrect: 12,
+        contextCorrect: 20,
+        seed: 'fixed',
+        corpusHash: corpus,
+        baselineWeightsSha256: weights,
+        contextWeightsSha256: weights,
+        baselineBackendFingerprint: `backend-${platform}`,
+        contextBackendFingerprint: `backend-${platform}`,
+        sentSourceCases: 20
+      }
+    }
+    return value
+  })
+  const limits: ContextBudgets = {
+    ...budgets,
+    minContextAccuracy: 0.95,
+    profiles: platforms.map((platform) => ({
+      id: platform,
+      platform,
+      arch: 'x',
+      cpu: 'cpu',
+      minMemoryBytes: 1,
+      maxMemoryBytes: 1,
+      maxP95Ms: Object.fromEntries([1000, 10000, 25000, 100000].map((size) => [size, 1e7])),
+      maxAppendP95Ms: Object.fromEntries([1000, 10000, 25000, 100000].map((size) => [size, 1e7])),
+      maxQueueP95Ms: Object.fromEntries([1000, 10000, 25000, 100000].map((size) => [size, 1e7])),
+      maxHeapDeltaBytes: Object.fromEntries(
+        [1000, 10000, 25000, 100000].map((size) => [size, 1e12])
+      ),
+      maxCompileP95Ms: 1e7
+    }))
+  }
+  expect(evaluateContextReleaseEvidence(reports, limits, sha)).toMatchObject({ pass: true })
+  reports[1].liveModel!.paired!.contextWeightsSha256 = 'f'.repeat(64)
+  expect(evaluateContextReleaseEvidence(reports, limits, sha).failures.join()).toMatch(
+    /changed model/
+  )
 })

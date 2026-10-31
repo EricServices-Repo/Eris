@@ -12,6 +12,10 @@ on:
         description: 'Existing git tag to build and publish (e.g. v0.2.3). Leave empty to use package.json version.'
         required: false
         default: ''
+      context_evidence_run_id:
+        description: 'Workflow run containing ram-context-release-evidence for this exact source SHA (macOS + Windows packaged reports).'
+        required: false
+        default: ''
       repair_existing:
         description: 'Replace assets of the same immutable tag after a failed upload.'
         type: boolean
@@ -19,6 +23,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   resolve-version:
@@ -42,8 +47,31 @@ jobs:
           RELEASE_TAG_INPUT: ${{ inputs.tag }}
         run: node scripts/release-source.cjs
 
-  build:
+  context-evidence:
     needs: resolve-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve-version.outputs.build_ref }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Download exact-source packaged context evidence
+        if: inputs.context_evidence_run_id != '' || vars.RAM_CONTEXT_EVIDENCE_RUN_ID != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ram-context-release-evidence
+          path: out/qualification/release-evidence
+          run-id: ${{ inputs.context_evidence_run_id || vars.RAM_CONTEXT_EVIDENCE_RUN_ID }}
+          github-token: ${{ github.token }}
+      - name: Refuse unqualified RAM-context releases
+        run: npm run check:context:release
+
+  build:
+    needs: [resolve-version, context-evidence]
     strategy:
       fail-fast: false
       matrix:
