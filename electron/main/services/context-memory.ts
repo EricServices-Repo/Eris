@@ -1,4 +1,5 @@
 import { filterEvidenceMemory } from './context-evidence'
+import { logInfo } from './logger'
 import { HydrationScheduler, type HydrationPriority } from './context-hydration-scheduler'
 import { registerOptionalContextMemory, refreshContextMemoryPressure } from './inference-governor'
 import { SharedHydration } from './context-hydration'
@@ -30,7 +31,9 @@ const scheduler = new HydrationScheduler()
 registerOptionalContextMemory({
   ledger: () => contextMemoryStore.ledger,
   limit: (bytes, pressure) => {
-    contextMemoryStore.setPressureLimit(bytes)
+    const releasedBytes = contextMemoryStore.setPressureLimit(bytes)
+    if (releasedBytes > 0)
+      logInfo('Context store eviction', { pressure, releasedBytes, limitBytes: bytes })
     if (pressure === 'critical') for (const load of pending.values()) load.controller.abort()
   }
 })
