@@ -1,3 +1,4 @@
+import { assertTaskReferences } from '../reference-binding'
 import type { AppSettings } from '../../../../src/shared/settings-schema'
 import { AGENT_HANDOFF_CHARS } from '../../../../src/shared/agent-orchestration'
 import { truncateForModel } from './prompts'
@@ -335,8 +336,20 @@ export async function compactAgentMessages(options: {
   const tail = nonSystem.slice(split)
   const middle = nonSystem.slice(0, split)
 
+  let skipLite = options.skipLiteSummary
+  if (!skipLite) {
+    try {
+      for (const message of options.messages) {
+        const referenceTask = message.contextBundle?.referenceTask
+        if (referenceTask)
+          await assertTaskReferences(referenceTask, options.settings, options.liteModel)
+      }
+    } catch {
+      skipLite = true
+    } // A local deterministic summary preserves privacy without another model call.
+  }
   let progressSummary: string
-  if (options.skipLiteSummary) {
+  if (skipLite) {
     progressSummary = buildFallbackProgressSummary(
       options.goal,
       options.filesTouched,

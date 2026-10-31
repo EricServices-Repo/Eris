@@ -123,6 +123,10 @@ export type ContextBundleItem = {
 }
 export type ContextBundleCounts = Record<ContextItemStatus, number> & { selected: number }
 export type ContextBundle = {
+  referenceTask?: Pick<
+    import('./task-contract').TaskContract,
+    'referenceBinding' | 'scope' | 'threadId'
+  >
   version: 1
   taskId: string
   /** Memory namespace, so a later inspection can find its conversation's last request. */

@@ -1,3 +1,4 @@
+import type { ResolvedReference } from './reference-binding'
 import { isPathInside } from './workspace-fs'
 import { createHash, randomUUID } from 'crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'fs'
@@ -262,6 +263,7 @@ function structuresNewCode(text: string): boolean {
 }
 
 export function createTaskContract(input: {
+  referenceBinding?: ResolvedReference
   taskId?: string
   threadId?: string | null
   workspacePath: string | null
@@ -310,8 +312,15 @@ export function createTaskContract(input: {
     existsSync(priorScope.projectRoot)
       ? priorScope.projectRoot
       : null
+  const boundProject =
+    input.referenceBinding?.binding.status === 'bound'
+      ? input.referenceBinding.binding.sources[0]?.projectRoot
+      : undefined
   const selected =
-    inheritedRoot ?? (target ? (matchedRoots.length === 1 ? matchedRoots[0]!.root : null) : root)
+    !target && boundProject && root && isPathInside(root, boundProject) && existsSync(boundProject)
+      ? boundProject
+      : (inheritedRoot ??
+        (target ? (matchedRoots.length === 1 ? matchedRoots[0]!.root : null) : root))
   const priorAnswer = [...(input.history ?? [])]
     .reverse()
     .find((message) => message.role === 'assistant')
@@ -321,6 +330,15 @@ export function createTaskContract(input: {
     /\b(those|these|them|recommended|suggested|recommendations?|confirm\s+(?:the\s+|all\s+)?(?:\d+|two|three|four|five|six|seven|eight|nine|ten)\s+(?:improvements?|enhancements?|changes|fixes|ideas)|all of (?:it|them)|items?\s*#?\d|#\d|(?:first|second|third|fourth|fifth|last)\s+(?:one|item|recommendation|suggestion|fix|two|three)|the\s+[\w-]+(?:\s+[\w-]+){0,3}\s+(?:one|recommendation|suggestion))\b/i.test(
       input.text
     )
+  const referenceConflict =
+    input.referenceBinding?.binding.status === 'bound' && boundProject !== selected
+  const referenceBlocked = Boolean(
+    input.referenceBinding &&
+    (input.referenceBinding.binding.status !== 'bound' || referenceConflict)
+  )
+  const referenceReason = referenceConflict
+    ? 'The referenced recommendations belong to a different project; clarify the intended scope.'
+    : input.referenceBinding?.binding.reason
   const offered = input.priorTask?.result?.offeredRecommendations ?? []
   const available: TaskRecommendation[] = !refersToPrior
     ? []
@@ -331,22 +349,36 @@ export function createTaskContract(input: {
         : []
   // “Only 2 and 4”, “all except caching”: the selection is resolved to stable IDs
   // before any edit, and an unresolvable one is asked about instead of widened.
-  const selection = available.length ? selectRecommendations(input.text, available) : null
+  const selection = input.referenceBinding
+    ? referenceBlocked
+      ? {
+          mode: 'named' as const,
+          selected: [],
+          excluded: [],
+          unresolved: referenceReason || 'Clarify historical references before editing.'
+        }
+      : { mode: 'named' as const, selected: input.referenceBinding.recommendations, excluded: [] }
+    : available.length
+      ? selectRecommendations(input.text, available)
+      : null
   const recommendations: TaskRecommendation[] = selection?.unresolved
     ? []
     : (selection?.selected ?? [])
-  const recommendationSource = !recommendations.length
-    ? 'none'
-    : offered.length
-      ? 'prior-task'
-      : 'prior-answer-prose'
+  const recommendationSource =
+    input.referenceBinding && recommendations.length
+      ? 'historical-artifact'
+      : !recommendations.length
+        ? 'none'
+        : offered.length
+          ? 'prior-task'
+          : 'prior-answer-prose'
   // An explicit “do not edit / do not run” is a constraint, whatever the route says.
   // Each forbidden effect is removed on its own: no edits keeps approved checks,
   // no commands keeps the patch.
   const forbidden = effectConstraints(input.text)
   const noCommands = forbidden.execution || forbidden.verification
   const policy =
-    input.plan.toolPolicy === 'none'
+    input.plan.toolPolicy === 'none' || referenceBlocked
       ? 'none'
       : input.plan.mode === 'ask' || (forbidden.edit && (noCommands || input.plan.intent !== 'run'))
         ? 'read'
@@ -432,6 +464,19 @@ export function createTaskContract(input: {
     revision: 1,
     threadId: input.threadId ?? null,
     originalText: input.text,
+    ...(input.referenceBinding
+      ? {
+          referenceBinding: referenceBlocked
+            ? {
+                ...input.referenceBinding.binding,
+                status: referenceConflict
+                  ? ('unavailable' as const)
+                  : input.referenceBinding.binding.status,
+                reason: referenceReason
+              }
+            : input.referenceBinding.binding
+        }
+      : {}),
     intent: input.plan.intent,
     deliverable,
     scope: {
@@ -480,13 +525,14 @@ export function createTaskContract(input: {
           }
         }
       : {}),
-    acceptanceCriteria: acceptanceCriteriaFor(
-      input.plan,
-      deliverable,
-      input.text,
-      interpretation,
-      applicability
-    ),
+    acceptanceCriteria: [
+      ...acceptanceCriteriaFor(input.plan, deliverable, input.text, interpretation, applicability),
+      ...(referenceBlocked
+        ? [
+            `Before editing or running commands, ask the user to clarify: ${referenceReason || 'which historical recommendation source to use'}`
+          ]
+        : [])
+    ],
     interpretation
   }
 }

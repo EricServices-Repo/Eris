@@ -112,7 +112,7 @@ export const DebugExpectSchema = z.object({
   recommendations: z
     .object({
       min: z.number().int().nonnegative(),
-      source: z.enum(['prior-task', 'prior-answer-prose']).optional()
+      source: z.enum(['prior-task', 'prior-answer-prose', 'historical-artifact']).optional()
     })
     .optional(),
   /** Follow-ups: the task must carry the files the previous turn actually changed. */
@@ -373,7 +373,7 @@ export interface DebugContractRecord {
   obligations?: TaskInterpretation['obligations']
   taskId?: string
   recommendations?: number
-  recommendationSource?: 'prior-task' | 'prior-answer-prose' | 'none'
+  recommendationSource?: 'prior-task' | 'prior-answer-prose' | 'historical-artifact' | 'none'
   priorChangedFiles?: string[]
 }
 
@@ -384,12 +384,7 @@ export interface DebugContractRecord {
  */
 /** unknown: a timeout or other stop whose recorded evidence does not identify a cause. */
 export type DebugOutcomeClass =
-  | 'passed'
-  | 'agent_defect'
-  | 'environment'
-  | 'harness'
-  | 'unknown'
-  | 'ungraded'
+  'passed' | 'agent_defect' | 'environment' | 'harness' | 'unknown' | 'ungraded'
 
 /**
  * What a timed-out case was doing when its deadline fired. The terminal status alone
@@ -408,12 +403,7 @@ export interface DebugTimeoutEvidence {
 
 /** How the case ended, typed so incomplete work never reads as success. */
 export type DebugCaseOutcome =
-  | 'completed'
-  | 'partial'
-  | 'blocked'
-  | 'failed'
-  | 'cancelled'
-  | 'timed_out'
+  'completed' | 'partial' | 'blocked' | 'failed' | 'cancelled' | 'timed_out'
 
 /** Why the case passed, failed or is ungraded, with references into its evidence. */
 export interface DebugEvaluation {

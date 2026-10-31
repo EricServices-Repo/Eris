@@ -1,3 +1,4 @@
+import { assertTaskReferences } from './reference-binding'
 import { selectOutcomeEvidence } from './outcome-evidence'
 import { contextBudgetTokens } from './agent/context-budget'
 import type { AppSettings } from '../../../src/shared/settings-schema'
@@ -24,6 +25,7 @@ export async function reviewTaskOutcome(input: {
   else input.signal?.addEventListener('abort', cancel, { once: true })
   const timer = setTimeout(() => controller.abort(), 15000)
   try {
+    await assertTaskReferences(input.task, input.settings, input.model)
     const report = {
       request: input.task.originalText,
       deliverable: input.task.deliverable,

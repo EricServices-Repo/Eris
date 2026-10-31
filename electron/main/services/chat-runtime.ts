@@ -1,3 +1,4 @@
+import { assertTaskReferences } from './reference-binding'
 import { reportChatActivity } from './chat-activity'
 import { resolveModelCapabilities } from './model-capabilities'
 import { compileModelMessages, budgetModelMessages, type ModelMessage } from './model-protocol'
@@ -59,6 +60,10 @@ export type StreamModelChatOptions = {
 export async function* streamModelChat(
   options: StreamModelChatOptions
 ): AsyncGenerator<string, void, unknown> {
+  for (const message of options.messages) {
+    const task = (message as ModelMessage).contextBundle?.referenceTask
+    if (task) await assertTaskReferences(task, options.settings, options.model)
+  }
   const { messages, revoked } = await withEligibleMemory(options.messages, options.model)
   // A live local session holds its seeded prompt; only a reseed removes revoked text.
   if (revoked && options.sessionKey) releaseLocalChatSession(options.sessionKey)
@@ -94,6 +99,10 @@ export async function* streamProviderChat(
   options: StreamModelChatOptions
 ): AsyncGenerator<string, void, unknown> {
   let model = options.model || options.settings.models.defaultModel || 'builtin:composer-lite'
+  for (const message of options.messages) {
+    const task = (message as ModelMessage).contextBundle?.referenceTask
+    if (task) await assertTaskReferences(task, options.settings, model)
+  }
   assertProviderCallAllowed(options.settings, model)
   const capabilities = resolveModelCapabilities(options.settings, model)
   if (options.maxOutputTokens !== undefined) {

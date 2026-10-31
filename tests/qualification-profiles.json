@@ -15,6 +15,7 @@
         "tests/agent-discussions.test.ts",
         "tests/agent-evidence.test.ts",
         "tests/agent-followup-review.test.ts",
+        "tests/reference-binding.test.ts",
         "tests/agent-heuristics.test.ts",
         "tests/agent-improvements.test.ts",
         "tests/agent-interpretation.test.ts",

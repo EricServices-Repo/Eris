@@ -1,3 +1,4 @@
+import { recordRecommendationSource } from './recommendation-catalog'
 import { createHash } from 'crypto'
 import { atomicEvidenceJson, readEvidence, saveEvidenceOwner } from './evidence-records'
 import { parsePersistedTask } from './evidence-schemas'
@@ -36,4 +37,5 @@ export function saveTask(task: TaskContract): void {
     ),
     checked
   )
+  recordRecommendationSource(checked)
 }

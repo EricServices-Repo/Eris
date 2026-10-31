@@ -1,3 +1,4 @@
+import { bindTaskReferences, type ResolvedReference } from './reference-binding'
 import { realpathSync } from 'fs'
 import type {
   AppSettings,
@@ -32,6 +33,7 @@ import { previousTask } from './task-store'
  * persistence; this module owns the task logic so it is never reimplemented.
  */
 export interface ChatTurnInput {
+  referenceBinding?: ResolvedReference
   requestId: string
   workspacePath: string | null
   settings: AppSettings
@@ -141,7 +143,31 @@ export async function resolveChatTurnContract(
   } catch {
     /* reported by runtime */
   }
+  let references = input.referenceBinding
+  if (!references && input.threadId && input.priorTask === undefined) {
+    try {
+      references = await bindTaskReferences({
+        root: canonicalRoot,
+        threadId: input.threadId,
+        text: input.text,
+        settings: input.settings,
+        models: [plan.models.chat, plan.models.tools],
+        recentSourceIds: input.history?.flatMap((message) => (message.id ? [message.id] : []))
+      })
+    } catch {
+      references = {
+        binding: {
+          status: 'unavailable',
+          remotePolicy: 'local-only',
+          sources: [],
+          reason: 'Historical references could not be checked; clarify before editing.'
+        },
+        recommendations: []
+      }
+    }
+  }
   const task = createTaskContract({
+    referenceBinding: references,
     taskId: input.requestId,
     threadId: input.threadId,
     workspacePath: input.workspacePath,
