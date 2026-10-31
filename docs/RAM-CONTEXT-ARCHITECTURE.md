@@ -1031,6 +1031,8 @@ A test can compare selection and actual dispatch digests to detect a model/backe
 
 ### 19.3 Eris-Dev modes
 
+Implementation status and acceptance limits: [146 implementation notes](fixes/146-stateful-memory-replay.md).
+
 Provide four explicit modes:
 
 1. **Independent routing:** existing stateless question cases with fresh context per case.

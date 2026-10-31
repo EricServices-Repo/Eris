@@ -825,6 +825,10 @@ export class ChatDatabase {
 }
 
 const databases = new Map<string, ChatDatabase>()
+export function closeChatDatabase(dir: string): boolean {
+  databases.get(dir)?.close()
+  return databases.delete(dir)
+}
 export function closeChatDatabases(): void {
   for (const database of databases.values()) database.close()
   databases.clear()

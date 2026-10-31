@@ -42,6 +42,7 @@
         "tests/eris-dev-followup.test.ts",
         "tests/eris-dev-live-review.test.ts",
         "tests/eris-dev.test.ts",
+        "tests/eris-dev-memory.test.ts",
         "tests/eval-sandbox.test.ts",
         "tests/goal-check.test.ts",
         "tests/image-agent-smoke.test.ts",
@@ -88,6 +89,7 @@
       "description": "Eris-Dev capture app. Gates npm run build:dev-app.",
       "files": [
         "tests/eris-dev.test.ts",
+        "tests/eris-dev-memory.test.ts",
         "tests/eris-dev-followup.test.ts",
         "tests/eris-dev-live-review.test.ts",
         "tests/quality-adapter.test.ts",

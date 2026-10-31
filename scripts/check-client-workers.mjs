@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 const root = await mkdtemp(join(tmpdir(), 'eris-client-workers-'))
-const worker = new Worker(resolve('out/main/workspace-worker.js'), {
+const worker = new Worker(resolve(process.argv[2] ?? 'out/main/workspace-worker.js'), {
   env: { ...process.env, ERIS_APP_PATH: process.cwd() }
 })
 let sequence = 0
