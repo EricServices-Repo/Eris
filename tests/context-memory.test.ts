@@ -408,3 +408,60 @@ describe('Memory settings usage counters', () => {
     expect(store.usage().ownedBytes).toBe(0)
   })
 })
+
+it('installs ordered worker segments cooperatively and rejects a stale publication', async () => {
+  const store = new ContextMemoryStore()
+  const segments = Array.from({ length: 8 }, (_, page) =>
+    Array.from({ length: 128 }, (_, i) => ({
+      ordinal: page * 128 + i,
+      message: message(String(page * 128 + i), 'Remember currency CAD')
+    }))
+  )
+  const input = {
+    revision: 1,
+    total: 1024,
+    segments,
+    controls: emptyMemoryControls(),
+    partial: false
+  }
+  const installing = store.installSegments('t', input, store.token('t'))
+  expect(store.has('t')).toBe(false)
+  store.clear('t')
+  expect(await installing).toBe(false)
+  expect(await store.installSegments('t', input, store.token('t'))).toBe(true)
+  expect((await store.select('t', 'currency')).inspection.manifest.retainedMessages).toBe(1024)
+})
+
+it('keeps ring rows and byte accounting stable across repeated append/evict cycles', async () => {
+  const store = new ContextMemoryStore()
+  store.configure({ ...store.config, maxMessages: 500 })
+  install(
+    store,
+    't',
+    Array.from({ length: 500 }, (_, i) => message(String(i), `Routine source ${i}`))
+  )
+  for (let i = 500; i < 1500; i++)
+    store.append('t', i - 498, i + 1, [message(String(i), `Remember constraint ${i}`)], i)
+  const view = await store.select('t', 'constraint 1499')
+  expect(view.inspection.manifest.retainedMessages).toBe(500)
+  expect(view.inspection.manifest.firstOrdinal).toBe(1000)
+  expect(view.inspection.facts.some((fact) => fact.sourceId === '1499')).toBe(true)
+  expect(store.ledger.ownedBytes).toBeGreaterThan(0)
+  expect(store.ledger.pinnedBytes).toBe(0)
+})
+
+it('preserves warm overlap when canonical metadata property order differs from a live tail', () => {
+  const store = new ContextMemoryStore()
+  const first = {
+    ...message('first', 'Remember booking currency CAD'),
+    agentId: 'coder',
+    model: 'local:test',
+    contextSequence: 1,
+    contextProjectRoot: '/project'
+  }
+  install(store, 't', [first])
+  const second = { ...message('second', 'Follow-up'), contextSequence: 2 }
+  store.append('t', 2, 2, [first, second], 0)
+  expect(store.has('t')).toBe(true)
+  expect(store.usage('t').activeBytes).toBeGreaterThan(0)
+})

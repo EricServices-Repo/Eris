@@ -120,7 +120,8 @@ export async function warmConversationMemory(
       complete = false,
       corruptRecords = seed?.corruptRecords ?? 0
     const corruptOrdinals = new Set<number>(seed?.corruptOrdinals ?? [])
-    const records: ContextPage['records'] = [...(seed?.records ?? [])]
+    const segments: ContextPage['records'][] = seed ? [seed.records] : []
+    let recordCount = seed?.records.length ?? 0
     const reservation = contextMemoryStore.reserve(key, bytes + PAGE_TRANSFER_BYTES)
     if (!reservation) return
     try {
@@ -166,7 +167,8 @@ export async function warmConversationMemory(
         corruptRecords += Math.max(0, (page.corruptRecords ?? 0) - overlappingCorruption)
         for (const ordinal of page.corruptOrdinals ?? [])
           if (corruptOrdinals.size < 100500) corruptOrdinals.add(ordinal)
-        records.unshift(...page.records)
+        segments.push(page.records)
+        recordCount += page.records.length
         bytes += page.records.reduce(
           (n, r) => n + Buffer.byteLength(JSON.stringify(r.message)) * 4 + 512,
           0
@@ -178,7 +180,7 @@ export async function warmConversationMemory(
         if (
           bytes >=
             Math.min(config.maxThreadMiB, policy.maxThreadMiB, config.maxMemoryMiB) * 1024 ** 2 ||
-          records.length >= Math.min(config.maxMessages, policy.maxMessages)
+          recordCount >= Math.min(config.maxMessages, policy.maxMessages)
         ) {
           partial = true
           break
@@ -199,20 +201,21 @@ export async function warmConversationMemory(
         return
       }
       if (revision !== undefined)
-        contextMemoryStore.install(
+        await contextMemoryStore.installSegments(
           key,
           {
             revision,
             sourceEpoch,
             total,
-            records,
+            segments: segments.reverse(),
             controls,
             partial: partial || !complete,
             corruptRecords,
             corruptOrdinals: [...corruptOrdinals]
           },
           token,
-          reservation
+          reservation,
+          loadSignal
         )
     } finally {
       // Aborts, worker failures and late replies all end here; install already released.

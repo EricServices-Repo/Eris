@@ -334,6 +334,8 @@ Failure, abort, worker death and timeout all release reservations exactly once. 
 
 ### 8.1 Recent-turn ring
 
+Implementation status and acceptance limits: [132 implementation notes](fixes/132-incremental-context-history.md).
+
 Keep exact recent turns in a bounded ring/deque rather than rebuilding a map and sorted array on every append. Append is amortized O(1); duplicate lookup uses a bounded message-ID map. Byte counters update from the added/removed record delta.
 
 Preserve chronological role order. A user message, assistant tool call and corresponding tool observation form an indivisible semantic unit for prompt assembly where the backend protocol requires it. Raw UI traces do not substitute for structured tool observations.
