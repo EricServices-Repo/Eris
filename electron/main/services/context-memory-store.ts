@@ -1,4 +1,3 @@
-import { childOutcomeText } from '../../../src/shared/child-outcome'
 import { ContextRowDeque } from './context-row-deque'
 import { workingStateText } from '../../../src/shared/thread-working-state'
 import { contextRecord } from '../../../src/shared/context-record'
@@ -11,6 +10,7 @@ import {
   tokenScore
 } from '../../../src/shared/recall-terms'
 import { DecisionIndex, decisionId } from './context-decisions'
+import { childOutcomeText } from '../../../src/shared/child-outcome'
 import { RecallIndex } from './context-recall-index'
 import { createHash } from 'crypto'
 import type { ChatMessage } from '../../../src/shared/settings-schema'

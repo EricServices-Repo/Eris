@@ -1,7 +1,7 @@
-import { childOutcomeText, type ChildOutcome } from './child-outcome'
 import type { ContextHeader } from './context-memory'
 import type { ContextEvidence } from './context-evidence'
 import type { TaskContract } from './task-contract'
+import { childOutcomeText, type ChildOutcome } from './child-outcome'
 /** Minimum characters kept when one agent passes text to another. */
 export const AGENT_HANDOFF_CHARS = 8_000
 

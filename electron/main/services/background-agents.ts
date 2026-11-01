@@ -1,7 +1,3 @@
-import { realpathAllowMissing } from './workspace-fs'
-import { childOutcome, outcomeDigest } from './child-outcome'
-import { ThreadWorkingStateBuilder } from './thread-working-state'
-import { captureReceiptEvidence } from './context-evidence'
 import { appendTaskEvent, flushTaskLedger } from './task-ledger'
 import { createTaskContract, childTaskContract } from './task-intake'
 import { createHash, randomUUID } from 'crypto'
@@ -49,6 +45,10 @@ import {
 } from './command-approval'
 import { getResolvedSettings } from './settings'
 import { appendChatMessage, createChat, getChat } from './chats'
+import { realpathAllowMissing } from './workspace-fs'
+import { childOutcome, outcomeDigest } from './child-outcome'
+import { ThreadWorkingStateBuilder } from './thread-working-state'
+import { captureReceiptEvidence } from './context-evidence'
 import { findAgent } from './agents'
 import {
   captureHandoffEvidence,
@@ -126,7 +126,7 @@ function upsert(job: BackgroundJob): BackgroundJob {
   const prior = job.outcome?.receipt
   const integration = job.integration?.state ?? 'unapplied'
   if (prior && (prior.status !== job.status || prior.integration !== integration)) {
-    const receipt = {
+    const receipt: NonNullable<BackgroundJob['outcome']>['receipt'] = {
       ...prior,
       status: job.status,
       integration,
@@ -925,9 +925,9 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
           plan: turnPlan
         })
 
-    observedState = new ThreadWorkingStateBuilder(turnPlan.task, `child:${job.id}`)
     appendTaskEvent(job.id, 'task', turnPlan.task)
     const sender = currentSender
+    observedState = new ThreadWorkingStateBuilder(turnPlan.task, `child:${job.id}`)
     let thinkingBuf = ''
     let lastUpsert = 0
     const flushThinking = (force = false) => {
