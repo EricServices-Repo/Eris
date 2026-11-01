@@ -1,3 +1,5 @@
+import type { ContextHeader } from './context-memory'
+import type { ContextEvidence } from './context-evidence'
 import type { TaskContract } from './task-contract'
 /** Minimum characters kept when one agent passes text to another. */
 export const AGENT_HANDOFF_CHARS = 8_000
@@ -7,6 +9,31 @@ export const HANDOFF_VERSION = 1
 
 /** What may be cut. The goal and constraints are refused rather than shortened. */
 export type HandoffOptionalField = 'parentGoal' | 'summary' | 'files' | 'openQuestions'
+
+/**
+ * One recalled item a handoff may derive from. It names the item and digests its text, so
+ * eligibility can be proved again later without keeping private text in the job file.
+ */
+export interface HandoffEvidenceItem {
+  id: string
+  sourceId: string
+  kind: string
+  chars: number
+  digest: string
+  /** Where the excerpt sits in its source. Absent for pins and receipts. */
+  offset?: number
+  dependencies?: ContextEvidence
+}
+
+/** What a coordinator had seen when it wrote a handoff, and how far that may travel. */
+export interface HandoffEvidence {
+  root: string | null
+  threadId: string
+  /** The disclosure ceiling: whether this recall could go to a remote model at all. */
+  allowRemote: boolean
+  sourceVersion?: ContextHeader
+  items: HandoffEvidenceItem[]
+}
 
 /** Structured handoff between orchestrator and specialist agents. */
 export interface AgentHandoffPacket {
@@ -20,6 +47,8 @@ export interface AgentHandoffPacket {
   summary: string
   /** Must reach the specialist whatever else is cut. Each is short and checkable. */
   constraints?: string[]
+  /** Set by the runtime, never by the sending agent. See `HandoffEvidence`. */
+  evidence?: HandoffEvidence[]
   files?: string[]
   openQuestions?: string[]
   /** 0–1 confidence from the sender */
@@ -71,7 +100,8 @@ export const HANDOFF_LIMITS = {
   fileChars: 512,
   openQuestions: 16,
   openQuestionChars: 1_000,
-  taskChars: 256_000
+  taskChars: 256_000,
+  evidenceChars: 256_000
 } as const
 
 /** Every field of a task, so a new one has to be added here and nothing unknown is saved. */
@@ -131,6 +161,51 @@ function parseTask(value: unknown): { task?: TaskContract; error?: string } {
     : { task: JSON.parse(text) as TaskContract }
 }
 
+function parseEvidenceItem(value: unknown): HandoffEvidenceItem | null {
+  if (!isRecord(value)) return null
+  const { id, sourceId, kind, chars, digest, offset, dependencies } = value
+  if (typeof id !== 'string' || typeof sourceId !== 'string' || typeof kind !== 'string')
+    return null
+  if (typeof digest !== 'string' || !Number.isSafeInteger(chars)) return null
+  if (offset !== undefined && !Number.isSafeInteger(offset)) return null
+  return {
+    id,
+    sourceId,
+    kind,
+    chars: chars as number,
+    digest,
+    ...(offset === undefined ? {} : { offset: offset as number }),
+    ...(dependencies === undefined ? {} : { dependencies: dependencies as ContextEvidence })
+  }
+}
+
+/** Evidence that cannot be read is refused: a guard that fails open is not a guard. */
+function parseEvidence(value: unknown): { evidence?: HandoffEvidence[]; error?: string } {
+  if (value === undefined || value === null) return {}
+  const invalid = { error: 'The handoff evidence record is not valid.' }
+  if (!Array.isArray(value)) return invalid
+  const evidence: HandoffEvidence[] = []
+  for (const entry of value) {
+    if (!isRecord(entry) || typeof entry.threadId !== 'string') return invalid
+    if (typeof entry.allowRemote !== 'boolean' || !Array.isArray(entry.items)) return invalid
+    if (entry.root !== null && typeof entry.root !== 'string') return invalid
+    const items = entry.items.map(parseEvidenceItem)
+    if (items.some((item) => item === null)) return invalid
+    evidence.push({
+      root: entry.root,
+      threadId: entry.threadId,
+      allowRemote: entry.allowRemote,
+      ...(isRecord(entry.sourceVersion)
+        ? { sourceVersion: entry.sourceVersion as unknown as ContextHeader }
+        : {}),
+      items: items as HandoffEvidenceItem[]
+    })
+  }
+  return JSON.stringify(evidence).length > HANDOFF_LIMITS.evidenceChars
+    ? { error: 'The handoff evidence record is too large to pass to another agent.' }
+    : { evidence }
+}
+
 export type HandoffParse = { ok: true; packet: AgentHandoffPacket } | { ok: false; error: string }
 
 /**
@@ -175,6 +250,8 @@ export function parseHandoff(input: unknown): HandoffParse {
   if (constraintProblem) return fail(constraintProblem)
   const { task, error: taskError } = parseTask(input.task)
   if (taskError) return fail(taskError)
+  const { evidence, error: evidenceError } = parseEvidence(input.evidence)
+  if (evidenceError) return fail(evidenceError)
 
   const cut = new Set<HandoffOptionalField>(
     Array.isArray(input.truncated)
@@ -209,6 +286,7 @@ export function parseHandoff(input: unknown): HandoffParse {
     goal,
     summary: bounded(summary, 'summary'),
     ...(constraints.items ? { constraints: constraints.items } : {}),
+    ...(evidence ? { evidence } : {}),
     ...(files.items ? { files: kept.slice(0, HANDOFF_LIMITS.files) } : {}),
     ...(openQuestions.items
       ? { openQuestions: shortQuestions.slice(0, HANDOFF_LIMITS.openQuestions) }

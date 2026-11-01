@@ -10,6 +10,7 @@
         "tests/thread-working-state.test.ts",
         "tests/agent-context.test.ts",
         "tests/background-evidence-scope.test.ts",
+        "tests/background-evidence-revalidation.test.ts",
         "tests/background-cancellation.test.ts",
         "tests/child-task-requirements.test.ts",
         "tests/handoff-constraints.test.ts",

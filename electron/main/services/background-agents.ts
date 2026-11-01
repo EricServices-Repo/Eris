@@ -42,7 +42,14 @@ import {
 import { getResolvedSettings } from './settings'
 import { appendMessage, createChat, getChat } from './chats'
 import { findAgent } from './agents'
-import { currentEvidenceScope, runInEvidenceScope, type EvidenceScope } from './memory-dispatch'
+import {
+  captureHandoffEvidence,
+  currentEvidenceScope,
+  runInEvidenceScope,
+  runWithHandoffEvidence,
+  withEligibleMemory,
+  type EvidenceScope
+} from './memory-dispatch'
 
 const jobs = new Map<string, BackgroundJob>()
 const aborts = new Map<string, AbortController>()
@@ -272,7 +279,8 @@ export function delegateFromAgent(options: {
       forceRoute: 'tools',
       parentId: options.parentJobId ?? null,
       inheritWorktree: inherit,
-      handoff: options.handoff,
+      // Taken here, while the coordinator's lease is alive. A queued child can outlive it.
+      handoff: { ...options.handoff, evidence: captureHandoffEvidence() },
       claim: options.claim || `${options.agentId}: ${options.goal.slice(0, 48)}`
     },
     currentEvidenceScope()
@@ -568,7 +576,7 @@ async function pumpQueue(): Promise<void> {
         launched++
         // The pump can run inside any request's context, so a job always states its own.
         const run = runInEvidenceScope(
-          () => runOne(job, settings),
+          () => runWithHandoffEvidence(job.handoff?.evidence, () => runOne(job, settings)),
           evidenceScopes.get(job.id)
         ).finally(() => {
           evidenceScopes.delete(job.id)
@@ -599,6 +607,8 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
       status: 'running',
       liveStatus: j.liveStatus || 'Planning route…'
     }))
+    // Before any model, including the router, reads text this handoff may derive from.
+    if (job.handoff?.evidence?.length) await withEligibleMemory([], job.model, settings)
     const planText =
       job.handoff != null ? `${formatHandoffForPrompt(job.handoff)}\n\n${job.goal}` : job.goal
 

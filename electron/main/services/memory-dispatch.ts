@@ -3,7 +3,7 @@ import { invalidEvidenceItems } from './context-evidence'
 import { evidenceEpochMatches } from './context-evidence-epochs'
 import { createHash } from 'crypto'
 import { memoryKey, warmConversationMemory } from './context-memory'
-import { contextMemoryStore, MEMORY_PROMPT_HEADER } from './context-memory-store'
+import { contextMemoryStore, evidenceDigest, MEMORY_PROMPT_HEADER } from './context-memory-store'
 import { workspaceRequest } from './workspace-worker-client'
 import { userChatsDir, workspaceChatsDir } from './paths'
 import { abortable } from './context-hydration'
@@ -12,6 +12,7 @@ import { getResolvedSettings } from './settings'
 import { modelDestination } from './model-destination'
 import type { AppSettings } from '../../../src/shared/settings-schema'
 import { appendTaskEvent } from './task-ledger'
+import type { HandoffEvidence } from '../../../src/shared/agent-orchestration'
 import {
   ContextMemorySettingsSchema,
   memoryItemMarker,
@@ -41,7 +42,18 @@ type EvidenceLease = {
     authority?: { role: string; content: string; contextBundle?: { taskId: string } }
   } | null
 }
+/**
+ * A child's own hold on what its handoff derives from. It lives in the job's async context,
+ * so it ends with the job on every exit and does not depend on any parent's lease.
+ */
+type ChildEvidence = HandoffEvidence & {
+  key: string
+  ceiling: boolean
+  token: string
+  invalid: Set<string>
+}
 const leases = new Set<EvidenceLease>()
+const childEvidence = new AsyncLocalStorage<ChildEvidence[]>()
 const scopes = new AsyncLocalStorage<EvidenceScope>()
 
 export const currentEvidenceScope = () => scopes.getStore()
@@ -55,6 +67,61 @@ export const inEvidenceScope =
   <A extends unknown[], T>(work: (...args: A) => T) =>
   (...args: A): T =>
     runInEvidenceScope(() => work(...args))
+
+/** Runs a background job under the evidence its handoff carries, and only that. */
+export const runWithHandoffEvidence = <T>(
+  evidence: readonly HandoffEvidence[] | undefined,
+  work: () => T
+): T =>
+  childEvidence.run(
+    (evidence ?? []).map((source) => ({
+      ...source,
+      key: memoryKey(source.root, source.threadId),
+      ceiling: source.allowRemote,
+      token: '', // No cached copy can vouch for this until it has been checked.
+      invalid: new Set()
+    })),
+    work
+  )
+
+/**
+ * What this request's model has been shown, for a handoff written now. Later revalidation
+ * needs no lease, so a queued child stays bound after its parent has ended. Evidence a
+ * job itself inherited passes on, so a chain of children keeps the first ceiling.
+ */
+export function captureHandoffEvidence(): HandoffEvidence[] {
+  const scope = scopes.getStore()
+  const seen = [...leases].filter((lease) => lease.scope === scope && lease.exposure)
+  const held = (childEvidence.getStore() ?? []).map(
+    ({ root, threadId, ceiling, sourceVersion, items }): HandoffEvidence => ({
+      root,
+      threadId,
+      allowRemote: ceiling,
+      sourceVersion,
+      items
+    })
+  )
+  return [
+    ...held,
+    ...seen.map((lease): HandoffEvidence => ({
+      root: lease.root,
+      threadId: lease.threadId,
+      allowRemote: lease.allowRemote,
+      sourceVersion: lease.sourceVersion,
+      items: lease.items
+        .filter((item) => lease.exposure!.items.has(item.id))
+        .map(({ id, sourceId, kind, span, text, dependencies }) => ({
+          id,
+          sourceId,
+          kind,
+          chars: text.length,
+          digest: evidenceDigest(text),
+          ...(span ? { offset: span.offset } : {}),
+          ...(dependencies ? { dependencies } : {})
+        }))
+    }))
+  ]
+}
 
 export const DERIVED_WITHHELD_NOTICE =
   'Earlier steps in this run used local-only conversation memory and are not shown to this model. Inspect the workspace again rather than assuming their results.'
@@ -126,6 +193,33 @@ async function reloadIfCleared(lease: EvidenceLease) {
   } catch {
     contextMemoryStore.clear(key) // A source that cannot be revalidated fails closed.
   }
+}
+
+/** The canonical work for a child's evidence, before the synchronous check below. */
+async function refreshChildEvidence(source: ChildEvidence) {
+  await reloadIfCleared(source as unknown as EvidenceLease)
+  const items = source.items.filter((item) => item.dependencies)
+  for (const id of await invalidEvidenceItems(source.root, items as never)) source.invalid.add(id)
+}
+
+/** Why this child may not call this model now, or null. Synchronous, like `settle`. */
+function childEvidenceProblem(
+  source: ChildEvidence,
+  blocked: (lease: { allowRemote: boolean; root: string | null }) => boolean
+): string | null {
+  const policy = ContextMemorySettingsSchema.parse(
+    getResolvedSettings(source.root).agent.contextMemory ?? {}
+  )
+  source.ceiling &&= policy.shareWithRemoteModels
+  const stale =
+    !policy.enabled ||
+    source.invalid.size > 0 ||
+    contextMemoryStore.staleEvidence(source.key, source.items).length > 0
+  if (stale)
+    return 'This handoff drew on conversation memory that has since changed or been removed, so it was withheld. Rebuild the task from current sources.'
+  return blocked({ allowRemote: source.ceiling, root: source.root })
+    ? 'This handoff drew on local-only conversation memory and cannot go to this model. Choose a model approved for recall, or rebuild the task from eligible sources.'
+    : null
 }
 
 /** Synchronous, so nothing can interleave between this check and the transport. */
@@ -296,24 +390,31 @@ export async function withEligibleMemory<T extends { content?: unknown }>(
 ): Promise<{ messages: T[]; revoked: boolean }> {
   const { owned, carried } = leasesFor(messages as Outbound[])
   const relevant = [...owned, ...carried]
-  if (!relevant.length) return { messages, revoked: false }
+  const inherited = childEvidence.getStore() ?? []
+  if (!relevant.length && !inherited.length) return { messages, revoked: false }
   /** Needs both the request's settings and current ones, so a revoked approval applies. */
-  const recallBlocked = (lease: EvidenceLease) =>
+  const recallBlocked = (lease: { allowRemote: boolean; root: string | null }) =>
     !lease.allowRemote &&
     !(
       modelDestination(settings, model).recallAllowed &&
       modelDestination(getResolvedSettings(lease.root), model).recallAllowed
     )
   let dependenciesRevoked = false
-  await Promise.all(
-    relevant.map(async (lease) => {
+  await Promise.all([
+    ...inherited.map(refreshChildEvidence),
+    ...relevant.map(async (lease) => {
       await reloadIfCleared(lease)
       for (const id of await invalidEvidenceItems(lease.root, lease.items)) {
         if (!lease.revoked.has(id)) dependenciesRevoked = true
         lease.revoked.add(id)
       }
     })
-  )
+  ])
+  // Its text cannot be told apart from the rest of the handoff, so the whole request stops.
+  for (const source of inherited) {
+    const problem = childEvidenceProblem(source, recallBlocked)
+    if (problem) throw new Error(problem)
+  }
   let outbound = messages
   let revoked = dependenciesRevoked
   for (const lease of relevant) {
