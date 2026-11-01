@@ -17,6 +17,25 @@ export interface BackgroundJobToolEvent {
   at: string
 }
 
+/** Which limit stopped a task tree. */
+export type TaskTreeLimit = 'depth' | 'cycle' | 'agents' | 'steps' | 'deadline'
+
+/** Where a job sits in the tree its root started. Saved, so a restart cannot reset it. */
+export interface TaskTree {
+  rootId: string
+  depth: number
+  /** Agent and goal fingerprints of every ancestor, root first. */
+  ancestry: string[]
+  deadlineAt: string
+}
+
+/** Work across the whole tree, as opposed to `step`, which is this job's own count. */
+export interface TaskTreeUsage {
+  agents: number
+  steps: number
+  depth: number
+}
+
 export interface BackgroundJob {
   id: string
   workspacePath: string
@@ -37,6 +56,13 @@ export interface BackgroundJob {
   parentId?: string | null
   /** Child job ids spawned by this job */
   childIds?: string[]
+  /** Absent on jobs saved before trees were budgeted. */
+  tree?: TaskTree
+  treeUsage?: TaskTreeUsage
+  /** Set when a job first runs: a job that never ran spends none of its tree's budget. */
+  startedAt?: string
+  /** The limit that stopped this job or refused its delegation. */
+  budgetExhausted?: TaskTreeLimit
   /** Structured handoff that created this job */
   handoff?: AgentHandoffPacket | null
   /** Short claim shown on the blackboard */

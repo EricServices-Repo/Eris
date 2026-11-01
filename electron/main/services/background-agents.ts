@@ -1,6 +1,6 @@
 import { appendTaskEvent, flushTaskLedger } from './task-ledger'
 import { createTaskContract, childTaskContract } from './task-intake'
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import type { WebContents } from 'electron'
@@ -9,11 +9,15 @@ import type {
   BackgroundJob,
   BackgroundJobEvent,
   BackgroundJobToolEvent,
-  EnqueueBackgroundJobRequest
+  EnqueueBackgroundJobRequest,
+  TaskTree,
+  TaskTreeLimit,
+  TaskTreeUsage
 } from '../../../src/shared/background-agents'
 import {
   deriveBlackboardStatus,
   summarizeAgentResults,
+  TASK_TREE_LIMITS,
   formatHandoffForPrompt,
   formatJobResultForChat,
   handoffMessages,
@@ -104,6 +108,7 @@ function upsert(job: BackgroundJob): BackgroundJob {
   job.updatedAt = new Date().toISOString()
   const next = withBoard(job)
   jobs.set(next.id, next)
+  next.treeUsage = taskTreeUsage(rootIdOf(next))
   emit({ type: 'upsert', job: next })
   return next
 }
@@ -112,6 +117,82 @@ function patch(id: string, fn: (job: BackgroundJob) => BackgroundJob): Backgroun
   const cur = jobs.get(id)
   if (!cur) return null
   return upsert(fn({ ...cur }))
+}
+
+const rootIdOf = (job: BackgroundJob) => job.tree?.rootId ?? job.id
+
+/**
+ * Read from the jobs themselves, so a reservation is the job record and a restart cannot
+ * reset it. A job that never ran is not counted once it ends, which is what releases it.
+ */
+function taskTreeUsage(rootId: string): TaskTreeUsage {
+  const spent = [...jobs.values()].filter(
+    (job) =>
+      rootIdOf(job) === rootId &&
+      (job.startedAt || job.status === 'queued' || job.status === 'running')
+  )
+  return {
+    agents: spent.length,
+    steps: spent.reduce((total, job) => total + job.step, 0),
+    depth: Math.max(0, ...spent.map((job) => job.tree?.depth ?? 0))
+  }
+}
+
+const treeLimitText: Record<TaskTreeLimit, string> = {
+  depth: `agents may only delegate ${TASK_TREE_LIMITS.depth} levels deep`,
+  cycle: 'this agent already has this goal higher up the same task',
+  agents: `one task may use ${TASK_TREE_LIMITS.agents} agents`,
+  steps: `one task may use ${TASK_TREE_LIMITS.steps} model steps across its agents`,
+  deadline: `one task may run for ${TASK_TREE_LIMITS.minutes} minutes`
+}
+const treeLimitMessage = (limit: TaskTreeLimit) =>
+  `Task budget exhausted (${limit}): ${treeLimitText[limit]}. Finish what you can yourself and report what is unresolved.`
+
+/** A limit that ends the tree's remaining work, as opposed to refusing one more child. */
+function treeOverrun(job: BackgroundJob): TaskTreeLimit | null {
+  if (job.tree && Date.now() >= Date.parse(job.tree.deadlineAt)) return 'deadline'
+  return taskTreeUsage(rootIdOf(job)).steps >= TASK_TREE_LIMITS.steps ? 'steps' : null
+}
+
+/** The same agent and goal, however the goal was spaced or capitalized. */
+const treeFingerprint = (agentId: string, goal: string) =>
+  createHash('sha256')
+    .update(`${agentId}\0${goal.trim().toLowerCase().replace(/\s+/g, ' ')}`)
+    .digest('hex')
+    .slice(0, 16)
+
+function treeRefusal(
+  parent: BackgroundJob,
+  ancestry: readonly string[],
+  fingerprint: string
+): TaskTreeLimit | null {
+  const overrun = treeOverrun(parent)
+  if (overrun) return overrun
+  if (ancestry.includes(fingerprint)) return 'cycle'
+  if ((parent.tree?.depth ?? 0) >= TASK_TREE_LIMITS.depth) return 'depth'
+  return taskTreeUsage(rootIdOf(parent)).agents >= TASK_TREE_LIMITS.agents ? 'agents' : null
+}
+
+const newTreeDeadline = () => new Date(Date.now() + TASK_TREE_LIMITS.minutes * 60_000).toISOString()
+
+/** The child's place in the tree. Checked and recorded in one synchronous pass with enqueue. */
+function childTree(parent: BackgroundJob, agentId: string, goal: string): TaskTree {
+  const ancestry = [...(parent.tree?.ancestry ?? []), treeFingerprint(parent.agentId, parent.goal)]
+  const limit = treeRefusal(parent, ancestry, treeFingerprint(agentId, goal))
+  if (limit) {
+    upsert({
+      ...parent,
+      budgetExhausted: limit,
+      actionLog: [...parent.actionLog, `Delegation refused: ${limit}`].slice(-80)
+    })
+    throw new Error(treeLimitMessage(limit))
+  }
+  return {
+    rootId: rootIdOf(parent),
+    depth: (parent.tree?.depth ?? 0) + 1,
+    ancestry,
+    deadlineAt: parent.tree?.deadlineAt ?? newTreeDeadline()
+  }
 }
 
 function pushRoute(job: BackgroundJob, step: AgentRouteStep): AgentRouteStep[] {
@@ -183,18 +264,25 @@ export function enqueueBackgroundJob(
     branch = parent.branch
   }
 
+  const id = randomUUID()
+  const agentId = request.agentId?.trim() || 'auto'
+  const tree: TaskTree = parent
+    ? childTree(parent, agentId, goal)
+    : { rootId: id, depth: 0, ancestry: [], deadlineAt: newTreeDeadline() }
+
   const job: BackgroundJob = {
-    id: randomUUID(),
+    id,
     workspacePath,
     worktreePath,
     branch,
     goal,
     model: String(request.model || '').trim() || 'builtin:composer-lite',
-    agentId: request.agentId?.trim() || 'auto',
+    agentId,
     source: request.source || 'panel',
     sourceThreadId: request.sourceThreadId ?? parent?.sourceThreadId ?? null,
     parentId: request.parentId ?? null,
     childIds: [],
+    tree,
     destinationBranch: parent?.destinationBranch,
     baseSha: parent?.baseSha,
     handoff: request.handoff ?? null,
@@ -551,9 +639,29 @@ async function pumpQueue(): Promise<void> {
       const slots = Math.max(0, settings.backgroundAgents.maxParallel - running)
       for (let i = 0; i < slots && i < group.length; i++) {
         const job = group[i]!
+        const overrun = treeOverrun(job)
+        if (overrun) {
+          upsert({
+            ...job,
+            status: 'failed',
+            budgetExhausted: overrun,
+            error: treeLimitMessage(overrun),
+            liveStatus: 'Task budget exhausted'
+          })
+          pendingHints.delete(job.id)
+          evidenceScopes.delete(job.id)
+          continue
+        }
         // Claim immediately so parallel pumps / parent await can start siblings.
         patch(job.id, (j) =>
-          j.status === 'queued' ? { ...j, status: 'running', liveStatus: 'Planning route…' } : j
+          j.status === 'queued'
+            ? {
+                ...j,
+                status: 'running',
+                startedAt: new Date().toISOString(),
+                liveStatus: 'Planning route…'
+              }
+            : j
         )
         if (getBackgroundJob(job.id)?.status !== 'running') continue
         launched++
@@ -578,6 +686,17 @@ async function pumpQueue(): Promise<void> {
 async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> {
   const ac = new AbortController()
   aborts.set(job.id, ac)
+  let overrun: TaskTreeLimit | null = null
+  const stopForBudget = (limit: TaskTreeLimit) => {
+    overrun = limit
+    ac.abort()
+  }
+  const budgetFields = () =>
+    overrun ? { error: treeLimitMessage(overrun), budgetExhausted: overrun } : {}
+  // A timer, because an agent waiting on a child or a tool reports no progress to check.
+  const deadline = job.tree
+    ? setTimeout(() => stopForBudget('deadline'), Date.parse(job.tree.deadlineAt) - Date.now())
+    : undefined
   const hints = pendingHints.get(job.id) ?? {
     mode: 'agent' as const,
     manualAgentId: job.agentId !== 'auto' ? job.agentId : null
@@ -835,6 +954,8 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
           filesTouched: evt.filesTouched,
           thinkingTail: thinkingBuf.slice(-MAX_THINKING)
         })
+        const limit = treeOverrun(getBackgroundJob(job.id)!)
+        if (limit) stopForBudget(limit)
       } else if (evt.type === 'status') {
         upsert({
           ...cur,
@@ -905,6 +1026,7 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
         ...done,
         status: ac.signal.aborted ? 'stopped' : incomplete ? 'failed' : 'done',
         error: incomplete ? 'The agent stopped before satisfying its task contract.' : undefined,
+        ...budgetFields(),
         liveStatus: ac.signal.aborted
           ? 'Stopped'
           : incomplete
@@ -922,11 +1044,13 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
         ...cur,
         status: aborted ? 'stopped' : 'failed',
         error: aborted ? 'Stopped' : message,
+        ...budgetFields(),
         liveStatus: aborted ? 'Stopped' : 'Failed'
       })
     }
     logError('Background agent failed', { id: job.id, error: message })
   } finally {
+    clearTimeout(deadline)
     await flushTaskLedger(job.id)
     aborts.delete(job.id)
     void pumpQueue()
