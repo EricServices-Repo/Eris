@@ -37,6 +37,13 @@ export interface TaskTreeUsage {
 }
 
 export interface BackgroundJob {
+  outcome?: {
+    receipt: import('./child-outcome').ChildOutcome
+    dependencies?: import('./context-evidence').ContextEvidence
+  }
+  /** Import targets, separate from the immutable source conversation identity. */
+  chatImports?: Array<{ workspaceKey: string; threadId: string }>
+
   id: string
   workspacePath: string
   worktreePath: string

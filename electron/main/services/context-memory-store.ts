@@ -1,3 +1,4 @@
+import { childOutcomeText } from '../../../src/shared/child-outcome'
 import { ContextRowDeque } from './context-row-deque'
 import { workingStateText } from '../../../src/shared/thread-working-state'
 import { contextRecord } from '../../../src/shared/context-record'
@@ -1065,13 +1066,14 @@ export class ContextMemoryStore {
             sourceId: m.id,
             ordinal: row.ordinal,
             kind: 'task-result',
-            text:
-              r.workingState &&
-              r.workingState.sourceMessageId === m.id &&
-              r.workingState.taskId === r.taskId
+            text: r.childOutcome
+              ? childOutcomeText(r.childOutcome)
+              : r.workingState &&
+                  r.workingState.sourceMessageId === m.id &&
+                  r.workingState.taskId === r.taskId
                 ? workingStateText(r.workingState)
                 : `Recorded task ${r.taskId}: ${r.terminal}. Recorded changed paths: ${r.changedFiles.slice(0, 20).join(', ')}. Historical outcome, not current verification.`,
-            status: 'observed',
+            status: r.childOutcome && !r.childOutcome.observed ? 'unverified' : 'observed',
             projectRoot: r.projectRoot
           },
           score: score + 4,

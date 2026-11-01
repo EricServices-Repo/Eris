@@ -324,6 +324,7 @@ export interface ChatMessage {
   agentName?: string
   model?: string
   contextResult?: {
+    childOutcome?: import('./child-outcome').ChildOutcome
     workingState?: import('./thread-working-state').ThreadWorkingState
     taskId: string
     terminal: string
@@ -475,7 +476,13 @@ export interface TurnPlan {
     policy: 'fixed' | 'auto-local' | 'auto-any'
     selection: string
     basis: string
-    candidates: Array<{ model: string; eligible: boolean; reason: string; rank: number; locality: string }>
+    candidates: Array<{
+      model: string
+      eligible: boolean
+      reason: string
+      rank: number
+      locality: string
+    }>
   }
   /** Effective tool ceiling after intersecting agent policy + intent + mode. */
   toolPolicy: AgentToolsCeiling

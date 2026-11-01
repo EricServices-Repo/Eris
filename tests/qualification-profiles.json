@@ -100,7 +100,8 @@
         "tests/context-memory-recovery.test.ts",
         "tests/auto-model-policy.test.ts",
         "tests/model-switching.test.ts",
-        "tests/context-allocation.test.ts"
+        "tests/context-allocation.test.ts",
+        "tests/child-outcome.test.ts"
       ],
       "notRun": [
         "live model inference",
