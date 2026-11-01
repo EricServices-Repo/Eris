@@ -395,6 +395,17 @@ export function registerChatStreamIpc(): void {
                 settings,
                 {
                   excludeId: `${requestId}:user`,
+                  queryHints: {
+                    files: [
+                      ...(payload.prompt.openFile ? [payload.prompt.openFile.path] : []),
+                      ...payload.prompt.attachments.slice(0, 3).map((file) => file.path),
+                      ...(turnPlan.task?.continuation?.changedFiles ?? [])
+                    ],
+                    task: (turnPlan.task?.recommendations ?? [])
+                      .slice(0, 2)
+                      .map((item) => item.text)
+                      .join(' ')
+                  },
                   coveredSourceIds: compactHistory(
                     canonicalHistory ?? payload.prompt.history,
                     historyChars(allocation)

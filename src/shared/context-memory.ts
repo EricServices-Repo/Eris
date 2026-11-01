@@ -80,6 +80,8 @@ export type MemoryManifest = {
   derivation?: ContextDerivationStatus
   archive?: import('./archive-context').ArchiveContextSearch['index']
   rankingVersion?: number
+  /** Counts and digest only: expansion never logs historical source text. */
+  queryExpansion?: { version: 1; units: number; digest: string }
   /** Matching raw sources already covered by admitted complete recent turns. */
   duplicateSourceMessages?: number
   /** Character estimate of avoided candidate text, not measured backend tokens. */
