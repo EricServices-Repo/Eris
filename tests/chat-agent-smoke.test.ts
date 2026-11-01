@@ -1169,9 +1169,10 @@ describe('context pull through the agent loop', () => {
     expect(
       harness.prompts.filter((prompt) => prompt.includes('compress agent working memory'))
     ).toEqual([])
-    // Eviction keeps KV. Only a full compaction and the end of the run release it.
+    // Eviction keeps KV. Only a reroute, a full compaction and the end of the run release it.
+    expect(said('Moved older tool output').length).toBeGreaterThan(3)
     expect(harness.releasedSessions.filter((key) => key === 'gguf:job-evict').length).toBe(
-      said('Compacting context').length + 1
+      said('Compacting context').length + events.filter((e) => e.type === 'adapt').length + 1
     )
   })
 
