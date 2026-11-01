@@ -8,6 +8,7 @@ import {
   messagesToLlamaHistory,
   nativeStopReason,
   oneShotPrompt,
+  promptFitProblem,
   replyTokenAllowance
 } from '../../src/shared/llama-session'
 
@@ -129,6 +130,8 @@ async function ensureContext(): Promise<void> {
   const plan = { min: contextMin, max: contextMax }
   context = await createContextWithVramFallback((options) => model.createContext(options), plan)
   loadedContextSize = typeof context.contextSize === 'number' ? context.contextSize : contextMax
+  // Main budgets from the last size it heard; a rebuild can land on a smaller window.
+  post({ type: 'context-allocated', ...allocationFacts(model, context) })
 }
 
 async function getOrCreateSession(
@@ -274,6 +277,8 @@ function replyBudget(
   // Template framing adds a few tokens per message beyond the text itself.
   const promptTokens =
     countTokens(messages.map((message) => message.content).join('\n')) + messages.length * 8
+  const problem = promptFitProblem({ contextSize: loadedContextSize, promptTokens })
+  if (problem) throw new Error(problem)
   return {
     promptTokens,
     maxTokens: replyTokenAllowance({ requested, contextSize: loadedContextSize, promptTokens })

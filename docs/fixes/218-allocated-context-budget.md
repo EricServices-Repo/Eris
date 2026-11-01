@@ -10,6 +10,6 @@ Native loads now report their allocation: context size, train size, GPU layers a
 
 `local:` models previously skipped the plan entirely and now use it. Each `context-compiled` event records `context: { source, tokens }`.
 
-Known limit: the first request of a cold load is compiled from the plan before load finishes. If the runtime then allocates below the plan, that one request can still exceed the window. Later steps re-read capacity, and #230 should close this by loading first. A context recreated during worker recovery keeps the same min/max but its new size is not re-reported.
+The first request of a cold load, and a context recreated during worker recovery, were both known limits here. #260 closed them: see `260-measured-first-request.md`.
 
 Verification: `npx vitest run tests/model-context-allocation.test.ts`. Real load reporting is typechecked but has not been exercised on a packaged build.

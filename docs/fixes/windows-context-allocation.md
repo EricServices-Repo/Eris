@@ -14,4 +14,4 @@ The native allocation is still measured and recorded, so subsequent context comp
 
 `tests/vram-fit.test.ts` reproduces the reported Windows error with a fake allocator and tests successful shrinking, native range selection, unsupported quantization, exhausted retries, and unrelated failures. Full typecheck/lint/tests are run separately.
 
-This is deterministic allocation-failure simulation, not certification on a Windows CUDA device. If model weights plus the smallest context cannot fit, allocation still fails safely. The first cold-load prompt is currently compiled against the plan before load; shrinking the window does not by itself recompile an oversized first prompt. That remains the documented allocation-before-compilation follow-up from #243.
+This is deterministic allocation-failure simulation, not certification on a Windows CUDA device. If model weights plus the smallest context cannot fit, allocation still fails safely. The first cold-load prompt is packed again after load, against this allocation: see `260-measured-first-request.md`.

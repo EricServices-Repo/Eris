@@ -125,6 +125,7 @@ export function reportContextDispatch(input: {
   settings: AppSettings
   tools?: unknown
   adapted?: boolean
+  context?: ContextDispatch['context']
 }): void {
   const bundle = input.compiled.find((message) => message.contextBundle)?.contextBundle
   if (!bundle) return
@@ -155,6 +156,7 @@ export function reportContextDispatch(input: {
       .update(JSON.stringify([input.outbound, input.tools ?? null]))
       .digest('hex'),
     estimatedTokens: estimateContextTokens(wire),
+    ...(input.context ? { context: input.context } : {}),
     counts: countContextItems(items),
     ...(changed ? { items } : {}),
     at: Date.now()

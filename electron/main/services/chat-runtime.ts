@@ -111,6 +111,24 @@ function apiFinishReason(finishReason: string | null): ModelTermination['reason'
   }
 }
 
+/** Packs for the window a load really produced, and says so when that is what failed. */
+function packForAllocation(
+  messages: ModelMessage[],
+  allocated: ReturnType<typeof resolveModelCapabilities>,
+  plannedTokens: number
+) {
+  try {
+    return budgetModelMessages(messages, allocated.promptBudget, 'text-tools')
+  } catch (err) {
+    if (allocated.contextCeiling >= plannedTokens) throw err
+    const size = (tokens: number) => tokens.toLocaleString('en-US')
+    throw new Error(
+      `The model loaded with a ${size(allocated.contextCeiling)}-token context instead of the planned ${size(plannedTokens)}, and this request does not fit. ${(err as Error).message} Freeing GPU memory may also help.`,
+      { cause: err }
+    )
+  }
+}
+
 /** Provider transport only. Diagnostics live adapters call this directly. */
 export async function* streamProviderChat(
   options: StreamModelChatOptions
@@ -134,12 +152,20 @@ export async function* streamProviderChat(
   // That check can wait on the canonical source, and nothing below it awaits before sending.
   throwIfAborted(options.signal)
   options = { ...options, messages: eligible.messages }
-  const capabilities = resolveModelCapabilities(options.settings, model)
-  if (options.maxOutputTokens !== undefined) {
-    if (!Number.isSafeInteger(options.maxOutputTokens) || options.maxOutputTokens < 1)
-      throw new Error('Invalid output-token reservation')
-    capabilities.outputCap = Math.min(capabilities.outputCap, options.maxOutputTokens)
+  if (
+    options.maxOutputTokens !== undefined &&
+    (!Number.isSafeInteger(options.maxOutputTokens) || options.maxOutputTokens < 1)
+  )
+    throw new Error('Invalid output-token reservation')
+  const { settings: requestSettings, maxOutputTokens } = options
+  const currentCapabilities = () => {
+    const resolved = resolveModelCapabilities(requestSettings, model)
+    if (maxOutputTokens !== undefined)
+      resolved.outputCap = Math.min(resolved.outputCap, maxOutputTokens)
+    return resolved
   }
+  const capabilities = currentCapabilities()
+  const plannedTokens = capabilities.contextCeiling
   const protocol = capabilities.tools
   const inputMessages = options.messages.map((message) => {
     const { contextBundle: _accounting, ...wire } = message as ModelMessage
@@ -171,7 +197,8 @@ export async function* streamProviderChat(
       compiled: options.messages,
       outbound: compiled,
       adapted: true,
-      ...options
+      ...options,
+      context: { source: capabilities.contextSource, tokens: capabilities.contextCeiling }
     })
   let inputEstimate =
     estimateMessagesTokens(
@@ -256,7 +283,7 @@ export async function* streamProviderChat(
           const latest = await withEligibleMemory(options.messages, model, options.settings)
           if (latest.revoked && options.sessionKey) releaseLocalChatSession(options.sessionKey)
           throwIfAborted(options.signal)
-          const allocated = resolveModelCapabilities(options.settings, model)
+          const allocated = currentCapabilities()
           const wire = latest.messages.map((message) => {
             const { contextBundle: _bundle, ...value } = message as ModelMessage
             return { ...value, content: value.content ?? '' }
@@ -268,7 +295,7 @@ export async function* streamProviderChat(
                 'Available tools (JSON schemas):\n' +
                 JSON.stringify(options.tools.map((tool) => tool.function))
             })
-          const packed = budgetModelMessages(wire, allocated.promptBudget, 'text-tools')
+          const packed = packForAllocation(wire, allocated, plannedTokens)
           compiled = compileModelMessages(packed.messages, {
             protocol: 'text-tools',
             contextWindow: allocated.contextCeiling,
@@ -285,7 +312,12 @@ export async function* streamProviderChat(
             ...options,
             compiled: latest.messages,
             outbound: compiled,
-            adapted: true
+            adapted: true,
+            context: {
+              source: allocated.contextSource,
+              tokens: allocated.contextCeiling,
+              ...(allocated.contextCeiling === plannedTokens ? {} : { plannedTokens })
+            }
           })
           return compiled
             .filter((m) => m.role === 'system' || m.role === 'user' || m.role === 'assistant')
