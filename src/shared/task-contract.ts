@@ -159,6 +159,21 @@ export interface TaskInterpretation {
   }
 }
 
+/** What a child must honour from its parent's request. It never adds authority or work. */
+export interface InheritedRequirements {
+  fromTaskId: string
+  /** The top-level request, bounded, so limits the parser did not recognize still reach the child. */
+  parentRequest: string
+  /** Stack the parent required and the child's own goal did not state. */
+  stack: string[]
+  /** The parent's explicit clauses, such as "without changing the public API". */
+  requirements: string[]
+  /** Files the parent named. Background for the assignment, not a list of things to do. */
+  files: string[]
+  /** The child's goal named something else. The parent's requirement stands. */
+  conflicts: Array<{ field: 'language'; parent: string; child: string }>
+}
+
 export interface TaskContract {
   referenceBinding?: import('./reference-binding').TaskReferenceBinding
   version: 2
@@ -187,6 +202,8 @@ export interface TaskContract {
     execute: 'none' | 'verification' | 'approved'
     externalEffects: boolean
   }
+  /** Present on a child task. */
+  inherited?: InheritedRequirements
   skillIds?: string[]
   /** Recommendations this follow-up refers to (“implement those”), resolved at intake. */
   recommendations: TaskRecommendation[]
