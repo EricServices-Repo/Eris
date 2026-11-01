@@ -519,44 +519,60 @@ describe('attached 10,000 natural coding chat questions', () => {
     expect(agentCounts.size).toBeGreaterThanOrEqual(2)
   })
 
-  it('runs 120 natural questions through the complete chat agent loop', async () => {
+  let representativeCases: NaturalQuestionCase[] | undefined
+  function representativeNaturalCases() {
+    if (representativeCases) return representativeCases
     const routedCases = naturalQuestions.map(naturalCaseFor)
     const byAgent = [...new Set(routedCases.map((entry) => entry.agent))].flatMap((agent) =>
       routedCases.filter((entry) => entry.agent === agent).slice(0, 20)
     )
     const selectedIds = new Set(byAgent.map((entry) => entry.id))
-    const representativeCases = [
+    const selected = [
       ...byAgent,
       ...routedCases.filter((entry, index) => index % 37 === 0 && !selectedIds.has(entry.id))
     ].slice(0, 120)
-    expect(representativeCases).toHaveLength(120)
 
-    for (const testCase of representativeCases) {
-      const label = `natural question ${testCase.id}: ${testCase.question}`
-      const events = await runNaturalCase(testCase)
-      expect(lastAnswer(events), `${label} should post its simulated answer`).toContain(
-        testCase.expectedToken
-      )
-      expect(
-        events.some((event) => event.type === 'progress' && event.incomplete === true),
-        `${label} should complete`
-      ).toBe(false)
-      expect(model.replies, `${label} should consume every simulated response`).toHaveLength(0)
-
-      const successfulTools = events.filter(
-        (event): event is Extract<AgentRunnerEvent, { type: 'tool' }> =>
-          event.type === 'tool' && event.tool.status === 'ok'
-      )
-      if (testCase.outputPath) {
-        expect(readFileSync(join(workspacePath, testCase.outputPath), 'utf8')).toContain(
+    representativeCases = selected
+    return selected
+  }
+  it.each(Array.from({ length: 12 }, (_, index) => index))(
+    'runs natural chat questions through the complete agent loop, batch %i (10 cases)',
+    async (batch) => {
+      const cases = representativeNaturalCases()
+      expect(cases).toHaveLength(120)
+      expect(new Set(cases.map((testCase) => testCase.id)).size).toBe(120)
+      const batchCases = cases.slice(batch * 10, (batch + 1) * 10)
+      expect(batchCases).toHaveLength(10)
+      for (const testCase of batchCases) {
+        const label = `natural question ${testCase.id}: ${testCase.question}`
+        const events = await runNaturalCase(testCase)
+        expect(lastAnswer(events), `${label} should post its simulated answer`).toContain(
           testCase.expectedToken
         )
-        expect(successfulTools.some((event) => event.tool.name === 'write_file')).toBe(true)
-      } else if (naturalPlanFor(testCase).requiresTools) {
-        expect(successfulTools.length, `${label} should execute its routed tool`).toBeGreaterThan(0)
-      } else {
-        expect(successfulTools, `${label} should not need tools`).toHaveLength(0)
+        expect(
+          events.some((event) => event.type === 'progress' && event.incomplete === true),
+          `${label} should complete`
+        ).toBe(false)
+        expect(model.replies, `${label} should consume every simulated response`).toHaveLength(0)
+
+        const successfulTools = events.filter(
+          (event): event is Extract<AgentRunnerEvent, { type: 'tool' }> =>
+            event.type === 'tool' && event.tool.status === 'ok'
+        )
+        if (testCase.outputPath) {
+          expect(readFileSync(join(workspacePath, testCase.outputPath), 'utf8')).toContain(
+            testCase.expectedToken
+          )
+          expect(successfulTools.some((event) => event.tool.name === 'write_file')).toBe(true)
+        } else if (naturalPlanFor(testCase).requiresTools) {
+          expect(successfulTools.length, `${label} should execute its routed tool`).toBeGreaterThan(
+            0
+          )
+        } else {
+          expect(successfulTools, `${label} should not need tools`).toHaveLength(0)
+        }
       }
-    }
-  }, 30_000)
+    },
+    30_000
+  )
 })

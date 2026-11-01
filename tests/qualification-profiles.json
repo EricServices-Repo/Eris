@@ -6,6 +6,7 @@
       "files": [
         "tests/agent-capabilities.test.ts",
         "tests/model-context-allocation.test.ts",
+        "tests/memory-tiers.test.ts",
         "tests/native-first-request.test.ts",
         "tests/llama-worker-context.test.ts",
         "tests/vram-placement.test.ts",
@@ -100,8 +101,7 @@
         "tests/context-memory-recovery.test.ts",
         "tests/auto-model-policy.test.ts",
         "tests/model-switching.test.ts",
-        "tests/context-allocation.test.ts",
-        "tests/memory-tiers.test.ts"
+        "tests/context-allocation.test.ts"
       ],
       "notRun": [
         "live model inference",
