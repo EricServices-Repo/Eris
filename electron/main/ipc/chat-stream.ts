@@ -19,7 +19,7 @@ import {
   type ContextAllocation
 } from '../../../src/shared/context-allocation'
 import { conversationContext } from '../services/context-memory'
-import { leaseMemoryEvidence } from '../services/memory-dispatch'
+import { inEvidenceScope, leaseMemoryEvidence } from '../services/memory-dispatch'
 import { appendTaskEvent } from '../services/task-ledger'
 import type { MemoryPrompt } from '../../../src/shared/context-memory'
 import { flushTaskLedger } from '../services/task-ledger'
@@ -149,7 +149,7 @@ export function registerChatStreamIpc(): void {
       return false
     }
     try {
-      return await foregroundTasks.run(payload.requestId, event.sender, async (controller) => {
+      const run = inEvidenceScope(async (controller: AbortController) => {
         if (workspacePath !== appState.currentWorkspace)
           throw new Error('The workspace changed while this task was queued.')
         markChatJobRunning(payload.requestId)
@@ -598,8 +598,7 @@ export function registerChatStreamIpc(): void {
             const usingComposerFull =
               turnPlan.models.tools === 'builtin:composer' ||
               turnPlan.models.chat === 'builtin:composer'
-            const cloudPreferred =
-              turnPlan.cloudPreferred === true && usingComposerFull
+            const cloudPreferred = turnPlan.cloudPreferred === true && usingComposerFull
             const wantCloudInline =
               !asksForImageGeneration(userText) &&
               (mode ?? 'agent') === 'agent' &&
@@ -613,16 +612,37 @@ export function registerChatStreamIpc(): void {
               (await cloudInlineAvailable(settings, getSecret, turnPlan.task?.version))
             if (wantCloudInline && !cloudCompatible) {
               if (!turnPlan.modelExecution || turnPlan.modelExecution.policy === 'fixed')
-                throw new Error('Fixed Cloud Composer is unavailable. Select another model or an automatic execution policy to continue.')
-              const fallback = await chooseExecutionModel(settings, turnPlan.intent, 'auto-local', [resolvedModel])
-              if (!fallback.model) throw new Error(`Cloud Composer is unavailable and no eligible local worker is ready. ${fallback.candidates.map((c) => `${c.model}: ${c.reason}`).join('; ')}`)
+                throw new Error(
+                  'Fixed Cloud Composer is unavailable. Select another model or an automatic execution policy to continue.'
+                )
+              const fallback = await chooseExecutionModel(settings, turnPlan.intent, 'auto-local', [
+                resolvedModel
+              ])
+              if (!fallback.model)
+                throw new Error(
+                  `Cloud Composer is unavailable and no eligible local worker is ready. ${fallback.candidates.map((c) => `${c.model}: ${c.reason}`).join('; ')}`
+                )
               const coordinator = resolvedModel
               resolvedModel = fallback.model
-              turnPlan = { ...turnPlan, cloudPreferred: false,
-                models: { ...turnPlan.models, coordinator, chat: resolvedModel, tools: resolvedModel },
-                modelExecution: { ...turnPlan.modelExecution, candidates: fallback.candidates, basis: 'cloud-unavailable' } }
-              publish('chat:status', { requestId,
-                text: `Cloud server is unavailable or lacks the required task contract. Continuing with ${resolvedModel} under the same permissions.` })
+              turnPlan = {
+                ...turnPlan,
+                cloudPreferred: false,
+                models: {
+                  ...turnPlan.models,
+                  coordinator,
+                  chat: resolvedModel,
+                  tools: resolvedModel
+                },
+                modelExecution: {
+                  ...turnPlan.modelExecution,
+                  candidates: fallback.candidates,
+                  basis: 'cloud-unavailable'
+                }
+              }
+              publish('chat:status', {
+                requestId,
+                text: `Cloud server is unavailable or lacks the required task contract. Continuing with ${resolvedModel} under the same permissions.`
+              })
             }
             if (cloudCompatible) {
               let cloudWorkObserved = false
@@ -728,10 +748,22 @@ export function registerChatStreamIpc(): void {
                   publish('chat:done', { requestId, aborted: true })
                   return false
                 }
-                if (!turnPlan.modelExecution || turnPlan.modelExecution.policy === 'fixed') throw cloudErr
-                if (telemetryMutated || cloudWorkObserved) throw new Error('Cloud execution stopped after beginning workspace work. Existing changes are preserved; automatic model recovery was stopped to avoid replaying operations.')
-                const fallback = await chooseExecutionModel(settings, turnPlan.intent, 'auto-local', [resolvedModel])
-                if (!fallback.model) throw new Error(`Cloud execution failed and no eligible local recovery model is available. ${fallback.candidates.map((c) => `${c.model}: ${c.reason}`).join('; ')}`)
+                if (!turnPlan.modelExecution || turnPlan.modelExecution.policy === 'fixed')
+                  throw cloudErr
+                if (telemetryMutated || cloudWorkObserved)
+                  throw new Error(
+                    'Cloud execution stopped after beginning workspace work. Existing changes are preserved; automatic model recovery was stopped to avoid replaying operations.'
+                  )
+                const fallback = await chooseExecutionModel(
+                  settings,
+                  turnPlan.intent,
+                  'auto-local',
+                  [resolvedModel]
+                )
+                if (!fallback.model)
+                  throw new Error(
+                    `Cloud execution failed and no eligible local recovery model is available. ${fallback.candidates.map((c) => `${c.model}: ${c.reason}`).join('; ')}`
+                  )
                 logWarn('Cloud inline chat falling back to local', {
                   requestId,
                   error: cloudErr instanceof Error ? cloudErr.message : String(cloudErr)
@@ -742,8 +774,17 @@ export function registerChatStreamIpc(): void {
                 resolvedModel = fallback.model
                 turnPlan = {
                   ...turnPlan,
-                  models: { ...turnPlan.models, coordinator, chat: resolvedModel, tools: resolvedModel },
-                  modelExecution: { ...turnPlan.modelExecution, candidates: fallback.candidates, basis: 'cloud-recovery' },
+                  models: {
+                    ...turnPlan.models,
+                    coordinator,
+                    chat: resolvedModel,
+                    tools: resolvedModel
+                  },
+                  modelExecution: {
+                    ...turnPlan.modelExecution,
+                    candidates: fallback.candidates,
+                    basis: 'cloud-recovery'
+                  },
                   cloudPreferred: false
                 }
                 scheduleStreamFlush()
@@ -1233,6 +1274,7 @@ export function registerChatStreamIpc(): void {
           }
         }
       })
+      return await foregroundTasks.run(payload.requestId, event.sender, run)
     } catch (error) {
       const stopped = error instanceof Error && error.name === 'AbortError'
       finishChatJob(payload.requestId, stopped ? 'stopped' : 'failed')
