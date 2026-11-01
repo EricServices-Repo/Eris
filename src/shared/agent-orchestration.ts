@@ -79,6 +79,9 @@ export interface AgentRouteStep {
   kind: 'plan' | 'escalate' | 'reroute' | 'delegate'
 }
 
+/** One root's total, however its agents delegate. A run's own step limit resets per agent. */
+export const TASK_TREE_LIMITS = { depth: 4, agents: 16, steps: 600, minutes: 60 } as const
+
 export const MAX_HANDOFF_CONSTRAINTS = 12
 export const MAX_HANDOFF_CONSTRAINT_CHARS = 300
 

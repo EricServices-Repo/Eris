@@ -138,7 +138,7 @@ describe('stopping a job tree', () => {
     const other = await treeOf()
     const kid = child(parent.id)
     await running(kid.id)
-    const grandkid = child(kid.id)
+    const grandkid = child(kid.id, 'Grandchild')
     await running(grandkid.id)
     expect(stopBackgroundJob(parent.id)).toBe(true)
     await until(() => {

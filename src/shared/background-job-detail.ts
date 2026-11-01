@@ -1,5 +1,9 @@
 import type { BackgroundJob } from './background-agents'
-import { AGENT_HANDOFF_CHARS, deriveBlackboardStatus } from './agent-orchestration'
+import {
+  AGENT_HANDOFF_CHARS,
+  deriveBlackboardStatus,
+  TASK_TREE_LIMITS
+} from './agent-orchestration'
 
 export function formatBackgroundJobDetail(job: BackgroundJob, diff: string): string {
   const board = job.blackboard || deriveBlackboardStatus(job)
@@ -8,6 +12,9 @@ export function formatBackgroundJobDetail(job: BackgroundJob, diff: string): str
     job.claim ? `claim: ${job.claim}` : '',
     job.parentId ? `parent: ${job.parentId.slice(0, 8)}` : '',
     job.childIds?.length ? `children: ${job.childIds.map((id) => id.slice(0, 8)).join(', ')}` : '',
+    job.treeUsage
+      ? `task tree: depth ${job.treeUsage.depth}/${TASK_TREE_LIMITS.depth} · ${job.treeUsage.agents}/${TASK_TREE_LIMITS.agents} agents · ${job.treeUsage.steps}/${TASK_TREE_LIMITS.steps} steps${job.budgetExhausted ? ` · exhausted: ${job.budgetExhausted}` : ''}`
+      : '',
     job.routeReason || '',
     job.liveStatus ? `status: ${job.liveStatus}` : '',
     job.toolsModel || job.model
@@ -49,7 +56,8 @@ export function formatBackgroundJobDetail(job: BackgroundJob, diff: string): str
     for (const t of tools.slice(-16)) {
       const mark = t.status === 'ok' ? '✓' : t.status === 'error' ? '✗' : '…'
       lines.push(`  ${mark} ${t.name}${t.path ? ` ${t.path}` : ''}`)
-      if (t.status === 'error' && t.detail) lines.push(`      ${t.detail.slice(0, AGENT_HANDOFF_CHARS)}`)
+      if (t.status === 'error' && t.detail)
+        lines.push(`      ${t.detail.slice(0, AGENT_HANDOFF_CHARS)}`)
     }
     lines.push('')
   }
@@ -71,7 +79,12 @@ export function formatBackgroundJobDetail(job: BackgroundJob, diff: string): str
       `Artifacts: ${job.artifactCount || job.filesTouched.length} file(s) — use Apply changes to open Diff Review`
     )
     if (job.filesTouched?.length) {
-      lines.push(job.filesTouched.slice(0, 40).map((f) => `  - ${f}`).join('\n'))
+      lines.push(
+        job.filesTouched
+          .slice(0, 40)
+          .map((f) => `  - ${f}`)
+          .join('\n')
+      )
     }
     lines.push('')
   }

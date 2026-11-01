@@ -14,6 +14,7 @@
         "tests/background-evidence-scope.test.ts",
         "tests/background-evidence-revalidation.test.ts",
         "tests/background-cancellation.test.ts",
+        "tests/task-tree-budget.test.ts",
         "tests/child-task-requirements.test.ts",
         "tests/handoff-constraints.test.ts",
         "tests/handoff-envelope.test.ts",
