@@ -59,7 +59,9 @@ export const ModelConnectionSchema = z.object({
    * Base URL the user approved for recall. It covers that exact URL only, so editing
    * the address ends the approval. Only the user profile may set it.
    */
-  recallApprovedUrl: z.string().optional()
+  recallApprovedUrl: z.string().optional(),
+  /** Ollama: hold the model in memory until the server stops or unloads it. */
+  keepModelLoaded: z.boolean().optional()
 })
 
 export const McpServerSchema = z.object({
@@ -408,6 +410,14 @@ export interface GpuAccelStatus {
   vramBudgetBytes?: number
 }
 
+export type ConnectionModelPlacement = {
+  model: string
+  requestedWindow: number
+  loadedWindow?: number
+  sizeBytes: number
+  vramBytes: number
+}
+
 export interface ModelsStatus {
   ok: boolean
   error?: string
@@ -415,7 +425,14 @@ export interface ModelsStatus {
   /** User-downloaded GGUFs that run inside Eris (no Ollama). */
   local?: LocalModelStatus[]
   models: ModelInfo[]
-  connections: Array<ModelConnection & { reachable?: boolean; error?: string }>
+  connections: Array<
+    ModelConnection & {
+      reachable?: boolean
+      error?: string
+      /** Where the server last placed each model; Ollama only. */
+      placements?: ConnectionModelPlacement[]
+    }
+  >
   /** Local GGUF GPU / eGPU acceleration probe. */
   gpu?: GpuAccelStatus
 }

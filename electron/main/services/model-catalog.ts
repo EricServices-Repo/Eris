@@ -8,6 +8,7 @@ import { getBuiltinStatuses, isBuiltinRef, resolveReadyBuiltinRef } from './buil
 import { getLocalStatuses, isLocalRef } from './local-model'
 import { listOpenAIModels } from './openai-compatible'
 import { getGpuAccelStatus } from './gpu-accel'
+import { placementsFor } from './ollama-runtime'
 
 export type ModelsStatusOptions = {
   /**
@@ -87,7 +88,10 @@ export async function getModelsStatus(
   let connections: ModelsStatus['connections'] = []
 
   if (!probeConnections) {
-    const snap = lightConnectionSnapshot(settings, builtin.some((b) => b.ready))
+    const snap = lightConnectionSnapshot(
+      settings,
+      builtin.some((b) => b.ready)
+    )
     connections = snap.connections
     models.push(...snap.models)
   } else {
@@ -147,13 +151,17 @@ export async function getModelsStatus(
   const anyConnectionReady = models.some((m) => m.source === 'connection' && m.ready)
   return {
     ok: anyBuiltinReady || anyLocalReady || anyConnectionReady,
-    error: anyBuiltinReady || anyLocalReady || anyConnectionReady
-      ? undefined
-      : 'No models ready — download Composer Lite or a Local model, or add an API in Settings → Models',
+    error:
+      anyBuiltinReady || anyLocalReady || anyConnectionReady
+        ? undefined
+        : 'No models ready — download Composer Lite or a Local model, or add an API in Settings → Models',
     builtin,
     local,
     models,
-    connections,
+    connections: connections.map((connection) => {
+      const placements = placementsFor(connection)
+      return placements.length ? { ...connection, placements } : connection
+    }),
     gpu
   }
 }
@@ -205,10 +213,7 @@ export function resolveConnectionForModel(
  * without searching the workspace. Uses persisted connection lists + builtin status
  * (no network round-trip).
  */
-export function formatAvailableModelsPrompt(
-  settings: AppSettings,
-  selectedModel?: string
-): string {
+export function formatAvailableModelsPrompt(settings: AppSettings, selectedModel?: string): string {
   const lines: string[] = [
     '[Eris AI models — use this list for questions about available / accessible models. Do not search the workspace for “models”.]',
     `Chat selection: ${selectedModel || settings.models.defaultModel || '(none)'}`,

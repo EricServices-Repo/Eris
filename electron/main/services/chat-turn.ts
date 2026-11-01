@@ -25,6 +25,7 @@ import { resolveTaskDecision } from './task-resolver'
 import { executionPlanFor } from './execution-plan'
 import { appendTaskEvent } from './task-ledger'
 import { previousTask } from './task-store'
+import { prepareModelWindows } from './ollama-runtime'
 
 /**
  * Production chat turn pipeline shared by the chat IPC handler and in-app
@@ -143,6 +144,12 @@ export async function resolveChatTurnContract(
   } catch {
     /* reported by runtime */
   }
+  await prepareModelWindows(
+    input.settings,
+    [plan.models.chat, plan.models.tools],
+    input.getSecret,
+    input.signal
+  )
   let references = input.referenceBinding
   if (!references && input.threadId && input.priorTask === undefined) {
     try {

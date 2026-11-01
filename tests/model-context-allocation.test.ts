@@ -43,7 +43,7 @@ import {
 } from '../electron/main/services/model-runtime'
 import { allocationFacts } from '../electron/main/services/vram-fit'
 
-const settings = { models: { contextWindow: 32768 } } as AppSettings
+const settings = { models: { connections: [], contextWindow: 32768 } } as unknown as AppSettings
 
 beforeEach(() => {
   harness.local = entry()

@@ -74,6 +74,7 @@
         "tests/context-change-log.test.ts",
         "tests/memory-dispatch.test.ts",
         "tests/model-destination.test.ts",
+        "tests/ollama-runtime.test.ts",
         "tests/derived-privacy-lineage.test.ts",
         "tests/context-dispatch.test.ts",
         "tests/context-sequence.test.ts",
