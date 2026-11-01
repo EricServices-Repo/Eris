@@ -361,6 +361,8 @@ export function getLocalStatuses(): LocalModelStatus[] {
     if (phase === 'finalizing') progress = Math.max(progress, 0.99)
     return {
       id: entry.id,
+      routingCapabilities: entry.routingCapabilities,
+      contextWindow: entry.contextWindow,
       ref: entry.ref,
       name: entry.name,
       displayName: entry.displayName,

@@ -1,3 +1,4 @@
+import { chooseExecutionModel, executionPolicy, type AutoModelChoice } from './auto-model-policy'
 import { asksForImageGeneration } from '../../../src/shared/image-generation'
 import type {
   AgentDefinition,
@@ -432,7 +433,7 @@ export function filterToolsByPolicy<T extends { function: { name: string } }>(
 /** Empty or "auto" lets the turn choose among ready models. Anything else is used as picked. */
 export function isAutoModelChoice(selected: string): boolean {
   const name = selected.trim()
-  return !name || name === 'auto'
+  return !name || name === 'auto' || name === 'auto-local' || name === 'auto-any'
 }
 
 /**
@@ -446,50 +447,8 @@ export async function pickAutoChatModel(
   return (await chooseAutoChatModel(settings, intent)).model
 }
 
-async function chooseAutoChatModel(
-  settings: AppSettings,
-  intent: ChatIntent
-): Promise<{ model: string; basis: 'telemetry' | 'eval' | 'profile' }> {
-  // Use user outcomes/evals only when enabled and only among models that are
-  // currently configured and ready. This keeps Auto explainable and prevents
-  // stale scores from selecting a removed provider.
-  if (settings.evals?.useScoresForRouting) {
-    const candidates = [
-      ...(isExactBuiltinReady('builtin:composer-lite') ? ['builtin:composer-lite'] : []),
-      ...(isExactBuiltinReady('builtin:composer') ? ['builtin:composer'] : []),
-      ...getLocalStatuses()
-        .filter((m) => m.ready && isLocalRef(m.ref))
-        .map((m) => m.ref),
-      ...settings.models.connections
-        .filter((c) => c.enabled && c.type !== 'builtin')
-        .flatMap((c) => c.models.filter((name) => name.trim()))
-    ]
-    if (candidates.length) {
-      const { bestModelForIntent } = await import('./agent-telemetry')
-      const telemetryModel = bestModelForIntent(intent, candidates, settings.evals.minRuns)
-      if (telemetryModel) return { model: telemetryModel, basis: 'telemetry' }
-      const { bestEvalModelForIntent } = await import('./eval-store')
-      const evalModel = bestEvalModelForIntent(intent, candidates, settings.evals.minRuns)
-      if (evalModel) return { model: evalModel, basis: 'eval' }
-    }
-  }
-  const heavy = intent === 'edit' || intent === 'verify' || intent === 'run'
-  const profile = settings.agent.routing.profile ?? 'auto'
-  const localFull = localComposerFullActive(settings)
-  const preferCloud =
-    !localFull && profile !== 'local' && settings.agent.routing.preferCloudComposer !== false
-  if (heavy && (localFull || preferCloud)) return { model: 'builtin:composer', basis: 'profile' }
-  if (isExactBuiltinReady('builtin:composer-lite')) {
-    return { model: 'builtin:composer-lite', basis: 'profile' }
-  }
-  const fitted = await readyLocalHandoffRef(settings)
-  if (fitted) return { model: fitted, basis: 'profile' }
-  for (const conn of settings.models.connections) {
-    if (!conn.enabled || conn.type === 'builtin') continue
-    const name = conn.models.find((model) => model.trim())
-    if (name) return { model: name, basis: 'profile' }
-  }
-  return { model: 'builtin:composer-lite', basis: 'profile' }
+async function chooseAutoChatModel(settings: AppSettings, intent: ChatIntent): Promise<AutoModelChoice> {
+  return chooseExecutionModel(settings, intent)
 }
 
 export function resolveModelRoles(options: {
@@ -968,9 +927,11 @@ export async function planChatTurn(options: {
   let modelBasis: 'user' | 'agent' | 'telemetry' | 'eval' | 'profile' = agentModelOverride
     ? 'agent'
     : 'user'
+  let modelChoice: AutoModelChoice | undefined
   let chosenModel = agentModelOverride || selectedModel
   if (isAutoModelChoice(chosenModel)) {
-    const choice = await chooseAutoChatModel(options.settings, intent)
+    const choice = await chooseExecutionModel(options.settings, intent, chosenModel)
+    modelChoice = choice
     chosenModel = choice.model
     modelBasis = choice.basis
   }
@@ -1017,7 +978,15 @@ export async function planChatTurn(options: {
     method,
     classifiedIntent,
     routeTrace: { heuristicRule: heuristic.rule, overrides },
-    error: roles.error,
+    error: modelChoice && !modelChoice.model
+      ? `No eligible model for ${modelChoice.policy}. ${modelChoice.candidates.map((c) => `${c.model}: ${c.reason}`).join('; ')}`
+      : roles.error,
+    modelExecution: {
+      policy: agentModelOverride ? 'fixed' : executionPolicy(options.settings, selectedModel),
+      selection: agentModelOverride || selectedModel,
+      basis: modelBasis,
+      candidates: modelChoice?.candidates || []
+    },
     routingProfile,
     cloudPreferred,
     executionPlan: executionPlanFor(mode, intent)

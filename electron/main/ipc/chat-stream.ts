@@ -503,7 +503,8 @@ export function registerChatStreamIpc(): void {
             if (!telemetryOn) return
             try {
               recordAgentRun({
-                model: usedCloud ? 'composer' : turnPlan.models.tools,
+                model: usedCloud ? 'composer' : resolvedModel,
+                settings,
                 intent: turnPlan.intent,
                 steps: telemetrySteps,
                 mutated: telemetryMutated,

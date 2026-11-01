@@ -1,3 +1,4 @@
+import { routingEvidenceKey } from './routing-evidence'
 import { randomUUID } from 'crypto'
 import {
   existsSync,
@@ -449,6 +450,7 @@ export async function runEvalSuite(
             text
           })
       })
+      result.routingKey = routingEvidenceKey(settings, result.model)
       result.batchId = batchId
       results.push(result)
       onProgress?.({ type: 'result', batchId, index: i, result })

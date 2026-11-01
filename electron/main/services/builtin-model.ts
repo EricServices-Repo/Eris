@@ -655,6 +655,8 @@ const activeChatSessions = new Set<string>()
 const inProcessSessions = new Map<string, { session: any; sequence: any }>()
 
 type WorkerMsg = {
+  counts?: number[]
+  modelPath?: string | null
   type: string
   id?: string
   requestId?: string

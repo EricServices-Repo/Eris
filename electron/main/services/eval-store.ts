@@ -1,3 +1,5 @@
+import type { AppSettings } from '../../../src/shared/settings-schema'
+import { routingEvidenceKey, ROUTING_EVIDENCE_MAX_AGE_MS } from './routing-evidence'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import type { ChatIntent } from '../../../src/shared/settings-schema'
@@ -89,11 +91,16 @@ export function bestEvalModelForIntent(
   intent: ChatIntent,
   candidates: string[],
   minRuns: number,
-  results?: EvalResult[]
+  results?: EvalResult[],
+  settings?: AppSettings
 ): string | null {
   const ready = new Set(candidates.filter(Boolean))
   if (ready.size === 0) return null
-  const ranked = scoreEvalResults(results).filter(
+  const fresh = settings ? (results ?? readStore().results).filter((r) =>
+    r.routingKey === routingEvidenceKey(settings, r.model) &&
+    Number.isFinite(Date.parse(r.at)) && Date.now() - Date.parse(r.at) <= ROUTING_EVIDENCE_MAX_AGE_MS
+  ) : results
+  const ranked = scoreEvalResults(fresh).filter(
     (s) => s.intent === intent && ready.has(s.model) && s.runs >= minRuns
   )
   if (ranked.length === 0) return null

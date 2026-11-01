@@ -469,6 +469,12 @@ export interface TurnPlan {
     tools: string
     router?: string
   }
+  modelExecution?: {
+    policy: 'fixed' | 'auto-local' | 'auto-any'
+    selection: string
+    basis: string
+    candidates: Array<{ model: string; eligible: boolean; reason: string; rank: number; locality: string }>
+  }
   /** Effective tool ceiling after intersecting agent policy + intent + mode. */
   toolPolicy: AgentToolsCeiling
   requiresTools: boolean
@@ -596,7 +602,14 @@ export interface BuiltinModelStatus {
 }
 
 /** Curated GGUF that downloads/runs inside Eris (Settings → Text Models). */
+export interface ModelRoutingCapabilities {
+  /** Declared compatibility, not measured quality. Omitted means unknown. */
+  intents?: ChatIntent[]
+  tools?: boolean
+}
+
 export interface LocalModelManifestEntry {
+  routingCapabilities?: ModelRoutingCapabilities
   id: string
   ref: string
   name: string
@@ -614,6 +627,8 @@ export interface LocalModelManifestEntry {
 }
 
 export interface LocalModelStatus {
+  routingCapabilities?: ModelRoutingCapabilities
+  contextWindow?: number
   id: string
   ref: string
   name: string
