@@ -1,5 +1,5 @@
-import { ContextOriginSchema } from './context-origin'
 import type { ContextHeader } from './context-memory'
+import { ContextOriginSchema } from './context-origin'
 import type { ContextEvidence } from './context-evidence'
 import type { TaskContract } from './task-contract'
 /** Minimum characters kept when one agent passes text to another. */

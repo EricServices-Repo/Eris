@@ -52,6 +52,7 @@
         "tests/chat-stream.test.ts",
         "tests/context-inspector-ipc.test.ts",
         "tests/context-memory-identity.test.ts",
+        "tests/context-origin.test.ts",
         "tests/context-continuity.test.ts",
         "tests/command-approval.test.ts",
         "tests/debug-runs.test.ts",
@@ -100,8 +101,7 @@
         "tests/context-memory-recovery.test.ts",
         "tests/auto-model-policy.test.ts",
         "tests/model-switching.test.ts",
-        "tests/context-allocation.test.ts",
-        "tests/context-origin.test.ts"
+        "tests/context-allocation.test.ts"
       ],
       "notRun": [
         "live model inference",

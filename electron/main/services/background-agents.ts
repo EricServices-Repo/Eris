@@ -1,9 +1,9 @@
-import { createContextOrigin, bindContextOrigin } from './context-origin'
 import { appendTaskEvent, flushTaskLedger } from './task-ledger'
 import { createTaskContract, childTaskContract } from './task-intake'
 import { createHash, randomUUID } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join, relative } from 'path'
+import { createContextOrigin, bindContextOrigin } from './context-origin'
 import type { WebContents } from 'electron'
 import type { AppSettings } from '../../../src/shared/settings-schema'
 import type {
