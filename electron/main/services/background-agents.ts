@@ -40,9 +40,12 @@ import {
 import { getResolvedSettings } from './settings'
 import { appendMessage, createChat, getChat } from './chats'
 import { findAgent } from './agents'
+import { currentEvidenceScope, runInEvidenceScope, type EvidenceScope } from './memory-dispatch'
 
 const jobs = new Map<string, BackgroundJob>()
 const aborts = new Map<string, AbortController>()
+/** A delegated job answers to its parent request's recall; an unrelated one does not. */
+const evidenceScopes = new Map<string, EvidenceScope>()
 const listeners = new Set<(event: BackgroundJobEvent) => void>()
 let pumping = false
 const MAX_TOOLS = 40
@@ -146,7 +149,8 @@ const pendingHints = new Map<
 
 export function enqueueBackgroundJob(
   workspacePath: string,
-  request: EnqueueBackgroundJobRequest
+  request: EnqueueBackgroundJobRequest,
+  evidenceScope?: EvidenceScope
 ): BackgroundJob {
   // A persisted job would outlive the diagnostics case and its disposable
   // sandbox, then run outside the scope with the user's settings.
@@ -207,6 +211,8 @@ export function enqueueBackgroundJob(
     manualAgentId: request.agentId && request.agentId !== 'auto' ? request.agentId : null
   })
   upsert(job)
+  // Before the pump below, which can start this job before enqueue returns.
+  if (evidenceScope) evidenceScopes.set(job.id, evidenceScope)
 
   if (parent) {
     patch(parent.id, (p) => ({
@@ -237,19 +243,23 @@ export function delegateFromAgent(options: {
 }): BackgroundJob {
   const parent = options.parentJobId ? jobs.get(options.parentJobId) : null
   const inherit = Boolean(parent?.worktreePath)
-  return enqueueBackgroundJob(options.workspacePath, {
-    goal: options.goal,
-    model: options.model || parent?.model || 'builtin:composer-lite',
-    agentId: options.agentId,
-    mode: 'agent',
-    source: 'delegate',
-    sourceThreadId: options.sourceThreadId ?? parent?.sourceThreadId ?? null,
-    forceRoute: 'tools',
-    parentId: options.parentJobId ?? null,
-    inheritWorktree: inherit,
-    handoff: options.handoff,
-    claim: options.claim || `${options.agentId}: ${options.goal.slice(0, 48)}`
-  })
+  return enqueueBackgroundJob(
+    options.workspacePath,
+    {
+      goal: options.goal,
+      model: options.model || parent?.model || 'builtin:composer-lite',
+      agentId: options.agentId,
+      mode: 'agent',
+      source: 'delegate',
+      sourceThreadId: options.sourceThreadId ?? parent?.sourceThreadId ?? null,
+      forceRoute: 'tools',
+      parentId: options.parentJobId ?? null,
+      inheritWorktree: inherit,
+      handoff: options.handoff,
+      claim: options.claim || `${options.agentId}: ${options.goal.slice(0, 48)}`
+    },
+    currentEvidenceScope()
+  )
 }
 
 export async function awaitChildJobs(
@@ -473,9 +483,13 @@ async function pumpQueue(): Promise<void> {
         )
         if (getBackgroundJob(job.id)?.status !== 'running') continue
         launched++
-        void runOne(job, settings).finally(() => {
-          void pumpQueue()
-        })
+        // The pump can run inside any request's context, so a job always states its own.
+        void runInEvidenceScope(() => runOne(job, settings), evidenceScopes.get(job.id)).finally(
+          () => {
+            evidenceScopes.delete(job.id)
+            void pumpQueue()
+          }
+        )
       }
     }
     void launched
