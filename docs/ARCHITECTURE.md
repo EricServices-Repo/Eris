@@ -1,5 +1,7 @@
 # Eris architecture
 
+Detailed implementation design: [Agent handoff and RAM context](design/AGENT-HANDOFF-AND-RAM-CONTEXT.md). This snapshot-based design traces chat/recall, inline and background delegation, model dispatch, memory leases, and explicit implementation gaps; read its source-version notes before applying it to newer code.
+
 ## 2026-11-01 scoped review: Auto, conversation context, and agent boundaries
 
 Scope: chat intake and routing, canonical task contracts, generic answer prompts, answer finalization, specialist handoffs, model transport budgeting, and local context allocation. The integrated baseline was `fbd91e8` (v0.6.9). The changes below address the scoped review findings; they do not constitute live-model or packaged-platform certification.
