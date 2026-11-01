@@ -26,6 +26,7 @@
         "tests/agent-loop.test.ts",
         "tests/agent-orchestration.test.ts",
         "tests/compaction-summary-coverage.test.ts",
+        "tests/compaction-eviction.test.ts",
         "tests/agent-prompts.test.ts",
         "tests/agent-qualification.test.ts",
         "tests/agent-request-coherence.test.ts",

@@ -65,6 +65,9 @@ function summarizeArgs(args: unknown): string {
   return sensitiveText.test(text) ? '[sensitive arguments]' : text.slice(0, ARGS_SUMMARY_CHARS)
 }
 
+const STUB_LINE_CHARS = 80
+const STUB_ARGS_CHARS = 80
+export const EVICTION_STUB_PREFIX = '[ref:'
 const SNIPPET_CHARS = 240
 const MAX_TERM_HITS = 8
 const METADATA_MATCH_SCORE = 4
@@ -114,6 +117,7 @@ const globalBytes = () => [...open].reduce((sum, journal) => sum + journal.resid
 export class RunJournal {
   private entries = new Map<string, JournalEntry>()
   private calls = new Map<string, string>()
+  private reusedCalls = new Set<string>()
   private resident = new Map<string, Resident>()
   private seq = 0
   private stopPressure: () => void
@@ -153,6 +157,7 @@ export class RunJournal {
       at: Date.now()
     }
     this.entries.set(entry.ref, entry)
+    if (this.calls.has(input.toolCallId)) this.reusedCalls.add(input.toolCallId)
     this.calls.set(input.toolCallId, entry.ref)
     const cost = bytes.length + ENTRY_OVERHEAD_BYTES
     if (cost > RUN_JOURNAL_MAX_BYTES) return this.omit(entry, 'over-run-cap')
@@ -218,6 +223,49 @@ export class RunJournal {
   }
 
   refForCall = (toolCallId: string) => this.calls.get(toolCallId)
+
+  /**
+   * A short handle that replaces evicted output, or nothing when the original cannot be
+   * read back: a stub must never point at nothing. A provider that reuses a tool-call ID
+   * makes the ref ambiguous, so that output is not evicted to a handle either.
+   */
+  evictionStub(toolCallId: string, shown: string): string | undefined {
+    const ref = this.calls.get(toolCallId)
+    if (!ref || this.reusedCalls.has(toolCallId) || !this.resident.has(ref)) return undefined
+    const entry = this.entries.get(ref)!
+    const lines = redactSensitive(shown)
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+    const edge = (line: string | undefined) => (line ?? '').slice(0, STUB_LINE_CHARS)
+    return (
+      `${EVICTION_STUB_PREFIX}${ref} · ${entry.toolName} ${entry.argsSummary.slice(0, STUB_ARGS_CHARS)} · ` +
+      `${entry.bytes} bytes${trustLabel(entry.trust)} · starts: ${edge(lines[0])} · ` +
+      `ends: ${edge(lines.at(-1))} · context_read("${ref}")]`
+    )
+  }
+
+  /**
+   * One line for each result still held, newest first and within `maxChars`. Rebuilt from
+   * the journal at every compaction, so a ref is never summarized away. The count of what
+   * did not fit is stated, and those results stay reachable through context_search.
+   */
+  evidenceIndex(exceptCalls: ReadonlySet<string>, maxChars: number): string {
+    const lines: string[] = []
+    let used = 0
+    let held = 0
+    for (const entry of [...this.entries.values()].reverse()) {
+      if (!this.resident.has(entry.ref) || exceptCalls.has(entry.toolCallId)) continue
+      held++
+      const line = `[ref:${entry.ref} · ${entry.toolName} ${entry.argsSummary.slice(0, STUB_ARGS_CHARS)} · ${entry.bytes} bytes]`
+      if (used + line.length + 1 > maxChars) continue
+      used += line.length + 1
+      lines.push(line)
+    }
+    if (held > lines.length)
+      lines.push(`(${held - lines.length} older results are held; context_search finds them)`)
+    return lines.join('\n')
+  }
 
   /** Metadata for every entry, in order, including omitted ones. */
   list = () => [...this.entries.values()]

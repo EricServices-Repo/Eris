@@ -5,6 +5,7 @@ import { truncateForModel } from './prompts'
 import { collectModelText } from './stream'
 import type { AgentChatMessage } from './types'
 import { contextUnits } from '../../../../src/shared/token-estimate'
+import { EVICTION_STUB_PREFIX } from './run-journal'
 
 /** Keep this many non-system messages verbatim after compaction. */
 const COMPACT_TAIL_MESSAGES = 5
@@ -38,17 +39,42 @@ export function estimateTokens(messages: AgentChatMessage[]): number {
   return Math.ceil(chars / 3)
 }
 
+/** Where evicted output stays. Absent when this destination cannot read it back. */
+export type EvidenceStore = {
+  evictionStub(toolCallId: string, shown: string): string | undefined
+  evidenceIndex(exceptCalls: ReadonlySet<string>, maxChars: number): string
+}
+
+const callIdOf = (message: AgentChatMessage) => (message as { tool_call_id?: string }).tool_call_id
+
+const evidenceStub = (message: AgentChatMessage, evidence: EvidenceStore | undefined) => {
+  const id = callIdOf(message)
+  return id ? evidence?.evictionStub(id, message.content) : undefined
+}
+
 /**
  * Zero-model-cost compaction for old tool dumps. The system prompt is pinned
  * and recent turns are preserved unless older trims do not restore the budget.
  * Returns early once the prompt is back under budget.
+ *
+ * With an evidence store, output is replaced by a handle to the original. Older
+ * output is evicted newest first, because a change late in the prompt leaves the
+ * longest prefix for KV to reuse. A result with no readable original keeps the
+ * head-and-tail excerpt.
  */
 export function microCompactAgentMessages(
   messages: AgentChatMessage[],
-  budgetTokens: number
-): { messages: AgentChatMessage[]; changed: boolean; withinBudget: boolean } {
+  budgetTokens: number,
+  evidence?: EvidenceStore
+): {
+  messages: AgentChatMessage[]
+  changed: boolean
+  withinBudget: boolean
+  evicted: number
+  shortened: number
+} {
   if (estimateTokens(messages) <= budgetTokens) {
-    return { messages, changed: false, withinBudget: true }
+    return { messages, changed: false, withinBudget: true, evicted: 0, shortened: 0 }
   }
 
   const nonSystemIndexes = messages
@@ -58,11 +84,26 @@ export function microCompactAgentMessages(
   const protectedFrom =
     nonSystemIndexes[Math.max(0, nonSystemIndexes.length - COMPACT_TAIL_MESSAGES)] ?? 0
   const compacted = messages.map((message) => ({ ...message }))
-  let changed = false
+  let evicted = 0
+  let shortened = 0
+  const order = evidence
+    ? [
+        ...nonSystemIndexes.filter((index) => index < protectedFrom).reverse(),
+        ...nonSystemIndexes.filter((index) => index >= protectedFrom)
+      ]
+    : nonSystemIndexes
 
-  for (const index of nonSystemIndexes) {
+  for (const index of order) {
     if (estimateTokens(compacted) <= budgetTokens) break
     const message = compacted[index]!
+    if (message.content.startsWith(EVICTION_STUB_PREFIX)) continue
+    const stub = evidenceStub(message, evidence)
+    if (stub) {
+      if (message.content.length <= stub.length) continue
+      message.content = stub
+      evicted++
+      continue
+    }
     const targetChars =
       index >= protectedFrom ? MICRO_COMPACT_MAX_CHARS * 2 : MICRO_COMPACT_MAX_CHARS
     if (
@@ -80,13 +121,15 @@ export function microCompactAgentMessages(
       `${message.content.slice(0, headChars)}\n\n` +
       `${marker}\n\n` +
       message.content.slice(-tailChars)
-    changed = true
+    shortened++
   }
 
   return {
     messages: compacted,
-    changed,
-    withinBudget: estimateTokens(compacted) <= budgetTokens
+    changed: evicted + shortened > 0,
+    withinBudget: estimateTokens(compacted) <= budgetTokens,
+    evicted,
+    shortened
   }
 }
 
@@ -203,6 +246,7 @@ function buildResumeMessage(options: {
   actionLog: string[]
   treeSnapshot: string | null
   progressSummary: string
+  evidenceIndex?: string
 }): AgentChatMessage {
   const files =
     options.filesTouched.length > 0
@@ -218,6 +262,9 @@ function buildResumeMessage(options: {
       `Progress summary (fallible execution memory; the task contract remains authoritative):\n` +
       `${options.progressSummary.slice(0, AGENT_HANDOFF_CHARS * 3)}\n\n` +
       `Action log (the only record of executed actions; a summary claim missing here did not happen):\n${formatActionLogForResume(options.actionLog)}\n\n` +
+      (options.evidenceIndex
+        ? `Earlier tool output, held in full (context_read with a ref; do not rerun a tool to recover it):\n${options.evidenceIndex}\n\n`
+        : '') +
       `${files}${treeBit}\n` +
       `Continue until the request is fully satisfied. ` +
       `Do not redo completed actions unless fixing a failure. ` +
@@ -299,6 +346,7 @@ async function summarizeMiddleWithLite(options: {
   signal?: AbortSignal
   getSecret: (key: string) => string | null
   temperature: number
+  citeRefs?: boolean
 }): Promise<string> {
   const { transcript, omittedMessages, shortenedMessages } = buildSummaryTranscript(options.middle)
 
@@ -322,6 +370,9 @@ async function summarizeMiddleWithLite(options: {
         'Never state that a command ran, a package was installed or a file changed unless it is listed there; ' +
         'anything the transcript only proposed or suggested is "proposed, not done".\n' +
         'Be concrete (paths, commands, error phrases). Drop chatter and repeated tool dumps.\n' +
+        (options.citeRefs
+          ? 'Keep any [ref:...] handle you rely on, so the original output can be read back.\n'
+          : '') +
         'No tools. No CALL_FULL. No markdown fences. Plain text only.'
     },
     {
@@ -390,11 +441,14 @@ export async function compactAgentMessages(options: {
   getSecret: (key: string) => string | null
   /** When true, skip Lite and use action-log fallback only (stuck-loop recovery). */
   skipLiteSummary?: boolean
-}): Promise<{ messages: AgentChatMessage[]; memory: string }> {
+  evidence?: EvidenceStore
+  /** Also pay for a model summary when every result can be read back without one. */
+  summarizeEvicted?: boolean
+}): Promise<{ messages: AgentChatMessage[]; memory: string; lossless: boolean }> {
   const system = options.messages.find((m) => m.role === 'system')
   const nonSystem = options.messages.filter((m) => m.role !== 'system')
   if (nonSystem.length <= COMPACT_TAIL_MESSAGES + 1) {
-    return { messages: options.messages, memory: options.priorMemory ?? '' }
+    return { messages: options.messages, memory: options.priorMemory ?? '', lossless: true }
   }
 
   let split = Math.max(0, nonSystem.length - COMPACT_TAIL_MESSAGES)
@@ -402,8 +456,17 @@ export async function compactAgentMessages(options: {
   while (split > 0 && nonSystem[split]?.role === 'tool') split--
   const tail = nonSystem.slice(split)
   const middle = nonSystem.slice(0, split)
+  const lossless = middle.every(
+    (message) =>
+      message.role !== 'tool' ||
+      message.content.startsWith(EVICTION_STUB_PREFIX) ||
+      Boolean(evidenceStub(message, options.evidence))
+  )
+  const tailCalls = new Set(tail.map(callIdOf).filter((id): id is string => Boolean(id)))
+  const evidenceIndex = options.evidence?.evidenceIndex(tailCalls, AGENT_HANDOFF_CHARS)
 
-  let skipLite = options.skipLiteSummary
+  let skipLite =
+    options.skipLiteSummary || (lossless && Boolean(options.evidence) && !options.summarizeEvicted)
   if (!skipLite) {
     try {
       for (const message of options.messages) {
@@ -434,7 +497,8 @@ export async function compactAgentMessages(options: {
       priorMemory: options.priorMemory,
       signal: options.signal,
       getSecret: options.getSecret,
-      temperature: options.temperature
+      temperature: options.temperature,
+      citeRefs: Boolean(options.evidence)
     })
   }
 
@@ -443,12 +507,13 @@ export async function compactAgentMessages(options: {
     filesTouched: options.filesTouched,
     actionLog: options.actionLog,
     treeSnapshot: options.treeSnapshot,
-    progressSummary
+    progressSummary,
+    evidenceIndex
   })
 
   const out: AgentChatMessage[] = []
   if (system) out.push(system)
   out.push(resume)
   out.push(...tail)
-  return { messages: out, memory: progressSummary }
+  return { messages: out, memory: progressSummary, lossless }
 }

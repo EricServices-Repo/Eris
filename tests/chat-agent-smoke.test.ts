@@ -1136,6 +1136,45 @@ describe('context pull through the agent loop', () => {
     expect(harness.prompts[2]).toContain('HISTORICAL EVIDENCE')
   })
 
+  it('evicts to handles in a real run: no summary call, and KV is kept', async () => {
+    const settings = structuredClone(getDefaults())
+    settings.models.contextWindow = 12_000
+    for (let index = 0; index < 14; index++) {
+      writeFileSync(join(workspacePath, `f${index}.txt`), `start ${index}\n${'x '.repeat(5_000)}`)
+      harness.replies.push(`{"name":"read_file","path":"f${index}.txt"}`)
+    }
+    harness.replies.push('DONE: read them all.')
+    const events = await drain(
+      runAgentWithWorkspaceTools({
+        workspacePath,
+        settings,
+        model: 'builtin:composer-lite',
+        messages: [{ role: 'user', content: 'Read every file' }],
+        temperature: 0,
+        getSecret: () => null,
+        mode: 'agent',
+        turnPlan: planted('builtin:composer-lite'),
+        jobId: 'job-evict',
+        mcp: 'off'
+      })
+    )
+    const said = (text: string) =>
+      events.filter((event) => event.type === 'thinking' && String(event.text).includes(text))
+    const stubs = harness.transcripts
+      .flat()
+      .filter((message) => message.content.startsWith('[ref:'))
+    expect(stubs.length).toBeGreaterThan(0)
+    expect(stubs[0]!.content).toMatch(/context_read\("[0-9a-f]{12}"\)/)
+    expect(said('Moved older tool output').length).toBeGreaterThan(0)
+    expect(
+      harness.prompts.filter((prompt) => prompt.includes('compress agent working memory'))
+    ).toEqual([])
+    // Eviction keeps KV. Only a full compaction and the end of the run release it.
+    expect(harness.releasedSessions.filter((key) => key === 'gguf:job-evict').length).toBe(
+      said('Compacting context').length + 1
+    )
+  })
+
   it('offers guidance and both tools to an allowed model, on the native protocol', async () => {
     harness.nativeCalls.push([
       { id: 'n1', name: 'context_search', arguments: '{"query":"anything","scope":"run"}' }
