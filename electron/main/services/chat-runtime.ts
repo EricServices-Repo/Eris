@@ -90,6 +90,10 @@ export async function* streamModelChat(
   yield* streamProviderChat(request)
 }
 
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
+}
+
 /** OpenAI-style finish_reason of a stream that ended normally. */
 function apiFinishReason(finishReason: string | null): ModelTermination['reason'] {
   switch (finishReason) {
@@ -118,7 +122,7 @@ export async function* streamProviderChat(
   }
   assertProviderCallAllowed(options.settings, model)
   await prepareModelWindows(options.settings, [model], options.getSecret, options.signal)
-  if (options.signal?.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
+  throwIfAborted(options.signal)
   // Preparation can load/reconfigure a server model asynchronously. Validate again
   // after that await, immediately before serializing the actual provider request.
   for (const message of options.messages) {
@@ -127,6 +131,8 @@ export async function* streamProviderChat(
   }
   const eligible = await withEligibleMemory(options.messages, model, options.settings)
   if (eligible.revoked && options.sessionKey) releaseLocalChatSession(options.sessionKey)
+  // That check can wait on the canonical source, and nothing below it awaits before sending.
+  throwIfAborted(options.signal)
   options = { ...options, messages: eligible.messages }
   const capabilities = resolveModelCapabilities(options.settings, model)
   if (options.maxOutputTokens !== undefined) {
@@ -242,14 +248,14 @@ export async function* streamProviderChat(
       for await (const chunk of streamBuiltinChat({
         onLoaded: () => phase('prefill', 'Local model ready; request dispatched'),
         prepareMessages: async () => {
-          if (options.signal?.aborted)
-            throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
+          throwIfAborted(options.signal)
           for (const message of options.messages) {
             const task = (message as ModelMessage).contextBundle?.referenceTask
             if (task) await assertTaskReferences(task, options.settings, model)
           }
           const latest = await withEligibleMemory(options.messages, model, options.settings)
           if (latest.revoked && options.sessionKey) releaseLocalChatSession(options.sessionKey)
+          throwIfAborted(options.signal)
           const allocated = resolveModelCapabilities(options.settings, model)
           const wire = latest.messages.map((message) => {
             const { contextBundle: _bundle, ...value } = message as ModelMessage
