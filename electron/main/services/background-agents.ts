@@ -16,6 +16,7 @@ import {
   summarizeAgentResults,
   formatHandoffForPrompt,
   formatJobResultForChat,
+  handoffMessages,
   type AgentHandoffPacket,
   type AgentRouteStep
 } from '../../../src/shared/agent-orchestration'
@@ -592,7 +593,14 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
     }
 
     turnPlan.task = job.handoff?.task
-      ? childTaskContract(job.handoff.task, turnPlan, job.goal, treePath, job.id)
+      ? childTaskContract(
+          job.handoff.task,
+          turnPlan,
+          job.goal,
+          treePath,
+          job.id,
+          job.handoff.constraints
+        )
       : createTaskContract({
           taskId: job.id,
           threadId: job.sourceThreadId,
@@ -617,15 +625,12 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
       })
     }
 
-    const userContent =
-      job.handoff != null ? `${formatHandoffForPrompt(job.handoff)}\n\n${job.goal}` : job.goal
-
     let incomplete = false
     for await (const evt of runAgentWithWorkspaceTools({
       workspacePath: treePath,
       settings,
       model: turnPlan.models.chat,
-      messages: [{ role: 'user', content: userContent }],
+      messages: job.handoff ? handoffMessages(job.handoff) : [{ role: 'user', content: job.goal }],
       temperature: settings.models.temperature,
       signal: ac.signal,
       getSecret: currentGetSecret,

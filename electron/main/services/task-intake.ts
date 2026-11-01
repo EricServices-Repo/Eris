@@ -1,3 +1,4 @@
+import { handoffConstraintProblem } from '../../../src/shared/agent-orchestration'
 import type { ResolvedReference } from './reference-binding'
 import { isPathInside } from './workspace-fs'
 import { createHash, randomUUID } from 'crypto'
@@ -605,8 +606,12 @@ function mergedEffects(
 function inheritRequirements(
   parent: TaskContract,
   goal: string,
-  child: TaskInterpretation
+  child: TaskInterpretation,
+  constraints: readonly string[]
 ): { interpretation: TaskInterpretation; inherited: InheritedRequirements } {
+  const carried = [...new Set([...(parent.inherited?.constraints ?? []), ...constraints])]
+  const problem = handoffConstraintProblem(carried)
+  if (problem) throw new Error(problem)
   const from = interpretationOf(parent)
   const same = (a: string | null | undefined, b: string | null | undefined) =>
     Boolean(a && b && a.toLowerCase() === b.toLowerCase())
@@ -639,6 +644,7 @@ function inheritRequirements(
     inherited: {
       fromTaskId: parent.taskId,
       parentRequest,
+      constraints: carried,
       stack: [
         ...(language && !same(language, child.language) ? [language] : []),
         ...frameworks.filter((name) => !child.frameworks.includes(name))
@@ -682,7 +688,8 @@ export function childTaskContract(
   plan: TurnPlan,
   goal: string,
   workspacePath: string,
-  taskId: string
+  taskId: string,
+  constraints: readonly string[] = []
 ): TaskContract {
   const levels = ['none', 'read', 'edit', 'full'] as const
   const tools =
@@ -709,7 +716,8 @@ export function childTaskContract(
       canEdit: edit,
       revision: parent.revision,
       route: plan.routeTrace
-    })
+    }),
+    constraints
   )
   const root = realpathSync(workspacePath)
   const relativeProject =

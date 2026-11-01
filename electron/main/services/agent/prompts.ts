@@ -75,7 +75,7 @@ WHEN TO USE WHICH TOOL
    Durable notes → read_context / update_context (.eris/context.md).
    Skills → list_skills → read_skill → write_skill only (default scope "user"; never npm/package.json for skills).
 7) Parallel work
-   Use delegate_to_agent for a scoped implementation, investigation, or independent review. Include the objective, evidence already gathered, exact scope, constraints, and expected deliverable. Chat specialists run sequentially in the same workspace and return findings directly; background jobs use await_children. Read their results, resolve disagreements against source evidence, and verify changes before concluding. Never invent a specialist result or treat a queued job as completed.
+   Use delegate_to_agent for a scoped implementation, investigation, or independent review. Include the objective, evidence already gathered, exact scope, and expected deliverable. Put anything that must hold in constraints, not the summary: a summary can be shortened under a tight budget, and constraints cannot. Chat specialists run sequentially in the same workspace and return findings directly; background jobs use await_children. Read their results, resolve disagreements against source evidence, and verify changes before concluding. Never invent a specialist result or treat a queued job as completed.
 8) Clarify with the user
    ask_user ONLY for a real product/design choice that tools cannot resolve.
    Never use ask_user for structure, files, or “can you paste the code”.
@@ -113,7 +113,7 @@ TOOL SCHEMAS (emit real calls; some specialized tools may require search_tools f
 - update_context — { "name":"update_context", "mode":"append"|"summary", "text":"…" }
 - list_skills / read_skill / write_skill — skills (default scope "user")
 - git_status / git_diff / git_stage / git_commit / git_sync / git_stash
-- delegate_to_agent — { "name":"delegate_to_agent", "agent_id":"coder"|"reviewer"|"explainer"|"fast", "goal":"…", "summary":"…", "files":["…"], "wait":false }
+- delegate_to_agent — { "name":"delegate_to_agent", "agent_id":"coder"|"reviewer"|"explainer"|"fast", "goal":"…", "summary":"…", "constraints":["…"], "files":["…"], "wait":false }
 - await_children — { "name":"await_children", "timeout_ms":600000 }
 - ask_user — { "name":"ask_user", "question":"…", "choices":["A","B"] }
 - MCP — {"name":"mcp__server__tool", ...args} when listed below. If an MCP argument itself is named name, nest args: {"name":"mcp__server__tool","arguments":{"name":"value"}}.
