@@ -163,6 +163,7 @@ export class RunJournal {
   private resident = new Map<string, Resident>()
   private seq = 0
   private stopPressure: () => void
+  searchCount = 0
   residentBytes = 0
 
   constructor(
@@ -261,6 +262,7 @@ export class RunJournal {
    * metadata, and its hit says so rather than hiding that the result ever existed.
    */
   async search(query: string, limit: number, signal?: AbortSignal): Promise<JournalHit[]> {
+    this.searchCount++
     const terms = searchTerms(query)
     if (!terms.length) return []
     const hits: JournalHit[] = []
@@ -342,6 +344,10 @@ export class RunJournal {
     return lines.join('\n')
   }
 
+  get namespace() {
+    return this.identity.memoryKey
+  }
+
   /** Metadata for every entry, in order, including omitted ones. */
   list = () => [...this.entries.values()]
 
@@ -374,5 +380,24 @@ export class RunJournal {
     for (const ref of [...this.resident.keys()]) this.drop(ref, 'run-ended')
     this.stopPressure()
     open.delete(this)
+  }
+}
+
+/** Current live-run figures only; closed journals are not retained for telemetry. */
+export function runJournalUsage(memoryKey?: string) {
+  const journals = [...open].filter((journal) => !memoryKey || journal.namespace === memoryKey)
+  return {
+    bytes: journals.reduce((n, journal) => n + journal.residentBytes, 0),
+    searches: journals.reduce((n, journal) => n + journal.searchCount, 0),
+    evicted: journals.reduce(
+      (n, journal) =>
+        n +
+        journal
+          .list()
+          .filter((entry) => entry.omitted === 'over-budget' || entry.omitted === 'memory-pressure')
+          .length,
+      0
+    ),
+    runs: journals.length
   }
 }
