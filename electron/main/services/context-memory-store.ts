@@ -13,6 +13,7 @@ import { DecisionIndex, decisionId } from './context-decisions'
 import { RecallIndex } from './context-recall-index'
 import { createHash } from 'crypto'
 import type { ChatMessage } from '../../../src/shared/settings-schema'
+import type { HandoffEvidenceItem } from '../../../src/shared/agent-orchestration'
 import {
   ContextMemorySettingsSchema,
   emptyMemoryControls,
@@ -59,6 +60,9 @@ export const sensitive =
   /\b(?:api[_-]?key|password|passwd|authorization|secret|token)\s*[:=]\s*\S+|\bBearer\s+\S+/i
 const secrets = new RegExp(sensitive.source, 'gi')
 /** Tool and message text keeps its context; the secret itself never leaves. */
+/** Lets recalled text be compared later without keeping it. */
+export const evidenceDigest = (text: string) => createHash('sha256').update(text).digest('hex')
+
 export const redactSensitive = (text: string) => text.replace(secrets, '[redacted secret]')
 const unfinished = (message: ChatMessage) =>
   message.contextResult?.workingState &&
@@ -376,6 +380,32 @@ export class ContextMemoryStore {
       if (!rows.length || rows.some((row) => excludedByCutoff(row, controls))) return true
       if (item.kind === 'decision') return !e.decisions.currentId(item.id)
       return item.kind !== 'task-result' && !rows.some((r) => r.message.content.includes(item.text))
+    })
+  }
+  /** The same test as `ineligible`, for an item known only by its digest. */
+  staleEvidence(key: string, items: readonly HandoffEvidenceItem[]): HandoffEvidenceItem[] {
+    const e = this.entries.get(key)
+    if (!e) return [...items]
+    const { controls } = e
+    const matches = (text: string, item: HandoffEvidenceItem) =>
+      evidenceDigest(text) === item.digest
+    return items.filter((item) => {
+      if (controls.forgotten.includes(item.sourceId)) return true
+      if (item.kind === 'pinned')
+        return !controls.pinned.some(
+          (pin) => pin.id === item.id && matches(pin.text.slice(0, item.chars), item)
+        )
+      const rows = [...(e.sourceRows.get(item.sourceId) ?? [])]
+      if (!rows.length || rows.some((row) => excludedByCutoff(row, controls))) return true
+      if (item.kind === 'decision') return !e.decisions.currentId(item.id)
+      if (item.kind === 'task-result') return false
+      const { offset } = item
+      if (offset === undefined) return true // Nothing to compare, so it cannot be proved.
+      return !rows.some(({ message }) => {
+        // The offset is into the whole message, and a row may hold a window of it.
+        const start = offset - (message.contextContentOffset ?? 0)
+        return matches(message.content.slice(start, start + item.chars), item)
+      })
     })
   }
   /** A cache-only reset: the source is unchanged, so leased evidence stays eligible. */
