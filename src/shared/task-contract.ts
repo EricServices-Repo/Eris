@@ -177,6 +177,7 @@ export interface InheritedRequirements {
 }
 
 export interface TaskContract {
+  contextOrigin?: import('./context-origin').ContextOrigin
   referenceBinding?: import('./reference-binding').TaskReferenceBinding
   version: 2
   taskId: string

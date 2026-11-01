@@ -53,6 +53,7 @@
         "tests/chat-stream.test.ts",
         "tests/context-inspector-ipc.test.ts",
         "tests/context-memory-identity.test.ts",
+        "tests/context-origin.test.ts",
         "tests/context-continuity.test.ts",
         "tests/command-approval.test.ts",
         "tests/debug-runs.test.ts",

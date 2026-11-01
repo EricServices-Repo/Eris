@@ -1,3 +1,4 @@
+import { createContextOrigin } from '../services/context-origin'
 import { chooseExecutionModel } from '../services/auto-model-policy'
 import { ThreadWorkingStateBuilder } from '../services/thread-working-state'
 import { pendingCommandApprovals } from '../services/command-approval'
@@ -356,6 +357,21 @@ export function registerChatStreamIpc(): void {
           try {
             const contract = await resolveChatTurnContract(turnInput, turnPlan)
             turnPlan = contract.plan
+            if (contract.task.threadId) {
+              try {
+                contract.task.contextOrigin = await createContextOrigin(
+                  {
+                    sourceRoot: contract.task.scope.workspaceRoot,
+                    threadId: contract.task.threadId,
+                    projectRoot: contract.task.scope.projectRoot,
+                    taskId: contract.task.taskId
+                  },
+                  AbortSignal.any([controller.signal, AbortSignal.timeout(150)])
+                )
+              } catch {
+                controller.signal.throwIfAborted() /* Optional source mapping fails closed. */
+              }
+            }
             saveTask(contract.task)
             workingState = new ThreadWorkingStateBuilder(contract.task, `${requestId}:assistant`)
             publish('chat:task', { requestId, task: contract.task })

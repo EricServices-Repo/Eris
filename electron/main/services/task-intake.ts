@@ -1,3 +1,4 @@
+import { bindContextOrigin } from './context-origin'
 import { handoffConstraintProblem } from '../../../src/shared/agent-orchestration'
 import type { ResolvedReference } from './reference-binding'
 import { isPathInside } from './workspace-fs'
@@ -729,6 +730,9 @@ export function childTaskContract(
     throw new Error('The inherited project scope escapes its workspace.')
   return {
     ...parent,
+    contextOrigin: parent.contextOrigin
+      ? bindContextOrigin(parent.contextOrigin, { root, projectRoot, taskId })
+      : undefined,
     taskId,
     parentTaskId: parent.taskId,
     originalText: goal,

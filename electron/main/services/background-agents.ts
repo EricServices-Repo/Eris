@@ -2,7 +2,8 @@ import { appendTaskEvent, flushTaskLedger } from './task-ledger'
 import { createTaskContract, childTaskContract } from './task-intake'
 import { createHash, randomUUID } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
-import { join } from 'path'
+import { join, relative } from 'path'
+import { createContextOrigin, bindContextOrigin } from './context-origin'
 import type { WebContents } from 'electron'
 import type { AppSettings } from '../../../src/shared/settings-schema'
 import type {
@@ -839,6 +840,26 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
           plan: turnPlan
         })
 
+    if (!turnPlan.task.contextOrigin && job.sourceThreadId) {
+      const sourceProject = turnPlan.task.scope.projectRoot
+        ? join(job.workspacePath, relative(treePath, turnPlan.task.scope.projectRoot))
+        : null
+      const origin = await createContextOrigin(
+        {
+          sourceRoot: job.workspacePath,
+          threadId: job.sourceThreadId,
+          projectRoot: sourceProject,
+          taskId: job.id
+        },
+        ac.signal
+      )
+      if (origin)
+        turnPlan.task.contextOrigin = bindContextOrigin(origin, {
+          root: treePath,
+          projectRoot: turnPlan.task.scope.projectRoot,
+          taskId: job.id
+        })
+    }
     appendTaskEvent(job.id, 'task', turnPlan.task)
     const sender = currentSender
     let thinkingBuf = ''
