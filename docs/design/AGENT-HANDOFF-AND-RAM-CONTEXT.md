@@ -1,8 +1,11 @@
 # Agent handoff and RAM context design
 
-**Project:** Eris desktop IDE  
-**Review date:** 2026-11-01  
-**Source snapshot:** `d7a10fd` — Auto creative-chat and answer-repair changes, based on integrated v0.6.9 (`fbd91e8`).  
+**Project:** Eris desktop IDE
+
+**Review date:** 2026-11-01
+
+**Source snapshot:** `d7a10fd` — Auto creative-chat and answer-repair changes, based on integrated v0.6.9 (`fbd91e8`).
+
 **Document status:** Implementation description, explicit limitations, and a separately labeled proposed next design. This document does not change runtime behavior or certify a live model.
 
 ## Source-version and publication notes
