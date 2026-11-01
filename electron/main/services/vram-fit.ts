@@ -218,6 +218,157 @@ export function modelLoadOptions(modelPath: string, contextMax: number, relaxed:
   }
 }
 
+/** Every layer on the GPU, or an error. `fitContext` would drop layers to keep the window. */
+export const fullOffloadOptions = (modelPath: string) => ({
+  modelPath,
+  useMmap: 'auto' as const,
+  defaultContextFlashAttention: true as const,
+  gpuLayers: 'max' as const
+})
+
+/** The last resort when spilling: no layers, so no VRAM for a context to compete with. */
+export const cpuOnlyOptions = (modelPath: string) => ({
+  ...fullOffloadOptions(modelPath),
+  gpuLayers: 0 as const
+})
+
+/** Below this, tool schemas and the task leave too little of the window to work in. */
+export const PLACEMENT_MIN_WINDOW = 4_096
+
+export type PlacementStep = {
+  stage: 'all-layers' | 'context' | 'cpu-spill'
+  /** The largest window this step asked for. */
+  window: number
+  outcome: 'placed' | 'did-not-fit'
+  reason?: string
+}
+export type ModelPlacement = {
+  /** Layers may be on the CPU, because no window between the target and the floor fit. */
+  allowedSpill: boolean
+  steps: PlacementStep[]
+}
+
+export class CpuSpillRefusedError extends Error {
+  constructor(public steps: PlacementStep[]) {
+    super(
+      `This model does not fit on the GPU, even with a ${PLACEMENT_MIN_WINDOW}-token context. ` +
+        'Choose a smaller model, or turn on "Allow CPU layers" in Settings → Models.'
+    )
+    this.name = 'CpuSpillRefusedError'
+  }
+}
+
+const reasonOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+type ModelLoad =
+  | ReturnType<typeof modelLoadOptions>
+  | ReturnType<typeof fullOffloadOptions>
+  | ReturnType<typeof cpuOnlyOptions>
+
+/**
+ * A smaller window with RAM paging beats a larger window with CPU layers. Every layer goes
+ * on the GPU first, then the runtime sizes the largest window that fits above a floor,
+ * from its own estimates. Only when that fails may layers stay on the CPU, and each step
+ * is reported, so a spill always says what was tried first. No GPU means nothing to place.
+ */
+export async function placeModel<M, C>(input: {
+  load: (options: ModelLoad) => Promise<M>
+  createContext: (model: M, options: ReturnType<typeof contextCreateOptions>) => Promise<C>
+  disposeModel: (model: M) => Promise<void> | void
+  modelPath: string
+  plan: { min: number; target: number }
+  gpu: boolean
+  allowCpuSpill: boolean
+}): Promise<{ model: M; context: C; placement: ModelPlacement }> {
+  const { load, createContext, disposeModel, modelPath, plan, gpu, allowCpuSpill } = input
+  const { target } = plan
+  const steps: PlacementStep[] = []
+  /** A context failure must not leave model weights occupying VRAM. */
+  const withContext = async (model: M, span: { min: number; max: number }, floor?: number) => {
+    try {
+      return await createContextWithVramFallback(
+        (options) => createContext(model, options),
+        span,
+        floor
+      )
+    } catch (error) {
+      await disposeModel(model)
+      throw error
+    }
+  }
+  if (gpu) {
+    let model: M | undefined
+    try {
+      model = await load(fullOffloadOptions(modelPath))
+    } catch (error) {
+      if (!isMemoryError(error)) throw error
+      steps.push({
+        stage: 'all-layers',
+        window: target,
+        outcome: 'did-not-fit',
+        reason: reasonOf(error)
+      })
+    }
+    if (model !== undefined) {
+      const floor = Math.min(PLACEMENT_MIN_WINDOW, target)
+      try {
+        const context = await withContext(model, { min: floor, max: target }, floor)
+        steps.push({ stage: 'context', window: target, outcome: 'placed' })
+        return { model, context, placement: { allowedSpill: false, steps } }
+      } catch (error) {
+        if (!isMemoryError(error)) throw error
+        steps.push({
+          stage: 'context',
+          window: target,
+          outcome: 'did-not-fit',
+          reason: reasonOf(error)
+        })
+      }
+    }
+    if (!allowCpuSpill) throw new CpuSpillRefusedError(steps)
+  }
+  if (!gpu) {
+    const model = await load(modelLoadOptions(modelPath, target, false))
+    const context = await withContext(model, { min: Math.min(plan.min, target), max: target })
+    return { model, context, placement: { allowedSpill: false, steps } }
+  }
+  // Reserve the floor window first, which keeps the most layers. Reserving the whole target
+  // keeps fewer. If layers still leave no room for a context, CPU only needs no VRAM at all.
+  const rungs = [
+    ...[...new Set([Math.min(PLACEMENT_MIN_WINDOW, target), target])].map((window) => ({
+      window,
+      options: modelLoadOptions(modelPath, window, false) as ModelLoad
+    })),
+    { window: target, options: cpuOnlyOptions(modelPath) }
+  ]
+  for (const [index, { window, options }] of rungs.entries()) {
+    try {
+      const model = await load(options)
+      const context = await withContext(model, { min: Math.min(plan.min, window), max: target })
+      steps.push({ stage: 'cpu-spill', window, outcome: 'placed' })
+      return { model, context, placement: { allowedSpill: true, steps } }
+    } catch (error) {
+      if (!isMemoryError(error) || index === rungs.length - 1) throw error
+      steps.push({ stage: 'cpu-spill', window, outcome: 'did-not-fit', reason: reasonOf(error) })
+    }
+  }
+  throw new CpuSpillRefusedError(steps)
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function estimatedKvBytes(model: any, context: any): number | undefined {
+  try {
+    const { gpuVram, cpuRam } = model.fileInsights.estimateContextResourceRequirements({
+      contextSize: context.contextSize,
+      modelGpuLayers: model.gpuLayers,
+      flashAttention: true
+    })
+    return gpuVram + cpuRam
+  } catch {
+    return undefined
+  }
+}
+
 /** The allocation a loaded model and context report; budgets follow this, not the plan. */
 export function allocationFacts(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -229,12 +380,14 @@ export function allocationFacts(
   trainContextSize?: number
   gpuLayers?: number
   totalLayers?: number
+  kvBytes?: number
 } {
   return {
     contextSize: context?.contextSize,
     trainContextSize: model?.trainContextSize,
     gpuLayers: model?.gpuLayers,
-    totalLayers: model?.fileInsights?.totalLayers
+    totalLayers: model?.fileInsights?.totalLayers,
+    kvBytes: estimatedKvBytes(model, context)
   }
 }
 
@@ -272,9 +425,10 @@ export function contextCreateOptions(
  */
 export async function createContextWithVramFallback<T>(
   create: (options: ReturnType<typeof contextCreateOptions>) => Promise<T>,
-  plan: { min: number; max: number }
+  plan: { min: number; max: number },
+  floor = 512
 ): Promise<T> {
-  let min = Math.max(512, Math.floor(plan.min))
+  let min = Math.max(floor, Math.floor(plan.min))
   let max = Math.max(min, Math.floor(plan.max))
   for (;;) {
     try {
@@ -286,12 +440,12 @@ export async function createContextWithVramFallback<T>(
         try {
           return await create(contextCreateOptions(min, max, false))
         } catch (defaultError) {
-          if (!isMemoryError(defaultError) || min === 512) throw defaultError
+          if (!isMemoryError(defaultError) || min === floor) throw defaultError
         }
-      } else if (min === 512) {
+      } else if (min === floor) {
         throw quantizedError
       }
-      min = Math.max(512, Math.floor(min / 2))
+      min = Math.max(floor, Math.floor(min / 2))
       max = min
     }
   }

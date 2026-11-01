@@ -40,14 +40,13 @@ import { getResolvedSettings } from './settings'
 import { clearLoadedModel, recordLoadedModel } from './model-runtime'
 import {
   allocationFacts,
-  createContextWithVramFallback,
   contextLimits,
+  placeModel,
   REPLY_MAX_TOKENS,
-  isMemoryError,
   localPerformanceContextMax,
-  modelLoadOptions,
   textHostReservation,
-  textModelPeakBytes
+  textModelPeakBytes,
+  type ModelPlacement
 } from './vram-fit'
 import { appState } from '../app-state'
 import {
@@ -667,6 +666,8 @@ type WorkerMsg = {
   trainContextSize?: number
   gpuLayers?: number
   totalLayers?: number
+  kvBytes?: number
+  placement?: ModelPlacement
 }
 
 function workerScriptPath(): string {
@@ -841,34 +842,31 @@ export function contextPlan(
   entry: BuiltinModelManifestEntry,
   vramBudgetBytes?: number,
   settingsContext = getResolvedSettings(appState.currentWorkspace).models.contextWindow
-): { min: number; max: number } {
+): { min: number; max: number; target: number } {
   const limits = contextLimits({
     tier: entry.tier,
     role: entry.role,
     modelContext: entry.contextWindow,
     settingsContext
   })
-  if (entry.role !== 'local') return limits
+  // `max` is the forecast before a load. `target` is where placement starts, because the
+  // runtime measures what fits and the forecast's thresholds are only a guess at it.
+  if (entry.role !== 'local') return { ...limits, target: limits.max }
   const max = localPerformanceContextMax({
     requested: limits.max,
     modelBytes: entry.approxBytes,
     vramBudgetBytes
   })
-  return { min: Math.min(limits.min, max), max }
+  return { min: Math.min(limits.min, max), max, target: limits.max }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function loadModelForVram(llama: any, modelPath: string, contextMax: number): Promise<any> {
-  try {
-    return await llama.loadModel(modelLoadOptions(modelPath, contextMax, false))
-  } catch (err) {
-    if (!isMemoryError(err)) throw err
-    logWarn('Model did not fit the target context; retrying with automatic GPU layers', {
+/** Say so whenever placement could not go as planned, so a slow model has an explanation. */
+function logPlacement(modelPath: string, placement: ModelPlacement) {
+  if (placement.allowedSpill)
+    logWarn('Model did not fit fully on the GPU; layers may run on the CPU', {
       path: modelPath,
-      error: err instanceof Error ? err.message : String(err)
+      steps: placement.steps
     })
-    return await llama.loadModel(modelLoadOptions(modelPath, contextMax, true))
-  }
 }
 
 async function ensureRuntimeInProcess(
@@ -912,9 +910,20 @@ async function ensureRuntimeInProcess(
       contextMin: plan.min,
       contextMax: plan.max
     })
-    let model
+    let placed
     try {
-      model = await loadModelForVram(llama, modelPath, plan.max)
+      placed = await placeModel({
+        load: (options) => llama.loadModel(options),
+        createContext: (loaded, options) => loaded.createContext(options),
+        disposeModel: async (loaded) => {
+          await loaded.dispose?.()
+        },
+        modelPath,
+        plan,
+        gpu: llama.gpu !== false,
+        allowCpuSpill: getResolvedSettings(appState.currentWorkspace).models.allowCpuSpill !== false
+      })
+      logPlacement(modelPath, placed.placement)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       logError('Failed to load builtin model', { path: modelPath, error: message })
@@ -935,6 +944,7 @@ async function ensureRuntimeInProcess(
       }
       throw err
     }
+    const { model, context, placement } = placed
 
     if (entry.sha256 && !readVerifiedSidecar(modelPath)) {
       void sha256File(modelPath)
@@ -944,21 +954,15 @@ async function ensureRuntimeInProcess(
         .catch(() => undefined)
     }
 
-    let context
-    try {
-      context = await createContextWithVramFallback((options) => model.createContext(options), plan)
-    } catch (error) {
-      // This model was not installed in runtime yet, so runtime disposal cannot free it.
-      try {
-        await model.dispose?.()
-      } catch {
-        // Keep the original allocation error.
-      }
-      throw error
-    }
     runtime = { modelPath, llama, model, context }
     const facts = allocationFacts(model, context)
-    recordLoadedModel({ ...facts, ref: entry.ref, contextSize: facts.contextSize ?? plan.max })
+    recordLoadedModel({
+      ...facts,
+      ref: entry.ref,
+      contextSize: facts.contextSize ?? plan.target,
+      device: gpuStatus.backendDeviceName ?? (llama.gpu === false ? 'CPU' : String(llama.gpu)),
+      placementSteps: placement.steps
+    })
     return runtime
   })
 }
@@ -1021,10 +1025,11 @@ async function ensureWorkerModel(
   postToWorker({
     type: 'load',
     modelPath,
-    contextSize: plan.max,
+    contextSize: plan.target,
     contextMin: plan.min,
     requestId,
     preferEgpu,
+    allowCpuSpill: getResolvedSettings(appState.currentWorkspace).models.allowCpuSpill !== false,
     gpu: 'auto'
   })
   const result = await loaded
@@ -1032,13 +1037,17 @@ async function ensureWorkerModel(
     throw new Error(result.error || 'Failed to load model in worker')
   }
   workerModelPath = modelPath
-  const { contextSize, trainContextSize, gpuLayers, totalLayers } = result
+  const { contextSize, trainContextSize, gpuLayers, totalLayers, kvBytes, placement } = result
+  if (placement) logPlacement(modelPath, placement)
   recordLoadedModel({
     ref: entry.ref,
     contextSize: contextSize ?? plan.max,
     trainContextSize,
     gpuLayers,
-    totalLayers
+    totalLayers,
+    kvBytes,
+    device: gpuStatus.backendDeviceName ?? gpuStatus.backend?.toString(),
+    placementSteps: placement?.steps
   })
 }
 

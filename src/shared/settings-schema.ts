@@ -99,7 +99,9 @@ export const SettingsSchema = z.object({
     contextWindow: z.number().int().min(512).max(128000),
     connections: z.array(ModelConnectionSchema),
     /** Prefer an attached eGPU (or discrete GPU) for Local / Composer GGUFs. */
-    preferEgpu: z.boolean().default(true)
+    preferEgpu: z.boolean().default(true),
+    /** After every smaller window fails, may layers run on the CPU instead of refusing? */
+    allowCpuSpill: z.boolean().default(true)
   }),
   agent: z.object({
     contextMemory: ContextMemorySettingsSchema.prefault({}),
@@ -408,6 +410,14 @@ export interface GpuAccelStatus {
    * are pooled, otherwise the best GPU's free memory (or its total minus a reserve).
    */
   vramBudgetBytes?: number
+  /** The model resident now, as the runtime reports it. */
+  loadedModel?: {
+    contextSize: number
+    gpuLayers?: number
+    totalLayers?: number
+    kvBytes?: number
+    device?: string
+  }
 }
 
 export type ConnectionModelPlacement = {

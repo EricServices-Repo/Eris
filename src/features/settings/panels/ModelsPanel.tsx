@@ -24,6 +24,16 @@ function gpuKindLabel(
   return 'Integrated'
 }
 
+function modelPlacementLabel(loaded: NonNullable<GpuAccelStatus['loadedModel']>): string {
+  const window = `${Math.round(loaded.contextSize / 1024)}K window`
+  const layers =
+    loaded.gpuLayers !== undefined && loaded.totalLayers !== undefined
+      ? `${loaded.gpuLayers}/${loaded.totalLayers} layers on ${loaded.device ?? 'GPU'}`
+      : (loaded.device ?? '')
+  const kv = loaded.kvBytes ? formatMemoryStat('', loaded.kvBytes) : null
+  return [layers, window, kv ? `about ${kv} KV` : ''].filter(Boolean).join(' · ')
+}
+
 function formatMemoryStat(name: string, bytes?: number): string | null {
   if (!bytes || bytes <= 0) return null
   const size =
@@ -54,16 +64,28 @@ function gpuStatLine(d: {
 function GpuAccelCard({
   gpu,
   preferEgpu,
+  allowCpuSpill,
   apply,
   onRefresh
 }: {
   gpu: GpuAccelStatus | null | undefined
   preferEgpu: boolean
+  allowCpuSpill: boolean
   apply: ApplySetting
   onRefresh: () => Promise<void>
 }) {
   const [busy, setBusy] = useState(false)
 
+  const setSpill = async (next: boolean) => {
+    setBusy(true)
+    try {
+      await apply(['models', 'allowCpuSpill'], next)
+      await window.ide.reloadLlamaGpu()
+      await onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
   const setPrefer = async (next: boolean) => {
     setBusy(true)
     try {
@@ -110,6 +132,20 @@ function GpuAccelCard({
           <span className="model-conn-meta">
             used to choose the quant, context length, and GPU layers
           </span>
+        </p>
+      ) : null}
+
+      {gpu?.loadedModel ? (
+        <p className="gpu-share-vram">
+          <span>Loaded model</span>
+          <strong>{modelPlacementLabel(gpu.loadedModel)}</strong>
+          {gpu.loadedModel.gpuLayers !== undefined &&
+          gpu.loadedModel.totalLayers !== undefined &&
+          gpu.loadedModel.gpuLayers < gpu.loadedModel.totalLayers ? (
+            <span className="model-conn-meta">
+              Some layers run on the CPU, which is much slower. A smaller model will fit fully.
+            </span>
+          ) : null}
         </p>
       ) : null}
 
@@ -172,6 +208,15 @@ function GpuAccelCard({
           onChange={(e) => void setPrefer(e.target.checked)}
         />
         <span>Prefer best GPU</span>
+      </label>
+      <label className="gpu-accel-toggle">
+        <input
+          type="checkbox"
+          checked={allowCpuSpill}
+          disabled={busy}
+          onChange={(e) => void setSpill(e.target.checked)}
+        />
+        <span>Allow CPU layers when a model cannot fit on the GPU</span>
       </label>
     </section>
   )
@@ -524,6 +569,7 @@ export function GpuModelsPanel({ resolved, status, apply, load }: Omit<SharedPro
       <GpuAccelCard
         gpu={status?.gpu}
         preferEgpu={resolved.models.preferEgpu !== false}
+        allowCpuSpill={resolved.models.allowCpuSpill !== false}
         apply={apply}
         onRefresh={load}
       />
