@@ -46,6 +46,11 @@ const jobs = new Map<string, BackgroundJob>()
 const aborts = new Map<string, AbortController>()
 /** A delegated job answers to its parent request's recall; an unrelated one does not. */
 const evidenceScopes = new Map<string, EvidenceScope>()
+/** Settles when a job has fully finished, including its ledger flush and cleanup. */
+const active = new Map<string, Promise<void>>()
+const discarding = new Map<string, Promise<BackgroundJob>>()
+/** How long discard waits for a stopped tree before it keeps the worktree instead. */
+export const DISCARD_WAIT_MS = 30_000
 const listeners = new Set<(event: BackgroundJobEvent) => void>()
 let pumping = false
 const MAX_TOOLS = 40
@@ -170,6 +175,8 @@ export function enqueueBackgroundJob(
   let worktreePath = ''
   let branch = ''
   const parent = request.parentId ? jobs.get(request.parentId) : null
+  if (parent && isEnding(parent))
+    throw new Error('The parent job is stopping, so it cannot start another agent.')
   if (request.inheritWorktree && parent?.worktreePath && parent.branch) {
     worktreePath = parent.worktreePath
     branch = parent.branch
@@ -316,7 +323,24 @@ export async function awaitChildJobs(
   }
 }
 
-export function stopBackgroundJob(id: string): boolean {
+const isEnding = (job: BackgroundJob) =>
+  ['stopped', 'discarded'].includes(job.status) || Boolean(aborts.get(job.id)?.signal.aborted)
+
+/** Every job under `id`. Each one depends on its parent's work and, usually, its worktree. */
+function descendantsOf(id: string): BackgroundJob[] {
+  const found = new Map<string, BackgroundJob>()
+  const visit = (parentId: string) => {
+    for (const child of jobs.values()) {
+      if (child.parentId !== parentId || child.id === id || found.has(child.id)) continue
+      found.set(child.id, child)
+      visit(child.id)
+    }
+  }
+  visit(id)
+  return [...found.values()]
+}
+
+function stopOne(id: string): boolean {
   const ac = aborts.get(id)
   if (ac) {
     ac.abort()
@@ -331,37 +355,86 @@ export function stopBackgroundJob(id: string): boolean {
       liveStatus: 'Stopped'
     })
     pendingHints.delete(id)
+    evidenceScopes.delete(id)
     return true
   }
   return false
 }
 
-export async function discardBackgroundJob(id: string): Promise<BackgroundJob> {
-  const job = jobs.get(id)
-  if (!job) throw new Error('Job not found')
+/** Stops a job and everything under it, so nothing keeps writing to work being abandoned. */
+export function stopBackgroundJob(id: string): boolean {
+  return [id, ...descendantsOf(id).map((job) => job.id)].map(stopOne).some(Boolean)
+}
+
+/** Waits for these jobs to finish, up to a limit. Returns the ones still going. */
+async function settled(ids: readonly string[], timeoutMs: number): Promise<string[]> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([
+    Promise.allSettled(ids.map((id) => active.get(id))),
+    new Promise((resolve) => {
+      timer = setTimeout(resolve, timeoutMs)
+    })
+  ])
+  clearTimeout(timer)
+  return ids.filter((id) => active.has(id))
+}
+
+const sharesWorktree = (job: BackgroundJob) => {
+  const parent = job.parentId ? jobs.get(job.parentId) : undefined
+  return Boolean(parent?.worktreePath && parent.worktreePath === job.worktreePath)
+}
+
+async function discardTree(id: string, timeoutMs: number): Promise<BackgroundJob> {
+  if (!jobs.has(id)) throw new Error('Job not found')
+  if (jobs.get(id)!.status === 'discarded') return jobs.get(id)!
   stopBackgroundJob(id)
-  const shared =
-    job.parentId &&
-    jobs.get(job.parentId)?.worktreePath &&
-    jobs.get(job.parentId)?.worktreePath === job.worktreePath
-  if (job.worktreePath && job.branch && !shared) {
+  const tree = [id, ...descendantsOf(id).map((job) => job.id)]
+  const still = await settled(tree, timeoutMs)
+  // Read after waiting: a job that was still planning may have created its worktree since.
+  const job = jobs.get(id)!
+  if (still.length)
+    return upsert({
+      ...job,
+      worktreeRetained: true,
+      liveStatus: 'Discard is waiting for agents to stop. The worktree was kept.',
+      actionLog: [
+        ...job.actionLog,
+        `Worktree kept: ${still.length} agent${still.length === 1 ? '' : 's'} still stopping`
+      ].slice(-80)
+    })
+  if (job.worktreePath && job.branch && !sharesWorktree(job)) {
     try {
       await removeAgentWorktree(job.workspacePath, { path: job.worktreePath, branch: job.branch })
     } catch {
       // still mark discarded
     }
+    // Children in that worktree went with it. One with its own keeps its work to review.
+    for (const child of descendantsOf(id))
+      if (child.worktreePath === job.worktreePath)
+        upsert({ ...child, status: 'discarded', liveStatus: 'Discarded with its parent' })
   }
-  return upsert({ ...job, status: 'discarded', liveStatus: 'Discarded' })
+  return upsert({ ...job, status: 'discarded', worktreeRetained: false, liveStatus: 'Discarded' })
+}
+
+/** Repeating this while it runs joins the same discard, so a worktree goes only once. */
+export function discardBackgroundJob(
+  id: string,
+  timeoutMs = DISCARD_WAIT_MS
+): Promise<BackgroundJob> {
+  const running = discarding.get(id)
+  if (running) return running
+  const work = discardTree(id, timeoutMs).finally(() => discarding.delete(id))
+  discarding.set(id, work)
+  return work
 }
 
 export async function mergeBackgroundJob(id: string): Promise<BackgroundJob> {
   const job = jobs.get(id)
   if (!job) throw new Error('Job not found')
   if (job.status !== 'done') throw new Error('Only finished jobs can be merged')
-  const shared =
-    job.parentId &&
-    jobs.get(job.parentId)?.worktreePath &&
-    jobs.get(job.parentId)?.worktreePath === job.worktreePath
+  const shared = sharesWorktree(job)
+  if (!shared && descendantsOf(id).some((child) => active.has(child.id)))
+    throw new Error('Agents under this job are still running. Wait for them, or stop them first.')
   if (shared) {
     return upsert({
       ...job,
@@ -484,12 +557,15 @@ async function pumpQueue(): Promise<void> {
         if (getBackgroundJob(job.id)?.status !== 'running') continue
         launched++
         // The pump can run inside any request's context, so a job always states its own.
-        void runInEvidenceScope(() => runOne(job, settings), evidenceScopes.get(job.id)).finally(
-          () => {
-            evidenceScopes.delete(job.id)
-            void pumpQueue()
-          }
-        )
+        const run = runInEvidenceScope(
+          () => runOne(job, settings),
+          evidenceScopes.get(job.id)
+        ).finally(() => {
+          evidenceScopes.delete(job.id)
+          active.delete(job.id)
+          void pumpQueue()
+        })
+        active.set(job.id, run)
       }
     }
     void launched
@@ -531,6 +607,8 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
       signal: ac.signal
     })
 
+    // Stopped while planning: nothing has been created yet, so create nothing.
+    ac.signal.throwIfAborted()
     if (turnPlan.error) {
       upsert({
         ...getBackgroundJob(job.id)!,
