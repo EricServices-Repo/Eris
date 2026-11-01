@@ -376,7 +376,11 @@ export function buildPreservedWorkerMessages(options: {
       skillIds: task.skillIds,
       customAgentPrompt
     }),
-    ...memoryForDestination(options.conversationMemory, options.plan.models.tools),
+    ...memoryForDestination(
+      options.conversationMemory,
+      options.plan.models.tools,
+      options.settings
+    ),
     retrieval: options.retrievalHint,
     maxInputTokens:
       options.inputTokenBudget ?? contextBudgetTokens(options.settings, plan.models.tools)

@@ -36,6 +36,8 @@ import {
 } from '../src/shared/chat-history-window'
 import type { AppSettings, ChatThread } from '../src/shared/settings-schema'
 
+const DISPATCH_SETTINGS = { models: { connections: [] } } as unknown as AppSettings
+
 const LOCAL = 'builtin:test.gguf'
 const REMOTE = 'openai:gpt-test'
 const PRIVATE = 'PRIVATE-PREVIEW'
@@ -200,7 +202,12 @@ it('previews actual task authority, guidance, evidence and effective input reser
     toolsAvailable: true,
     toolProtocol: 'text-tools'
   })
-  reportContextDispatch({ compiled: [real.message], outbound: [real.message], model: LOCAL })
+  reportContextDispatch({
+    settings: DISPATCH_SETTINGS,
+    compiled: [real.message],
+    outbound: [real.message],
+    model: LOCAL
+  })
   const preview = previewContextDispatch({
     prompt,
     model: LOCAL,
@@ -253,7 +260,12 @@ it('expires a snapshot rather than presenting old instructions as current', asyn
     ...memoryForDestination(prompt, LOCAL),
     maxInputTokens: 8000
   })
-  reportContextDispatch({ compiled: [real.message], outbound: [real.message], model: LOCAL })
+  reportContextDispatch({
+    settings: DISPATCH_SETTINGS,
+    compiled: [real.message],
+    outbound: [real.message],
+    model: LOCAL
+  })
   const now = Date.now()
   vi.spyOn(Date, 'now').mockReturnValue(now + 120001)
   expect(

@@ -1,3 +1,4 @@
+import type { AppSettings } from '../src/shared/settings-schema'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const h = vi.hoisted(() => ({
   provider: [] as Array<{ messages: Array<Record<string, unknown>> }>,
@@ -14,7 +15,7 @@ vi.mock('../electron/main/services/model-catalog', async (original) => ({
   ...(await original<typeof import('../electron/main/services/model-catalog')>()),
   resolveConnectionForModel: () => ({
     type: 'openai-compatible',
-    baseUrl: 'http://127.0.0.1:1',
+    baseUrl: 'https://remote.invalid',
     name: 'test'
   })
 }))
@@ -40,6 +41,8 @@ import {
 } from '../src/shared/context-memory'
 import { createTaskContract } from '../electron/main/services/task-intake'
 import type { ChatMessage } from '../src/shared/settings-schema'
+
+const DISPATCH_SETTINGS = { models: { connections: [] } } as unknown as AppSettings
 
 const LOCAL = 'builtin:test.gguf'
 const REMOTE = 'openai:gpt-test'
@@ -209,6 +212,7 @@ describe('actual dispatch', () => {
     const compiled = compile(prompt, LOCAL)
     const victim = prompt.items!.find((item) => item.sourceId === 'c')!
     reportContextDispatch({
+      settings: DISPATCH_SETTINGS,
       compiled: [compiled.message],
       outbound: [
         { content: compiled.message.content.replace(victim.line, victim.line.slice(0, 80)) }
@@ -224,6 +228,7 @@ describe('actual dispatch', () => {
     const compiled = compile(prompt, LOCAL)
     const send = () =>
       reportContextDispatch({
+        settings: DISPATCH_SETTINGS,
         compiled: [compiled.message],
         outbound: [compiled.message],
         model: LOCAL,
@@ -239,6 +244,7 @@ describe('actual dispatch', () => {
     const compiled = compile(prompt, LOCAL)
     const send = () =>
       reportContextDispatch({
+        settings: DISPATCH_SETTINGS,
         compiled: [compiled.message],
         outbound: [compiled.message],
         model: LOCAL,
@@ -251,6 +257,7 @@ describe('actual dispatch', () => {
   })
   it('ignores requests with no compiled context', () => {
     reportContextDispatch({
+      settings: DISPATCH_SETTINGS,
       compiled: [{ content: 'x' }],
       outbound: [{ content: 'x' }],
       model: LOCAL

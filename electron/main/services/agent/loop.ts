@@ -613,7 +613,7 @@ async function* runAgentInternal(options: {
       task,
       toolsAvailable: false,
       guidance: tips.join('\n\n'),
-      ...memoryForDestination(options.conversationMemory, chatModel),
+      ...memoryForDestination(options.conversationMemory, chatModel, options.settings),
       project: priorSystem,
       retrieval: '',
       maxInputTokens: contextBudgetTokens(options.settings, chatModel)

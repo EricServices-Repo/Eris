@@ -20,6 +20,7 @@ import {
   type OpenAIToolDef
 } from './openai-compatible'
 import { resolveConnectionForModel } from './model-catalog'
+import { modelDestination } from './model-destination'
 import { estimateMessagesTokens, estimateTokens, recordModelUsage } from './usage-stats'
 import {
   activeDiagnosticsScope,
@@ -64,7 +65,11 @@ export async function* streamModelChat(
     const task = (message as ModelMessage).contextBundle?.referenceTask
     if (task) await assertTaskReferences(task, options.settings, options.model)
   }
-  const { messages, revoked } = await withEligibleMemory(options.messages, options.model)
+  const { messages, revoked } = await withEligibleMemory(
+    options.messages,
+    options.model,
+    options.settings
+  )
   // A live local session holds its seeded prompt; only a reseed removes revoked text.
   if (revoked && options.sessionKey) releaseLocalChatSession(options.sessionKey)
   const request = { ...options, messages }
@@ -268,6 +273,7 @@ export async function* streamProviderChat(
       temperature: options.temperature,
       maxOutputTokens: capabilities.outputCap,
       signal: options.signal,
+      refuseRedirects: modelDestination(options.settings, model).recallAllowed,
       tools: protocol === 'native-tools' ? options.tools : undefined,
       toolChoice: options.toolChoice,
       onNativeToolCalls: options.onNativeToolCalls,

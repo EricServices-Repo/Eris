@@ -73,6 +73,8 @@ export async function* streamOpenAICompatible(options: {
   temperature: number
   maxOutputTokens?: number
   signal?: AbortSignal
+  /** A destination cleared for recall must not hand the request to another host. */
+  refuseRedirects?: boolean
   onUsage?: (usage: OpenAIStreamUsage) => void
   /** The stream's finish_reason (if any) and whether it ended with a finish signal or [DONE]. */
   onFinish?: (finishReason: string | null, complete: boolean, failure?: ApiStreamFailure) => void
@@ -109,7 +111,8 @@ export async function* streamOpenAICompatible(options: {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
-    signal: options.signal
+    signal: options.signal,
+    ...(options.refuseRedirects ? { redirect: 'error' as const } : {})
   })
 
   if (!res.ok || !res.body) {
