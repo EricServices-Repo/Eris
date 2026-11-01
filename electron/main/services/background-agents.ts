@@ -1051,7 +1051,10 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
     logError('Background agent failed', { id: job.id, error: message })
   } finally {
     clearTimeout(deadline)
-    await flushTaskLedger(job.id)
+    // Nothing awaits a job, so a failure here must not skip this cleanup or go unhandled.
+    await flushTaskLedger(job.id).catch((err) =>
+      logError('Background agent ledger not saved', { id: job.id, error: String(err) })
+    )
     aborts.delete(job.id)
     void pumpQueue()
   }

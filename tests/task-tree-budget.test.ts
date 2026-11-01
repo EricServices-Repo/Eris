@@ -23,8 +23,23 @@ const h = vi.hoisted(() => ({
   /** A deterministic fake agent: what it does with its one model call. */
   agent: null as null | ((run: Run) => AsyncGenerator<unknown, void, unknown>),
   modelCalls: 0,
-  maxParallel: 6
+  maxParallel: 6,
+  /** Fails a job's last ledger flush, the one in its cleanup. */
+  failFinalFlush: false,
+  flushes: new Map<string, number>()
 }))
+vi.mock('../electron/main/services/task-ledger', async (original) => {
+  const actual = await original<typeof import('../electron/main/services/task-ledger')>()
+  return {
+    ...actual,
+    flushTaskLedger: async (id: string) => {
+      const count = (h.flushes.get(id) ?? 0) + 1
+      h.flushes.set(id, count)
+      if (h.failFinalFlush && count === 2) throw new Error('Task evidence storage failed')
+      return actual.flushTaskLedger(id)
+    }
+  }
+})
 vi.mock('../electron/main/services/paths', async (original) => ({
   ...(await original<object>()),
   userDataRoot: () => h.root
@@ -123,6 +138,8 @@ const hang = (signal: AbortSignal) =>
 beforeEach(async () => {
   h.modelCalls = 0
   h.maxParallel = 6
+  h.failFinalFlush = false
+  h.flushes.clear()
   answers.length = 0
   h.agent = async function* () {}
   rmSync(store(), { force: true })
@@ -374,6 +391,24 @@ describe('reservations', () => {
     const start = root()
     await quiet()
     expect(job(start.id).treeUsage?.agents).toBe(2)
+  })
+})
+
+describe('cleanup', () => {
+  it('survives a failed final ledger flush: no stuck job, and the queue moves on', async () => {
+    h.failFinalFlush = true
+    h.maxParallel = 1
+    const rejected: unknown[] = []
+    const onRejected = (reason: unknown) => rejected.push(reason)
+    process.on('unhandledRejection', onRejected)
+    const first = root('First')
+    const second = root('Second')
+    await quiet()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    process.off('unhandledRejection', onRejected)
+    expect(rejected).toEqual([])
+    expect(job(second.id).status).toBe('done') // Only a pump after the first job starts it.
+    expect(agents.stopBackgroundJob(first.id)).toBe(false) // Its abort entry is gone.
   })
 })
 

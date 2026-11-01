@@ -16,6 +16,8 @@ The refusal reaches the coordinator as a tool result saying which limit was hit 
 
 **The reservation is the job record.** Usage is read from the jobs, not from a counter, and the check and the insert happen in one synchronous pass. So there is nothing to leak or to reset on restart. A job that never ran stops counting when it ends, which is what releases its slot on cancellation or restart. A job that ran keeps counting, however it ended.
 
+**A failed final ledger flush no longer stalls the queue.** This predates the budget work and showed up in this PR's CI. `runOne` flushed in its `finally`, so a failure skipped `aborts.delete` and the next pump, and rejected a promise nothing handles. It is now logged and cleanup continues.
+
 ## Decisions to review
 
 - **The limits are constants** in `TASK_TREE_LIMITS`, not settings. They are generous for one request and easy to promote if they prove wrong.
