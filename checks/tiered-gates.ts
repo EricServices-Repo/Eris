@@ -73,14 +73,20 @@ async function measureRecoverability() {
       originals.set(id, body(index))
       messages.push(await recorded(journal, id, body(index)))
     }
-    const compacted = microCompactAgentMessages(messages, COMPACTION_BUDGET_TOKENS).messages
+    const compacted = microCompactAgentMessages(
+      messages,
+      COMPACTION_BUDGET_TOKENS,
+      journal
+    ).messages
     let evicted = 0
     let recoverable = 0
     for (const message of compacted) {
       const id = (message as { tool_call_id?: string }).tool_call_id
       if (!id || message.content === originals.get(id)) continue
       evicted++
-      const read = await journal.read(journal.refForCall(id) ?? '')
+      // The ref a model would use: the one printed in the prompt, not a side lookup.
+      const ref = message.content.match(/^\[ref:([0-9a-f]+) /)?.[1] ?? ''
+      const read = await journal.read(ref)
       if (read.status === 'found' && read.content === originals.get(id)) recoverable++
     }
     return { results: RECOVERABILITY_RESULTS, evicted, recoverable }
@@ -100,7 +106,7 @@ async function measureRecallAfter(rounds: number) {
     for (let round = 0; round < rounds; round++) {
       for (let index = 0; index < 20; index++)
         messages.push(await recorded(journal, `r${round}-${index}`, body(index)))
-      messages = microCompactAgentMessages(messages, COMPACTION_BUDGET_TOKENS).messages
+      messages = microCompactAgentMessages(messages, COMPACTION_BUDGET_TOKENS, journal).messages
     }
     const prompt = messages.map((message) => message.content).join('\n')
     const texts = await Promise.all(journal.list().map((entry) => journal.read(entry.ref)))

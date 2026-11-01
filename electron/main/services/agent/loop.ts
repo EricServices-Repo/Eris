@@ -1435,15 +1435,24 @@ async function* runAgentInternal(options: {
     const force = Boolean(opts.force)
     if (!needsContextCompaction(workerMessages, promptBudget, force)) return
 
-    const micro = microCompactAgentMessages(workerMessages, promptBudget)
+    // Stubs are only useful to a model allowed to read them back.
+    const evidence = contextPullAllowed(workerModel, options.settings) ? runJournal : undefined
+    const micro = microCompactAgentMessages(workerMessages, promptBudget, evidence)
     if (micro.changed) {
       workerMessages.splice(0, workerMessages.length, ...micro.messages)
       yield {
         type: 'thinking',
-        text: '\n\n— Shortened older tool output locally to free context…\n'
+        text: micro.evicted
+          ? '\n\n— Moved older tool output out of the prompt; it stays readable…\n'
+          : '\n\n— Shortened older tool output locally to free context…\n'
       }
-      // The transcript changed even when no model summary was needed.
-      releaseGgufSession()
+      appendTaskEvent(task.taskId, 'context-evicted', {
+        mode: 'micro',
+        evicted: micro.evicted,
+        shortened: micro.shortened
+      })
+      // Every turn re-seeds history, so eviction keeps the unchanged prefix in KV.
+      if (micro.shortened) releaseGgufSession()
       contextPull.noteCompaction()
       if (micro.withinBudget && !force) return
     }
@@ -1455,9 +1464,10 @@ async function* runAgentInternal(options: {
     yield { type: 'status', text: 'Compacting context…' }
     yield {
       type: 'thinking',
-      text: skipLite
-        ? '\n\n— Compacting context from action log…\n'
-        : '\n\n— Summarizing context so work can continue…\n'
+      text:
+        skipLite || (evidence && !options.settings.agent.summarizeEvictedContext)
+          ? '\n\n— Compacting context from action log…\n'
+          : '\n\n— Summarizing context so work can continue…\n'
     }
     const compacted = await compactAgentMessages({
       messages: workerMessages,
@@ -1471,7 +1481,14 @@ async function* runAgentInternal(options: {
       temperature: options.temperature,
       signal: options.signal,
       getSecret: options.getSecret,
-      skipLiteSummary: skipLite
+      skipLiteSummary: skipLite,
+      evidence,
+      summarizeEvicted: options.settings.agent.summarizeEvictedContext
+    })
+    appendTaskEvent(task.taskId, 'context-evicted', {
+      mode: 'full',
+      lossless: compacted.lossless,
+      withEvidence: Boolean(evidence)
     })
     workerMessages.length = 0
     workerMessages.push(...compacted.messages)
