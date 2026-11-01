@@ -131,6 +131,8 @@ export type ContextBundleItem = {
 }
 export type ContextBundleCounts = Record<ContextItemStatus, number> & { selected: number }
 export type ContextBundle = {
+  /** Character-estimated instruction/project/history prefix before the volatile current turn. */
+  stablePrefixTokens?: number
   referenceTask?: Pick<
     import('./task-contract').TaskContract,
     'referenceBinding' | 'scope' | 'threadId'
@@ -154,6 +156,7 @@ export type ContextBundle = {
 }
 /** What one model request actually carried, measured after provider adaptation. */
 export type ContextDispatch = {
+  stablePrefixTokens?: number
   version: 1
   taskId: string
   model: string

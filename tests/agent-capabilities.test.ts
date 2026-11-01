@@ -124,7 +124,7 @@ describe('AG-024 one prompt pipeline across intents and modes', () => {
         retrieval: '',
         maxInputTokens: 8192
       })
-      const block = JSON.parse(message.content.split('\n')[1]!)
+      const block = JSON.parse(message.content.split('TASK CONTRACT\n')[1]!.split('\n')[0]!)
       expect(block).toMatchObject({
         taskId: task.taskId,
         revision: task.revision,
@@ -223,7 +223,7 @@ describe('AG-032 imported material stays evidence', () => {
       retrieval: '',
       maxInputTokens: 8192
     })
-    const block = JSON.parse(compiled.message.content.split('\n')[1]!)
+    const block = JSON.parse(compiled.message.content.split('TASK CONTRACT\n')[1]!.split('\n')[0]!)
     expect(block.authority).toEqual({
       tools: 'read',
       edit: false,
@@ -450,6 +450,10 @@ describe('agent loop capability behavior', () => {
     )
     expect(system).not.toContain('Read the matching files')
     // LR-001: the workflow is built for the generic scope, not linted after the fact.
-    expect(system).toContain('without citing the open project')
+    expect(
+      (model.requests.at(-1)?.messages as Array<{ content: string }>)
+        .map((message) => message.content)
+        .join('\n')
+    ).toContain('without citing the open project')
   })
 })

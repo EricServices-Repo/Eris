@@ -1,0 +1,9 @@
+# Stable prompt prefix (#232)
+
+Prompt schema `model-task/4` separates stable host/tool/role/workspace guidance and slow project context from volatile task identity, recalled evidence and retrieval. Real conversation roles remain between those layers. The current task/evidence layer is attached to the current user request, so native runtimes cannot hoist a second late system message into the beginning. Host task/tool authority remains the execution boundary; historical text cannot grant permissions. The canonical conversation is unchanged.
+
+Admission priority is independent of serialization: required task/instructions still reserve space first; fresh-source versus recall allocation remains unchanged. The compiler retains a combined inspectable message for compatibility, while production answer/worker paths use layered assembly. Both measured compilation and final allocation fit checks remain active. Current-turn plans are outside reusable guidance. Prompt behavior version is bumped for diagnostic comparisons.
+
+`stablePrefixTokens` is recorded per assembly and final-dispatch metadata as a character-based estimate covering reusable instructions/project and prior conversation. It excludes provider-added schemas/framing and is not a measured provider cache hit or native KV reuse metric. Recalled content remains in the current turn and appends to the same worker transcript during a run.
+
+Qualification compares native/text protocol prefixes, native session seeds, preserved conversation roles, metadata, required-context budgets, source revocation and a spoofed-contract fixture against the host gateway. These deterministic tests do not prove that a live model resists every injection or that answer quality is unchanged. Paired live-model quality and actual prefill/cache measurements remain required rollout evidence.

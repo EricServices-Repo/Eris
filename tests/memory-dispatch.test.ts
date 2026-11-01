@@ -1,3 +1,9 @@
+import {
+  compileTaskContext,
+  compiledTurnMessages,
+  memoryForDestination
+} from '../electron/main/services/agent/context-compiler'
+import { createTaskContract } from '../electron/main/services/task-intake'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -860,5 +866,50 @@ describe('evidence scopes', () => {
     const [first, second] = await Promise.all([handler(), handler()])
     expect(first).toBeDefined()
     expect(first).not.toBe(second)
+  })
+})
+
+describe('layered current-turn recall revocation (#232)', () => {
+  it('removes revoked user-layer evidence and derived output while retaining sanitized intent', async () => {
+    const prompt = await recall()
+    lease(prompt)
+    const task = createTaskContract({
+      taskId: 'task',
+      workspacePath: null,
+      text: 'Explain checkout',
+      plan: { intent: 'answer', mode: 'ask', toolPolicy: 'none' } as never
+    })
+    const compiled = compileTaskContext({
+      task,
+      guidance: 'Be precise',
+      project: '',
+      retrieval: '',
+      toolsAvailable: false,
+      ...memoryForDestination(prompt, LOCAL, settings()),
+      maxInputTokens: 8192
+    })
+    const messages = compiledTurnMessages(compiled, [], 'Explain checkout')
+    const send = async () => {
+      for await (const _ of streamModelChat({
+        settings: settings(),
+        model: LOCAL,
+        messages,
+        temperature: 0,
+        getSecret: () => null
+      }));
+      return JSON.stringify(h.sent.at(-1)!.messages)
+    }
+    expect(await send()).toContain('PRIVATE-A')
+    messages.push({ role: 'assistant', content: 'Derived PRIVATE-A result' })
+    await forget('a')
+    const after = await send()
+    expect(after).not.toContain('PRIVATE-A')
+    expect(after).toContain('Explain checkout')
+    expect(
+      h.sent
+        .at(-1)!
+        .messages.map((message) => message.content)
+        .join('\n')
+    ).toContain('"taskId":"task"')
   })
 })

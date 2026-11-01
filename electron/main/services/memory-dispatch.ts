@@ -290,10 +290,22 @@ function recordExposure(lease: EvidenceLease, messages: Array<{ content?: unknow
             .replace(MEMORY_PROMPT_HEADER, '')
         }
       : undefined
+  const sanitize = (message: { content?: unknown }) =>
+    typeof message.content === 'string'
+      ? {
+          ...message,
+          content: lease.items
+            .reduce((text, item) => withoutItem(text, item.line), message.content)
+            .replace(MEMORY_PROMPT_HEADER, '')
+        }
+      : message
   lease.exposure = {
     authority,
-    clean: new Set(messages.map(digest)),
-    intent: user[user.length - 1],
+    clean: new Set([
+      ...messages.map(digest),
+      ...messages.map((message) => digest(sanitize(message)))
+    ]),
+    intent: user.length ? sanitize(user[user.length - 1]!) : undefined,
     items: new Set(
       lease.items
         .filter((item) =>
@@ -321,15 +333,12 @@ function withoutDerived<T extends { content?: unknown }>(
   const { clean, intent, authority } = lease.exposure!
   const kept = messages.filter((message) => clean.has(digest(message)))
   const removedSystems = messages.filter(
-    (message) =>
-      !kept.includes(message) &&
-      (message as { role?: string }).role === 'system' &&
-      'contextBundle' in message
+    (message) => !kept.includes(message) && 'contextBundle' in message
   )
   if (
     removedSystems.some((message) => {
       const taskId = (message as { contextBundle?: { taskId?: string } }).contextBundle?.taskId
-      return taskId && taskId !== authority?.contextBundle?.taskId
+      return taskId && taskId !== (authority?.contextBundle?.taskId ?? lease.taskId)
     })
   )
     throw new Error(

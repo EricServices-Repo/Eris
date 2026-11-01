@@ -129,7 +129,7 @@ import {
   type TaskContract
 } from '../../../../src/shared/task-contract'
 import { artifactResponseContract } from '../../../../src/shared/task-interpretation'
-import { contextPullAllowed, memoryForDestination } from './context-compiler'
+import { contextPullAllowed, memoryForDestination, compiledTurnMessages } from './context-compiler'
 import { RunJournal, trustLabel } from './run-journal'
 import { ContextPull, conversationThreadRecall } from './context-pull'
 import { executionPlanFor } from '../execution-plan'
@@ -632,11 +632,6 @@ async function* runAgentInternal(options: {
     const tips: string[] = [...(modelsCatalog ? [modelsCatalog] : [])]
     if (plan.intent !== 'capability')
       tips.push(artifactResponseContract(interpretationOf(task), task.scope.applicability))
-    if (plan.executionPlan) {
-      tips.push(
-        `Task plan:\n${plan.executionPlan.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}\nDone when: ${plan.executionPlan.doneWhen}`
-      )
-    }
     if (mode === 'ask') {
       tips.push(
         'You are in Ask mode. Answer clearly in markdown with concrete paths/symbols when relevant. ' +
@@ -657,6 +652,9 @@ async function* runAgentInternal(options: {
         task,
         toolsAvailable: false,
         guidance: tips.join('\n\n'),
+        turnGuidance: plan.executionPlan
+          ? `Task plan:\n${plan.executionPlan.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}\nDone when: ${plan.executionPlan.doneWhen}`
+          : undefined,
         ...memoryForDestination(options.conversationMemory, chatModel, options.settings),
         project: priorSystem,
         retrieval: '',
@@ -664,6 +662,15 @@ async function* runAgentInternal(options: {
       },
       chatModel
     )
+    const priorConversation = messages
+      .filter((message) => message.role !== 'system')
+      .map((message) => ({ ...message }))
+    if (
+      priorConversation.at(-1)?.role === 'user' &&
+      priorConversation.at(-1)?.content === originalUserGoal
+    )
+      priorConversation.pop()
+    const askMessages = compiledTurnMessages(compiled, priorConversation, originalUserGoal)
     appendTaskEvent(task.taskId, 'context-compiled', {
       context: contextProvenance(options.settings, chatModel),
       revision: task.revision,
@@ -673,10 +680,6 @@ async function* runAgentInternal(options: {
       budget: compiled.budget,
       bundle: compiled.bundle
     })
-    const askMessages = [
-      compiled.message,
-      ...messages.filter((m) => m.role !== 'system').map((m) => ({ ...m }))
-    ]
     const askSessionKey =
       isNativeGgufRef(chatModel) && options.jobId ? `gguf:${options.jobId}` : undefined
     let full = ''

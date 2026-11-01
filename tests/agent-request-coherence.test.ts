@@ -58,7 +58,11 @@ async function capture(text: string, workspace = fixture(JS)) {
     .map((message) => message.content)
     .join('\n')
   const tools = (agent.tools as Array<{ function: { name: string } }>).map((t) => t.function.name)
-  return { result, task, system, tools }
+  const currentTurn =
+    (agent.messages as Array<{ role: string; content: string }>).find(
+      (message) => message.role === 'user' && message.content.startsWith('TASK CONTRACT\n')
+    )?.content ?? system
+  return { result, task, system, currentTurn, tools }
 }
 const GROUNDING =
   /grounded in (?:the )?(?:inspected files|files that were read)|Inspect the relevant (?:files|sources)|Return findings with file paths|real file paths and symbols it read|Read the matching source files/i
@@ -68,13 +72,13 @@ describe('LR-001/LR-002/LR-014 generic tasks compile without workspace grounding
     ['Q1', Q1],
     ['Q28', Q28]
   ])('%s has no mandatory file-grounding criterion or instruction', async (_, text) => {
-    const { task, system, result } = await capture(text)
+    const { task, system, currentTurn, result } = await capture(text)
     expect(task.scope.applicability).toBe('generic')
     expect(task.acceptanceCriteria.filter((line) => GROUNDING.test(line))).toEqual([])
     expect(system).not.toMatch(GROUNDING)
     expect(result.findingIds).toEqual([])
     // The model-facing contract carries applicability; the internal root is kept.
-    const facing = JSON.parse(system.split('TASK CONTRACT\n')[1]!.split('\n')[0]!)
+    const facing = JSON.parse(currentTurn.split('TASK CONTRACT\n')[1]!.split('\n')[0]!)
     expect(facing.scope).toMatchObject({
       applicability: 'generic',
       evidence: 'none',
@@ -84,10 +88,10 @@ describe('LR-001/LR-002/LR-014 generic tasks compile without workspace grounding
   })
 
   it('a named source file still requires inspected-source evidence', async () => {
-    const { task, system } = await capture('Explain the implementation in src/auth.ts')
+    const { task, currentTurn } = await capture('Explain the implementation in src/auth.ts')
     expect(task.scope.applicability).toBe('selected-project')
     expect(task.acceptanceCriteria[0]).toMatch(/grounded in the files that were read/)
-    const facing = JSON.parse(system.split('TASK CONTRACT\n')[1]!.split('\n')[0]!)
+    const facing = JSON.parse(currentTurn.split('TASK CONTRACT\n')[1]!.split('\n')[0]!)
     expect(facing.scope).toMatchObject({ applicability: 'selected-project', evidence: 'required' })
   })
 

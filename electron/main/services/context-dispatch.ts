@@ -149,6 +149,7 @@ export function reportContextDispatch(input: {
   const dispatch: ContextDispatch = {
     version: 1,
     taskId: bundle.taskId,
+    stablePrefixTokens: bundle.stablePrefixTokens,
     model: input.model,
     destination: destinationLabel(modelDestination(input.settings, input.model).locality),
     adapted: Boolean(input.adapted),
