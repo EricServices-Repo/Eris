@@ -37,7 +37,7 @@ import {
 } from './http-download'
 import { applyLlamaGpuPreference, noteLlamaBackend, type LlamaGpuBackend } from './gpu-accel'
 import { getResolvedSettings } from './settings'
-import { clearLoadedModel, recordLoadedModel } from './model-runtime'
+import { clearLoadedModel, recordLoadedModel, updateLoadedAllocation } from './model-runtime'
 import {
   allocationFacts,
   contextLimits,
@@ -53,6 +53,7 @@ import {
   messagesToLlamaHistory,
   nativeStopReason,
   oneShotPrompt,
+  promptFitProblem,
   replyTokenAllowance,
   splitSessionPrompt
 } from '../../../src/shared/llama-session'
@@ -735,6 +736,16 @@ function ensureLlamaChild(): Promise<void> {
           }
         }
         child.on('message', onReady)
+        child.on('message', (raw: unknown) => {
+          const msg = (
+            raw && typeof raw === 'object' && 'data' in (raw as object)
+              ? (raw as { data: WorkerMsg }).data
+              : raw
+          ) as WorkerMsg
+          if (msg?.type !== 'context-allocated' || llamaChild !== child) return
+          const { contextSize, trainContextSize, kvBytes } = msg
+          updateLoadedAllocation({ contextSize, trainContextSize, kvBytes })
+        })
         child.on('exit', (code) => {
           settle(new LocalModelWorkerError(`exited during startup (${String(code)})`))
           if (llamaChild === child) {
@@ -1108,6 +1119,8 @@ function inProcessReplyBudget(
   }
   promptTokens += messages.length * 8
   const contextTokens = Number(state.context?.contextSize) || REPLY_MAX_TOKENS
+  const problem = promptFitProblem({ contextSize: contextTokens, promptTokens })
+  if (problem) throw new Error(problem)
   return {
     promptTokens,
     contextTokens,

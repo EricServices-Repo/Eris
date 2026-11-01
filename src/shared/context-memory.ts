@@ -163,6 +163,8 @@ export type ContextDispatch = {
   requestDigest: string
   /** Conservative estimate for the whole request; never a provider measurement. */
   estimatedTokens: number
+  /** The window this request was packed for, and the plan it replaced if a load changed it. */
+  context?: { source: string; tokens: number; plannedTokens?: number }
   counts: ContextBundleCounts
   /** Present on a run's first dispatch and whenever an item's status changes. */
   items?: ContextBundleItem[]

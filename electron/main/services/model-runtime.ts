@@ -17,6 +17,14 @@ let loaded: LoadedModelFacts | null = null
 export function recordLoadedModel(facts: LoadedModelFacts) {
   loaded = facts.contextSize > 0 ? facts : null
 }
+/** The resident model's context was rebuilt, so its window may have changed size. */
+export function updateLoadedAllocation(
+  facts: Partial<Pick<LoadedModelFacts, 'contextSize' | 'trainContextSize' | 'kvBytes'>>
+) {
+  if (!loaded) return
+  if (!facts.contextSize || facts.contextSize <= 0) return clearLoadedModel()
+  loaded = { ...loaded, ...facts }
+}
 export function clearLoadedModel() {
   loaded = null
 }

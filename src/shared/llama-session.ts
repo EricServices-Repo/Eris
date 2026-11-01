@@ -82,6 +82,24 @@ export function replyTokenAllowance(input: {
   return Math.max(input.minimum ?? 256, Math.min(input.requested, available))
 }
 
+/** The least reply worth starting. Below this a turn overflows rather than answers. */
+export const MIN_REPLY_TOKENS = 128
+
+/**
+ * Why this prompt cannot run in this window, or null. The native runtime would otherwise
+ * shift the context and quietly drop the task blocks at the start of the prompt.
+ */
+export function promptFitProblem(input: {
+  contextSize: number
+  promptTokens: number
+  reserve?: number
+}): string | null {
+  const needed = input.promptTokens + (input.reserve ?? 64) + MIN_REPLY_TOKENS
+  return needed <= input.contextSize
+    ? null
+    : `This request needs about ${needed.toLocaleString('en-US')} tokens including its reply, which exceeds the ${input.contextSize.toLocaleString('en-US')}-token context the model was allocated. Free GPU memory, reduce attached context, or choose a smaller model.`
+}
+
 /** Map node-llama-cpp stop reasons onto transport termination reasons. */
 export function nativeStopReason(
   raw: unknown
