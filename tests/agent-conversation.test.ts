@@ -360,6 +360,56 @@ describe('AG-056/AG-058 delegation outcomes and recovery in the loop', () => {
     expect(answer).toContain('Specialist results not confirmed')
   })
 
+  const delegateWith = (args: Record<string, unknown>) =>
+    JSON.stringify({ name: 'delegate_to_agent', arguments: { agent_id: 'reviewer', ...args } })
+
+  it('delivers typed constraints to an inline specialist past a crowded summary', async () => {
+    const goal = 'Check whether retryDelay caps delays'
+    const { requests } = await runScripted(
+      [
+        read,
+        discover,
+        delegateWith({
+          goal,
+          summary: `${'background '.repeat(90_000)}TAIL-OF-SUMMARY`,
+          constraints: ['REQUIRED-CURRENCY-GBP']
+        }),
+        read,
+        'Findings for src/retry.ts: the delay has no cap.',
+        'DONE: the checks ran and the review of src/retry.ts is summarized above in detail.'
+      ],
+      runPlan(),
+      workspace(retry)
+    )
+    const child = requests.find((request) =>
+      request.messages.some((message) => String(message.content).includes('[Eris handoff'))
+    )!
+    const system = String(child.messages[0]?.content)
+    expect(system).toContain('REQUIRED-CURRENCY-GBP')
+    expect(system).not.toContain('TAIL-OF-SUMMARY')
+    expect(
+      child.messages.filter((item) => item.role === 'user' && item.content === goal)
+    ).toHaveLength(1)
+  })
+
+  it('refuses constraints it could not guarantee, and tells the coordinator', async () => {
+    const { requests, events } = await runScripted(
+      [
+        read,
+        discover,
+        delegateWith({
+          goal: 'Inspect retry jitter',
+          constraints: Array.from({ length: 13 }, (_, i) => `rule ${i}`)
+        }),
+        'DONE: the checks ran and the review of src/retry.ts is summarized above in detail.'
+      ],
+      runPlan(),
+      workspace(retry)
+    )
+    expect(events.some((event) => event.type === 'delegation')).toBe(false)
+    expect(JSON.stringify(requests.at(-1)?.messages)).toContain('at most 12 constraints')
+  })
+
   it('accepts a child that grounded its finding in the source', async () => {
     const { answer, events } = await runScripted(
       [

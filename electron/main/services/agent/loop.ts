@@ -114,7 +114,8 @@ import { toolFailureRecovery } from './recovery'
 import { findAgent } from '../agents'
 import {
   AGENT_HANDOFF_CHARS,
-  formatHandoffForPrompt
+  handoffConstraintProblem,
+  handoffMessages
 } from '../../../../src/shared/agent-orchestration'
 import { isVerifyCommand } from '../command-approval'
 import { buildPreservedWorkerMessages, isReadOnlyChat, truncateForModel } from './prompts'
@@ -416,7 +417,8 @@ async function* runAgentInternal(options: {
   let plan =
     options.turnPlan ??
     (await planChatTurn({
-      allowCloudComposer: false,      workspacePath: options.workspacePath,
+      allowCloudComposer: false,
+      workspacePath: options.workspacePath,
       settings: options.settings,
       context: {
         text: originalUserGoal,
@@ -538,15 +540,35 @@ async function* runAgentInternal(options: {
   let chatModel = plan.models.chat
   let workerModel = plan.models.tools
   const attemptedModels = new Set([workerModel])
-  if (plan.models.coordinator && plan.models.coordinator !== workerModel && plan.modelExecution?.policy !== 'fixed') {
-    await prepareModelTransition({ settings: options.settings, plan,
-      from: plan.models.coordinator, to: workerModel, releaseSession: () => undefined,
-      getSecret: options.getSecret, signal: options.signal })
+  if (
+    plan.models.coordinator &&
+    plan.models.coordinator !== workerModel &&
+    plan.modelExecution?.policy !== 'fixed'
+  ) {
+    await prepareModelTransition({
+      settings: options.settings,
+      plan,
+      from: plan.models.coordinator,
+      to: workerModel,
+      releaseSession: () => undefined,
+      getSecret: options.getSecret,
+      signal: options.signal
+    })
     const reason = `Coordinator ${plan.models.coordinator} → worker ${workerModel}`
-    appendTaskEvent(task.taskId, 'model-handoff', { coordinator: plan.models.coordinator,
-      worker: workerModel, taskId: task.taskId, policy: plan.modelExecution?.policy })
-    yield { type: 'adapt', kind: 'delegate', reason, model: workerModel,
-      agentId: plan.agentId, agentName: plan.agentName }
+    appendTaskEvent(task.taskId, 'model-handoff', {
+      coordinator: plan.models.coordinator,
+      worker: workerModel,
+      taskId: task.taskId,
+      policy: plan.modelExecution?.policy
+    })
+    yield {
+      type: 'adapt',
+      kind: 'delegate',
+      reason,
+      model: workerModel,
+      agentId: plan.agentId,
+      agentName: plan.agentName
+    }
   }
   const modelsCatalog =
     plan.intent === 'capability' ? formatAvailableModelsPrompt(options.settings, chatModel) : ''
@@ -707,8 +729,7 @@ async function* runAgentInternal(options: {
   const workspacePath = options.workspacePath as string
   const mcpMode = options.mcp ?? 'sync'
   /** Local GGUF KV session for this chat run (multi-step reuse). */
-  const ggufSessionKey =
-    options.jobId ? `gguf:${options.jobId}` : undefined
+  const ggufSessionKey = options.jobId ? `gguf:${options.jobId}` : undefined
   const releaseGgufSession = () => {
     if (ggufSessionKey) releaseLocalChatSession(ggufSessionKey)
   }
@@ -1313,7 +1334,8 @@ async function* runAgentInternal(options: {
     // A recovery route is a new turn plan and may widen tool access. Keep Ask
     // mode on the current read-only plan even when the worker is stuck.
     const decision =
-      mode === 'ask' || prohibitsModelRecovery(latestAssistant + ' ' + actionLog.slice(-3).join(' '))
+      mode === 'ask' ||
+      prohibitsModelRecovery(latestAssistant + ' ' + actionLog.slice(-3).join(' '))
         ? { kind: null, reason: '' as const }
         : await decideMidRunAdapt({
             workspacePath,
@@ -1354,16 +1376,26 @@ async function* runAgentInternal(options: {
       if (nextPlan.models.tools !== workerModel) {
         attemptedModels.add(nextPlan.models.tools)
         try {
-          await prepareModelTransition({ settings: options.settings, plan: nextPlan,
-            from: workerModel, to: nextPlan.models.tools, releaseSession: releaseGgufSession,
-            getSecret: options.getSecret, signal: options.signal })
+          await prepareModelTransition({
+            settings: options.settings,
+            plan: nextPlan,
+            from: workerModel,
+            to: nextPlan.models.tools,
+            releaseSession: releaseGgufSession,
+            getSecret: options.getSecret,
+            signal: options.signal
+          })
         } catch (error) {
           throwIfAborted(options.signal)
           rerouteCount++
           const reason = error instanceof Error ? error.message : String(error)
           recoveryExclusionReason = reason
-          appendTaskEvent(task.taskId, 'model-transition-refused', { from: workerModel,
-            to: nextPlan.models.tools, reason, attemptedModels: [...attemptedModels] })
+          appendTaskEvent(task.taskId, 'model-transition-refused', {
+            from: workerModel,
+            to: nextPlan.models.tools,
+            reason,
+            attemptedModels: [...attemptedModels]
+          })
           yield { type: 'status', text: reason }
           return false
         }
@@ -1399,9 +1431,12 @@ async function* runAgentInternal(options: {
       const reason = `${decision.reason} after ${trigger}`
       // Install the new agent's actual instructions, not just its display name.
       // Retain execution evidence and the original task's authority ceiling.
-      promptBudget = contextBudgetTokens(options.settings, workerModel) -
-        Math.ceil(JSON.stringify(openaiTools).length / 3) - 128
-      if (promptBudget < 512) throw new Error('Recovery model has insufficient context for the authorized tools')
+      promptBudget =
+        contextBudgetTokens(options.settings, workerModel) -
+        Math.ceil(JSON.stringify(openaiTools).length / 3) -
+        128
+      if (promptBudget < 512)
+        throw new Error('Recovery model has insufficient context for the authorized tools')
       const recoveryMessages = await buildPreservedWorkerMessages({
         messages,
         workspacePath,
@@ -1447,8 +1482,10 @@ async function* runAgentInternal(options: {
 
     if (decision.reason) {
       recoveryExclusionReason = decision.reason
-      appendTaskEvent(task.taskId, 'model-recovery-unavailable', { reason: decision.reason,
-        attemptedModels: [...attemptedModels] })
+      appendTaskEvent(task.taskId, 'model-recovery-unavailable', {
+        reason: decision.reason,
+        attemptedModels: [...attemptedModels]
+      })
       yield { type: 'status', text: decision.reason }
     }
     // Keep the current role when no safe fallback is configured, but give it a concrete recovery instruction.
@@ -2093,9 +2130,17 @@ async function* runAgentInternal(options: {
         throwIfAborted(options.signal)
         const detail = error instanceof Error ? error.message : String(error)
         const nativeFailure = error instanceof Error && error.name === 'LocalModelWorkerError'
-        const recoverable = nativeFailure || /context (?:budget|window)|vram|out of memory|invalid tool (?:schema|format)/i.test(detail)
-        if (plan.modelExecution?.policy && plan.modelExecution.policy !== 'fixed' &&
-            recoverable && !prohibitsModelRecovery(detail)) {
+        const recoverable =
+          nativeFailure ||
+          /context (?:budget|window)|vram|out of memory|invalid tool (?:schema|format)/i.test(
+            detail
+          )
+        if (
+          plan.modelExecution?.policy &&
+          plan.modelExecution.policy !== 'fixed' &&
+          recoverable &&
+          !prohibitsModelRecovery(detail)
+        ) {
           consecutiveToolErrors = Math.max(consecutiveToolErrors, 3)
           appendTaskEvent(task.taskId, 'model-execution-failed', { model: workerModel, detail })
           if (yield* tryMidRunAdapt('recoverable model execution failure')) continue
@@ -3554,11 +3599,18 @@ async function* runAgentInternal(options: {
               : Array.isArray(call.args.openQuestions)
                 ? call.args.openQuestions.map((q) => String(q)).filter(Boolean)
                 : undefined
+            const constraints = Array.isArray(call.args.constraints)
+              ? call.args.constraints.map((item) => String(item).trim()).filter(Boolean)
+              : []
+            const constraintProblem = handoffConstraintProblem([
+              ...new Set([...(task.inherited?.constraints ?? []), ...constraints])
+            ])
             const handoff: AgentHandoffPacket = {
               task,
               parentGoal: originalUserGoal,
               goal,
               summary,
+              constraints,
               files,
               openQuestions,
               confidence,
@@ -3571,6 +3623,8 @@ async function* runAgentInternal(options: {
                 detail: 'delegate_to_agent requires agent_id and goal',
                 mutated: false
               }
+            } else if (constraintProblem) {
+              result = { ok: false, detail: constraintProblem, mutated: false }
             } else if (options.allowDelegate === false) {
               result = {
                 ok: false,
@@ -3589,12 +3643,15 @@ async function* runAgentInternal(options: {
               // The child is the specialist that was asked for, within its own tool
               // ceiling. Routing the goal must not swap in an editor or force edits.
               const specialistPlan = await planChatTurn({
-                allowCloudComposer: false,                workspacePath,
+                allowCloudComposer: false,
+                workspacePath,
                 settings: options.settings,
                 context: {
                   text: goal,
-                  selectedModel: plan.modelExecution?.policy && plan.modelExecution.policy !== 'fixed'
-                    ? plan.modelExecution.policy : workerModel,
+                  selectedModel:
+                    plan.modelExecution?.policy && plan.modelExecution.policy !== 'fixed'
+                      ? plan.modelExecution.policy
+                      : workerModel,
                   mode: 'agent',
                   manualAgentId: agentId,
                   skipModelRouter: true
@@ -3621,7 +3678,8 @@ async function* runAgentInternal(options: {
                 specialistPlan,
                 goal,
                 workspacePath,
-                `${task.taskId}:${agentId}:${step}`
+                `${task.taskId}:${agentId}:${step}`,
+                constraints
               )
               specialistPlan.toolPolicy = intersectToolPolicy(specialistPlan.toolPolicy, task)
               specialistPlan.escalateToFull = false
@@ -3651,10 +3709,7 @@ async function* runAgentInternal(options: {
                   workspacePath,
                   settings: options.settings,
                   model: specialistPlan.models.tools,
-                  messages: [
-                    { role: 'system', content: formatHandoffForPrompt(handoff) },
-                    { role: 'user', content: goal }
-                  ],
+                  messages: handoffMessages(handoff),
                   temperature: specialist?.temperature ?? options.temperature,
                   signal: options.signal,
                   getSecret: options.getSecret,

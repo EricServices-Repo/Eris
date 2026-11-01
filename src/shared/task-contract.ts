@@ -164,6 +164,8 @@ export interface InheritedRequirements {
   fromTaskId: string
   /** The top-level request, bounded, so limits the parser did not recognize still reach the child. */
   parentRequest: string
+  /** Stated by the coordinator. Part of the required task block, so never truncated. */
+  constraints: string[]
   /** Stack the parent required and the child's own goal did not state. */
   stack: string[]
   /** The parent's explicit clauses, such as "without changing the public API". */

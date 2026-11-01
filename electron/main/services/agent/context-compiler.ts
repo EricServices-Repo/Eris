@@ -106,6 +106,7 @@ export function modelFacingTask(task: TaskContract): Record<string, unknown> {
     out.fromParentRequest = {
       note: 'Limits on this assignment, not additional work. Complete only your own goal.',
       request: inherited.parentRequest,
+      ...(inherited.constraints.length ? { constraints: inherited.constraints } : {}),
       ...(inherited.requirements.length ? { requirements: inherited.requirements } : {}),
       ...(inherited.files.length ? { files: inherited.files } : {})
     }

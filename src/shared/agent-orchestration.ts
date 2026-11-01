@@ -8,6 +8,8 @@ export interface AgentHandoffPacket {
   parentGoal?: string
   goal: string
   summary: string
+  /** Must reach the specialist whatever else is cut. Each is short and checkable. */
+  constraints?: string[]
   files?: string[]
   openQuestions?: string[]
   /** 0–1 confidence from the sender */
@@ -38,6 +40,44 @@ export interface AgentRouteStep {
   kind: 'plan' | 'escalate' | 'reroute' | 'delegate'
 }
 
+export const MAX_HANDOFF_CONSTRAINTS = 12
+export const MAX_HANDOFF_CONSTRAINT_CHARS = 300
+
+/** Why these constraints cannot be guaranteed, or null. Refused rather than shortened. */
+export function handoffConstraintProblem(constraints: readonly string[]): string | null {
+  if (constraints.length > MAX_HANDOFF_CONSTRAINTS)
+    return `A handoff carries at most ${MAX_HANDOFF_CONSTRAINTS} constraints, including inherited ones; got ${constraints.length}. Keep the ones that must hold and put the rest in the summary.`
+  const long = constraints.find((item) => item.length > MAX_HANDOFF_CONSTRAINT_CHARS)
+  return long === undefined
+    ? null
+    : `Each handoff constraint is at most ${MAX_HANDOFF_CONSTRAINT_CHARS} characters. Shorten: ${long.slice(0, 60)}…`
+}
+
+/**
+ * The optional part of a handoff, which may be cut under a tight budget. The goal, the
+ * parent request and the constraints are in the task contract, which never is.
+ */
+export function formatHandoffBriefing(packet: AgentHandoffPacket): string {
+  const lines = [
+    `[Eris handoff → ${packet.toAgentId}]`,
+    `From: ${packet.fromAgentId}`,
+    `You are a specialist working for ${packet.fromAgentId}, not answering the user. Complete only the goal in your task contract, within the task's project and tool ceiling, and return the requested evidence to your coordinator: what you inspected or changed, with paths, and anything left unresolved.`,
+    `Summary: ${packet.summary}`
+  ]
+  if (packet.files?.length) lines.push(`Files: ${packet.files.join(', ')}`)
+  if (packet.openQuestions?.length)
+    lines.push(`Open questions:\n${packet.openQuestions.map((q) => `- ${q}`).join('\n')}`)
+  if (packet.confidence != null) lines.push(`Confidence: ${packet.confidence}`)
+  return lines.join('\n')
+}
+
+/** One message shape for a specialist, whether it runs inline or as a background job. */
+export const handoffMessages = (packet: AgentHandoffPacket) => [
+  { role: 'system' as const, content: formatHandoffBriefing(packet) },
+  { role: 'user' as const, content: packet.goal }
+]
+
+/** The whole packet, for routing and for showing a job's result in chat. */
 export function formatHandoffForPrompt(packet: AgentHandoffPacket): string {
   const lines = [
     `[Eris handoff → ${packet.toAgentId}]`,
@@ -50,6 +90,8 @@ export function formatHandoffForPrompt(packet: AgentHandoffPacket): string {
       : '',
     `Summary: ${packet.summary}`
   ]
+  if (packet.constraints?.length)
+    lines.push(`Constraints:\n${packet.constraints.map((item) => `- ${item}`).join('\n')}`)
   if (packet.files?.length) lines.push(`Files: ${packet.files.join(', ')}`)
   if (packet.openQuestions?.length) {
     lines.push(`Open questions:\n${packet.openQuestions.map((q) => `- ${q}`).join('\n')}`)

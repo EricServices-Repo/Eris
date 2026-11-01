@@ -418,7 +418,16 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
       },
       agentId: { type: 'string' },
       goal: { type: 'string', description: 'Concrete goal for the specialist' },
-      summary: { type: 'string', description: 'Context the specialist needs' },
+      summary: {
+        type: 'string',
+        description: 'Context the specialist needs. May be shortened under a tight budget.'
+      },
+      constraints: {
+        type: 'array',
+        items: { type: 'string' },
+        description:
+          'Short requirements that must reach the specialist: at most 12, 300 characters each. Never shortened.'
+      },
       files: { type: 'array', items: { type: 'string' } },
       open_questions: { type: 'array', items: { type: 'string' } },
       openQuestions: { type: 'array', items: { type: 'string' } },
