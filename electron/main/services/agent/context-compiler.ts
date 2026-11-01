@@ -101,6 +101,15 @@ export function modelFacingTask(task: TaskContract): Record<string, unknown> {
     acceptanceCriteria: task.acceptanceCriteria
   }
   if (task.skillIds?.length) out.skillIds = task.skillIds
+  const { inherited } = task
+  if (inherited)
+    out.fromParentRequest = {
+      note: 'Limits on this assignment, not additional work. Complete only your own goal.',
+      request: inherited.parentRequest,
+      ...(inherited.requirements.length ? { requirements: inherited.requirements } : {}),
+      ...(inherited.files.length ? { files: inherited.files } : {})
+    }
+  if (inherited?.conflicts.length) out.requirementConflicts = inherited.conflicts
   if (task.recommendations.length)
     out.recommendations = task.recommendations.map(({ id, text, targets }) => ({
       id,

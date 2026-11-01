@@ -295,6 +295,11 @@ export function languageRoles(text: string): LanguageRoles {
 }
 
 /** The language the reply or patch must use. See languageRoles for the source language. */
+/** Every language a request names by name, whichever one became its target. */
+export const namedLanguages = (text: string) => [
+  ...new Set(languageAt(requestTextForIntent(text), EXPLICIT_LANGUAGES).map((item) => item.name))
+]
+
 export function requestedLanguage(text: string): string | null {
   return languageRoles(text).target
 }

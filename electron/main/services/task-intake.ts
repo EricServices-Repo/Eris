@@ -3,18 +3,26 @@ import { isPathInside } from './workspace-fs'
 import { createHash, randomUUID } from 'crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'fs'
 import { basename, join, relative } from 'path'
-import { extractRecommendations, selectRecommendations } from '../../../src/shared/recommendations'
-import type {
-  IntentResolution,
-  ProjectStack,
-  TaskRecommendation,
-  ScopeApplicability,
-  TaskContract,
-  TaskInterpretation
+import {
+  extractRecommendations,
+  pathsIn,
+  selectRecommendations
+} from '../../../src/shared/recommendations'
+import {
+  interpretationOf,
+  type InheritedRequirements,
+  type IntentResolution,
+  type ProjectStack,
+  type TaskRecommendation,
+  type ScopeApplicability,
+  type TaskContract,
+  type TaskInterpretation
 } from '../../../src/shared/task-contract'
 import {
   effectConstraints,
   interpretRequest,
+  namedLanguages,
+  requestConstraints,
   requestTextForIntent,
   stackFit
 } from '../../../src/shared/task-interpretation'
@@ -568,6 +576,107 @@ function acceptanceCriteriaFor(
   return [...new Set([base, ...interpretation.obligations.map((obligation) => obligation.text)])]
 }
 
+const MAX_INHERITED_REQUIREMENTS = 8
+const MAX_PARENT_REQUEST_CHARS = 600
+const MAX_INHERITED_FILES = 12
+
+function mergedEffects(
+  parent: TaskInterpretation['constraints'],
+  child: TaskInterpretation['constraints']
+): TaskInterpretation['constraints'] {
+  if (!parent || !child) return parent ?? child
+  return {
+    edit: parent.edit || child.edit,
+    verification: parent.verification || child.verification,
+    execution: parent.execution || child.execution,
+    commit: parent.commit || child.commit,
+    external: parent.external || child.external,
+    trace: [...parent.trace, ...child.trace]
+  }
+}
+
+/**
+ * A subgoal rarely restates what its parent asked for, so reading it alone loses the
+ * stack and every stated limit. A child may narrow the parent's request. Picking one of
+ * several languages the parent named is narrowing; naming a different one is a conflict,
+ * which is recorded for the coordinator while the parent's requirement stands. Limits
+ * only add up, and obligations and recommendations stay with the parent.
+ */
+function inheritRequirements(
+  parent: TaskContract,
+  goal: string,
+  child: TaskInterpretation
+): { interpretation: TaskInterpretation; inherited: InheritedRequirements } {
+  const from = interpretationOf(parent)
+  const same = (a: string | null | undefined, b: string | null | undefined) =>
+    Boolean(a && b && a.toLowerCase() === b.toLowerCase())
+  const parentRequest =
+    parent.inherited?.parentRequest ?? parent.originalText.slice(0, MAX_PARENT_REQUEST_CHARS)
+  const narrows = namedLanguages(parent.originalText).some((name) => same(name, child.language))
+  const namesSource = same(from.sourceLanguage, child.language)
+  const conflict =
+    from.language &&
+    child.language &&
+    !same(from.language, child.language) &&
+    !namesSource &&
+    !narrows
+  const language = narrows && !namesSource ? child.language : (from.language ?? child.language)
+  const frameworks = [...new Set([...from.frameworks, ...child.frameworks])]
+  const lower = goal.toLowerCase()
+  return {
+    interpretation: {
+      ...child,
+      language,
+      sourceLanguage: child.sourceLanguage ?? from.sourceLanguage,
+      languageAmbiguity: language ? undefined : from.languageAmbiguity,
+      frameworks,
+      forbidsMutation: from.forbidsMutation || child.forbidsMutation,
+      constraints: mergedEffects(from.constraints, child.constraints),
+      projectStack: from.projectStack,
+      stackFit: from.stackFit,
+      conceptFit: child.conceptFit ?? from.conceptFit
+    },
+    inherited: {
+      fromTaskId: parent.taskId,
+      parentRequest,
+      stack: [
+        ...(language && !same(language, child.language) ? [language] : []),
+        ...frameworks.filter((name) => !child.frameworks.includes(name))
+      ],
+      requirements: [
+        ...new Set([
+          ...(parent.inherited?.requirements ?? []),
+          ...requestConstraints(parent.originalText).phrases
+        ])
+      ]
+        .filter((phrase) => !lower.includes(phrase.toLowerCase()))
+        .slice(0, MAX_INHERITED_REQUIREMENTS),
+      files: [
+        ...new Set([...(parent.inherited?.files ?? []), ...pathsIn(parent.originalText)])
+      ].slice(0, MAX_INHERITED_FILES),
+      conflicts: [
+        ...(parent.inherited?.conflicts ?? []),
+        ...(conflict
+          ? [{ field: 'language' as const, parent: from.language!, child: child.language! }]
+          : [])
+      ]
+    }
+  }
+}
+
+function inheritedCriteria(inherited: InheritedRequirements, deliverable: string) {
+  return [
+    ...(inherited.stack.length && deliverable === 'patch'
+      ? [`Use ${inherited.stack.join(', ')}, as the parent request requires.`]
+      : []),
+    ...inherited.requirements.map((phrase) => `Keep to the parent request: ${phrase}.`),
+    ...inherited.conflicts.map(
+      ({ parent, child }) =>
+        `This goal names ${child} but the parent request requires ${parent}. Use ${parent} and report the conflict to your coordinator.`
+    )
+  ]
+}
+
 export function childTaskContract(
   parent: TaskContract,
   plan: TurnPlan,
@@ -591,13 +700,17 @@ export function childTaskContract(
             : 'answer',
     edit
   )
-  const interpretation = interpretRequest({
-    text: goal,
-    intent: plan.intent,
-    canEdit: edit,
-    revision: parent.revision,
-    route: plan.routeTrace
-  })
+  const { interpretation, inherited } = inheritRequirements(
+    parent,
+    goal,
+    interpretRequest({
+      text: goal,
+      intent: plan.intent,
+      canEdit: edit,
+      revision: parent.revision,
+      route: plan.routeTrace
+    })
+  )
   const root = realpathSync(workspacePath)
   const relativeProject =
     parent.scope.workspaceRoot && parent.scope.projectRoot
@@ -616,6 +729,10 @@ export function childTaskContract(
     // A child owns a bounded assignment; the parent's follow-up state is not its own.
     continuation: undefined,
     result: undefined,
+    // The parent's selected recommendations are its work, not this assignment.
+    recommendations: [],
+    recommendationSelection: undefined,
+    inherited,
     scope: { ...parent.scope, workspaceRoot: root, projectRoot },
     authority: {
       tools,
@@ -630,13 +747,10 @@ export function childTaskContract(
               : 'none',
       externalEffects: parent.authority.externalEffects && tools === 'full'
     },
-    acceptanceCriteria: acceptanceCriteriaFor(
-      plan,
-      deliverable,
-      goal,
-      interpretation,
-      parent.scope.applicability
-    ),
+    acceptanceCriteria: [
+      ...acceptanceCriteriaFor(plan, deliverable, goal, interpretation, parent.scope.applicability),
+      ...inheritedCriteria(inherited, deliverable)
+    ],
     interpretation
   }
 }
