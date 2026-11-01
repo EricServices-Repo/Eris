@@ -12,6 +12,7 @@ import {
   tokenScore
 } from '../../../src/shared/recall-terms'
 import { DecisionIndex, decisionId } from './context-decisions'
+import { childOutcomeText } from '../../../src/shared/child-outcome'
 import { RecallIndex } from './context-recall-index'
 import { createHash } from 'crypto'
 import type { ChatMessage } from '../../../src/shared/settings-schema'
@@ -1101,13 +1102,14 @@ export class ContextMemoryStore {
             sourceId: m.id,
             ordinal: row.ordinal,
             kind: 'task-result',
-            text:
-              r.workingState &&
-              r.workingState.sourceMessageId === m.id &&
-              r.workingState.taskId === r.taskId
+            text: r.childOutcome
+              ? childOutcomeText(r.childOutcome)
+              : r.workingState &&
+                  r.workingState.sourceMessageId === m.id &&
+                  r.workingState.taskId === r.taskId
                 ? workingStateText(r.workingState)
                 : `Recorded task ${r.taskId}: ${r.terminal}. Recorded changed paths: ${r.changedFiles.slice(0, 20).join(', ')}. Historical outcome, not current verification.`,
-            status: 'observed',
+            status: r.childOutcome && !r.childOutcome.observed ? 'unverified' : 'observed',
             projectRoot: r.projectRoot
           },
           score: score + 4,

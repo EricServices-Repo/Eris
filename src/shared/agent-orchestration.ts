@@ -2,6 +2,7 @@ import type { ContextHeader } from './context-memory'
 import { ContextOriginSchema } from './context-origin'
 import type { ContextEvidence } from './context-evidence'
 import type { TaskContract } from './task-contract'
+import { childOutcomeText, type ChildOutcome } from './child-outcome'
 /** Minimum characters kept when one agent passes text to another. */
 export const AGENT_HANDOFF_CHARS = 8_000
 
@@ -421,6 +422,7 @@ export function summarizeAgentResults(
         answer: string
         error?: string
         filesTouched?: string[]
+        outcome?: { receipt: ChildOutcome }
       }
     | undefined
   >
@@ -434,6 +436,10 @@ export function summarizeAgentResults(
           `### ${child.agentName || child.agentId} · ${child.status} · ${child.id}`,
           child.error ? `Error: ${child.error}` : '',
           child.filesTouched?.length ? `Files: ${child.filesTouched.join(', ')}` : '',
+          child.outcome
+            ? childOutcomeText(child.outcome.receipt)
+            : 'No typed child receipt; narrative is unverified.',
+          'Unverified child narrative:',
           child.answer.trim().slice(0, AGENT_HANDOFF_CHARS) || '(no answer)',
           child.status === 'done' && child.filesTouched?.length
             ? 'Inspect the reported changes. If they are in a separate worktree, merge/apply them before claiming they are in the user workspace.'

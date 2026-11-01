@@ -45,7 +45,11 @@ import {
   requestCommandApproval
 } from './command-approval'
 import { getResolvedSettings } from './settings'
-import { appendMessage, createChat, getChat } from './chats'
+import { appendChatMessage, createChat, getChat } from './chats'
+import { realpathAllowMissing } from './workspace-fs'
+import { childOutcome, outcomeDigest } from './child-outcome'
+import { ThreadWorkingStateBuilder } from './thread-working-state'
+import { captureReceiptEvidence } from './context-evidence'
 import { findAgent } from './agents'
 import {
   captureHandoffEvidence,
@@ -120,6 +124,19 @@ function withBoard(job: BackgroundJob): BackgroundJob {
 }
 
 function upsert(job: BackgroundJob): BackgroundJob {
+  const prior = job.outcome?.receipt
+  const integration = job.integration?.state ?? 'unapplied'
+  if (prior && (prior.status !== job.status || prior.integration !== integration)) {
+    const receipt: NonNullable<BackgroundJob['outcome']>['receipt'] = {
+      ...prior,
+      status: job.status,
+      integration,
+      observed:
+        prior.observed && ['done', 'merged'].includes(job.status) && integration === 'integrated'
+    }
+    receipt.resultRevision = outcomeDigest(receipt)
+    job = { ...job, outcome: { ...job.outcome!, receipt } }
+  }
   job.updatedAt = new Date().toISOString()
   const next = withBoard(job)
   jobs.set(next.id, next)
@@ -569,10 +586,45 @@ export async function mergeBackgroundJob(id: string): Promise<BackgroundJob> {
   } catch {
     // branch is already merged
   }
+  const integration = {
+    state: 'integrated' as const,
+    commit: merged.commit,
+    at: new Date().toISOString()
+  }
+  const priorOutcome = job.outcome
+  const paths = priorOutcome?.receipt.effects.map((effect) => effect.path) ?? []
+  const integratedEvidence = paths.length
+    ? await captureReceiptEvidence(job.workspacePath, paths)
+    : undefined
+  const matchesChild =
+    priorOutcome?.dependencies?.complete &&
+    integratedEvidence?.complete &&
+    paths.every(
+      (path) =>
+        priorOutcome.dependencies!.files.find((file) => file.path === path)?.digest ===
+        integratedEvidence.files.find((file) => file.path === path)?.digest
+    )
+  const integratedReceipt = priorOutcome
+    ? {
+        ...priorOutcome.receipt,
+        status: 'merged' as const,
+        integration: 'integrated' as const,
+        observed: Boolean(matchesChild),
+        verification:
+          priorOutcome.receipt.verification === 'passed'
+            ? ('stale' as const)
+            : priorOutcome.receipt.verification,
+        unresolved: ['Re-run verification in the integrated workspace.']
+      }
+    : undefined
+  if (integratedReceipt) integratedReceipt.resultRevision = outcomeDigest(integratedReceipt)
   return upsert({
     ...job,
+    outcome: integratedReceipt
+      ? { receipt: integratedReceipt, dependencies: matchesChild ? integratedEvidence : undefined }
+      : priorOutcome,
     status: 'merged',
-    integration: { state: 'integrated', commit: merged.commit, at: new Date().toISOString() },
+    integration,
     liveStatus: 'Merged',
     actionLog: [...job.actionLog, 'Merged into current branch']
   })
@@ -604,14 +656,45 @@ export async function bringJobIntoChat(
     handoff: job.handoff
   })
   try {
-    let thread = threadId ? await getChat(workspacePath, threadId) : null
+    const targetKey = workspacePath ? workspaceKey(workspacePath) : 'profile'
+    const previousImport = job.chatImports?.find((item) => item.workspaceKey === targetKey)
+    const targetThread = threadId ?? previousImport?.threadId
+    let thread = targetThread ? await getChat(workspacePath, targetThread) : null
     if (!thread) {
       thread = await createChat(workspacePath, job.model || 'builtin:composer-lite')
     }
-    const saved = await appendMessage(workspacePath, thread.id, 'assistant', content)
-    if (job.sourceThreadId !== saved.id) {
-      patch(jobId, (j) => ({ ...j, sourceThreadId: saved.id }))
-    }
+    const savedOutcome = job.outcome
+    const receipt = savedOutcome?.receipt ?? childOutcome(job)
+    // A separate-worktree snapshot is never validated as source-workspace truth.
+    const dependencies =
+      receipt.observed &&
+      savedOutcome?.dependencies?.root ===
+        (workspacePath ? realpathAllowMissing(workspacePath) : null)
+        ? savedOutcome.dependencies
+        : undefined
+    const imported = dependencies ? receipt : { ...receipt, observed: false }
+    const revision = outcomeDigest([imported, outcomeDigest(job.answer)])
+    const saved = await appendChatMessage(workspacePath, thread.id, {
+      id: `child:${job.id}:${revision.slice(0, 32)}`,
+      role: 'assistant',
+      content,
+      createdAt: Date.now(),
+      contextResult: {
+        taskId: job.id,
+        terminal: imported.status,
+        projectRoot: workspacePath,
+        changedFiles: imported.effects.map((effect) => effect.path),
+        childOutcome: imported,
+        dependencies
+      }
+    })
+    patch(jobId, (j) => ({
+      ...j,
+      chatImports: [
+        ...(j.chatImports ?? []).filter((item) => item.workspaceKey !== targetKey),
+        { workspaceKey: targetKey, threadId: saved.id }
+      ].slice(-16)
+    }))
     return { ok: true, threadId: saved.id, content }
   } catch (err) {
     return {
@@ -720,6 +803,9 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
     manualAgentId: job.agentId !== 'auto' ? job.agentId : null
   }
   pendingHints.delete(job.id)
+
+  let observedState: ThreadWorkingStateBuilder | undefined
+  const sourcePaths = new Set<string>()
 
   try {
     patch(job.id, (j) => ({
@@ -862,6 +948,7 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
     }
     appendTaskEvent(job.id, 'task', turnPlan.task)
     const sender = currentSender
+    observedState = new ThreadWorkingStateBuilder(turnPlan.task, `child:${job.id}`)
     let thinkingBuf = ''
     let lastUpsert = 0
     const flushThinking = (force = false) => {
@@ -978,6 +1065,10 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
     })) {
       const cur = getBackgroundJob(job.id)
       if (!cur) break
+      observedState?.observe(evt)
+      if (evt.type === 'evidence' && evt.evidence.ok && evt.evidence.path && sourcePaths.size < 32)
+        sourcePaths.add(evt.evidence.path)
+      if (evt.type === 'diff' && sourcePaths.size < 32) sourcePaths.add(evt.diff.path)
       if (evt.type === 'answer') {
         upsert({ ...cur, answer: cur.answer + evt.text })
       } else if (evt.type === 'thinking') {
@@ -1091,6 +1182,22 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
     logError('Background agent failed', { id: job.id, error: message })
   } finally {
     clearTimeout(deadline)
+    const ended = getBackgroundJob(job.id)
+    if (ended && observedState) {
+      try {
+        const state = observedState.snapshot(ended.status)
+        const dependencies = sourcePaths.size
+          ? await captureReceiptEvidence(ended.worktreePath, [...sourcePaths])
+          : undefined
+        const receipt = childOutcome(ended, state, dependencies)
+        upsert({ ...ended, outcome: { receipt, dependencies } })
+      } catch (error) {
+        logError('Child receipt unavailable; outcome remains unverified', {
+          id: ended.id,
+          error: String(error)
+        })
+      }
+    }
     await flushTaskLedger(job.id)
     aborts.delete(job.id)
     void pumpQueue()

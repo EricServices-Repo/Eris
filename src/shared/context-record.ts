@@ -1,3 +1,4 @@
+import { ChildOutcomeSchema } from './child-outcome'
 import { ThreadWorkingStateSchema } from './thread-working-state'
 import { z } from 'zod'
 import type { ChatMessage } from './settings-schema'
@@ -17,6 +18,7 @@ const ContextRecordSchema = z.object({
   contextResult: z
     .object({
       workingState: ThreadWorkingStateSchema.optional(),
+      childOutcome: ChildOutcomeSchema.optional(),
       taskId: z.string().min(1).max(256),
       terminal: z.string().min(1).max(64),
       projectRoot: z.string().max(4096).nullable(),

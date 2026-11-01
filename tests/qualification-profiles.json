@@ -17,6 +17,7 @@
         "tests/background-cancellation.test.ts",
         "tests/task-tree-budget.test.ts",
         "tests/child-task-requirements.test.ts",
+        "tests/child-outcome.test.ts",
         "tests/handoff-constraints.test.ts",
         "tests/handoff-envelope.test.ts",
         "tests/native-token-count.test.ts",
