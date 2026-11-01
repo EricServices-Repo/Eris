@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'async_hooks'
 import { invalidEvidenceItems } from './context-evidence'
 import { evidenceEpochMatches } from './context-evidence-epochs'
 import { createHash } from 'crypto'
@@ -18,7 +19,11 @@ import {
   type MemoryPromptItem
 } from '../../../src/shared/context-memory'
 
+/** One request and whatever it explicitly spawned. Compared by identity. */
+export type EvidenceScope = object
 type EvidenceLease = {
+  /** Undefined only for a lease taken outside any request. */
+  scope?: EvidenceScope
   root: string | null
   threadId: string
   taskId: string
@@ -37,6 +42,20 @@ type EvidenceLease = {
   } | null
 }
 const leases = new Set<EvidenceLease>()
+const scopes = new AsyncLocalStorage<EvidenceScope>()
+
+export const currentEvidenceScope = () => scopes.getStore()
+
+/** Runs `work` as its own request, or as part of `scope` for a dependent child. */
+export const runInEvidenceScope = <T>(work: () => T, scope: EvidenceScope = {}): T =>
+  scopes.run(scope, work)
+
+/** The same, for a callback another layer invokes. */
+export const inEvidenceScope =
+  <A extends unknown[], T>(work: (...args: A) => T) =>
+  (...args: A): T =>
+    runInEvidenceScope(() => work(...args))
+
 export const DERIVED_WITHHELD_NOTICE =
   'Earlier steps in this run used local-only conversation memory and are not shown to this model. Inspect the workspace again rather than assuming their results.'
 
@@ -50,6 +69,7 @@ export function leaseMemoryEvidence(input: {
   const { prompt } = input
   if (!prompt.items?.length || prompt.evidenceToken === undefined) return () => undefined
   const lease: EvidenceLease = {
+    scope: scopes.getStore(),
     root: input.root,
     threadId: input.threadId,
     taskId: input.taskId,
@@ -237,6 +257,34 @@ function withoutDerived<T extends { content?: unknown }>(
   ]
 }
 
+type Outbound = { content?: unknown; contextBundle?: { taskId?: string } }
+
+const namesTask = (lease: EvidenceLease, messages: readonly Outbound[]) =>
+  messages.some(({ contextBundle }) => contextBundle?.taskId === lease.taskId)
+
+const carriesItems = (lease: EvidenceLease, messages: readonly Outbound[]) =>
+  messages.some(
+    ({ content }) =>
+      typeof content === 'string' &&
+      lease.items.some((item) => content.includes(memoryItemMarker(item.line)))
+  )
+
+/**
+ * Only the request that took a lease answers to it, so an unrelated request keeps its own
+ * goal and instructions. A recalled item is private wherever it turns up, so a request
+ * that merely carries one loses that item, and nothing else: another lease's intent and
+ * authority must never replace its messages. That also means a call that lost its scope
+ * cannot send recalled text past this filter.
+ */
+function leasesFor(messages: readonly Outbound[]) {
+  const scope = scopes.getStore()
+  const owned = [...leases].filter((lease) => lease.scope === scope || namesTask(lease, messages))
+  const carried = [...leases].filter(
+    (lease) => !owned.includes(lease) && carriesItems(lease, messages)
+  )
+  return { owned, carried }
+}
+
 /**
  * The outbound messages this destination may receive right now. Retained prompts are
  * never edited, so a later recompile or compaction passes through the same removal.
@@ -246,7 +294,9 @@ export async function withEligibleMemory<T extends { content?: unknown }>(
   model: string,
   settings: AppSettings
 ): Promise<{ messages: T[]; revoked: boolean }> {
-  if (!leases.size) return { messages, revoked: false }
+  const { owned, carried } = leasesFor(messages as Outbound[])
+  const relevant = [...owned, ...carried]
+  if (!relevant.length) return { messages, revoked: false }
   /** Needs both the request's settings and current ones, so a revoked approval applies. */
   const recallBlocked = (lease: EvidenceLease) =>
     !lease.allowRemote &&
@@ -256,7 +306,7 @@ export async function withEligibleMemory<T extends { content?: unknown }>(
     )
   let dependenciesRevoked = false
   await Promise.all(
-    [...leases].map(async (lease) => {
+    relevant.map(async (lease) => {
       await reloadIfCleared(lease)
       for (const id of await invalidEvidenceItems(lease.root, lease.items)) {
         if (!lease.revoked.has(id)) dependenciesRevoked = true
@@ -266,7 +316,7 @@ export async function withEligibleMemory<T extends { content?: unknown }>(
   )
   let outbound = messages
   let revoked = dependenciesRevoked
-  for (const lease of leases) {
+  for (const lease of relevant) {
     if (settle(lease)) revoked = true
     const remoteBlocked = recallBlocked(lease)
     const removed = lease.items.filter((item) => remoteBlocked || lease.revoked.has(item.id))
@@ -285,7 +335,7 @@ export async function withEligibleMemory<T extends { content?: unknown }>(
       return cleaned
     })
   }
-  for (const lease of leases) {
+  for (const lease of owned) {
     recordExposure(lease, outbound)
     if (lease.exposure && recallBlocked(lease)) outbound = withoutDerived(lease, outbound)
     else if (lease.exposure && [...lease.revoked].some((id) => lease.exposure!.items.has(id)))

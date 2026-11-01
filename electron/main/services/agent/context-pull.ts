@@ -296,6 +296,7 @@ export class ContextPull {
         refused: journalOmissionMarker(journaled.entry),
         reason: `omitted:${journaled.entry.omitted}`
       }
+    if (journaled.status === 'busy') return { refused: journaled.marker, reason: 'memory-busy' }
     const item = this.threadRefs.get(ref)
     if (!item || !this.input.thread)
       return {
