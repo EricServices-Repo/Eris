@@ -5,6 +5,9 @@ import { RecallIndex } from '../electron/main/services/context-recall-index'
 import {
   firstMatchOffset,
   recallQuery,
+  recallExpansion,
+  weightedRecallQuery,
+  tokenScore,
   recallTerms,
   RECALL_RANKING_VERSION
 } from '../src/shared/recall-terms'
@@ -156,5 +159,53 @@ describe('recall terms', () => {
   it('finds a token offset in the raw string', () => {
     expect(firstMatchOffset('Ａ then bookingConfirmation', new Set(['booking']))).toBe(7)
     expect(firstMatchOffset('nothing here', new Set(['booking']))).toBe(-1)
+  })
+})
+
+describe('contextual follow-up query (#235)', () => {
+  it('finds a buried topic from eligible recent context without using excluded rows', async () => {
+    const store = storeWith(
+      [
+        message('old', 'bookingConfirmation returns the receipt code'),
+        ...filler(40),
+        message('recent', 'bookingConfirmation needs the same validation'),
+        message('forgotten', 'privateSecretFeature must be rewritten')
+      ],
+      ['forgotten']
+    )
+    const query = 'do the same for the other module'
+    expect(sources(await store.select('thread', query))).not.toContain('old')
+    const expansion = store.queryExpansion('thread', query, {})
+    expect(expansion).toContain('bookingconfirmation')
+    expect(expansion).not.toContain('privatesecretfeature')
+    expect(sources(await store.select('thread', query, { queryExpansion: expansion }))).toContain(
+      'old'
+    )
+  })
+  it('keeps explicit queries unchanged and primary matches stronger than all expansion', () => {
+    expect(recallExpansion('checkout currency', { recent: ['unrelated old issue'] })).toBe('')
+    const units = weightedRecallQuery('checkout', 'alpha beta gamma delta epsilon zeta')
+    const score = (term: string) =>
+      units.reduce((n, x) => n + x.weight * tokenScore(x.token, (t) => t === term), 0)
+    expect(score('checkout')).toBeGreaterThan(6 * score('alpha'))
+    expect(
+      recallQuery(
+        recallExpansion('fix that too', { task: 'x '.repeat(2000), files: ['src/payment.ts'] })
+      )
+    ).toHaveLength(2)
+  })
+  it('excludes other-project sources from query expansion', () => {
+    const store = storeWith([
+      { ...message('other', 'foreignProject secret design'), contextProjectRoot: '/other' },
+      { ...message('current', 'checkout receipt'), contextProjectRoot: '/current' }
+    ])
+    const expanded = store.queryExpansion(
+      'thread',
+      'same as before',
+      {},
+      { projectRoot: '/current' }
+    )
+    expect(expanded).toContain('checkout')
+    expect(expanded).not.toContain('foreign')
   })
 })

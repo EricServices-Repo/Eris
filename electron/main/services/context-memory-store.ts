@@ -4,7 +4,9 @@ import { contextRecord } from '../../../src/shared/context-record'
 import {
   firstMatchOffset,
   queryTerms,
-  recallQuery,
+  recallExpansion,
+  weightedRecallQuery,
+  type RecallQueryHints,
   recallTerms,
   RECALL_RANKING_VERSION,
   tokenScore
@@ -837,10 +839,40 @@ export class ContextMemoryStore {
       }
     }
   }
+  /** Only eligible current-scope user rows may seed a follow-up query. */
+  queryExpansion(
+    key: string,
+    query: string,
+    hints: RecallQueryHints,
+    options: {
+      projectRoot?: string | null
+      excludeId?: string
+    } = {}
+  ): string {
+    const entry = this.entries.get(key)
+    const recent: string[] = []
+    if (entry) {
+      const forgotten = new Set(entry.controls.forgotten)
+      for (let i = entry.records.length - 1; i >= Math.max(0, entry.records.length - 12); i--) {
+        const row = entry.records.get(i)
+        if (
+          !row ||
+          row.message.role !== 'user' ||
+          row.message.id === options.excludeId ||
+          recallExcluded(row, entry.controls, forgotten, options.projectRoot)
+        )
+          continue
+        recent.push(row.message.content.slice(0, 600))
+        if (recent.length === 1) break
+      }
+    }
+    return recallExpansion(query, { ...hints, recent })
+  }
   async select(
     key: string,
     query: string,
     options: {
+      queryExpansion?: string
       coveredSourceIds?: readonly string[]
       excludeId?: string
       projectRoot?: string | null
@@ -946,7 +978,8 @@ export class ContextMemoryStore {
       records = e.records,
       controls = structuredClone(e.controls)
     const resume = /\b(?:resume|continue|remaining|unfinished|left off|what remains)\b/i.test(query)
-    const tokens = recallQuery(query)
+    const weighted = weightedRecallQuery(query, options.queryExpansion)
+    const tokens = weighted.map((unit) => unit.token)
     const forgotten = new Set(controls.forgotten)
     const firstRow = e.firstRow
     // Read the index before the first yield; `records` above is the same snapshot.
@@ -980,7 +1013,10 @@ export class ContextMemoryStore {
       const terms = matched.get(id) ?? new Set<string>()
       if (options.explicitSearch && !terms.size) continue
       const score =
-        tokens.reduce((sum, token) => sum + tokenScore(token, (term) => terms.has(term)), 0) +
+        weighted.reduce(
+          (sum, { token, weight }) => sum + weight * tokenScore(token, (term) => terms.has(term)),
+          0
+        ) +
         (row.salient && m.role === 'user' ? 12 : 0) +
         (resume && unfinished(m) ? 15 : 0) +
         (position >= records.length - RECENT_ROWS ? 3 : 0)

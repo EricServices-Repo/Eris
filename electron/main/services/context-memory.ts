@@ -1,3 +1,8 @@
+import {
+  recallExpansion,
+  recallQuery,
+  type RecallQueryHints
+} from '../../../src/shared/recall-terms'
 import { isAutomaticModelSelection } from '../../../src/shared/model-execution'
 import { filterEvidenceMemory, invalidEvidenceItems } from './context-evidence'
 import { logInfo } from './logger'
@@ -266,6 +271,7 @@ async function recallWithoutRam(
     tokens?: number
     signal: AbortSignal
     explicitSearch?: boolean
+    queryExpansion?: string
   }
 ): Promise<{ prompt: MemoryPrompt; inspection: MemoryInspection }> {
   const { signal } = options
@@ -292,7 +298,7 @@ async function recallWithoutRam(
         type: 'context-archive-search',
         dir: dir(root),
         id,
-        query: query.slice(0, 8192),
+        query: `${query.slice(0, 7168)} ${options.queryExpansion ?? ''}`.slice(0, 8192),
         projectRoot: options.projectRoot
       })
     ).catch(() => {
@@ -376,6 +382,8 @@ export async function conversationContext(
   query: string,
   settings: AppSettings,
   options: {
+    queryHints?: RecallQueryHints
+    queryExpansion?: string
     coveredSourceIds?: readonly string[]
     excludeId?: string
     projectRoot?: string | null
@@ -399,12 +407,31 @@ export async function conversationContext(
   const signal = options.signal
     ? AbortSignal.any([options.signal, deadline.signal])
     : deadline.signal
+  const attachExpansion = (result: { prompt: MemoryPrompt; inspection: MemoryInspection }) => {
+    const expansion = options.queryExpansion ?? ''
+    if (expansion)
+      result.prompt.manifest.queryExpansion = {
+        version: 1,
+        units: recallQuery(expansion, 6).length,
+        digest: createHash('sha256').update(expansion).digest('hex')
+      }
+    return result
+  }
   try {
+    options = { ...options, queryExpansion: recallExpansion(query, options.queryHints) }
     if (policy.enabled && refreshContextMemoryPressure().pressure === 'critical')
-      return await recallWithoutRam(root, id, query, policy, { ...options, signal })
+      return attachExpansion(
+        await recallWithoutRam(root, id, query, policy, { ...options, signal })
+      )
     await warmConversationMemory(root, id, settings, signal)
     if (contextMemoryStore.config.enabled && !contextMemoryStore.has(memoryKey(root, id)))
       await warmConversationMemory(root, id, settings, signal)
+    options.queryExpansion = contextMemoryStore.queryExpansion(
+      memoryKey(root, id),
+      query,
+      options.queryHints ?? {},
+      options
+    )
     const result = await contextMemoryStore.select(memoryKey(root, id), query, {
       ...options,
       signal,
@@ -430,7 +457,7 @@ export async function conversationContext(
               type: 'context-archive-search',
               dir: dir(root),
               id,
-              query: query.slice(0, 8192),
+              query: `${query.slice(0, 7168)} ${options.queryExpansion ?? ''}`.slice(0, 8192),
               projectRoot: options.projectRoot
             }),
             [signal]
@@ -503,7 +530,7 @@ export async function conversationContext(
               selected.prompt.manifest.archive = archive.index
               selected.prompt.manifest.recallTier = 'ram'
               const prompt = await filterEvidenceMemory(root, selected.prompt, signal)
-              return {
+              return attachExpansion({
                 prompt,
                 inspection: {
                   ...selected.inspection,
@@ -512,7 +539,7 @@ export async function conversationContext(
                     prompt.manifest.selectedIds.includes(fact.id)
                   )
                 }
-              }
+              })
             }
           }
         } catch {
@@ -525,7 +552,7 @@ export async function conversationContext(
     }
     result.prompt.manifest.recallTier = 'ram'
     const prompt = await filterEvidenceMemory(root, result.prompt, signal)
-    return {
+    return attachExpansion({
       prompt,
       inspection: {
         ...result.inspection,
@@ -534,7 +561,7 @@ export async function conversationContext(
           prompt.manifest.selectedIds.includes(fact.id)
         )
       }
-    }
+    })
   } catch (error) {
     options.signal?.throwIfAborted() // User cancellation is not a recall fallback.
     if (!deadline.signal.aborted) throw error

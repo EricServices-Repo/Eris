@@ -1,5 +1,5 @@
 /** Bump when tokenizing or scoring changes, so stored evaluations compare like with like. */
-export const RECALL_RANKING_VERSION = 1
+export const RECALL_RANKING_VERSION = 2
 const TOKEN = /[\p{L}\p{N}_$]+(?:[./\\:-][\p{L}\p{N}_$]+)*[#+]*/gu
 const CJK_RUN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+/gu
 const MAX_TERM_CHARS = 96
@@ -153,4 +153,36 @@ export function firstMatchOffset(content: string, matched: ReadonlySet<string>) 
       )
         return found.index
   return -1
+}
+
+/** Host-provided, scoped hints. Never pass raw renderer history as recent text. */
+export type RecallQueryHints = {
+  files?: readonly string[]
+  task?: string
+  recent?: readonly string[]
+}
+export const isRecallFollowup = (text: string) =>
+  /\b(?:that|those|same|other|again|before|continue|resume|remaining|previous|earlier)\b/i.test(
+    text
+  )
+/** At most six expansion units; explicit queries retain their existing ranking. */
+export function recallExpansion(text: string, hints: RecallQueryHints = {}): string {
+  if (!isRecallFollowup(text)) return ''
+  const primary = new Set(queryTerms(recallQuery(text.slice(0, 8192))))
+  const candidates = [
+    ...(hints.files ?? []).slice(0, 4),
+    hints.task ?? '',
+    ...(hints.recent ?? []).slice(0, 1)
+  ]
+  const expansion = recallQuery(candidates.map((part) => part.slice(0, 600)).join(' '), 12)
+    .filter((token) => token.whole && !primary.has(token.whole))
+    .slice(0, 6)
+  return expansion.map((token) => token.whole).join(' ')
+}
+/** One primary match outweighs the entire six-unit expansion (max 12 points). */
+export function weightedRecallQuery(text: string, expansion = '') {
+  return [
+    ...recallQuery(text.slice(0, 8192)).map((token) => ({ token, weight: expansion ? 4 : 1 })),
+    ...recallQuery(expansion.slice(0, 1024), 6).map((token) => ({ token, weight: 0.125 }))
+  ]
 }
