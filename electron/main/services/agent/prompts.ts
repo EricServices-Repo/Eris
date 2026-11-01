@@ -341,7 +341,7 @@ export function buildPreservedWorkerMessages(options: {
   mcpToolCount: number
   inputTokenBudget?: number
   conversationMemory?: import('../../../../src/shared/context-memory').MemoryPrompt
-}): AgentChatMessage[] {
+}): Promise<AgentChatMessage[]> {
   const { plan } = options
   const task = plan.task
   const priorSystem = options.messages.find((m) => m.role === 'system')?.content || ''

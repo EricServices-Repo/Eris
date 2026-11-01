@@ -150,13 +150,19 @@ ${calls} ${effects} ${grounding} Report missing evidence, failed verification, a
 }
 
 /**
- * Budget accounting for one compiled system message. Counts are character
- * estimates (3 characters per token), not tokenizer output; the method and its
- * uncertainty are recorded so no report presents them as real token counts.
+ * Budget accounting for one compiled system message. Budgets are held in character
+ * units (3 per token), and real tokenizer counts are converted into them when a caller
+ * supplies `tokenCount`. The method and its uncertainty are recorded so no report
+ * presents an estimate as a real token count.
  */
 export interface ContextBudget {
-  method: 'characters'
-  tokenizer: 'none'
+  method: 'characters' | 'native-tokenizer'
+  /** 'none' for an estimate; otherwise the identity of the tokenizer that counted. */
+  tokenizer: string
+  /** Why an estimate was used. */
+  fallback?: TokenizerFallback
+  /** Exact tokens in this message, when `method` is 'native-tokenizer'. */
+  measuredTokens?: number
   charsPerToken: 3
   /** Non-ASCII text is budgeted at one token per code unit. */
   nonAsciiCharsPerToken: 1
@@ -216,21 +222,38 @@ export function countContextItems(items: readonly ContextBundleItem[]) {
   return counts
 }
 
+type Pricing = {
+  unitsOf: (text: string) => number
+  fit: (text: string, units: number) => string
+  costOf: (text: string, source: string) => number
+}
+
+const memoryHeader = (memory: string, items: readonly MemoryPromptItem[]) =>
+  memory.slice(0, Math.max(0, memory.indexOf(items[0]!.line)))
+
 /** Keep whole recalled items in priority order; a later smaller item may still fit. */
-function packMemory(memory: string, items: readonly MemoryPromptItem[], units: number) {
-  if (!items.length) return { text: fitAtBoundary(memory, units), kept: new Set<string>() }
-  const header = memory.slice(0, Math.max(0, memory.indexOf(items[0]!.line)))
+function packMemory(
+  memory: string,
+  items: readonly MemoryPromptItem[],
+  units: number,
+  { unitsOf, fit, costOf }: Pricing
+) {
+  if (!items.length) {
+    const text = fit(memory, units)
+    return { text, kept: new Set<string>(), used: costOf(text, memory) }
+  }
+  const header = memoryHeader(memory, items)
   let text = header
-  let used = contextUnits(header)
+  let used = unitsOf(header)
   const kept = new Set<string>()
   for (const item of items) {
-    const cost = contextUnits(item.line)
+    const cost = unitsOf(item.line)
     if (used + cost > units) continue
     text += item.line
     used += cost
     kept.add(item.id)
   }
-  return { text: kept.size ? text : '', kept }
+  return { text: kept.size ? text : '', kept, used }
 }
 
 /** Account for each selected item against what the memory block kept. */
@@ -277,7 +300,12 @@ export interface CompileTaskContextInput {
   /** False for answer-only turns: the request carries no tool definitions. */
   toolsAvailable?: boolean
   toolProtocol?: ToolCallProtocol
+  /** Real counts for known text. Absent, or for unknown text, the estimate applies. */
+  tokenCount?: (text: string) => number | undefined
+  /** Shrinks the budget when a measured pack came in over it. */
+  budgetScale?: number
 }
+export type TokenizerFallback = 'no-local-tokenizer' | 'model-not-loaded' | 'tokenizer-unavailable'
 export type ContextCompilationSnapshot = Omit<
   CompileTaskContextInput,
   'memory' | 'memoryItems' | 'memoryBlocked' | 'memoryNamespace'
@@ -285,15 +313,10 @@ export type ContextCompilationSnapshot = Omit<
 const compilations = new WeakMap<ContextBundle, ContextCompilationSnapshot>()
 export const contextCompilationFor = (bundle: ContextBundle) => compilations.get(bundle)
 
-export function compileTaskContext(input: CompileTaskContextInput): {
-  message: AgentChatMessage
-  blocks: ContextManifestBlock[]
-  budget: ContextBudget
-  bundle: ContextBundle
-} {
+function contextBlocks(input: CompileTaskContextInput): ContextBlock[] {
   const taskText = JSON.stringify(modelFacingTask(input.task))
   const protocol = taskProtocol(input.task, input.toolsAvailable !== false, input.toolProtocol)
-  const blocks: ContextBlock[] = [
+  return [
     { kind: 'task', content: `TASK CONTRACT\n${taskText}`, required: true },
     { kind: 'instructions', content: protocol + '\n' + input.guidance, required: true },
     ...(input.memory ? [{ kind: 'memory' as const, content: input.memory, required: false }] : []),
@@ -312,10 +335,46 @@ export function compileTaskContext(input: CompileTaskContextInput): {
       required: false
     }
   ]
+}
+
+/** Every whole text the compiler prices, so a caller can count them before it runs. */
+export function contextCandidates(input: CompileTaskContextInput): string[] {
+  const items = input.memoryItems ?? []
+  return [
+    ...contextBlocks(input).map((block) => block.content),
+    ...items.map((item) => item.line),
+    ...(input.memory && items.length ? [memoryHeader(input.memory, items)] : [])
+  ].filter(Boolean)
+}
+
+export function compileTaskContext(input: CompileTaskContextInput): {
+  message: AgentChatMessage
+  blocks: ContextManifestBlock[]
+  budget: ContextBudget
+  bundle: ContextBundle
+} {
+  const blocks = contextBlocks(input)
   // Leave the remaining input window for conversation, tools and source evidence.
   if (!Number.isFinite(input.maxInputTokens) || input.maxInputTokens <= 0)
     throw new Error('The model input context budget must be a positive finite number.')
-  const maxChars = Math.floor(input.maxInputTokens * CHARS_PER_TOKEN * SYSTEM_CONTEXT_SHARE)
+  const maxChars = Math.floor(
+    input.maxInputTokens * CHARS_PER_TOKEN * SYSTEM_CONTEXT_SHARE * (input.budgetScale ?? 1)
+  )
+  const unitsOf = (text: string) => {
+    const tokens = input.tokenCount?.(text)
+    return tokens === undefined ? contextUnits(text) : tokens * CHARS_PER_TOKEN
+  }
+  // A cut has no count of its own, so it is priced at the density of the block it came from.
+  const densityOf = (text: string) => {
+    const estimate = contextUnits(text)
+    return estimate ? unitsOf(text) / estimate : 1
+  }
+  const pricing: Pricing = {
+    unitsOf,
+    fit: (text, units) => fitAtBoundary(text, Math.floor(units / densityOf(text))),
+    costOf: (text, source) =>
+      text === source ? unitsOf(text) : Math.ceil(contextUnits(text) * densityOf(source))
+  }
   const freshFirst =
     evidenceRequirementFor(input.task.scope.applicability) !== 'none' &&
     Boolean(input.project || input.retrieval)
@@ -332,7 +391,7 @@ export function compileTaskContext(input: CompileTaskContextInput): {
     : blocks
   const mandatoryChars = blocks
     .filter((b) => b.required)
-    .reduce((n, b) => n + contextUnits(b.content) + 2, -2)
+    .reduce((n, b) => n + unitsOf(b.content) + 2, -2)
   const historicalCapChars = Math.max(
     0,
     Math.floor((maxChars - mandatoryChars) * (freshFirst ? 0.4 : 1))
@@ -347,7 +406,7 @@ export function compileTaskContext(input: CompileTaskContextInput): {
   for (const block of ordered) {
     const separator = chosen.length ? 2 : 0
     const available = Math.max(0, remaining - separator)
-    if (block.required && contextUnits(block.content) > available)
+    if (block.required && unitsOf(block.content) > available)
       throw new Error(
         'The task contract and instructions exceed this model context. Reduce attached instructions or increase the context window.'
       )
@@ -366,17 +425,17 @@ export function compileTaskContext(input: CompileTaskContextInput): {
     const cap = block.kind === 'memory' ? Math.min(available, historicalCapChars) : available
     const packed =
       block.kind === 'memory' && !duplicate
-        ? packMemory(block.content, input.memoryItems ?? [], cap)
+        ? packMemory(block.content, input.memoryItems ?? [], cap, pricing)
         : null
     if (packed) keptMemory = packed.kept
     const content = duplicate
       ? ''
       : block.required
         ? block.content
-        : (packed?.text ?? fitAtBoundary(block.content, cap))
+        : (packed?.text ?? pricing.fit(block.content, cap))
     if (content) {
       chosen.push({ ...block, content })
-      remaining -= contextUnits(content) + separator
+      remaining -= (packed?.used ?? pricing.costOf(content, block.content)) + separator
     }
     manifest.push({
       kind: block.kind,
@@ -444,7 +503,9 @@ export function compileTaskContext(input: CompileTaskContextInput): {
       retrieval: input.retrieval,
       maxInputTokens: input.maxInputTokens,
       toolsAvailable: input.toolsAvailable,
-      toolProtocol: input.toolProtocol
+      toolProtocol: input.toolProtocol,
+      tokenCount: input.tokenCount,
+      budgetScale: input.budgetScale
     })
   }
   return {

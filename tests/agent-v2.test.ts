@@ -274,7 +274,7 @@ describe('agent v2 model boundary', () => {
       budgetModelMessages([{ role: 'system', content: 'x'.repeat(10000) }], 100)
     ).toThrow('exceed')
   })
-  it('fits a default local task and core tool definitions into an 8k model window', () => {
+  it('fits a default local task and core tool definitions into an 8k model window', async () => {
     const root = fixture()
     const settings = structuredClone(getDefaults())
     settings.models.contextWindow = 8192
@@ -286,7 +286,7 @@ describe('agent v2 model boundary', () => {
       Math.ceil(JSON.stringify(tools).length / 3) -
       128
     const task = createTaskContract({ workspacePath: root, text: 'Fix booking', plan })
-    const messages = buildPreservedWorkerMessages({
+    const messages = await buildPreservedWorkerMessages({
       messages: [{ role: 'user', content: 'Fix booking' }],
       workspacePath: root,
       settings,

@@ -84,7 +84,7 @@ describe('agent context boundaries', () => {
     expect(messages.at(-1)).toEqual({ role: 'user', content: 'Improve' })
   })
 
-  it('keeps role instructions in the system message instead of repeating the prior answer as user intent', () => {
+  it('keeps role instructions in the system message instead of repeating the prior answer as user intent', async () => {
     const folder = mkdtempSync(join(tmpdir(), 'eris-context-'))
     folders.push(folder)
     const plan: TurnPlan = {
@@ -104,7 +104,7 @@ describe('agent context boundaries', () => {
       text: 'Add those improvements',
       plan
     })
-    const messages = buildPreservedWorkerMessages({
+    const messages = await buildPreservedWorkerMessages({
       workspacePath: folder,
       settings: getDefaults(),
       plan: { ...plan, task },
@@ -158,7 +158,7 @@ describe('RAM-CTX-032 admitted recent units', () => {
 })
 
 describe('memory at model boundaries', () => {
-  it('compiles recalled evidence for local models, omits it for remote workers and honors explicit opt-in', () => {
+  it('compiles recalled evidence for local models, omits it for remote workers and honors explicit opt-in', async () => {
     const folder = mkdtempSync(join(tmpdir(), 'eris-private-context-'))
     folders.push(folder)
     const plan: TurnPlan = {
@@ -203,7 +203,7 @@ describe('memory at model boundaries', () => {
       messages: [{ role: 'user' as const, content: 'Explain context' }],
       conversationMemory: memory
     }
-    const local = buildPreservedWorkerMessages({ ...base, plan: { ...plan, task } })
+    const local = await buildPreservedWorkerMessages({ ...base, plan: { ...plan, task } })
     expect(local[0]?.content).toContain('confidential recalled choice CAD')
     expect(local[0]?.content).toContain('task contract is authoritative')
     const remote = {
@@ -211,15 +211,17 @@ describe('memory at model boundaries', () => {
       models: { chat: 'connection:remote', tools: 'connection:remote' },
       task
     }
-    expect(buildPreservedWorkerMessages({ ...base, plan: remote })[0]?.content).not.toContain(
-      'confidential recalled choice CAD'
-    )
     expect(
-      buildPreservedWorkerMessages({
-        ...base,
-        plan: remote,
-        conversationMemory: { ...memory, allowRemote: true }
-      })[0]?.content
+      (await buildPreservedWorkerMessages({ ...base, plan: remote }))[0]?.content
+    ).not.toContain('confidential recalled choice CAD')
+    expect(
+      (
+        await buildPreservedWorkerMessages({
+          ...base,
+          plan: remote,
+          conversationMemory: { ...memory, allowRemote: true }
+        })
+      )[0]?.content
     ).toContain('confidential recalled choice CAD')
     expect(local.at(-1)?.content).toBe('Explain context')
   })

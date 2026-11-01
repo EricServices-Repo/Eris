@@ -144,7 +144,7 @@ describe('AG-025 each guidance block appears once', () => {
 
   it.each(['planner', 'composer', 'verifier'])(
     '%s worker prompt has one shared-rules block',
-    (agentId) => {
+    async (agentId) => {
       const settings = getDefaults()
       const turn = plan({
         intent: agentId === 'composer' ? 'edit' : agentId === 'planner' ? 'plan' : 'verify',
@@ -159,7 +159,7 @@ describe('AG-025 each guidance block appears once', () => {
         attachments: [],
         skillIds: []
       })
-      const worker = buildPreservedWorkerMessages({
+      const worker = await buildPreservedWorkerMessages({
         messages,
         workspacePath: ws,
         settings,

@@ -615,15 +615,18 @@ async function* runAgentInternal(options: {
     // Answer-only turns compile the same task contract as tool workers, with a
     // tool-free protocol, so task identity and permissions agree across branches.
     const priorSystem = messages.find((m) => m.role === 'system')?.content || ''
-    const compiled = compileTaskContext({
-      task,
-      toolsAvailable: false,
-      guidance: tips.join('\n\n'),
-      ...memoryForDestination(options.conversationMemory, chatModel, options.settings),
-      project: priorSystem,
-      retrieval: '',
-      maxInputTokens: contextBudgetTokens(options.settings, chatModel)
-    })
+    const compiled = await compileMeasuredContext(
+      {
+        task,
+        toolsAvailable: false,
+        guidance: tips.join('\n\n'),
+        ...memoryForDestination(options.conversationMemory, chatModel, options.settings),
+        project: priorSystem,
+        retrieval: '',
+        maxInputTokens: contextBudgetTokens(options.settings, chatModel)
+      },
+      chatModel
+    )
     appendTaskEvent(task.taskId, 'context-compiled', {
       context: contextProvenance(options.settings, chatModel),
       revision: task.revision,
@@ -870,7 +873,7 @@ async function* runAgentInternal(options: {
     throw new Error(
       'The available tools exceed this model context window. Increase context or reduce connected tools.'
     )
-  const workerMessages: AgentChatMessage[] = buildPreservedWorkerMessages({
+  const workerMessages: AgentChatMessage[] = await buildPreservedWorkerMessages({
     messages,
     workspacePath,
     settings: options.settings,
@@ -1357,7 +1360,7 @@ async function* runAgentInternal(options: {
       const reason = `${decision.reason} after ${trigger}`
       // Install the new agent's actual instructions, not just its display name.
       // Retain execution evidence and the original task's authority ceiling.
-      const recoveryMessages = buildPreservedWorkerMessages({
+      const recoveryMessages = await buildPreservedWorkerMessages({
         messages,
         workspacePath,
         settings: options.settings,

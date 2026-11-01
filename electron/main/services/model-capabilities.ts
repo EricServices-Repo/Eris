@@ -17,9 +17,10 @@ export interface ModelCapabilities {
   contextSource: 'measured-allocation' | 'runtime-plan' | 'unverified-window' | 'configured-ceiling'
   tools: 'native-tools' | 'text-tools'
   jsonSchema: 'grammar' | 'unverified'
+  /** How a compile counts right now: only a resident model can tokenize. */
   tokenCounting: 'native-tokenizer' | 'character-estimate'
 }
-function nativeEntry(model: string) {
+export function nativeEntry(model: string) {
   if (isBuiltinRef(model)) return findBuiltinEntry(model)
   if (!isLocalRef(model)) return null
   const local = findLocalEntry(model)
@@ -71,6 +72,7 @@ export function resolveModelCapabilities(settings: AppSettings, model: string): 
   const requestedContext = settings.models.contextWindow || 32768
   const { contextCeiling, contextSource } = contextCapacity(settings, model, requestedContext)
   const native = isNativeGgufRef(model)
+  const entry = nativeEntry(model)
   const outputReserve = Math.max(
     128,
     Math.min(native ? REPLY_MAX_TOKENS : 16384, Math.floor(contextCeiling * 0.3))
@@ -85,6 +87,6 @@ export function resolveModelCapabilities(settings: AppSettings, model: string): 
     contextSource,
     tools: toolProtocolFor(settings, model),
     jsonSchema: native ? 'grammar' : 'unverified',
-    tokenCounting: native ? 'native-tokenizer' : 'character-estimate'
+    tokenCounting: entry && loadedModelFacts(entry.ref) ? 'native-tokenizer' : 'character-estimate'
   }
 }
