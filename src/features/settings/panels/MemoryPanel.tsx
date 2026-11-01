@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ContextMemorySettingsSchema } from '@/shared/context-memory'
-import type { MemoryUsageStatus } from '@/shared/memory-usage'
+import { modelOffloadLabel, type MemoryUsageStatus } from '@/shared/memory-usage'
 import type { AppSettings } from '@/shared/settings-schema'
 import { settingFields } from '../fields'
 
@@ -18,6 +18,98 @@ export function memoryBytes(bytes: number): string {
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KiB`
   return `${(bytes / 1024 ** 2).toFixed(1)} MiB`
 }
+/** A read-only projection of runtime diagnostics; unknown allocation is never called full offload. */
+export function MemoryTiers({ tiers }: { tiers: NonNullable<MemoryUsageStatus['tiers']> }) {
+  const model = tiers.model
+  const layersKnown =
+    model?.gpuLayers !== undefined && model.totalLayers !== undefined && model.totalLayers > 0
+  const offload = modelOffloadLabel(model)
+  return (
+    <section className="memory-section" aria-label="Model and recall memory tiers">
+      <h3>Model and recall memory</h3>
+      <div className="memory-cards">
+        <div>
+          <span>Model · GPU / shared memory</span>
+          <strong>{offload}</strong>
+          <small>
+            {model
+              ? `${model.ref} · ${model.device ?? 'Device unavailable'}`
+              : 'Remote model memory is not measured here.'}
+          </small>
+          {model && (
+            <>
+              <p>Allocated window: {model.contextSize.toLocaleString()} tokens</p>
+              <p>
+                GPU layers:{' '}
+                {layersKnown ? `${model.gpuLayers} / ${model.totalLayers}` : 'Unavailable'}
+              </p>
+              <p>
+                Estimated KV:{' '}
+                {model.kvBytes !== undefined ? memoryBytes(model.kvBytes) : 'Unavailable'}
+              </p>
+            </>
+          )}
+          {tiers.devices.map((device) => (
+            <p key={device.id}>
+              {device.name} ·{' '}
+              {device.kind === 'unified' ? 'Shared system memory' : 'Dedicated VRAM'} ·{' '}
+              {memoryBytes(device.totalBytes)} total
+              {device.freeBytes !== undefined
+                ? ` · ${memoryBytes(device.freeBytes)} free`
+                : ' · Free memory unavailable'}
+            </p>
+          ))}
+        </div>
+        <div>
+          <span>RAM recall</span>
+          <strong>
+            {tiers.pressure === 'critical'
+              ? 'Paused'
+              : tiers.pressure === 'constrained'
+                ? 'Reduced'
+                : 'Available'}
+          </strong>
+          <p role="status">{tiers.pressureReason}</p>
+          <small>{tiers.budgetReason}</small>
+          <p>
+            Live tool journals: {memoryBytes(tiers.journal.bytes)} · {tiers.journal.runs} active
+            runs
+          </p>
+          <p>
+            Tool-evidence searches in active runs: {tiers.journal.searches} · Evicted outputs:{' '}
+            {tiers.journal.evicted}
+          </p>
+        </div>
+        <div>
+          <span>Selected chat · last model request</span>
+          <strong>
+            {tiers.lastDispatch
+              ? `${tiers.lastDispatch.counts.sent} recall items sent`
+              : 'No request recorded'}
+          </strong>
+          {tiers.lastDispatch && (
+            <>
+              <p>
+                {tiers.lastDispatch.counts.omitted} omitted · {tiers.lastDispatch.counts.truncated}{' '}
+                truncated
+              </p>
+              <small>
+                {tiers.lastDispatch.model}
+                {tiers.lastDispatch.window
+                  ? ` · ${tiers.lastDispatch.window.toLocaleString()} token window`
+                  : ''}
+              </small>
+            </>
+          )}
+          <p>
+            Request counts describe the last dispatch, not lifetime recall or provider memory use.
+          </p>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 type Draft = Record<string, string | boolean>
 function draftFrom(usage: MemoryUsageStatus): Draft {
   return Object.fromEntries([
@@ -132,6 +224,7 @@ export function MemoryPanel({
     usage && JSON.stringify(usage.config) !== JSON.stringify(usage.effectivePolicy)
   return (
     <div className="memory-panel">
+      {usage?.tiers && <MemoryTiers tiers={usage.tiers} />}
       <section className="memory-section" aria-label="Memory usage">
         <div className="memory-heading">
           <h3>Memory usage</h3>

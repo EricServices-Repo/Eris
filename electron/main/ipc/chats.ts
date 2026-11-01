@@ -1,3 +1,7 @@
+import { inferenceGovernorStatus } from '../services/inference-governor'
+import { currentLoadedModel } from '../services/model-runtime'
+import { runJournalUsage } from '../services/agent/run-journal'
+import { lastContextDispatch } from '../services/context-dispatch'
 import { contextMemoryStore } from '../services/context-memory-store'
 import { memoryKey } from '../services/context-memory'
 import { userChatsDir, workspaceChatsDir } from '../services/paths'
@@ -98,7 +102,38 @@ export function registerChatsIpc(): void {
       throw new Error('Workspace changed; refresh memory usage')
     const profile = getResolvedSettings(null).agent
     const { rss, heapUsed } = process.memoryUsage()
+    const inference = inferenceGovernorStatus()
+    const pressure = inference.contextPressure?.pressure ?? 'normal'
+    const namespace = activeThreadId ? memoryKey(root, activeThreadId) : undefined
+    const dispatch = namespace ? lastContextDispatch(namespace) : undefined
+    const loaded = currentLoadedModel()
     return {
+      tiers: {
+        model: loaded
+          ? {
+              ref: loaded.ref,
+              contextSize: loaded.contextSize,
+              gpuLayers: loaded.gpuLayers,
+              totalLayers: loaded.totalLayers,
+              kvBytes: loaded.kvBytes,
+              device: loaded.device
+            }
+          : null,
+        devices: inference.devices,
+        pressure,
+        budgetReason:
+          'Profile cache limit, reduced by renderer history and current system memory headroom.',
+        pressureReason:
+          pressure === 'critical'
+            ? 'Optional RAM recall paused: system memory is low. Recent history and eligible durable sources remain available.'
+            : pressure === 'constrained'
+              ? 'Recall cache reduced: system memory or pending model allocations need headroom.'
+              : 'Normal: optional recall is available within the configured budget.',
+        journal: runJournalUsage(namespace),
+        lastDispatch: dispatch
+          ? { model: dispatch.model, counts: dispatch.counts, window: dispatch.context?.tokens }
+          : null
+      },
       at: Date.now(),
       scope: root ? 'workspace' : 'profile',
       config: profile.contextMemory,

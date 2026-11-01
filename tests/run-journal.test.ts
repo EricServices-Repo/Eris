@@ -7,6 +7,7 @@ import {
   RUN_JOURNAL_MAX_BYTES,
   journalBusyMarker,
   RunJournal,
+  runJournalUsage,
   journalOmissionMarker,
   toolTrust,
   trustLabel
@@ -369,5 +370,25 @@ describe('RunJournal read scratch', () => {
     const entry = await append(target, 'find this')
     await target.search('find', 5)
     expect(sizes.at(-1)).toBe(entry.bytes * 6)
+  })
+})
+
+describe('active journal telemetry (#236)', () => {
+  it('reports scoped live usage and drops closed runs without retaining text', async () => {
+    const first = journal('telemetry-a')
+    const other = journal('telemetry-b')
+    await append(first, 'receipt evidence')
+    await append(other, 'unrelated evidence')
+    await first.search('receipt', 2)
+    expect(runJournalUsage('key-telemetry-a')).toMatchObject({ searches: 1, runs: 1, evicted: 0 })
+    expect(runJournalUsage('key-telemetry-a').bytes).toBe(first.residentBytes)
+    expect(JSON.stringify(runJournalUsage())).not.toContain('receipt evidence')
+    first.close()
+    expect(runJournalUsage('key-telemetry-a')).toEqual({
+      bytes: 0,
+      searches: 0,
+      evicted: 0,
+      runs: 0
+    })
   })
 })
