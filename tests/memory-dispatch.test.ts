@@ -5,13 +5,21 @@ import { join } from 'path'
 const h = vi.hoisted(() => ({
   sent: [] as Array<{ model: string; messages: Array<{ role: string; content: string }> }>,
   events: [] as Array<{ type: string; data: { revoked: string[]; remaining: number } }>,
-  beforePrepare: async () => {},
+  beforePrepare: async (..._args: unknown[]): Promise<void> => {},
+  realPrepare: null as unknown as typeof prepareModelWindows,
   nativePrepare: async () => {},
   released: [] as string[]
 }))
-vi.mock('../electron/main/services/ollama-runtime', async (original) => ({
-  ...(await original<object>()),
-  prepareModelWindows: async () => h.beforePrepare()
+vi.mock('../electron/main/services/ollama-runtime', async (original) => {
+  const actual = await original<typeof import('../electron/main/services/ollama-runtime')>()
+  h.realPrepare = actual.prepareModelWindows
+  return { ...actual, prepareModelWindows: async (...args: unknown[]) => h.beforePrepare(...args) }
+})
+vi.mock('../electron/main/services/ollama-chat', () => ({
+  streamOllamaChat: async function* (request: (typeof h.sent)[number]) {
+    h.sent.push(request)
+    yield 'ok'
+  }
 }))
 vi.mock('../electron/main/services/openai-compatible', async (original) => ({
   ...(await original<object>()),
@@ -69,6 +77,8 @@ import {
   runInEvidenceScope,
   withEligibleMemory
 } from '../electron/main/services/memory-dispatch'
+import type { prepareModelWindows } from '../electron/main/services/ollama-runtime'
+import { countContextItems } from '../electron/main/services/agent/context-compiler'
 import { compactAgentMessages } from '../electron/main/services/agent/compaction'
 import { streamModelChat, streamProviderChat } from '../electron/main/services/chat-runtime'
 import { getDefaults } from '../electron/main/services/settings'
@@ -455,6 +465,187 @@ describe('eligibility after asynchronous preparation', () => {
       expect(h.released).toContain('test:late')
     }
   )
+
+  const connection = (patch: object) => ({
+    id: 'server',
+    name: 'Server',
+    enabled: true,
+    type: 'openai-compatible' as const,
+    provider: 'custom',
+    models: ['server-model'],
+    baseUrl: 'http://10.0.0.5:9011/v1',
+    apiKeyRef: '',
+    ...patch
+  })
+  const withConnection = (patch: object) => {
+    const value = settings()
+    value.models.connections = [connection(patch)] as AppSettings['models']['connections']
+    return value
+  }
+  const send = async (value: AppSettings, signal?: AbortSignal, messages?: unknown[]) => {
+    const prompt = (messages ?? [
+      { role: 'system', content: (await recall()).text },
+      { role: 'user', content: 'What about checkout?' }
+    ]) as Array<{ role: 'system' | 'user'; content: string }>
+    for await (const _ of streamProviderChat({
+      settings: value,
+      model: 'server-model',
+      messages: prompt,
+      temperature: 0,
+      getSecret: () => null,
+      signal
+    }));
+  }
+
+  it('stops an approved endpoint receiving recall once approval is revoked during preparation', async () => {
+    const url = 'http://10.0.0.5:9011/v1'
+    const approved = withConnection({ recallApprovedUrl: url })
+    const resolved = vi.spyOn(profileSettings, 'getResolvedSettings').mockReturnValue(approved)
+    lease(await recall())
+    h.beforePrepare = async () => {
+      resolved.mockReturnValue(withConnection({}))
+    }
+    await send(approved)
+    expect(h.sent).toHaveLength(1)
+    expect(JSON.stringify(h.sent[0]!.messages)).not.toContain('PRIVATE-A')
+    expect(JSON.stringify(h.sent[0]!.messages)).not.toContain('KEPT-B')
+  })
+
+  it('still sends recall to an endpoint whose approval stands', async () => {
+    const approved = withConnection({ recallApprovedUrl: 'http://10.0.0.5:9011/v1' })
+    vi.spyOn(profileSettings, 'getResolvedSettings').mockReturnValue(approved)
+    lease(await recall())
+    await send(approved)
+    expect(JSON.stringify(h.sent[0]!.messages)).toContain('PRIVATE-A')
+  })
+
+  it('reports dispatch counts for the filtered payload, not the compiled one', async () => {
+    const prompt = await recall()
+    lease(prompt)
+    // The bundle names each item by the marker its rendered line starts with.
+    const items = prompt.items!.map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      ordinal: item.ordinal,
+      status: 'sent',
+      reason: 'fits-budget',
+      sentChars: item.line.length,
+      sourceDigest: /source (\S+);/.exec(item.line)![1]!
+    }))
+    const contextBundle = { taskId: 'task', items, counts: countContextItems(items as never) }
+    const gone = prompt.items!.find((item) => item.text.includes('PRIVATE-A'))!
+    const kept = prompt.items!.find((item) => item.text.includes('KEPT-B'))!
+    h.beforePrepare = () => forget(gone.sourceId).then(() => {})
+    const loopback = withConnection({ baseUrl: 'http://localhost:9011/v1' })
+    vi.spyOn(profileSettings, 'getResolvedSettings').mockReturnValue(loopback)
+    await send(loopback, undefined, [
+      { role: 'system', content: prompt.text, contextBundle },
+      { role: 'user', content: 'What about checkout?' }
+    ])
+    const { data } = h.events.filter((event) => event.type === 'context-dispatched').at(-1)!
+    const dispatched = data as unknown as {
+      counts: ReturnType<typeof countContextItems>
+      items: Array<{ id: string; status: string; reason: string }>
+    }
+    expect(JSON.stringify(h.sent.at(-1)!.messages)).not.toContain('PRIVATE-A')
+    expect(dispatched.items.find((item) => item.id === gone.id)).toMatchObject({
+      status: 'omitted',
+      reason: 'revoked-at-dispatch'
+    })
+    expect(dispatched.items.find((item) => item.id === kept.id)).toMatchObject({ status: 'sent' })
+    expect(dispatched.counts).toEqual(countContextItems(dispatched.items as never))
+    expect(dispatched.counts.omitted).toBe(1)
+  })
+
+  it.each(['server', 'native'])(
+    'sends nothing when cancelled during the final %s check',
+    async (kind) => {
+      const prompt = await recall()
+      lease(prompt)
+      const ac = new AbortController()
+      const value = withConnection({ baseUrl: 'http://localhost:9011/v1' })
+      const canonical = vi.mocked(workspaceRequest).getMockImplementation()!
+      // The native route checks again after the model loads, so aim at that later check.
+      let armed = kind === 'server'
+      h.nativePrepare = async () => {
+        armed = true
+      }
+      vi.mocked(workspaceRequest).mockImplementation(async (req) => {
+        if (req.type === 'context-header' && armed) ac.abort()
+        return canonical(req)
+      })
+      const stream = streamProviderChat({
+        settings: value,
+        model: kind === 'native' ? LOCAL : 'server-model',
+        messages: [
+          { role: 'system', content: prompt.text },
+          { role: 'user', content: 'What about checkout?' }
+        ],
+        temperature: 0,
+        getSecret: () => null,
+        signal: ac.signal
+      })
+      await expect(
+        (async () => {
+          for await (const _ of stream);
+        })()
+      ).rejects.toMatchObject({ name: 'AbortError' })
+      expect(h.sent).toHaveLength(0)
+    }
+  )
+
+  describe('through the real Ollama probe', () => {
+    const ollama = (port: number) =>
+      withConnection({
+        id: 'ollama',
+        provider: 'ollama',
+        baseUrl: `http://localhost:${port}/v1`
+      })
+    const probeAnswer = () =>
+      new Response(JSON.stringify({ model_info: { 'x.context_length': 8192 } }))
+    const prepare = (...args: unknown[]) =>
+      h.realPrepare(...(args as Parameters<typeof prepareModelWindows>))
+    afterEach(() => vi.unstubAllGlobals())
+
+    it('removes recall forgotten while a probe is outstanding', async () => {
+      let probes = 0
+      let answer = () => {}
+      // After a send the runtime also reads placement, which is not a capability probe.
+      vi.stubGlobal('fetch', async (url: string) => {
+        if (!url.endsWith('/api/show')) return new Response('{}')
+        probes++
+        await new Promise<void>((resolve) => (answer = resolve))
+        return probeAnswer()
+      })
+      h.beforePrepare = (...args) => {
+        const prepared = prepare(...args)
+        void forget('a').then(() => answer())
+        return prepared
+      }
+      lease(await recall())
+      await send(ollama(9012))
+      expect(probes).toBe(1)
+      expect(JSON.stringify(h.sent.at(-1)!.messages)).not.toContain('PRIVATE-A')
+    })
+
+    it('removes recall forgotten around a capability-cache hit', async () => {
+      const value = ollama(9013)
+      let probes = 0
+      vi.stubGlobal('fetch', async (url: string) => {
+        if (url.endsWith('/api/show')) probes++
+        return url.endsWith('/api/show') ? probeAnswer() : new Response('{}')
+      })
+      await prepare(value, ['server-model'], () => null)
+      h.beforePrepare = async (...args) => {
+        await prepare(...args)
+        await forget('a')
+      }
+      lease(await recall())
+      await send(value)
+      expect(probes).toBe(1)
+      expect(JSON.stringify(h.sent.at(-1)!.messages)).not.toContain('PRIVATE-A')
+    })
+  })
 })
 
 describe('evidence scopes', () => {

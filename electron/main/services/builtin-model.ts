@@ -1155,6 +1155,12 @@ async function* streamBuiltinChatInProcess(options: {
   const llamaCpp = await loadLlamaModule()
   const { LlamaChatSession } = llamaCpp
   const state = await ensureRuntimeInProcess(options.path, options.entry)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let grammar: any = undefined
+  if (options.jsonSchema) {
+    grammar = await state.llama.createGrammarForJsonSchema(options.jsonSchema)
+  }
+  // Last await before the prompt, so nothing can be revoked between this check and inference.
   if (options.prepareMessages) options.messages = await options.prepareMessages()
   options.onLoaded?.()
   const budget = inProcessReplyBudget(state, options.messages)
@@ -1164,12 +1170,6 @@ async function* streamBuiltinChatInProcess(options: {
   )
   const maxTokens = budget.maxOutputTokens
   let stopReason: unknown
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let grammar: any = undefined
-  if (options.jsonSchema) {
-    grammar = await state.llama.createGrammarForJsonSchema(options.jsonSchema)
-  }
 
   const split = options.sessionKey ? splitSessionPrompt(options.messages) : null
 
