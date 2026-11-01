@@ -148,6 +148,8 @@ Existing run-local compaction and native inference sessions are separate mechani
 
 Eris-Dev's independent question cases do not automatically consume production conversation memory. The shared compiler can expose a `memory` evidence block when supplied by a conversation-aware caller. The deterministic memory suites are included in the agents qualification profile used by normal builds. Live-model quality comparisons remain a separate evaluation; passing scripted tests does not establish that every model follows recalled instructions correctly.
 
+Each agent run also keeps a `RunJournal` of its full tool results, written before the prompt truncates them and released when the run ends. See `docs/fixes/221-run-journal.md`. Compaction does not use it yet, so it can still discard the prompt's copy.
+
 ## Verification and regression coverage
 
 Automated coverage includes:

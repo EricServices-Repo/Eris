@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'fs'
+import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -44,6 +44,9 @@ vi.mock('../electron/main/services/code-index', () => ({
 }))
 
 import { runAgentWithWorkspaceTools } from '../electron/main/services/agent/loop'
+import { truncateForModel } from '../electron/main/services/agent/prompts'
+import { RunJournal } from '../electron/main/services/agent/run-journal'
+import { contextMemoryStore } from '../electron/main/services/context-memory-store'
 import { getDefaults } from '../electron/main/services/settings'
 import type { AgentChatMessage } from '../electron/main/services/agent/types'
 import type { TurnPlan } from '../src/shared/settings-schema'
@@ -113,6 +116,35 @@ describe('agent loop (scripted model)', () => {
     expect(diff).toBeTruthy()
     const answer = events.find((e) => e.type === 'answer')
     expect(answer).toBeTruthy()
+  })
+
+  it('journals the full tool result before the prompt truncates it, then releases it', async () => {
+    writeFileSync(join(ws, 'big.txt'), 'line of output\n'.repeat(2000))
+    script.push('{"name":"read_file","path":"big.txt"}')
+    script.push('DONE: read it')
+    const append = vi.spyOn(RunJournal.prototype, 'append')
+    const before = contextMemoryStore.ledger.reservedBytes
+    await drain(
+      runAgentWithWorkspaceTools({
+        workspacePath: ws,
+        settings: getDefaults(),
+        model: 'builtin:composer-lite',
+        messages: [
+          { role: 'system', content: 'You are Composer.' },
+          { role: 'user', content: 'Read big.txt.' }
+        ],
+        temperature: 0,
+        getSecret: () => null,
+        mode: 'agent',
+        turnPlan: editPlan(),
+        mcp: 'off'
+      })
+    )
+    const journaled = append.mock.calls.find(([input]) => input.toolName === 'read_file')?.[0]
+    append.mockRestore()
+    expect(journaled?.content.length).toBeGreaterThan(truncateForModel('x'.repeat(40_000)).length)
+    expect(journaled?.toolCallId).toBeTruthy()
+    expect(contextMemoryStore.ledger.reservedBytes).toBe(before)
   })
 
   it('answers directly in ask mode without touching the workspace', async () => {
