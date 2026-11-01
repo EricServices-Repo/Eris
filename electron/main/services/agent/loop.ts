@@ -131,7 +131,7 @@ import {
 import { artifactResponseContract } from '../../../../src/shared/task-interpretation'
 import { contextPullAllowed, memoryForDestination } from './context-compiler'
 import { RunJournal, trustLabel } from './run-journal'
-import { ContextPull, conversationThreadRecall } from './context-pull'
+import { ContextPull, conversationThreadRecall, originThreadRecall } from './context-pull'
 import { executionPlanFor } from '../execution-plan'
 import { lintExecutionPlan } from './workflow-lint'
 import { appendTaskEvent } from '../task-ledger'
@@ -951,12 +951,24 @@ async function* runAgentInternal(options: {
   })
   const contextPull = new ContextPull({
     journal: runJournal,
-    thread: options.conversationSource
-      ? conversationThreadRecall(
-          { ...options.conversationSource, projectRoot: task.scope.projectRoot },
-          options.settings
-        )
-      : undefined,
+    thread:
+      task.contextOrigin && options.conversationSource
+        ? originThreadRecall(
+            task.contextOrigin,
+            {
+              root: task.scope.workspaceRoot,
+              projectRoot: task.scope.projectRoot,
+              taskId: task.taskId,
+              threadId: task.threadId
+            },
+            (sourceSettings) => contextPullAllowed(workerModel, sourceSettings)
+          )
+        : options.conversationSource
+          ? conversationThreadRecall(
+              { ...options.conversationSource, projectRoot: task.scope.projectRoot },
+              options.settings
+            )
+          : undefined,
     allowed: () => contextPullAllowed(workerModel, options.settings),
     budgetTokens: () => promptBudget,
     remainingTokens: () => promptBudget - estimateTokens(workerMessages),

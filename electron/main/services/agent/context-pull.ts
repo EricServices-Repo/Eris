@@ -1,3 +1,6 @@
+import type { ContextOrigin } from '../../../../src/shared/context-origin'
+import { resolveContextOrigin } from '../context-origin'
+import { getResolvedSettings } from '../settings'
 import { createHash, randomBytes } from 'crypto'
 import type { MemoryPromptItem } from '../../../../src/shared/context-memory'
 import type { AppSettings } from '../../../../src/shared/settings-schema'
@@ -313,6 +316,40 @@ export class ContextPull {
       text: read.content,
       label: `${item.kind} · message ${item.ordinal}`,
       sourceDigest: digest(item.sourceId)
+    }
+  }
+}
+
+/** Explicit source-scoped adapter; caller retains model disclosure and task lifetime gates. */
+export function originThreadRecall(
+  origin: ContextOrigin,
+  execution: {
+    root: string | null
+    projectRoot: string | null
+    taskId: string
+    threadId: string | null
+  },
+  allowed: (settings: AppSettings) => boolean
+): ThreadRecall {
+  const resolve = async (signal?: AbortSignal) => {
+    const source = await resolveContextOrigin(origin, execution, signal)
+    const settings = getResolvedSettings(source.root)
+    if (!allowed(settings))
+      throw new Error('Source conversation disclosure is not allowed for this model')
+    return { source, settings }
+  }
+  return {
+    async search(query, tokens, signal) {
+      const { source, settings } = await resolve(signal)
+      const result = await conversationThreadRecall(source, settings).search(query, tokens, signal)
+      await resolve(signal)
+      return result
+    },
+    async read(item, signal) {
+      const { source, settings } = await resolve(signal)
+      const result = await conversationThreadRecall(source, settings).read(item, signal)
+      await resolve(signal)
+      return result
     }
   }
 }

@@ -1,3 +1,4 @@
+import { ContextOriginSchema } from './context-origin'
 import type { ContextHeader } from './context-memory'
 import type { ContextEvidence } from './context-evidence'
 import type { TaskContract } from './task-contract'
@@ -110,6 +111,7 @@ export const HANDOFF_LIMITS = {
 /** Every field of a task, so a new one has to be added here and nothing unknown is saved. */
 const TASK_FIELDS: Record<keyof TaskContract, true> = {
   referenceBinding: true,
+  contextOrigin: true,
   version: true,
   taskId: true,
   parentTaskId: true,
@@ -156,6 +158,11 @@ function parseTask(value: unknown): { task?: TaskContract; error?: string } {
   if (value === undefined || value === null) return {}
   if (!isRecord(value) || value.version !== 2 || typeof value.taskId !== 'string')
     return { error: 'The handoff task is not a current task contract.' }
+  if (
+    value.contextOrigin !== undefined &&
+    !ContextOriginSchema.safeParse(value.contextOrigin).success
+  )
+    return { error: 'The handoff context origin is not valid.' }
   const known = Object.fromEntries(Object.entries(value).filter(([field]) => field in TASK_FIELDS))
   // Serializing is what removes anything live, such as a function or a handle.
   const text = JSON.stringify(known)
