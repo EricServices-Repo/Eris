@@ -1,6 +1,19 @@
 # Detailed conversation memory
 
-For the detailed **target** design, implementation work packages and acceptance gates, see [RAM-CONTEXT-ARCHITECTURE.md](RAM-CONTEXT-ARCHITECTURE.md). That specification distinguishes proposed changes from the implemented behavior below.
+For the detailed **target** design, implementation work packages and acceptance gates, see [RAM-CONTEXT-ARCHITECTURE.md](RAM-CONTEXT-ARCHITECTURE.md). That specification distinguishes proposed changes from the implemented behavior below. [Amendment 001](RAM-CONTEXT-AMENDMENT-001.md) sets the tiered VRAM and RAM target.
+
+## Implemented and target behavior
+
+Everything in this document describes implemented behavior, except this section.
+
+| Area | Implemented | Target (Amendment 001) |
+| --- | --- | --- |
+| Run-local compaction | Separate from RAM memory. It overwrites or summarizes tool output, so the content is lost | Evicts to a recoverable handle; summaries are optional |
+| Tool output | Only in the run's message array | Journaled in RAM before entering the prompt |
+| Recall direction | Pushed once per submission | Pushed, and pulled by the model on request |
+| KV | No cross-turn reuse | Reused once the prompt prefix is stable |
+
+The target does not enlarge a model's context window. RAM makes content recoverable, not simultaneously visible. On unified memory, RAM-tier bytes reduce what the model can use.
 
 ## Implemented behavior
 
@@ -131,7 +144,7 @@ These controls preserve the visible transcript. Excluding additional older recal
 
 `.eris/context.md` remains the existing project-summary/reference mechanism, with its separate auto/ask/off policy. RAM conversation recall does not silently write project summaries or promote assistant claims into project truth. The Summary extractor now handles a Summary section at end of file correctly, and its cache retains at most eight files no larger than 1 MiB each.
 
-Existing run-local compaction and native inference sessions are separate mechanisms. This change leaves native per-run session release intact. There is no cross-turn KV reuse, background summarizer or model swap for memory maintenance.
+Existing run-local compaction and native inference sessions are separate mechanisms today; Amendment 001 changes that for compaction. This change leaves native per-run session release intact. There is no cross-turn KV reuse, background summarizer or model swap for memory maintenance.
 
 Eris-Dev's independent question cases do not automatically consume production conversation memory. The shared compiler can expose a `memory` evidence block when supplied by a conversation-aware caller. The deterministic memory suites are included in the agents qualification profile used by normal builds. Live-model quality comparisons remain a separate evaluation; passing scripted tests does not establish that every model follows recalled instructions correctly.
 
