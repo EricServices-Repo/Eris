@@ -175,6 +175,7 @@ export class DevMemoryReplay {
         estimatedTokens: selected.prompt.manifest.estimatedTokens,
         actualModelCalls: 0,
         pressureInjected,
+        storeWiped: !pressureInjected && Boolean(header) && !this.store.has(id),
         rawContent: 'in-existing-request-capture-only'
       }
     }

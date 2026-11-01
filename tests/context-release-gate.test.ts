@@ -2,6 +2,8 @@ import { createRequire } from 'module'
 const { contextReleasePolicy } = createRequire(import.meta.url)(
   '../scripts/context-release-policy.cjs'
 )
+import { readFileSync } from 'fs'
+import { join } from 'path'
 import { describe, expect, it } from 'vitest'
 import {
   buildCorpus,
@@ -12,7 +14,16 @@ import {
   type ContextGateReport
 } from '../checks/context-gate'
 
-const budgets: ContextBudgets = { version: 2, maxGrowthRatio: 12, minBaselineMs: 5, profiles: [] }
+const tieredLimits = JSON.parse(
+  readFileSync(join(__dirname, '../checks/performance/context-budgets.json'), 'utf8')
+).tiered
+const budgets: ContextBudgets = {
+  version: 3,
+  maxGrowthRatio: 12,
+  minBaselineMs: 5,
+  tiered: tieredLimits,
+  profiles: []
+}
 const hardware = { platform: 'test', arch: 'x', cpu: 'cpu', totalMemoryBytes: 1 }
 const measured = () =>
   runContextGate({ sizes: [200, 400], gitSha: 'abc', hardware, runtime: { node: '1' } })
@@ -208,6 +219,22 @@ it('accepts complete validator fixtures and rejects model substitution in paired
       weightsSha256: weights,
       cases: 20,
       completed: 20,
+      tiered: {
+        evidence: 'live-hardware',
+        hostClass: platform === 'darwin' ? 'unified' : 'dedicated',
+        pressureSamples: 10,
+        pressureAgreements: 10,
+        compiledBudgetTokens: 5000,
+        allocatedWindowTokens: 8192,
+        actualPromptTokens: 4800,
+        layersOnGpu: 33,
+        totalLayers: 33,
+        ramSpillBytes: 0,
+        summaryCallsPerRun: 0,
+        reexecutedToolsPerRun: 0,
+        promptReevaluationsPerRun: 1,
+        firstTokenMs: { turn1: 1000, turnN: 1100, n: 10 }
+      },
       paired: {
         cases: 20,
         baselineCorrect: 12,
@@ -223,6 +250,11 @@ it('accepts complete validator fixtures and rejects model substitution in paired
     }
     return value
   })
+  const sameClass = structuredClone(reports)
+  sameClass[1]!.liveModel!.tiered!.hostClass = 'unified'
+  expect(evaluateContextReleaseEvidence(sameClass, budgets, sha).failures).toContain(
+    'Tiered evidence must cover one unified and one dedicated host'
+  )
   const limits: ContextBudgets = {
     ...budgets,
     minContextAccuracy: 0.95,

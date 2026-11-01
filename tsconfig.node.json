@@ -23,6 +23,7 @@
     "resources/agents.json",
     "src/features/chat/thinking-summary.ts",
     "checks/context-gate.ts",
+    "checks/tiered-gates.ts",
     "checks/context-recall-labels.ts",
     "tests/**/*",
     "vitest.config.ts",

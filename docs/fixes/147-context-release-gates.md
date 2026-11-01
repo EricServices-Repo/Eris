@@ -2,7 +2,7 @@
 
 ## Deterministic CI gate
 
-`npm run check:context` writes version 2 observations to `out/qualification/context-gate-performance.json`. The corpus remains deterministic 1k/10k/25k/100k mixed code, metadata, Unicode and decision workloads; each corpus has a hash, offered/retained denominators and independent query samples. This command certifies scripted invariants only. Its output explicitly says that release qualification is separate.
+`npm run check:context` writes version 3 observations to `out/qualification/context-gate-performance.json`. The corpus remains deterministic 1k/10k/25k/100k mixed code, metadata, Unicode and decision workloads; each corpus has a hash, offered/retained denominators and independent query samples. This command certifies scripted invariants only. Its output explicitly says that release qualification is separate.
 
 Measurements now include cold installation, per-query selection, twenty equal-size warm appends, event-loop queue samples, and actual production task compilation of fourteen labeled recall cases. Recall must survive into the compiled model-facing text; selection alone is insufficient. The report samples logical owned/reserved/pinned peaks and peak simultaneous charged bytes, separately from retained heap deltas. These are logical ownership observations and sampled heap changes, not an OS/process peak-allocation measurement. The corpus fixture itself is outside the store ledger.
 
@@ -41,3 +41,7 @@ Windows hardware limits, real host-pressure safety and live answer improvement r
 
 ## Release rollout correction for 0.6.7
 The original unconditional publishing dependency was deployed before reference profiles or live evidence existed. Pre-1.0 development releases now require deterministic context checks and both packaged platform smoke tests, and publish an explicit `development-scripted-only`, `certified:false` declaration alongside installers. They do not claim measured hardware/live-model certification. Version 1.x+, `require_context_certification`, the `REQUIRE_CONTEXT_CERTIFICATION` repository variable, or any supplied evidence run ID require the unchanged strict verifier; invalid or partial evidence is never silently ignored. This corrects the release pipeline rollout, not the qualification result.
+
+## Tiered memory gates (#237)
+
+Version 3 adds the gates in `docs/fixes/237-tiered-gates.md`. Packaged reports now need `liveModel.tiered` hardware evidence for release certification.

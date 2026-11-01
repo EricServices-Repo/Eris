@@ -25,5 +25,7 @@ export type DevMemoryTrace = {
   estimatedTokens: number
   actualModelCalls: number
   pressureInjected: boolean
+  /** The store lost this thread during the turn with no injected pressure. Gate: 0. */
+  storeWiped: boolean
   rawContent: 'in-existing-request-capture-only'
 }

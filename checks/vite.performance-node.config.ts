@@ -15,6 +15,8 @@ export default defineConfig({
       },
       output: {
         format: 'cjs',
+        // Beside the entries: shared code locates workspace-worker.js through __dirname.
+        chunkFileNames: '[name]-[hash].cjs',
         entryFileNames: (chunk) =>
           chunk.name === 'workspace-worker' ? 'workspace-worker.js' : '[name].cjs'
       }

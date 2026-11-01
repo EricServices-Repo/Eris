@@ -81,6 +81,7 @@
         "tests/context-sequence.test.ts",
         "tests/context-release-gate.test.ts",
         "tests/run-journal.test.ts",
+        "tests/tiered-gates.test.ts",
         "tests/context-critical-pressure.test.ts",
         "tests/context-memory-recovery.test.ts"
       ],
@@ -109,6 +110,7 @@
   "general": {
     "description": "General app behavior outside the qualification gates; runs in npm test and CI.",
     "files": [
+      "tests/host-memory-real.test.ts",
       "tests/language-negotiation.test.ts",
       "tests/ide-capabilities.test.ts",
       "tests/auto-update-version.test.ts",
