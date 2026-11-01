@@ -1,3 +1,5 @@
+import { routingEvidenceKey, ROUTING_EVIDENCE_MAX_AGE_MS } from './routing-evidence'
+import type { AppSettings } from '../../../src/shared/settings-schema'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { userDataRoot } from './paths'
@@ -76,9 +78,16 @@ export function recordAgentRun(input: {
   mutated: boolean
   incomplete: boolean
   aborted: boolean
+  settings?: AppSettings
 }): void {
   noteAgentRunContext(input.model, input.intent)
   mutate(input.model, input.intent, (r) => {
+    if (input.settings) {
+      const key = routingEvidenceKey(input.settings, input.model)
+      if (r.routingKey !== key || !r.updatedAt || Date.now() - r.updatedAt > ROUTING_EVIDENCE_MAX_AGE_MS) Object.assign(r, emptyOutcome(input.model, input.intent))
+      r.routingKey = key
+      r.updatedAt = Date.now()
+    }
     r.runs += 1
     r.totalSteps += Math.max(0, Math.round(input.steps))
     if (input.aborted) r.aborted += 1
@@ -110,9 +119,14 @@ export function getTelemetrySummaries(): AgentOutcomeSummary[] {
 export function bestModelForIntent(
   intent: ChatIntent,
   candidates: string[],
-  minRuns: number
+  minRuns: number,
+  settings?: AppSettings
 ): string | null {
-  return bestTelemetryModelForIntent(getTelemetryRecords(), intent, candidates, minRuns)
+  const records = getTelemetryRecords().filter((r) => !settings || (
+    r.routingKey === routingEvidenceKey(settings, r.model) &&
+    typeof r.updatedAt === 'number' && Date.now() - r.updatedAt <= ROUTING_EVIDENCE_MAX_AGE_MS
+  ))
+  return bestTelemetryModelForIntent(records, intent, candidates, minRuns)
 }
 
 export function clearTelemetry(): void {

@@ -87,6 +87,7 @@ export interface EvalCheckResult {
 export type EvalResultStatus = 'passed' | 'failed' | 'timed_out' | 'cancelled' | 'error'
 
 export interface EvalResult {
+  routingKey?: string
   /** Groups results from one Run click / CLI invocation */
   batchId: string
   taskId: string

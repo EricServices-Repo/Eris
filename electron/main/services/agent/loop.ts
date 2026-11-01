@@ -1,3 +1,4 @@
+import { compileMeasuredContext } from './measured-context'
 import { contextProvenance } from '../model-capabilities'
 import { assertTaskReferences } from '../reference-binding'
 import { createHash } from 'crypto'
@@ -125,7 +126,7 @@ import {
   type TaskContract
 } from '../../../../src/shared/task-contract'
 import { artifactResponseContract } from '../../../../src/shared/task-interpretation'
-import { compileTaskContext, contextPullAllowed, memoryForDestination } from './context-compiler'
+import { contextPullAllowed, memoryForDestination } from './context-compiler'
 import { RunJournal, trustLabel } from './run-journal'
 import { ContextPull, conversationThreadRecall } from './context-pull'
 import { executionPlanFor } from '../execution-plan'

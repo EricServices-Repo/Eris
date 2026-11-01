@@ -7,6 +7,8 @@ import type { ChatIntent } from './settings-schema'
  */
 export type AgentOutcomeRecord = {
   model: string
+  routingKey?: string
+  updatedAt?: number
   intent: ChatIntent
   /** Agent runs that reached a terminal state. */
   runs: number

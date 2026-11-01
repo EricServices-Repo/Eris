@@ -88,7 +88,9 @@
         "tests/run-journal.test.ts",
         "tests/tiered-gates.test.ts",
         "tests/context-critical-pressure.test.ts",
-        "tests/context-memory-recovery.test.ts"
+        "tests/context-memory-recovery.test.ts",
+        "tests/auto-model-policy.test.ts",
+        "tests/context-allocation.test.ts"
       ],
       "notRun": [
         "live model inference",
