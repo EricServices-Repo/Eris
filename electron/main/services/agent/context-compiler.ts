@@ -4,11 +4,12 @@ import {
   interpretationOf,
   type TaskContract
 } from '../../../../src/shared/task-contract'
-import type {
-  ContextBundle,
-  ContextBundleItem,
-  MemoryPrompt,
-  MemoryPromptItem
+import {
+  ContextMemorySettingsSchema,
+  type ContextBundle,
+  type ContextBundleItem,
+  type MemoryPrompt,
+  type MemoryPromptItem
 } from '../../../../src/shared/context-memory'
 import { isNativeGgufRef } from '../../../../src/shared/model-destination'
 import type { AppSettings } from '../../../../src/shared/settings-schema'
@@ -183,16 +184,24 @@ export const SYSTEM_CONTEXT_SHARE = 0.55
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 
 /** Recall a destination may receive. Blocked items stay listed so omissions have a reason. */
+const recallAllowedAt = (model: string, settings: AppSettings | undefined, allowRemote: boolean) =>
+  isNativeGgufRef(model) ||
+  (settings ? modelDestination(settings, model).recallAllowed : false) ||
+  (model === SIMULATED_MODEL_REF && activeDiagnosticsScope()?.mode === 'simulated') ||
+  allowRemote
+
+/** The rule pushed recall follows, for a model that asks for context itself. */
+export function contextPullAllowed(model: string, settings: AppSettings) {
+  const policy = ContextMemorySettingsSchema.parse(settings.agent.contextMemory ?? {})
+  return policy.enabled && recallAllowedAt(model, settings, policy.shareWithRemoteModels)
+}
+
 export function memoryForDestination(
   prompt: MemoryPrompt | undefined,
   model: string,
   settings?: AppSettings
 ) {
-  const allowed =
-    isNativeGgufRef(model) ||
-    (settings ? modelDestination(settings, model).recallAllowed : false) ||
-    (model === SIMULATED_MODEL_REF && activeDiagnosticsScope()?.mode === 'simulated') ||
-    Boolean(prompt?.allowRemote)
+  const allowed = recallAllowedAt(model, settings, Boolean(prompt?.allowRemote))
   return {
     memory: allowed ? prompt?.text : undefined,
     memoryItems: prompt?.items ?? [],

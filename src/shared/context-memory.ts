@@ -103,6 +103,8 @@ export type MemoryPromptItem = {
   span?: { offset: number; length: number }
   text: string
   line: string
+  /** Lexical rank from selection; absent for rows selected before ranks were kept. */
+  score?: number
 }
 /** The identifying prefix of a rendered item; it is unique to the item's source and kind. */
 export const memoryItemMarker = (line: string) => line.slice(0, line.indexOf('] ') + 2)
