@@ -7,6 +7,7 @@ export type ContextDerivationStatus = {
   complete: boolean
 }
 import { z } from 'zod'
+import { RECALL_MAX_TOKENS } from './context-allocation'
 import type { ContextDestinationLabel } from './model-destination'
 export const ContextMemorySettingsSchema = z.object({
   enabled: z.boolean().default(true),
@@ -16,7 +17,8 @@ export const ContextMemorySettingsSchema = z.object({
   warmThreads: z.number().int().min(1).max(16).default(8),
   idleMinutes: z.number().int().min(1).max(120).default(30),
   foregroundDeadlineMs: z.number().int().min(25).max(2000).default(150),
-  promptTokens: z.number().int().min(128).max(4096).default(1024),
+  /** A ceiling on recall, which otherwise follows the model's input window. */
+  promptTokens: z.number().int().min(128).max(RECALL_MAX_TOKENS).default(RECALL_MAX_TOKENS),
   shareWithRemoteModels: z.boolean().default(false)
 })
 export type ContextMemorySettings = z.infer<typeof ContextMemorySettingsSchema>
