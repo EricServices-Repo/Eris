@@ -1,5 +1,10 @@
 import type { AppSettings, ChatPromptInput } from '../../../src/shared/settings-schema'
 import { contractForAgent } from '../../../src/shared/agent-contract'
+import {
+  allocateContext,
+  historyChars,
+  type ContextAllocation
+} from '../../../src/shared/context-allocation'
 import { findAgent, getProjectAgents } from './agents'
 import { formatAgentDiscussions } from './agent-discussions'
 import { listBackgroundJobs } from './background-agents'
@@ -39,6 +44,11 @@ function workspaceDiscussions(
   return formatAgentDiscussions({ jobs, query, maxItems: 3, maxChars: 2200 })
 }
 
+/** Both sides of the last three exchanges fit even when each message is very long. */
+const MIN_RECENT_MESSAGES = 6
+const SUMMARY_MIN_CHARS = 2_200
+const SUMMARY_CHARS_PER_MESSAGE = 184
+
 export function compactHistory(
   history: ChatPromptInput['history'],
   maxChars: number
@@ -48,9 +58,18 @@ export function compactHistory(
   )
   // Reserve space for both sides of the conversation: a long model answer
   // must not evict the user's request that defines what "those changes" means.
-  const firstSelected = Math.max(0, messages.length - 6)
+  const perMessage = Math.floor(
+    maxChars / Math.max(1, Math.min(MIN_RECENT_MESSAGES, messages.length))
+  )
+  let firstSelected = messages.length
+  let spent = 0
+  while (firstSelected > 0) {
+    const cost = Math.min(perMessage, messages[firstSelected - 1]!.content?.length ?? 0)
+    if (messages.length - firstSelected >= MIN_RECENT_MESSAGES && spent + cost > maxChars) break
+    spent += cost
+    firstSelected--
+  }
   const tail = messages.slice(firstSelected)
-  const perMessage = Math.floor(maxChars / Math.max(1, tail.length))
   const selected = tail.map((message) => {
     const content = message.content || ''
     if (content.length <= perMessage) return message
@@ -64,9 +83,13 @@ export function compactHistory(
     }
   })
 
+  const summaryChars = Math.min(
+    Math.floor(maxChars / 3),
+    Math.max(SUMMARY_MIN_CHARS, Math.floor(maxChars / 8))
+  )
   const older = messages.slice(0, firstSelected)
   const summary = older
-    .slice(-12)
+    .slice(-Math.ceil(summaryChars / SUMMARY_CHARS_PER_MESSAGE))
     .map((message) => {
       const who = message.role === 'user' ? 'User' : message.agentName || 'Assistant'
       const excerpt = message.content.replace(/\s+/g, ' ').trim().slice(0, 240)
@@ -74,7 +97,7 @@ export function compactHistory(
     })
     .filter(Boolean)
     .join('\n')
-    .slice(-Math.min(2200, Math.floor(maxChars / 3)))
+    .slice(-summaryChars)
   // A shortened turn/summary does not cover the complete source. Never suppress
   // its unrepresented history merely because a prefix was admitted.
   const coveredSourceIds = tail.flatMap((message) =>
@@ -126,7 +149,7 @@ export function buildChatMessages(
   workspacePath: string | null,
   settings: AppSettings,
   input: ChatPromptInput,
-  options: { genericScope?: boolean } = {}
+  options: { genericScope?: boolean; allocation?: ContextAllocation } = {}
 ): BuiltChatMessage[] {
   // Agent turns are leaner so builtin 4k/8k windows keep room for tool output.
   const lean = input.mode === 'agent'
@@ -202,8 +225,16 @@ export function buildChatMessages(
     )
   }
 
-  const historyBudget = lean ? 6000 : 24000
-  const { recent: history, summary: historySummary } = compactHistory(input.history, historyBudget)
+  const allocation =
+    options.allocation ??
+    allocateContext(
+      Math.floor((settings.models.contextWindow || 32768) * 0.65),
+      lean ? 'agent' : 'chat'
+    )
+  const { recent: history, summary: historySummary } = compactHistory(
+    input.history,
+    historyChars(allocation)
+  )
   if (historySummary) {
     parts.push(`Earlier conversation summary (older turns condensed):\n${historySummary}`)
   }

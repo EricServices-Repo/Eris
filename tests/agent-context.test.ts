@@ -150,8 +150,10 @@ describe('RAM-CTX-032 admitted recent units', () => {
       content: i === 8 ? 'x'.repeat(2000) : 'same wording'
     }))
     const compacted = compactHistory(history, 600)
-    expect(compacted.coveredSourceIds).toEqual(['4', '5', '6', '7', '9'])
-    expect(compacted.recent.map((m) => m.id)).toEqual(['4', '5', '6', '7', '8', '9'])
+    // The tail follows the budget: short turns fit past the six-message minimum.
+    expect(compacted.coveredSourceIds).toEqual(['0', '1', '2', '3', '4', '5', '6', '7', '9'])
+    expect(compacted.recent.map((m) => m.id)).toEqual(history.map((m) => m.id))
+    expect(compactHistory(history, 120).coveredSourceIds).not.toContain('0')
   })
 })
 

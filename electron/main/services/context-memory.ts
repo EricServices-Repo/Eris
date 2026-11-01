@@ -20,6 +20,8 @@ import {
   lastContextDispatch,
   previewContextDispatch
 } from './context-dispatch'
+import { contextBudgetTokens } from './agent/context-budget'
+import { allocateContext } from '../../../src/shared/context-allocation'
 import type { AppSettings, ChatThread } from '../../../src/shared/settings-schema'
 import {
   type ContextPreview,
@@ -572,7 +574,15 @@ export async function inspectConversationMemory(
   let preview: ContextPreview | undefined
   let failure: string | undefined
   try {
-    const selected = await conversationContext(root, id, query, settings, { projectRoot })
+    // The same split a send to this model uses, so the inspector shows what would go.
+    const tokens = allocateContext(
+      contextBudgetTokens(
+        settings,
+        model && model !== 'auto' ? model : settings.models.defaultModel
+      ),
+      'chat'
+    ).recallTokens
+    const selected = await conversationContext(root, id, query, settings, { projectRoot, tokens })
     inspection = selected.inspection
     // Auto selects its model per turn, so there is no destination to preview.
     if (model && model !== 'auto')

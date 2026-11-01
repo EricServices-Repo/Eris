@@ -11,7 +11,7 @@ const ranges: Record<string, [number, number]> = {
   warmThreads: [1, 16],
   idleMinutes: [1, 120],
   foregroundDeadlineMs: [25, 2000],
-  promptTokens: [128, 4096]
+  promptTokens: [128, 8192]
 }
 export function memoryBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -251,7 +251,7 @@ export function MemoryPanel({
           <p>
             Workspace overrides are active: recall{' '}
             {usage.effectivePolicy.enabled ? 'enabled' : 'disabled'}, remote recall{' '}
-            {usage.effectivePolicy.shareWithRemoteModels ? 'allowed' : 'blocked'}, token budget{' '}
+            {usage.effectivePolicy.shareWithRemoteModels ? 'allowed' : 'blocked'}, token ceiling{' '}
             {usage.effectivePolicy.promptTokens}, deadline{' '}
             {usage.effectivePolicy.foregroundDeadlineMs} ms. RAM allocation remains controlled by
             user settings.

@@ -11,6 +11,12 @@ import {
 import { foregroundTasks } from '../services/foreground-tasks'
 import { getChat, appendChatMessage, scopeChatSource } from '../services/chats'
 import { compactHistory } from '../services/chat-prompt'
+import { contextBudgetTokens } from '../services/agent/context-budget'
+import {
+  allocateContext,
+  historyChars,
+  type ContextAllocation
+} from '../../../src/shared/context-allocation'
 import { conversationContext } from '../services/context-memory'
 import { leaseMemoryEvidence } from '../services/memory-dispatch'
 import { appendTaskEvent } from '../services/task-ledger'
@@ -80,6 +86,9 @@ import {
   admitChatJob,
   markChatJobRunning
 } from '../services/chat-job-controller'
+
+/** Routing and task intake read this much recent history, whatever the window. */
+const ROUTING_HISTORY_MESSAGES = 20
 
 export function registerChatStreamIpc(): void {
   ipcMain.handle('chat:stream', async (event, raw: unknown) => {
@@ -252,6 +261,7 @@ export function registerChatStreamIpc(): void {
           abortAllCompletes()
           const { model, agentId, mode } = payload
           let messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+          let canonicalHistory: NonNullable<typeof payload.prompt>['history'] | undefined
           // Canonical recent history is independent of renderer pagination. Appending
           // the same request ID is idempotent when optimistic persistence races us.
           if (contextThreadId && payload.prompt) {
@@ -267,9 +277,8 @@ export function registerChatStreamIpc(): void {
                 },
                 payload.model
               )
-              payload.prompt.history = recent.messages
+              canonicalHistory = recent.messages
                 .filter((m) => m.id !== `${requestId}:user` && m.role !== 'system')
-                .slice(-20)
                 .map(({ id, role, content, agentId, agentName }) => ({
                   id,
                   role,
@@ -277,6 +286,8 @@ export function registerChatStreamIpc(): void {
                   agentId,
                   agentName
                 }))
+              // Routing reads a short tail; the prompt takes what its allocation allows.
+              payload.prompt.history = canonicalHistory.slice(-ROUTING_HISTORY_MESSAGES)
             } catch (error) {
               publish('chat:error', {
                 requestId,
@@ -358,6 +369,16 @@ export function registerChatStreamIpc(): void {
             }
             return false
           }
+          // One split per turn, so what recall treats as covered is what the prompt sends.
+          const allocation: ContextAllocation = allocateContext(
+            contextBudgetTokens(
+              settings,
+              (turnPlan.mode === 'agent' ? turnPlan.models.tools : turnPlan.models.chat) ||
+                model ||
+                settings.models.defaultModel
+            ),
+            turnPlan.mode === 'agent' ? 'agent' : 'chat'
+          )
           if (contextThreadId && payload.prompt) {
             try {
               await scopeChatSource(
@@ -374,9 +395,10 @@ export function registerChatStreamIpc(): void {
                 {
                   excludeId: `${requestId}:user`,
                   coveredSourceIds: compactHistory(
-                    payload.prompt.history,
-                    turnPlan.mode === 'agent' ? 6000 : 24000
+                    canonicalHistory ?? payload.prompt.history,
+                    historyChars(allocation)
                   ).coveredSourceIds,
+                  tokens: allocation.recallTokens,
                   projectRoot: turnPlan.task?.scope.projectRoot ?? null,
                   signal: controller.signal
                 }
@@ -403,9 +425,12 @@ export function registerChatStreamIpc(): void {
               messages = buildChatTurnMessages(
                 workspacePath,
                 settings,
-                payload.prompt,
+                canonicalHistory
+                  ? { ...payload.prompt, history: canonicalHistory }
+                  : payload.prompt,
                 turnPlan,
-                payload.threadId
+                payload.threadId,
+                allocation
               )
             }
             promptBuildMs = Date.now() - promptBuildStartedAt
