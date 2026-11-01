@@ -16,7 +16,8 @@ vi.mock('../electron/main/services/ollama-runtime', async (original) => ({
 vi.mock('../electron/main/services/openai-compatible', async (original) => ({
   ...(await original<object>()),
   streamOpenAICompatible: async function* (request: (typeof h.sent)[number]) {
-    h.sent.push(request); yield 'ok'
+    h.sent.push(request)
+    yield 'ok'
   }
 }))
 vi.mock('worker_threads', async () => ({
@@ -40,11 +41,15 @@ vi.mock('../electron/main/services/builtin-model', async (original) => ({
   ...(await original<typeof import('../electron/main/services/builtin-model')>()),
   releaseLocalChatSession: (key: string) => h.released.push(key),
   resolveExactBuiltinRef: (ref: string) => ref,
-  streamBuiltinChat: async function* (request: { modelRef: string; messages: Array<{role: string; content: string}>;
-    prepareMessages?: () => Promise<Array<{role: string; content: string}>> }) {
+  streamBuiltinChat: async function* (request: {
+    modelRef: string
+    messages: Array<{ role: string; content: string }>
+    prepareMessages?: () => Promise<Array<{ role: string; content: string }>>
+  }) {
     await h.nativePrepare()
     const messages = request.prepareMessages ? await request.prepareMessages() : request.messages
-    h.sent.push({ model: request.modelRef, messages }); yield 'ok'
+    h.sent.push({ model: request.modelRef, messages })
+    yield 'ok'
   }
 }))
 import { workspaceRequest } from '../electron/main/services/workspace-worker-client'
@@ -57,7 +62,13 @@ import {
   saveMemoryControls
 } from '../electron/main/services/context-memory'
 import { contextMemoryStore } from '../electron/main/services/context-memory-store'
-import { leaseMemoryEvidence, withEligibleMemory } from '../electron/main/services/memory-dispatch'
+import {
+  currentEvidenceScope,
+  inEvidenceScope,
+  leaseMemoryEvidence,
+  runInEvidenceScope,
+  withEligibleMemory
+} from '../electron/main/services/memory-dispatch'
 import { compactAgentMessages } from '../electron/main/services/agent/compaction'
 import { streamModelChat, streamProviderChat } from '../electron/main/services/chat-runtime'
 import { getDefaults } from '../electron/main/services/settings'
@@ -403,24 +414,260 @@ describe('derived compiler and native-call privacy', () => {
   })
 })
 
-
 describe('eligibility after asynchronous preparation', () => {
-  it.each(['server', 'native'] as const)('removes recall revoked while the %s model loads before serialization', async (kind) => {
-    const prompt = await recall(); lease(prompt)
-    const model = kind === 'native' ? LOCAL : 'audit-model'
-    const s = settings()
-    s.models.connections = [{ id: 'audit', name: 'Audit', enabled: true, type: 'openai-compatible',
-      provider: 'custom', models: ['audit-model'], baseUrl: 'http://localhost:9011/v1', apiKeyRef: '' }]
-    const messages = [{ role: 'system' as const, content: prompt.text },
-      { role: 'user' as const, content: 'What about checkout?' }]
-    // The first eligibility check happened before loading, as it does in streamModelChat.
-    await withEligibleMemory(messages, model, s)
-    if (kind === 'server') h.beforePrepare = () => forget('a').then(() => {})
-    else h.nativePrepare = () => forget('a').then(() => {})
-    for await (const _ of streamProviderChat({ settings: s, model, messages, temperature: 0,
-      getSecret: () => null, sessionKey: 'test:late' }));
-    expect(JSON.stringify(h.sent.at(-1)?.messages)).not.toContain('PRIVATE-A')
-    expect(h.sent).toHaveLength(1)
-    expect(h.released).toContain('test:late')
+  it.each(['server', 'native'] as const)(
+    'removes recall revoked while the %s model loads before serialization',
+    async (kind) => {
+      const prompt = await recall()
+      lease(prompt)
+      const model = kind === 'native' ? LOCAL : 'audit-model'
+      const s = settings()
+      s.models.connections = [
+        {
+          id: 'audit',
+          name: 'Audit',
+          enabled: true,
+          type: 'openai-compatible',
+          provider: 'custom',
+          models: ['audit-model'],
+          baseUrl: 'http://localhost:9011/v1',
+          apiKeyRef: ''
+        }
+      ]
+      const messages = [
+        { role: 'system' as const, content: prompt.text },
+        { role: 'user' as const, content: 'What about checkout?' }
+      ]
+      // The first eligibility check happened before loading, as it does in streamModelChat.
+      await withEligibleMemory(messages, model, s)
+      if (kind === 'server') h.beforePrepare = () => forget('a').then(() => {})
+      else h.nativePrepare = () => forget('a').then(() => {})
+      for await (const _ of streamProviderChat({
+        settings: s,
+        model,
+        messages,
+        temperature: 0,
+        getSecret: () => null,
+        sessionKey: 'test:late'
+      }));
+      expect(JSON.stringify(h.sent.at(-1)?.messages)).not.toContain('PRIVATE-A')
+      expect(h.sent).toHaveLength(1)
+      expect(h.released).toContain('test:late')
+    }
+  )
+})
+
+describe('evidence scopes', () => {
+  const unrelated = [
+    { role: 'system', content: 'B only' },
+    { role: 'user', content: 'UNRELATED-REQUEST-B' }
+  ]
+  /** Request A in its own scope: it recalls, reaches a local model, and stays open. */
+  async function requestA() {
+    const scope = {}
+    const prompt = await recall()
+    await runInEvidenceScope(async () => {
+      lease(prompt)
+      await dispatch(prompt)
+    }, scope)
+    return { scope, prompt }
+  }
+
+  it.each([
+    ['remote', REMOTE],
+    ['native', LOCAL]
+  ])('leaves an unrelated %s request exactly as it was', async (_name, model) => {
+    await requestA()
+    const out = await runInEvidenceScope(() => withEligibleMemory(unrelated, model, settings()))
+    expect(out.messages).toBe(unrelated)
+    expect(out.revoked).toBe(false)
+  })
+
+  it('leaves unrelated background work outside any request alone', async () => {
+    await requestA()
+    expect((await withEligibleMemory(unrelated, REMOTE, settings())).messages).toBe(unrelated)
+  })
+
+  it('does not throw on another request with its own compiled task', async () => {
+    await requestA()
+    const compiled = [
+      { role: 'system', content: 'B contract', contextBundle: { taskId: 'task-b' } },
+      { role: 'user', content: 'UNRELATED-REQUEST-B' }
+    ]
+    const out = await runInEvidenceScope(() => withEligibleMemory(compiled, REMOTE, settings()))
+    expect(out.messages).toBe(compiled)
+  })
+
+  it('keeps two active requests from revoking each other', async () => {
+    const { prompt } = await requestA()
+    let leaseB = () => undefined as unknown
+    const scopeB = {}
+    const sentB = await runInEvidenceScope(async () => {
+      leaseB = leaseMemoryEvidence({ root: null, threadId: 't', taskId: 'task-b', prompt })
+      return withEligibleMemory(
+        [
+          { role: 'system', content: `Task B\n\n${prompt.text}` },
+          { role: 'user', content: 'Goal of B' }
+        ],
+        REMOTE,
+        settings()
+      )
+    }, scopeB)
+    leaseB()
+    const user = sentB.messages.filter((item) => item.role === 'user')
+    expect(user.map((item) => item.content)).toEqual(['Goal of B'])
+    expect(JSON.stringify(sentB.messages)).not.toContain('PRIVATE-A')
+    expect(JSON.stringify(sentB.messages)).not.toContain('What about checkout?')
+  })
+
+  it('keeps each intent through compaction in overlapping requests', async () => {
+    const { scope, prompt } = await requestA()
+    const long = (text: string) => [
+      { role: 'system' as const, content: 'Instructions' },
+      ...Array.from({ length: 40 }, (_, i) => ({
+        role: i % 2 ? ('assistant' as const) : ('user' as const),
+        content: `${text} step ${i}`
+      }))
+    ]
+    const compactedB = await runInEvidenceScope(() =>
+      compactAgentMessages({
+        messages: long('Goal of B'),
+        goal: 'Goal of B',
+        filesTouched: [],
+        actionLog: [],
+        treeSnapshot: null,
+        priorMemory: null,
+        settings: settings(),
+        liteModel: REMOTE,
+        temperature: 0,
+        getSecret: () => null
+      })
+    )
+    expect(compactedB.messages.length).toBeLessThan(long('Goal of B').length)
+    const b = await runInEvidenceScope(() =>
+      withEligibleMemory(compactedB.messages, REMOTE, settings())
+    )
+    expect(JSON.stringify(b.messages)).toContain('Goal of B')
+    expect(JSON.stringify(b.messages)).not.toContain('What about checkout?')
+    const a = await runInEvidenceScope(
+      () =>
+        withEligibleMemory(
+          [
+            { role: 'system', content: `Instructions\n\n${prompt.text}` },
+            { role: 'user', content: 'What about checkout?' },
+            { role: 'assistant', content: 'It uses PRIVATE-A' }
+          ],
+          REMOTE,
+          settings()
+        ),
+      scope
+    )
+    expect(JSON.stringify(a.messages)).not.toContain('PRIVATE-A')
+  })
+
+  it('still withholds derived text on a dependent reroute', async () => {
+    const { scope } = await requestA()
+    const out = await runInEvidenceScope(
+      () =>
+        withEligibleMemory(
+          [
+            { role: 'system', content: 'Rerouted' },
+            { role: 'assistant', content: 'Derived from PRIVATE-A' }
+          ],
+          REMOTE,
+          settings()
+        ),
+      scope
+    )
+    expect(JSON.stringify(out.messages)).not.toContain('Derived from PRIVATE-A')
+  })
+
+  it('still refuses to move derived text to another task inside the request', async () => {
+    const { scope } = await requestA()
+    await expect(
+      runInEvidenceScope(
+        () =>
+          withEligibleMemory(
+            [
+              { role: 'system', content: 'Child', contextBundle: { taskId: 'child' } },
+              { role: 'user', content: 'Review it' }
+            ],
+            REMOTE,
+            settings()
+          ),
+        scope
+      )
+    ).rejects.toThrow(/different task/)
+  })
+
+  it('still removes recalled items that reach another scope', async () => {
+    const { prompt } = await requestA()
+    const out = await runInEvidenceScope(() =>
+      withEligibleMemory(
+        [
+          { role: 'system', content: `Lost scope\n\n${prompt.text}` },
+          { role: 'user', content: 'Something else' }
+        ],
+        REMOTE,
+        settings()
+      )
+    )
+    expect(JSON.stringify(out.messages)).not.toContain('PRIVATE-A')
+  })
+
+  it('treats a bundle for the leased task as that request, in any scope', async () => {
+    const prompt = await recall()
+    const scope = {}
+    const bundle = { contextBundle: { taskId: 'task' } }
+    await runInEvidenceScope(async () => {
+      lease(prompt)
+      await withEligibleMemory(
+        [
+          { role: 'system', content: `Task\n\n${prompt.text}`, ...bundle },
+          { role: 'user', content: 'What about checkout?' }
+        ],
+        LOCAL,
+        settings()
+      )
+    }, scope)
+    const out = await runInEvidenceScope(() =>
+      withEligibleMemory(
+        [
+          { role: 'system', content: 'Rebuilt', ...bundle },
+          { role: 'assistant', content: 'Derived from PRIVATE-A' }
+        ],
+        REMOTE,
+        settings()
+      )
+    )
+    expect(JSON.stringify(out.messages)).not.toContain('Derived from PRIVATE-A')
+  })
+
+  it('follows a request through a stream and a dependent child', async () => {
+    const scope = {}
+    const seen: unknown[] = []
+    async function* stream() {
+      seen.push(currentEvidenceScope())
+      await Promise.resolve()
+      seen.push(currentEvidenceScope())
+      yield 1
+      seen.push(currentEvidenceScope())
+    }
+    await runInEvidenceScope(async () => {
+      for await (const _ of stream());
+      await runInEvidenceScope(
+        async () => seen.push(currentEvidenceScope()),
+        currentEvidenceScope()
+      )
+    }, scope)
+    expect(seen).toEqual([scope, scope, scope, scope])
+    expect(seen.every((item) => item === scope)).toBe(true)
+  })
+
+  it('gives every call of a wrapped handler a scope of its own', async () => {
+    const handler = inEvidenceScope(async () => currentEvidenceScope())
+    const [first, second] = await Promise.all([handler(), handler()])
+    expect(first).toBeDefined()
+    expect(first).not.toBe(second)
   })
 })
