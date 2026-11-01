@@ -1,3 +1,4 @@
+import { isAutomaticModelSelection } from '@/shared/model-execution'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AppSettings, ModelInfo, ResolvedAgent } from '@/shared/settings-schema'
 
@@ -80,13 +81,16 @@ export function useModels(settings: AppSettings | null) {
         status.models.find((m) => m.ready)?.name ||
         'builtin:composer-lite'
       setSelectedModel((prev) => {
-        if (prev === 'auto' || s?.models.defaultModel === 'auto') return 'auto'
-        if (prev === 'builtin:composer' || s?.models.defaultModel === 'builtin:composer') {
+        if (isAutomaticModelSelection(prev)) return prev
+        if (!prev && isAutomaticModelSelection(s?.models.defaultModel)) return s!.models.defaultModel
+        if (prev === 'builtin:composer') {
           return 'builtin:composer'
         }
         if (prev && status.models.some((m) => m.name === prev && m.ready === true)) {
           return prev
         }
+        if (s?.models.defaultModel === 'builtin:composer') return 'builtin:composer'
+        if (isAutomaticModelSelection(s?.models.defaultModel)) return s!.models.defaultModel
         if (
           s?.models.defaultModel &&
           status.models.some((m) => m.name === s.models.defaultModel && m.ready === true)

@@ -1,3 +1,5 @@
+import { chooseExecutionModel, executionLocal } from '../auto-model-policy'
+import { prohibitsModelRecovery } from './model-transition'
 import type { AppSettings, TurnPlan } from '../../../../src/shared/settings-schema'
 import { findAgent, getProjectAgents, listResolvedAgents } from '../agents'
 
@@ -41,13 +43,59 @@ export async function decideMidRunAdapt(options: {
   signal?: AbortSignal
   escalateCount: number
   rerouteCount: number
+  attemptedModels?: readonly string[]
+  failureText?: string
   actionLog: string[]
   filesTouched: string[]
 }): Promise<MidRunAdaptDecision> {
-  // Composer Full is Cloud Agents only — never mid-run escalate to local Full.
-  if (options.rerouteCount >= 1) {
-    return { kind: null, reason: '' }
+  if (options.escalateCount + options.rerouteCount >= MID_RUN_ADAPT_BUDGET)
+    return { kind: null, reason: 'Recovery transition budget exhausted' }
+  const policy = options.plan.modelExecution?.policy
+  if (
+    policy &&
+    policy !== 'fixed' &&
+    !prohibitsModelRecovery(options.failureText || options.actionLog.slice(-3).join(' '))
+  ) {
+    const excluded = [...new Set([options.selectedModel, ...(options.attemptedModels || [])])]
+    const choice = await chooseExecutionModel(
+      options.settings,
+      options.plan.intent,
+      policy,
+      excluded
+    )
+    // Recovery is conservative: never export already-derived local execution state
+    // to a remote endpoint while trying to escape a model-format/no-progress failure.
+    const alternate = choice.candidates
+      .filter((c) => c.eligible && executionLocal(options.settings, c.model))
+      .sort(
+        (a, b) =>
+          Number(b.model === choice.model) - Number(a.model === choice.model) ||
+          b.rank - a.rank ||
+          a.model.localeCompare(b.model)
+      )[0]
+    if (alternate)
+      return {
+        kind: 'reroute',
+        reason: `Model recovery: ${options.selectedModel} → ${alternate.model}`,
+        nextPlan: {
+          ...options.plan,
+          method: 'handoff',
+          models: { ...options.plan.models, chat: alternate.model, tools: alternate.model },
+          modelExecution: {
+            ...options.plan.modelExecution!,
+            candidates: choice.candidates,
+            basis: 'recovery'
+          }
+        }
+      }
+    return {
+      kind: null,
+      reason: `No untried eligible local recovery model. ${choice.candidates.map((c) => `${c.model}: ${c.reason}`).join('; ')}`
+    }
   }
+  if (prohibitsModelRecovery(options.failureText || ''))
+    return { kind: null, reason: 'Safety or permission refusal: no model recovery' }
+  if (options.rerouteCount >= 1) return { kind: null, reason: '' }
 
   const resolved = listResolvedAgents(options.workspacePath, options.settings)
   const current = resolved.find((a) => a.id === options.plan.agentId)

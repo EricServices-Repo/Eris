@@ -24,7 +24,8 @@ export function executionPolicy(settings: AppSettings, selected: string): Execut
   if (selected === 'auto-any') return 'auto-any'
   if (selected.trim() && selected !== 'auto') return 'fixed'
   return settings.agent.routing.profile === 'local' || !settings.agent.routing.preferCloudComposer
-    ? 'auto-local' : 'auto-any'
+    ? 'auto-local'
+    : 'auto-any'
 }
 
 /** Execution locality is stricter than permission to disclose recall to an approved LAN host. */
@@ -43,7 +44,8 @@ export async function chooseExecutionModel(
   settings: AppSettings,
   intent: ChatIntent,
   selected = 'auto',
-  excluded: readonly string[] = []
+  excluded: readonly string[] = [],
+  options: { cloudComposer?: boolean } = {}
 ): Promise<AutoModelChoice> {
   const policy = executionPolicy(settings, selected)
   if (policy === 'fixed') return { model: selected, policy, basis: 'profile', candidates: [] }
@@ -59,7 +61,9 @@ export async function chooseExecutionModel(
         preferredFreeBytes: gpu.preferredGpu?.vramFreeBytes,
         preferredTotalBytes: gpu.preferredGpu?.vramBytes
       })
-    } catch { /* unknown capacity excludes cold native workers */ }
+    } catch {
+      /* unknown capacity excludes cold native workers */
+    }
   }
   const resident = currentLoadedModel()
   const candidates: ModelCandidate[] = []
@@ -71,30 +75,49 @@ export async function chooseExecutionModel(
     if (!ready) reason = reason || 'not ready'
     else if (excluded.includes(model)) reason = 'already attempted in this run'
     else if (policy === 'auto-local' && !local) reason = 'excluded by Auto-local execution policy'
-    candidates.push({ model, eligible: ready && !reason, reason: reason || 'eligible; heuristic fallback',
-      locality: local ? 'local' : 'remote', rank: rank + (resident?.ref === model ? 3 : 0) })
+    candidates.push({
+      model,
+      eligible: ready && !reason,
+      reason: reason || 'eligible; heuristic fallback',
+      locality: local ? 'local' : 'remote',
+      rank: rank + (resident?.ref === model ? 3 : 0)
+    })
   }
   add('builtin:composer-lite', isExactBuiltinReady('builtin:composer-lite'), '', 10)
-  const fullLocal = settings.agent.routing.useLocalComposerFull && isExactBuiltinReady('builtin:composer')
+  const fullLocal =
+    settings.agent.routing.useLocalComposerFull && isExactBuiltinReady('builtin:composer')
   // Cloud Composer is resolved separately by the production cloud route.
-  add('builtin:composer', Boolean(fullLocal) || policy === 'auto-any', '',
-    ['edit', 'verify', 'run'].includes(intent) ? 24 : 8)
+  add(
+    'builtin:composer',
+    Boolean(fullLocal) || (policy === 'auto-any' && options.cloudComposer === true),
+    '',
+    ['edit', 'verify', 'run'].includes(intent) ? 24 : 8
+  )
   for (const m of locals) {
-    const incompatible = /mmproj|embed|clip|vision|encoder/i.test(`${m.ref} ${m.name} ${m.filename}`)
+    const incompatible = /mmproj|embed|clip|vision|encoder/i.test(
+      `${m.ref} ${m.name} ${m.filename}`
+    )
     const residentFits = resident?.ref === m.ref && resident.contextSize >= 1024
-    const fits = residentFits || (m.approxBytes > 0 && m.approxBytes + CONTEXT_HEADROOM_BYTES <= budget)
+    const fits =
+      residentFits || (m.approxBytes > 0 && m.approxBytes + CONTEXT_HEADROOM_BYTES <= budget)
     const coding = /coder|codestral|codeqwen|deepseek.*code/i.test(`${m.name} ${m.ref} ${m.family}`)
     const codeTask = ['edit', 'verify', 'run', 'review', 'explore'].includes(intent)
-    const specialization = coding ? (codeTask ? 8 : -2) : (codeTask ? 0 : 6)
+    const specialization = coding ? (codeTask ? 8 : -2) : codeTask ? 0 : 6
     const declared = m.routingCapabilities
     const requiresTools = !['answer', 'capability'].includes(intent)
-    const unsupported = declared?.intents && !declared.intents.includes(intent) ||
-      requiresTools && declared?.tools === false
-    const reason = incompatible ? 'non-chat model' : unsupported ? 'declared task/tool incompatibility' :
-      m.contextWindow && m.contextWindow < 1024 ? 'context capacity below minimum' :
-      !fits ? 'insufficient or unknown memory budget' : ''
-    add(m.ref, m.ready, reason,
-      20 + specialization)
+    const unsupported =
+      (declared?.intents && !declared.intents.includes(intent)) ||
+      (requiresTools && declared?.tools === false)
+    const reason = incompatible
+      ? 'non-chat model'
+      : unsupported
+        ? 'declared task/tool incompatibility'
+        : m.contextWindow && m.contextWindow < 1024
+          ? 'context capacity below minimum'
+          : !fits
+            ? 'insufficient or unknown memory budget'
+            : ''
+    add(m.ref, m.ready, reason, 20 + specialization)
   }
   for (const c of settings.models.connections) {
     if (!c.enabled || c.type === 'builtin') continue
@@ -102,11 +125,15 @@ export async function chooseExecutionModel(
       add(model, true, /embed|mmproj|clip|encoder/i.test(model) ? 'non-chat model' : '', 18)
     }
   }
-  const eligible = candidates.filter((c) => c.eligible)
+  const eligible = candidates
+    .filter((c) => c.eligible)
     .sort((a, b) => b.rank - a.rank || a.model.localeCompare(b.model))
-  for (const c of eligible) c.reason = `eligible; heuristic task rank ${c.rank}; ${
-    resident?.ref === c.model ? 'measured resident context, no reload' : 'switch/load cost estimated; capability specialization inferred unless declared'
-  }`
+  for (const c of eligible)
+    c.reason = `eligible; heuristic task rank ${c.rank}; ${
+      resident?.ref === c.model
+        ? 'measured resident context, no reload'
+        : 'switch/load cost estimated; capability specialization inferred unless declared'
+    }`
   const refs = eligible.map((c) => c.model)
   if (settings.evals?.useScoresForRouting && refs.length) {
     const { bestModelForIntent } = await import('./agent-telemetry')
@@ -114,7 +141,13 @@ export async function chooseExecutionModel(
     if (measured && refs.includes(measured))
       return { model: measured, basis: 'telemetry', policy, candidates }
     const { bestEvalModelForIntent } = await import('./eval-store')
-    const evaluated = bestEvalModelForIntent(intent, refs, settings.evals.minRuns, undefined, settings)
+    const evaluated = bestEvalModelForIntent(
+      intent,
+      refs,
+      settings.evals.minRuns,
+      undefined,
+      settings
+    )
     if (evaluated && refs.includes(evaluated))
       return { model: evaluated, basis: 'eval', policy, candidates }
   }

@@ -5,7 +5,19 @@ import { join } from 'path'
 const h = vi.hoisted(() => ({
   sent: [] as Array<{ model: string; messages: Array<{ role: string; content: string }> }>,
   events: [] as Array<{ type: string; data: { revoked: string[]; remaining: number } }>,
+  beforePrepare: async () => {},
+  nativePrepare: async () => {},
   released: [] as string[]
+}))
+vi.mock('../electron/main/services/ollama-runtime', async (original) => ({
+  ...(await original<object>()),
+  prepareModelWindows: async () => h.beforePrepare()
+}))
+vi.mock('../electron/main/services/openai-compatible', async (original) => ({
+  ...(await original<object>()),
+  streamOpenAICompatible: async function* (request: (typeof h.sent)[number]) {
+    h.sent.push(request); yield 'ok'
+  }
 }))
 vi.mock('worker_threads', async () => ({
   ...(await vi.importActual<typeof import('worker_threads')>('worker_threads')),
@@ -26,7 +38,14 @@ vi.mock('../electron/main/services/model-transport', async (original) => ({
 }))
 vi.mock('../electron/main/services/builtin-model', async (original) => ({
   ...(await original<typeof import('../electron/main/services/builtin-model')>()),
-  releaseLocalChatSession: (key: string) => h.released.push(key)
+  releaseLocalChatSession: (key: string) => h.released.push(key),
+  resolveExactBuiltinRef: (ref: string) => ref,
+  streamBuiltinChat: async function* (request: { modelRef: string; messages: Array<{role: string; content: string}>;
+    prepareMessages?: () => Promise<Array<{role: string; content: string}>> }) {
+    await h.nativePrepare()
+    const messages = request.prepareMessages ? await request.prepareMessages() : request.messages
+    h.sent.push({ model: request.modelRef, messages }); yield 'ok'
+  }
 }))
 import { workspaceRequest } from '../electron/main/services/workspace-worker-client'
 import { handleWorkspaceRequest } from '../electron/main/workspace-worker'
@@ -40,7 +59,7 @@ import {
 import { contextMemoryStore } from '../electron/main/services/context-memory-store'
 import { leaseMemoryEvidence, withEligibleMemory } from '../electron/main/services/memory-dispatch'
 import { compactAgentMessages } from '../electron/main/services/agent/compaction'
-import { streamModelChat } from '../electron/main/services/chat-runtime'
+import { streamModelChat, streamProviderChat } from '../electron/main/services/chat-runtime'
 import { getDefaults } from '../electron/main/services/settings'
 import * as profileSettings from '../electron/main/services/settings'
 import { emptyMemoryControls, type MemoryPrompt } from '../src/shared/context-memory'
@@ -102,6 +121,8 @@ const forget = (...forgotten: string[]) =>
 
 beforeEach(() => {
   h.sent.length = h.events.length = h.released.length = 0
+  h.beforePrepare = async () => {}
+  h.nativePrepare = async () => {}
   release = () => undefined
   contextMemoryStore.clear()
   contextMemoryStore.configure(settings().agent.contextMemory)
@@ -379,5 +400,27 @@ describe('derived compiler and native-call privacy', () => {
         DISPATCH_SETTINGS
       )
     ).rejects.toThrow(/different task/)
+  })
+})
+
+
+describe('eligibility after asynchronous preparation', () => {
+  it.each(['server', 'native'] as const)('removes recall revoked while the %s model loads before serialization', async (kind) => {
+    const prompt = await recall(); lease(prompt)
+    const model = kind === 'native' ? LOCAL : 'audit-model'
+    const s = settings()
+    s.models.connections = [{ id: 'audit', name: 'Audit', enabled: true, type: 'openai-compatible',
+      provider: 'custom', models: ['audit-model'], baseUrl: 'http://localhost:9011/v1', apiKeyRef: '' }]
+    const messages = [{ role: 'system' as const, content: prompt.text },
+      { role: 'user' as const, content: 'What about checkout?' }]
+    // The first eligibility check happened before loading, as it does in streamModelChat.
+    await withEligibleMemory(messages, model, s)
+    if (kind === 'server') h.beforePrepare = () => forget('a').then(() => {})
+    else h.nativePrepare = () => forget('a').then(() => {})
+    for await (const _ of streamProviderChat({ settings: s, model, messages, temperature: 0,
+      getSecret: () => null, sessionKey: 'test:late' }));
+    expect(JSON.stringify(h.sent.at(-1)?.messages)).not.toContain('PRIVATE-A')
+    expect(h.sent).toHaveLength(1)
+    expect(h.released).toContain('test:late')
   })
 })

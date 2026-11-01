@@ -1,4 +1,5 @@
-import { chooseExecutionModel, executionPolicy, type AutoModelChoice } from './auto-model-policy'
+import { isAutomaticModelSelection } from '../../../src/shared/model-execution'
+import { chooseExecutionModel, executionPolicy, executionLocal, type AutoModelChoice } from './auto-model-policy'
 import { asksForImageGeneration } from '../../../src/shared/image-generation'
 import type {
   AgentDefinition,
@@ -11,7 +12,7 @@ import type {
 } from '../../../src/shared/settings-schema'
 import { allAgentsFlat, findAgent } from './agents'
 import { isBuiltinRef, isExactBuiltinReady, resolveExactBuiltinRef } from './builtin-model'
-import { getLocalStatuses, isLocalRef, resolveExactLocalRef } from './local-model'
+import { isLocalRef, resolveExactLocalRef } from './local-model'
 import { streamModelChat } from './chat-runtime'
 import { getToolContract, type ToolAccess } from './tool-registry'
 import { routeHeuristic, routeMessage } from './router'
@@ -33,7 +34,6 @@ import {
   needsWebLookup,
   chatAgentForTurn
 } from '../../../src/shared/agent-contract'
-import { CONTEXT_HEADROOM_BYTES, inferenceBudgetBytes } from './vram-fit'
 import { executionPlanFor } from './execution-plan'
 import {
   COMMAND_OPERAND,
@@ -63,78 +63,10 @@ const POLICY_ACCESS_RANK: Record<AgentToolsCeiling, number> = {
   full: 3
 }
 
-const NON_CHAT_LOCAL = /mmproj|embed|clip|vision|encoder/i
-
-/**
- * Largest ready local chat GGUF whose weights plus context headroom fit the budget.
- * Unknown or too-small budgets stay on Composer Lite.
- */
-export function bestFittingLocalModel(
-  models: Array<{
-    ref: string
-    ready?: boolean
-    approxBytes?: number
-    filename?: string
-    name?: string
-  }>,
-  budgetBytes: number
-): string | null {
-  if (budgetBytes <= 0) return null
-  const fitting = models
-    .filter((m) => {
-      if (m.ready === false || !isLocalRef(m.ref)) return false
-      const bytes = m.approxBytes || 0
-      if (bytes <= 0) return false
-      if (NON_CHAT_LOCAL.test(`${m.filename || ''} ${m.name || ''} ${m.ref}`)) return false
-      return bytes + CONTEXT_HEADROOM_BYTES <= budgetBytes
-    })
-    .sort((a, b) => (b.approxBytes || 0) - (a.approxBytes || 0))
-  return fitting[0]?.ref ?? null
-}
-
-export async function readyLocalHandoffRef(settings: AppSettings): Promise<string | null> {
-  let budget = 0
-  try {
-    const { getGpuAccelStatus } = await import('./gpu-accel')
-    const gpu = await getGpuAccelStatus(settings.models.preferEgpu !== false)
-    budget = inferenceBudgetBytes({
-      vramShareFreeBytes: gpu.vramShareFreeBytes,
-      vramShareTotalBytes: gpu.vramShareTotalBytes,
-      preferredFreeBytes: gpu.preferredGpu?.vramFreeBytes,
-      preferredTotalBytes: gpu.preferredGpu?.vramBytes
-    })
-  } catch {
-    budget = 0
-  }
-  return bestFittingLocalModel(getLocalStatuses(), budget)
-}
-
 export function localComposerFullActive(settings: AppSettings): boolean {
   return (
     settings.agent.routing.useLocalComposerFull === true && isExactBuiltinReady('builtin:composer')
   )
-}
-
-export function selectComposerLocalHandoff(options: {
-  selectedModel: string
-  intent: ChatIntent
-  profile?: 'auto' | 'local' | 'max'
-  preferCloudComposer: boolean
-  cloudJobsExhausted: boolean
-  readyLocalRef: string | null
-}): { ref: string; because: 'usage' | 'local' } | null {
-  if (!options.readyLocalRef) return null
-  if (!intentNeedsMutation(options.intent)) return null
-  const selected = options.selectedModel.trim() || 'builtin:composer-lite'
-  if (!isBuiltinRef(selected) || !/composer/i.test(selected)) return null
-  const profile = options.profile ?? 'auto'
-  if (profile === 'local' || options.preferCloudComposer === false) {
-    return { ref: options.readyLocalRef, because: 'local' }
-  }
-  if (options.cloudJobsExhausted) {
-    return { ref: options.readyLocalRef, because: 'usage' }
-  }
-  return null
 }
 
 export function intentNeedsTools(intent: ChatIntent): boolean {
@@ -433,7 +365,7 @@ export function filterToolsByPolicy<T extends { function: { name: string } }>(
 /** Empty or "auto" lets the turn choose among ready models. Anything else is used as picked. */
 export function isAutoModelChoice(selected: string): boolean {
   const name = selected.trim()
-  return !name || name === 'auto' || name === 'auto-local' || name === 'auto-any'
+  return !name || isAutomaticModelSelection(name)
 }
 
 /**
@@ -537,11 +469,15 @@ async function llmRouteHint(options: {
   getSecret: (key: string) => string | null
   signal?: AbortSignal
   examples?: string
-}): Promise<{ intent?: ChatIntent; agentId?: string; confidence: number } | null> {
-  const routerModel =
+  selectedModel?: string
+}): Promise<{ intent?: ChatIntent; agentId?: string; confidence: number; model: string } | null> {
+  let routerModel =
     options.settings.agent.routing.routerModel ||
     options.settings.models.defaultModel ||
     'builtin:composer-lite'
+  if (isAutoModelChoice(routerModel)) routerModel = isExactBuiltinReady('builtin:composer-lite')
+    ? 'builtin:composer-lite' : (await chooseExecutionModel(options.settings, 'answer', options.selectedModel || 'auto')).model
+  if (!routerModel) return null
   if (isBuiltinRef(routerModel) && !isExactBuiltinReady(routerModel)) {
     // Fall back: any ready lite, else skip LLM router
     if (!isExactBuiltinReady('builtin:composer-lite')) return null
@@ -551,6 +487,9 @@ async function llmRouteHint(options: {
       resolveExactBuiltinRef('builtin:composer-lite') ||
       routerModel
     : routerModel
+
+  if (executionPolicy(options.settings, options.selectedModel || 'auto') === 'auto-local' &&
+      !executionLocal(options.settings, model)) return null
 
   const agentLines = options.agents
     .map((a) => `- ${a.id}: ${a.description || a.name} (tools: ${a.tools ?? 'edit'})`)
@@ -632,13 +571,15 @@ async function llmRouteHint(options: {
         ? parsed.agentId
         : undefined
     const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0
-    return { intent, agentId, confidence }
+    return { intent, agentId, confidence, model }
   } catch {
     return null
   }
 }
 
 export async function planChatTurn(options: {
+  /** Direct/local worker runners do not have the chat Cloud execution adapter. */
+  allowCloudComposer?: boolean
   workspacePath: string | null
   settings: AppSettings
   context: ChatTurnContext
@@ -674,8 +615,8 @@ export async function planChatTurn(options: {
   let method: TurnPlan['method'] = route.method
   let intent = heuristicIntent
 
-  const routingProfile = options.settings.agent.routing.profile ?? 'auto'
-  const preferCloudSetting = options.settings.agent.routing.preferCloudComposer !== false
+  const routingProfile = selectedModel === 'auto-local' ? 'local' : selectedModel === 'auto-any' ? 'auto' : options.settings.agent.routing.profile ?? 'auto'
+  const preferCloudSetting = selectedModel === 'auto-any' || options.settings.agent.routing.preferCloudComposer !== false
   // Auto/Max profiles turn on the LLM router even if the legacy toggle is off.
   const wantLlmRouter =
     options.settings.agent.routing.useLlmRouter ||
@@ -684,6 +625,7 @@ export async function planChatTurn(options: {
 
   const roster = allAgentsFlat(options.workspacePath)
   let llmAgentSelected = false
+  let coordinator: string | undefined
 
   const routeScore = Number(route.reason.match(/Matched keywords \(score (\d+)\)/)?.[1] || 0)
   const explicitIntent =
@@ -700,7 +642,7 @@ export async function planChatTurn(options: {
   if (
     mode === 'agent' &&
     options.settings.agent.routing.enabled &&
-    wantLlmRouter &&
+    (wantLlmRouter || pickedModel === 'auto-local' || pickedModel === 'auto-any') &&
     !options.context.manualAgentId &&
     !options.context.skipModelRouter &&
     !deterministicRouteIsClear
@@ -718,6 +660,7 @@ export async function planChatTurn(options: {
       hint = await Promise.race([
         llmRouteHint({
           settings: options.settings,
+          selectedModel,
           text,
           previousMessages: options.context.previousMessages,
           agents,
@@ -737,6 +680,7 @@ export async function planChatTurn(options: {
       options.signal?.removeEventListener('abort', abortRoute)
       if (!routeController.signal.aborted) routeController.abort()
     }
+    if (hint?.intent || hint?.agentId) coordinator = hint.model
     if (hint?.intent) {
       // Don't let a weak/cold router strip tools from "review/improve the project…"
       const llmStripsTools =
@@ -921,7 +865,7 @@ export async function planChatTurn(options: {
 
   const toolPolicy = effectiveToolPolicy(agent, intent, mode)
   const agentModelOverride =
-    (!pickedModel || isAutoModelChoice(pickedModel)) && agent.model.trim() && agent.model !== 'auto'
+    (!pickedModel || isAutoModelChoice(pickedModel)) && agent.model.trim() && !isAutoModelChoice(agent.model)
       ? agent.model.trim()
       : ''
   let modelBasis: 'user' | 'agent' | 'telemetry' | 'eval' | 'profile' = agentModelOverride
@@ -930,11 +874,14 @@ export async function planChatTurn(options: {
   let modelChoice: AutoModelChoice | undefined
   let chosenModel = agentModelOverride || selectedModel
   if (isAutoModelChoice(chosenModel)) {
-    const choice = await chooseExecutionModel(options.settings, intent, chosenModel)
+    const choice = await chooseExecutionModel(options.settings, intent, chosenModel, [], { cloudComposer: options.allowCloudComposer !== false && mode === 'agent' && Boolean(options.workspacePath) })
     modelChoice = choice
     chosenModel = choice.model
     modelBasis = choice.basis
   }
+  const localityConflict = agentModelOverride && executionPolicy(options.settings, selectedModel) === 'auto-local' &&
+    !executionLocal(options.settings, agentModelOverride)
+      ? `Agent ${agent.name} pins remote model ${agentModelOverride}, which conflicts with Auto-local. Choose a local agent model, Fixed remote, or Auto-any.` : undefined
   const roles = resolveModelRoles({
     selectedModel: chosenModel,
     intent,
@@ -960,6 +907,7 @@ export async function planChatTurn(options: {
     models: {
       chat: roles.chat,
       tools: roles.tools,
+      coordinator,
       router: wantLlmRouter ? options.settings.agent.routing.routerModel : undefined
     },
     toolPolicy,
@@ -980,7 +928,7 @@ export async function planChatTurn(options: {
     routeTrace: { heuristicRule: heuristic.rule, overrides },
     error: modelChoice && !modelChoice.model
       ? `No eligible model for ${modelChoice.policy}. ${modelChoice.candidates.map((c) => `${c.model}: ${c.reason}`).join('; ')}`
-      : roles.error,
+      : localityConflict || roles.error,
     modelExecution: {
       policy: agentModelOverride ? 'fixed' : executionPolicy(options.settings, selectedModel),
       selection: agentModelOverride || selectedModel,

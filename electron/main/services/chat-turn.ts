@@ -1,3 +1,4 @@
+import { isExactBuiltinReady } from './builtin-model'
 import { bindTaskReferences, type ResolvedReference } from './reference-binding'
 import { realpathSync } from 'fs'
 import type {
@@ -102,6 +103,8 @@ export async function resolveChatTurnContract(
   resolution: IntentResolution
 }> {
   let plan = initial
+  const coordinatorModel = plan.modelExecution && plan.modelExecution.policy !== 'fixed' &&
+    isExactBuiltinReady('builtin:composer-lite') ? 'builtin:composer-lite' : plan.models.chat
   const resolution: IntentResolution = input.forceRoute
     ? {
         intent: plan.intent,
@@ -114,7 +117,7 @@ export async function resolveChatTurnContract(
         text: input.text,
         fallback: plan.intent,
         settings: input.settings,
-        model: plan.models.chat,
+        model: coordinatorModel,
         mode: input.mode ?? 'agent',
         history: input.history,
         signal: input.signal,
@@ -139,6 +142,7 @@ export async function resolveChatTurnContract(
       signal: input.signal
     })
   }
+  if (resolution.source === 'semantic') plan = { ...plan, models: { ...plan.models, coordinator: coordinatorModel } }
   let canonicalRoot = input.workspacePath
   try {
     if (input.workspacePath) canonicalRoot = realpathSync(input.workspacePath)
@@ -268,6 +272,8 @@ export function localChatTurnModel(
     (model === 'builtin:composer' || model === 'composer') &&
     !localComposerFullActive(settings)
   ) {
+    if (plan.modelExecution?.policy === 'fixed') return { model, plan: { ...plan,
+      error: 'Fixed Composer Full is unavailable for local execution. Enable local Full or explicitly choose another model or automatic policy.' } }
     const lite = 'builtin:composer-lite'
     return { model: lite, plan: { ...plan, models: { ...plan.models, chat: lite, tools: lite } } }
   }

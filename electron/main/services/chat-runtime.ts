@@ -118,6 +118,16 @@ export async function* streamProviderChat(
   }
   assertProviderCallAllowed(options.settings, model)
   await prepareModelWindows(options.settings, [model], options.getSecret, options.signal)
+  if (options.signal?.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
+  // Preparation can load/reconfigure a server model asynchronously. Validate again
+  // after that await, immediately before serializing the actual provider request.
+  for (const message of options.messages) {
+    const task = (message as ModelMessage).contextBundle?.referenceTask
+    if (task) await assertTaskReferences(task, options.settings, model)
+  }
+  const eligible = await withEligibleMemory(options.messages, model, options.settings)
+  if (eligible.revoked && options.sessionKey) releaseLocalChatSession(options.sessionKey)
+  options = { ...options, messages: eligible.messages }
   const capabilities = resolveModelCapabilities(options.settings, model)
   if (options.maxOutputTokens !== undefined) {
     if (!Number.isSafeInteger(options.maxOutputTokens) || options.maxOutputTokens < 1)
@@ -145,18 +155,19 @@ export async function* streamProviderChat(
     capabilities.promptBudget - schemaTokens,
     protocol
   )
-  const compiled = compileModelMessages(budgeted.messages, {
+  let compiled = compileModelMessages(budgeted.messages, {
     protocol,
     contextWindow: capabilities.contextCeiling,
     outputReserve: capabilities.outputReserve
   })
-  reportContextDispatch({
-    compiled: options.messages,
-    outbound: compiled,
-    adapted: true,
-    ...options
-  })
-  const inputEstimate =
+  if (!isNativeGgufRef(model))
+    reportContextDispatch({
+      compiled: options.messages,
+      outbound: compiled,
+      adapted: true,
+      ...options
+    })
+  let inputEstimate =
     estimateMessagesTokens(
       compiled.map((message) => ({
         role: message.role === 'tool' ? 'user' : message.role,
@@ -230,6 +241,53 @@ export async function* streamProviderChat(
       phase('loading', 'Waiting for local resources and model readiness')
       for await (const chunk of streamBuiltinChat({
         onLoaded: () => phase('prefill', 'Local model ready; request dispatched'),
+        prepareMessages: async () => {
+          if (options.signal?.aborted)
+            throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
+          for (const message of options.messages) {
+            const task = (message as ModelMessage).contextBundle?.referenceTask
+            if (task) await assertTaskReferences(task, options.settings, model)
+          }
+          const latest = await withEligibleMemory(options.messages, model, options.settings)
+          if (latest.revoked && options.sessionKey) releaseLocalChatSession(options.sessionKey)
+          const allocated = resolveModelCapabilities(options.settings, model)
+          const wire = latest.messages.map((message) => {
+            const { contextBundle: _bundle, ...value } = message as ModelMessage
+            return { ...value, content: value.content ?? '' }
+          }) as ModelMessage[]
+          if (options.tools?.length)
+            wire.splice(1, 0, {
+              role: 'system',
+              content:
+                'Available tools (JSON schemas):\n' +
+                JSON.stringify(options.tools.map((tool) => tool.function))
+            })
+          const packed = budgetModelMessages(wire, allocated.promptBudget, 'text-tools')
+          compiled = compileModelMessages(packed.messages, {
+            protocol: 'text-tools',
+            contextWindow: allocated.contextCeiling,
+            outputReserve: allocated.outputReserve
+          })
+          Object.assign(capabilities, allocated)
+          inputEstimate = estimateMessagesTokens(
+            compiled.map((m) => ({
+              role: m.role === 'tool' ? 'user' : m.role,
+              content: m.content ?? ''
+            }))
+          )
+          reportContextDispatch({
+            ...options,
+            compiled: latest.messages,
+            outbound: compiled,
+            adapted: true
+          })
+          return compiled
+            .filter((m) => m.role === 'system' || m.role === 'user' || m.role === 'assistant')
+            .map((m) => ({
+              role: m.role as 'system' | 'user' | 'assistant',
+              content: String(m.content ?? '')
+            }))
+        },
         modelRef: model,
         maxOutputTokens: capabilities.outputCap,
         messages: compiled

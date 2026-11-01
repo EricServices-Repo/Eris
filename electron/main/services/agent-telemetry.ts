@@ -92,7 +92,7 @@ export function recordAgentRun(input: {
     r.totalSteps += Math.max(0, Math.round(input.steps))
     if (input.aborted) r.aborted += 1
     else if (input.incomplete) r.incomplete += 1
-    else if (input.mutated) r.succeeded += 1
+    else r.succeeded += 1
   })
 }
 
@@ -122,10 +122,11 @@ export function bestModelForIntent(
   minRuns: number,
   settings?: AppSettings
 ): string | null {
-  const records = getTelemetryRecords().filter((r) => !settings || (
+  const eligible = new Set(candidates)
+  const records = getTelemetryRecords().filter((r) => eligible.has(r.model) && (!settings || (
     r.routingKey === routingEvidenceKey(settings, r.model) &&
     typeof r.updatedAt === 'number' && Date.now() - r.updatedAt <= ROUTING_EVIDENCE_MAX_AGE_MS
-  ))
+  )))
   return bestTelemetryModelForIntent(records, intent, candidates, minRuns)
 }
 

@@ -1,3 +1,4 @@
+import { prepareModelTransition, prohibitsModelRecovery } from './model-transition'
 import { compileMeasuredContext } from './measured-context'
 import { contextProvenance } from '../model-capabilities'
 import { assertTaskReferences } from '../reference-binding'
@@ -415,7 +416,7 @@ async function* runAgentInternal(options: {
   let plan =
     options.turnPlan ??
     (await planChatTurn({
-      workspacePath: options.workspacePath,
+      allowCloudComposer: false,      workspacePath: options.workspacePath,
       settings: options.settings,
       context: {
         text: originalUserGoal,
@@ -534,8 +535,19 @@ async function* runAgentInternal(options: {
     }
     return
   }
-  const chatModel = plan.models.chat
+  let chatModel = plan.models.chat
   let workerModel = plan.models.tools
+  const attemptedModels = new Set([workerModel])
+  if (plan.models.coordinator && plan.models.coordinator !== workerModel && plan.modelExecution?.policy !== 'fixed') {
+    await prepareModelTransition({ settings: options.settings, plan,
+      from: plan.models.coordinator, to: workerModel, releaseSession: () => undefined,
+      getSecret: options.getSecret, signal: options.signal })
+    const reason = `Coordinator ${plan.models.coordinator} → worker ${workerModel}`
+    appendTaskEvent(task.taskId, 'model-handoff', { coordinator: plan.models.coordinator,
+      worker: workerModel, taskId: task.taskId, policy: plan.modelExecution?.policy })
+    yield { type: 'adapt', kind: 'delegate', reason, model: workerModel,
+      agentId: plan.agentId, agentName: plan.agentName }
+  }
   const modelsCatalog =
     plan.intent === 'capability' ? formatAvailableModelsPrompt(options.settings, chatModel) : ''
   // Safety net: "review/improve the project folder" must never go answer-only just
@@ -696,7 +708,7 @@ async function* runAgentInternal(options: {
   const mcpMode = options.mcp ?? 'sync'
   /** Local GGUF KV session for this chat run (multi-step reuse). */
   const ggufSessionKey =
-    options.jobId && isNativeGgufRef(workerModel) ? `gguf:${options.jobId}` : undefined
+    options.jobId ? `gguf:${options.jobId}` : undefined
   const releaseGgufSession = () => {
     if (ggufSessionKey) releaseLocalChatSession(ggufSessionKey)
   }
@@ -969,6 +981,7 @@ async function* runAgentInternal(options: {
   let verifyPassedOnce = false
   const escalateCount = plan.escalateToFull ? 1 : 0
   let rerouteCount = 0
+  let recoveryExclusionReason = ''
   const reviewOnly =
     plan.intent === 'review' ||
     plan.intent === 'plan' ||
@@ -1300,13 +1313,15 @@ async function* runAgentInternal(options: {
     // A recovery route is a new turn plan and may widen tool access. Keep Ask
     // mode on the current read-only plan even when the worker is stuck.
     const decision =
-      mode === 'ask'
+      mode === 'ask' || prohibitsModelRecovery(latestAssistant + ' ' + actionLog.slice(-3).join(' '))
         ? { kind: null, reason: '' as const }
         : await decideMidRunAdapt({
             workspacePath,
             settings: options.settings,
             plan,
             selectedModel: workerModel,
+            attemptedModels: [...attemptedModels],
+            failureText: latestAssistant + ' ' + actionLog.slice(-3).join(' '),
             goal: originalUserGoal,
             getSecret: options.getSecret,
             signal: options.signal,
@@ -1334,6 +1349,25 @@ async function* runAgentInternal(options: {
       })
     if (decision.kind === 'reroute' && decision.nextPlan && !sameModelRetry) {
       const fromAgent = plan.agentId
+      const fromModel = workerModel
+      const nextPlan = decision.nextPlan
+      if (nextPlan.models.tools !== workerModel) {
+        attemptedModels.add(nextPlan.models.tools)
+        try {
+          await prepareModelTransition({ settings: options.settings, plan: nextPlan,
+            from: workerModel, to: nextPlan.models.tools, releaseSession: releaseGgufSession,
+            getSecret: options.getSecret, signal: options.signal })
+        } catch (error) {
+          throwIfAborted(options.signal)
+          rerouteCount++
+          const reason = error instanceof Error ? error.message : String(error)
+          recoveryExclusionReason = reason
+          appendTaskEvent(task.taskId, 'model-transition-refused', { from: workerModel,
+            to: nextPlan.models.tools, reason, attemptedModels: [...attemptedModels] })
+          yield { type: 'status', text: reason }
+          return false
+        }
+      }
       plan = {
         ...decision.nextPlan,
         task,
@@ -1341,11 +1375,15 @@ async function* runAgentInternal(options: {
         toolPolicy: intersectToolPolicy(decision.nextPlan.toolPolicy, task)
       }
       workerModel = plan.models.tools
+      chatModel = plan.models.chat
       rerouteCount++
       // The worker changes; the task, its artifact, project and authority do not.
       appendTaskEvent(task.taskId, 'reroute', {
         from: fromAgent,
         to: plan.agentId,
+        fromModel,
+        toModel: workerModel,
+        attemptedModels: [...attemptedModels],
         trigger,
         budget: { used: escalateCount + rerouteCount, max: MID_RUN_ADAPT_BUDGET },
         taskId: task.taskId,
@@ -1361,6 +1399,9 @@ async function* runAgentInternal(options: {
       const reason = `${decision.reason} after ${trigger}`
       // Install the new agent's actual instructions, not just its display name.
       // Retain execution evidence and the original task's authority ceiling.
+      promptBudget = contextBudgetTokens(options.settings, workerModel) -
+        Math.ceil(JSON.stringify(openaiTools).length / 3) - 128
+      if (promptBudget < 512) throw new Error('Recovery model has insufficient context for the authorized tools')
       const recoveryMessages = await buildPreservedWorkerMessages({
         messages,
         workspacePath,
@@ -1377,6 +1418,8 @@ async function* runAgentInternal(options: {
         else workerMessages.unshift(recoveryMessages[0])
       }
       releaseGgufSession()
+      disableRetryGrammar = false
+      consecutiveEmptyReplies = 0
       lastFingerprint = ''
       repeatFingerprint = 0
       consecutiveToolErrors = 0
@@ -1402,6 +1445,12 @@ async function* runAgentInternal(options: {
       return true
     }
 
+    if (decision.reason) {
+      recoveryExclusionReason = decision.reason
+      appendTaskEvent(task.taskId, 'model-recovery-unavailable', { reason: decision.reason,
+        attemptedModels: [...attemptedModels] })
+      yield { type: 'status', text: decision.reason }
+    }
     // Keep the current role when no safe fallback is configured, but give it a concrete recovery instruction.
     rerouteCount++
     const reason =
@@ -1953,7 +2002,8 @@ async function* runAgentInternal(options: {
               ? `The last tool failure was: ${lastFailure}`
               : rejectedReplies && !successfulObservations.size
                 ? `The model replied ${rejectedReplies} time${rejectedReplies === 1 ? '' : 's'} without using a tool, so no project files were inspected.`
-                : 'The model did not produce an actionable next step.'),
+                : 'The model did not produce an actionable next step.') +
+            (recoveryExclusionReason ? `\nModel recovery: ${recoveryExclusionReason}` : ''),
           replace: true
         }
         return
@@ -2014,29 +2064,43 @@ async function* runAgentInternal(options: {
           ? ['read_file']
           : names
       }
-      for await (const evt of streamThinkingText({
-        ...options,
-        model: workerModel,
-        messages: workerMessages,
-        stopOnToolCall: true,
-        tools: openaiTools,
-        builtinJsonSchema: constrainThisTurn
-          ? toolCallJsonSchema(
-              mcpTools.map((tool) => tool.fqName),
-              grammarToolNames(),
-              true
-            )
-          : undefined,
-        sessionKey: isNativeGgufRef(workerModel) ? ggufSessionKey : undefined
-      })) {
-        if (evt.kind === 'thinking') {
-          // Model tokens are the reply, not the thinking trace.
-        } else {
-          assistantText = evt.full
-          latestAssistant = evt.full
-          abortedLoop = evt.aborted === 'loop'
-          nativeFromStream = evt.nativeToolCalls
+      try {
+        for await (const evt of streamThinkingText({
+          ...options,
+          model: workerModel,
+          messages: workerMessages,
+          stopOnToolCall: true,
+          tools: openaiTools,
+          builtinJsonSchema: constrainThisTurn
+            ? toolCallJsonSchema(
+                mcpTools.map((tool) => tool.fqName),
+                grammarToolNames(),
+                true
+              )
+            : undefined,
+          sessionKey: isNativeGgufRef(workerModel) ? ggufSessionKey : undefined
+        })) {
+          if (evt.kind === 'thinking') {
+            // Model tokens are the reply, not the thinking trace.
+          } else {
+            assistantText = evt.full
+            latestAssistant = evt.full
+            abortedLoop = evt.aborted === 'loop'
+            nativeFromStream = evt.nativeToolCalls
+          }
         }
+      } catch (error) {
+        throwIfAborted(options.signal)
+        const detail = error instanceof Error ? error.message : String(error)
+        const nativeFailure = error instanceof Error && error.name === 'LocalModelWorkerError'
+        const recoverable = nativeFailure || /context (?:budget|window)|vram|out of memory|invalid tool (?:schema|format)/i.test(detail)
+        if (plan.modelExecution?.policy && plan.modelExecution.policy !== 'fixed' &&
+            recoverable && !prohibitsModelRecovery(detail)) {
+          consecutiveToolErrors = Math.max(consecutiveToolErrors, 3)
+          appendTaskEvent(task.taskId, 'model-execution-failed', { model: workerModel, detail })
+          if (yield* tryMidRunAdapt('recoverable model execution failure')) continue
+        }
+        throw error
       }
       throwIfAborted(options.signal)
 
@@ -2088,6 +2152,10 @@ async function* runAgentInternal(options: {
           })
           yield { type: 'status', text: 'Retrying empty model response with a fresh session…' }
           continue
+        }
+        if (plan.modelExecution && plan.modelExecution.policy !== 'fixed') {
+          noProgressStreak = Math.max(noProgressStreak, 4)
+          if (yield* tryMidRunAdapt('repeated empty model responses')) continue
         }
         const reason = 'The model returned empty responses after two fresh-session retries.'
         workflow.block(reason)
@@ -3521,11 +3589,12 @@ async function* runAgentInternal(options: {
               // The child is the specialist that was asked for, within its own tool
               // ceiling. Routing the goal must not swap in an editor or force edits.
               const specialistPlan = await planChatTurn({
-                workspacePath,
+                allowCloudComposer: false,                workspacePath,
                 settings: options.settings,
                 context: {
                   text: goal,
-                  selectedModel: workerModel,
+                  selectedModel: plan.modelExecution?.policy && plan.modelExecution.policy !== 'fixed'
+                    ? plan.modelExecution.policy : workerModel,
                   mode: 'agent',
                   manualAgentId: agentId,
                   skipModelRouter: true
@@ -3547,11 +3616,6 @@ async function* runAgentInternal(options: {
                 ? effectiveToolPolicy(specialist, specialistPlan.intent, 'agent')
                 : minCeiling(specialistPlan.toolPolicy, specialistCeiling)
               specialistPlan.requiresTools = specialistPlan.toolPolicy !== 'none'
-              specialistPlan.models = {
-                ...specialistPlan.models,
-                chat: workerModel,
-                tools: workerModel
-              }
               specialistPlan.task = childTaskContract(
                 task,
                 specialistPlan,
@@ -3586,7 +3650,7 @@ async function* runAgentInternal(options: {
                 for await (const specEvt of runAgentWithWorkspaceTools({
                   workspacePath,
                   settings: options.settings,
-                  model: workerModel,
+                  model: specialistPlan.models.tools,
                   messages: [
                     { role: 'system', content: formatHandoffForPrompt(handoff) },
                     { role: 'user', content: goal }
