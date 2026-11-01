@@ -135,12 +135,16 @@ export type ContextBundle = {
   taskId: string
   /** Memory namespace, so a later inspection can find its conversation's last request. */
   namespace?: string
-  tokenizer: {
-    method: 'characters'
-    tokenizer: 'none'
-    charsPerToken: number
-    nonAsciiCharsPerToken: number
-  }
+  /** How this compile actually counted, and why when it fell back to the estimate. */
+  tokenizer:
+    | {
+        method: 'characters'
+        tokenizer: 'none'
+        charsPerToken: number
+        nonAsciiCharsPerToken: number
+        fallback?: 'no-local-tokenizer' | 'model-not-loaded' | 'tokenizer-unavailable'
+      }
+    | { method: 'native-tokenizer'; tokenizer: string; exactTokens: number }
   counts: ContextBundleCounts
   items: ContextBundleItem[]
 }

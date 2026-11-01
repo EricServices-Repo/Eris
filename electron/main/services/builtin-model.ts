@@ -1,6 +1,6 @@
 import { inferenceDevice } from './inference-device'
 import { LocalModelWorkerError, waitForWorkerMessage } from './llama-worker-channel'
-import { createHash } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import {
   closeSync,
   createWriteStream,
@@ -667,6 +667,8 @@ type WorkerMsg = {
   trainContextSize?: number
   gpuLayers?: number
   totalLayers?: number
+  counts?: number[] | null
+  modelPath?: string
 }
 
 function workerScriptPath(): string {
@@ -961,6 +963,42 @@ async function ensureRuntimeInProcess(
     recordLoadedModel({ ...facts, ref: entry.ref, contextSize: facts.contextSize ?? plan.max })
     return runtime
   })
+}
+
+const residentModelPath = () => workerModelPath ?? runtime?.modelPath ?? null
+
+/**
+ * The identity counts are cached under, or null when nothing is resident. The file's size
+ * and time stand in for the tokenizer, which ships inside the GGUF.
+ */
+export function residentTokenizerId(ref: string): string | null {
+  const path = residentModelPath()
+  if (!path) return null
+  try {
+    const { size, mtimeMs } = statSync(path)
+    return `${ref}:${size}:${Math.floor(mtimeMs)}`
+  } catch {
+    return null
+  }
+}
+
+/** Token counts from the resident model, or null if it changed or cannot count. */
+export async function tokenizeWithLoadedModel(
+  texts: string[],
+  signal?: AbortSignal
+): Promise<number[] | null> {
+  const path = residentModelPath()
+  if (runtime?.modelPath === path && runtime) {
+    return texts.map((text) => runtime!.model.tokenize(text).length)
+  }
+  const requestId = randomUUID()
+  const reply = onceWorkerMessage(
+    (msg) => msg.type === 'tokenized' && msg.requestId === requestId,
+    signal
+  )
+  postToWorker({ type: 'tokenize', requestId, texts })
+  const { counts, modelPath } = await reply
+  return counts && modelPath === path ? counts : null
 }
 
 /** Device and host charges for one text lease on this model's current placement. */

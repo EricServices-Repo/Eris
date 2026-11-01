@@ -19,6 +19,7 @@ import {
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
 
 type Incoming =
+  | { type: 'tokenize'; requestId: string; texts: string[] }
   | {
       type: 'load'
       modelPath: string
@@ -227,6 +228,15 @@ async function buildGrammar(jsonSchema?: Record<string, unknown>): Promise<unkno
   if (!llama?.createGrammarForJsonSchema)
     throw new Error('This local runtime cannot enforce the requested tool schema.')
   return await llama.createGrammarForJsonSchema(jsonSchema)
+}
+
+function nativeTokenCounts(texts: string[]): number[] | null {
+  try {
+    if (!model?.tokenize) return null
+    return texts.map((text) => (model.tokenize(text) as ArrayLike<number>).length)
+  } catch {
+    return null
+  }
 }
 
 function countTokens(text: string): number {
@@ -536,6 +546,15 @@ function onMessage(raw: Incoming): void {
       abortControllers.get(raw.id)?.abort()
       break
     }
+    // Not queued: tokenizing does not use the context, so it must not wait for a reply.
+    case 'tokenize':
+      post({
+        type: 'tokenized',
+        requestId: raw.requestId,
+        modelPath,
+        counts: nativeTokenCounts(raw.texts)
+      })
+      break
     case 'dispose':
       enqueue(async () => {
         await disposeAll()
