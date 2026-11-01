@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import {
   contextMemoryStore,
+  redactSensitive,
   sensitive as sensitiveText,
   type ContextMemoryStore,
   type ContextReservation
@@ -62,6 +63,42 @@ function chunksOf(bytes: Buffer): Buffer[] {
 function summarizeArgs(args: unknown): string {
   const text = JSON.stringify(args ?? {}) ?? ''
   return sensitiveText.test(text) ? '[sensitive arguments]' : text.slice(0, ARGS_SUMMARY_CHARS)
+}
+
+const SNIPPET_CHARS = 240
+const MAX_TERM_HITS = 8
+const METADATA_MATCH_SCORE = 4
+const YIELD_BYTES = 4 * JOURNAL_CHUNK_BYTES
+
+export type JournalHit = { entry: JournalEntry; score: number; snippet: string }
+
+export const searchTerms = (query: string) =>
+  [
+    ...new Set(
+      query
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}_]+/u)
+        .filter((term) => term.length >= 2)
+    )
+  ].slice(0, 16)
+
+function occurrences(text: string, term: string) {
+  let hits = 0
+  for (
+    let at = text.indexOf(term);
+    at >= 0 && hits < MAX_TERM_HITS;
+    at = text.indexOf(term, at + term.length)
+  )
+    hits++
+  return hits
+}
+
+function snippetAround(text: string, at: number) {
+  const start = Math.max(0, at - Math.floor(SNIPPET_CHARS / 3))
+  return text
+    .slice(start, start + SNIPPET_CHARS)
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 type Resident = { chunks: Buffer[]; reservation: ContextReservation; cost: number }
@@ -144,6 +181,40 @@ export class RunJournal {
     const resident = this.resident.get(ref)
     if (!resident) return { status: 'omitted', entry, marker: journalOmissionMarker(entry) }
     return { status: 'found', entry, content: Buffer.concat(resident.chunks).toString('utf8') }
+  }
+
+  /**
+   * Lexical search, newest first on ties. Text is redacted before it is matched, so a
+   * secret cannot be probed for. An entry whose output is gone still matches on its
+   * metadata, and its hit says so rather than hiding that the result ever existed.
+   */
+  async search(query: string, limit: number, signal?: AbortSignal): Promise<JournalHit[]> {
+    const terms = searchTerms(query)
+    if (!terms.length) return []
+    const hits: JournalHit[] = []
+    let sinceYield = 0
+    for (const entry of [...this.entries.values()].reverse()) {
+      if (sinceYield >= YIELD_BYTES || signal?.aborted) {
+        sinceYield = 0
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        signal?.throwIfAborted()
+      }
+      const metadata = `${entry.toolName} ${entry.argsSummary}`.toLowerCase()
+      let score = 0
+      for (const term of terms) if (metadata.includes(term)) score += METADATA_MATCH_SCORE
+      const read = await this.read(entry.ref)
+      let snippet = journalOmissionMarker(entry)
+      if (read.status === 'found') {
+        sinceYield += entry.bytes
+        const text = redactSensitive(read.content)
+        const lower = text.toLowerCase()
+        const first = terms.map((term) => lower.indexOf(term)).filter((at) => at >= 0)
+        for (const term of terms) score += occurrences(lower, term)
+        snippet = snippetAround(text, first.length ? Math.min(...first) : 0)
+      }
+      if (score) hits.push({ entry, score, snippet })
+    }
+    return hits.sort((a, b) => b.score - a.score || b.entry.seq - a.entry.seq).slice(0, limit)
   }
 
   refForCall = (toolCallId: string) => this.calls.get(toolCallId)

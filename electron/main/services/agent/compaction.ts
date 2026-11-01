@@ -31,7 +31,7 @@ export function buildWorkSummary(goal: string, actions: string[], workerNote: st
 }
 
 /** Rough token estimate for local budgeting (chars/4). */
-function estimateTokens(messages: AgentChatMessage[]): number {
+export function estimateTokens(messages: AgentChatMessage[]): number {
   let chars = 0
   for (const m of messages)
     chars += contextUnits(m.content) + JSON.stringify(m.tool_calls ?? []).length + 8

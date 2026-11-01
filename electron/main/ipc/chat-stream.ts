@@ -718,6 +718,13 @@ export function registerChatStreamIpc(): void {
               model: resolvedModel,
               messages,
               conversationMemory,
+              conversationSource: contextThreadId
+                ? {
+                    root: workspacePath,
+                    threadId: contextThreadId,
+                    excludeId: `${requestId}:user`
+                  }
+                : undefined,
               temperature,
               signal: controller.signal,
               getSecret,

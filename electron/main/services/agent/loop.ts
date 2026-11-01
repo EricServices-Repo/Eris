@@ -40,6 +40,7 @@ import { runVerify } from '../verify'
 import type { OpenAIToolDef } from '../chat-runtime'
 import {
   COMPOSER_OPENAI_TOOLS,
+  CONTEXT_PULL_TOOLS,
   getToolContract,
   MAX_INLINE_MCP_TOOLS,
   isVisibleCapability,
@@ -78,6 +79,7 @@ import {
   buildWorkSummary,
   compactAgentMessages,
   contextBudgetTokens,
+  estimateTokens,
   microCompactAgentMessages,
   needsContextCompaction
 } from './compaction'
@@ -123,8 +125,9 @@ import {
   type TaskContract
 } from '../../../../src/shared/task-contract'
 import { artifactResponseContract } from '../../../../src/shared/task-interpretation'
-import { compileTaskContext, memoryForDestination } from './context-compiler'
+import { compileTaskContext, contextPullAllowed, memoryForDestination } from './context-compiler'
 import { RunJournal, trustLabel } from './run-journal'
+import { ContextPull, conversationThreadRecall } from './context-pull'
 import { executionPlanFor } from '../execution-plan'
 import { lintExecutionPlan } from './workflow-lint'
 import { appendTaskEvent } from '../task-ledger'
@@ -349,6 +352,8 @@ export async function* runAgentWithWorkspaceTools(
 }
 async function* runAgentInternal(options: {
   conversationMemory?: import('../../../../src/shared/context-memory').MemoryPrompt
+  /** The conversation behind this run, so its model can search it. Absent for child agents. */
+  conversationSource?: { root: string | null; threadId: string; excludeId?: string }
   workspacePath: string | null
   settings: AppSettings
   model: string
@@ -812,7 +817,8 @@ async function* runAgentInternal(options: {
       verificationRun: verificationRunAllowed(),
       discovered: discoveredBuiltinToolNames,
       deferWeb: !webQuestion,
-      deferProjectOrientation: task.scope.applicability === 'generic'
+      deferProjectOrientation: task.scope.applicability === 'generic',
+      contextPull: contextPullAllowed(workerModel, options.settings)
     })
   const visibleComposerToolDefinitions = (): OpenAIToolDef[] => {
     const visible = new Set(
@@ -903,6 +909,19 @@ async function* runAgentInternal(options: {
     runId: options.jobId ?? task.taskId,
     taskId: task.taskId,
     memoryKey: options.conversationMemory?.namespace ?? task.taskId
+  })
+  const contextPull = new ContextPull({
+    journal: runJournal,
+    thread: options.conversationSource
+      ? conversationThreadRecall(
+          { ...options.conversationSource, projectRoot: task.scope.projectRoot },
+          options.settings
+        )
+      : undefined,
+    allowed: () => contextPullAllowed(workerModel, options.settings),
+    budgetTokens: () => promptBudget,
+    remainingTokens: () => promptBudget - estimateTokens(workerMessages),
+    record: (event) => appendTaskEvent(task.taskId, 'context-pulled', event)
   })
 
   const emitSessionStep = (summary?: string): AgentRunnerEvent => {
@@ -1425,6 +1444,7 @@ async function* runAgentInternal(options: {
       }
       // The transcript changed even when no model summary was needed.
       releaseGgufSession()
+      contextPull.noteCompaction()
       if (micro.withinBudget && !force) return
     }
     // Never swap Lite↔Full mid-run — node-llama-cpp holds one runtime; unloading
@@ -1458,6 +1478,7 @@ async function* runAgentInternal(options: {
     contextMemory = compacted.memory || contextMemory
     // History rewritten — drop KV session so the next turn re-seeds.
     releaseGgufSession()
+    contextPull.noteCompaction()
   }
 
   const nudgeToTools = (reason: string): AgentChatMessage => ({
@@ -3235,6 +3256,10 @@ async function* runAgentInternal(options: {
               argString(call.args, 'query') || argString(call.args, 'pattern') || originalUserGoal
             const retrieved = await inspectWorkspace(workspacePath, query, 8)
             result = { ok: retrieved.ok, detail: retrieved.detail, mutated: false }
+          } else if (call.name === 'context_search') {
+            result = await contextPull.search(call.args, options.signal)
+          } else if (call.name === 'context_read') {
+            result = await contextPull.read(call.args, options.signal)
           } else if (call.name === 'read_context') {
             const prompt = formatWorkspaceContextPrompt(workspacePath, { full: true })
             const doc = getWorkspaceContext(workspacePath)
@@ -4125,15 +4150,18 @@ async function* runAgentInternal(options: {
             }\n`
           }
           // Before truncation: this is the only full copy compaction can leave behind.
-          const journaled = await runJournal.append({
-            toolName: call.name,
-            toolCallId: call.id!,
-            args: call.args,
-            content: result.detail
-          })
-          appendTaskEvent(task.taskId, 'run-journal-entry', journaled)
+          // Recalled text is already held; journaling it would make search find itself.
+          const journaled = CONTEXT_PULL_TOOLS.has(call.name)
+            ? null
+            : await runJournal.append({
+                toolName: call.name,
+                toolCallId: call.id!,
+                args: call.args,
+                content: result.detail
+              })
+          if (journaled) appendTaskEvent(task.taskId, 'run-journal-entry', journaled)
           resultParts.push(
-            `TOOL_RESULT ${call.name}${result.path ? ` path=${result.path}` : ''}${trustLabel(journaled.trust)}:\n${truncateForModel(result.detail)}` +
+            `TOOL_RESULT ${call.name}${result.path ? ` path=${result.path}` : ''}${journaled ? trustLabel(journaled.trust) : ''}:\n${truncateForModel(result.detail)}` +
               (result.ok ? '' : `\nRECOVERY: ${toolFailureRecovery(call.name, result.detail)}`)
           )
         } finally {
