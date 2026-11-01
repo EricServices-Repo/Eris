@@ -50,9 +50,20 @@ function contextCapacity(settings: AppSettings, model: string, requestedContext:
 /** Recorded with each compile, so a report can tell a measurement from a plan. */
 export function contextProvenance(settings: AppSettings, model: string) {
   const { contextCeiling, contextSource } = resolveModelCapabilities(settings, model)
+  const entry = nativeEntry(model)
+  const measured = entry ? loadedModelFacts(entry.ref) : null
   return {
     source: contextSource,
     tokens: contextCeiling,
+    ...(measured
+      ? {
+          gpuLayers: measured.gpuLayers,
+          totalLayers: measured.totalLayers,
+          kvBytes: measured.kvBytes,
+          device: measured.device,
+          placementSteps: measured.placementSteps
+        }
+      : {}),
     ...serverWindowFacts(settings, model)
   }
 }

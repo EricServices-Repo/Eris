@@ -3,12 +3,7 @@
  * All load/chat work is serialized. Job sessions keep KV warm across agent steps.
  */
 
-import {
-  allocationFacts,
-  createContextWithVramFallback,
-  isMemoryError,
-  modelLoadOptions
-} from './services/vram-fit'
+import { allocationFacts, createContextWithVramFallback, placeModel } from './services/vram-fit'
 import {
   messagesToLlamaHistory,
   nativeStopReason,
@@ -27,6 +22,7 @@ type Incoming =
       contextMin?: number
       requestId: string
       preferEgpu?: boolean
+      allowCpuSpill?: boolean
       gpu?: 'auto' | 'metal' | 'cuda' | 'vulkan' | false
     }
   | {
@@ -180,7 +176,8 @@ async function handleLoad(
   contextSize: number,
   requestId: string,
   gpu: 'auto' | 'metal' | 'cuda' | 'vulkan' | false = 'auto',
-  minContext?: number
+  minContext?: number,
+  allowCpuSpill = true
 ): Promise<void> {
   try {
     contextMax = Math.max(512, contextSize)
@@ -203,15 +200,34 @@ async function handleLoad(
     } catch {
       llama = await getLlama({ gpu: false, progressLogs: false })
     }
-    try {
-      model = await llama.loadModel(modelLoadOptions(path, contextMax, false))
-    } catch (err) {
-      if (!isMemoryError(err) || llama.gpu === false) throw err
-      model = await llama.loadModel(modelLoadOptions(path, contextMax, true))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const placed = await placeModel<any, any>({
+      load: (options) => llama.loadModel(options),
+      createContext: (loaded, options) => loaded.createContext(options),
+      disposeModel: async (loaded) => {
+        await loaded.dispose?.()
+      },
+      modelPath: path,
+      plan: { min: contextMin, target: contextMax },
+      gpu: llama.gpu !== false,
+      allowCpuSpill
+    })
+    model = placed.model
+    context = placed.context
+    // A later context rebuild must not ask for more than placement found room for.
+    if (typeof context.contextSize === 'number') {
+      contextMax = context.contextSize
+      contextMin = Math.min(contextMin, contextMax)
+      loadedContextSize = contextMax
     }
-    await ensureContext()
     modelPath = path
-    post({ type: 'loaded', requestId, gpu: llama?.gpu ?? null, ...allocationFacts(model, context) })
+    post({
+      type: 'loaded',
+      requestId,
+      gpu: llama?.gpu ?? null,
+      placement: placed.placement,
+      ...allocationFacts(model, context)
+    })
   } catch (err) {
     // A failed context allocation must not leave model weights occupying VRAM.
     await disposeAll()
@@ -527,7 +543,14 @@ function onMessage(raw: Incoming): void {
   switch (raw.type) {
     case 'load':
       enqueue(() =>
-        handleLoad(raw.modelPath, raw.contextSize, raw.requestId, raw.gpu ?? 'auto', raw.contextMin)
+        handleLoad(
+          raw.modelPath,
+          raw.contextSize,
+          raw.requestId,
+          raw.gpu ?? 'auto',
+          raw.contextMin,
+          raw.allowCpuSpill
+        )
       )
       break
     case 'chat':

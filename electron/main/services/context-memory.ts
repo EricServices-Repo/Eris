@@ -1,4 +1,4 @@
-import { filterEvidenceMemory } from './context-evidence'
+import { filterEvidenceMemory, invalidEvidenceItems } from './context-evidence'
 import { logInfo } from './logger'
 import { HydrationScheduler, type HydrationPriority } from './context-hydration-scheduler'
 import { registerOptionalContextMemory, refreshContextMemoryPressure } from './inference-governor'
@@ -13,17 +13,22 @@ import { workspaceRequest } from './workspace-worker-client'
 import {
   contextMemoryStore,
   ContextMemoryStore,
-  RECOVERY_RESERVATION_BYTES
+  RECOVERY_RESERVATION_BYTES,
+  recallExcluded,
+  redactSensitive
 } from './context-memory-store'
 import {
   contextPreviewScope,
   lastContextDispatch,
   previewContextDispatch
 } from './context-dispatch'
+import { contextBudgetTokens } from './agent/context-budget'
+import { allocateContext } from '../../../src/shared/context-allocation'
 import type { AppSettings, ChatThread } from '../../../src/shared/settings-schema'
 import {
   type ContextPreview,
   type MemoryPrompt,
+  type MemoryPromptItem,
   type MemoryInspection,
   type ContextMemorySettings,
   ContextMemorySettingsSchema,
@@ -259,6 +264,7 @@ async function recallWithoutRam(
     projectRoot?: string | null
     tokens?: number
     signal: AbortSignal
+    explicitSearch?: boolean
   }
 ): Promise<{ prompt: MemoryPrompt; inspection: MemoryInspection }> {
   const { signal } = options
@@ -374,9 +380,16 @@ export async function conversationContext(
     projectRoot?: string | null
     tokens?: number
     signal?: AbortSignal
+    /** Replaces the send-path deadline when the model is already waiting on a tool. */
+    deadlineMs?: number
+    explicitSearch?: boolean
   } = {}
 ): Promise<{ prompt: MemoryPrompt; inspection: MemoryInspection }> {
-  const policy = ContextMemorySettingsSchema.parse(settings.agent.contextMemory ?? {})
+  const parsedPolicy = ContextMemorySettingsSchema.parse(settings.agent.contextMemory ?? {})
+  const policy = {
+    ...parsedPolicy,
+    foregroundDeadlineMs: options.deadlineMs ?? parsedPolicy.foregroundDeadlineMs
+  }
   options.signal?.throwIfAborted()
   if (options.projectRoot !== undefined) rememberTaskScope(memoryKey(root, id), options.projectRoot)
   const deadline = new AbortController()
@@ -533,6 +546,66 @@ export async function conversationContext(
     clearTimeout(timer)
   }
 }
+export type ConversationSourceRead =
+  { status: 'found'; content: string } | { status: 'unavailable'; reason: string }
+
+/**
+ * The full text of one recalled source, for a model that asked to read it. Reads the
+ * durable transcript, so it works whatever is resident, and rechecks every recall rule
+ * now: the user may have forgotten this source since it was found.
+ */
+export async function readConversationSource(
+  root: string | null,
+  id: string,
+  item: MemoryPromptItem,
+  options: { projectRoot?: string | null; signal?: AbortSignal } = {}
+): Promise<ConversationSourceRead> {
+  const key = memoryKey(root, id)
+  const signals = options.signal ? [options.signal] : []
+  const request = <T>(work: Promise<T>) => abortable(work, [AbortSignal.timeout(2000), ...signals])
+  const reservation =
+    contextMemoryStore.reserve(key, PAGE_TRANSFER_BYTES) ?? contextMemoryStore.reserveRecovery()
+  if (!reservation) return { status: 'unavailable', reason: 'memory-pressure' }
+  try {
+    const controls = await request(
+      workspaceRequest({ type: 'context-controls', dir: dir(root), id })
+    )
+    const forgotten = new Set(controls.forgotten)
+    if ((await invalidEvidenceItems(root, [item], options.signal)).size)
+      return { status: 'unavailable', reason: 'stale-evidence' }
+    const parts: Array<{ offset: number; content: string }> = []
+    let before = item.ordinal + 1
+    let beforeContentOffset: number | undefined
+    for (;;) {
+      const page = await request(
+        workspaceRequest({ type: 'context-page', dir: dir(root), id, before, beforeContentOffset })
+      )
+      const rows = page?.records.filter((row) => row.ordinal === item.ordinal) ?? []
+      for (const row of rows) {
+        if (row.message.id !== item.sourceId) return { status: 'unavailable', reason: 'changed' }
+        if (recallExcluded(row, controls, forgotten, options.projectRoot))
+          return { status: 'unavailable', reason: 'excluded' }
+        parts.push({ offset: row.message.contextContentOffset ?? 0, content: row.message.content })
+      }
+      // Chunks of one message arrive newest first, so offset zero is the last one.
+      if (!page || page.done || !rows.length || parts.some((part) => !part.offset)) break
+      before = page.before
+      beforeContentOffset = page.beforeContentOffset
+    }
+    if (!parts.some((part) => !part.offset)) return { status: 'unavailable', reason: 'not-found' }
+    const content = parts
+      .sort((a, b) => a.offset - b.offset)
+      .map((part) => part.content)
+      .join('')
+    return { status: 'found', content: redactSensitive(content) }
+  } catch {
+    options.signal?.throwIfAborted()
+    return { status: 'unavailable', reason: 'read-failed' }
+  } finally {
+    reservation.release()
+  }
+}
+
 export async function saveMemoryControls(
   root: string | null,
   id: string,
@@ -572,7 +645,15 @@ export async function inspectConversationMemory(
   let preview: ContextPreview | undefined
   let failure: string | undefined
   try {
-    const selected = await conversationContext(root, id, query, settings, { projectRoot })
+    // The same split a send to this model uses, so the inspector shows what would go.
+    const tokens = allocateContext(
+      contextBudgetTokens(
+        settings,
+        model && model !== 'auto' ? model : settings.models.defaultModel
+      ),
+      'chat'
+    ).recallTokens
+    const selected = await conversationContext(root, id, query, settings, { projectRoot, tokens })
     inspection = selected.inspection
     // Auto selects its model per turn, so there is no destination to preview.
     if (model && model !== 'auto')

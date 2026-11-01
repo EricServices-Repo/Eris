@@ -19,6 +19,7 @@ import {
 } from '../../../src/shared/recommendations'
 import type { AgentRunnerEvent } from './agent/types'
 import { buildChatMessages, type BuiltChatMessage } from './chat-prompt'
+import type { ContextAllocation } from '../../../src/shared/context-allocation'
 import { localComposerFullActive, planChatTurn } from './chat-router'
 import { createTaskContract } from './task-intake'
 import { resolveTaskDecision } from './task-resolver'
@@ -240,7 +241,8 @@ export function buildChatTurnMessages(
   settings: AppSettings,
   prompt: ChatPromptInput,
   plan: TurnPlan,
-  threadId?: string | null
+  threadId?: string | null,
+  allocation?: ContextAllocation
 ): BuiltChatMessage[] {
   return buildChatMessages(
     workspacePath,
@@ -252,7 +254,7 @@ export function buildChatTurnMessages(
       agentName: plan.agentName,
       threadId: threadId ?? prompt.threadId
     },
-    { genericScope: plan.task?.scope.applicability === 'generic' }
+    { genericScope: plan.task?.scope.applicability === 'generic', allocation }
   )
 }
 

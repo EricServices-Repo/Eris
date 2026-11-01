@@ -1,3 +1,4 @@
+import { currentLoadedModel } from '../services/model-runtime'
 import { inferenceGovernorStatus } from '../services/inference-governor'
 import { ipcMain } from 'electron'
 import { getResolvedSettings, setSettings } from '../services/settings'
@@ -185,7 +186,9 @@ export function registerModelsIpc(): void {
 
   ipcMain.handle('models:gpuStatus', async () => {
     const settings = getResolvedSettings(appState.currentWorkspace)
-    return getGpuAccelStatus(settings.models.preferEgpu !== false)
+    const status = await getGpuAccelStatus(settings.models.preferEgpu !== false)
+    const loadedModel = currentLoadedModel()
+    return loadedModel ? { ...status, loadedModel } : status
   })
 
   ipcMain.handle('models:reloadLlamaGpu', async () => {
