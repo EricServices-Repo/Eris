@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'crypto'
 
 import {
   GLOBAL_JOURNAL_MAX_BYTES,
   JOURNAL_CHUNK_BYTES,
   RUN_JOURNAL_MAX_BYTES,
+  journalBusyMarker,
   RunJournal,
   journalOmissionMarker,
   toolTrust,
@@ -184,5 +185,189 @@ describe('RunJournal accounting', () => {
     target.close()
     contextMemoryStore.setPressureLimit(0)
     expect(entry.omitted).toBe('run-ended')
+  })
+})
+
+describe('RunJournal admission', () => {
+  const sha = (text: string) => createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex')
+  /** Records the size of every reservation, and can refuse from a given size up. */
+  function store(refuseFrom = Infinity) {
+    const real = new ContextMemoryStore()
+    real.configure(ContextMemorySettingsSchema.parse({ maxMemoryMiB: 512 }))
+    const sizes: number[] = []
+    const released = vi.fn()
+    const reserve = real.reserve.bind(real)
+    real.reserve = (key, bytes) => {
+      sizes.push(bytes)
+      if (bytes >= refuseFrom) return null
+      const held = reserve(key, bytes)
+      if (!held) return null
+      const release = held.release
+      held.release = () => {
+        released(bytes)
+        release()
+      }
+      return held
+    }
+    return { store: real, sizes, released }
+  }
+  const owned = (memory: ContextMemoryStore) => {
+    const created = new RunJournal({ runId: 'r', taskId: 't', memoryKey: 'k' }, memory)
+    journals.push(created)
+    return created
+  }
+
+  it('encodes nothing for an entry that is over the run cap', async () => {
+    const encode = vi.spyOn(TextEncoder.prototype, 'encodeInto')
+    const from = vi.spyOn(Buffer, 'from')
+    const content = 'x'.repeat(RUN_JOURNAL_MAX_BYTES + 1)
+    const entry = await append(journal(), content)
+    expect(encode).not.toHaveBeenCalled()
+    expect(from.mock.calls.some(([value]) => value === content)).toBe(false)
+    encode.mockRestore()
+    from.mockRestore()
+    expect(entry).toMatchObject({ omitted: 'over-run-cap', bytes: content.length })
+    expect(entry.contentDigest).toBe(sha(content))
+  })
+
+  it('encodes nothing when the store refuses the entry', async () => {
+    const encode = vi.spyOn(TextEncoder.prototype, 'encodeInto')
+    const { store: memory } = store(1)
+    const entry = await append(owned(memory), 'refused content')
+    expect(entry.omitted).toBe('over-budget')
+    expect(encode).not.toHaveBeenCalled()
+    encode.mockRestore()
+  })
+
+  it('reserves before it encodes', async () => {
+    const order: string[] = []
+    const { store: memory } = store()
+    const reserve = memory.reserve.bind(memory)
+    memory.reserve = (key, bytes) => (order.push('reserve'), reserve(key, bytes))
+    const encode = vi
+      .spyOn(TextEncoder.prototype, 'encodeInto')
+      .mockImplementationOnce((text, into) => {
+        order.push('encode')
+        encode.mockRestore()
+        return new TextEncoder().encodeInto(text, into)
+      })
+    await append(owned(memory), 'admitted content')
+    expect(order).toEqual(['reserve', 'encode'])
+  })
+
+  it('returns the reservation and keeps the marker if encoding fails', async () => {
+    const { store: memory, released } = store()
+    const target = owned(memory)
+    const encode = vi.spyOn(TextEncoder.prototype, 'encodeInto').mockImplementationOnce(() => {
+      throw new RangeError('Array buffer allocation failed')
+    })
+    const entry = await append(target, 'lost to allocation')
+    encode.mockRestore()
+    expect(entry.omitted).toBe('memory-pressure')
+    expect(released).toHaveBeenCalledTimes(1)
+    expect(target.residentBytes).toBe(0)
+    expect(await target.read(entry.ref)).toMatchObject({ status: 'omitted' })
+  })
+
+  it.each([
+    ['ascii', 'a'.repeat(3 * 1024 * 1024)],
+    ['a pair across every chunk', '🙂'.repeat(1024 * 1024)],
+    ['wide text over a slice edge', `${'a'.repeat(256 * 1024 - 1)}🙂${'é'.repeat(300_000)}`],
+    ['a pair across a chunk edge', `${'a'.repeat(JOURNAL_CHUNK_BYTES - 1)}🙂tail`],
+    ['a lone surrogate', `before\ud83dafter`],
+    ['empty', '']
+  ])('keeps exact bytes for %s', async (_name, content) => {
+    const target = journal()
+    const entry = await append(target, content)
+    const encoded = Buffer.from(content, 'utf8')
+    expect(entry.bytes).toBe(encoded.length)
+    expect(entry.contentDigest).toBe(sha(content))
+    const read = await target.read(entry.ref)
+    expect(read.status).toBe('found')
+    if (read.status === 'found')
+      expect(Buffer.from(read.content, 'utf8').equals(encoded)).toBe(true)
+  })
+
+  it('splits what it keeps into bounded chunks', async () => {
+    const encode = vi.spyOn(TextEncoder.prototype, 'encodeInto')
+    await append(journal(), 'a'.repeat(JOURNAL_CHUNK_BYTES * 3 + 5))
+    expect(encode.mock.calls).toHaveLength(4)
+    for (const [, into] of encode.mock.calls)
+      expect(into.length).toBeLessThanOrEqual(JOURNAL_CHUNK_BYTES)
+    encode.mockRestore()
+  })
+})
+
+describe('RunJournal read scratch', () => {
+  const memoryWith = (refuse: (bytes: number) => boolean) => {
+    const memory = new ContextMemoryStore()
+    memory.configure(ContextMemorySettingsSchema.parse({ maxMemoryMiB: 512 }))
+    const sizes: number[] = []
+    const reserve = memory.reserve.bind(memory)
+    memory.reserve = (key, bytes) => {
+      sizes.push(bytes)
+      return refuse(bytes) ? null : reserve(key, bytes)
+    }
+    const target = new RunJournal({ runId: 'r', taskId: 't', memoryKey: 'k' }, memory)
+    journals.push(target)
+    return { memory, sizes, target }
+  }
+
+  it('charges decoded text to the ledger and gives it back', async () => {
+    const { memory, sizes, target } = memoryWith(() => false)
+    const entry = await append(target, 'é'.repeat(1_000))
+    const before = memory.reservedBytes
+    expect((await target.read(entry.ref)).status).toBe('found')
+    expect(sizes.at(-1)).toBe(entry.bytes * 2)
+    expect(memory.reservedBytes).toBe(before)
+  })
+
+  it('says the entry is held, rather than decoding without admission', async () => {
+    let tight = false
+    const { target } = memoryWith(() => tight)
+    const entry = await append(target, 'kept content')
+    tight = true
+    expect(await target.read(entry.ref)).toEqual({
+      status: 'busy',
+      entry,
+      marker: journalBusyMarker(entry)
+    })
+    tight = false
+    expect(await target.read(entry.ref)).toMatchObject({ status: 'found' })
+  })
+
+  it('search still finds a busy entry by metadata and never decodes it', async () => {
+    let tight = false
+    const { target, memory } = memoryWith(() => tight)
+    await target.append({ toolName: 'grep', toolCallId: 'c', args: {}, content: 'needle' })
+    tight = true
+    const before = memory.reservedBytes
+    const hits = await target.search('grep needle', 5)
+    expect(hits).toHaveLength(1)
+    expect(hits[0]?.snippet).toContain('memory is too tight')
+    expect(memory.reservedBytes).toBe(before)
+  })
+
+  it('releases scratch when work on the decoded text throws', async () => {
+    const { target, memory } = memoryWith(() => false)
+    const entry = await append(target, 'content')
+    const before = memory.reservedBytes
+    const internal = target as unknown as {
+      resident: Map<string, unknown>
+      withText: (e: unknown, r: unknown, n: number, use: () => void) => void
+    }
+    expect(() =>
+      internal.withText(entry, internal.resident.get(entry.ref), 2, () => {
+        throw new Error('boom')
+      })
+    ).toThrow('boom')
+    expect(memory.reservedBytes).toBe(before)
+  })
+
+  it('reserves for every copy search holds', async () => {
+    const { sizes, target } = memoryWith(() => false)
+    const entry = await append(target, 'find this')
+    await target.search('find', 5)
+    expect(sizes.at(-1)).toBe(entry.bytes * 6)
   })
 })
