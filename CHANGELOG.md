@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.10 — 2026-11-01
+
+- Rebuild with task-aware local model selection, Lite-to-worker handoffs, bounded model recovery, safer RAM context dispatch, and explicit execution-policy controls.
+
 ## 0.6.9 — 2026-10-31
 
 - Rebuild with Windows context allocation recovery and Eris-Dev discovery of shared Eris models without symlink permissions.
