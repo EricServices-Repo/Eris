@@ -10,6 +10,7 @@
         "tests/thread-working-state.test.ts",
         "tests/agent-context.test.ts",
         "tests/background-evidence-scope.test.ts",
+        "tests/background-cancellation.test.ts",
         "tests/native-token-count.test.ts",
         "tests/context-evidence.test.ts",
         "tests/context-pull.test.ts",

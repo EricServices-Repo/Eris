@@ -50,6 +50,8 @@ export interface BackgroundJob {
   waitReason?: 'children' | 'approval' | 'question' | null
   destinationBranch?: string
   baseSha?: string
+  /** A discard could not finish because agents were still stopping, so the worktree stays. */
+  worktreeRetained?: boolean
   integration?: { state: 'shared-parent' | 'integrated'; commit?: string; at: string }
   status: BackgroundJobStatus
   step: number
