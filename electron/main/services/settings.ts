@@ -117,6 +117,9 @@ function sanitizeLegacyModels(raw: Record<string, unknown>): Record<string, unkn
   if (typeof models.preferEgpu !== 'boolean') {
     models.preferEgpu = true
   }
+  if (typeof models.allowCpuSpill !== 'boolean') {
+    models.allowCpuSpill = true
+  }
   return { ...raw, models }
 }
 

@@ -4,6 +4,7 @@
     "temperature": 0.3,
     "contextWindow": 32768,
     "preferEgpu": true,
+    "allowCpuSpill": true,
     "connections": [
       {
         "id": "builtin",

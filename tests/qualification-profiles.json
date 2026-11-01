@@ -6,6 +6,7 @@
       "files": [
         "tests/agent-capabilities.test.ts",
         "tests/model-context-allocation.test.ts",
+        "tests/vram-placement.test.ts",
         "tests/thread-working-state.test.ts",
         "tests/agent-context.test.ts",
         "tests/context-evidence.test.ts",
