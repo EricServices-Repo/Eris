@@ -205,7 +205,9 @@ describe('AG-054 top-level and child roles', () => {
           project: '',
           retrieval: '',
           maxInputTokens: 8192
-        }).message.content.split('\n')[1]!
+        })
+          .message.content.split('TASK CONTRACT\n')[1]!
+          .split('\n')[0]!
       )
     expect(facing(parent).assignment).toEqual({ kind: 'top-level', reportTo: 'user' })
   })
@@ -384,11 +386,14 @@ describe('AG-056/AG-058 delegation outcomes and recovery in the loop', () => {
     const child = requests.find((request) =>
       request.messages.some((message) => String(message.content).includes('[Eris handoff'))
     )!
-    const system = String(child.messages[0]?.content)
+    const system = child.messages.map((message) => String(message.content)).join('\n')
     expect(system).toContain('REQUIRED-CURRENCY-GBP')
     expect(system).not.toContain('TAIL-OF-SUMMARY')
     expect(
-      child.messages.filter((item) => item.role === 'user' && item.content === goal)
+      child.messages.filter(
+        (item) =>
+          item.role === 'user' && String(item.content).endsWith('CURRENT USER REQUEST\n' + goal)
+      )
     ).toHaveLength(1)
   })
 

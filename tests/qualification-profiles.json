@@ -21,6 +21,7 @@
         "tests/handoff-constraints.test.ts",
         "tests/handoff-envelope.test.ts",
         "tests/native-token-count.test.ts",
+        "tests/stable-prefix.test.ts",
         "tests/context-evidence.test.ts",
         "tests/context-pull.test.ts",
         "tests/agent-contract.test.ts",
@@ -124,7 +125,10 @@
         "tests/quality-adapter.test.ts",
         "tests/quality-scenarios.test.ts"
       ],
-      "notRun": ["model inference", "answer quality"]
+      "notRun": [
+        "model inference",
+        "answer quality"
+      ]
     }
   },
   "general": {

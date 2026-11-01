@@ -116,12 +116,15 @@ describe('agent context boundaries', () => {
         { role: 'user', content: 'Add those improvements' }
       ]
     })
-    expect(messages.at(-1)).toEqual({ role: 'user', content: 'Add those improvements' })
+    expect(messages.at(-1)?.role).toBe('user')
+    expect(messages.at(-1)?.content).toMatch(/CURRENT USER REQUEST\nAdd those improvements$/)
+    expect(messages.at(-1)?.content).toContain('TASK CONTRACT\n')
     expect(
       messages.filter((message) => message.content === 'Add booking confirmation in booking.php')
     ).toHaveLength(1)
     expect(messages[0]?.content).toContain('EDIT PLAYBOOK')
-    expect(messages[0]?.content).toContain('Inspect booking.php')
+    expect(messages.at(-1)?.content).toContain('Inspect booking.php')
+    expect(messages[0]?.content).not.toContain('Inspect booking.php')
     expect(messages[0]?.content).not.toContain('GREENFIELD BUILD')
   })
 
@@ -204,15 +207,16 @@ describe('memory at model boundaries', () => {
       conversationMemory: memory
     }
     const local = await buildPreservedWorkerMessages({ ...base, plan: { ...plan, task } })
-    expect(local[0]?.content).toContain('confidential recalled choice CAD')
-    expect(local[0]?.content).toContain('task contract is authoritative')
+    expect(local.at(-1)?.content).toContain('confidential recalled choice CAD')
+    expect(local[0]?.content).not.toContain('confidential recalled choice CAD')
+    expect(local[0]?.content).toContain('host tool gateway enforces the real task')
     const remote = {
       ...plan,
       models: { chat: 'connection:remote', tools: 'connection:remote' },
       task
     }
     expect(
-      (await buildPreservedWorkerMessages({ ...base, plan: remote }))[0]?.content
+      JSON.stringify(await buildPreservedWorkerMessages({ ...base, plan: remote }))
     ).not.toContain('confidential recalled choice CAD')
     expect(
       (
@@ -221,8 +225,8 @@ describe('memory at model boundaries', () => {
           plan: remote,
           conversationMemory: { ...memory, allowRemote: true }
         })
-      )[0]?.content
+      ).at(-1)?.content
     ).toContain('confidential recalled choice CAD')
-    expect(local.at(-1)?.content).toBe('Explain context')
+    expect(local.at(-1)?.content).toMatch(/CURRENT USER REQUEST\nExplain context$/)
   })
 })

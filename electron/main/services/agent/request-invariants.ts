@@ -205,7 +205,19 @@ export function requestInvariantFindings(input: {
         'review',
         'A generic request is offered workspace inspection tools.'
       )
-    if (!system.includes('TASK CONTRACT'))
+    const contractPresent = request.messages.some((message) => {
+      if (!message || typeof message !== 'object') return false
+      const value = message as { role?: string; content?: string }
+      if (typeof value.content !== 'string' || !['system', 'user'].includes(value.role ?? ''))
+        return false
+      const line = value.content.split('TASK CONTRACT\n')[1]?.split('\n')[0]
+      try {
+        return Boolean(line && JSON.parse(line).taskId === task.taskId)
+      } catch {
+        return false
+      }
+    })
+    if (!contractPresent)
       add('missing-task-contract', 'defect', 'An agent request has no compiled task contract.')
     if (tools.length === 0 && /Make the requested changes|Run relevant verification/.test(system))
       add(

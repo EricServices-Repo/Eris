@@ -168,9 +168,9 @@ describe('required context and evidence units', () => {
   })
   it('shortens project evidence at a line boundary', () => {
     const project = Array.from({ length: 200 }, (_, i) => `line ${i} of project notes`).join('\n')
-    const { message, blocks } = compile(undefined, baseTokens + 200, project)
+    const { layers, blocks } = compile(undefined, baseTokens + 200, project)
     expect(blocks.find((block) => block.kind === 'project')?.status).toBe('truncated')
-    expect(message.content.trimEnd()).toMatch(/of project notes$/)
+    expect(layers.prefix.trimEnd()).toMatch(/of project notes$/)
   })
   it('counts dense history in the provider budget', () => {
     const history = [
