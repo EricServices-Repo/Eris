@@ -144,3 +144,50 @@ describe('agent loop (scripted model)', () => {
     expect(String((answer as { text: string }).text)).toContain('explanation')
   })
 })
+
+describe('Auto story request through the actual answer-only agent loop', () => {
+  it.each([true, false])(
+    'handles a bare refusal with bounded recovery (recovers=%s)',
+    async (recovers) => {
+      const refusal = "I'm sorry, but I can't assist with that request."
+      const story =
+        'Hans followed a trail of blue ribbons through the village. At the last gate, his best friend was waiting with a warm blanket and a very large biscuit.'
+      script.push(refusal, recovers ? story : refusal)
+      const plan: TurnPlan = {
+        ...editPlan(),
+        agentId: 'fast',
+        agentName: 'Fast',
+        intent: 'answer',
+        requiresTools: false,
+        toolPolicy: 'none',
+        method: 'heuristic'
+      }
+      const events = await drain(
+        runAgentWithWorkspaceTools({
+          workspacePath: ws,
+          settings: getDefaults(),
+          model: 'builtin:composer-lite',
+          messages: [
+            { role: 'system', content: 'You are Fast.' },
+            { role: 'user', content: 'Write a story about a dog named Hans' }
+          ],
+          temperature: 0.3,
+          getSecret: () => null,
+          mode: 'agent',
+          turnPlan: plan,
+          mcp: 'off'
+        })
+      )
+      expect(events.some((event) => event.type === 'tool' || event.type === 'diff')).toBe(false)
+      expect(script).toHaveLength(0)
+      if (recovers) {
+        expect(events.filter((event) => event.type === 'answer').at(-1)?.text).toBe(story)
+        expect(events.some((event) => event.type === 'progress' && event.incomplete)).toBe(false)
+      } else {
+        expect(events.some((event) => event.type === 'progress' && event.incomplete === true)).toBe(
+          true
+        )
+      }
+    }
+  )
+})

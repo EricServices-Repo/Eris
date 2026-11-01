@@ -6,6 +6,7 @@ import { createTaskDeadline } from './task-deadline'
 import {
   asksForCodeDestination,
   asksForCodeExample,
+  asksForCreativeWriting,
   asksForDesignAnswer,
   asksForRecommendations,
   asksForPlan,
@@ -64,6 +65,7 @@ export function resolverBypassRule(text: string, fallback: ChatIntent): string |
   // Quoted content alone never becomes an instruction, so nothing is left to resolve.
   if (isQuotedContentOnly(text)) return 'quoted-content-only'
   const t = withoutLeadingScope(requestTextForIntent(text))
+  if (asksForCreativeWriting(t)) return fallback === 'answer' ? 'creative-writing' : null
   if (fallback === 'capability') return 'capability-question'
   if (needsWebLookup(t)) return 'web-lookup'
   if (/^(?:please\s+)?review\b/i.test(t) && ['review', 'explore'].includes(fallback))

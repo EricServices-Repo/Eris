@@ -1,5 +1,37 @@
 # Eris architecture
 
+## 2026-11-01 scoped review: Auto, conversation context, and agent boundaries
+
+Scope: chat intake and routing, canonical task contracts, generic answer prompts, answer finalization, specialist handoffs, model transport budgeting, and local context allocation. The integrated baseline was `fbd91e8` (v0.6.9). The changes below address the scoped review findings; they do not constitute live-model or packaged-platform certification.
+
+The existing story feedback report showed `Auto → Fast → answer`, `builtin:composer-lite`, tools `none`, followed by “I'm sorry, but I can't assist with that request.” That exact request was not blocked by a tool permission check. The model returned an unexplained refusal, and the answer-only completion path accepted it as completed. Related wording such as “Generate a story” could additionally match the imperative edit rules.
+
+### Chat to agent
+
+Explicit creative-writing requests without a file/project destination now receive an `answer` intent and a deterministic resolver bypass. A named file or requested workspace effect continues through the edit path. Generic response guidance explicitly supports general conversation and creative writing, follows the user's requested format/length, and does not treat an IDE identity as grounds for refusal. It preserves applicable safety restrictions.
+
+### Chat context and completion
+
+The finalizer previously repaired malformed output from the latest goal alone. Follow-ups such as “Make the ending happier” could therefore lose the earlier character names, tone, or constraints. Repair requests now retain original system blocks and conversational roles, remove only a duplicated latest user turn, and append that current request once. Existing outbound message budgeting still applies; this does not make history unbounded.
+
+A short unexplained or coding-role-only refusal for an explicit generic creative request receives one recovery attempt. A repeated refusal or failed repair is incomplete, not successful fulfillment. An explicit safety refusal is not retried by this mechanism. The raw draft and presentation audit remain available. This is a bounded recovery policy, not an unrestricted refusal override or a canned substitute for model output.
+
+### Agent to agent: retained safeguards and remaining design work
+
+`childTaskContract` intersects the child tool ceiling with the parent, inherits project scope and execution/external-effect restrictions, and clears parent follow-up result state. Inline specialists are sequential in the same workspace. Their tool events, diffs, incomplete state, and returned text are collected; a tool-free claim is marked unverified. Background result summaries report missing and failed children rather than treating queue completion as evidence.
+
+The handoff packet carries parent/subtask goals, summary, files, open questions and confidence. Its rendered text is currently supplied as optional project/conversation context to prompt compilation. Under pressure it can be shortened or omitted; the child task contract preserves authority, but not necessarily every nuance in the coordinator's prose. A future typed handoff context block should retain a bounded set of required parent constraints, report omitted evidence explicitly, and attach source IDs and the parent's memory manifest. A child should then request missing evidence rather than guessing. This review does not claim that this future design is implemented.
+
+### Agent to model: retained safeguards and remaining design work
+
+`chat-runtime.ts` budgets final outbound messages including history and tool schemas, while `model-protocol.ts` validates tool-call/result pairing. Structured native history and session helpers synchronize current seed history rather than treating a reused KV cache as authoritative conversation state. Context capability records distinguish measured allocation from a runtime plan.
+
+The important remaining gap is the first cold load: compilation/transport budgeting can use the plan before the model allocates a smaller window. The recent VRAM retry fix can shrink that window, but cannot by itself recompile the initial prompt. Warm/load the selected model before final native budgeting, then re-read measured capacity; repeat this after worker context recreation. Keep tokenizer estimates labeled as estimates until actual counts are available.
+
+### Validation boundary
+
+`tests/agent-creative-chat.test.ts` covers creative intent and resolver precedence, generic prompt guidance, history-preserving repairs, repeated refusals, and explicit safety refusals. `tests/agent-loop.test.ts` exercises the reported Auto/Fast answer-only path with scripted model output and verifies that recovery performs no workspace tool operations. These tests are included in the agent prebuild qualification profile. Validation passed: typecheck, lint, 124 test files / 1,349 tests, and the deterministic context gate including 14/14 synthetic recall labels. The focused context/conversation/orchestration/allocation/memory-dispatch/deliverable run passed 85 tests across eight suites. No hardware-specific absolute latency budget was evaluated. Scripted success proves control flow and contract handling, not the quality of a real model's story.
+
 REC-29: Local index vectors have an explicit versioned hash space; incompatible vectors trigger rebuild and lexical fallback. External embedding utility returns provenance with opt-in transfer policy and bounded cancellation. Workspace ranking remains local; see [contract and calibration](changes/REC-29-retrieval-provenance.md).
 
 ## REC-34 · Chat virtualization and performance qualification

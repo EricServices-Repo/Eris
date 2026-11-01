@@ -19,6 +19,7 @@ import {
   agentForFollowUp,
   asksForCodeDestination,
   asksForCodeExample,
+  asksForCreativeWriting,
   asksForRecommendations,
   asksForPlan,
   asksForVerification,
@@ -229,6 +230,7 @@ function classifyIntentRule(
   if (isQuotedContentOnly(rawText)) return { intent: 'answer', rule: 'quoted-content-only' }
   const text = requestTextForIntent(rawText)
   if (isErisCapabilityQuestion(text)) return { intent: 'capability', rule: 'capability-question' }
+  if (asksForCreativeWriting(text)) return { intent: 'answer', rule: 'creative-writing' }
   if (needsWebLookup(text)) return { intent: 'explore', rule: 'web-lookup' }
   if (
     mode === 'ask' &&

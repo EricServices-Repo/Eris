@@ -1,4 +1,7 @@
 import { createHash } from 'crypto'
+import { asksForCreativeWriting } from '../../../../src/shared/agent-contract'
+import { requestTextForIntent } from '../../../../src/shared/task-interpretation'
+import { workerConversation } from './conversation'
 import { assembledSyntax } from './artifact-syntax'
 import type { AppSettings } from '../../../../src/shared/settings-schema'
 import { AGENT_HANDOFF_CHARS } from '../../../../src/shared/agent-orchestration'
@@ -66,6 +69,15 @@ const evades = (text: string) =>
     (check) => check.id === 'refusal' || check.id === 'clarification-request'
   )
 
+/** A short unexplained/IDE-scope rejection, not a refusal with an explicit safety reason. */
+function unexplainedCreativeRefusal(text: string): boolean {
+  const bare =
+    /^(?:(?:i['’]m|i am) sorry[,!.]?\s*(?:but\s+)?|sorry[,!.]?\s*)?i (?:can['’]?t|cannot|am unable to) (?:assist|help)(?: you)?(?: with)? (?:that|this|your)(?: request)?[.!]?$/i
+  const roleOnly =
+    /^(?:(?:i['’]m|i am) sorry[,!.]?\s*(?:but\s+)?)?(?:as (?:an? )?(?:ai |coding |software )*(?:assistant|model)[, ]+)?i (?:can only|only) (?:help|assist|answer)[^.]{0,100}(?:coding|programming|software)[.!]?$/i
+  return bare.test(text.trim()) || roleOnly.test(text.trim())
+}
+
 /**
  * Last step before an answer is shown. Internal framing is cut off or answered
  * again from the original goal once; a reply that stops mid-code gets one bounded
@@ -87,24 +99,27 @@ export async function finalizeAnswer(
     })
     return { text, incomplete, repaired, rawOutput: answer }
   }
-  const answerAgain = () =>
+  const repairMessages = (extra = ''): AgentChatMessage[] => [
+    ...options.messages.filter((message) => message.role === 'system'),
+    { role: 'system', content: REANSWER_SYSTEM + extra },
+    ...workerConversation(options.messages, options.goal),
+    {
+      role: 'user',
+      content:
+        options.goal +
+        (options.evidence
+          ? `\n\nProject sources that were read:\n${options.evidence.slice(0, AGENT_HANDOFF_CHARS * 2)}`
+          : '')
+    }
+  ]
+  const answerAgain = (extra = '') =>
     collectModelText({
       settings: options.settings,
       model: options.model,
       temperature: options.temperature,
       signal: options.signal,
       getSecret: options.getSecret,
-      messages: [
-        { role: 'system', content: REANSWER_SYSTEM },
-        {
-          role: 'user',
-          content:
-            options.goal.slice(0, AGENT_HANDOFF_CHARS * 2) +
-            (options.evidence
-              ? `\n\nProject sources that were read:\n${options.evidence.slice(0, AGENT_HANDOFF_CHARS * 2)}`
-              : '')
-        }
-      ]
+      messages: repairMessages(extra)
     }).catch((error: unknown) => {
       if (options.signal?.aborted) throw error
       return ''
@@ -126,6 +141,24 @@ export async function finalizeAnswer(
   }
 
   if (options.truncated) return finish(text + TRUNCATED_NOTE, true, repaired)
+  const creative =
+    options.task?.scope.applicability === 'generic' &&
+    asksForCreativeWriting(requestTextForIntent(options.goal))
+  if (creative && unexplainedCreativeRefusal(text)) {
+    // One repair with conversational constraints intact; no tool/effect authority is added.
+    const again = await answerAgain(
+      ' Eris supports creative writing. Fulfill the requested literary format when allowed; retain all applicable safety restrictions. Do not decline merely because you are an IDE assistant.'
+    )
+    if (
+      !again.trim() ||
+      unexplainedCreativeRefusal(again) ||
+      protocolProblems(again, options.goal, options.task)
+    )
+      return finish(text, true, repaired)
+    text = again.trim()
+    repaired.push('re-answered-creative-refusal')
+  }
+
   // With sources in hand, asking the user what they meant is not an answer.
   if (options.evidence && evades(text)) {
     const again = await answerAgain()
