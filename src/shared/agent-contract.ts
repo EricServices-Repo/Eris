@@ -219,6 +219,16 @@ function requestsExampleByForm(text: string): boolean {
 const PROSE_ARTIFACT =
   /^(?:an?\s+|the\s+|some\s+|me\s+)*(?:(?:short|brief|quick|detailed|clear|concise|good)\s+)?(?:summary|essay|blog|post|article|email|e-mail|letter|doc|docs|documentation|readme|description|paragraph|report|overview|comparison|explanation|story|poem|message|note|notes|changelog|commit\s+message|proposal|spec|specification|tutorial|guide|faq|cover\s+letter|bio|tweet|outline|review|list)\b/i
 
+/** Explicit creative deliverables belong in chat unless a workspace effect is requested. */
+export function asksForCreativeWriting(text: string): boolean {
+  if (asksForCodeDestination(text) || mentionsSourcePath(text)) return false
+  if (/\b(?:and|then)\s+(?:save|edit|commit|publish|implement|run|add|build)\b/i.test(text))
+    return false
+  return /^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|help\s+me\s+(?:to\s+)?|i\s+(?:need|want)\s+(?:you\s+)?to\s+)?(?:write|create|generate|compose|tell)\s+(?:me\s+)?(?:(?:a|an|the|some)\s+)?(?:(?:short|brief|long|funny|bedtime|original|simple|children['’]?s)\s+){0,3}(?:story|stories|poem|poetry|haiku|limerick|fable|fairy\s+tale|screenplay)\b/i.test(
+    text
+  )
+}
+
 /**
  * “Can you write per-user rate limiting so errors are explicit?” asks for code even
  * without an artifact noun. “Write a summary of rate limiting” stays prose.

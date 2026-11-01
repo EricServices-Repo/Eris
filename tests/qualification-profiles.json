@@ -21,6 +21,7 @@
         "tests/agent-heuristics.test.ts",
         "tests/agent-improvements.test.ts",
         "tests/agent-interpretation.test.ts",
+        "tests/agent-creative-chat.test.ts",
         "tests/agent-loop.test.ts",
         "tests/agent-orchestration.test.ts",
         "tests/compaction-summary-coverage.test.ts",
