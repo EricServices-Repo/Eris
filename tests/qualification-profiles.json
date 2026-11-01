@@ -90,6 +90,7 @@
         "tests/context-critical-pressure.test.ts",
         "tests/context-memory-recovery.test.ts",
         "tests/auto-model-policy.test.ts",
+        "tests/model-switching.test.ts",
         "tests/context-allocation.test.ts"
       ],
       "notRun": [

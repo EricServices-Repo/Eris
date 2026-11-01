@@ -18,10 +18,8 @@ import {
   filterToolsByPolicy,
   isErisCapabilityQuestion,
   planChatTurn,
-  bestFittingLocalModel,
   isAutoModelChoice,
   resolveModelRoles,
-  selectComposerLocalHandoff,
   toolAllowedByPolicy
 } from '../electron/main/services/chat-router'
 import { recordRoutingCorrection } from '../electron/main/services/routing-feedback'
@@ -214,114 +212,6 @@ describe('isAutoModelChoice', () => {
   })
 })
 
-describe('selectComposerLocalHandoff', () => {
-  const local = 'local:qwen3-32b'
-
-  it('stays on Composer while Cloud usage remains', () => {
-    expect(
-      selectComposerLocalHandoff({
-        selectedModel: 'builtin:composer-lite',
-        intent: 'edit',
-        profile: 'auto',
-        preferCloudComposer: true,
-        cloudJobsExhausted: false,
-        readyLocalRef: local
-      })
-    ).toBeNull()
-  })
-
-  it('hands tool turns to a local model when Cloud usage is spent', () => {
-    expect(
-      selectComposerLocalHandoff({
-        selectedModel: 'builtin:composer',
-        intent: 'edit',
-        profile: 'max',
-        preferCloudComposer: true,
-        cloudJobsExhausted: true,
-        readyLocalRef: local
-      })
-    ).toEqual({ ref: local, because: 'usage' })
-  })
-
-  it('hands tool turns to a local model on the local profile', () => {
-    expect(
-      selectComposerLocalHandoff({
-        selectedModel: 'builtin:composer-lite',
-        intent: 'run',
-        profile: 'local',
-        preferCloudComposer: true,
-        cloudJobsExhausted: false,
-        readyLocalRef: local
-      })
-    ).toEqual({ ref: local, because: 'local' })
-  })
-
-  it('leaves explore and review on Composer Lite', () => {
-    expect(
-      selectComposerLocalHandoff({
-        selectedModel: 'builtin:composer-lite',
-        intent: 'explore',
-        profile: 'local',
-        preferCloudComposer: false,
-        cloudJobsExhausted: true,
-        readyLocalRef: local
-      })
-    ).toBeNull()
-    expect(
-      selectComposerLocalHandoff({
-        selectedModel: 'builtin:composer-lite',
-        intent: 'review',
-        profile: 'local',
-        preferCloudComposer: false,
-        cloudJobsExhausted: true,
-        readyLocalRef: local
-      })
-    ).toBeNull()
-  })
-
-  it('leaves questions and explicit API models on their own model', () => {
-    expect(
-      selectComposerLocalHandoff({
-        selectedModel: 'builtin:composer-lite',
-        intent: 'answer',
-        profile: 'local',
-        preferCloudComposer: false,
-        cloudJobsExhausted: true,
-        readyLocalRef: local
-      })
-    ).toBeNull()
-    expect(
-      selectComposerLocalHandoff({
-        selectedModel: 'qwen3:0.6b',
-        intent: 'edit',
-        profile: 'local',
-        preferCloudComposer: false,
-        cloudJobsExhausted: true,
-        readyLocalRef: local
-      })
-    ).toBeNull()
-  })
-})
-
-describe('bestFittingLocalModel', () => {
-  const gb = (n: number) => n * 1024 ** 3
-  const models = [
-    { ref: 'local:small', ready: true, approxBytes: gb(4), filename: 'small-Q4.gguf' },
-    { ref: 'local:large', ready: true, approxBytes: gb(20), filename: 'large-Q4.gguf' },
-    { ref: 'local:vision', ready: true, approxBytes: gb(3), filename: 'mmproj.gguf' }
-  ]
-
-  it('picks the largest model that fits and skips non-chat files', () => {
-    expect(bestFittingLocalModel(models, gb(8))).toBe('local:small')
-    expect(bestFittingLocalModel(models, gb(24))).toBe('local:large')
-  })
-
-  it('stays on Composer Lite when the budget is unknown or too small', () => {
-    expect(bestFittingLocalModel(models, 0)).toBeNull()
-    expect(bestFittingLocalModel(models, gb(2))).toBeNull()
-  })
-})
-
 describe('planChatTurn', () => {
   const base = {
     workspacePath: null,
@@ -350,6 +240,7 @@ describe('planChatTurn', () => {
     settings.agent.routing.useLocalComposerFull = true
     const plan = await planChatTurn({
       ...base,
+      workspacePath: '/workspace',
       settings,
       context: {
         text: 'implement a login form',
@@ -407,6 +298,7 @@ describe('planChatTurn', () => {
   it('uses Composer Full when Auto handles an edit and Cloud is allowed', async () => {
     const plan = await planChatTurn({
       ...base,
+      workspacePath: '/workspace',
       settings: getDefaults(),
       context: {
         text: 'implement a login form',

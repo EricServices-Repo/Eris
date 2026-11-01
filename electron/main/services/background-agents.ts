@@ -503,6 +503,7 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
       job.handoff != null ? `${formatHandoffForPrompt(job.handoff)}\n\n${job.goal}` : job.goal
 
     const turnPlan = await planChatTurn({
+      allowCloudComposer: false,
       workspacePath: job.workspacePath,
       settings,
       context: {

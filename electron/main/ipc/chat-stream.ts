@@ -1,3 +1,4 @@
+import { chooseExecutionModel } from '../services/auto-model-policy'
 import { ThreadWorkingStateBuilder } from '../services/thread-working-state'
 import { pendingCommandApprovals } from '../services/command-approval'
 import { captureReceiptEvidence } from '../services/context-evidence'
@@ -598,10 +599,7 @@ export function registerChatStreamIpc(): void {
               turnPlan.models.tools === 'builtin:composer' ||
               turnPlan.models.chat === 'builtin:composer'
             const cloudPreferred =
-              turnPlan.cloudPreferred !== false &&
-              usingComposerFull &&
-              (settings.agent.routing.profile ?? 'auto') !== 'local' &&
-              settings.agent.routing.preferCloudComposer !== false
+              turnPlan.cloudPreferred === true && usingComposerFull
             const wantCloudInline =
               !asksForImageGeneration(userText) &&
               (mode ?? 'agent') === 'agent' &&
@@ -613,12 +611,21 @@ export function registerChatStreamIpc(): void {
             const cloudCompatible =
               wantCloudInline &&
               (await cloudInlineAvailable(settings, getSecret, turnPlan.task?.version))
-            if (wantCloudInline && !cloudCompatible)
-              publish('chat:status', {
-                requestId,
-                text: 'Cloud server is unavailable or lacks the required task contract. Continuing locally with the same permissions.'
-              })
+            if (wantCloudInline && !cloudCompatible) {
+              if (!turnPlan.modelExecution || turnPlan.modelExecution.policy === 'fixed')
+                throw new Error('Fixed Cloud Composer is unavailable. Select another model or an automatic execution policy to continue.')
+              const fallback = await chooseExecutionModel(settings, turnPlan.intent, 'auto-local', [resolvedModel])
+              if (!fallback.model) throw new Error(`Cloud Composer is unavailable and no eligible local worker is ready. ${fallback.candidates.map((c) => `${c.model}: ${c.reason}`).join('; ')}`)
+              const coordinator = resolvedModel
+              resolvedModel = fallback.model
+              turnPlan = { ...turnPlan, cloudPreferred: false,
+                models: { ...turnPlan.models, coordinator, chat: resolvedModel, tools: resolvedModel },
+                modelExecution: { ...turnPlan.modelExecution, candidates: fallback.candidates, basis: 'cloud-unavailable' } }
+              publish('chat:status', { requestId,
+                text: `Cloud server is unavailable or lacks the required task contract. Continuing with ${resolvedModel} under the same permissions.` })
+            }
             if (cloudCompatible) {
+              let cloudWorkObserved = false
               try {
                 assertCloudJobWithinPlan(settings, getSecret)
                 usedCloud = true
@@ -638,6 +645,7 @@ export function registerChatStreamIpc(): void {
                   getSecret,
                   signal: controller.signal
                 })) {
+                  if (evt.type === 'tool') cloudWorkObserved = true
                   workingState?.observe(evt)
                   noteFirstAgentOutput(evt)
                   if (evt.type === 'diff' && evidencePaths.size < 32)
@@ -666,6 +674,7 @@ export function registerChatStreamIpc(): void {
                     } else if (evt.type === 'status') {
                       publish('chat:status', { requestId, text: evt.text })
                     } else if (evt.type === 'model') {
+                      resolvedModel = evt.model
                       publish('chat:model', {
                         requestId,
                         model: evt.model,
@@ -719,15 +728,22 @@ export function registerChatStreamIpc(): void {
                   publish('chat:done', { requestId, aborted: true })
                   return false
                 }
+                if (!turnPlan.modelExecution || turnPlan.modelExecution.policy === 'fixed') throw cloudErr
+                if (telemetryMutated || cloudWorkObserved) throw new Error('Cloud execution stopped after beginning workspace work. Existing changes are preserved; automatic model recovery was stopped to avoid replaying operations.')
+                const fallback = await chooseExecutionModel(settings, turnPlan.intent, 'auto-local', [resolvedModel])
+                if (!fallback.model) throw new Error(`Cloud execution failed and no eligible local recovery model is available. ${fallback.candidates.map((c) => `${c.model}: ${c.reason}`).join('; ')}`)
                 logWarn('Cloud inline chat falling back to local', {
                   requestId,
                   error: cloudErr instanceof Error ? cloudErr.message : String(cloudErr)
                 })
-                pendingThinking += '\nCloud unavailable — continuing with Composer Lite.\n'
-                resolvedModel = 'builtin:composer-lite'
+                pendingThinking += `\nCloud unavailable — continuing with ${fallback.model}.\n`
+                usedCloud = false
+                const coordinator = resolvedModel
+                resolvedModel = fallback.model
                 turnPlan = {
                   ...turnPlan,
-                  models: { ...turnPlan.models, chat: resolvedModel, tools: resolvedModel },
+                  models: { ...turnPlan.models, coordinator, chat: resolvedModel, tools: resolvedModel },
+                  modelExecution: { ...turnPlan.modelExecution, candidates: fallback.candidates, basis: 'cloud-recovery' },
                   cloudPreferred: false
                 }
                 scheduleStreamFlush()
@@ -1064,6 +1080,7 @@ export function registerChatStreamIpc(): void {
                     text: evt.reason
                   })
                   if (evt.model) {
+                    resolvedModel = evt.model
                     publish('chat:model', {
                       requestId,
                       model: evt.model,
@@ -1072,6 +1089,7 @@ export function registerChatStreamIpc(): void {
                     })
                   }
                 } else if (evt.type === 'model') {
+                  resolvedModel = evt.model
                   publish('chat:model', {
                     requestId,
                     model: evt.model,

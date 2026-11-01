@@ -1148,11 +1148,14 @@ async function* streamBuiltinChatInProcess(options: {
   sessionKey?: string
   maxOutputTokens?: number
   onLoaded?: () => void
+  /** Revalidated and repacked after actual allocation, while the inference lease is held. */
+  prepareMessages?: () => Promise<Array<{ role: 'system' | 'user' | 'assistant'; content: string }>>
   onTermination?: (termination: ModelTermination) => void
 }): AsyncGenerator<string, void, unknown> {
   const llamaCpp = await loadLlamaModule()
   const { LlamaChatSession } = llamaCpp
   const state = await ensureRuntimeInProcess(options.path, options.entry)
+  if (options.prepareMessages) options.messages = await options.prepareMessages()
   options.onLoaded?.()
   const budget = inProcessReplyBudget(state, options.messages)
   budget.maxOutputTokens = Math.min(
@@ -1365,9 +1368,12 @@ async function* streamBuiltinChatViaWorker(options: {
   sessionKey?: string
   maxOutputTokens?: number
   onLoaded?: () => void
+  /** Revalidated and repacked after actual allocation, while the inference lease is held. */
+  prepareMessages?: () => Promise<Array<{ role: 'system' | 'user' | 'assistant'; content: string }>>
   onTermination?: (termination: ModelTermination) => void
 }): AsyncGenerator<string, void, unknown> {
   await ensureWorkerModel(options.path, options.entry, options.signal)
+  if (options.prepareMessages) options.messages = await options.prepareMessages()
   options.onLoaded?.()
   const child = llamaChild
   if (!child) throw new LocalModelWorkerError('is unavailable')
@@ -1500,7 +1506,8 @@ let warmInFlight: { modelRef: string; promise: Promise<WarmResult> } | null = nu
  */
 export function warmLocalInference(
   settings?: AppSettings,
-  requestedModel?: string
+  requestedModel?: string,
+  signal?: AbortSignal
 ): Promise<WarmResult> {
   if (process.env.VITEST || process.env.ERIS_SKIP_LLAMA_WARM === '1') {
     return Promise.resolve({ ok: false, error: 'skipped' })
@@ -1553,10 +1560,11 @@ export function warmLocalInference(
         owner: entry.ref,
         ...(await textLease(entry, path)),
         exclusiveGpu: true,
-        priority: 5
+        priority: 5,
+        signal
       })
       try {
-        await ensureWorkerModel(path, entry)
+        await ensureWorkerModel(path, entry, signal)
       } finally {
         lease.release()
       }
@@ -1596,6 +1604,8 @@ export async function* streamBuiltinChat(options: {
   /** Called once with how generation ended (stop reason, limits, prompt size). */
   maxOutputTokens?: number
   onLoaded?: () => void
+  /** Revalidated and repacked after actual allocation, while the inference lease is held. */
+  prepareMessages?: () => Promise<Array<{ role: 'system' | 'user' | 'assistant'; content: string }>>
   onTermination?: (termination: ModelTermination) => void
 }): AsyncGenerator<string, void, unknown> {
   let entry: BuiltinModelManifestEntry

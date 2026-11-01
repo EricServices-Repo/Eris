@@ -1,3 +1,4 @@
+import { app } from 'electron'
 import { createHash } from 'crypto'
 import { statSync } from 'fs'
 import type { AppSettings } from '../../../src/shared/settings-schema'
@@ -19,13 +20,26 @@ export function routingEvidenceKey(settings: AppSettings, model: string): string
       const path = local ? localModelFilePath(local) : builtin ? localModelPath(builtin) : ''
       const stat = statSync(path)
       file = [stat.size, stat.mtimeMs]
-    } catch { /* absent weights cannot reuse a prior installation's measurements */ }
+    } catch {
+      /* absent weights cannot reuse a prior installation's measurements */
+    }
     identity = [entry?.sha256, file, entry?.contextWindow]
   } else {
     const c = resolveConnectionForModel(settings, model)
     identity = [c?.id, c?.baseUrl, c?.provider]
   }
-  return createHash('sha256').update(JSON.stringify([
-    'auto-routing-v1', model, identity, settings.models.contextWindow, toolProtocolFor(settings, model)
-  ])).digest('hex')
+  return createHash('sha256')
+    .update(
+      JSON.stringify([
+        'auto-routing-v1',
+        app.getVersion(),
+        process.versions.node,
+        process.versions.electron,
+        model,
+        identity,
+        settings.models.contextWindow,
+        toolProtocolFor(settings, model)
+      ])
+    )
+    .digest('hex')
 }

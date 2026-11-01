@@ -1,3 +1,4 @@
+import { isAutomaticModelSelection } from '@/shared/model-execution'
 import { PanelActions } from '@/components/PanelActions'
 import { ContextMemoryInspector } from './ContextMemoryInspector'
 import { useRequestFocus } from '@/hooks/useDialogFocus'
@@ -718,7 +719,10 @@ export function ChatPanel({
   const modelOptions = useMemo(() => {
     const ready = models.filter((m) => m.ready === true)
     const byName = new Map<string, ModelInfo>()
-    byName.set('auto', { name: 'auto', ready: true, source: 'builtin' })
+    byName.set('auto-local', { name: 'auto-local', ready: true, source: 'builtin' })
+    byName.set('auto-any', { name: 'auto-any', ready: true, source: 'builtin' })
+    // Persisted legacy Auto follows the policy in Settings until the user chooses explicitly.
+    if (selectedModel === 'auto') byName.set('auto', { name: 'auto', ready: true, source: 'builtin' })
     byName.set('builtin:composer-lite', {
       name: 'builtin:composer-lite',
       ready: composerReady,
@@ -741,25 +745,31 @@ export function ChatPanel({
             : 'connection'
       })
     }
-    const auto = byName.get('auto')!
-    byName.delete('auto')
-    return [auto, ...byName.values()]
+    return [...byName.values()]
   }, [models, selectedModel, composerReady])
 
   const modelLabel = (m: ModelInfo): string => {
-    if (m.name === 'auto') return 'Auto'
-    if (m.name === 'builtin:composer-lite') return 'Composer Lite'
-    if (m.name === 'builtin:composer') return 'Composer Full'
+    if (m.name === 'auto-local') return 'Auto-local'
+    if (m.name === 'auto-any') return 'Auto-any'
+    if (m.name === 'auto') return 'Auto · Settings policy'
+    if (m.name === 'builtin:composer-lite') return 'Fixed · Composer Lite'
+    if (m.name === 'builtin:composer') return 'Fixed · Composer Full'
     if (m.source === 'builtin') return m.name.replace(/^builtin:/, '')
-    if (m.source === 'local') return m.name.replace(/^local:/, '')
-    return m.name
+    if (m.source === 'local') return `Fixed · ${m.name.replace(/^local:/, '')}`
+    return `Fixed · ${m.name}`
   }
 
   const modelDataHint = (m: ModelInfo): string => {
+    if (m.name === 'auto-local')
+      return 'Selects and may recover with eligible models on this device, including loopback model servers. Remote and LAN endpoints are excluded. Agent Auto chooses the role separately.'
+    if (m.name === 'auto-any')
+      return 'Selects among eligible local and configured remote models. The chosen provider receives the prompt and attached context subject to memory disclosure settings. Recovery may use another eligible local worker.'
     if (m.name === 'auto')
       return 'Eris selects a ready model for this task. When outcome routing is enabled, saved run outcomes and eval scores can influence the choice. The selected provider may receive your prompt and attached project context.'
     if (m.ready === false)
       return 'This model is not currently ready. Reconnect or enable its provider in Settings → Models.'
+    if (m.name === 'builtin:composer')
+      return 'Uses Composer Full as configured in Settings. Cloud execution sends the prompt and attached context to Cloud Composer; local execution stays on this device.'
     if (m.source === 'builtin' || m.source === 'local')
       return 'Runs on this device. Prompts and attached files stay local to Eris.'
     const connection = m.connectionId
@@ -773,7 +783,7 @@ export function ChatPanel({
     : modelOptions[0]?.name || 'builtin:composer-lite'
 
   useEffect(() => {
-    if (selectedModel === 'auto') return
+    if (isAutomaticModelSelection(selectedModel)) return
     if (selectValue && selectValue !== selectedModel) onModelChange(selectValue)
   }, [selectValue, selectedModel, onModelChange])
 
@@ -1029,7 +1039,7 @@ export function ChatPanel({
             <div className="chat-empty agent-welcome">
               <h2>Chat runs one agent</h2>
               <p>
-                Auto picks the role from your message. Ask never edits. Pin an agent when you want
+                Agent Auto picks the role. Auto-local and Auto-any select execution models; Fixed keeps your chosen model. Ask never edits. Pin an agent when you want
                 that role every time.
               </p>
               <ul className="agent-roster">
@@ -1390,8 +1400,8 @@ export function ChatPanel({
                     value={selectValue}
                     disabled={streaming}
                     onChange={(e) => onModelChange(e.target.value)}
-                    title={`${modelDataHint(modelOptions.find((m) => m.name === selectValue) || modelOptions[0]!)} Auto chooses a model for the turn; a picked model is used as-is.`}
-                    aria-label="Select model"
+                    title={`${modelDataHint(modelOptions.find((m) => m.name === selectValue) || modelOptions[0]!)} Automatic policies can select a different worker; Fixed keeps the selected model.`}
+                    aria-label="Execution model policy and fixed model"
                   >
                     {modelOptions.map((m) => (
                       <option key={m.name} value={m.name} title={modelDataHint(m)}>

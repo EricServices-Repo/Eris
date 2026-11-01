@@ -12,7 +12,7 @@ export type AgentOutcomeRecord = {
   intent: ChatIntent
   /** Agent runs that reached a terminal state. */
   runs: number
-  /** Runs that finished without hitting a safety budget and that changed files. */
+  /** Runs that completed their task without cancellation or an incomplete outcome (including non-mutating answers). */
   succeeded: number
   /** Runs that stopped at a step/verify budget before finishing. */
   incomplete: number

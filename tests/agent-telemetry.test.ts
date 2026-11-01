@@ -30,7 +30,15 @@ describe('agent telemetry', () => {
   it('picks the best model for an intent among ready candidates with enough runs', () => {
     const records = [
       rec({ model: 'good', intent: 'edit', runs: 5, succeeded: 5, totalSteps: 10, kept: 5 }),
-      rec({ model: 'meh', intent: 'edit', runs: 5, succeeded: 2, totalSteps: 40, kept: 1, undone: 3 }),
+      rec({
+        model: 'meh',
+        intent: 'edit',
+        runs: 5,
+        succeeded: 2,
+        totalSteps: 40,
+        kept: 1,
+        undone: 3
+      }),
       rec({ model: 'other-intent', intent: 'review', runs: 9, succeeded: 9 })
     ]
     expect(bestTelemetryModelForIntent(records, 'edit', ['good', 'meh'], 3)).toBe('good')
@@ -49,26 +57,65 @@ describe('agent telemetry', () => {
 })
 
 import { getDefaults } from '../electron/main/services/settings'
-import { recordAgentRun, bestModelForIntent, clearTelemetry } from '../electron/main/services/agent-telemetry'
+import {
+  recordAgentRun,
+  bestModelForIntent,
+  clearTelemetry
+} from '../electron/main/services/agent-telemetry'
 import { routingEvidenceKey } from '../electron/main/services/routing-evidence'
 
 describe('versioned production routing evidence', () => {
   it('invalidates outcomes after endpoint or protocol changes', () => {
     clearTelemetry()
-    const settings = getDefaults()
-    settings.models.connections = [{ id: 'audit', name: 'Audit', type: 'openai-compatible',
-      provider: 'custom', enabled: true, models: ['audit-model'], baseUrl: 'http://localhost:11434/v1', apiKeyRef: '' }]
+    const settings = structuredClone(getDefaults())
+    settings.models.connections = [
+      {
+        id: 'audit',
+        name: 'Audit',
+        type: 'openai-compatible',
+        provider: 'custom',
+        enabled: true,
+        models: ['audit-model'],
+        baseUrl: 'http://localhost:11434/v1',
+        apiKeyRef: ''
+      }
+    ]
     const connection = settings.models.connections[0]!
-    recordAgentRun({ model: 'audit-model', intent: 'edit', steps: 2, mutated: true,
-      incomplete: false, aborted: false, settings })
+    recordAgentRun({
+      model: 'audit-model',
+      intent: 'edit',
+      steps: 2,
+      mutated: true,
+      incomplete: false,
+      aborted: false,
+      settings
+    })
     expect(bestModelForIntent('edit', ['audit-model'], 1, settings)).toBe('audit-model')
     connection.baseUrl = 'https://replacement.example/v1'
     expect(bestModelForIntent('edit', ['audit-model'], 1, settings)).toBeNull()
-    recordAgentRun({ model: 'audit-model', intent: 'edit', steps: 2, mutated: true,
-      incomplete: false, aborted: false, settings })
+    recordAgentRun({
+      model: 'audit-model',
+      intent: 'edit',
+      steps: 2,
+      mutated: true,
+      incomplete: false,
+      aborted: false,
+      settings
+    })
     expect(bestModelForIntent('edit', ['audit-model'], 1, settings)).toBe('audit-model')
+    recordAgentRun({
+      model: 'audit-model',
+      intent: 'answer',
+      steps: 1,
+      mutated: false,
+      incomplete: false,
+      aborted: false,
+      settings
+    })
+    expect(bestModelForIntent('answer', ['audit-model'], 1, settings)).toBe('audit-model')
     const key = routingEvidenceKey(settings, 'audit-model')
-    connection.toolProtocol = connection.toolProtocol === 'text-tools' ? 'native-tools' : 'text-tools'
+    connection.toolProtocol =
+      connection.toolProtocol === 'text-tools' ? 'native-tools' : 'text-tools'
     expect(routingEvidenceKey(settings, 'audit-model')).not.toBe(key)
     expect(bestModelForIntent('edit', ['audit-model'], 1, settings)).toBeNull()
   })

@@ -1,3 +1,4 @@
+import { isAutomaticModelSelection } from '../../../src/shared/model-execution'
 import { filterEvidenceMemory, invalidEvidenceItems } from './context-evidence'
 import { logInfo } from './logger'
 import { HydrationScheduler, type HydrationPriority } from './context-hydration-scheduler'
@@ -649,14 +650,14 @@ export async function inspectConversationMemory(
     const tokens = allocateContext(
       contextBudgetTokens(
         settings,
-        model && model !== 'auto' ? model : settings.models.defaultModel
+        model && !isAutomaticModelSelection(model) ? model : settings.models.defaultModel
       ),
       'chat'
     ).recallTokens
     const selected = await conversationContext(root, id, query, settings, { projectRoot, tokens })
     inspection = selected.inspection
     // Auto selects its model per turn, so there is no destination to preview.
-    if (model && model !== 'auto')
+    if (model && !isAutomaticModelSelection(model))
       preview = previewContextDispatch({
         prompt: selected.prompt,
         model,

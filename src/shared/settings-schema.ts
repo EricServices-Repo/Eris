@@ -468,6 +468,8 @@ export interface TurnPlan {
     chat: string
     tools: string
     router?: string
+    /** Actual model used for the bounded route hint; execution may use a different worker. */
+    coordinator?: string
   }
   modelExecution?: {
     policy: 'fixed' | 'auto-local' | 'auto-any'
