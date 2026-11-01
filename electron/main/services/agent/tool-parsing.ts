@@ -213,6 +213,19 @@ export function stripToolBlocks(text: string): string {
     .trim()
 }
 
+/** Two spellings of one argument that disagree, which neither can be chosen over the other. */
+export function conflictingAliases(
+  args: Record<string, unknown>,
+  pairs: ReadonlyArray<readonly [string, string]>
+): string | null {
+  for (const [first, second] of pairs) {
+    if (args[first] === undefined || args[second] === undefined) continue
+    if (JSON.stringify(args[first]) !== JSON.stringify(args[second]))
+      return `${first} and ${second} disagree. Send one of them.`
+  }
+  return null
+}
+
 export function argString(args: Record<string, unknown>, key: string, fallback = ''): string {
   const v = args[key]
   return typeof v === 'string' ? v : fallback

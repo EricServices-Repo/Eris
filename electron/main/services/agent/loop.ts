@@ -115,7 +115,8 @@ import { findAgent } from '../agents'
 import {
   AGENT_HANDOFF_CHARS,
   handoffConstraintProblem,
-  handoffMessages
+  handoffMessages,
+  parseHandoff
 } from '../../../../src/shared/agent-orchestration'
 import { isVerifyCommand } from '../command-approval'
 import { buildPreservedWorkerMessages, isReadOnlyChat, truncateForModel } from './prompts'
@@ -153,6 +154,7 @@ import {
 import { editNotebookCell, readNotebook } from '../workspace-notebook'
 import {
   argString,
+  conflictingAliases,
   parseToolCalls,
   postedAnswer,
   proseOutsideTools,
@@ -3586,6 +3588,10 @@ async function* runAgentInternal(options: {
             }
           } else if (call.name === 'delegate_to_agent') {
             const agentId = argString(call.args, 'agent_id') || argString(call.args, 'agentId')
+            const aliasProblem = conflictingAliases(call.args, [
+              ['agent_id', 'agentId'],
+              ['open_questions', 'openQuestions']
+            ])
             const goal = argString(call.args, 'goal')
             const summary = argString(call.args, 'summary') || goal
             const claim = argString(call.args, 'claim') || undefined
@@ -3605,7 +3611,7 @@ async function* runAgentInternal(options: {
             const constraintProblem = handoffConstraintProblem([
               ...new Set([...(task.inherited?.constraints ?? []), ...constraints])
             ])
-            const handoff: AgentHandoffPacket = {
+            const parsedHandoff = parseHandoff({
               task,
               parentGoal: originalUserGoal,
               goal,
@@ -3616,8 +3622,10 @@ async function* runAgentInternal(options: {
               confidence,
               fromAgentId: plan.agentId,
               toAgentId: agentId
-            }
-            if (!agentId || !goal) {
+            })
+            if (aliasProblem) {
+              result = { ok: false, detail: aliasProblem, mutated: false }
+            } else if (!agentId || !goal) {
               result = {
                 ok: false,
                 detail: 'delegate_to_agent requires agent_id and goal',
@@ -3625,6 +3633,8 @@ async function* runAgentInternal(options: {
               }
             } else if (constraintProblem) {
               result = { ok: false, detail: constraintProblem, mutated: false }
+            } else if (!parsedHandoff.ok) {
+              result = { ok: false, detail: parsedHandoff.error, mutated: false }
             } else if (options.allowDelegate === false) {
               result = {
                 ok: false,
@@ -3709,7 +3719,7 @@ async function* runAgentInternal(options: {
                   workspacePath,
                   settings: options.settings,
                   model: specialistPlan.models.tools,
-                  messages: handoffMessages(handoff),
+                  messages: handoffMessages(parsedHandoff.packet),
                   temperature: specialist?.temperature ?? options.temperature,
                   signal: options.signal,
                   getSecret: options.getSecret,
@@ -3826,7 +3836,7 @@ async function* runAgentInternal(options: {
                 openQuestions,
                 confidence,
                 claim,
-                handoff
+                handoff: parsedHandoff.packet
               })
               result = {
                 ok: delegated.ok,

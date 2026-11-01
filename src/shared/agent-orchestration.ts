@@ -2,8 +2,18 @@ import type { TaskContract } from './task-contract'
 /** Minimum characters kept when one agent passes text to another. */
 export const AGENT_HANDOFF_CHARS = 8_000
 
+/** Bumped when a saved handoff can no longer be read as the current shape. */
+export const HANDOFF_VERSION = 1
+
+/** What may be cut. The goal and constraints are refused rather than shortened. */
+export type HandoffOptionalField = 'parentGoal' | 'summary' | 'files' | 'openQuestions'
+
 /** Structured handoff between orchestrator and specialist agents. */
 export interface AgentHandoffPacket {
+  /** Set by `parseHandoff`. Absent only on a job saved before versions existed. */
+  version?: number
+  /** Optional fields cut to fit, so a reader knows the handoff is incomplete. */
+  truncated?: HandoffOptionalField[]
   task?: TaskContract
   parentGoal?: string
   goal: string
@@ -53,6 +63,164 @@ export function handoffConstraintProblem(constraints: readonly string[]): string
     : `Each handoff constraint is at most ${MAX_HANDOFF_CONSTRAINT_CHARS} characters. Shorten: ${long.slice(0, 60)}…`
 }
 
+export const HANDOFF_LIMITS = {
+  goalChars: AGENT_HANDOFF_CHARS,
+  agentIdChars: 128,
+  textChars: 16_000,
+  files: 64,
+  fileChars: 512,
+  openQuestions: 16,
+  openQuestionChars: 1_000,
+  taskChars: 256_000
+} as const
+
+/** Every field of a task, so a new one has to be added here and nothing unknown is saved. */
+const TASK_FIELDS: Record<keyof TaskContract, true> = {
+  referenceBinding: true,
+  version: true,
+  taskId: true,
+  parentTaskId: true,
+  revision: true,
+  threadId: true,
+  originalText: true,
+  intent: true,
+  deliverable: true,
+  scope: true,
+  authority: true,
+  inherited: true,
+  skillIds: true,
+  recommendations: true,
+  recommendationSelection: true,
+  acceptanceCriteria: true,
+  continuation: true,
+  result: true,
+  interpretation: true
+}
+
+const SHORTENED_NOTE = '\n[Shortened at the handoff limit.]'
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+/** A file lead names a place to look. It is a project-relative path, never a grant of access. */
+function fileLead(value: string, projectRoot?: string | null): string | null {
+  let path = value.trim().replace(/\\/g, '/')
+  const root = projectRoot?.replace(/\\/g, '/').replace(/\/$/, '')
+  if (root && path.startsWith(`${root}/`)) path = path.slice(root.length + 1)
+  if (!path || path.length > HANDOFF_LIMITS.fileChars || /[\u0000-\u001f]/.test(path)) return null
+  if (/^(\/|[a-zA-Z]:|~)/.test(path)) return null
+  return path.split('/').includes('..') ? null : path
+}
+
+function strings(value: unknown, field: string): { items?: string[]; error?: string } {
+  if (value === undefined || value === null) return {}
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string'))
+    return { error: `Handoff ${field} must be a list of strings.` }
+  return { items: [...new Set((value as string[]).map((item) => item.trim()).filter(Boolean))] }
+}
+
+function parseTask(value: unknown): { task?: TaskContract; error?: string } {
+  if (value === undefined || value === null) return {}
+  if (!isRecord(value) || value.version !== 2 || typeof value.taskId !== 'string')
+    return { error: 'The handoff task is not a current task contract.' }
+  const known = Object.fromEntries(Object.entries(value).filter(([field]) => field in TASK_FIELDS))
+  // Serializing is what removes anything live, such as a function or a handle.
+  const text = JSON.stringify(known)
+  return text.length > HANDOFF_LIMITS.taskChars
+    ? { error: 'The handoff task is too large to pass to another agent.' }
+    : { task: JSON.parse(text) as TaskContract }
+}
+
+export type HandoffParse = { ok: true; packet: AgentHandoffPacket } | { ok: false; error: string }
+
+/**
+ * The one reading of a handoff, at the tool, at enqueue and when a saved job loads, so
+ * inline and queued specialists get the same packet. Required fields are refused with a
+ * reason the sender can act on. Optional ones are cut and listed in `truncated`. Fields
+ * not named here are dropped, so nothing else can reach a job file or a prompt. Parsing
+ * a parsed packet changes nothing.
+ */
+export function parseHandoff(input: unknown): HandoffParse {
+  const fail = (error: string): HandoffParse => ({ ok: false, error })
+  if (!isRecord(input)) return fail('A handoff must be an object.')
+  const version = input.version ?? HANDOFF_VERSION
+  if (version !== HANDOFF_VERSION)
+    return fail(`This handoff is version ${String(version)}; this Eris reads ${HANDOFF_VERSION}.`)
+
+  const goal = typeof input.goal === 'string' ? input.goal.trim() : ''
+  if (!goal) return fail('A handoff requires a goal.')
+  if (goal.length > HANDOFF_LIMITS.goalChars)
+    return fail(
+      `A handoff goal is at most ${HANDOFF_LIMITS.goalChars} characters; got ${goal.length}. State the goal briefly and put the detail in the summary.`
+    )
+  for (const field of ['fromAgentId', 'toAgentId'] as const) {
+    const id = input[field]
+    if (typeof id !== 'string' || !id.trim() || id.length > HANDOFF_LIMITS.agentIdChars)
+      return fail(`A handoff requires a valid ${field}.`)
+  }
+  const { confidence } = input
+  if (
+    confidence !== undefined &&
+    confidence !== null &&
+    (typeof confidence !== 'number' || !(confidence >= 0 && confidence <= 1))
+  )
+    return fail('Handoff confidence must be a number from 0 to 1.')
+
+  const constraints = strings(input.constraints, 'constraints')
+  const files = strings(input.files, 'files')
+  const openQuestions = strings(input.openQuestions, 'openQuestions')
+  const failed = constraints.error ?? files.error ?? openQuestions.error
+  if (failed) return fail(failed)
+  const constraintProblem = handoffConstraintProblem(constraints.items ?? [])
+  if (constraintProblem) return fail(constraintProblem)
+  const { task, error: taskError } = parseTask(input.task)
+  if (taskError) return fail(taskError)
+
+  const cut = new Set<HandoffOptionalField>(
+    Array.isArray(input.truncated)
+      ? input.truncated.filter((field): field is HandoffOptionalField =>
+          ['parentGoal', 'summary', 'files', 'openQuestions'].includes(field)
+        )
+      : []
+  )
+  const bounded = (value: string, field: HandoffOptionalField) => {
+    if (value.length <= HANDOFF_LIMITS.textChars) return value
+    cut.add(field)
+    return value.slice(0, HANDOFF_LIMITS.textChars - SHORTENED_NOTE.length) + SHORTENED_NOTE
+  }
+
+  const leads = (files.items ?? []).map((file) => fileLead(file, task?.scope.projectRoot))
+  const kept = [...new Set(leads.filter((file): file is string => file !== null))]
+  if (kept.length < leads.length || kept.length > HANDOFF_LIMITS.files) cut.add('files')
+  const questions = openQuestions.items ?? []
+  const shortQuestions = questions.filter((q) => q.length <= HANDOFF_LIMITS.openQuestionChars)
+  if (
+    shortQuestions.length < questions.length ||
+    shortQuestions.length > HANDOFF_LIMITS.openQuestions
+  )
+    cut.add('openQuestions')
+
+  const parentGoal = typeof input.parentGoal === 'string' ? input.parentGoal : undefined
+  const summary = typeof input.summary === 'string' && input.summary.trim() ? input.summary : goal
+  const packet: AgentHandoffPacket = {
+    version: HANDOFF_VERSION,
+    ...(task ? { task } : {}),
+    ...(parentGoal !== undefined ? { parentGoal: bounded(parentGoal, 'parentGoal') } : {}),
+    goal,
+    summary: bounded(summary, 'summary'),
+    ...(constraints.items ? { constraints: constraints.items } : {}),
+    ...(files.items ? { files: kept.slice(0, HANDOFF_LIMITS.files) } : {}),
+    ...(openQuestions.items
+      ? { openQuestions: shortQuestions.slice(0, HANDOFF_LIMITS.openQuestions) }
+      : {}),
+    ...(typeof confidence === 'number' ? { confidence } : {}),
+    fromAgentId: input.fromAgentId as string,
+    toAgentId: input.toAgentId as string,
+    ...(cut.size ? { truncated: [...cut] } : {})
+  }
+  return { ok: true, packet }
+}
+
 /**
  * The optional part of a handoff, which may be cut under a tight budget. The goal, the
  * parent request and the constraints are in the task contract, which never is.
@@ -68,6 +236,8 @@ export function formatHandoffBriefing(packet: AgentHandoffPacket): string {
   if (packet.openQuestions?.length)
     lines.push(`Open questions:\n${packet.openQuestions.map((q) => `- ${q}`).join('\n')}`)
   if (packet.confidence != null) lines.push(`Confidence: ${packet.confidence}`)
+  if (packet.truncated?.length)
+    lines.push(`Incomplete: ${packet.truncated.join(', ')} cut at the handoff limit.`)
   return lines.join('\n')
 }
 
