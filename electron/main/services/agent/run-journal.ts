@@ -1,4 +1,5 @@
 import { createHash } from 'crypto'
+import { StringDecoder } from 'string_decoder'
 import {
   contextMemoryStore,
   redactSensitive,
@@ -12,6 +13,12 @@ export const RUN_JOURNAL_MAX_BYTES = 32 * 1024 ** 2
 export const GLOBAL_JOURNAL_MAX_BYTES = 64 * 1024 ** 2
 const ENTRY_OVERHEAD_BYTES = 512
 const ARGS_SUMMARY_CHARS = 200
+/** Hashing and encoding take this much text at a time, so no step copies a whole result. */
+const TEXT_SLICE_CHARS = 256 * 1024
+/** A decoded string can take two bytes for each UTF-8 byte once one wide character joins it. */
+const DECODED_BYTES_PER_BYTE = 2
+/** Search also holds a redacted and a lowercased copy of what it decoded. */
+const SEARCH_BYTES_PER_BYTE = 3 * DECODED_BYTES_PER_BYTE
 
 /** Where content came from. `untrusted` text is evidence and never an instruction. */
 export type JournalTrust = 'local' | 'command' | 'untrusted'
@@ -38,6 +45,8 @@ export type JournalEntry = {
 export type JournalRead =
   | { status: 'found'; entry: JournalEntry; content: string }
   | { status: 'omitted'; entry: JournalEntry; marker: string }
+  /** Still held, but no memory to decode it right now. A later read can succeed. */
+  | { status: 'busy'; entry: JournalEntry; marker: string }
   | { status: 'unknown' }
 
 export function toolTrust(toolName: string): JournalTrust {
@@ -53,11 +62,44 @@ export const trustLabel = (trust: JournalTrust) =>
 export const journalOmissionMarker = (entry: JournalEntry) =>
   `[ref:${entry.ref} · ${entry.toolName} · ${entry.bytes} bytes · output not retained: ${entry.omitted}]`
 
-function chunksOf(bytes: Buffer): Buffer[] {
+export const journalBusyMarker = (entry: JournalEntry) =>
+  `[ref:${entry.ref} · ${entry.toolName} · ${entry.bytes} bytes · held, but memory is too tight to read it now]`
+
+/** Up to `chars` of text from `at`, never ending between the halves of a surrogate pair. */
+function sliceAt(text: string, at: number, chars: number) {
+  const end = Math.min(text.length, at + chars)
+  const last = text.charCodeAt(end - 1)
+  return text.slice(at, end < text.length && last >= 0xd800 && last <= 0xdbff ? end - 1 : end)
+}
+
+function digestOf(text: string) {
+  const hash = createHash('sha256')
+  for (let at = 0; at < text.length;) {
+    const slice = sliceAt(text, at, TEXT_SLICE_CHARS)
+    hash.update(slice, 'utf8')
+    at += slice.length
+  }
+  return hash.digest('hex')
+}
+
+/** Encodes straight into the chunks it keeps, so the only allocation is what was admitted. */
+function encodeChunks(text: string, bytes: number): Buffer[] {
+  const encoder = new TextEncoder()
   const chunks: Buffer[] = []
-  for (let at = 0; at < bytes.length; at += JOURNAL_CHUNK_BYTES)
-    chunks.push(bytes.subarray(at, at + JOURNAL_CHUNK_BYTES))
+  let left = bytes
+  for (let at = 0; at < text.length;) {
+    const chunk = Buffer.allocUnsafeSlow(Math.min(left, JOURNAL_CHUNK_BYTES))
+    const { read, written } = encoder.encodeInto(sliceAt(text, at, JOURNAL_CHUNK_BYTES), chunk)
+    chunks.push(chunk.subarray(0, written))
+    at += read
+    left -= written
+  }
   return chunks
+}
+
+function decodeChunks(chunks: readonly Buffer[]) {
+  const decoder = new StringDecoder('utf8')
+  return chunks.map((chunk) => decoder.write(chunk)).join('') + decoder.end()
 }
 
 function summarizeArgs(args: unknown): string {
@@ -140,7 +182,7 @@ export class RunJournal {
   }): Promise<JournalEntry> {
     const { runId, taskId, memoryKey } = this.identity
     const seq = ++this.seq
-    const bytes = Buffer.from(input.content, 'utf8')
+    const bytes = Buffer.byteLength(input.content, 'utf8')
     const entry: JournalEntry = {
       ref: createHash('sha256').update(`${runId}:${seq}`).digest('hex').slice(0, 12),
       runId,
@@ -150,8 +192,8 @@ export class RunJournal {
       toolName: input.toolName,
       toolCallId: input.toolCallId,
       argsSummary: summarizeArgs(input.args),
-      contentDigest: createHash('sha256').update(bytes).digest('hex'),
-      bytes: bytes.length,
+      contentDigest: digestOf(input.content),
+      bytes,
       trust: toolTrust(input.toolName),
       sensitive: sensitiveText.test(input.content),
       at: Date.now()
@@ -159,7 +201,7 @@ export class RunJournal {
     this.entries.set(entry.ref, entry)
     if (this.calls.has(input.toolCallId)) this.reusedCalls.add(input.toolCallId)
     this.calls.set(input.toolCallId, entry.ref)
-    const cost = bytes.length + ENTRY_OVERHEAD_BYTES
+    const cost = bytes + ENTRY_OVERHEAD_BYTES
     if (cost > RUN_JOURNAL_MAX_BYTES) return this.omit(entry, 'over-run-cap')
     while (
       this.resident.size &&
@@ -173,7 +215,13 @@ export class RunJournal {
       reservation = this.fits(cost) ? this.store.reserve(memoryKey, cost) : null
     }
     if (!reservation) return this.omit(entry, 'over-budget')
-    this.resident.set(entry.ref, { chunks: chunksOf(bytes), reservation, cost })
+    try {
+      const chunks = encodeChunks(input.content, bytes)
+      this.resident.set(entry.ref, { chunks, reservation, cost })
+    } catch {
+      reservation.release()
+      return this.omit(entry, 'memory-pressure')
+    }
     this.residentBytes += cost
     return entry
   }
@@ -185,7 +233,26 @@ export class RunJournal {
     if (!entry) return { status: 'unknown' }
     const resident = this.resident.get(ref)
     if (!resident) return { status: 'omitted', entry, marker: journalOmissionMarker(entry) }
-    return { status: 'found', entry, content: Buffer.concat(resident.chunks).toString('utf8') }
+    const content = this.withText(entry, resident, DECODED_BYTES_PER_BYTE, (text) => text)
+    return content === null
+      ? { status: 'busy', entry, marker: journalBusyMarker(entry) }
+      : { status: 'found', entry, content }
+  }
+
+  /** Charges the decoded text to the ledger for as long as `use` works on it. Null if denied. */
+  private withText<T>(
+    entry: JournalEntry,
+    resident: Resident,
+    bytesPerByte: number,
+    use: (text: string) => T
+  ): T | null {
+    const scratch = this.store.reserve(this.identity.memoryKey, entry.bytes * bytesPerByte)
+    if (!scratch) return null
+    try {
+      return use(decodeChunks(resident.chunks))
+    } finally {
+      scratch.release()
+    }
   }
 
   /**
@@ -207,15 +274,23 @@ export class RunJournal {
       const metadata = `${entry.toolName} ${entry.argsSummary}`.toLowerCase()
       let score = 0
       for (const term of terms) if (metadata.includes(term)) score += METADATA_MATCH_SCORE
-      const read = await this.read(entry.ref)
-      let snippet = journalOmissionMarker(entry)
-      if (read.status === 'found') {
+      const resident = this.resident.get(entry.ref)
+      let snippet = resident ? journalBusyMarker(entry) : journalOmissionMarker(entry)
+      if (resident) {
         sinceYield += entry.bytes
-        const text = redactSensitive(read.content)
-        const lower = text.toLowerCase()
-        const first = terms.map((term) => lower.indexOf(term)).filter((at) => at >= 0)
-        for (const term of terms) score += occurrences(lower, term)
-        snippet = snippetAround(text, first.length ? Math.min(...first) : 0)
+        const found = this.withText(entry, resident, SEARCH_BYTES_PER_BYTE, (decoded) => {
+          const text = redactSensitive(decoded)
+          const lower = text.toLowerCase()
+          const first = terms.map((term) => lower.indexOf(term)).filter((at) => at >= 0)
+          return {
+            matches: terms.reduce((sum, term) => sum + occurrences(lower, term), 0),
+            snippet: snippetAround(text, first.length ? Math.min(...first) : 0)
+          }
+        })
+        if (found) {
+          score += found.matches
+          snippet = found.snippet
+        }
       }
       if (score) hits.push({ entry, score, snippet })
     }
