@@ -1,4 +1,5 @@
 /** OpenAI-compatible function tool definitions for Composer Full. */
+import { HANDOFF_LIMITS } from '../../../src/shared/agent-orchestration'
 
 export type OpenAIToolDef = {
   type: 'function'
@@ -417,7 +418,11 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
         description: 'Specialist id: coder | explainer | reviewer | fast (or project agent id)'
       },
       agentId: { type: 'string' },
-      goal: { type: 'string', description: 'Concrete goal for the specialist' },
+      goal: {
+        type: 'string',
+        maxLength: HANDOFF_LIMITS.goalChars,
+        description: 'Concrete goal for the specialist'
+      },
       summary: {
         type: 'string',
         description: 'Context the specialist needs. May be shortened under a tight budget.'
@@ -431,7 +436,7 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
       files: { type: 'array', items: { type: 'string' } },
       open_questions: { type: 'array', items: { type: 'string' } },
       openQuestions: { type: 'array', items: { type: 'string' } },
-      confidence: { type: 'number' },
+      confidence: { type: 'number', minimum: 0, maximum: 1 },
       claim: { type: 'string', description: 'Short blackboard claim line' },
       wait: {
         type: 'boolean',

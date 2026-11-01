@@ -410,6 +410,49 @@ describe('AG-056/AG-058 delegation outcomes and recovery in the loop', () => {
     expect(JSON.stringify(requests.at(-1)?.messages)).toContain('at most 12 constraints')
   })
 
+  it.each([
+    ['disagreeing aliases', { goal: 'Inspect jitter', agentId: 'explainer' }, /disagree/],
+    ['confidence past the range', { goal: 'Inspect jitter', confidence: 7 }, /confidence/],
+    ['an oversized goal', { goal: 'g'.repeat(9000) }, /goal/],
+    // Valid to the tool schema, so this one reaches the shared parser.
+    ['an impossible agent id', { goal: 'Inspect jitter', agent_id: 'x'.repeat(200) }, /toAgentId/]
+  ])('refuses %s at the tool, before any specialist runs', async (_name, args, reason) => {
+    const { requests, events } = await runScripted(
+      [
+        read,
+        discover,
+        delegateWith(args),
+        'DONE: the checks ran and the review of src/retry.ts is summarized above in detail.'
+      ],
+      runPlan(),
+      workspace(retry)
+    )
+    expect(events.some((event) => event.type === 'delegation')).toBe(false)
+    expect(JSON.stringify(requests.at(-1)?.messages)).toMatch(reason)
+  })
+
+  it('tells an inline specialist that its handoff was cut', async () => {
+    const { requests } = await runScripted(
+      [
+        read,
+        discover,
+        delegateWith({ goal: 'Inspect jitter', files: ['/etc/passwd', 'src/retry.ts'] }),
+        read,
+        'Findings for src/retry.ts: the delay has no cap.',
+        'DONE: the checks ran and the review of src/retry.ts is summarized above in detail.'
+      ],
+      runPlan(),
+      workspace(retry)
+    )
+    const child = requests.find((request) =>
+      request.messages.some((message) => String(message.content).includes('[Eris handoff'))
+    )!
+    const briefing = JSON.stringify(child.messages)
+    expect(briefing).toContain('Files: src/retry.ts')
+    expect(briefing).toContain('Incomplete: files')
+    expect(briefing).not.toContain('/etc/passwd')
+  })
+
   it('accepts a child that grounded its finding in the source', async () => {
     const { answer, events } = await runScripted(
       [

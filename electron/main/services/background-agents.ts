@@ -17,6 +17,7 @@ import {
   formatHandoffForPrompt,
   formatJobResultForChat,
   handoffMessages,
+  parseHandoff,
   type AgentHandoffPacket,
   type AgentRouteStep
 } from '../../../src/shared/agent-orchestration'
@@ -76,6 +77,12 @@ function loadPersisted(): void {
         job.status = 'stopped'
         job.error = job.error || 'Interrupted when Eris quit'
         job.updatedAt = new Date().toISOString()
+      }
+      if (job.handoff) {
+        const parsed = parseHandoff(job.handoff)
+        job.handoff = parsed.ok ? parsed.packet : null
+        // The record stays for review. What it cannot be read as must not reach a model.
+        if (!parsed.ok) job.error = job.error || `Saved handoff not used: ${parsed.error}`
       }
       job.blackboard = deriveBlackboardStatus(job)
       jobs.set(job.id, job)
@@ -172,6 +179,8 @@ export function enqueueBackgroundJob(
   const now = new Date().toISOString()
   const goal = String(request.goal || '').trim()
   if (!goal) throw new Error('Goal is required')
+  const handoff = request.handoff ? parseHandoff(request.handoff) : null
+  if (handoff && !handoff.ok) throw new Error(handoff.error)
 
   let worktreePath = ''
   let branch = ''
@@ -197,7 +206,7 @@ export function enqueueBackgroundJob(
     childIds: [],
     destinationBranch: parent?.destinationBranch,
     baseSha: parent?.baseSha,
-    handoff: request.handoff ?? null,
+    handoff: handoff?.ok ? handoff.packet : null,
     claim: request.claim ?? null,
     routeHistory: [],
     escalateCount: 0,
