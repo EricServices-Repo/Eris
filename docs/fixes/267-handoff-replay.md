@@ -4,13 +4,13 @@ Each handoff fix had its own unit tests, and tiered gates read journals directly
 
 `tests/handoff-replay.test.ts` runs that tree through the production scheduler, `parseHandoff`, `childTaskContract`, the compiler, evidence revalidation and `streamModelChat`. Only the provider adapter and the tool loop are scripted.
 
-| Family | Scenario | Passes only if |
-| --- | --- | --- |
-| HR-001 | A concurrent request repeats the parent's private text while a lease is live and revoked | Its message reaches the adapter unchanged |
-| HR-002 | A queued child after the parent left, with and without a forget | Forgotten: no model call. Unchanged: the fact arrives |
-| HR-003 | A subgoal omits the language | `"language":"Python"` is in the dispatched contract |
-| HR-004 | A required constraint beside a crowded briefing | The constraint is dispatched |
-| HR-005 | A forget lands during model preparation | The fact is absent from the request |
+| Family | Scenario                                                                                 | Passes only if                                        |
+| ------ | ---------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| HR-001 | A concurrent request repeats the parent's private text while a lease is live and revoked | Its message reaches the adapter unchanged             |
+| HR-002 | A queued child after the parent left, with and without a forget                          | Forgotten: no model call. Unchanged: the fact arrives |
+| HR-003 | A subgoal omits the language                                                             | `"language":"Python"` is in the dispatched contract   |
+| HR-004 | A required constraint beside a crowded briefing                                          | The constraint is dispatched                          |
+| HR-005 | A forget lands during model preparation                                                  | The fact is absent from the request                   |
 
 Two more rows cover a child stopped while queued, and a store emptied by pressure followed by a cold reload.
 
@@ -26,13 +26,13 @@ The suite is in the `agents` profile, so it gates `npm run build`.
 
 Each fix was removed in turn and the suite run:
 
-| Removed | Result |
-| --- | --- |
-| Scope check in `leasesFor` | Fails |
-| `runWithHandoffEvidence` evidence | Fails |
-| Language inheritance | Fails |
-| Constraint carrying in `inheritRequirements` | Fails |
-| Final `withEligibleMemory` in `streamProviderChat` | Fails |
+| Removed                                            | Result |
+| -------------------------------------------------- | ------ |
+| Scope check in `leasesFor`                         | Fails  |
+| `runWithHandoffEvidence` evidence                  | Fails  |
+| Language inheritance                               | Fails  |
+| Constraint carrying in `inheritRequirements`       | Fails  |
+| Final `withEligibleMemory` in `streamProviderChat` | Fails  |
 
 The first version of HR-003 stayed green, because "Python" also arrives in the parent's request text. It now checks the contract field.
 
