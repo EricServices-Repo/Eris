@@ -9,17 +9,24 @@ export type ContextDerivationStatus = {
 import { z } from 'zod'
 import { RECALL_MAX_TOKENS } from './context-allocation'
 import type { ContextDestinationLabel } from './model-destination'
+export const CONTEXT_MEMORY_MAX_MIB = 1024
+export const CONTEXT_THREAD_MAX_MIB = 256
 export const ContextMemorySettingsSchema = z.object({
   enabled: z.boolean().default(true),
-  maxMemoryMiB: z.number().int().min(16).max(512).default(128),
-  maxThreadMiB: z.number().int().min(4).max(128).default(32),
+  /** Auto sizes the RAM tier from the host; the two budgets below apply only to manual. */
+  mode: z.enum(['auto', 'manual']).default('auto'),
+  maxMemoryMiB: z.number().int().min(16).max(CONTEXT_MEMORY_MAX_MIB).default(128),
+  maxThreadMiB: z.number().int().min(4).max(CONTEXT_THREAD_MAX_MIB).default(32),
   maxMessages: z.number().int().min(500).max(100000).default(25000),
   warmThreads: z.number().int().min(1).max(16).default(8),
   idleMinutes: z.number().int().min(1).max(120).default(30),
   foregroundDeadlineMs: z.number().int().min(25).max(2000).default(150),
   /** A ceiling on recall, which otherwise follows the model's input window. */
   promptTokens: z.number().int().min(128).max(RECALL_MAX_TOKENS).default(RECALL_MAX_TOKENS),
-  shareWithRemoteModels: z.boolean().default(false)
+  shareWithRemoteModels: z.boolean().default(false),
+  /** Keep tool output past the run. Off changes nothing during a run. */
+  persistToolOutput: z.boolean().default(true),
+  journalThreadMiB: z.number().int().min(1).max(256).default(16)
 })
 export type ContextMemorySettings = z.infer<typeof ContextMemorySettingsSchema>
 export type MemoryFact = {

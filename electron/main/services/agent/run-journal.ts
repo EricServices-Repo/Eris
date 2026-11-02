@@ -168,7 +168,9 @@ export class RunJournal {
 
   constructor(
     private identity: { runId: string; taskId: string; memoryKey: string },
-    private store: ContextMemoryStore = contextMemoryStore
+    private store: ContextMemoryStore = contextMemoryStore,
+    /** Keeps a copy past the run. Called once per entry, before any cap can drop the text. */
+    private persist?: (entry: JournalEntry, content: string) => void
   ) {
     open.add(this)
     this.stopPressure = store.onPressure(() => this.shed())
@@ -200,6 +202,11 @@ export class RunJournal {
       at: Date.now()
     }
     this.entries.set(entry.ref, entry)
+    try {
+      this.persist?.(entry, input.content)
+    } catch {
+      // Same rule as the rest of append: durability never costs the run its result.
+    }
     if (this.calls.has(input.toolCallId)) this.reusedCalls.add(input.toolCallId)
     this.calls.set(input.toolCallId, entry.ref)
     const cost = bytes + ENTRY_OVERHEAD_BYTES

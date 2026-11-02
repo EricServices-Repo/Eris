@@ -140,14 +140,22 @@ export function settingFields(agentIds: string[]): SettingField[] {
     },
     {
       cat: 'memory',
-      hint: 'Conservative logical accounting, not a hard process RSS limit. Range: 16–512.',
+      hint: 'Auto sizes the RAM tier from your memory, GPU type and loaded model. Manual uses the two budgets below.',
+      label: 'RAM tier sizing',
+      options: ['auto', 'manual'],
+      path: ['agent', 'contextMemory', 'mode'],
+      type: 'select'
+    },
+    {
+      cat: 'memory',
+      hint: 'Manual sizing only. Conservative logical accounting, not a hard process RSS limit. Range: 16–1024.',
       label: 'Conversation RAM budget (MiB, logical estimate)',
       path: ['agent', 'contextMemory', 'maxMemoryMiB'],
       type: 'number'
     },
     {
       cat: 'memory',
-      hint: 'Each conversation is limited by this and the global budget. Range: 4–128.',
+      hint: 'Manual sizing only. Each conversation is limited by this and the global budget. Range: 4–256.',
       label: 'RAM budget per conversation (MiB)',
       path: ['agent', 'contextMemory', 'maxThreadMiB'],
       type: 'number'
@@ -157,6 +165,20 @@ export function settingFields(agentIds: string[]): SettingField[] {
       hint: 'Full transcripts stay on disk when older messages are evicted. Range: 500–100000.',
       label: 'Maximum retained messages per conversation',
       path: ['agent', 'contextMemory', 'maxMessages'],
+      type: 'number'
+    },
+    {
+      cat: 'memory',
+      hint: 'Tool output stays searchable after a run, with secrets filtered first. Turning this off stops new saves and does not change the current run.',
+      label: 'Save tool output with the conversation',
+      path: ['agent', 'contextMemory', 'persistToolOutput'],
+      type: 'boolean'
+    },
+    {
+      cat: 'memory',
+      hint: 'Oldest output is removed first and leaves a marker. Range: 1–256.',
+      label: 'Saved tool output per conversation (MiB)',
+      path: ['agent', 'contextMemory', 'journalThreadMiB'],
       type: 'number'
     },
     {

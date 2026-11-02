@@ -14,7 +14,7 @@ import { createHash } from 'crypto'
 import { userDataRoot, userChatsDir, workspaceChatsDir } from './paths'
 import { realpathAllowMissing } from './workspace-fs'
 import { registeredWorkspaceId } from './workspace'
-import { getResolvedSettings } from './settings'
+import { configureContextTier, namespaceThreadMiB } from './context-tier-budget'
 import { workspaceRequest } from './workspace-worker-client'
 import {
   contextMemoryStore,
@@ -69,7 +69,9 @@ export const memoryKey = (root: string | null, thread: string) =>
       ])
     )
     .digest('hex')
-const dir = (root: string | null) => (root ? workspaceChatsDir(root) : userChatsDir())
+export const conversationDirectory = (root: string | null) =>
+  root ? workspaceChatsDir(root) : userChatsDir()
+const dir = conversationDirectory
 export function invalidateConversationMemory(root: string | null, id: string) {
   const key = memoryKey(root, id)
   pending.get(key)?.controller.abort()
@@ -95,11 +97,13 @@ export async function warmConversationMemory(
   priority: HydrationPriority = signal ? 'foreground' : 'background'
 ) {
   const policy = ContextMemorySettingsSchema.parse(settings.agent.contextMemory ?? {})
-  // Only profile settings govern the process allocator. Workspace disclosure,
-  // scope and prompt budgets must never reconfigure another request.
-  contextMemoryStore.configure(getResolvedSettings(null).agent.contextMemory)
+  // Workspace disclosure, scope and prompt budgets must never reconfigure another request.
+  configureContextTier()
   const key = memoryKey(root, id)
-  contextMemoryStore.configureNamespace(key, policy)
+  contextMemoryStore.configureNamespace(key, {
+    ...policy,
+    maxThreadMiB: namespaceThreadMiB(policy)
+  })
   if (!policy.enabled || !contextMemoryStore.config.enabled) return
   if (refreshContextMemoryPressure().pressure === 'critical') return
   signal?.throwIfAborted()
@@ -201,7 +205,8 @@ export async function warmConversationMemory(
         }
         if (
           bytes >=
-            Math.min(config.maxThreadMiB, policy.maxThreadMiB, config.maxMemoryMiB) * 1024 ** 2 ||
+            Math.min(config.maxThreadMiB, namespaceThreadMiB(policy), config.maxMemoryMiB) *
+              1024 ** 2 ||
           recordCount >= Math.min(config.maxMessages, policy.maxMessages)
         ) {
           partial = true
@@ -438,7 +443,7 @@ export async function conversationContext(
       policy
     })
     const key = memoryKey(root, id)
-    contextMemoryStore.configure(getResolvedSettings(null).agent.contextMemory)
+    configureContextTier()
     if (
       policy.enabled &&
       contextMemoryStore.config.enabled &&

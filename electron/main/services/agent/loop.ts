@@ -131,6 +131,7 @@ import {
 import { artifactResponseContract } from '../../../../src/shared/task-interpretation'
 import { contextPullAllowed, memoryForDestination, compiledTurnMessages } from './context-compiler'
 import { RunJournal, trustLabel } from './run-journal'
+import { journalPersistence } from '../context-journal'
 import { ContextPull, conversationThreadRecall, originThreadRecall } from './context-pull'
 import { executionPlanFor } from '../execution-plan'
 import { lintExecutionPlan } from './workflow-lint'
@@ -655,7 +656,7 @@ async function* runAgentInternal(options: {
         turnGuidance: plan.executionPlan
           ? `Task plan:\n${plan.executionPlan.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}\nDone when: ${plan.executionPlan.doneWhen}`
           : undefined,
-        ...memoryForDestination(options.conversationMemory, chatModel, options.settings),
+        ...memoryForDestination(options.conversationMemory, chatModel, options.settings, task),
         project: priorSystem,
         retrieval: '',
         maxInputTokens: contextBudgetTokens(options.settings, chatModel)
@@ -947,11 +948,25 @@ async function* runAgentInternal(options: {
   let step = 0
   const maxStepsPerRun = options.settings.agent.maxStepsPerRun ?? 60
   let verifyFailures = 0
-  const runJournal = new RunJournal({
-    runId: options.jobId ?? task.taskId,
-    taskId: task.taskId,
-    memoryKey: options.conversationMemory?.namespace ?? task.taskId
-  })
+  const runJournal = new RunJournal(
+    {
+      runId: options.jobId ?? task.taskId,
+      taskId: task.taskId,
+      memoryKey: options.conversationMemory?.namespace ?? task.taskId
+    },
+    undefined,
+    options.conversationSource && !activeDiagnosticsScope()
+      ? journalPersistence(
+          {
+            root: options.conversationSource.root,
+            threadId: options.conversationSource.threadId,
+            sourceId: options.conversationSource.excludeId,
+            projectRoot: task.scope.projectRoot
+          },
+          options.settings
+        )
+      : undefined
+  )
   const contextPull = new ContextPull({
     journal: runJournal,
     thread:

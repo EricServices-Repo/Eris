@@ -4,6 +4,7 @@ import { runJournalUsage } from '../services/agent/run-journal'
 import { lastContextDispatch } from '../services/context-dispatch'
 import { contextMemoryStore } from '../services/context-memory-store'
 import { memoryKey } from '../services/context-memory'
+import { configureContextTier } from '../services/context-tier-budget'
 import { userChatsDir, workspaceChatsDir } from '../services/paths'
 import { workspaceRequest } from '../services/workspace-worker-client'
 import type { MemoryUsageStatus } from '../../../src/shared/memory-usage'
@@ -23,7 +24,12 @@ import {
 import { MemoryControlsSchema } from '../../../src/shared/context-memory'
 import { getResolvedSettings } from '../services/settings'
 import { deleteConversationEvidence } from './storage'
-import { ipcMain } from 'electron'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
+import {
+  listProjectFacts,
+  promoteProjectFact,
+  revokeProjectFact
+} from '../services/project-facts'
 import { deleteRule, listRules, saveRule } from '../services/rules'
 import {
   listChats,
@@ -107,6 +113,7 @@ export function registerChatsIpc(): void {
     const namespace = activeThreadId ? memoryKey(root, activeThreadId) : undefined
     const dispatch = namespace ? lastContextDispatch(namespace) : undefined
     const loaded = currentLoadedModel()
+    const budget = configureContextTier()
     return {
       tiers: {
         model: loaded
@@ -121,8 +128,8 @@ export function registerChatsIpc(): void {
           : null,
         devices: inference.devices,
         pressure,
-        budgetReason:
-          'Profile cache limit, reduced by renderer history and current system memory headroom.',
+        budgetReason: budget.reason,
+        budgetMiB: budget.memoryMiB,
         pressureReason:
           pressure === 'critical'
             ? 'Optional RAM recall paused: system memory is low. Recent history and eligible durable sources remain available.'
@@ -269,6 +276,44 @@ export function registerChatsIpc(): void {
     if (snapshotHandle) inspections.delete(snapshotHandle)
     return { ...inspection, snapshotHandle: handle }
   })
+  const factWorkspace = (event: IpcMainInvokeEvent) => {
+    if (
+      !appState.mainWindow ||
+      event.sender !== appState.mainWindow.webContents ||
+      event.senderFrame !== event.sender.mainFrame
+    )
+      throw new Error('Unauthorized project fact request')
+    const root = appState.currentWorkspace
+    const workspaceId = root ? getWorkspaceByPath(root)?.id : null
+    if (!root || !workspaceId) throw new Error('Open a workspace to use project facts')
+    return { root, workspaceId }
+  }
+  ipcMain.handle('contextMemory:projectFacts', (event) =>
+    listProjectFacts(factWorkspace(event).workspaceId)
+  )
+  ipcMain.handle('contextMemory:promoteFact', async (event, raw: unknown) => {
+    const { root, workspaceId } = factWorkspace(event)
+    const { threadId, pinId, supersedes } = z
+      .object({
+        threadId: z.string().min(1).max(256),
+        pinId: z.string().min(1).max(256),
+        supersedes: z.string().uuid().optional()
+      })
+      .strict()
+      .parse(raw)
+    // The text comes from the saved pin, so a renderer cannot promote anything else.
+    const controls = await workspaceRequest({
+      type: 'context-controls',
+      dir: workspaceChatsDir(root),
+      id: threadId
+    })
+    const pin = controls.pinned.find((item) => item.id === pinId)
+    if (!pin) throw new Error('Only a pinned note can become a project fact')
+    return promoteProjectFact({ workspaceId, threadId, pin, supersedes })
+  })
+  ipcMain.handle('contextMemory:revokeFact', (event, id: unknown) =>
+    revokeProjectFact(factWorkspace(event).workspaceId, z.string().uuid().parse(id))
+  )
   ipcMain.handle('chats:list', () => listChats(appState.currentWorkspace))
   ipcMain.handle(
     'chats:get',

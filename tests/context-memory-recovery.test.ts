@@ -566,6 +566,7 @@ describe('RAM-CTX-004 growing context capacity', () => {
     }))
     db.save(thread)
     const config = settings()
+    config.agent.contextMemory.mode = 'manual'
     config.agent.contextMemory.maxThreadMiB = 4
     const small = await conversationContext(null, 'bytes', 'Discussion', config)
     config.agent.contextMemory.maxThreadMiB = 8

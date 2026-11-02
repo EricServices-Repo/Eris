@@ -97,7 +97,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: performance-observations
-          path: out/qualification/*performance.json
+          path: |
+            out/qualification/*performance.json
+            out/qualification/handoff-replay.json
           if-no-files-found: warn
 
       - name: Typecheck cloud worker
