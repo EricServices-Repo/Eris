@@ -164,6 +164,53 @@ function sourceIdOf(record: unknown, position: number): string | undefined {
   return id
 }
 
+type RowFailure = { sourceLine: number; message: string }
+const LISTED_FAILURES = 20
+
+/**
+ * Refuse the whole file when any row is invalid, listing each failure by where it is
+ * in the file. A partial import would change the denominator without saying so.
+ */
+function rejectRows(failures: RowFailure[], total: number, unit: 'line' | 'item'): void {
+  if (!failures.length) return
+  const listed = failures
+    .slice(0, LISTED_FAILURES)
+    .map(
+      (failure) =>
+        `  ${unit === 'line' ? 'Line' : 'Item'} ${failure.sourceLine}: ${failure.message}`
+    )
+  const more = failures.length - listed.length
+  throw new Error(
+    `${failures.length.toLocaleString()} of ${total.toLocaleString()} question record(s) are invalid, so nothing was imported. Fix them in the source file:\n` +
+      listed.join('\n') +
+      (more > 0 ? `\n  …and ${more.toLocaleString()} more.` : '')
+  )
+}
+
+function jsonFailure(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).slice(0, 200)
+}
+
+/** Line and column of a JSON.parse failure, from the position V8 reports. */
+function jsonLocation(source: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : ''
+  const explicit = message.match(/line (\d+) column (\d+)/)
+  if (explicit) return ` at line ${explicit[1]}, column ${explicit[2]}`
+  const position = Number(message.match(/position (\d+)/)?.[1])
+  if (!Number.isInteger(position)) return ''
+  const before = source.slice(0, position).split(/\r?\n/)
+  return ` at line ${before.length}, column ${before.at(-1)!.length + 1}`
+}
+
+function memoryOf(value: unknown, position: number): DevQuestion['memory'] {
+  const parsed = DevMemoryCaseSchema.safeParse(value)
+  if (parsed.success) return parsed.data
+  const issue = parsed.error.issues[0]
+  throw new Error(
+    `Question ${position} memory is invalid${issue?.path.length ? ` at ${issue.path.join('.')}` : ''}: ${issue?.message ?? 'unknown problem'}.`
+  )
+}
+
 /**
  * Parse a question file and report exactly what was imported, normalized or
  * excluded. TXT: one question per line; numbered lists lose their numbers. Only
@@ -187,39 +234,68 @@ export function prepareQuestions(
   let records: ImportRecord[]
 
   if (extension === '.json' || extension === '.jsonl') {
-    const raw: Array<{ value: unknown; sourceLine: number }> =
-      extension === '.json'
-        ? (() => {
-            const parsed: unknown = JSON.parse(source)
-            if (!Array.isArray(parsed)) throw new Error('A JSON question file must be an array.')
-            return parsed.map((value, index) => ({ value, sourceLine: index + 1 }))
-          })()
-        : source
-            .split(/\r?\n/)
-            .flatMap((line, index) =>
-              line.trim() ? [{ value: JSON.parse(line), sourceLine: index + 1 }] : []
+    const jsonl = extension === '.jsonl'
+    const raw: Array<{ value: unknown; sourceLine: number; failure?: string }> = jsonl
+      ? source.split(/\r?\n/).flatMap((line, index) => {
+          if (!line.trim()) return []
+          try {
+            return [{ value: JSON.parse(line), sourceLine: index + 1 }]
+          } catch (error) {
+            return [{ value: undefined, sourceLine: index + 1, failure: jsonFailure(error) }]
+          }
+        })
+      : (() => {
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(source)
+          } catch (error) {
+            throw new Error(
+              `The JSON question file is not valid JSON${jsonLocation(source, error)}.`
             )
-    records = raw.map(({ value, sourceLine }, index) => {
-      const script = intentReplyOf(value, index + 1)
-      return {
-        text: validText(
-          typeof value === 'string'
-            ? value
-            : ((value as { question?: unknown; text?: unknown } | null)?.question ??
-                (value as { text?: unknown } | null)?.text),
-          index + 1
-        ),
-        sourceLine,
-        sourceId: sourceIdOf(value, index + 1),
-        intentReply: script.reply,
-        intentReplyMalformed: script.malformed,
-        history: historyOf(value, index + 1),
-        memory:
-          typeof value === 'object' && value !== null && 'memory' in value
-            ? DevMemoryCaseSchema.parse(value.memory)
-            : undefined
+          }
+          if (!Array.isArray(parsed)) throw new Error('A JSON question file must be an array.')
+          return parsed.map((value, index) => ({ value, sourceLine: index + 1 }))
+        })()
+    // EV-03: check every row, then report them together. Stopping at the first bad row
+    // hides how much of the corpus needs fixing; importing around it would silently
+    // shrink the corpus a run claims to cover.
+    const failures: RowFailure[] = []
+    records = []
+    for (const { value, sourceLine, failure } of raw) {
+      // A JSONL row is named by its file line; a JSON row by its array position.
+      const position = sourceLine
+      if (failure) {
+        failures.push({ sourceLine, message: `Question ${position} is not valid JSON: ${failure}` })
+        continue
       }
-    })
+      try {
+        const script = intentReplyOf(value, position)
+        records.push({
+          text: validText(
+            typeof value === 'string'
+              ? value
+              : ((value as { question?: unknown; text?: unknown } | null)?.question ??
+                  (value as { text?: unknown } | null)?.text),
+            position
+          ),
+          sourceLine,
+          sourceId: sourceIdOf(value, position),
+          intentReply: script.reply,
+          intentReplyMalformed: script.malformed,
+          history: historyOf(value, position),
+          memory:
+            typeof value === 'object' && value !== null && 'memory' in value
+              ? memoryOf(value.memory, position)
+              : undefined
+        })
+      } catch (error) {
+        failures.push({
+          sourceLine,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      }
+    }
+    rejectRows(failures, raw.length, jsonl ? 'line' : 'item')
     const scripted = records.filter((record) => record.intentReplyMalformed).length
     if (scripted)
       normalization.push(
@@ -287,7 +363,19 @@ export function prepareQuestions(
       normalization.push(`Excluded ${excluded.length} non-question line(s); see the list.`)
     if (include.size) normalization.push(`Restored ${include.size} excluded line(s) on request.`)
   }
-  for (const [index, record] of records.entries()) validText(record.text, index + 1)
+  if (extension !== '.json' && extension !== '.jsonl') {
+    const failures: RowFailure[] = []
+    for (const record of records)
+      try {
+        validText(record.text, record.sourceLine)
+      } catch (error) {
+        failures.push({
+          sourceLine: record.sourceLine,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      }
+    rejectRows(failures, records.length, 'line')
+  }
   if (!records.length) throw new Error('The file contains no questions.')
   if (records.length > MAX_QUESTIONS)
     throw new Error(

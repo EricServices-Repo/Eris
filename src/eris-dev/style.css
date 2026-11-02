@@ -468,6 +468,10 @@ pre {
   background: #352525;
   color: #f0c2bc;
 }
+/* Import errors list one failing row per line. */
+.banner.error span {
+  white-space: pre-line;
+}
 .inline-error {
   padding: 14px;
   border-radius: 8px;

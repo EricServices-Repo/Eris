@@ -586,3 +586,82 @@ it('recovers incomplete outcomes in earlier live exports without treating ordina
     }).completion
   ).toBeUndefined()
 })
+describe('Eris-Dev corpus row errors (#307 EV-03)', () => {
+  const failure = (run: () => unknown): string => {
+    try {
+      run()
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+    throw new Error('expected the import to be refused')
+  }
+
+  it('names every bad JSONL row by its file line, including unparsable JSON', () => {
+    const corpus = [
+      '{"question":"First?"}',
+      '',
+      '{"question":"Broken?"',
+      '{"question":""}',
+      '{"question":"Fine?"}',
+      '{"question":"Bad id?","id":"has space"}',
+      '{"question":"Bad script?","intentReply":{"intent":"deploy","confidence":0.5}}'
+    ].join('\n')
+    const message = failure(() => prepareQuestions(corpus, '.jsonl'))
+    expect(message).toMatch(/^4 of 6 question record\(s\) are invalid, so nothing was imported/)
+    expect(message).toMatch(/Line 3: Question 3 is not valid JSON/)
+    expect(message).toMatch(/Line 4: Question 4 must be nonempty text/)
+    expect(message).toMatch(/Line 6: Question 6 id must be/)
+    expect(message).toMatch(/Line 7: Question 7 intentReply has unknown intent "deploy"/)
+    // Valid rows are not reported, and the blank line is neither a row nor an error.
+    expect(message).not.toMatch(/Line [125]:/)
+  })
+
+  it('names bad JSON array items by position and locates a syntax error', () => {
+    const message = failure(() =>
+      prepareQuestions(
+        JSON.stringify(['ok', 7, { text: 'fine' }, { history: 'x', text: 'y' }]),
+        '.json'
+      )
+    )
+    expect(message).toMatch(/^2 of 4 question record\(s\)/)
+    expect(message).toMatch(/Item 2: Question 2 must be nonempty text/)
+    expect(message).toMatch(/Item 4: Question 4 history must be an array/)
+    expect(failure(() => prepareQuestions('[\n  "a",\n  "b" "c"\n]', '.json'))).toMatch(
+      /not valid JSON at line 3, column \d+/
+    )
+  })
+
+  it('reports an invalid memory case with its row and field, not a raw schema dump', () => {
+    const message = failure(() =>
+      prepareQuestions('{"question":"Recall?","memory":{"expectedSourceIds":"m1"}}', '.jsonl')
+    )
+    expect(message).toMatch(/Line 1: Question 1 memory is invalid at expectedSourceIds/)
+  })
+
+  it('bounds the listing and counts the rest', () => {
+    const corpus = Array.from({ length: 30 }, (_, i) => (i % 2 ? '{"question":""}' : '"ok?"')).join(
+      '\n'
+    )
+    const message = failure(() => prepareQuestions(corpus, '.jsonl'))
+    expect(message).toMatch(/^15 of 30 question record\(s\)/)
+    expect(message.split('\n').filter((line) => line.startsWith('  Line'))).toHaveLength(15)
+    const big = Array.from({ length: 60 }, () => '{"question":""}').join('\n')
+    const bounded = failure(() => prepareQuestions(big, '.jsonl'))
+    expect(bounded.split('\n').filter((line) => line.startsWith('  Line'))).toHaveLength(20)
+    expect(bounded).toMatch(/…and 40 more\.$/)
+  })
+
+  it('reports an oversized TXT question by its source line', () => {
+    const corpus = ['Title:', 'Short question?', 'x'.repeat(32_001)].join('\n')
+    expect(failure(() => prepareQuestions(corpus, '.txt'))).toMatch(
+      /^1 of 2 question record\(s\)[\s\S]*Line 3: Question 3 must be nonempty text of at most 32,000/
+    )
+  })
+
+  it('imports exactly 10,000 valid rows and still refuses 10,001', () => {
+    const rows = (n: number) =>
+      Array.from({ length: n }, (_, i) => JSON.stringify({ question: `Question ${i}?` })).join('\n')
+    expect(prepareQuestions(rows(10_000), '.jsonl').questions).toHaveLength(10_000)
+    expect(failure(() => prepareQuestions(rows(10_001), '.jsonl'))).toMatch(/limit is 10,000/)
+  })
+})
