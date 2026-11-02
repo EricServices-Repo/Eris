@@ -33,6 +33,7 @@
         "tests/project-facts.test.ts",
         "tests/agent-conversation.test.ts",
         "tests/agent-corpus-boundary.test.ts",
+        "tests/protected-mutation-paths.test.ts",
         "tests/agent-discussions.test.ts",
         "tests/agent-evidence.test.ts",
         "tests/agent-followup-review.test.ts",

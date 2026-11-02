@@ -79,12 +79,57 @@ export function assertIdentity(root: string, path: string, expected: FileIdentit
   if (JSON.stringify(fileIdentity(root, path)) !== JSON.stringify(expected))
     throw new MutationConflict('File changed before publication; read it again: ' + path)
 }
+/**
+ * Eris's own workspace state. Settings, agent definitions and workspace identity can
+ * widen what a task may do once the folder is trusted; transactions, checkpoints, runs,
+ * sessions and chats are the records that undo and review rely on. None of it is a
+ * project file. Rules, skills, evals, launch configs and project context stay editable,
+ * because they are project content a user asks an agent to write.
+ */
+const PROTECTED_STATE = new Set([
+  'settings.json',
+  'workspace.json',
+  'agents.json',
+  'transactions',
+  'checkpoints',
+  'runs',
+  'sessions',
+  'chats',
+  'cache',
+  'code-index.json',
+  'code-index.json.tmp'
+])
+const STATE_DIRS = new Set(['.eris', '.ericservices-ide'])
+/**
+ * Windows drops trailing dots and spaces from a name, and default macOS and Windows
+ * volumes ignore case, so `.GIT` and `.git.` reach the same entry as `.git`.
+ */
+const comparable = (part: string) => part.replace(/[. ]+$/, '').toLowerCase()
+/** Why a workspace-relative path is outside what file tools may change, or null. */
+export function protectedMutationReason(rel: string): string | null {
+  const parts = rel
+    .split(/[\\/]+/)
+    .filter(Boolean)
+    .map(comparable)
+  // A `.git` file (worktree or submodule link) is as sensitive as the folder.
+  if (parts.includes('.git')) return 'Git metadata is not a project file'
+  for (let i = 0; i < parts.length - 1; i++)
+    if (STATE_DIRS.has(parts[i]!) && PROTECTED_STATE.has(parts[i + 1]!))
+      return 'Eris workspace state is not a project file'
+  return null
+}
+/** Refuse a tool mutation of Git metadata or Eris state, whatever spelling reaches it. */
+function assertMutablePath(canonical: string, path: string): void {
+  const reason = protectedMutationReason(relative(canonical, resolve(canonical, path)))
+  if (reason) throw new MutationConflict(`${reason}: ${path}`)
+}
 export function prepareMutationPlan(
   root: string,
   paths: string[],
   plan?: MutationPlan
 ): MutationPlan {
   const canonical = realpathSync(root)
+  for (const path of paths) assertMutablePath(canonical, path)
   if (plan) {
     if (plan.root !== canonical) throw new MutationConflict('Workspace identity changed')
     for (const path of paths) {
