@@ -98,6 +98,18 @@ describe('host-sealed conversation origin (#263)', () => {
     ).toBe(true)
     expect(bound.executionRoot).toBe(target)
   })
+  it('reads the source thread summary through the sealed origin and its checks (#313)', async () => {
+    const bound = bindContextOrigin((await origin())!, execution())
+    const summary = await originThreadRecall(bound, execution(), () => true).summary!()
+    expect(summary?.scope.threadId).toBe('t')
+    expect(summary?.items.some((item) => item.text.includes('CAD'))).toBe(true)
+    await expect(originThreadRecall(bound, execution(), () => false).summary!()).rejects.toThrow(
+      'disclosure'
+    )
+    await expect(
+      originThreadRecall({ ...bound, threadId: 'other' }, execution(), () => true).summary!()
+    ).rejects.toThrow()
+  })
   it('rejects tampering, other-thread access and re-registration', async () => {
     const bound = bindContextOrigin((await origin())!, execution())
     await expect(

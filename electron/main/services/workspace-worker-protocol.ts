@@ -5,6 +5,7 @@ import type { IndexRecord } from './code-index'
 export type ChatPage = { before?: number; limit?: number }
 interface AdditionalWorkspaceResults {
   'context-archive-search': import('../../../src/shared/archive-context').ArchiveContextSearch
+  'context-thread-summary': import('../../../src/shared/thread-summary').ThreadSummary | null
   'context-journal-write': boolean
   'context-journal-search': import('../../../src/shared/context-journal').DurableJournalHit[]
   'context-journal-read': import('../../../src/shared/context-journal').DurableJournalRead
@@ -72,6 +73,7 @@ export type WorkspaceRequest =
       ref: string
       projectRoot?: string | null
     }
+  | { type: 'context-thread-summary'; dir: string; id: string; projectRoot?: string | null }
   | { type: 'chat-close'; dir: string }
   | { type: 'chat-list'; dir: string }
   | { type: 'chat-get'; dir: string; id: string; page?: ChatPage }
