@@ -22,6 +22,14 @@ import {
   type ContextPage
 } from '../../../src/shared/context-memory'
 import { DatabaseSync } from 'node:sqlite'
+import {
+  installJournalStore,
+  purgeJournal,
+  readJournal,
+  searchJournal,
+  writeJournalEntry
+} from './context-journal-store'
+import type { DurableJournalEntry } from '../../../src/shared/context-journal'
 import { createHash } from 'crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'fs'
 import { join } from 'path'
@@ -139,6 +147,7 @@ export class ChatDatabase {
       'CREATE TABLE IF NOT EXISTS context_controls(threadId TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,body TEXT NOT NULL)'
     )
     this.transaction(() => installArchiveIndex(this.db))
+    this.transaction(() => installJournalStore(this.db))
     this.migrateContextSequences()
     this.transaction(() => installContextChangeLog(this.db))
     try {
@@ -308,7 +317,12 @@ export class ChatDatabase {
     return String(row.epoch)
   }
   replayContextChanges(limit = 128) {
-    return this.transaction(() => replayContextChanges(this.db, limit))
+    return this.transaction(() =>
+      replayContextChanges(this.db, limit, (id) => {
+        if (this.db.prepare('SELECT 1 FROM conversations WHERE id=?').get(id))
+          purgeJournal(this.db, id, this.memoryControls(id))
+      })
+    )
   }
   contextChangeStatus() {
     return contextDerivationStatus(this.db)
@@ -521,7 +535,20 @@ export class ChatDatabase {
     return { ...next, contextEpoch: this.sourceEpoch(next.id) }
   }
   save(thread: ChatThread): ChatThread {
-    return this.transaction(() => this.write(thread))
+    return this.transaction(() => {
+      const saved = this.write(thread)
+      purgeJournal(this.db, thread.id, this.memoryControls(thread.id))
+      return saved
+    })
+  }
+  journalWrite(id: string, entry: DurableJournalEntry, maxBytes: number) {
+    return this.transaction(() => writeJournalEntry(this.db, id, entry, maxBytes))
+  }
+  journalSearch(id: string, query: string, limit: number, projectRoot?: string | null) {
+    return searchJournal(this.db, id, query, limit, this.contextControls(id), projectRoot)
+  }
+  journalRead(id: string, ref: string, projectRoot?: string | null) {
+    return readJournal(this.db, id, ref, this.contextControls(id), projectRoot)
   }
   append(id: string, message: ChatMessage, model?: string): ChatThread {
     return this.transaction(() => {
@@ -813,6 +840,7 @@ export class ChatDatabase {
           `${CONTEXT_CONTROLS_CONFLICT}: Memory controls changed in another view. Reload RAM from saved history, then retry your action.`
         )
       }
+      purgeJournal(this.db, id, committedPayload)
     }
     const row = this.db.prepare('SELECT body FROM context_controls WHERE threadId=?').get(id)
     if (!row) return emptyMemoryControls()

@@ -68,7 +68,12 @@ export function contextDerivationStatus(db: DatabaseSync): ContextDerivationStat
 }
 
 /** Bounded, idempotent catalog invalidation; cursor and projected rows commit together. */
-export function replayContextChanges(db: DatabaseSync, limit = 128): ContextDerivationStatus {
+export function replayContextChanges(
+  db: DatabaseSync,
+  limit = 128,
+  /** Derived state that must follow a change, inside the same transaction as the cursor. */
+  invalidate?: (threadId: string) => void
+): ContextDerivationStatus {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500)
     throw new Error('Invalid context replay limit')
   let status = contextDerivationStatus(db)
@@ -96,6 +101,7 @@ export function replayContextChanges(db: DatabaseSync, limit = 128): ContextDeri
       row.sequence!,
       row.kind === 'delete' ? 1 : 0
     )
+    if (row.kind !== 'delete') invalidate?.(String(row.threadId))
     db.prepare('UPDATE context_derivation_cursor SET sequence=? WHERE id=1').run(row.sequence!)
   }
   return contextDerivationStatus(db)

@@ -69,7 +69,9 @@ export const memoryKey = (root: string | null, thread: string) =>
       ])
     )
     .digest('hex')
-const dir = (root: string | null) => (root ? workspaceChatsDir(root) : userChatsDir())
+export const conversationDirectory = (root: string | null) =>
+  root ? workspaceChatsDir(root) : userChatsDir()
+const dir = conversationDirectory
 export function invalidateConversationMemory(root: string | null, id: string) {
   const key = memoryKey(root, id)
   pending.get(key)?.controller.abort()

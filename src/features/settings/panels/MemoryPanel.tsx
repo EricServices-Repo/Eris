@@ -12,6 +12,7 @@ const ranges: Record<string, [number, number]> = {
   maxMemoryMiB: [16, CONTEXT_MEMORY_MAX_MIB],
   maxThreadMiB: [4, CONTEXT_THREAD_MAX_MIB],
   maxMessages: [500, 100000],
+  journalThreadMiB: [1, 256],
   warmThreads: [1, 16],
   idleMinutes: [1, 120],
   foregroundDeadlineMs: [25, 2000],
