@@ -19,6 +19,7 @@ export type MemoryUsageStatus = {
     devices: import('./inference').InferenceSnapshot['devices']
     pressure: 'normal' | 'constrained' | 'critical'
     budgetReason: string
+    budgetMiB: number
     pressureReason: string
     journal: { bytes: number; searches: number; evicted: number; runs: number }
     lastDispatch: null | {

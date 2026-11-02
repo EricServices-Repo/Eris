@@ -12,7 +12,6 @@ import { handleWorkspaceRequest } from '../electron/main/workspace-worker'
 import { ChatDatabase, closeChatDatabases } from '../electron/main/services/chat-database'
 import type { WorkspaceRequest } from '../electron/main/services/workspace-worker-protocol'
 import {
-  invalidateConversationMemory,
   memoryKey,
   warmConversationMemory
 } from '../electron/main/services/context-memory'
@@ -20,6 +19,7 @@ import {
   ContextMemoryStore,
   contextMemoryStore
 } from '../electron/main/services/context-memory-store'
+import { configureContextTier } from '../electron/main/services/context-tier-budget'
 import { RecallIndex, MAX_MATCHED_ROWS } from '../electron/main/services/context-recall-index'
 import { getDefaults } from '../electron/main/services/settings'
 import {
@@ -204,6 +204,7 @@ describe('hydration lifecycle', () => {
     expect(contextMemoryStore.has(memoryKey(null, 't'))).toBe(false)
   })
   it('admits nothing when the envelope is taken', async () => {
+    configureContextTier()
     const held = contextMemoryStore.reserve('other', contextMemoryStore.ledger.envelopeBytes)
     await warmConversationMemory(null, 't', settings())
     expect(contextMemoryStore.has(memoryKey(null, 't'))).toBe(false)

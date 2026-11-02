@@ -7,6 +7,7 @@ const tiers: NonNullable<MemoryUsageStatus['tiers']> = {
   pressure: 'critical',
   pressureReason: 'Recall paused: system memory is low',
   budgetReason: 'Profile cache limit',
+  budgetMiB: 128,
   journal: { bytes: 123, searches: 2, evicted: 3, runs: 1 },
   lastDispatch: { model: 'local:test', counts: { selected: 5, sent: 2, omitted: 3, truncated: 0 } }
 }
