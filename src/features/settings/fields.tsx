@@ -161,6 +161,20 @@ export function settingFields(agentIds: string[]): SettingField[] {
     },
     {
       cat: 'memory',
+      hint: 'Tool output stays searchable after a run, with secrets filtered first. Turning this off stops new saves and does not change the current run.',
+      label: 'Save tool output with the conversation',
+      path: ['agent', 'contextMemory', 'persistToolOutput'],
+      type: 'boolean'
+    },
+    {
+      cat: 'memory',
+      hint: 'Oldest output is removed first and leaves a marker. Range: 1–256.',
+      label: 'Saved tool output per conversation (MiB)',
+      path: ['agent', 'contextMemory', 'journalThreadMiB'],
+      type: 'number'
+    },
+    {
+      cat: 'memory',
       hint: 'Least recently used conversations are evicted first. Range: 1–16.',
       label: 'Maximum warm conversations',
       path: ['agent', 'contextMemory', 'warmThreads'],

@@ -8,6 +8,12 @@ import { conversationContext, readConversationSource } from '../context-memory'
 import type { ConversationSourceRead } from '../context-memory'
 import { redactSensitive } from '../context-memory-store'
 import { journalOmissionMarker, trustLabel, type RunJournal } from './run-journal'
+import type {
+  DurableJournalHit,
+  DurableJournalMeta,
+  DurableJournalRead
+} from '../../../../src/shared/context-journal'
+import { readDurableJournal, searchDurableJournal } from '../context-journal'
 
 /** Most of one model-facing page. A result this size leaves room for the next step. */
 export const CONTEXT_READ_MAX_CHARS = 8_000
@@ -36,6 +42,9 @@ export type ThreadSearch = {
 export type ThreadRecall = {
   search(query: string, tokens: number, signal?: AbortSignal): Promise<ThreadSearch>
   read(item: MemoryPromptItem, signal?: AbortSignal): Promise<ConversationSourceRead>
+  /** Tool output from earlier runs in this conversation. */
+  journalSearch?(query: string, limit: number, signal?: AbortSignal): Promise<DurableJournalHit[]>
+  journalRead?(ref: string, signal?: AbortSignal): Promise<DurableJournalRead>
 }
 
 /** Digests and sizes only: the ledger never holds recalled text. */
@@ -70,12 +79,20 @@ export function conversationThreadRecall(
       })
       return { items: prompt.items ?? [], coverage: prompt.manifest.coverage }
     },
-    read: (item, signal) => readConversationSource(root, threadId, item, { projectRoot, signal })
+    read: (item, signal) => readConversationSource(root, threadId, item, { projectRoot, signal }),
+    journalSearch: (query, limit, signal) =>
+      searchDurableJournal(root, threadId, query, limit, projectRoot, signal),
+    journalRead: (ref, signal) => readDurableJournal(root, threadId, ref, projectRoot, signal)
   }
 }
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex')
 const threadRef = (sourceId: string) => `t${digest(sourceId).slice(0, 11)}`
+const durableRef = (ref: string) => `j${ref}`
+const day = (at: number) => new Date(at).toISOString().slice(0, 10)
+/** A past result is what happened then. It never describes the files as they are now. */
+const historicalLabel = (entry: DurableJournalMeta) =>
+  `recorded ${day(entry.at)} · historical: says nothing about the current files${trustLabel(entry.trust)}`
 const flat = (text: string) => text.replace(/\s+/g, ' ').trim()
 
 function wholeNumber(value: unknown): number | undefined {
@@ -108,6 +125,7 @@ function evidenceBlock(heading: string, body: string) {
 export class ContextPull {
   /** Only what a search returned can be read, so a ref cannot be guessed into a source. */
   private threadRefs = new Map<string, MemoryPromptItem>()
+  private durableRefs = new Map<string, string>()
   private served = new Set<string>()
   private returnedChars = 0
 
@@ -217,6 +235,19 @@ export class ContextPull {
         else if (coverage === 'partial')
           notes.push('Only part of this conversation could be searched.')
         const sources = new Set<string>()
+        const live = new Set(this.input.journal.list().map((entry) => entry.ref))
+        const earlier = await this.input.thread.journalSearch?.(query, limit, signal)
+        for (const { entry, score, snippet } of earlier ?? []) {
+          if (live.has(entry.ref)) continue
+          const ref = durableRef(entry.ref)
+          this.durableRefs.set(ref, entry.ref)
+          const shown = snippet || `[output not retained: ${entry.omitted}]`
+          hits.push({
+            score,
+            line: `[ref:${ref} · ${entry.toolName} · ${entry.argsSummary.slice(0, 80)} · ${historicalLabel(entry)} · score ${score}] ${shown}`,
+            ref: { ref, sourceDigest: digest(entry.ref), chars: shown.length }
+          })
+        }
         for (const item of items) {
           if (sources.has(item.sourceId)) continue
           sources.add(item.sourceId)
@@ -300,6 +331,25 @@ export class ContextPull {
         reason: `omitted:${journaled.entry.omitted}`
       }
     if (journaled.status === 'busy') return { refused: journaled.marker, reason: 'memory-busy' }
+    const durable = this.durableRefs.get(ref)
+    if (durable && this.input.thread?.journalRead) {
+      const read = await this.input.thread.journalRead(durable, signal)
+      if (read.status === 'unavailable')
+        return {
+          refused: 'That tool output can no longer be read. Treat it as unknown.',
+          reason: 'unavailable'
+        }
+      if (read.status === 'omitted')
+        return {
+          refused: `[ref:${ref} · ${read.entry.toolName} · output not retained: ${read.entry.omitted}]`,
+          reason: `omitted:${read.entry.omitted}`
+        }
+      return {
+        text: read.text,
+        label: `${read.entry.toolName} · ${read.entry.argsSummary.slice(0, 80)} · ${historicalLabel(read.entry)}`,
+        sourceDigest: digest(durable)
+      }
+    }
     const item = this.threadRefs.get(ref)
     if (!item || !this.input.thread)
       return {
@@ -348,6 +398,22 @@ export function originThreadRecall(
     async read(item, signal) {
       const { source, settings } = await resolve(signal)
       const result = await conversationThreadRecall(source, settings).read(item, signal)
+      await resolve(signal)
+      return result
+    },
+    async journalSearch(query, limit, signal) {
+      const { source, settings } = await resolve(signal)
+      const result = await conversationThreadRecall(source, settings).journalSearch!(
+        query,
+        limit,
+        signal
+      )
+      await resolve(signal)
+      return result
+    },
+    async journalRead(ref, signal) {
+      const { source, settings } = await resolve(signal)
+      const result = await conversationThreadRecall(source, settings).journalRead!(ref, signal)
       await resolve(signal)
       return result
     }

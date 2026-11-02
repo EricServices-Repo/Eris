@@ -19,7 +19,10 @@ export const ContextMemorySettingsSchema = z.object({
   foregroundDeadlineMs: z.number().int().min(25).max(2000).default(150),
   /** A ceiling on recall, which otherwise follows the model's input window. */
   promptTokens: z.number().int().min(128).max(RECALL_MAX_TOKENS).default(RECALL_MAX_TOKENS),
-  shareWithRemoteModels: z.boolean().default(false)
+  shareWithRemoteModels: z.boolean().default(false),
+  /** Keep tool output past the run. Off changes nothing during a run. */
+  persistToolOutput: z.boolean().default(true),
+  journalThreadMiB: z.number().int().min(1).max(256).default(16)
 })
 export type ContextMemorySettings = z.infer<typeof ContextMemorySettingsSchema>
 export type MemoryFact = {
