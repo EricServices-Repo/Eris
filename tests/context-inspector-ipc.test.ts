@@ -38,6 +38,11 @@ vi.mock('../electron/main/services/workspace', () => ({
   })
 }))
 vi.mock('../electron/main/services/workspace-worker-client', () => ({ workspaceRequest: vi.fn() }))
+vi.mock('../electron/main/services/project-facts', () => ({
+  listProjectFacts: vi.fn(() => []),
+  promoteProjectFact: vi.fn(() => ({ text: 'saved' })),
+  revokeProjectFact: vi.fn(() => true)
+}))
 vi.mock('../electron/main/services/settings', () => ({
   getResolvedSettings: () => ({
     agent: { contextMemory: ContextMemorySettingsSchema.parse({}), projectMemory: 'ask' }
@@ -59,6 +64,7 @@ vi.mock('../electron/main/services/context-memory', () => ({
     processLogicalBytes: 0
   }))
 }))
+import { promoteProjectFact } from '../electron/main/services/project-facts'
 import { evidenceEpoch } from '../electron/main/services/context-evidence-epochs'
 import { appState } from '../electron/main/app-state'
 import { registerChatsIpc } from '../electron/main/ipc/chats'
@@ -230,5 +236,43 @@ describe('Read-only memory usage IPC', () => {
     appState.currentWorkspace = '/B'
     release()
     await expect(pending).rejects.toThrow('Workspace changed')
+  })
+})
+describe('RAM-CTX-042 project fact promotion', () => {
+  const promote = (raw: unknown, source: unknown = event) =>
+    h.handlers.get('contextMemory:promoteFact')!(source, raw) as Promise<{ text: string }>
+  const pin = { id: 'pin-1', text: 'Saved pin text' }
+
+  beforeEach(() => {
+    vi.mocked(promoteProjectFact).mockClear()
+    vi.mocked(workspaceRequest).mockResolvedValue({
+      ...emptyMemoryControls(),
+      pinned: [pin]
+    } as never)
+  })
+
+  it('takes the text from the saved pin, never from the request', async () => {
+    await promote({ threadId: 'same', pinId: 'pin-1' })
+    expect(promoteProjectFact).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: 'registered-A', threadId: 'same', pin })
+    )
+    await expect(promote({ threadId: 'same', pinId: 'pin-1', text: 'injected' })).rejects.toThrow()
+    expect(promoteProjectFact).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses anything that is not a saved pin', async () => {
+    await expect(promote({ threadId: 'same', pinId: 'not-a-pin' })).rejects.toThrow(
+      'Only a pinned note'
+    )
+    expect(promoteProjectFact).not.toHaveBeenCalled()
+  })
+
+  it('refuses a subframe, another window and a chat with no workspace', async () => {
+    const raw = { threadId: 'same', pinId: 'pin-1' }
+    await expect(promote(raw, { sender, senderFrame: {} })).rejects.toThrow('Unauthorized')
+    await expect(promote(raw, { sender: {}, senderFrame: {} })).rejects.toThrow('Unauthorized')
+    appState.currentWorkspace = null
+    await expect(promote(raw)).rejects.toThrow('Open a workspace')
+    expect(promoteProjectFact).not.toHaveBeenCalled()
   })
 })

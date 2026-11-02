@@ -360,6 +360,13 @@ export interface IdeApi {
     controls?: import('./context-memory').MemoryControls
     evict?: boolean
   }) => Promise<import('./context-memory').MemoryInspection>
+  listProjectFacts: () => Promise<import('./project-facts').ProjectFact[]>
+  promoteProjectFact: (input: {
+    threadId: string
+    pinId: string
+    supersedes?: string
+  }) => Promise<import('./project-facts').ProjectFact>
+  revokeProjectFact: (id: string) => Promise<boolean>
   getChat: (id: string, page?: { before?: number; limit?: number }) => Promise<ChatThread | null>
   appendChatMessage: (
     id: string,

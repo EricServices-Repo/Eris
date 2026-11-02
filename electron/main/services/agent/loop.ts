@@ -656,7 +656,7 @@ async function* runAgentInternal(options: {
         turnGuidance: plan.executionPlan
           ? `Task plan:\n${plan.executionPlan.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}\nDone when: ${plan.executionPlan.doneWhen}`
           : undefined,
-        ...memoryForDestination(options.conversationMemory, chatModel, options.settings),
+        ...memoryForDestination(options.conversationMemory, chatModel, options.settings, task),
         project: priorSystem,
         retrieval: '',
         maxInputTokens: contextBudgetTokens(options.settings, chatModel)

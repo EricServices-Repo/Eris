@@ -75,7 +75,8 @@ export function previewContextDispatch(input: {
   })
   const { bundle } = compileTaskContext({
     ...(snapshot ?? { task: fallbackTask, guidance: '', project: '', retrieval: '' }),
-    ...memoryForDestination(prompt, model, settings),
+    // Later than the snapshot, so a fact revoked since then is gone from this request.
+    ...memoryForDestination(prompt, model, settings, snapshot?.task ?? fallbackTask),
     maxInputTokens: Math.min(
       snapshot?.maxInputTokens ?? Infinity,
       contextBudgetTokens(settings, model)

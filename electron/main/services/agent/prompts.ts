@@ -395,7 +395,8 @@ export async function buildPreservedWorkerMessages(options: {
       ...memoryForDestination(
         options.conversationMemory,
         options.plan.models.tools,
-        options.settings
+        options.settings,
+        task
       ),
       retrieval: options.retrievalHint,
       maxInputTokens:
