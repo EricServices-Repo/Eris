@@ -4,7 +4,12 @@ import { getResolvedSettings } from '../settings'
 import { createHash, randomBytes } from 'crypto'
 import type { MemoryPromptItem } from '../../../../src/shared/context-memory'
 import type { AppSettings } from '../../../../src/shared/settings-schema'
-import { conversationContext, readConversationSource } from '../context-memory'
+import { conversationContext, readConversationSource, readThreadSummary } from '../context-memory'
+import {
+  THREAD_SUMMARY_REF,
+  threadSummaryText,
+  type ThreadSummary
+} from '../../../../src/shared/thread-summary'
 import type { ConversationSourceRead } from '../context-memory'
 import { redactSensitive } from '../context-memory-store'
 import { journalOmissionMarker, trustLabel, type RunJournal } from './run-journal'
@@ -316,6 +321,19 @@ export class ContextPull {
   ): Promise<
     { text: string; label: string; sourceDigest: string } | { refused: string; reason: string }
   > {
+    if (ref === THREAD_SUMMARY_REF) {
+      const summary = await this.input.thread?.summary?.(signal).catch(() => null)
+      if (!summary)
+        return {
+          refused: 'No thread summary is available. context_search still works.',
+          reason: 'summary-unavailable'
+        }
+      return {
+        text: redactSensitive(threadSummaryText(summary)),
+        label: 'deterministic thread summary, unverified against the current files',
+        sourceDigest: summary.digest
+      }
+    }
     const journaled = await this.input.journal.read(ref)
     if (journaled.status === 'found') {
       const { entry, content } = journaled

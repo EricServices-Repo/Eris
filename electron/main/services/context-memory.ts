@@ -587,6 +587,19 @@ export type ConversationSourceRead =
  * durable transcript, so it works whatever is resident, and rechecks every recall rule
  * now: the user may have forgotten this source since it was found.
  */
+/** Bounded like any other tool wait. The worker scan is itself limited. */
+export async function readThreadSummary(
+  root: string | null,
+  id: string,
+  projectRoot: string | null,
+  signal?: AbortSignal
+) {
+  return abortable(
+    workspaceRequest({ type: 'context-thread-summary', dir: dir(root), id, projectRoot }),
+    [AbortSignal.timeout(2000), ...(signal ? [signal] : [])]
+  )
+}
+
 export async function readConversationSource(
   root: string | null,
   id: string,

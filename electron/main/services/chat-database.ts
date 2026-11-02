@@ -534,6 +534,11 @@ export class ChatDatabase {
       .run(next.id, next.messageCount)
     return { ...next, contextEpoch: this.sourceEpoch(next.id) }
   }
+  threadSummary(id: string, projectRoot?: string | null) {
+    const header = this.contextHeader(id)
+    if (!header) return null
+    return buildThreadSummary(this.db, id, header, this.contextControls(id), projectRoot)
+  }
   save(thread: ChatThread): ChatThread {
     return this.transaction(() => {
       const saved = this.write(thread)
