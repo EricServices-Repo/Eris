@@ -13,9 +13,23 @@ import { getResolvedSettings } from './settings'
 
 let settled: ContextTierBudget | undefined
 
-function hostClass(devices: ReadonlyArray<{ kind: 'unified' | 'dedicated' }>): TierHostClass {
+/**
+ * Whether model memory competes with the RAM tier. A loaded model decides it by the
+ * device it actually holds. Without one, any shared-memory device counts, because the
+ * next model may land there: an Intel iGPU beside an RTX card stays conservative until
+ * the RTX card is the one in use. A lease on a device discovery did not report is
+ * treated the same way.
+ */
+export function hostClass(
+  devices: ReadonlyArray<{ id: string; kind: 'unified' | 'dedicated' }>,
+  active: ReadonlyArray<{ gpu: boolean; deviceId: string | null }> = []
+): TierHostClass {
   if (!devices.length) return 'unknown'
-  return devices.some((device) => device.kind === 'unified') ? 'unified' : 'dedicated'
+  const held = active.filter((lease) => lease.gpu && lease.deviceId)
+  const inUse = held.length
+    ? held.map((lease) => devices.find((device) => device.id === lease.deviceId))
+    : devices
+  return inUse.every((device) => device?.kind === 'dedicated') ? 'dedicated' : 'unified'
 }
 
 /** The allocator's limits for this profile, with the reason Settings shows for them. */
@@ -37,7 +51,7 @@ export function resolveTierPolicy(policy: ContextMemorySettings): {
   }
   const { memory, devices, active } = inferenceGovernorStatus()
   settled = settleTierBudget(settled, {
-    kind: hostClass(devices),
+    kind: hostClass(devices, active),
     totalBytes: memory.total,
     availableBytes: memory.free,
     reserveBytes: memory.pressureReserve ?? memory.reserve,
