@@ -4,6 +4,7 @@ import { getResolvedSettings } from '../settings'
 import { createHash, randomBytes } from 'crypto'
 import type { MemoryPromptItem } from '../../../../src/shared/context-memory'
 import type { AppSettings } from '../../../../src/shared/settings-schema'
+import type { TaskContract } from '../../../../src/shared/task-contract'
 import { conversationContext, readConversationSource, readThreadSummary } from '../context-memory'
 import {
   THREAD_SUMMARY_REF,
@@ -52,6 +53,16 @@ export type ThreadRecall = {
   journalRead?(ref: string, signal?: AbortSignal): Promise<DurableJournalRead>
   /** A deterministic overview rebuilt from canonical rows. Null when it cannot be read. */
   summary?(signal?: AbortSignal): Promise<ThreadSummary | null>
+}
+
+/**
+ * A thread handle that refuses (seal, thread, controls or disclosure no longer valid)
+ * becomes a tool result the model can act on. Cancellation still propagates.
+ */
+function refusal(error: unknown, signal?: AbortSignal): string {
+  if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) throw error
+  const reason = error instanceof Error ? error.message : 'unavailable'
+  return `Conversation history was refused (${reason.slice(0, 200)}). Treat it as unknown.`
 }
 
 /** Digests and sizes only: the ledger never holds recalled text. */
@@ -235,41 +246,17 @@ export class ContextPull {
     if (scope !== 'run') {
       if (!this.input.thread) {
         if (scope === 'thread') notes.push('Conversation history is not available to this task.')
-      } else {
-        const tokens = Math.ceil(allowance / CHARS_PER_TOKEN)
-        const { items, coverage } = await this.input.thread.search(query, tokens, signal)
-        if (coverage === 'unavailable' || coverage === 'disabled')
-          notes.push('Conversation search is unavailable right now, so nothing here rules it out.')
-        else if (coverage === 'partial')
-          notes.push('Only part of this conversation could be searched.')
-        const sources = new Set<string>()
-        const live = new Set(this.input.journal.list().map((entry) => entry.ref))
-        const earlier = await this.input.thread.journalSearch?.(query, limit, signal)
-        for (const { entry, score, snippet } of earlier ?? []) {
-          if (live.has(entry.ref)) continue
-          const ref = durableRef(entry.ref)
-          this.durableRefs.set(ref, entry.ref)
-          const shown = snippet || `[output not retained: ${entry.omitted}]`
-          hits.push({
-            score,
-            line: `[ref:${ref} · ${entry.toolName} · ${entry.argsSummary.slice(0, 80)} · ${historicalLabel(entry)} · score ${score}] ${shown}`,
-            ref: { ref, sourceDigest: digest(entry.ref), chars: shown.length }
-          })
+      } else
+        try {
+          hits.push(
+            ...(await this.threadHits(this.input.thread, query, allowance, limit, notes, signal))
+          )
+        } catch (error) {
+          const why = refusal(error, signal)
+          if (scope === 'thread')
+            return this.refuse('context_search', 'thread-refused', why, digest(query))
+          notes.push(why)
         }
-        for (const item of items) {
-          if (sources.has(item.sourceId)) continue
-          sources.add(item.sourceId)
-          const ref = threadRef(item.sourceId)
-          this.threadRefs.set(ref, item)
-          const snippet = flat(redactSensitive(item.text)).slice(0, THREAD_SNIPPET_CHARS)
-          const score = Math.round(item.score ?? 0)
-          hits.push({
-            score,
-            line: `[ref:${ref} · ${item.kind} · message ${item.ordinal} · score ${score}] ${snippet}`,
-            ref: { ref, sourceDigest: digest(item.sourceId), chars: snippet.length }
-          })
-        }
-      }
     }
     hits.sort((a, b) => b.score - a.score)
     let used = 0
@@ -287,6 +274,54 @@ export class ContextPull {
       detail,
       used
     )
+  }
+
+  /**
+   * Thread and earlier-run hits for one search. Throws when the thread handle refuses,
+   * so a refusal never leaves half of a result behind.
+   */
+  private async threadHits(
+    thread: ThreadRecall,
+    query: string,
+    allowance: number,
+    limit: number,
+    notes: string[],
+    signal?: AbortSignal
+  ) {
+    const found: Array<{ score: number; line: string; ref: ContextPullEvent['refs'][number] }> = []
+    const tokens = Math.ceil(allowance / CHARS_PER_TOKEN)
+    const { items, coverage } = await thread.search(query, tokens, signal)
+    if (coverage === 'unavailable' || coverage === 'disabled')
+      notes.push('Conversation search is unavailable right now, so nothing here rules it out.')
+    else if (coverage === 'partial') notes.push('Only part of this conversation could be searched.')
+    const sources = new Set<string>()
+    const live = new Set(this.input.journal.list().map((entry) => entry.ref))
+    const earlier = await thread.journalSearch?.(query, limit, signal)
+    for (const { entry, score, snippet } of earlier ?? []) {
+      if (live.has(entry.ref)) continue
+      const ref = durableRef(entry.ref)
+      this.durableRefs.set(ref, entry.ref)
+      const shown = snippet || `[output not retained: ${entry.omitted}]`
+      found.push({
+        score,
+        line: `[ref:${ref} · ${entry.toolName} · ${entry.argsSummary.slice(0, 80)} · ${historicalLabel(entry)} · score ${score}] ${shown}`,
+        ref: { ref, sourceDigest: digest(entry.ref), chars: shown.length }
+      })
+    }
+    for (const item of items) {
+      if (sources.has(item.sourceId)) continue
+      sources.add(item.sourceId)
+      const ref = threadRef(item.sourceId)
+      this.threadRefs.set(ref, item)
+      const snippet = flat(redactSensitive(item.text)).slice(0, THREAD_SNIPPET_CHARS)
+      const score = Math.round(item.score ?? 0)
+      found.push({
+        score,
+        line: `[ref:${ref} · ${item.kind} · message ${item.ordinal} · score ${score}] ${snippet}`,
+        ref: { ref, sourceDigest: digest(item.sourceId), chars: snippet.length }
+      })
+    }
+    return found
   }
 
   async read(args: ToolArgs, signal?: AbortSignal): Promise<PullResult> {
@@ -354,7 +389,12 @@ export class ContextPull {
     if (journaled.status === 'busy') return { refused: journaled.marker, reason: 'memory-busy' }
     const durable = this.durableRefs.get(ref)
     if (durable && this.input.thread?.journalRead) {
-      const read = await this.input.thread.journalRead(durable, signal)
+      let read: DurableJournalRead
+      try {
+        read = await this.input.thread.journalRead(durable, signal)
+      } catch (error) {
+        return { refused: refusal(error, signal), reason: 'thread-refused' }
+      }
       if (read.status === 'unavailable')
         return {
           refused: 'That tool output can no longer be read. Treat it as unknown.',
@@ -377,7 +417,12 @@ export class ContextPull {
         refused: `Unknown ref ${ref}. Refs come from context_search or an earlier-output stub.`,
         reason: 'unknown-ref'
       }
-    const read = await this.input.thread.read(item, signal)
+    let read: ConversationSourceRead
+    try {
+      read = await this.input.thread.read(item, signal)
+    } catch (error) {
+      return { refused: refusal(error, signal), reason: 'thread-refused' }
+    }
     if (read.status === 'unavailable')
       return {
         refused: `That source can no longer be read (${read.reason}). Treat it as unknown.`,
@@ -389,6 +434,40 @@ export class ContextPull {
       sourceDigest: digest(item.sourceId)
     }
   }
+}
+
+/**
+ * The conversation a task may pull from. A task carrying a host-sealed origin reads its
+ * source thread through that origin: a delegated specialist or background child gets a
+ * bounded, read-only handle to its parent's conversation, re-validated on every read
+ * (seal, profile, thread, controls and disclosure), instead of a transcript copy or no
+ * history at all. A task without an origin reads the conversation it runs in, if any.
+ * The handle grants evidence only; it never widens file or tool authority.
+ */
+export function taskThreadRecall(input: {
+  task: Pick<TaskContract, 'contextOrigin' | 'taskId' | 'threadId' | 'scope'>
+  conversationSource?: { root: string | null; threadId: string; excludeId?: string }
+  settings: AppSettings
+  allowed: (sourceSettings: AppSettings) => boolean
+}): ThreadRecall | undefined {
+  const { task, conversationSource, settings, allowed } = input
+  if (task.contextOrigin)
+    return originThreadRecall(
+      task.contextOrigin,
+      {
+        root: task.scope.workspaceRoot,
+        projectRoot: task.scope.projectRoot,
+        taskId: task.taskId,
+        threadId: task.threadId
+      },
+      allowed
+    )
+  return conversationSource
+    ? conversationThreadRecall(
+        { ...conversationSource, projectRoot: task.scope.projectRoot },
+        settings
+      )
+    : undefined
 }
 
 /** Explicit source-scoped adapter; caller retains model disclosure and task lifetime gates. */
