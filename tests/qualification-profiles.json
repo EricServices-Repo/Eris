@@ -11,6 +11,7 @@
         "tests/llama-worker-context.test.ts",
         "tests/vram-placement.test.ts",
         "tests/thread-working-state.test.ts",
+        "tests/thread-summary.test.ts",
         "tests/agent-context.test.ts",
         "tests/background-evidence-scope.test.ts",
         "tests/background-evidence-revalidation.test.ts",

@@ -22,6 +22,7 @@ import {
   type ContextPage
 } from '../../../src/shared/context-memory'
 import { DatabaseSync } from 'node:sqlite'
+import { buildThreadSummary } from './context-thread-summary'
 import { createHash } from 'crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'fs'
 import { join } from 'path'
@@ -519,6 +520,11 @@ export class ChatDatabase {
       .prepare('DELETE FROM messages WHERE threadId = ? AND ordinal >= ?')
       .run(next.id, next.messageCount)
     return { ...next, contextEpoch: this.sourceEpoch(next.id) }
+  }
+  threadSummary(id: string, projectRoot?: string | null) {
+    const header = this.contextHeader(id)
+    if (!header) return null
+    return buildThreadSummary(this.db, id, header, this.contextControls(id), projectRoot)
   }
   save(thread: ChatThread): ChatThread {
     return this.transaction(() => this.write(thread))

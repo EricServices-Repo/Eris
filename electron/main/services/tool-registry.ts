@@ -274,7 +274,7 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   ),
   tool(
     'context_read',
-    'Read the original text of a ref from context_search or an earlier-output stub',
+    'Read the original text of a ref from context_search or an earlier-output stub, or use the ref "thread-summary" for this conversation\'s decisions, constraints and unfinished work',
     {
       ref: { type: 'string' },
       offset: { type: 'number', description: 'Character to start from. Default 0' },
