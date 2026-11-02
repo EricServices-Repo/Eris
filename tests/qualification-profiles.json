@@ -21,6 +21,7 @@
         "tests/child-outcome.test.ts",
         "tests/handoff-constraints.test.ts",
         "tests/handoff-envelope.test.ts",
+        "tests/handoff-replay.test.ts",
         "tests/native-token-count.test.ts",
         "tests/stable-prefix.test.ts",
         "tests/context-evidence.test.ts",
