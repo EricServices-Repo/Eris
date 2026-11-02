@@ -22,6 +22,7 @@ import {
   type ContextPage
 } from '../../../src/shared/context-memory'
 import { DatabaseSync } from 'node:sqlite'
+import { buildThreadSummary } from './context-thread-summary'
 import {
   installJournalStore,
   purgeJournal,

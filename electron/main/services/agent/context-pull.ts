@@ -50,6 +50,8 @@ export type ThreadRecall = {
   /** Tool output from earlier runs in this conversation. */
   journalSearch?(query: string, limit: number, signal?: AbortSignal): Promise<DurableJournalHit[]>
   journalRead?(ref: string, signal?: AbortSignal): Promise<DurableJournalRead>
+  /** A deterministic overview rebuilt from canonical rows. Null when it cannot be read. */
+  summary?(signal?: AbortSignal): Promise<ThreadSummary | null>
 }
 
 /** Digests and sizes only: the ledger never holds recalled text. */
@@ -87,7 +89,8 @@ export function conversationThreadRecall(
     read: (item, signal) => readConversationSource(root, threadId, item, { projectRoot, signal }),
     journalSearch: (query, limit, signal) =>
       searchDurableJournal(root, threadId, query, limit, projectRoot, signal),
-    journalRead: (ref, signal) => readDurableJournal(root, threadId, ref, projectRoot, signal)
+    journalRead: (ref, signal) => readDurableJournal(root, threadId, ref, projectRoot, signal),
+    summary: (signal) => readThreadSummary(root, threadId, projectRoot, signal)
   }
 }
 
@@ -432,6 +435,12 @@ export function originThreadRecall(
     async journalRead(ref, signal) {
       const { source, settings } = await resolve(signal)
       const result = await conversationThreadRecall(source, settings).journalRead!(ref, signal)
+      await resolve(signal)
+      return result
+    },
+    async summary(signal) {
+      const { source, settings } = await resolve(signal)
+      const result = await conversationThreadRecall(source, settings).summary!(signal)
       await resolve(signal)
       return result
     }
