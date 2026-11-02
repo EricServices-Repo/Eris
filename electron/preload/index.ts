@@ -132,6 +132,9 @@ const api: IdeApi = {
   reportRendererHistoryBytes: (bytes) => ipcRenderer.send('contextMemory:rendererHistory', bytes),
   getMemoryUsage: (input) => ipcRenderer.invoke('contextMemory:usage', input),
   inspectContextMemory: (input) => ipcRenderer.invoke('contextMemory:inspect', input),
+  listProjectFacts: () => ipcRenderer.invoke('contextMemory:projectFacts'),
+  promoteProjectFact: (input) => ipcRenderer.invoke('contextMemory:promoteFact', input),
+  revokeProjectFact: (id) => ipcRenderer.invoke('contextMemory:revokeFact', id),
   getChat: (id, page) => ipcRenderer.invoke('chats:get', id, page),
   appendChatMessage: (id, message, model, workspacePath) =>
     ipcRenderer.invoke('chats:append', id, message, model, workspacePath),

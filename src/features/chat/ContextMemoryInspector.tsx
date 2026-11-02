@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { ProjectFact } from '@/shared/project-facts'
 import { useDialogFocus } from '@/hooks/useDialogFocus'
 import type { ContextItemReason, MemoryControls, MemoryInspection } from '@/shared/context-memory'
 import { useInspectorRequests } from '@/hooks/useInspectorRequests'
@@ -72,6 +73,30 @@ export function ContextMemoryInspector({
     }
   }
   const controls = snapshot?.controlsAvailable ? snapshot.controls : undefined
+  const [facts, setFacts] = useState<ProjectFact[]>([])
+  useEffect(() => {
+    if (!open || !workspacePath) return setFacts([])
+    let current = true
+    window.ide
+      .listProjectFacts()
+      .then((rows) => current && setFacts(rows.filter((fact) => fact.status === 'active')))
+      .catch(() => current && setFacts([]))
+    return () => {
+      current = false
+    }
+  }, [open, workspacePath])
+  const changeFact = async (work: () => Promise<unknown>) => {
+    setBusy(true)
+    setError('')
+    try {
+      await work()
+      setFacts((await window.ide.listProjectFacts()).filter((fact) => fact.status === 'active'))
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
   const sendState = (id: string) => {
     const item = snapshot?.preview?.items.find((entry) => entry.id === id)
     if (!item) return ''
@@ -265,9 +290,42 @@ export function ContextMemoryInspector({
                   >
                     Unpin
                   </button>
+                  {workspacePath && !facts.some((fact) => fact.text === p.text) && (
+                    <button
+                      className="btn"
+                      disabled={busy}
+                      onClick={() =>
+                        void changeFact(() =>
+                          window.ide.promoteProjectFact({ threadId, pinId: p.id })
+                        )
+                      }
+                    >
+                      Use in all chats in this project
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
+            {facts.length > 0 && (
+              <>
+                <h3>Project facts</h3>
+                <p>You approved these for every chat in this project.</p>
+                <ul>
+                  {facts.map((fact) => (
+                    <li key={fact.id}>
+                      {fact.text}
+                      <button
+                        className="btn"
+                        disabled={busy}
+                        onClick={() => void changeFact(() => window.ide.revokeProjectFact(fact.id))}
+                      >
+                        Revoke
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
             <p>
               Excluding older recall preserves your transcript and the ordinary recent conversation
               window.
