@@ -4,6 +4,7 @@ import {
   publishWorkspaceText,
   journalMutation,
   prepareMutationPlan,
+  protectedMutationReason,
   type MutationPlan
 } from './file-mutations'
 import {
@@ -351,6 +352,8 @@ export function mkdirWorkspace(
   userPath: string
 ): { path: string; created: boolean } {
   const abs = resolveInWorkspace(workspacePath, userPath)
+  const reason = protectedMutationReason(relative(assertWorkspaceRoot(workspacePath), abs))
+  if (reason) throw new WorkspaceFsError(`${reason}: ${userPath}`)
   const created = !existsSync(abs)
   mkdirSync(abs, { recursive: true })
   if (created) invalidateWorkspaceTreeCache(workspacePath)

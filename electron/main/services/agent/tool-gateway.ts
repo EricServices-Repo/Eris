@@ -1,4 +1,9 @@
-import { fileIdentity, assertIdentity, type MutationPlan } from '../file-mutations'
+import {
+  fileIdentity,
+  assertIdentity,
+  protectedMutationReason,
+  type MutationPlan
+} from '../file-mutations'
 import { randomUUID } from 'crypto'
 import { createHash } from 'crypto'
 import { existsSync, readFileSync, realpathSync } from 'fs'
@@ -116,6 +121,12 @@ export class TaskToolGateway {
             : call.name === 'rename_path'
               ? [String(call.args.path ?? ''), String(call.args.to ?? '')]
               : [String(call.args.path ?? '')]
+        // Refuse before taking a mutation plan, so the model gets a reason it can act on.
+        if (contract?.effect === 'workspace')
+          for (const path of paths) {
+            const reason = protectedMutationReason(path)
+            if (reason) return `Blocked ${call.name}: ${reason} (${path}).`
+          }
         if (
           [
             'write_file',
