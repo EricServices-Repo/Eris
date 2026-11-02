@@ -77,8 +77,9 @@ export function ContextMemoryInspector({
   useEffect(() => {
     if (!open || !workspacePath) return setFacts([])
     let current = true
-    window.ide
-      .listProjectFacts()
+    // Facts are an extra here: failing to list them must never take recall controls down.
+    Promise.resolve()
+      .then(() => window.ide.listProjectFacts())
       .then((rows) => current && setFacts(rows.filter((fact) => fact.status === 'active')))
       .catch(() => current && setFacts([]))
     return () => {
