@@ -140,14 +140,22 @@ export function settingFields(agentIds: string[]): SettingField[] {
     },
     {
       cat: 'memory',
-      hint: 'Conservative logical accounting, not a hard process RSS limit. Range: 16–512.',
+      hint: 'Auto sizes the RAM tier from your memory, GPU type and loaded model. Manual uses the two budgets below.',
+      label: 'RAM tier sizing',
+      options: ['auto', 'manual'],
+      path: ['agent', 'contextMemory', 'mode'],
+      type: 'select'
+    },
+    {
+      cat: 'memory',
+      hint: 'Manual sizing only. Conservative logical accounting, not a hard process RSS limit. Range: 16–1024.',
       label: 'Conversation RAM budget (MiB, logical estimate)',
       path: ['agent', 'contextMemory', 'maxMemoryMiB'],
       type: 'number'
     },
     {
       cat: 'memory',
-      hint: 'Each conversation is limited by this and the global budget. Range: 4–128.',
+      hint: 'Manual sizing only. Each conversation is limited by this and the global budget. Range: 4–256.',
       label: 'RAM budget per conversation (MiB)',
       path: ['agent', 'contextMemory', 'maxThreadMiB'],
       type: 'number'

@@ -251,6 +251,17 @@ function withUserRecallApprovals(models: unknown, userLayer: SettingsPatch): unk
   }
 }
 
+/** A budget chosen before automatic sizing existed stays in force until the user changes mode. */
+function hasCustomMemoryBudget(userLayer: SettingsPatch) {
+  const saved = userLayer.agent?.contextMemory
+  if (!saved || saved.mode) return false
+  const defaults = getDefaults().agent.contextMemory
+  return (
+    (saved.maxMemoryMiB ?? defaults.maxMemoryMiB) !== defaults.maxMemoryMiB ||
+    (saved.maxThreadMiB ?? defaults.maxThreadMiB) !== defaults.maxThreadMiB
+  )
+}
+
 function buildResolvedSettings(workspacePath: string | null): AppSettings {
   const userLayer = getUserSettings()
   const workspaceLayer = getWorkspaceSettings(workspacePath)
@@ -282,6 +293,7 @@ function buildResolvedSettings(workspacePath: string | null): AppSettings {
       userLayer.agent?.contextMemory?.shareWithRemoteModels === true &&
       workspaceLayer.agent?.contextMemory?.shareWithRemoteModels !== false
   }
+  if (hasCustomMemoryBudget(userLayer)) (agent.contextMemory as { mode: string }).mode = 'manual'
   const routing = { ...((agent.routing as Record<string, unknown>) || {}) }
   if (routing.fallbackAgentId === 'orchestrator') routing.fallbackAgentId = 'composer'
   if (!routing.routerModel) routing.routerModel = 'builtin:composer-lite'
