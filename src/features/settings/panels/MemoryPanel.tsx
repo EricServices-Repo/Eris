@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { ContextMemorySettingsSchema } from '@/shared/context-memory'
+import {
+  CONTEXT_MEMORY_MAX_MIB,
+  CONTEXT_THREAD_MAX_MIB,
+  ContextMemorySettingsSchema
+} from '@/shared/context-memory'
 import { modelOffloadLabel, type MemoryUsageStatus } from '@/shared/memory-usage'
 import type { AppSettings } from '@/shared/settings-schema'
 import { settingFields } from '../fields'
 
 const ranges: Record<string, [number, number]> = {
-  maxMemoryMiB: [16, 512],
-  maxThreadMiB: [4, 128],
+  maxMemoryMiB: [16, CONTEXT_MEMORY_MAX_MIB],
+  maxThreadMiB: [4, CONTEXT_THREAD_MAX_MIB],
   maxMessages: [500, 100000],
   warmThreads: [1, 16],
   idleMinutes: [1, 120],
@@ -70,6 +74,7 @@ export function MemoryTiers({ tiers }: { tiers: NonNullable<MemoryUsageStatus['t
                 : 'Available'}
           </strong>
           <p role="status">{tiers.pressureReason}</p>
+          <p>RAM tier budget: {tiers.budgetMiB} MiB</p>
           <small>{tiers.budgetReason}</small>
           <p>
             Live tool journals: {memoryBytes(tiers.journal.bytes)} · {tiers.journal.runs} active

@@ -4,6 +4,7 @@ import { runJournalUsage } from '../services/agent/run-journal'
 import { lastContextDispatch } from '../services/context-dispatch'
 import { contextMemoryStore } from '../services/context-memory-store'
 import { memoryKey } from '../services/context-memory'
+import { configureContextTier } from '../services/context-tier-budget'
 import { userChatsDir, workspaceChatsDir } from '../services/paths'
 import { workspaceRequest } from '../services/workspace-worker-client'
 import type { MemoryUsageStatus } from '../../../src/shared/memory-usage'
@@ -107,6 +108,7 @@ export function registerChatsIpc(): void {
     const namespace = activeThreadId ? memoryKey(root, activeThreadId) : undefined
     const dispatch = namespace ? lastContextDispatch(namespace) : undefined
     const loaded = currentLoadedModel()
+    const budget = configureContextTier()
     return {
       tiers: {
         model: loaded
@@ -121,8 +123,8 @@ export function registerChatsIpc(): void {
           : null,
         devices: inference.devices,
         pressure,
-        budgetReason:
-          'Profile cache limit, reduced by renderer history and current system memory headroom.',
+        budgetReason: budget.reason,
+        budgetMiB: budget.memoryMiB,
         pressureReason:
           pressure === 'critical'
             ? 'Optional RAM recall paused: system memory is low. Recent history and eligible durable sources remain available.'

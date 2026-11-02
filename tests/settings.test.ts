@@ -241,3 +241,32 @@ describe('RAM-CTX-034 user-owned remote recall ceiling', () => {
     ).toBe(false)
   })
 })
+
+describe('RAM-CTX-055 RAM tier sizing mode', () => {
+  const resolved = (saved: Record<string, unknown>) => {
+    writeUserSettings({ agent: { contextMemory: saved } })
+    return getResolvedSettings(null).agent.contextMemory
+  }
+
+  it('defaults to automatic, including for a saved default budget', () => {
+    expect(getDefaults().agent.contextMemory.mode).toBe('auto')
+    expect(resolved({ maxMemoryMiB: 128, maxThreadMiB: 32 }).mode).toBe('auto')
+  })
+
+  it('keeps a budget chosen before automatic sizing existed', () => {
+    expect(resolved({ maxMemoryMiB: 512 })).toMatchObject({ mode: 'manual', maxMemoryMiB: 512 })
+    expect(resolved({ maxThreadMiB: 64 }).mode).toBe('manual')
+  })
+
+  it('lets the user return to automatic without losing the saved budget', () => {
+    expect(resolved({ mode: 'auto', maxMemoryMiB: 512 })).toMatchObject({
+      mode: 'auto',
+      maxMemoryMiB: 512
+    })
+  })
+
+  it('accepts the raised manual ceiling and nothing past it', () => {
+    expect(resolved({ mode: 'manual', maxMemoryMiB: 1024 }).maxMemoryMiB).toBe(1024)
+    expect(resolved({ mode: 'manual', maxMemoryMiB: 1025 }).maxMemoryMiB).toBe(128)
+  })
+})

@@ -9,10 +9,14 @@ export type ContextDerivationStatus = {
 import { z } from 'zod'
 import { RECALL_MAX_TOKENS } from './context-allocation'
 import type { ContextDestinationLabel } from './model-destination'
+export const CONTEXT_MEMORY_MAX_MIB = 1024
+export const CONTEXT_THREAD_MAX_MIB = 256
 export const ContextMemorySettingsSchema = z.object({
   enabled: z.boolean().default(true),
-  maxMemoryMiB: z.number().int().min(16).max(512).default(128),
-  maxThreadMiB: z.number().int().min(4).max(128).default(32),
+  /** Auto sizes the RAM tier from the host; the two budgets below apply only to manual. */
+  mode: z.enum(['auto', 'manual']).default('auto'),
+  maxMemoryMiB: z.number().int().min(16).max(CONTEXT_MEMORY_MAX_MIB).default(128),
+  maxThreadMiB: z.number().int().min(4).max(CONTEXT_THREAD_MAX_MIB).default(32),
   maxMessages: z.number().int().min(500).max(100000).default(25000),
   warmThreads: z.number().int().min(1).max(16).default(8),
   idleMinutes: z.number().int().min(1).max(120).default(30),
