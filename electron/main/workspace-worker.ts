@@ -45,6 +45,17 @@ export async function handleWorkspaceRequest(request: WorkspaceRequest): Promise
     }
     case 'context-archive-search':
       return chatDatabase(request.dir).archiveSearch(request.id, request.query, request.projectRoot)
+    case 'context-journal-write':
+      return chatDatabase(request.dir).journalWrite(request.id, request.entry, request.maxBytes)
+    case 'context-journal-search':
+      return chatDatabase(request.dir).journalSearch(
+        request.id,
+        request.query,
+        request.limit,
+        request.projectRoot
+      )
+    case 'context-journal-read':
+      return chatDatabase(request.dir).journalRead(request.id, request.ref, request.projectRoot)
     case 'context-page':
       return chatDatabase(request.dir).contextPage(
         request.id,
