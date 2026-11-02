@@ -2,6 +2,13 @@ import { z } from 'zod'
 
 export const PROJECT_FACT_MAX_CHARS = 2000
 export const PROJECT_FACTS_MAX_ACTIVE = 32
+/**
+ * Revoked and superseded facts kept for provenance. Older ones are pruned on the next
+ * save, so churn can never fill the file and block a new promotion.
+ */
+export const PROJECT_FACTS_MAX_HISTORY = 200
+/** Largest fact file read. Active plus history at full length is far below this. */
+export const PROJECT_FACTS_MAX_FILE_BYTES = 8 * 1024 * 1024
 
 const ProjectFactSchema = z
   .object({

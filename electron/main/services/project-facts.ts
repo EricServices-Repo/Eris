@@ -1,9 +1,19 @@
 import { randomUUID } from 'crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync
+} from 'fs'
 import { join } from 'path'
 import { ContextMemorySettingsSchema } from '../../../src/shared/context-memory'
 import {
   PROJECT_FACTS_MAX_ACTIVE,
+  PROJECT_FACTS_MAX_FILE_BYTES,
+  PROJECT_FACTS_MAX_HISTORY,
   ProjectFactFileSchema,
   type ProjectFact,
   type ProjectFactFile
@@ -19,24 +29,83 @@ import { registeredWorkspaceId } from './workspace'
 const factsPath = (workspaceId: string) =>
   join(userDataRoot(), 'project-facts', `${workspaceId.replace(/[^\w-]/g, '_')}.json`)
 
-function load(workspaceId: string): ProjectFactFile {
+type Read = { file: ProjectFactFile } | { unreadable: string }
+
+function read(workspaceId: string): Read {
   const path = factsPath(workspaceId)
-  if (!existsSync(path)) return { version: 1, facts: [] }
+  if (!existsSync(path)) return { file: { version: 1, facts: [] } }
   try {
-    return ProjectFactFileSchema.parse(JSON.parse(readFileSync(path, 'utf8')))
-  } catch {
-    // Unreadable facts apply to nothing: a fact is never guessed back into a prompt.
-    logWarn('Project facts could not be read')
-    return { version: 1, facts: [] }
+    // Checked before reading, so a huge file is never decoded.
+    if (statSync(path).size > PROJECT_FACTS_MAX_FILE_BYTES)
+      return { unreadable: 'it is larger than 8 MiB' }
+    return { file: ProjectFactFileSchema.parse(JSON.parse(readFileSync(path, 'utf8'))) }
+  } catch (error) {
+    return {
+      unreadable:
+        error instanceof SyntaxError
+          ? 'it is not valid JSON'
+          : (error as NodeJS.ErrnoException).code
+            ? `it could not be opened (${(error as NodeJS.ErrnoException).code})`
+            : 'it does not match the expected format'
+    }
   }
+}
+
+/** Unreadable facts apply to nothing: a fact is never guessed back into a prompt. */
+function load(workspaceId: string): ProjectFactFile {
+  const result = read(workspaceId)
+  if ('file' in result) return result.file
+  logWarn('Project facts could not be read')
+  return { version: 1, facts: [] }
+}
+
+/**
+ * The file a change starts from. An unreadable file is refused rather than replaced:
+ * saving over it would silently discard every fact it holds.
+ */
+function loadForChange(workspaceId: string): ProjectFactFile {
+  const result = read(workspaceId)
+  if ('file' in result) return result.file
+  throw new Error(
+    `Saved project facts could not be read because ${result.unreadable}, so nothing was changed. ` +
+      `The file is kept at ${factsPath(workspaceId)}. Fix or move it to start over.`
+  )
+}
+
+/** Active facts, plus the most recently ended ones up to the history limit, in file order. */
+function bounded(facts: ProjectFact[]): ProjectFact[] {
+  const kept = new Set(
+    facts
+      .filter((fact) => fact.status !== 'active')
+      .sort((a, b) => (b.endedAt ?? b.promotedAt) - (a.endedAt ?? a.promotedAt))
+      .slice(0, PROJECT_FACTS_MAX_HISTORY)
+  )
+  return facts.filter((fact) => fact.status === 'active' || kept.has(fact))
 }
 
 function save(workspaceId: string, file: ProjectFactFile) {
   const path = factsPath(workspaceId)
+  const body = JSON.stringify(
+    ProjectFactFileSchema.parse({ ...file, facts: bounded(file.facts) }),
+    null,
+    2
+  )
   mkdirSync(join(userDataRoot(), 'project-facts'), { recursive: true })
   const next = `${path}.${randomUUID()}.tmp`
-  writeFileSync(next, JSON.stringify(ProjectFactFileSchema.parse(file), null, 2), 'utf8')
-  renameSync(next, path)
+  try {
+    writeFileSync(next, body, 'utf8')
+    renameSync(next, path)
+  } catch (error) {
+    try {
+      unlinkSync(next)
+    } catch {
+      /* never created */
+    }
+    const code = (error as NodeJS.ErrnoException).code
+    throw new Error(
+      `Project facts could not be saved${code ? ` (${code})` : ''}. The previous facts were kept.`
+    )
+  }
 }
 
 export const activeProjectFacts = (workspaceId: string) =>
@@ -53,7 +122,7 @@ export function promoteProjectFact(input: {
 }): ProjectFact {
   const { workspaceId, threadId, pin, supersedes } = input
   if (sensitive.test(pin.text)) throw new Error('This note looks like it holds a secret.')
-  const file = load(workspaceId)
+  const file = loadForChange(workspaceId)
   const replaced = supersedes
     ? file.facts.find((fact) => fact.id === supersedes && fact.status === 'active')
     : undefined
@@ -78,7 +147,7 @@ export function promoteProjectFact(input: {
 }
 
 export function revokeProjectFact(workspaceId: string, id: string) {
-  const file = load(workspaceId)
+  const file = loadForChange(workspaceId)
   const fact = file.facts.find((row) => row.id === id && row.status === 'active')
   if (!fact) return false
   Object.assign(fact, { status: 'revoked', endedAt: Date.now() })

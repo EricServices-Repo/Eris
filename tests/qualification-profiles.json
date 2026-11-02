@@ -32,6 +32,7 @@
         "tests/agent-contract.test.ts",
         "tests/context-decisions.test.ts",
         "tests/project-facts.test.ts",
+        "tests/project-fact-storage.test.ts",
         "tests/agent-conversation.test.ts",
         "tests/agent-corpus-boundary.test.ts",
         "tests/protected-mutation-paths.test.ts",
