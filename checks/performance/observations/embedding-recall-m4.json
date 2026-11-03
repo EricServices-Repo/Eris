@@ -1,0 +1,1338 @@
+{
+  "issue": 234,
+  "recorded": "2026-11-03",
+  "evidence": "live CPU embedding model, scripted benchmark; not packaged, not dedicated-GPU",
+  "build": "npx vite build --config checks/vite.performance-node.config.ts",
+  "reports": [
+    {
+      "version": 1,
+      "evidence": "model-embedding",
+      "space": {
+        "indexVersion": 1,
+        "provider": "node-llama-cpp-cpu",
+        "model": "bge-small-en-v1.5-q8_0.gguf@ec38e8da142596ba",
+        "dimensions": 384,
+        "tokenizer": "gguf:[\"Represent this sentence for searching relevant passages: \",\"\"]"
+      },
+      "fusion": {
+        "hybrid": {
+          "method": "reciprocal-rank",
+          "k": 60
+        },
+        "bestRank": {
+          "method": "best-rank"
+        }
+      },
+      "missDepth": 5,
+      "byCategory": {
+        "lexical-control": {
+          "cases": 6,
+          "lexical": {
+            "recallAt1": 1,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          },
+          "embedding": {
+            "recallAt1": 1,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          },
+          "hybrid": {
+            "recallAt1": 1,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          },
+          "bestRank": {
+            "recallAt1": 1,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          }
+        },
+        "synonym": {
+          "cases": 7,
+          "lexical": {
+            "recallAt1": 0.2857142857142857,
+            "recallAt3": 0.42857142857142855,
+            "recallAt5": 0.42857142857142855,
+            "misses": [
+              "syn-login",
+              "syn-money",
+              "syn-crash",
+              "syn-cheap"
+            ]
+          },
+          "embedding": {
+            "recallAt1": 0.7142857142857143,
+            "recallAt3": 0.8571428571428571,
+            "recallAt5": 0.8571428571428571,
+            "misses": [
+              "syn-crash"
+            ]
+          },
+          "hybrid": {
+            "recallAt1": 0.2857142857142857,
+            "recallAt3": 0.42857142857142855,
+            "recallAt5": 0.42857142857142855,
+            "misses": [
+              "syn-login",
+              "syn-money",
+              "syn-crash",
+              "syn-cheap"
+            ]
+          },
+          "bestRank": {
+            "recallAt1": 0.2857142857142857,
+            "recallAt3": 0.7142857142857143,
+            "recallAt5": 0.8571428571428571,
+            "misses": [
+              "syn-crash"
+            ]
+          }
+        },
+        "abbreviation": {
+          "cases": 5,
+          "lexical": {
+            "recallAt1": 0.4,
+            "recallAt3": 0.8,
+            "recallAt5": 0.8,
+            "misses": [
+              "abbr-k8s"
+            ]
+          },
+          "embedding": {
+            "recallAt1": 1,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          },
+          "hybrid": {
+            "recallAt1": 0.6,
+            "recallAt3": 0.8,
+            "recallAt5": 0.8,
+            "misses": [
+              "abbr-k8s"
+            ]
+          },
+          "bestRank": {
+            "recallAt1": 0.6,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          }
+        },
+        "inflection": {
+          "cases": 5,
+          "lexical": {
+            "recallAt1": 0.4,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          },
+          "embedding": {
+            "recallAt1": 1,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          },
+          "hybrid": {
+            "recallAt1": 0.4,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          },
+          "bestRank": {
+            "recallAt1": 0.4,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          }
+        },
+        "description": {
+          "cases": 5,
+          "lexical": {
+            "recallAt1": 0.2,
+            "recallAt3": 0.4,
+            "recallAt5": 0.4,
+            "misses": [
+              "desc-login-thing",
+              "desc-rounding",
+              "desc-flake"
+            ]
+          },
+          "embedding": {
+            "recallAt1": 0.2,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          },
+          "hybrid": {
+            "recallAt1": 0.2,
+            "recallAt3": 0.4,
+            "recallAt5": 0.4,
+            "misses": [
+              "desc-login-thing",
+              "desc-rounding",
+              "desc-flake"
+            ]
+          },
+          "bestRank": {
+            "recallAt1": 0.2,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          }
+        }
+      },
+      "paraphrased": {
+        "cases": 22,
+        "lexical": {
+          "recallAt1": 0.3181818181818182,
+          "recallAt3": 0.6363636363636364,
+          "recallAt5": 0.6363636363636364,
+          "misses": [
+            "syn-login",
+            "syn-money",
+            "syn-crash",
+            "syn-cheap",
+            "abbr-k8s",
+            "desc-login-thing",
+            "desc-rounding",
+            "desc-flake"
+          ]
+        },
+        "embedding": {
+          "recallAt1": 0.7272727272727273,
+          "recallAt3": 0.9545454545454546,
+          "recallAt5": 0.9545454545454546,
+          "misses": [
+            "syn-crash"
+          ]
+        },
+        "hybrid": {
+          "recallAt1": 0.36363636363636365,
+          "recallAt3": 0.6363636363636364,
+          "recallAt5": 0.6363636363636364,
+          "misses": [
+            "syn-login",
+            "syn-money",
+            "syn-crash",
+            "syn-cheap",
+            "abbr-k8s",
+            "desc-login-thing",
+            "desc-rounding",
+            "desc-flake"
+          ]
+        },
+        "bestRank": {
+          "recallAt1": 0.36363636363636365,
+          "recallAt3": 0.9090909090909091,
+          "recallAt5": 0.9545454545454546,
+          "misses": [
+            "syn-crash"
+          ]
+        }
+      },
+      "latencyMs": {
+        "queryP50": 1.5,
+        "queryP95": 2.3,
+        "documentP50": 1,
+        "documentP95": 1.3,
+        "documents": 1176
+      },
+      "rows": [
+        {
+          "id": "ctl-oauth",
+          "category": "lexical-control",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": 2,
+            "embedding": 2,
+            "hybrid": 2,
+            "bestRank": 2
+          }
+        },
+        {
+          "id": "ctl-currency",
+          "category": "lexical-control",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": null,
+            "embedding": 41,
+            "hybrid": 41,
+            "bestRank": 41
+          }
+        },
+        {
+          "id": "ctl-retry",
+          "category": "lexical-control",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": 2,
+            "embedding": 2,
+            "hybrid": 2,
+            "bestRank": 2
+          }
+        },
+        {
+          "id": "ctl-postgres",
+          "category": "lexical-control",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": null,
+            "embedding": 2,
+            "hybrid": 14,
+            "bestRank": 3
+          }
+        },
+        {
+          "id": "ctl-flag",
+          "category": "lexical-control",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": 2,
+            "embedding": 2,
+            "hybrid": 2,
+            "bestRank": 2
+          }
+        },
+        {
+          "id": "ctl-timeout",
+          "category": "lexical-control",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": 2,
+            "embedding": 2,
+            "hybrid": 2,
+            "bestRank": 2
+          }
+        },
+        {
+          "id": "syn-login",
+          "category": "synonym",
+          "lexical": null,
+          "embedding": 2,
+          "hybrid": 14,
+          "bestRank": 4,
+          "distractor": {
+            "lexical": null,
+            "embedding": 1,
+            "hybrid": 13,
+            "bestRank": 2
+          }
+        },
+        {
+          "id": "syn-money",
+          "category": "synonym",
+          "lexical": null,
+          "embedding": 1,
+          "hybrid": 13,
+          "bestRank": 2,
+          "distractor": {
+            "lexical": null,
+            "embedding": 2,
+            "hybrid": 14,
+            "bestRank": 4
+          }
+        },
+        {
+          "id": "syn-delete",
+          "category": "synonym",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": 2,
+            "embedding": 2,
+            "hybrid": 2,
+            "bestRank": 2
+          }
+        },
+        {
+          "id": "syn-slow",
+          "category": "synonym",
+          "lexical": 2,
+          "embedding": 1,
+          "hybrid": 2,
+          "bestRank": 2,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 2,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        },
+        {
+          "id": "syn-crash",
+          "category": "synonym",
+          "lexical": null,
+          "embedding": 8,
+          "hybrid": 19,
+          "bestRank": 15,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 1,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        },
+        {
+          "id": "syn-forbid",
+          "category": "synonym",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": 2,
+            "embedding": 2,
+            "hybrid": 2,
+            "bestRank": 2
+          }
+        },
+        {
+          "id": "syn-cheap",
+          "category": "synonym",
+          "lexical": null,
+          "embedding": 1,
+          "hybrid": 13,
+          "bestRank": 2,
+          "distractor": {
+            "lexical": null,
+            "embedding": 2,
+            "hybrid": 14,
+            "bestRank": 4
+          }
+        },
+        {
+          "id": "abbr-db",
+          "category": "abbreviation",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": null,
+            "embedding": 42,
+            "hybrid": 42,
+            "bestRank": 42
+          }
+        },
+        {
+          "id": "abbr-k8s",
+          "category": "abbreviation",
+          "lexical": null,
+          "embedding": 1,
+          "hybrid": 13,
+          "bestRank": 2,
+          "distractor": {
+            "lexical": null,
+            "embedding": 37,
+            "hybrid": 39,
+            "bestRank": 39
+          }
+        },
+        {
+          "id": "abbr-ci",
+          "category": "abbreviation",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": null,
+            "embedding": 42,
+            "hybrid": 42,
+            "bestRank": 42
+          }
+        },
+        {
+          "id": "abbr-auth",
+          "category": "abbreviation",
+          "lexical": 2,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 20,
+            "hybrid": 5,
+            "bestRank": 2
+          }
+        },
+        {
+          "id": "abbr-env",
+          "category": "abbreviation",
+          "lexical": 2,
+          "embedding": 1,
+          "hybrid": 2,
+          "bestRank": 2,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 2,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        },
+        {
+          "id": "inf-retried",
+          "category": "inflection",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": 2,
+            "embedding": 2,
+            "hybrid": 2,
+            "bestRank": 2
+          }
+        },
+        {
+          "id": "inf-migration",
+          "category": "inflection",
+          "lexical": 2,
+          "embedding": 1,
+          "hybrid": 2,
+          "bestRank": 2,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 2,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        },
+        {
+          "id": "inf-cached",
+          "category": "inflection",
+          "lexical": 2,
+          "embedding": 1,
+          "hybrid": 2,
+          "bestRank": 2,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 2,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        },
+        {
+          "id": "inf-validates",
+          "category": "inflection",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": null,
+            "embedding": 3,
+            "hybrid": 15,
+            "bestRank": 5
+          }
+        },
+        {
+          "id": "inf-deprecated",
+          "category": "inflection",
+          "lexical": 2,
+          "embedding": 1,
+          "hybrid": 2,
+          "bestRank": 2,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 2,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        },
+        {
+          "id": "desc-login-thing",
+          "category": "description",
+          "lexical": null,
+          "embedding": 2,
+          "hybrid": 14,
+          "bestRank": 3,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 1,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        },
+        {
+          "id": "desc-rounding",
+          "category": "description",
+          "lexical": null,
+          "embedding": 2,
+          "hybrid": 14,
+          "bestRank": 3,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 1,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        },
+        {
+          "id": "desc-index",
+          "category": "description",
+          "lexical": 2,
+          "embedding": 2,
+          "hybrid": 2,
+          "bestRank": 2,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 1,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        },
+        {
+          "id": "desc-secrets",
+          "category": "description",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": null,
+            "embedding": 2,
+            "hybrid": 14,
+            "bestRank": 3
+          }
+        },
+        {
+          "id": "desc-flake",
+          "category": "description",
+          "lexical": null,
+          "embedding": 2,
+          "hybrid": 14,
+          "bestRank": 3,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 1,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        }
+      ],
+      "model": {
+        "file": "bge-small-en-v1.5-q8_0.gguf",
+        "sha256": "ec38e8da142596baa913124ae50550de284b6916bf59577ef2f0cb9660c2f514",
+        "bytes": 36806944,
+        "dimensions": 384,
+        "queryPrefix": "Represent this sentence for searching relevant passages: ",
+        "docPrefix": "",
+        "gpuLayers": 0,
+        "source": "https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf"
+      },
+      "runtime": {
+        "nodeLlamaCpp": "3.22.1",
+        "node": "v22.22.0",
+        "llama": {
+          "gpu": false,
+          "buildType": "localBuild"
+        }
+      },
+      "host": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "cpu": "Apple M4",
+        "totalMemoryBytes": 17179869184
+      },
+      "command": "node scripts/measure-embedding-recall.mjs --model <models>/bge-small-en-v1.5-q8_0.gguf --query-prefix Represent this sentence for searching relevant passages:  --out /private/tmp/claude-501/-Users-ericembling-Documents-EricServices-IDE/65ed8699-bbbb-46d8-9a86-27868a98de86/scratchpad/obs/bge.json"
+    },
+    {
+      "version": 1,
+      "evidence": "model-embedding",
+      "space": {
+        "indexVersion": 1,
+        "provider": "node-llama-cpp-cpu",
+        "model": "nomic-embed-text-v1.5.Q8_0.gguf@3e24342164b3d949",
+        "dimensions": 768,
+        "tokenizer": "gguf:[\"search_query: \",\"search_document: \"]"
+      },
+      "fusion": {
+        "hybrid": {
+          "method": "reciprocal-rank",
+          "k": 60
+        },
+        "bestRank": {
+          "method": "best-rank"
+        }
+      },
+      "missDepth": 5,
+      "byCategory": {
+        "lexical-control": {
+          "cases": 6,
+          "lexical": {
+            "recallAt1": 1,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          },
+          "embedding": {
+            "recallAt1": 1,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          },
+          "hybrid": {
+            "recallAt1": 1,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          },
+          "bestRank": {
+            "recallAt1": 1,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          }
+        },
+        "synonym": {
+          "cases": 7,
+          "lexical": {
+            "recallAt1": 0.2857142857142857,
+            "recallAt3": 0.42857142857142855,
+            "recallAt5": 0.42857142857142855,
+            "misses": [
+              "syn-login",
+              "syn-money",
+              "syn-crash",
+              "syn-cheap"
+            ]
+          },
+          "embedding": {
+            "recallAt1": 0.7142857142857143,
+            "recallAt3": 0.7142857142857143,
+            "recallAt5": 0.8571428571428571,
+            "misses": [
+              "syn-login"
+            ]
+          },
+          "hybrid": {
+            "recallAt1": 0.2857142857142857,
+            "recallAt3": 0.42857142857142855,
+            "recallAt5": 0.42857142857142855,
+            "misses": [
+              "syn-login",
+              "syn-money",
+              "syn-crash",
+              "syn-cheap"
+            ]
+          },
+          "bestRank": {
+            "recallAt1": 0.2857142857142857,
+            "recallAt3": 0.7142857142857143,
+            "recallAt5": 0.7142857142857143,
+            "misses": [
+              "syn-login",
+              "syn-crash"
+            ]
+          }
+        },
+        "abbreviation": {
+          "cases": 5,
+          "lexical": {
+            "recallAt1": 0.4,
+            "recallAt3": 0.8,
+            "recallAt5": 0.8,
+            "misses": [
+              "abbr-k8s"
+            ]
+          },
+          "embedding": {
+            "recallAt1": 1,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          },
+          "hybrid": {
+            "recallAt1": 0.6,
+            "recallAt3": 0.8,
+            "recallAt5": 0.8,
+            "misses": [
+              "abbr-k8s"
+            ]
+          },
+          "bestRank": {
+            "recallAt1": 0.6,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          }
+        },
+        "inflection": {
+          "cases": 5,
+          "lexical": {
+            "recallAt1": 0.4,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          },
+          "embedding": {
+            "recallAt1": 1,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          },
+          "hybrid": {
+            "recallAt1": 0.4,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          },
+          "bestRank": {
+            "recallAt1": 0.4,
+            "recallAt3": 1,
+            "recallAt5": 1,
+            "misses": []
+          }
+        },
+        "description": {
+          "cases": 5,
+          "lexical": {
+            "recallAt1": 0.2,
+            "recallAt3": 0.4,
+            "recallAt5": 0.4,
+            "misses": [
+              "desc-login-thing",
+              "desc-rounding",
+              "desc-flake"
+            ]
+          },
+          "embedding": {
+            "recallAt1": 0.4,
+            "recallAt3": 0.6,
+            "recallAt5": 0.6,
+            "misses": [
+              "desc-login-thing",
+              "desc-index"
+            ]
+          },
+          "hybrid": {
+            "recallAt1": 0.2,
+            "recallAt3": 0.2,
+            "recallAt5": 0.2,
+            "misses": [
+              "desc-login-thing",
+              "desc-rounding",
+              "desc-index",
+              "desc-flake"
+            ]
+          },
+          "bestRank": {
+            "recallAt1": 0.2,
+            "recallAt3": 0.8,
+            "recallAt5": 0.8,
+            "misses": [
+              "desc-login-thing"
+            ]
+          }
+        }
+      },
+      "paraphrased": {
+        "cases": 22,
+        "lexical": {
+          "recallAt1": 0.3181818181818182,
+          "recallAt3": 0.6363636363636364,
+          "recallAt5": 0.6363636363636364,
+          "misses": [
+            "syn-login",
+            "syn-money",
+            "syn-crash",
+            "syn-cheap",
+            "abbr-k8s",
+            "desc-login-thing",
+            "desc-rounding",
+            "desc-flake"
+          ]
+        },
+        "embedding": {
+          "recallAt1": 0.7727272727272727,
+          "recallAt3": 0.8181818181818182,
+          "recallAt5": 0.8636363636363636,
+          "misses": [
+            "syn-login",
+            "desc-login-thing",
+            "desc-index"
+          ]
+        },
+        "hybrid": {
+          "recallAt1": 0.36363636363636365,
+          "recallAt3": 0.5909090909090909,
+          "recallAt5": 0.5909090909090909,
+          "misses": [
+            "syn-login",
+            "syn-money",
+            "syn-crash",
+            "syn-cheap",
+            "abbr-k8s",
+            "desc-login-thing",
+            "desc-rounding",
+            "desc-index",
+            "desc-flake"
+          ]
+        },
+        "bestRank": {
+          "recallAt1": 0.36363636363636365,
+          "recallAt3": 0.8636363636363636,
+          "recallAt5": 0.8636363636363636,
+          "misses": [
+            "syn-login",
+            "syn-crash",
+            "desc-login-thing"
+          ]
+        }
+      },
+      "latencyMs": {
+        "queryP50": 6.1,
+        "queryP95": 7.2,
+        "documentP50": 5.4,
+        "documentP95": 7,
+        "documents": 1176
+      },
+      "rows": [
+        {
+          "id": "ctl-oauth",
+          "category": "lexical-control",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": 2,
+            "embedding": 2,
+            "hybrid": 2,
+            "bestRank": 2
+          }
+        },
+        {
+          "id": "ctl-currency",
+          "category": "lexical-control",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": null,
+            "embedding": 2,
+            "hybrid": 14,
+            "bestRank": 3
+          }
+        },
+        {
+          "id": "ctl-retry",
+          "category": "lexical-control",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": 2,
+            "embedding": 2,
+            "hybrid": 2,
+            "bestRank": 2
+          }
+        },
+        {
+          "id": "ctl-postgres",
+          "category": "lexical-control",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": null,
+            "embedding": 3,
+            "hybrid": 14,
+            "bestRank": 5
+          }
+        },
+        {
+          "id": "ctl-flag",
+          "category": "lexical-control",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": 2,
+            "embedding": 2,
+            "hybrid": 2,
+            "bestRank": 2
+          }
+        },
+        {
+          "id": "ctl-timeout",
+          "category": "lexical-control",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": 2,
+            "embedding": 2,
+            "hybrid": 2,
+            "bestRank": 2
+          }
+        },
+        {
+          "id": "syn-login",
+          "category": "synonym",
+          "lexical": null,
+          "embedding": 42,
+          "hybrid": 42,
+          "bestRank": 42,
+          "distractor": {
+            "lexical": null,
+            "embedding": 23,
+            "hybrid": 27,
+            "bestRank": 27
+          }
+        },
+        {
+          "id": "syn-money",
+          "category": "synonym",
+          "lexical": null,
+          "embedding": 1,
+          "hybrid": 13,
+          "bestRank": 2,
+          "distractor": {
+            "lexical": null,
+            "embedding": 2,
+            "hybrid": 14,
+            "bestRank": 4
+          }
+        },
+        {
+          "id": "syn-delete",
+          "category": "synonym",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": 2,
+            "embedding": 2,
+            "hybrid": 2,
+            "bestRank": 2
+          }
+        },
+        {
+          "id": "syn-slow",
+          "category": "synonym",
+          "lexical": 2,
+          "embedding": 1,
+          "hybrid": 2,
+          "bestRank": 2,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 2,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        },
+        {
+          "id": "syn-crash",
+          "category": "synonym",
+          "lexical": null,
+          "embedding": 5,
+          "hybrid": 15,
+          "bestRank": 9,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 1,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        },
+        {
+          "id": "syn-forbid",
+          "category": "synonym",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": 2,
+            "embedding": 2,
+            "hybrid": 2,
+            "bestRank": 2
+          }
+        },
+        {
+          "id": "syn-cheap",
+          "category": "synonym",
+          "lexical": null,
+          "embedding": 1,
+          "hybrid": 13,
+          "bestRank": 2,
+          "distractor": {
+            "lexical": null,
+            "embedding": 22,
+            "hybrid": 25,
+            "bestRank": 25
+          }
+        },
+        {
+          "id": "abbr-db",
+          "category": "abbreviation",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": null,
+            "embedding": 42,
+            "hybrid": 42,
+            "bestRank": 42
+          }
+        },
+        {
+          "id": "abbr-k8s",
+          "category": "abbreviation",
+          "lexical": null,
+          "embedding": 1,
+          "hybrid": 13,
+          "bestRank": 2,
+          "distractor": {
+            "lexical": null,
+            "embedding": 42,
+            "hybrid": 42,
+            "bestRank": 42
+          }
+        },
+        {
+          "id": "abbr-ci",
+          "category": "abbreviation",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": null,
+            "embedding": 42,
+            "hybrid": 42,
+            "bestRank": 42
+          }
+        },
+        {
+          "id": "abbr-auth",
+          "category": "abbreviation",
+          "lexical": 2,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 28,
+            "hybrid": 9,
+            "bestRank": 2
+          }
+        },
+        {
+          "id": "abbr-env",
+          "category": "abbreviation",
+          "lexical": 2,
+          "embedding": 1,
+          "hybrid": 2,
+          "bestRank": 2,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 2,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        },
+        {
+          "id": "inf-retried",
+          "category": "inflection",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": 2,
+            "embedding": 2,
+            "hybrid": 2,
+            "bestRank": 2
+          }
+        },
+        {
+          "id": "inf-migration",
+          "category": "inflection",
+          "lexical": 2,
+          "embedding": 1,
+          "hybrid": 2,
+          "bestRank": 2,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 2,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        },
+        {
+          "id": "inf-cached",
+          "category": "inflection",
+          "lexical": 2,
+          "embedding": 1,
+          "hybrid": 2,
+          "bestRank": 2,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 2,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        },
+        {
+          "id": "inf-validates",
+          "category": "inflection",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": null,
+            "embedding": 42,
+            "hybrid": 42,
+            "bestRank": 42
+          }
+        },
+        {
+          "id": "inf-deprecated",
+          "category": "inflection",
+          "lexical": 2,
+          "embedding": 1,
+          "hybrid": 2,
+          "bestRank": 2,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 2,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        },
+        {
+          "id": "desc-login-thing",
+          "category": "description",
+          "lexical": null,
+          "embedding": 41,
+          "hybrid": 42,
+          "bestRank": 42,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 42,
+            "hybrid": 11,
+            "bestRank": 2
+          }
+        },
+        {
+          "id": "desc-rounding",
+          "category": "description",
+          "lexical": null,
+          "embedding": 2,
+          "hybrid": 14,
+          "bestRank": 3,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 1,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        },
+        {
+          "id": "desc-index",
+          "category": "description",
+          "lexical": 2,
+          "embedding": 42,
+          "hybrid": 11,
+          "bestRank": 3,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 1,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        },
+        {
+          "id": "desc-secrets",
+          "category": "description",
+          "lexical": 1,
+          "embedding": 1,
+          "hybrid": 1,
+          "bestRank": 1,
+          "distractor": {
+            "lexical": null,
+            "embedding": 10,
+            "hybrid": 15,
+            "bestRank": 12
+          }
+        },
+        {
+          "id": "desc-flake",
+          "category": "description",
+          "lexical": null,
+          "embedding": 1,
+          "hybrid": 14,
+          "bestRank": 2,
+          "distractor": {
+            "lexical": 1,
+            "embedding": 2,
+            "hybrid": 1,
+            "bestRank": 1
+          }
+        }
+      ],
+      "model": {
+        "file": "nomic-embed-text-v1.5.Q8_0.gguf",
+        "sha256": "3e24342164b3d94991ba9692fdc0dd08e3fd7362e0aacc396a9a5c54a544c3b7",
+        "bytes": 146146432,
+        "dimensions": 768,
+        "queryPrefix": "search_query: ",
+        "docPrefix": "search_document: ",
+        "gpuLayers": 0,
+        "source": "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF"
+      },
+      "runtime": {
+        "nodeLlamaCpp": "3.22.1",
+        "node": "v22.22.0",
+        "llama": {
+          "gpu": false,
+          "buildType": "localBuild"
+        }
+      },
+      "host": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "cpu": "Apple M4",
+        "totalMemoryBytes": 17179869184
+      },
+      "command": "node scripts/measure-embedding-recall.mjs --model <models>/nomic-embed-text-v1.5.Q8_0.gguf --query-prefix search_query:  --doc-prefix search_document:  --out /private/tmp/claude-501/-Users-ericembling-Documents-EricServices-IDE/65ed8699-bbbb-46d8-9a86-27868a98de86/scratchpad/obs/nomic.json"
+    }
+  ]
+}

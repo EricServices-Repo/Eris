@@ -12,6 +12,7 @@ export default defineConfig({
         'workspace-performance': resolve('checks/workspace-performance.ts'),
         'context-gate': resolve('checks/context-gate.ts'),
         'memory-process-baseline': resolve('checks/memory-process-baseline.ts'),
+        'embedding-recall': resolve('checks/embedding-recall.ts'),
         'workspace-worker': resolve('electron/main/workspace-worker.ts')
       },
       output: {
