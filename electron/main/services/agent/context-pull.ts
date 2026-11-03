@@ -470,7 +470,17 @@ export function taskThreadRecall(input: {
     : undefined
 }
 
-/** Explicit source-scoped adapter; caller retains model disclosure and task lifetime gates. */
+/** Raised for anything written after the assignment was made; the model sees it as a refusal. */
+const AFTER_SNAPSHOT =
+  'That was written after this assignment started, so it is outside its snapshot'
+
+/**
+ * Explicit source-scoped adapter; caller retains model disclosure and task lifetime gates.
+ * When the origin carries a parent snapshot, the handle is bounded to it: messages written
+ * after the assignment was made are left out of search and refused on read, tool output
+ * recorded after it is left out, and the thread summary is refused once the thread has grown.
+ * A queued child therefore sees the conversation its parent saw, not the user's later turns.
+ */
 export function originThreadRecall(
   origin: ContextOrigin,
   execution: {
@@ -486,40 +496,52 @@ export function originThreadRecall(
     const settings = getResolvedSettings(source.root)
     if (!allowed(settings))
       throw new Error('Source conversation disclosure is not allowed for this model')
-    return { source, settings }
+    return { source, settings, recall: conversationThreadRecall(source, settings) }
   }
+  const before = (ordinal: number, snapshot?: { messages: number }) =>
+    !snapshot || ordinal < snapshot.messages
   return {
     async search(query, tokens, signal) {
-      const { source, settings } = await resolve(signal)
-      const result = await conversationThreadRecall(source, settings).search(query, tokens, signal)
+      const { source, recall } = await resolve(signal)
+      const result = await recall.search(query, tokens, signal)
       await resolve(signal)
-      return result
+      return {
+        ...result,
+        items: result.items.filter((item) => before(item.ordinal, source.snapshot))
+      }
     },
     async read(item, signal) {
-      const { source, settings } = await resolve(signal)
-      const result = await conversationThreadRecall(source, settings).read(item, signal)
+      const { source, recall } = await resolve(signal)
+      if (!before(item.ordinal, source.snapshot)) throw new Error(AFTER_SNAPSHOT)
+      const result = await recall.read(item, signal)
       await resolve(signal)
       return result
     },
     async journalSearch(query, limit, signal) {
-      const { source, settings } = await resolve(signal)
-      const result = await conversationThreadRecall(source, settings).journalSearch!(
-        query,
-        limit,
-        signal
-      )
+      const { source, recall } = await resolve(signal)
+      const result = await recall.journalSearch!(query, limit, signal)
       await resolve(signal)
-      return result
+      const snapshot = source.snapshot
+      return snapshot ? result.filter(({ entry }) => entry.at <= snapshot.at) : result
     },
     async journalRead(ref, signal) {
-      const { source, settings } = await resolve(signal)
-      const result = await conversationThreadRecall(source, settings).journalRead!(ref, signal)
+      const { source, recall } = await resolve(signal)
+      const result = await recall.journalRead!(ref, signal)
       await resolve(signal)
+      if (
+        source.snapshot &&
+        result.status !== 'unavailable' &&
+        result.entry.at > source.snapshot.at
+      )
+        throw new Error(AFTER_SNAPSHOT)
       return result
     },
     async summary(signal) {
-      const { source, settings } = await resolve(signal)
-      const result = await conversationThreadRecall(source, settings).summary!(signal)
+      const { source, recall } = await resolve(signal)
+      // The summary is rebuilt from every canonical row, so it cannot be cut at the snapshot.
+      if (source.snapshot && source.messageCount > source.snapshot.messages)
+        throw new Error(AFTER_SNAPSHOT)
+      const result = await recall.summary!(signal)
       await resolve(signal)
       return result
     }

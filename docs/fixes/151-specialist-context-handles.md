@@ -27,12 +27,32 @@ loop. It now returns `ok: false` with `Conversation history was refused (<reason
 so the model can continue. Cancellation still propagates. A `scope: "all"` search
 keeps its run-journal hits and adds the refusal as a note.
 
+## Parent snapshot
+
+An origin now also seals the parent snapshot: `sourceMessages` (the thread's message
+count) and `snapshotAt` when it was created. A child bound from it inherits both, so
+the handle covers the conversation the parent saw when it delegated:
+
+- `context_search` leaves out messages at or past `sourceMessages`.
+- `context_read` of such a message is refused ("written after this assignment
+  started"), as a result.
+- Earlier-run tool output recorded after `snapshotAt` is left out of search and
+  refused on read.
+- The thread summary is rebuilt from every canonical row, so it is refused once the
+  thread has grown past the snapshot. `context_search` still works.
+
+Before this, a queued child that ran after the user had moved on could read those
+later turns, which were never part of its assignment. A task delegated after the
+later turn gets a new snapshot and sees it.
+
+Origins sealed before these fields existed still verify: the fields are appended to
+the signed payload only when present, and such an origin has no snapshot bound.
+
 ## Not done
 
-- No per-assignment allowlist of source IDs. A child can search the whole sealed
-  parent thread (within scope and controls), not only the sources its assignment
-  needs. The issue's "bounded assignment-relevant handles" with permitted ranges/IDs
-  is still open.
+- No per-assignment allowlist of source IDs. Within the snapshot, a child can search
+  the whole sealed parent thread (within scope and controls), not only the sources
+  its assignment needs.
 - Typed partial outcomes and model-switch tests for failed/stopped specialist work
   are covered by #264/#298, not changed here.
 - No live-model run: a real specialist was not observed choosing to search.

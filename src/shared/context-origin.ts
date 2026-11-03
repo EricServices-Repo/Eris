@@ -15,6 +15,12 @@ export const ContextOriginSchema = z
     executionRoot: z.string().max(4096).nullable(),
     executionProject: z.string().max(4096).nullable(),
     taskId: z.string().min(1).max(256),
+    /**
+     * The parent snapshot: messages the source thread held, and when, as the assignment was
+     * made. A handle reads nothing written after it. Absent on origins sealed before #151.
+     */
+    sourceMessages: z.number().int().nonnegative().optional(),
+    snapshotAt: z.number().int().nonnegative().optional(),
     seal: z.string().length(64)
   })
   .strict()

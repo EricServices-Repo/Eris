@@ -48,7 +48,11 @@ const payload = (value: Omit<ContextOrigin, 'seal'>) =>
     value.policyDigest,
     value.executionRoot,
     value.executionProject,
-    value.taskId
+    value.taskId,
+    // Appended only when present, so origins sealed before the snapshot fields still verify.
+    ...(value.sourceMessages === undefined && value.snapshotAt === undefined
+      ? []
+      : [value.sourceMessages ?? null, value.snapshotAt ?? null])
   ])
 const sign = (value: Omit<ContextOrigin, 'seal'>, create = false) =>
   createHmac('sha256', key(create)).update(payload(value)).digest('hex')
@@ -121,7 +125,9 @@ export async function createContextOrigin(
     policyDigest: sourcePolicy,
     executionRoot: sourceRoot,
     executionProject: project,
-    taskId: input.taskId
+    taskId: input.taskId,
+    sourceMessages: header.messageCount,
+    snapshotAt: Date.now()
   }
   return { ...value, seal: sign(value, true) }
 }
@@ -188,6 +194,11 @@ export async function resolveContextOrigin(
     threadId: source.threadId,
     projectRoot,
     namespace: source.namespace,
-    binding: digest(payload(source))
+    binding: digest(payload(source)),
+    snapshot:
+      source.sourceMessages === undefined
+        ? undefined
+        : { messages: source.sourceMessages, at: source.snapshotAt ?? 0 },
+    messageCount: header.messageCount
   }
 }
