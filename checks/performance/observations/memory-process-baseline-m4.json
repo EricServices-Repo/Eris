@@ -5,7 +5,8 @@
   "source": "main 9afe507",
   "commands": {
     "electronMain": "electron --js-flags=--expose-gc scripts/measure-memory-baseline.cjs --main",
-    "electronAsNode": "ELECTRON_RUN_AS_NODE=1 electron --expose-gc scripts/measure-memory-baseline.cjs"
+    "electronAsNode": "ELECTRON_RUN_AS_NODE=1 electron --expose-gc scripts/measure-memory-baseline.cjs",
+    "electronMainSegments": "electron --js-flags=--expose-gc scripts/measure-memory-baseline.cjs --main   # harness v2, install: segments (default)"
   },
   "electronMain": {
     "version": 1,
@@ -396,5 +397,225 @@
       "cpu": "Apple M4",
       "totalMemoryBytes": 17179869184
     }
+  },
+  "electronMainSegments": {
+    "version": 2,
+    "install": "segments",
+    "fullTierRecall": [
+      {
+        "envelopeMiB": 128,
+        "ownedMiB": 128,
+        "facts": 0,
+        "reason": "Optional recall scratch space was not admitted; using recent canonical history."
+      },
+      {
+        "envelopeMiB": 159,
+        "ownedMiB": 128,
+        "facts": 24,
+        "reason": null
+      }
+    ],
+    "evidence": "measured-process",
+    "boundary": "ContextMemoryStore in the measuring process; synthetic corpus; no UI or IPC load",
+    "heapSizeLimitMiB": 4192,
+    "runtime": {
+      "node": "24.22.0",
+      "electron": "44.9.3"
+    },
+    "processType": "browser",
+    "gcForcedBeforeSample": true,
+    "stopped": null,
+    "steps": [
+      {
+        "targetMiB": 128,
+        "threads": 1,
+        "ledgerOwnedMiB": 128,
+        "heapUsedMiB": 136,
+        "heapGrowthMiB": 115,
+        "rssMiB": 383,
+        "rssGrowthMiB": 225,
+        "heapPerLedgerByte": 0.9,
+        "rssPerLedgerByte": 1.76,
+        "heapLimitShare": 0.03,
+        "fillMs": 599,
+        "fillGc": {
+          "count": 37,
+          "totalMs": 27,
+          "maxMs": 2
+        },
+        "selectMs": {
+          "p50": 0.56,
+          "p95": 4.36,
+          "max": 4.36
+        },
+        "selectsWithNoFacts": 0,
+        "meanRetainedRowsPerSelect": 16427,
+        "selectGc": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "selectMaxBlockMs": {
+          "p50": 0.22,
+          "p95": 1.67,
+          "max": 1.67
+        },
+        "installMs": {
+          "p50": 487.5,
+          "p95": 487.5,
+          "max": 487.5
+        },
+        "installMaxBlockMs": {
+          "p50": 6.23,
+          "p95": 6.23,
+          "max": 6.23
+        }
+      },
+      {
+        "targetMiB": 256,
+        "threads": 2,
+        "ledgerOwnedMiB": 256,
+        "heapUsedMiB": 181,
+        "heapGrowthMiB": 160,
+        "rssMiB": 504,
+        "rssGrowthMiB": 346,
+        "heapPerLedgerByte": 0.63,
+        "rssPerLedgerByte": 1.35,
+        "heapLimitShare": 0.04,
+        "fillMs": 479,
+        "fillGc": {
+          "count": 29,
+          "totalMs": 22,
+          "maxMs": 2
+        },
+        "selectMs": {
+          "p50": 0.62,
+          "p95": 3.05,
+          "max": 3.05
+        },
+        "selectsWithNoFacts": 0,
+        "meanRetainedRowsPerSelect": 16427,
+        "selectGc": {
+          "count": 1,
+          "totalMs": 1,
+          "maxMs": 1
+        },
+        "selectMaxBlockMs": {
+          "p50": 0.22,
+          "p95": 1.37,
+          "max": 1.37
+        },
+        "installMs": {
+          "p50": 374.78,
+          "p95": 374.78,
+          "max": 374.78
+        },
+        "installMaxBlockMs": {
+          "p50": 2.11,
+          "p95": 2.11,
+          "max": 2.11
+        }
+      },
+      {
+        "targetMiB": 512,
+        "threads": 4,
+        "ledgerOwnedMiB": 512,
+        "heapUsedMiB": 272,
+        "heapGrowthMiB": 251,
+        "rssMiB": 693,
+        "rssGrowthMiB": 535,
+        "heapPerLedgerByte": 0.49,
+        "rssPerLedgerByte": 1.04,
+        "heapLimitShare": 0.06,
+        "fillMs": 956,
+        "fillGc": {
+          "count": 58,
+          "totalMs": 48,
+          "maxMs": 3
+        },
+        "selectMs": {
+          "p50": 0.82,
+          "p95": 3.09,
+          "max": 3.09
+        },
+        "selectsWithNoFacts": 0,
+        "meanRetainedRowsPerSelect": 16427,
+        "selectGc": {
+          "count": 1,
+          "totalMs": 1,
+          "maxMs": 1
+        },
+        "selectMaxBlockMs": {
+          "p50": 0.26,
+          "p95": 1.34,
+          "max": 1.34
+        },
+        "installMs": {
+          "p50": 365.71,
+          "p95": 375.07,
+          "max": 375.07
+        },
+        "installMaxBlockMs": {
+          "p50": 2.05,
+          "p95": 2.42,
+          "max": 2.42
+        }
+      },
+      {
+        "targetMiB": 1024,
+        "threads": 7,
+        "ledgerOwnedMiB": 896,
+        "heapUsedMiB": 408,
+        "heapGrowthMiB": 388,
+        "rssMiB": 938,
+        "rssGrowthMiB": 780,
+        "heapPerLedgerByte": 0.43,
+        "rssPerLedgerByte": 0.87,
+        "heapLimitShare": 0.1,
+        "fillMs": 1399,
+        "fillGc": {
+          "count": 87,
+          "totalMs": 71,
+          "maxMs": 2
+        },
+        "selectMs": {
+          "p50": 0.74,
+          "p95": 2.71,
+          "max": 2.71
+        },
+        "selectsWithNoFacts": 0,
+        "meanRetainedRowsPerSelect": 16427,
+        "selectGc": {
+          "count": 1,
+          "totalMs": 1,
+          "maxMs": 1
+        },
+        "selectMaxBlockMs": {
+          "p50": 0.25,
+          "p95": 1.29,
+          "max": 1.29
+        },
+        "installMs": {
+          "p50": 360.38,
+          "p95": 366.51,
+          "max": 366.51
+        },
+        "installMaxBlockMs": {
+          "p50": 2.55,
+          "p95": 2.79,
+          "max": 2.79
+        }
+      }
+    ],
+    "host": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "cpu": "Apple M4",
+      "totalMemoryBytes": 17179869184
+    }
+  },
+  "notes": {
+    "electronMain": "harness v1: one-call sync install of a thread built about twice its cap, then trimmed; install time equals main-thread blocking",
+    "electronMainSegments": "harness v2, recorded 2026-11-03 on main 226123a: production paged installSegments, thread sized as the hydration loader requests it; installMs is wall time, installMaxBlockMs is the longest event-loop block"
   }
 }
