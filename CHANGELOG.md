@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.12 — 2026-11-03
+
+- Rebuild with safer agent task completion, protected journal memory accounting, clearer Auto model selection, stronger workspace mutation guards, and Eris-Dev corpus validation.
+
 ## 0.6.11 — 2026-11-02
 
 - Rebuild with durable tool-output recall, approved project facts and deterministic summaries, safer agent handoffs and task lifecycle, improved model eligibility, and filesystem protections.
