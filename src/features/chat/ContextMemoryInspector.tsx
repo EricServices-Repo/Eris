@@ -304,13 +304,39 @@ export function ContextMemoryInspector({
                       Use in all chats in this project
                     </button>
                   )}
+                  {workspacePath &&
+                    facts.length > 0 &&
+                    !facts.some((fact) => fact.text === p.text) && (
+                      <select
+                        aria-label="Replace a project fact with this note"
+                        disabled={busy}
+                        value=""
+                        onChange={(e) => {
+                          const supersedes = e.target.value
+                          if (supersedes)
+                            void changeFact(() =>
+                              window.ide.promoteProjectFact({ threadId, pinId: p.id, supersedes })
+                            )
+                        }}
+                      >
+                        <option value="">Replace a project fact…</option>
+                        {facts.map((fact) => (
+                          <option key={fact.id} value={fact.id}>
+                            {fact.text.length > 60 ? `${fact.text.slice(0, 59)}…` : fact.text}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                 </li>
               ))}
             </ul>
             {facts.length > 0 && (
               <>
                 <h3>Project facts</h3>
-                <p>You approved these for every chat in this project.</p>
+                <p>
+                  You approved these for every chat in this project. To change one, pin the
+                  corrected note and choose the fact it replaces; the old fact stops being used.
+                </p>
                 <ul>
                   {facts.map((fact) => (
                     <li key={fact.id}>
