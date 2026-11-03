@@ -5,7 +5,11 @@ const state = vi.hoisted(() => ({
   budget: 16 * 1024 ** 3,
   winner: null as string | null,
   scored: [] as string[],
-  resident: null as { ref: string; contextSize: number } | null
+  resident: null as { ref: string; contextSize: number } | null,
+  secrets: new Map<string, string>()
+}))
+vi.mock('../electron/main/services/credentials', () => ({
+  getSecret: (key: string) => state.secrets.get(key) ?? null
 }))
 vi.mock('../electron/main/services/local-model', () => ({
   getLocalStatuses: () => state.locals,
@@ -64,6 +68,7 @@ beforeEach(() => {
   state.winner = null
   state.scored = []
   state.resident = null
+  state.secrets.clear()
 })
 describe('production Auto model selection', () => {
   it.each(['answer', 'edit', 'review', 'plan', 'verify'] as const)(
@@ -141,5 +146,53 @@ describe('production Auto model selection', () => {
     expect(
       (await chooseExecutionModel(settings(), 'edit', 'auto-local', ['local:qwen-coder'])).model
     ).toBe('builtin:composer-lite')
+  })
+
+  describe('connection readiness (#305 MO-03)', () => {
+    const keyed = (apiKeyRef: string, baseUrl = 'https://remote.example/v1') => {
+      const s = settings()
+      s.agent.routing.profile = 'auto'
+      s.agent.routing.preferCloudComposer = true
+      s.models.connections[0] = { ...s.models.connections[0]!, apiKeyRef, baseUrl }
+      return s
+    }
+    beforeEach(() => {
+      state.locals = []
+    })
+    it('does not prefer a keyed connection whose key is not stored over a ready Lite', async () => {
+      const choice = await chooseExecutionModel(keyed('openai-key'), 'edit', 'auto-any')
+      expect(choice.model).toBe('builtin:composer-lite')
+      expect(choice.candidates.find((c) => c.model === 'remote-coder')).toMatchObject({
+        eligible: false,
+        reason: 'connection API key is not stored'
+      })
+    })
+    it('treats a blank stored key as missing', async () => {
+      state.secrets.set('openai-key', '   ')
+      const choice = await chooseExecutionModel(keyed('openai-key'), 'edit', 'auto-any')
+      expect(choice.model).toBe('builtin:composer-lite')
+    })
+    it('selects the same connection once its key is stored', async () => {
+      state.secrets.set('openai-key', 'sk-test')
+      const choice = await chooseExecutionModel(keyed('openai-key'), 'edit', 'auto-any')
+      expect(choice.model).toBe('remote-coder')
+    })
+    it('keyless endpoints (no key reference) stay eligible', async () => {
+      const choice = await chooseExecutionModel(keyed(''), 'edit', 'auto-any')
+      expect(choice.model).toBe('remote-coder')
+    })
+    it('excludes a connection without a base URL', async () => {
+      const choice = await chooseExecutionModel(keyed('', ''), 'edit', 'auto-any')
+      expect(choice.candidates.find((c) => c.model === 'remote-coder')).toMatchObject({
+        eligible: false,
+        reason: 'connection has no base URL'
+      })
+    })
+    it('recovery never reaches an unauthenticated connection', async () => {
+      const choice = await chooseExecutionModel(keyed('openai-key'), 'edit', 'auto-any', [
+        'builtin:composer-lite'
+      ])
+      expect(choice.model).toBe('')
+    })
   })
 })
