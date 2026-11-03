@@ -12,6 +12,8 @@ export type ChatJobSnapshot = {
   submissionDigest?: string
   cursor?: number
   persistenceError?: string
+  /** Events that arrived after the job ended; recorded, never applied. */
+  lateEvents?: number
   workspacePath: string | null
   threadId: string | null
   goal: string
