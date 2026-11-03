@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'fs'
 import { join, relative, sep } from 'path'
 import { resolveInWorkspace, toWorkspaceRelative } from './workspace-fs'
 import { buildWorkspaceProcessEnv } from './workspace-env'
@@ -149,10 +149,13 @@ function walkFiles(root: string, dir: string, out: string[], maxFiles: number): 
     const full = join(dir, name)
     let st
     try {
-      st = statSync(full)
+      // A link may point outside the workspace; never follow one (#306 IW-03), as rg and
+      // the workspace index already do not.
+      st = lstatSync(full)
     } catch {
       continue
     }
+    if (st.isSymbolicLink()) continue
     const rel = relative(root, full).split(sep).join('/')
     if (st.isDirectory()) {
       if (shouldSkipDir(root, name, rel)) continue

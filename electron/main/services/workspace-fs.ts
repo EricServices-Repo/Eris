@@ -9,6 +9,7 @@ import {
 } from './file-mutations'
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -432,12 +433,16 @@ export function workspaceTree(workspacePath: string, userPath = '.', maxDepth = 
       if (SKIP_DIR_NAMES.has(name)) continue
       const full = join(dir, name)
       let isDir = false
+      let isLink = false
       try {
-        isDir = statSync(full).isDirectory()
+        // Shown, but never followed: a link may point outside the workspace (#306 IW-03).
+        const st = lstatSync(full)
+        isLink = st.isSymbolicLink()
+        isDir = !isLink && st.isDirectory()
       } catch {
         continue
       }
-      lines.push(`${prefix}${name}${isDir ? '/' : ''}`)
+      lines.push(`${prefix}${name}${isDir ? '/' : isLink ? '@' : ''}`)
       if (isDir && depth < maxDepth) walk(full, depth + 1, `${prefix}  `)
     }
   }
