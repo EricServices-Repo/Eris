@@ -24,6 +24,7 @@ try {
 }
 import {
   getResolvedSettings,
+  migrateContextMemoryModeInUserSettings,
   migrateLegacyConnectionTypesInUserSettings,
   stripLegacySubagentsFromUserSettings
 } from './services/settings'
@@ -121,6 +122,7 @@ app.whenReady().then(async () => {
   try {
     stripLegacySubagentsFromUserSettings()
     migrateLegacyConnectionTypesInUserSettings()
+    migrateContextMemoryModeInUserSettings()
   } catch {
     // ignore migrate errors
   }

@@ -265,6 +265,29 @@ describe('RAM-CTX-055 RAM tier sizing mode', () => {
     })
   })
 
+  it('persists the inferred legacy mode so later default changes cannot flip it', async () => {
+    const { migrateContextMemoryModeInUserSettings } =
+      await import('../electron/main/services/settings')
+    const { readFileSync } = await import('fs')
+    const saved = () => JSON.parse(readFileSync(userSettingsPath(), 'utf8')).agent.contextMemory
+
+    writeUserSettings({ agent: { contextMemory: { maxMemoryMiB: 512, enabled: true } } })
+    migrateContextMemoryModeInUserSettings()
+    expect(saved()).toEqual({ maxMemoryMiB: 512, enabled: true, mode: 'manual' })
+
+    writeUserSettings({ agent: { contextMemory: { maxMemoryMiB: 128, maxThreadMiB: 32 } } })
+    migrateContextMemoryModeInUserSettings()
+    expect(saved().mode).toBe('auto')
+
+    // A deliberate choice is never rewritten, and settings without a budget are untouched.
+    writeUserSettings({ agent: { contextMemory: { mode: 'auto', maxMemoryMiB: 512 } } })
+    migrateContextMemoryModeInUserSettings()
+    expect(saved().mode).toBe('auto')
+    writeUserSettings({ agent: { contextMemory: { shareWithRemoteModels: true } } })
+    migrateContextMemoryModeInUserSettings()
+    expect(saved()).toEqual({ shareWithRemoteModels: true })
+  })
+
   it('accepts the raised manual ceiling and nothing past it', () => {
     expect(resolved({ mode: 'manual', maxMemoryMiB: 1024 }).maxMemoryMiB).toBe(1024)
     expect(resolved({ mode: 'manual', maxMemoryMiB: 1025 }).maxMemoryMiB).toBe(128)
