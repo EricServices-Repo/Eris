@@ -165,6 +165,8 @@ const questionsFile = (lines: string[]) => {
   return path
 }
 
+// Cold production-module transforms can exceed 10s on Windows. Only setup gets
+// this allowance; the scenario and application deadlines remain unchanged.
 beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), 'eris-dev-ipc-'))
   h.userData = join(root, 'userData')
@@ -175,7 +177,7 @@ beforeAll(async () => {
   h.capture = async (index, question) => result(index, question)
   await import('../electron/dev/main')
   await new Promise((resolve) => setTimeout(resolve, 0))
-})
+}, 30_000)
 afterAll(async () => {
   if (h.sent.at(-1)?.running) {
     await invoke('dev:stop')
