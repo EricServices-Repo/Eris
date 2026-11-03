@@ -57,6 +57,7 @@ function identify(records: ImportRecord[]): DevQuestion[] {
     const occurrence = (seen.get(base) ?? 0) + 1
     seen.set(base, occurrence)
     if (record.sourceId) {
+      // Unreachable from prepareQuestions, which lists every repeat first; kept as a guard.
       if (explicit.has(record.sourceId))
         throw new Error(`Question ID “${record.sourceId}” appears more than once.`)
       explicit.add(record.sourceId)
@@ -295,6 +296,20 @@ export function prepareQuestions(
         })
       }
     }
+    // Every repeat of an explicit ID is listed with the row that first used it, beside
+    // the other row errors, instead of stopping at the first one.
+    const firstUse = new Map<string, number>()
+    for (const record of records) {
+      if (!record.sourceId) continue
+      const first = firstUse.get(record.sourceId)
+      if (first === undefined) firstUse.set(record.sourceId, record.sourceLine)
+      else
+        failures.push({
+          sourceLine: record.sourceLine,
+          message: `Question ID “${record.sourceId}” was already used by ${jsonl ? 'line' : 'item'} ${first}.`
+        })
+    }
+    failures.sort((a, b) => a.sourceLine - b.sourceLine)
     rejectRows(failures, raw.length, jsonl ? 'line' : 'item')
     const scripted = records.filter((record) => record.intentReplyMalformed).length
     if (scripted)
