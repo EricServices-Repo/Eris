@@ -12,7 +12,7 @@ import {
   toolTrust,
   trustLabel
 } from '../electron/main/services/agent/run-journal'
-import { ContextMemorySettingsSchema } from '../src/shared/context-memory'
+import { ContextMemorySettingsSchema, emptyMemoryControls } from '../src/shared/context-memory'
 import {
   ContextMemoryStore,
   contextMemoryStore
@@ -426,6 +426,60 @@ describe('RunJournal keeps evidence it cannot replace (#304)', () => {
     expect(first.omitted).toBe('over-budget')
     expect(second.omitted).toBeUndefined()
     expect(store.ledger.reservedBytes).toBe(target.residentBytes)
+  })
+
+  it("counts the run's own conversation thread as unevictable", async () => {
+    const { store, target } = isolated()
+    // The run's thread lives under the journal's key, which reserve() never evicts.
+    const messages = Array.from({ length: 40 }, (_, i) => ({
+      id: `m${i}`,
+      role: 'user' as const,
+      content: `thread message ${i} ` + 'w'.repeat(200_000),
+      createdAt: i
+    }))
+    store.install(
+      'key-keep',
+      {
+        revision: 1,
+        total: messages.length,
+        records: messages.map((message, ordinal) => ({ ordinal, message })),
+        controls: emptyMemoryControls(),
+        partial: false
+      },
+      store.token('key-keep')
+    )
+    const thread = store.ledger.ownedBytes
+    expect(thread).toBeGreaterThan(4 * MiB)
+    const kept = []
+    for (let i = 0; i < 3; i++)
+      kept.push(await append(target, `needle${i} ` + 'a'.repeat(200_000), 'read', `c${i}`))
+    // Fits the envelope on its own, but never beside the protected thread.
+    const huge = await append(
+      target,
+      'b'.repeat(store.ledger.envelopeBytes - thread),
+      'run_command',
+      'huge'
+    )
+    expect(huge.omitted).toBe('over-budget')
+    for (const entry of kept)
+      expect(await target.read(entry.ref)).toMatchObject({ status: 'found' })
+    expect(store.ledger.ownedBytes).toBe(thread)
+    expect(store.ledger.reservedBytes).toBe(target.residentBytes)
+  })
+
+  it("counts other runs' share of the global journal cap as unevictable", async () => {
+    const others = Array.from({ length: 2 }, (_, i) => journal(`global-${i}`))
+    for (const [i, other] of others.entries())
+      await append(other, 'g'.repeat(RUN_JOURNAL_MAX_BYTES - 4 * MiB), 'read', `g${i}`)
+    const target = journal('global-target')
+    const kept = []
+    for (let i = 0; i < 3; i++)
+      kept.push(await append(target, `needle${i} ` + 'a'.repeat(200_000), 'read', `c${i}`))
+    // Under the run cap, but over what the other runs leave of the global cap.
+    const huge = await append(target, 'b'.repeat(12 * MiB), 'run_command', 'huge')
+    expect(huge.omitted).toBe('over-budget')
+    for (const entry of kept)
+      expect(await target.read(entry.ref)).toMatchObject({ status: 'found' })
   })
 
   it('a late append after close takes no reservation', async () => {

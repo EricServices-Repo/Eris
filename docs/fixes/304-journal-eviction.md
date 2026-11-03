@@ -33,8 +33,13 @@ hardened here because the journal is the boundary a memory process would call.
 
 ## Limits
 
-- **Upper bound only.** The ceiling treats every owned thread byte as evictable.
-  If the protected thread's own bytes keep a fit impossible, the old path can
-  still evict some entries before failing.
+- **Ceiling (follow-up).** The ceiling first treated every owned thread byte as
+  evictable and ignored the global journal cap. `reserve` never evicts the thread
+  it reserves for, and eviction only frees this run's entries. The run's own
+  conversation thread (`threadBytes(memoryKey)`) and other runs' share of the
+  64 MiB global journal cap are now subtracted too. An entry that cannot fit beside
+  either is omitted without evicting anything. The remaining inexactness is idle
+  expiry, which can free a thread between the check and the reservation; that only
+  makes a fit more likely.
 - **Not a persistence change.** This keeps evidence within one run;
   persistence across restarts is the separate durable journal.

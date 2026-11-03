@@ -262,6 +262,10 @@ export class ContextMemoryStore {
   get logicalBytes() {
     return [...this.entries.values()].reduce((sum, e) => sum + e.bytes, 0)
   }
+  /** Bytes one thread holds. `reserve` never evicts the thread it reserves for. */
+  threadBytes(key: string) {
+    return this.entries.get(key)?.bytes ?? 0
+  }
   get reservedBytes() {
     return [...this.reservations].reduce((sum, r) => sum + r.bytes, 0)
   }

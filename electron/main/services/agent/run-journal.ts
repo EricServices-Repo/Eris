@@ -265,13 +265,20 @@ export class RunJournal {
   }
 
   /**
-   * The most a new entry could ever be granted: the envelope less what other owners
-   * hold and cannot give back for it (reservations and pins). This run's own resident
-   * entries count as available, since they are what eviction would release.
+   * The most a new entry could ever be granted, given everything eviction cannot free:
+   * other owners' reservations and pins, the run's own conversation thread (`reserve`
+   * never evicts the key it reserves for), and other runs' share of the global journal
+   * cap. This run's resident entries count as available, since eviction releases them.
    */
   private ceilingBytes() {
     const { envelopeBytes, reservedBytes, pinnedBytes } = this.store.ledger
-    return envelopeBytes - (reservedBytes - this.residentBytes) - pinnedBytes
+    const store =
+      envelopeBytes -
+      (reservedBytes - this.residentBytes) -
+      pinnedBytes -
+      this.store.threadBytes(this.identity.memoryKey)
+    const global = GLOBAL_JOURNAL_MAX_BYTES - (globalBytes() - this.residentBytes)
+    return Math.min(store, global)
   }
 
   private fits = (cost: number) => globalBytes() + cost <= GLOBAL_JOURNAL_MAX_BYTES
