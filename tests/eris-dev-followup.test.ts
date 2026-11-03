@@ -139,6 +139,9 @@ const result = (
 
 let root = ''
 const priorTmp = process.env.TMPDIR
+// This is a 1,200-record comparison oracle, not a latency benchmark. Windows
+// must complete 2,400 real durable result/progress writes before export checks.
+const COMPARISON_DRAIN_MS = process.platform === 'win32' ? 240_000 : 120_000
 const invoke = (channel: string, ...args: unknown[]) => h.handlers[channel]!({}, ...args)
 const idle = async (timeoutMs = 30000) => {
   const last = h.sent.at(-1)
@@ -273,7 +276,7 @@ describe('Eris-Dev main process', () => {
     await invoke('dev:start', { context: 8192, mode: 'agent', intentReplyMode: 'fallback' })
     // Every result/progress record is now fsynced. Windows CI flush latency is
     // substantial for 2,400 durable writes; retain the complete 1,200-case oracle.
-    await idle(120000)
+    await idle(COMPARISON_DRAIN_MS)
     const current = readdirSync(join(h.userData, 'captures'))
       .map((id) => JSON.parse(readFileSync(join(h.userData, 'captures', id, 'run.json'), 'utf8')))
       .find((manifest) => manifest.questions.length === 1200)
@@ -300,7 +303,7 @@ describe('Eris-Dev main process', () => {
 
     h.open.push([questionsFile(['not a header line'])])
     await expect(invoke('dev:compare')).rejects.toThrow(/not valid JSON|no run header/)
-  }, 125000)
+  }, COMPARISON_DRAIN_MS + 5_000)
 
   it('FR-030: streams an export into place with no partial file left', async () => {
     const out = join(root, 'export.jsonl')

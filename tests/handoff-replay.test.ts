@@ -356,7 +356,7 @@ beforeEach(() => {
       (await handleWorkspaceRequest({ ...request, dir: folder } as WorkspaceRequest)) as never
   )
   db.save(longThread())
-})
+}, 30_000) // Real SQLite fixture setup can exceed the default 10s on Windows.
 afterEach(async () => {
   for (const open of h.open.splice(0)) open()
   await stopAllBackgroundJobs()
