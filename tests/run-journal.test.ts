@@ -392,3 +392,49 @@ describe('active journal telemetry (#236)', () => {
     })
   })
 })
+
+describe('RunJournal keeps evidence it cannot replace (#304)', () => {
+  const MiB = 1024 ** 2
+  const isolated = () => {
+    const store = new ContextMemoryStore()
+    store.configure(ContextMemorySettingsSchema.parse({ maxMemoryMiB: 16 }))
+    const target = new RunJournal({ runId: 'keep', taskId: 'task', memoryKey: 'key-keep' }, store)
+    journals.push(target)
+    return { store, target }
+  }
+
+  it('does not evict older entries for one that cannot fit even after evicting them', async () => {
+    const { store, target } = isolated()
+    const kept = []
+    for (let i = 0; i < 3; i++)
+      kept.push(await append(target, `needle${i} ` + 'a'.repeat(200_000), 'read', `c${i}`))
+    const huge = await append(target, 'b'.repeat(20 * MiB), 'run_command', 'huge')
+    expect(huge.omitted).toBe('over-budget')
+    for (const entry of kept) {
+      expect(entry.omitted).toBeUndefined()
+      expect(await target.read(entry.ref)).toMatchObject({ status: 'found' })
+    }
+    expect(store.ledger.reservedBytes).toBe(target.residentBytes)
+  })
+
+  it('still evicts oldest first when that does make room', async () => {
+    const { store, target } = isolated()
+    const first = await append(target, 'a'.repeat(6 * MiB), 'read', 'one')
+    const second = await append(target, 'b'.repeat(6 * MiB), 'read', 'two')
+    const third = await append(target, 'c'.repeat(6 * MiB), 'read', 'three')
+    expect(third.omitted).toBeUndefined()
+    expect(first.omitted).toBe('over-budget')
+    expect(second.omitted).toBeUndefined()
+    expect(store.ledger.reservedBytes).toBe(target.residentBytes)
+  })
+
+  it('a late append after close takes no reservation', async () => {
+    const { store, target } = isolated()
+    await append(target, 'early', 'read', 'early')
+    target.close()
+    const late = await append(target, 'x'.repeat(10_000), 'run_command', 'late')
+    expect(late.omitted).toBe('run-ended')
+    expect(store.ledger.reservedBytes).toBe(0)
+    expect(await target.read(late.ref)).toMatchObject({ status: 'omitted' })
+  })
+})
