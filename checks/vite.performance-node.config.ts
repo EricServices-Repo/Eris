@@ -11,6 +11,7 @@ export default defineConfig({
       input: {
         'workspace-performance': resolve('checks/workspace-performance.ts'),
         'context-gate': resolve('checks/context-gate.ts'),
+        'memory-process-baseline': resolve('checks/memory-process-baseline.ts'),
         'workspace-worker': resolve('electron/main/workspace-worker.ts')
       },
       output: {
