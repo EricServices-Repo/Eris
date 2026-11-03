@@ -127,7 +127,8 @@ describe('post-compaction recall is measured through the model-facing tools (#26
     for (const row of (await report()).postCompactionRecall) {
       expect(row.pullCalls).toBeGreaterThan(row.planted)
       expect(row.refusedPulls).toBe(0)
-      expect(row.searchRanks.every((rank) => typeof rank === 'number' && rank >= 1)).toBe(true)
+      // Each fact's exact identifier makes its own entry the first hit.
+      expect(row.searchRanks).toEqual(row.searchRanks.map(() => 1))
     }
   })
 
