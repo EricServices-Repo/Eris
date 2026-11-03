@@ -10,12 +10,15 @@ vi.mock('../electron/main/services/workspace-worker-client', () => ({ workspaceR
 import { workspaceRequest } from '../electron/main/services/workspace-worker-client'
 import { handleWorkspaceRequest } from '../electron/main/workspace-worker'
 import { chatDatabase, closeChatDatabases } from '../electron/main/services/chat-database'
-import { workspaceChatsDir } from '../electron/main/services/paths'
+import { userDataRoot, workspaceChatsDir } from '../electron/main/services/paths'
 import { rememberWorkspace } from '../electron/main/services/workspace'
 import { getResolvedSettings } from '../electron/main/services/settings'
 import { saveMemoryControls } from '../electron/main/services/context-memory'
 import { createContextOrigin } from '../electron/main/services/context-origin'
 import { ContextPull, taskThreadRecall } from '../electron/main/services/agent/context-pull'
+import { THREAD_SUMMARY_REF } from '../src/shared/thread-summary'
+import { createHmac } from 'crypto'
+import { readFileSync } from 'fs'
 import { RunJournal } from '../electron/main/services/agent/run-journal'
 import { contextMemoryStore } from '../electron/main/services/context-memory-store'
 import { childTaskContract, createTaskContract } from '../electron/main/services/task-intake'
@@ -96,6 +99,27 @@ async function parentTask(): Promise<TaskContract> {
     taskId: 'parent'
   })
   return parent
+}
+/** The pre-#151 seal: the same HMAC over the payload without the snapshot fields. */
+function resealLegacy(value: Record<string, unknown>) {
+  const key = readFileSync(join(userDataRoot(), 'context-capabilities', 'origin-key'))
+  const fields = [
+    'version',
+    'profile',
+    'sourceRoot',
+    'workspaceId',
+    'threadId',
+    'namespace',
+    'projectRelative',
+    'sourceEpoch',
+    'controlsRevision',
+    'policyDigest',
+    'executionRoot',
+    'executionProject',
+    'taskId'
+  ]
+  const payload = JSON.stringify(fields.map((field) => value[field]))
+  return { ...value, seal: createHmac('sha256', key).update(payload).digest('hex') } as never
 }
 /** A specialist delegated from the parent, running in its own worktree, as loop.ts does. */
 const specialist = (parent: TaskContract, goal: string, id: string) =>
@@ -196,6 +220,81 @@ describe('scoped specialist context handles (#151)', () => {
     pull(task).journal.close()
     expect(task.authority).toEqual(authority)
     expect(task.authority.edit).toBe(parent.authority.edit && task.authority.edit)
+  })
+
+  it('binds the handle to the parent snapshot: later turns are outside the assignment', async () => {
+    const parent = await parentTask()
+    expect(parent.contextOrigin?.sourceMessages).toBe(32)
+    const task = specialist(parent, 'Check receipts', 'child-1')
+    // Before the queued child runs, the user keeps talking in the parent thread.
+    const db = chatDatabase(workspaceChatsDir(source))
+    const thread = db.get('t')!
+    db.save({
+      ...thread,
+      messages: [
+        ...thread.messages,
+        {
+          id: 'later',
+          role: 'user',
+          content: 'Remember: booking refunds go to the loyalty wallet',
+          createdAt: 2,
+          contextProjectRoot: join(source, 'app')
+        }
+      ]
+    })
+    const { journal, tools } = pull(task)
+    const later = await tools.search({ query: 'booking refunds loyalty wallet', scope: 'thread' })
+    expect(later.detail).not.toContain('loyalty wallet')
+    // Evidence from inside the snapshot still comes back.
+    const earlier = await tools.search({ query: 'booking receipts currency', scope: 'thread' })
+    expect(earlier.detail).toContain('CAD')
+    // The summary is rebuilt from every row, so it is refused once the thread has grown.
+    const summary = await tools.read({ ref: THREAD_SUMMARY_REF })
+    expect(summary.ok).toBe(false)
+    journal.close()
+    // A task delegated after that turn sees it.
+    const fresh = specialist(await parentTask(), 'Check refunds', 'child-2')
+    const next = pull(fresh)
+    const found = await next.tools.search({
+      query: 'booking refunds loyalty wallet',
+      scope: 'thread'
+    })
+    expect(found.detail).toContain('loyalty wallet')
+    next.journal.close()
+  })
+
+  it('refuses a read of a message past the snapshot as a result', async () => {
+    const parent = await parentTask()
+    const recall = taskThreadRecall({
+      task: specialist(parent, 'Check receipts', 'child-1'),
+      settings: getResolvedSettings(child),
+      allowed: () => true
+    })!
+    await expect(
+      recall.read({
+        id: 'x',
+        sourceId: 'later',
+        kind: 'user-stated',
+        ordinal: 32,
+        text: '',
+        line: ''
+      })
+    ).rejects.toThrow(/after this assignment started/)
+  })
+
+  it('still verifies an origin sealed before the snapshot fields existed', async () => {
+    const parent = await parentTask()
+    const { sourceMessages: _m, snapshotAt: _a, seal: _s, ...legacy } = parent.contextOrigin!
+    expect(_m).toBeDefined()
+    // Re-seal the legacy shape exactly as the old code did, then bind a child from it.
+    const resealed = resealLegacy(legacy)
+    const task = specialist({ ...parent, contextOrigin: resealed }, 'Check receipts', 'child-1')
+    expect(task.contextOrigin?.sourceMessages).toBeUndefined()
+    const { journal, tools } = pull(task)
+    expect(
+      (await tools.search({ query: 'booking receipts currency', scope: 'thread' })).detail
+    ).toContain('CAD')
+    journal.close()
   })
 
   it('keeps a task without an origin or a conversation out of history', async () => {
