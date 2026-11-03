@@ -5,7 +5,8 @@
  *   ELECTRON_RUN_AS_NODE=1 electron scripts/measure-memory-baseline.cjs [--out file]   # Electron's V8 as Node
  *   electron scripts/measure-memory-baseline.cjs --main [--out file]                    # a real Electron main process
  *
- * --steps 128,256 limits the tier sizes. Writes JSON to stdout and to --out.
+ * --steps 128,256 limits the tier sizes. --install sync times the one-call install instead
+ * of the production paged path (default: segments). Writes JSON to stdout and to --out.
  */
 const fs = require('node:fs'),
   os = require('node:os'),
@@ -21,7 +22,11 @@ async function measure() {
     path.resolve(__dirname, '../.eris/cache/performance/memory-process-baseline.cjs')
   )
   const steps = flag('--steps')?.split(',').map(Number)
-  const report = await measureMemoryBaseline(steps ? { stepsMiB: steps } : {})
+  const install = flag('--install')
+  const report = await measureMemoryBaseline({
+    ...(steps ? { stepsMiB: steps } : {}),
+    ...(install ? { install } : {})
+  })
   const out = {
     ...report,
     host: {

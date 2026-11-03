@@ -66,3 +66,53 @@ The 1 GiB step stops at 896 MiB because the seventh 128 MiB thread crosses the
   frame drops.
 - Synthetic corpus. One unified-memory host.
 - Step 2, the dedicated process, and the issue's acceptance items are not done.
+
+## Correction (harness v2): the production install path does not block for 1.5 s
+
+Finding 1 timed the one-call `install`. Production hydration does not use it.
+`hydrateContextMemory` pages the thread from the workspace worker and publishes it
+through `installSegments`, which yields every 64 rows. The one-call `install` runs
+in production only for a dozen archive or pin rows. The v1 harness also built each
+thread about twice its per-thread cap, so the store then trimmed half of it. The
+hydration loader stops paging once its estimate reaches the cap, so it never does
+that.
+
+Harness v2 defaults to `install: 'segments'`. It pages rows 256 at a time, sizes each
+thread the way the loader does, and records the longest event-loop block during the
+install (`installMaxBlockMs`) beside its wall time. `--install sync` keeps the v1
+behaviour for comparison.
+
+### Electron 44.9.3 main process, Apple M4, 16 GB, `main` 226123a
+
+| Step | Threads | Ledger | Heap growth | RSS growth | Install wall p50 | Install max block | Select max block |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 128 MiB | 1 | 128 MiB | 115 MiB | 225 MiB | 488 ms | 6.2 ms | 1.7 ms |
+| 256 MiB | 2 | 256 MiB | 160 MiB | 346 MiB | 375 ms | 2.1 ms | 1.4 ms |
+| 512 MiB | 4 | 512 MiB | 251 MiB | 535 MiB | 366 ms | 2.4 ms | 1.3 ms |
+| 1 GiB | 7 | 896 MiB | 388 MiB | 780 MiB | 360 ms | 2.8 ms | 1.3 ms |
+
+Every select returned facts. GC stayed at a 3 ms maximum pause.
+
+### What changes in the findings
+
+1. **Hydration does not freeze the main thread.** The longest block while a 128 MiB
+   thread installs is 2–6 ms, against about 1.5 s for the one-call path. The
+   install still takes about 0.4 s of wall time, spread across yields. The ~40–55 ms
+   block in an intermediate v2 run came from `trim()` pruning the oversized
+   thread after publish. That is a harness artifact, not the production path.
+2. **The full-tier finding is unchanged.** A tier filled to its envelope still
+   returns no recall.
+3. **RSS growth is below the ledger here, not 1.27× above it.** At 896 MiB ledger,
+   RSS grew 780 MiB (0.87×) and the heap 388 MiB. The v1 run allocated each thread
+   at about twice its cap and trimmed half. Freed memory need not return to the OS,
+   so the v1 RSS figure is not comparable. The ledger is still an
+   estimate. The margin acceptance item 2 asks for is not yet established; this
+   is one host and one corpus.
+
+### What this means for #228
+
+The main-thread-latency argument for moving the store out of process is weaker
+than step 1 suggested: hydration and selection both stay under 7 ms per block at
+896 MiB. The remaining reasons are heap headroom for a multi-GiB tier, GC
+isolation, and crash isolation. These still need the dedicated-process comparison
+(step 2), which is not done.
