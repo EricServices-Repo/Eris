@@ -1,4 +1,5 @@
 import { microCompactAgentMessages } from '../electron/main/services/agent/compaction'
+import { ContextPull, type ContextPullEvent } from '../electron/main/services/agent/context-pull'
 import { RunJournal } from '../electron/main/services/agent/run-journal'
 import type { AgentChatMessage } from '../electron/main/services/agent/types'
 import { ContextMemoryStore } from '../electron/main/services/context-memory-store'
@@ -95,6 +96,34 @@ async function measureRecoverability() {
   }
 }
 
+/** Context reads a model could make before giving up on one fact; bounded like a run. */
+const MAX_PULL_CALLS_PER_FACT = 12
+
+/**
+ * Recover one fact the way a model must (#267): context_search for it, choose the
+ * result whose line shows it, then context_read that ref, paging with the offset each
+ * read reports. Only refs a search returned are read; nothing here enumerates or reads
+ * the journal directly.
+ */
+async function pullFact(pull: ContextPull, fact: string) {
+  const needle = fact.trim()
+  const found = await pull.search({ query: needle, scope: 'run' })
+  const lines = found.detail.split('\n').filter((line) => line.startsWith('[ref:'))
+  const rank = lines.findIndex((line) => line.includes(needle))
+  const ref = rank >= 0 ? lines[rank]!.match(/^\[ref:([0-9a-z:-]+) /)?.[1] : undefined
+  let calls = 1
+  let offset: number | undefined = ref ? 0 : undefined
+  while (ref && offset !== undefined && calls < MAX_PULL_CALLS_PER_FACT) {
+    calls++
+    const read = await pull.read({ ref, offset })
+    if (!read.ok) break
+    if (read.detail.includes(needle)) return { recovered: true, calls, rank: rank + 1 }
+    const next = read.detail.match(/Continue with offset (\d+)\./)?.[1]
+    offset = next === undefined ? undefined : Number(next)
+  }
+  return { recovered: false, calls, rank: rank >= 0 ? rank + 1 : null }
+}
+
 /** Facts sit mid-output, where compaction removes them from the prompt. */
 async function measureRecallAfter(rounds: number) {
   const journal = newJournal(`gate-recall-${rounds}`)
@@ -109,14 +138,32 @@ async function measureRecallAfter(rounds: number) {
       messages = microCompactAgentMessages(messages, COMPACTION_BUDGET_TOKENS, journal).messages
     }
     const prompt = messages.map((message) => message.content).join('\n')
-    const texts = await Promise.all(journal.list().map((entry) => journal.read(entry.ref)))
-    const recovered = facts.filter((fact) =>
-      texts.some((read) => read.status === 'found' && read.content.includes(fact))
-    )
+    const events: ContextPullEvent[] = []
+    const pull = new ContextPull({
+      journal,
+      allowed: () => true,
+      budgetTokens: () => 8_192,
+      remainingTokens: () => 4_096,
+      record: (event) => void events.push(event)
+    })
+    let recovered = 0
+    let pullCalls = 0
+    const searchRanks: Array<number | null> = []
+    for (const fact of facts) {
+      const result = await pullFact(pull, fact)
+      pullCalls += result.calls
+      searchRanks.push(result.rank)
+      if (result.recovered) recovered++
+    }
     return {
       rounds,
       planted: facts.length,
-      recovered: recovered.length,
+      /** Found through context_search + context_read, never by enumerating the journal. */
+      recovered,
+      pullCalls,
+      /** 1-based position of the fact's entry in its own search results. */
+      searchRanks,
+      refusedPulls: events.filter((event) => event.status === 'refused').length,
       leftInPrompt: facts.filter((fact) => prompt.includes(fact)).length
     }
   } finally {

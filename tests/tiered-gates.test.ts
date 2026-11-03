@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 
+import { ContextPull } from '../electron/main/services/agent/context-pull'
 import {
   evaluateTieredGates,
   evaluateTieredHardware,
@@ -119,4 +120,41 @@ describe('hardware evidence', () => {
   ])('fails on %j', (change, reason) => {
     expect(evaluateTieredHardware({ ...live, ...change }, limits).join()).toMatch(reason)
   })
+})
+
+describe('post-compaction recall is measured through the model-facing tools (#267)', () => {
+  it('reports how each fact was reached: pull calls, search rank, no refusals', async () => {
+    for (const row of (await report()).postCompactionRecall) {
+      expect(row.pullCalls).toBeGreaterThan(row.planted)
+      expect(row.refusedPulls).toBe(0)
+      expect(row.searchRanks.every((rank) => typeof rank === 'number' && rank >= 1)).toBe(true)
+    }
+  })
+
+  it('credits nothing when context_search cannot return the fact', async () => {
+    const search = vi
+      .spyOn(ContextPull.prototype, 'search')
+      .mockResolvedValue({ ok: true, detail: 'No matches.', mutated: false })
+    try {
+      const value = await measureTieredGates()
+      for (const row of value.postCompactionRecall) expect(row.recovered).toBe(0)
+      expect(evaluateTieredGates(value, limits).join()).toMatch(/Recall after 1 compactions: 0\/3/)
+    } finally {
+      search.mockRestore()
+    }
+  }, 60_000)
+
+  it('credits nothing when context_read refuses the ref search returned', async () => {
+    const read = vi.spyOn(ContextPull.prototype, 'read').mockResolvedValue({
+      ok: false,
+      detail: 'Earlier context is not available to this model.',
+      mutated: false
+    })
+    try {
+      const value = await measureTieredGates()
+      for (const row of value.postCompactionRecall) expect(row.recovered).toBe(0)
+    } finally {
+      read.mockRestore()
+    }
+  }, 60_000)
 })
