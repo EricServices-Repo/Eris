@@ -29,6 +29,23 @@ const threadPath = (workspace: string | null, thread: string | null) =>
       '.json'
   )
 const active = (job: ChatJobSnapshot) => job.status === 'running' || job.status === 'queued'
+/**
+ * A terminal job is final: later outcomes, chunks or a restart of the same ID are
+ * evidence of a late event, never a new state (#303 EX-02).
+ */
+function late(job: ChatJobSnapshot, channel: string, detail: Record<string, unknown>): void {
+  job.lateEvents = (job.lateEvents ?? 0) + 1
+  logWarn('Late chat task event ignored', { taskId: job.id, status: job.status, channel })
+  if (job.lateEvents > 8) return // bounded: the count still records every one
+  job.cursor = (job.cursor ?? job.events.at(-1)?.sequence ?? 0) + 1
+  job.events.push({
+    sequence: job.cursor,
+    at: new Date().toISOString(),
+    channel: 'chat:late-event',
+    payload: { channel, ...detail }
+  })
+  if (job.events.length > MAX_EVENTS) job.events.splice(0, job.events.length - MAX_EVENTS)
+}
 
 function persistNow(job: ChatJobSnapshot, updateIndexes = true): Promise<void> {
   const snapshot = structuredClone(job)
@@ -182,6 +199,11 @@ export async function admitChatJob(input: {
 }
 export function markChatJobRunning(id: string): void {
   const job = jobs.get(id)
+  if (job && !active(job)) {
+    late(job, 'running', {})
+    persistLater(job)
+    return
+  }
   if (job) {
     job.status = 'running'
     job.timeline = transitionTaskTimeline(id, job.timeline, {
@@ -200,6 +222,16 @@ export function recordChatJobEvent(
 ): void {
   const job = jobs.get(id)
   if (!job) return
+  if (!active(job)) {
+    // Observations after the end (a straggling chunk, status or a second outcome)
+    // must not rewrite the recorded answer, model or status line.
+    // Thinking and phase updates carry nothing to keep; the timeline is already final.
+    if (channel !== 'chat:thinking' && channel !== 'chat:phase') {
+      late(job, channel, {})
+      schedulePersist(job)
+    }
+    return
+  }
   job.updatedAt = new Date().toISOString()
   if (channel === 'chat:phase' && isTaskPhaseEvent(payload))
     job.timeline = transitionTaskTimeline(id, job.timeline, payload)
@@ -241,6 +273,13 @@ export function recordChatJobEvent(
 export function finishChatJob(id: string, status: ChatJobStatus): void {
   const job = jobs.get(id)
   if (!job) return
+  if (!active(job)) {
+    if (job.status !== status) {
+      late(job, 'terminal', { status })
+      persistLater(job)
+    }
+    return
+  }
   job.status = status
   if (status !== 'running' && status !== 'queued')
     job.timeline = transitionTaskTimeline(id, job.timeline, {
