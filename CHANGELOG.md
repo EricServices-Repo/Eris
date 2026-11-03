@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.11 — 2026-11-02
+
+- Rebuild with durable tool-output recall, approved project facts and deterministic summaries, safer agent handoffs and task lifecycle, improved model eligibility, and filesystem protections.
+
 ## 0.6.10 — 2026-11-01
 
 - Rebuild with task-aware local model selection, Lite-to-worker handoffs, bounded model recovery, safer RAM context dispatch, and explicit execution-policy controls.

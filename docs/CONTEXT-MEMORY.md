@@ -4,6 +4,22 @@ Reviewed against integrated `main` `0a54629` on 2026-11-01. Package version: **0
 
 This guide describes implemented behavior. The [RAM architecture](RAM-CONTEXT-ARCHITECTURE.md) and [tier amendment](RAM-CONTEXT-AMENDMENT-001.md) contain additional targets; their names and sizing examples are not all implemented APIs.
 
+## Implemented versus target at the v0.6.11 rebuild baseline
+
+This table reconciles integrated source `d92fc75` (2026-11-02). The detailed sections below retain their explicitly dated `0a54629` review snapshot; older limitations there must be reconciled with this table and later fix reports before implementation. A source feature is not release or hardware certification.
+
+| Area | Implemented | Target / remaining qualification |
+| --- | --- | --- |
+| Canonical history | SQLite transcript, source/control revisions and bounded archive retrieval | Exact-source upgrade, deletion and recovery acceptance |
+| RAM ownership | Bounded main-process cache with reservations and pressure admission | Dedicated off-heap ownership before multi-GiB tiers (#228) |
+| RAM sizing | Conservative automatic tiers and explicit manual mode | Measured hardware/accounting calibration and integrated-GPU/migration safety (#330) |
+| Tool evidence | Run-local recoverable handles plus bounded durable historical output when persistence is enabled (#301) | Retention/privacy and delegated-output qualification (#329) |
+| Thread summaries | Source-backed deterministic worker summary through a bounded pull, without model inference (#309) | Independent recall benefit and packaged/live acceptance (#331) |
+| Project facts | Explicit user promotion/revocation in the host-owned project store (#308) | Active-run invalidation and bounded fact-history lifecycle (#327/#328) |
+| Specialist handoff | Bounded contracts, source-origin validation, scoped pulls and typed child outcomes | Complete task-tree and persisted derived-evidence qualification (#267/#323) |
+| Model context and KV | Finite admitted model window, measured native repacking and per-run sessions | Cross-turn KV reuse only after measured benefit and safe invalidation (#233) |
+| Certification | Deterministic profiles and packaged startup checks | Separate exact-source live/hardware/installed evidence for v1.x (#311) |
+
 ## What each tier means
 
 - SQLite holds canonical conversation sources, source/control revisions, pins/exclusions and structured task outcomes.
