@@ -86,6 +86,15 @@ const systemPrompt = (result: DevResult) =>
     .map((message) => String(message.content))
     .join('\n')
 
+/** The current turn of each agent request: request-derived instructions live here (#233). */
+const currentTurn = (result: DevResult) =>
+  result.requests
+    .filter((request) => request.purpose === 'agent')
+    .map((request) => request.messages as Array<{ role: string; content: unknown }>)
+    .map((messages) => messages.filter((message) => message.role === 'user').at(-1))
+    .map((message) => String(message?.content ?? ''))
+    .join('\n')
+
 describe('FR-002 the production request boundary keeps chat examples in chat', () => {
   it.each([107, 413])(
     'Q%i: artifact, destination, authority, worker and prompt agree',
@@ -102,7 +111,8 @@ describe('FR-002 the production request boundary keeps chat examples in chat', (
       expect(task.interpretation.destination).toBe('chat')
       expect(task.authority).toMatchObject({ edit: false, execute: 'none' })
       expect(result.agent).not.toBe('Composer')
-      expect(systemPrompt(result)).toContain('RESPONSE CONTRACT — code example in chat')
+      expect(currentTurn(result)).toContain('RESPONSE CONTRACT — code example in chat')
+      expect(systemPrompt(result)).not.toContain('RESPONSE CONTRACT')
       expect(result.findingsDetail).toEqual([])
     }
   )
@@ -112,7 +122,8 @@ describe('FR-002 the production request boundary keeps chat examples in chat', (
     expect(result.intent).toBe('edit')
     expect(result.artifact).toBe('patch')
     expect((result.task as { authority: { edit: boolean } }).authority.edit).toBe(true)
-    expect(systemPrompt(result)).toContain('RESPONSE CONTRACT — patch')
+    expect(currentTurn(result)).toContain('RESPONSE CONTRACT — patch')
+    expect(systemPrompt(result)).not.toContain('RESPONSE CONTRACT')
   })
 })
 

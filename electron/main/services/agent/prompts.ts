@@ -377,10 +377,6 @@ export async function buildPreservedWorkerMessages(options: {
         },
         { id: 'playbook', content: intentPlaybook(plan.intent, false, task.scope.applicability) },
         {
-          id: 'response-contract',
-          content: artifactResponseContract(interpretationOf(task), task.scope.applicability)
-        },
-        {
           id: 'context-pull',
           content:
             plan.toolPolicy !== 'none' && contextPullAllowed(plan.models.tools, options.settings)
@@ -388,6 +384,8 @@ export async function buildPreservedWorkerMessages(options: {
               : ''
         }
       ]),
+      // Derived from this request, so it travels with the turn, not the reusable prefix.
+      turnInstructions: artifactResponseContract(interpretationOf(task), task.scope.applicability),
       project: withoutSharedBlocks(priorSystem, options.workspacePath, options.settings, {
         skillIds: task.skillIds,
         customAgentPrompt
