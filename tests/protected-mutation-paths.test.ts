@@ -9,7 +9,7 @@ import {
   symlinkSync,
   writeFileSync
 } from 'fs'
-import { join } from 'path'
+import { join, normalize } from 'path'
 import { tmpdir } from 'os'
 import {
   MOVED_TREE_MAX_ENTRIES,
@@ -128,7 +128,7 @@ describe('protected mutation paths (#306 IW-03)', () => {
     ]) {
       const result = executeTool(root, call('rename_path', { path, to }))
       expect(result, path).toMatchObject({ ok: false, mutated: false })
-      expect(result.detail).toContain(`would move ${moved}`)
+      expect(result.detail).toContain(`would move ${normalize(moved)}`)
       expect(existsSync(join(root, path))).toBe(true)
       expect(existsSync(join(root, to))).toBe(false)
     }
