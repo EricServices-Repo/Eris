@@ -246,6 +246,29 @@ function thread(c: ParaphraseCase): ChatMessage[] {
   ]
 }
 
+/** One case's thread, oldest first. Exported so other recall paths run on the same rows. */
+export const paraphraseThread = (c: ParaphraseCase) => thread(c)
+
+/** Source IDs in the order the production lexical ranking recalls them; pins excluded. */
+export async function lexicalRanking(c: ParaphraseCase): Promise<string[]> {
+  const store = new ContextMemoryStore()
+  store.configure(ContextMemorySettingsSchema.parse({}))
+  const messages = thread(c)
+  store.install(
+    'gate',
+    {
+      revision: 1,
+      total: messages.length,
+      records: messages.map((message, ordinal) => ({ ordinal, message })),
+      controls: emptyMemoryControls(),
+      partial: false
+    },
+    store.token('gate')
+  )
+  const { inspection } = await store.select('gate', c.query)
+  return inspection.facts.filter((fact) => fact.kind !== 'pinned').map((fact) => fact.sourceId)
+}
+
 export type ParaphraseResult = {
   id: string
   category: ParaphraseCategory
@@ -257,24 +280,7 @@ export type ParaphraseResult = {
 export async function measureParaphraseRecall(cases = PARAPHRASE_CASES) {
   const results: ParaphraseResult[] = []
   for (const c of cases) {
-    const store = new ContextMemoryStore()
-    store.configure(ContextMemorySettingsSchema.parse({}))
-    const messages = thread(c)
-    store.install(
-      'gate',
-      {
-        revision: 1,
-        total: messages.length,
-        records: messages.map((message, ordinal) => ({ ordinal, message })),
-        controls: emptyMemoryControls(),
-        partial: false
-      },
-      store.token('gate')
-    )
-    const { inspection } = await store.select('gate', c.query)
-    const ranked = inspection.facts
-      .filter((fact) => fact.kind !== 'pinned')
-      .map((fact) => fact.sourceId)
+    const ranked = await lexicalRanking(c)
     const rankOf = (id: string) => (ranked.indexOf(id) >= 0 ? ranked.indexOf(id) + 1 : null)
     results.push({
       id: c.id,
