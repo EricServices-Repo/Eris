@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "issue": 233,
+  "recordedAt": "2026-11-02",
+  "source": "main 9afe507",
+  "command": "node scripts/measure-kv-reuse.mjs --model <gguf> --turns <24|48> --repeats 3 --out <file>",
+  "reports": [
+    {
+      "version": 1,
+      "evidence": "live-hardware",
+      "boundary": "node-llama-cpp context sequence directly; not the Eris turn loop",
+      "model": "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
+      "modelBytes": 986048800,
+      "runtime": {
+        "nodeLlamaCpp": "3.22.1",
+        "gpu": "metal"
+      },
+      "host": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "cpu": "Apple M4",
+        "totalMemoryBytes": 17179869184
+      },
+      "contextSize": 8192,
+      "gpuLayers": 29,
+      "historyTurns": 24,
+      "repeats": 3,
+      "scenarios": {
+        "fresh": {
+          "firstTokenMsMedian": 3732,
+          "firstTokenMs": [3619, 3732, 3943],
+          "evaluatedTokensMedian": 3268
+        },
+        "retained": {
+          "firstTokenMsMedian": 53,
+          "firstTokenMs": [54, 52, 53],
+          "evaluatedTokensMedian": 19
+        },
+        "parked": {
+          "firstTokenMsMedian": 61,
+          "firstTokenMs": [71, 61, 60],
+          "evaluatedTokensMedian": 19,
+          "includesLoad": true
+        }
+      },
+      "parking": {
+        "stateFileBytes": 93380144,
+        "saveMsMedian": 26,
+        "loadMsMedian": 9
+      }
+    },
+    {
+      "version": 1,
+      "evidence": "live-hardware",
+      "boundary": "node-llama-cpp context sequence directly; not the Eris turn loop",
+      "model": "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
+      "modelBytes": 986048800,
+      "runtime": {
+        "nodeLlamaCpp": "3.22.1",
+        "gpu": "metal"
+      },
+      "host": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "cpu": "Apple M4",
+        "totalMemoryBytes": 17179869184
+      },
+      "contextSize": 8192,
+      "gpuLayers": 29,
+      "historyTurns": 48,
+      "repeats": 3,
+      "scenarios": {
+        "fresh": {
+          "firstTokenMsMedian": 9005,
+          "firstTokenMs": [9005, 8981, 9599],
+          "evaluatedTokensMedian": 6580
+        },
+        "retained": {
+          "firstTokenMsMedian": 74,
+          "firstTokenMs": [65, 76, 74],
+          "evaluatedTokensMedian": 19
+        },
+        "parked": {
+          "firstTokenMsMedian": 87,
+          "firstTokenMs": [87, 86, 89],
+          "evaluatedTokensMedian": 19,
+          "includesLoad": true
+        }
+      },
+      "parking": {
+        "stateFileBytes": 188394800,
+        "saveMsMedian": 55,
+        "loadMsMedian": 17
+      }
+    },
+    {
+      "version": 1,
+      "evidence": "live-hardware",
+      "boundary": "node-llama-cpp context sequence directly; not the Eris turn loop",
+      "model": "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+      "modelBytes": 4683074336,
+      "runtime": {
+        "nodeLlamaCpp": "3.22.1",
+        "gpu": "metal"
+      },
+      "host": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "cpu": "Apple M4",
+        "totalMemoryBytes": 17179869184
+      },
+      "contextSize": 8192,
+      "gpuLayers": 29,
+      "historyTurns": 24,
+      "repeats": 3,
+      "scenarios": {
+        "fresh": {
+          "firstTokenMsMedian": 22414,
+          "firstTokenMs": [20747, 22414, 25038],
+          "evaluatedTokensMedian": 3268
+        },
+        "retained": {
+          "firstTokenMsMedian": 262,
+          "firstTokenMs": [295, 238, 262],
+          "evaluatedTokensMedian": 19
+        },
+        "parked": {
+          "firstTokenMsMedian": 304,
+          "firstTokenMs": [263, 311, 304],
+          "evaluatedTokensMedian": 19,
+          "includesLoad": true
+        }
+      },
+      "parking": {
+        "stateFileBytes": 186707504,
+        "saveMsMedian": 45,
+        "loadMsMedian": 55
+      }
+    },
+    {
+      "version": 1,
+      "evidence": "live-hardware",
+      "boundary": "node-llama-cpp context sequence directly; not the Eris turn loop",
+      "model": "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+      "modelBytes": 4683074336,
+      "runtime": {
+        "nodeLlamaCpp": "3.22.1",
+        "gpu": "metal"
+      },
+      "host": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "cpu": "Apple M4",
+        "totalMemoryBytes": 17179869184
+      },
+      "contextSize": 8192,
+      "gpuLayers": 29,
+      "historyTurns": 48,
+      "repeats": 3,
+      "scenarios": {
+        "fresh": {
+          "firstTokenMsMedian": 52912,
+          "firstTokenMs": [49752, 52912, 53910],
+          "evaluatedTokensMedian": 6580
+        },
+        "retained": {
+          "firstTokenMsMedian": 311,
+          "firstTokenMs": [311, 314, 277],
+          "evaluatedTokensMedian": 19
+        },
+        "parked": {
+          "firstTokenMsMedian": 401,
+          "firstTokenMs": [401, 401, 382],
+          "evaluatedTokensMedian": 19,
+          "includesLoad": true
+        }
+      },
+      "parking": {
+        "stateFileBytes": 376683824,
+        "saveMsMedian": 197,
+        "loadMsMedian": 113
+      }
+    }
+  ]
+}

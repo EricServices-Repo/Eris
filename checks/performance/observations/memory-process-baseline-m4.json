@@ -1,0 +1,400 @@
+{
+  "version": 1,
+  "issue": 228,
+  "recordedAt": "2026-11-02",
+  "source": "main 9afe507",
+  "commands": {
+    "electronMain": "electron --js-flags=--expose-gc scripts/measure-memory-baseline.cjs --main",
+    "electronAsNode": "ELECTRON_RUN_AS_NODE=1 electron --expose-gc scripts/measure-memory-baseline.cjs"
+  },
+  "electronMain": {
+    "version": 1,
+    "fullTierRecall": [
+      {
+        "envelopeMiB": 128,
+        "ownedMiB": 128,
+        "facts": 0,
+        "reason": "Optional recall scratch space was not admitted; using recent canonical history."
+      },
+      {
+        "envelopeMiB": 159,
+        "ownedMiB": 128,
+        "facts": 24,
+        "reason": null
+      }
+    ],
+    "evidence": "measured-process",
+    "boundary": "ContextMemoryStore in the measuring process; synthetic corpus; no UI or IPC load",
+    "heapSizeLimitMiB": 4192,
+    "runtime": {
+      "node": "24.22.0",
+      "electron": "44.9.3"
+    },
+    "processType": "browser",
+    "gcForcedBeforeSample": true,
+    "stopped": null,
+    "steps": [
+      {
+        "targetMiB": 128,
+        "threads": 1,
+        "ledgerOwnedMiB": 128,
+        "heapUsedMiB": 132,
+        "heapGrowthMiB": 111,
+        "rssMiB": 510,
+        "rssGrowthMiB": 352,
+        "heapPerLedgerByte": 0.87,
+        "rssPerLedgerByte": 2.75,
+        "heapLimitShare": 0.03,
+        "fillMs": 1628,
+        "fillGc": {
+          "count": 69,
+          "totalMs": 45,
+          "maxMs": 2
+        },
+        "selectMs": {
+          "p50": 0.58,
+          "p95": 5.11,
+          "max": 5.11
+        },
+        "selectsWithNoFacts": 0,
+        "meanRetainedRowsPerSelect": 16427,
+        "selectGc": {
+          "count": 1,
+          "totalMs": 1,
+          "maxMs": 1
+        },
+        "selectMaxBlockMs": {
+          "p50": 0.24,
+          "p95": 1.86,
+          "max": 1.86
+        },
+        "installMs": {
+          "p50": 1533.48,
+          "p95": 1533.48,
+          "max": 1533.48
+        }
+      },
+      {
+        "targetMiB": 256,
+        "threads": 2,
+        "ledgerOwnedMiB": 256,
+        "heapUsedMiB": 182,
+        "heapGrowthMiB": 161,
+        "rssMiB": 636,
+        "rssGrowthMiB": 477,
+        "heapPerLedgerByte": 0.63,
+        "rssPerLedgerByte": 1.86,
+        "heapLimitShare": 0.04,
+        "fillMs": 1615,
+        "fillGc": {
+          "count": 65,
+          "totalMs": 44,
+          "maxMs": 2
+        },
+        "selectMs": {
+          "p50": 0.61,
+          "p95": 4.48,
+          "max": 4.48
+        },
+        "selectsWithNoFacts": 0,
+        "meanRetainedRowsPerSelect": 16427,
+        "selectGc": {
+          "count": 1,
+          "totalMs": 1,
+          "maxMs": 1
+        },
+        "selectMaxBlockMs": {
+          "p50": 0.26,
+          "p95": 1.52,
+          "max": 1.52
+        },
+        "installMs": {
+          "p50": 1534.93,
+          "p95": 1534.93,
+          "max": 1534.93
+        }
+      },
+      {
+        "targetMiB": 512,
+        "threads": 4,
+        "ledgerOwnedMiB": 512,
+        "heapUsedMiB": 274,
+        "heapGrowthMiB": 254,
+        "rssMiB": 941,
+        "rssGrowthMiB": 783,
+        "heapPerLedgerByte": 0.5,
+        "rssPerLedgerByte": 1.53,
+        "heapLimitShare": 0.07,
+        "fillMs": 3155,
+        "fillGc": {
+          "count": 131,
+          "totalMs": 108,
+          "maxMs": 6
+        },
+        "selectMs": {
+          "p50": 0.85,
+          "p95": 3.45,
+          "max": 3.45
+        },
+        "selectsWithNoFacts": 0,
+        "meanRetainedRowsPerSelect": 16427,
+        "selectGc": {
+          "count": 1,
+          "totalMs": 1,
+          "maxMs": 1
+        },
+        "selectMaxBlockMs": {
+          "p50": 0.3,
+          "p95": 1.48,
+          "max": 1.48
+        },
+        "installMs": {
+          "p50": 1433.23,
+          "p95": 1557.93,
+          "max": 1557.93
+        }
+      },
+      {
+        "targetMiB": 1024,
+        "threads": 7,
+        "ledgerOwnedMiB": 896,
+        "heapUsedMiB": 422,
+        "heapGrowthMiB": 401,
+        "rssMiB": 1299,
+        "rssGrowthMiB": 1140,
+        "heapPerLedgerByte": 0.45,
+        "rssPerLedgerByte": 1.27,
+        "heapLimitShare": 0.1,
+        "fillMs": 4671,
+        "fillGc": {
+          "count": 197,
+          "totalMs": 166,
+          "maxMs": 3
+        },
+        "selectMs": {
+          "p50": 0.81,
+          "p95": 3.31,
+          "max": 3.31
+        },
+        "selectsWithNoFacts": 0,
+        "meanRetainedRowsPerSelect": 16427,
+        "selectGc": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "selectMaxBlockMs": {
+          "p50": 0.27,
+          "p95": 1.47,
+          "max": 1.47
+        },
+        "installMs": {
+          "p50": 1475.54,
+          "p95": 1524.05,
+          "max": 1524.05
+        }
+      }
+    ],
+    "host": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "cpu": "Apple M4",
+      "totalMemoryBytes": 17179869184
+    }
+  },
+  "electronAsNode": {
+    "version": 1,
+    "fullTierRecall": [
+      {
+        "envelopeMiB": 128,
+        "ownedMiB": 128,
+        "facts": 0,
+        "reason": "Optional recall scratch space was not admitted; using recent canonical history."
+      },
+      {
+        "envelopeMiB": 159,
+        "ownedMiB": 128,
+        "facts": 24,
+        "reason": null
+      }
+    ],
+    "evidence": "measured-process",
+    "boundary": "ContextMemoryStore in the measuring process; synthetic corpus; no UI or IPC load",
+    "heapSizeLimitMiB": 4192,
+    "runtime": {
+      "node": "24.22.0",
+      "electron": "44.9.3"
+    },
+    "processType": "node",
+    "gcForcedBeforeSample": true,
+    "stopped": null,
+    "steps": [
+      {
+        "targetMiB": 128,
+        "threads": 1,
+        "ledgerOwnedMiB": 128,
+        "heapUsedMiB": 131,
+        "heapGrowthMiB": 111,
+        "rssMiB": 465,
+        "rssGrowthMiB": 350,
+        "heapPerLedgerByte": 0.87,
+        "rssPerLedgerByte": 2.73,
+        "heapLimitShare": 0.03,
+        "fillMs": 1599,
+        "fillGc": {
+          "count": 69,
+          "totalMs": 46,
+          "maxMs": 3
+        },
+        "selectMs": {
+          "p50": 0.55,
+          "p95": 4.75,
+          "max": 4.75
+        },
+        "selectsWithNoFacts": 0,
+        "meanRetainedRowsPerSelect": 16427,
+        "selectGc": {
+          "count": 1,
+          "totalMs": 1,
+          "maxMs": 1
+        },
+        "selectMaxBlockMs": {
+          "p50": 0.27,
+          "p95": 1.8,
+          "max": 1.8
+        },
+        "installMs": {
+          "p50": 1517.21,
+          "p95": 1517.21,
+          "max": 1517.21
+        }
+      },
+      {
+        "targetMiB": 256,
+        "threads": 2,
+        "ledgerOwnedMiB": 256,
+        "heapUsedMiB": 181,
+        "heapGrowthMiB": 161,
+        "rssMiB": 591,
+        "rssGrowthMiB": 475,
+        "heapPerLedgerByte": 0.63,
+        "rssPerLedgerByte": 1.86,
+        "heapLimitShare": 0.04,
+        "fillMs": 1606,
+        "fillGc": {
+          "count": 65,
+          "totalMs": 45,
+          "maxMs": 2
+        },
+        "selectMs": {
+          "p50": 0.61,
+          "p95": 4.27,
+          "max": 4.27
+        },
+        "selectsWithNoFacts": 0,
+        "meanRetainedRowsPerSelect": 16427,
+        "selectGc": {
+          "count": 1,
+          "totalMs": 1,
+          "maxMs": 1
+        },
+        "selectMaxBlockMs": {
+          "p50": 0.23,
+          "p95": 1.41,
+          "max": 1.41
+        },
+        "installMs": {
+          "p50": 1527.74,
+          "p95": 1527.74,
+          "max": 1527.74
+        }
+      },
+      {
+        "targetMiB": 512,
+        "threads": 4,
+        "ledgerOwnedMiB": 512,
+        "heapUsedMiB": 274,
+        "heapGrowthMiB": 254,
+        "rssMiB": 897,
+        "rssGrowthMiB": 782,
+        "heapPerLedgerByte": 0.5,
+        "rssPerLedgerByte": 1.53,
+        "heapLimitShare": 0.07,
+        "fillMs": 3098,
+        "fillGc": {
+          "count": 131,
+          "totalMs": 97,
+          "maxMs": 2
+        },
+        "selectMs": {
+          "p50": 0.57,
+          "p95": 3.59,
+          "max": 3.59
+        },
+        "selectsWithNoFacts": 0,
+        "meanRetainedRowsPerSelect": 16427,
+        "selectGc": {
+          "count": 1,
+          "totalMs": 1,
+          "maxMs": 1
+        },
+        "selectMaxBlockMs": {
+          "p50": 0.2,
+          "p95": 1.31,
+          "max": 1.31
+        },
+        "installMs": {
+          "p50": 1423.76,
+          "p95": 1514.53,
+          "max": 1514.53
+        }
+      },
+      {
+        "targetMiB": 1024,
+        "threads": 7,
+        "ledgerOwnedMiB": 896,
+        "heapUsedMiB": 421,
+        "heapGrowthMiB": 401,
+        "rssMiB": 1129,
+        "rssGrowthMiB": 1014,
+        "heapPerLedgerByte": 0.45,
+        "rssPerLedgerByte": 1.13,
+        "heapLimitShare": 0.1,
+        "fillMs": 8100,
+        "fillGc": {
+          "count": 197,
+          "totalMs": 346,
+          "maxMs": 11
+        },
+        "selectMs": {
+          "p50": 3.52,
+          "p95": 8.1,
+          "max": 8.1
+        },
+        "selectsWithNoFacts": 0,
+        "meanRetainedRowsPerSelect": 16427,
+        "selectGc": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "selectMaxBlockMs": {
+          "p50": 0.73,
+          "p95": 2.15,
+          "max": 2.15
+        },
+        "installMs": {
+          "p50": 2698.55,
+          "p95": 3458.33,
+          "max": 3458.33
+        }
+      }
+    ],
+    "host": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "cpu": "Apple M4",
+      "totalMemoryBytes": 17179869184
+    }
+  }
+}
