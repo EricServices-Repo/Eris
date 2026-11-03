@@ -86,7 +86,8 @@ import {
   finishChatJob,
   getLatestChatJob,
   admitChatJob,
-  markChatJobRunning
+  markChatJobRunning,
+  isChatJobTerminal
 } from '../services/chat-job-controller'
 
 /** Routing and task intake read this much recent history, whatever the window. */
@@ -1304,7 +1305,10 @@ export function registerChatStreamIpc(): void {
       return await foregroundTasks.run(payload.requestId, event.sender, run)
     } catch (error) {
       const stopped = error instanceof Error && error.name === 'AbortError'
+      // A task that already ended keeps its outcome; this one is recorded as late only.
+      const ended = isChatJobTerminal(payload.requestId)
       finishChatJob(payload.requestId, stopped ? 'stopped' : 'failed')
+      if (ended) return false
       event.sender.send(stopped ? 'chat:done' : 'chat:error', {
         requestId: payload.requestId,
         ...(stopped

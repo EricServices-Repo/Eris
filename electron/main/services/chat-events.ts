@@ -8,7 +8,9 @@ export interface ChatEventTarget {
 /** One owner for foreground event persistence, publication and terminal transitions. */
 export function chatPublisher(requestId: string, target: () => ChatEventTarget) {
   return (channel: string, data: Record<string, unknown>): void => {
-    recordChatJobEvent(requestId, channel, data)
+    // After the task ended, a second outcome or straggling chunk is recorded as late and
+    // goes no further: the renderer must not show an error for a task that completed.
+    if (!recordChatJobEvent(requestId, channel, data)) return
     if (['chat:task', 'chat:evidence', 'chat:outcome', 'chat:phase'].includes(channel))
       appendTaskEvent(requestId, channel, data)
     const sender = target()

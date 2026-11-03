@@ -215,13 +215,22 @@ export function markChatJobRunning(id: string): void {
     persistLater(job)
   }
 }
+/** True once the job reached a terminal status; unknown jobs are not terminal. */
+export function isChatJobTerminal(id: string): boolean {
+  const job = jobs.get(id)
+  return Boolean(job && !active(job))
+}
+/**
+ * Records one observation. Returns false for a late event on a terminal job: it was
+ * recorded as late (or dropped) and must not reach the renderer either.
+ */
 export function recordChatJobEvent(
   id: string,
   channel: string,
   payload: Record<string, unknown>
-): void {
+): boolean {
   const job = jobs.get(id)
-  if (!job) return
+  if (!job) return true
   if (!active(job)) {
     // Observations after the end (a straggling chunk, status or a second outcome)
     // must not rewrite the recorded answer, model or status line.
@@ -230,7 +239,7 @@ export function recordChatJobEvent(
       late(job, channel, {})
       schedulePersist(job)
     }
-    return
+    return false
   }
   job.updatedAt = new Date().toISOString()
   if (channel === 'chat:phase' && isTaskPhaseEvent(payload))
@@ -269,6 +278,7 @@ export function recordChatJobEvent(
     if (job.events.length > MAX_EVENTS) job.events.splice(0, job.events.length - MAX_EVENTS)
   }
   schedulePersist(job)
+  return true
 }
 export function finishChatJob(id: string, status: ChatJobStatus): void {
   const job = jobs.get(id)

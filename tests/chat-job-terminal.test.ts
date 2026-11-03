@@ -5,9 +5,21 @@ import {
   finishChatJob,
   flushChatJobs,
   getChatJob,
+  isChatJobTerminal,
   markChatJobRunning,
   recordChatJobEvent
 } from '../electron/main/services/chat-job-controller'
+import { chatPublisher } from '../electron/main/services/chat-events'
+
+/** What the renderer would receive. */
+function renderer() {
+  const sent: Array<[string, Record<string, unknown>]> = []
+  const target = {
+    isDestroyed: () => false,
+    send: (channel: string, data: Record<string, unknown>) => void sent.push([channel, data])
+  }
+  return { sent, target: () => target as never }
+}
 
 /** #303 EX-02: a terminal task is final; late events are evidence, never a new state. */
 async function admitted() {
@@ -100,6 +112,35 @@ describe('terminal chat jobs stay terminal (#303)', () => {
     finishChatJob(id, 'incomplete')
     expect(getChatJob(id)).toMatchObject({ status: 'incomplete' })
     expect(getChatJob(id)!.lateEvents).toBeUndefined()
+    await flushChatJobs()
+  })
+
+  it('does not send the renderer an error, chunk or second outcome after the task ended', async () => {
+    const id = await admitted()
+    const { sent, target } = renderer()
+    const publish = chatPublisher(id, target)
+    publish('chat:answer', { requestId: id, chunk: 'Done.' })
+    publish('chat:done', { requestId: id })
+    expect(isChatJobTerminal(id)).toBe(true)
+    // The outer chat:stream catch after chat:done, then stragglers.
+    publish('chat:error', { requestId: id, error: 'late failure' })
+    publish('chat:answer', { requestId: id, chunk: ' more' })
+    publish('chat:done', { requestId: id, aborted: true })
+    expect(sent.map(([channel]) => channel)).toEqual(['chat:answer', 'chat:done'])
+    expect(getChatJob(id)).toMatchObject({ status: 'done', answer: 'Done.', lateEvents: 3 })
+    await flushChatJobs()
+  })
+
+  it('still forwards every event while the task runs, and for unknown tasks', async () => {
+    const id = await admitted()
+    const { sent, target } = renderer()
+    chatPublisher(id, target)('chat:error', { requestId: id, error: 'real failure' })
+    expect(sent.map(([channel]) => channel)).toEqual(['chat:error'])
+    expect(getChatJob(id)).toMatchObject({ status: 'failed' })
+    const unknown = renderer()
+    chatPublisher('not-admitted', unknown.target)('chat:status', { text: 'x' })
+    expect(unknown.sent).toHaveLength(1)
+    expect(isChatJobTerminal('not-admitted')).toBe(false)
     await flushChatJobs()
   })
 })
