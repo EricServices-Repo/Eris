@@ -44,6 +44,19 @@ only because the right line was still within the top five. Queries that differ b
 single digit ("test 3", "error 5") behave the same way. Scoring was not changed
 here.
 
+**Fixed (follow-up).** `searchTerms` now adds two kinds of term, ahead of the plain
+words so the 16-term cap never drops them:
+
+- a separated token with a one-character part (`planted-fact-0`, `v1.2`, `error-5`)
+- a lone digit joined to each neighbour (`test 3`, `3 failed`)
+
+The entry that carries the exact identifier then outscores its siblings by one match.
+The gate now fails unless every planted fact is the **first** hit for its own search.
+`npm run check:context` reports ranks 1, 1, 1 at 1, 3 and 10 compactions.
+`tests/journal-search-terms.test.ts` covers the terms and the ranking. The durable
+journal search (`context-journal-store.ts`) uses its own postings index of recall
+terms and is not changed; matching identifiers there would need a reindex.
+
 ## Limits
 
 - **Recoverability still reads by ref directly.** `measureRecoverability` calls

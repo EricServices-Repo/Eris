@@ -244,6 +244,12 @@ export function evaluateTieredGates(tiered: TieredReport | undefined, limits?: T
     if (row.leftInPrompt) failures.push(`${row.rounds} compactions left a planted fact in prompt`)
     if (row.recovered / row.planted < limits.minPostCompactionRecall)
       failures.push(`Recall after ${row.rounds} compactions: ${row.recovered}/${row.planted}`)
+    // A search for a fact's exact identifier must return that fact first, not a sibling.
+    const buried = row.searchRanks.filter((rank) => rank !== 1).length
+    if (buried)
+      failures.push(
+        `${buried}/${row.planted} facts were not the first search hit after ${row.rounds} compactions`
+      )
   }
   if (storeStability.wipes / storeStability.turns > limits.maxStoreWipesPerTurn)
     failures.push(`Store wiped on ${storeStability.wipes}/${storeStability.turns} healthy turns`)

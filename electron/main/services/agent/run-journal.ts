@@ -117,15 +117,38 @@ const YIELD_BYTES = 4 * JOURNAL_CHUNK_BYTES
 
 export type JournalHit = { entry: JournalEntry; score: number; snippet: string }
 
-export const searchTerms = (query: string) =>
-  [
-    ...new Set(
-      query
-        .toLowerCase()
-        .split(/[^\p{L}\p{N}_]+/u)
-        .filter((term) => term.length >= 2)
-    )
-  ].slice(0, 16)
+const MAX_SEARCH_TERMS = 16
+const word = /[^\p{L}\p{N}_]+/u
+const edges = /^[^\p{L}\p{N}_]+|[^\p{L}\p{N}_]+$/gu
+
+/**
+ * Words of two or more characters, plus the identifiers a one-character part would
+ * otherwise be lost from. `PLANTED-FACT-0` also searches for `planted-fact-0`, and
+ * `test 3` for the phrase `test 3`, so the entry that carries the exact identifier outranks its
+ * siblings instead of tying with them on the shared words.
+ */
+export const searchTerms = (query: string) => {
+  const lower = query.toLowerCase()
+  const words = lower.split(word).filter((term) => term.length >= 2)
+  const tokens = lower
+    .split(/\s+/)
+    .map((token) => token.replace(edges, ''))
+    .filter(Boolean)
+  const short = (token: string) => token.split(word).some((part) => part.length === 1)
+  // A token with separators whose parts include a one-character one: v1.2, error-5, fact-0.
+  const compounds = tokens.filter((token) => word.test(token) && short(token))
+  // A one-digit token joined to each neighbour: "test 3", "step 2 of".
+  const phrases = tokens.flatMap((token, i) =>
+    /^\p{N}$/u.test(token)
+      ? [
+          ...(tokens[i - 1] ? [`${tokens[i - 1]} ${token}`] : []),
+          ...(tokens[i + 1] ? [`${token} ${tokens[i + 1]}`] : [])
+        ]
+      : []
+  )
+  // Exact identifiers first, so the 16-term cap never drops them for common words.
+  return [...new Set([...compounds, ...phrases, ...words])].slice(0, MAX_SEARCH_TERMS)
+}
 
 function occurrences(text: string, term: string) {
   let hits = 0
