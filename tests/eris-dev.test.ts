@@ -631,6 +631,37 @@ describe('Eris-Dev corpus row errors (#307 EV-03)', () => {
     )
   })
 
+  it('lists every repeated explicit ID with the row that first used it, beside other errors', () => {
+    const corpus = [
+      '{"question":"One?","id":"a"}',
+      '{"question":"Two?","id":"b"}',
+      '{"question":"Three?","id":"a"}',
+      '{"question":""}',
+      '{"question":"Five?","id":"b"}',
+      '{"question":"Six?","id":"a"}'
+    ].join('\n')
+    const message = failure(() => prepareQuestions(corpus, '.jsonl'))
+    expect(message).toMatch(/^4 of 6 question record\(s\) are invalid/)
+    const listed = message.split('\n').filter((line) => line.startsWith('  Line'))
+    expect(listed).toEqual([
+      '  Line 3: Question ID “a” was already used by line 1.',
+      expect.stringMatching(/^ {2}Line 4: Question 4 must be nonempty text/),
+      '  Line 5: Question ID “b” was already used by line 2.',
+      '  Line 6: Question ID “a” was already used by line 1.'
+    ])
+    expect(
+      failure(() =>
+        prepareQuestions(
+          JSON.stringify([
+            { id: 'x', text: 'p' },
+            { id: 'x', text: 'q' }
+          ]),
+          '.json'
+        )
+      )
+    ).toMatch(/Item 2: Question ID “x” was already used by item 1\./)
+  })
+
   it('reports an invalid memory case with its row and field, not a raw schema dump', () => {
     const message = failure(() =>
       prepareQuestions('{"question":"Recall?","memory":{"expectedSourceIds":"m1"}}', '.jsonl')

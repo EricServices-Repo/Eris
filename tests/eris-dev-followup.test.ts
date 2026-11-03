@@ -372,7 +372,7 @@ describe('FR-019/023 comparison identity', () => {
     )
     expect(() =>
       prepareQuestions('{"id":"x","question":"A?"}\n{"id":"x","question":"B?"}', '.jsonl')
-    ).toThrow(/appears more than once/)
+    ).toThrow(/Question ID “[^”]+” was already used by (line|item) 1\./)
   })
 })
 
