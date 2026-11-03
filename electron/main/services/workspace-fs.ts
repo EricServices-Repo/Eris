@@ -5,6 +5,8 @@ import {
   journalMutation,
   prepareMutationPlan,
   protectedMutationReason,
+  movedTreeReason,
+  MutationConflict,
   type MutationPlan
 } from './file-mutations'
 import {
@@ -393,6 +395,8 @@ export function renameWorkspacePath(
   const toAbs = resolveInWorkspace(workspacePath, toPath)
   if (!existsSync(fromAbs)) throw new WorkspaceFsError(`Not found: ${fromPath}`)
   if (existsSync(toAbs)) throw new WorkspaceFsError(`Destination already exists: ${toPath}`)
+  const carried = movedTreeReason(workspacePath, fromPath)
+  if (carried) throw new MutationConflict(`Refusing to rename ${fromPath}: ${carried}`)
   journalMutation(workspacePath, [fromPath, toPath], 'rename', plan, undefined, (check, mark) => {
     mkdirSync(dirname(toAbs), { recursive: true })
     check()

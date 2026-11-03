@@ -6,11 +6,16 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { protectedMutationReason } from '../electron/main/services/file-mutations'
+import {
+  MOVED_TREE_MAX_ENTRIES,
+  movedTreeReason,
+  protectedMutationReason
+} from '../electron/main/services/file-mutations'
 import { executeTool } from '../electron/main/services/agent/execute-tool'
 import { TaskToolGateway } from '../electron/main/services/agent/tool-gateway'
 import { createTaskContract } from '../electron/main/services/task-intake'
@@ -106,6 +111,48 @@ describe('protected mutation paths (#306 IW-03)', () => {
     expect(existsSync(join(root, '.git', 'hooks', 'pre-commit'))).toBe(false)
     expect(existsSync(join(root, '.git', 'hooks', 'extra'))).toBe(false)
     expect(existsSync(join(root, 'app.ts'))).toBe(true)
+  })
+
+  it('does not rename a folder that carries a nested repository or Eris state', () => {
+    const root = fixture()
+    // A submodule's .git is a file; a nested clone's is a folder; both are deep here.
+    mkdirSync(join(root, 'vendor', 'lib'), { recursive: true })
+    writeFileSync(join(root, 'vendor', 'lib', '.git'), 'gitdir: ../../.git/modules/lib\n')
+    mkdirSync(join(root, 'packages', 'api', 'clone', '.git'), { recursive: true })
+    mkdirSync(join(root, 'site', '.eris', 'checkpoints'), { recursive: true })
+    writeFileSync(join(root, 'site', '.eris', 'checkpoints', 'c1.json'), '{}\n')
+    for (const [path, to, moved] of [
+      ['vendor', 'third_party', 'vendor/lib/.git'],
+      ['packages', 'pkgs', 'packages/api/clone/.git'],
+      ['site', 'web', 'site/.eris/checkpoints']
+    ]) {
+      const result = executeTool(root, call('rename_path', { path, to }))
+      expect(result, path).toMatchObject({ ok: false, mutated: false })
+      expect(result.detail).toContain(`would move ${moved}`)
+      expect(existsSync(join(root, path))).toBe(true)
+      expect(existsSync(join(root, to))).toBe(false)
+    }
+  })
+
+  it('still renames ordinary folders and files, and does not follow links', () => {
+    const root = fixture()
+    mkdirSync(join(root, 'src', 'lib'), { recursive: true })
+    writeFileSync(join(root, 'src', 'lib', 'a.ts'), 'export {}\n')
+    // A link to the repository moves as a link; it carries no metadata with it.
+    symlinkSync(join(root, '.git'), join(root, 'src', 'git-link'))
+    expect(executeTool(root, call('rename_path', { path: 'src', to: 'source' })).ok).toBe(true)
+    expect(existsSync(join(root, 'source', 'lib', 'a.ts'))).toBe(true)
+    expect(executeTool(root, call('rename_path', { path: 'app.ts', to: 'main.ts' })).ok).toBe(true)
+    expect(readFileSync(join(root, '.git', 'config'), 'utf8')).toBe('[core]\n')
+  })
+
+  it('refuses a folder too large to check rather than assuming it is clean', () => {
+    const root = fixture()
+    mkdirSync(join(root, 'big'))
+    for (let i = 0; i < 12; i++) writeFileSync(join(root, 'big', `f${i}`), '')
+    expect(movedTreeReason(root, 'big', 10)).toMatch(/more than 10 entries, too many to check/)
+    expect(movedTreeReason(root, 'big')).toBeNull()
+    expect(MOVED_TREE_MAX_ENTRIES).toBe(50_000)
   })
 
   it('stops a tool from rewriting workspace settings that widen authority', () => {
