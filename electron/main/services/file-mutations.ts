@@ -118,6 +118,44 @@ export function protectedMutationReason(rel: string): string | null {
       return 'Eris workspace state is not a project file'
   return null
 }
+/** Entries a directory move may check before it is refused as unverifiable. */
+export const MOVED_TREE_MAX_ENTRIES = 50_000
+/**
+ * Why moving the directory at `path` would carry protected data with it, or null.
+ * A nested repository or submodule holds a `.git` entry, and a project folder may hold
+ * Eris state; renaming the folder moves them as surely as naming them would. The walk
+ * does not follow symbolic links, which a rename moves as links, and it is bounded:
+ * a tree too large to check is refused rather than assumed clean.
+ */
+export function movedTreeReason(
+  root: string,
+  path: string,
+  maxEntries = MOVED_TREE_MAX_ENTRIES
+): string | null {
+  const canonical = realpathSync(root)
+  const start = resolve(canonical, path)
+  let stat
+  try {
+    stat = lstatSync(start)
+  } catch {
+    return null // Missing source: the caller reports it.
+  }
+  if (!stat.isDirectory()) return null
+  const pending = [start]
+  let seen = 0
+  while (pending.length) {
+    const dir = pending.pop()!
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (++seen > maxEntries)
+        return `the folder has more than ${maxEntries.toLocaleString()} entries, too many to check for Git metadata or Eris state`
+      const abs = join(dir, entry.name)
+      const reason = protectedMutationReason(relative(canonical, abs))
+      if (reason) return `${reason}, and moving the folder would move ${relative(canonical, abs)}`
+      if (entry.isDirectory()) pending.push(abs)
+    }
+  }
+  return null
+}
 /** Refuse a tool mutation of Git metadata or Eris state, whatever spelling reaches it. */
 function assertMutablePath(canonical: string, path: string): void {
   const reason = protectedMutationReason(relative(canonical, resolve(canonical, path)))
