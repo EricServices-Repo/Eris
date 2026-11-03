@@ -1,10 +1,12 @@
 # Image generation in Eris
 
+Reviewed against integrated `main` `0a54629` on 2026-11-01. Package version: **0.6.10**; published tag `v0.6.10` is the older immutable `f14e409` source. Later source changes require another build.
+
 Eris uses a dedicated image service rather than passing generation requests to its text chat runtime.
 
 ## Using it
 
-1. Open Settings → Providers → Image generation and choose **Local Hugging Face model**.
+1. Open Settings → Models → Image Models and choose **Local Hugging Face model**.
 2. Download SD-Turbo for a lightweight default, SDXL-Turbo for a larger model, or enter a compatible Hugging Face Diffusers repository URL. Download automatically sets up the private runtime and enables local generation. Review the model card for its download/access terms.
 3. Setup needs Python 3.10–3.12 installed. It creates `Eris/image-runtime/venv` and installs PyTorch, torchvision, Diffusers, Transformers, Accelerate, and safetensors. On Windows/Linux with `nvidia-smi`, setup installs a CUDA 12.8 PyTorch build; macOS uses its native PyTorch build.
 4. Send `/image a calm blue mountain illustration` in chat. This explicit command works without a downloaded coding model. Attachments and active skills are rejected because this version accepts text prompts only.
@@ -13,7 +15,7 @@ Eris uses a dedicated image service rather than passing generation requests to i
 
 The newest complete local image download is automatically active. Removing it selects the next available complete download. Downloads are explicit settings operations; a tool call never starts a model download or silently falls back to a cloud provider. Optional gated model tokens are saved through Eris secrets under `huggingface.imageToken`.
 
-For an API backend, add a connection in Providers, choose **Image API**, enter its image model ID, enable generation, and save. Its saved API key is reused.
+For an API backend, configure a model-server connection, choose **Image API**, enter its image model ID, enable generation, and save. Its saved API key is reused.
 
 The cloud inline worker does not expose the desktop image service. Explicit artwork requests use the desktop agent loop so it can call the configured provider. Direct `/image` requests always use the dedicated service.
 
@@ -75,3 +77,13 @@ Inference sets `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `local_files_only=T
 Sources: [Diffusers loading](https://huggingface.co/docs/diffusers/using-diffusers/loading), [Hugging Face downloads](https://huggingface.co/docs/huggingface_hub/guides/download), [SD-Turbo model card](https://huggingface.co/stabilityai/sd-turbo), [PyTorch installation](https://pytorch.org/get-started/locally/).
 
 Local tests use a real subprocess protocol simulator and execute the real Python worker with simulated ML dependencies. They cover automatic selection, keeping models out of the chat catalog, cancellation, cleanup, no cloud fallback, download selection/integrity, and offline generation parameters. They do not benchmark an actual GPU or download production weights.
+
+## Resource and Metal safeguards
+
+Local generation uses the shared inference governor and its exclusive GPU/device lease. When the image lease owns the device, the idle text runtime can be released before memory is measured again. The service selects a complete installed image model that passes preflight; a safer installed fallback is reported, and no fitting candidate yields an explicit refusal rather than an unrequested cloud generation/download.
+
+For CPU/MPS shared-memory devices, current conservative preflight requires at least 24 GiB total / 6 GiB free for SDXL, or 12 GiB total / 3 GiB free for the other supported pipeline. Estimated working set is weights × 1.55 (SDXL) or × 1.25 plus 2 GiB, and cannot exceed 68% of total memory. These are code thresholds, not quality or hardware benchmark results.
+
+The subprocess sets MPS high/low watermark ratios 0.75/0.60 and a 0.60 per-process memory fraction where supported, and repeats device/host checks before loading. Cancellation, worker exit and timeout retain explicit failure semantics and cleanup. The default inference timeout is 15 minutes; setup/download stages have their own bounds. This protects an M4 desktop from obvious unsafe SDXL loads without promising that every accepted native workload cannot stall or exceed physical memory.
+
+Read [local-image-model.ts](../electron/main/services/local-image-model.ts), [Python worker](../resources/image-generation/worker.py), [admission design](changes/REC-32-inference-admission.md) and [runtime repair](changes/REC-33-image-runtime-repair.md). Live CUDA/MPS/model quality and packaged setup remain separate acceptance from protocol simulators.

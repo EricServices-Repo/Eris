@@ -1,181 +1,101 @@
-# Detailed conversation memory
+# Conversation memory, evidence and context
 
-For the detailed **target** design, implementation work packages and acceptance gates, see [RAM-CONTEXT-ARCHITECTURE.md](RAM-CONTEXT-ARCHITECTURE.md). That specification distinguishes proposed changes from the implemented behavior below. [Amendment 001](RAM-CONTEXT-AMENDMENT-001.md) sets the tiered VRAM and RAM target.
+Reviewed against integrated `main` `0a54629` on 2026-11-01. Package version: **0.6.10**. The published `v0.6.10` tag is `f14e409`; the five subsequent handoff/RAM fixes in this source baseline require a later build to appear in an installed app.
 
-## Implemented and target behavior
+This guide describes implemented behavior. The [RAM architecture](RAM-CONTEXT-ARCHITECTURE.md) and [tier amendment](RAM-CONTEXT-AMENDMENT-001.md) contain additional targets; their names and sizing examples are not all implemented APIs.
 
-Everything in this document describes implemented behavior, except this section.
+## What each tier means
 
-| Area | Implemented | Target (Amendment 001) |
-| --- | --- | --- |
-| Run-local compaction | Separate from RAM memory. It overwrites or summarizes tool output, so the content is lost | Evicts to a recoverable handle; summaries are optional |
-| Tool output | Only in the run's message array | Journaled in RAM before entering the prompt |
-| Recall direction | Pushed once per submission | Pushed, and pulled by the model on request |
-| KV | No cross-turn reuse | Reused once the prompt prefix is stable |
+- SQLite holds canonical conversation sources, source/control revisions, pins/exclusions and structured task outcomes.
+- The main-process RAM store retains bounded detailed history, a lexical index and derived selection state to accelerate recall.
+- The run journal holds bounded recoverable tool output for an active run. It is not yet durable after that run ends.
+- A compiled prompt contains only admitted recent history, selected evidence and task/instruction blocks that fit the destination.
+- Native KV represents the currently seeded model session. It is reseedable runtime state, not a durable or automatically shared conversation database.
 
-The target does not enlarge a model's context window. RAM makes content recoverable, not simultaneously visible. On unified memory, RAM-tier bytes reduce what the model can use.
+RAM makes evidence retrievable; it does not enlarge the context window. Unified-memory Macs share physical capacity between app state, model weights, KV and other workloads.
 
-## Implemented behavior
+## Canonical send and persistence
 
-Eris now keeps a large, detailed, bounded copy of saved conversation history in the Electron main process. A new chat message can retrieve relevant older evidence even when the renderer has loaded only the newest page. The model receives a small selection, rather than the entire RAM history.
+Normal thread-bound renderer submissions carry no authoritative history. Main validates ownership, admits the task and persists `${requestId}:user`; optimistic retries use the same ID. Canonical recent messages feed intake. After task/project scope resolves, `conversationContext` selects separate historical evidence, excluding the active source and complete sources already represented by admitted recent history.
 
-This is an implementation of the RAM context design. It does not increase a model's context window or replace its inference/KV cache. It does not perform model inference to summarize history.
+Main records/leases the selection, then passes `conversationMemory` explicitly to both answer-only and tool-worker compilation. The final visible assistant answer, assets, delegations and structured task outcome are saved before terminal delivery, including replacement events. A failed canonical write is an error, not cache-only success.
 
-The durable source remains the existing per-workspace or user-profile SQLite transcript. Pins and recall exclusions are stored beside that transcript. Restarting or evicting the RAM copy does not delete history.
+A warm append updates the resident store incrementally. Rewind, replacement, deletion, settings disable and invalidation fence pending loads. Stable `contextSequence` source identities prevent a rewind from reusing an old cutoff identity; headers carry revision/count/epoch/controls information.
 
-## Ownership and data flow
+Sources: [chat IPC](../electron/main/ipc/chat-stream.ts), [chat facade](../electron/main/services/chats.ts), [database](../electron/main/services/chat-database.ts), [context facade](../electron/main/services/context-memory.ts).
 
-1. The renderer sends the current request, thread ID, attachments and preferences. Its `prompt.history` is empty for normal thread-bound submissions.
-2. Main validates that the thread belongs to the pinned workspace and admits the request using the existing job controller.
-3. Main appends the user message with `${requestId}:user`. The renderer's optimistic append uses the same ID, so concurrent saves are idempotent.
-4. The append returns a recent canonical tail. Main uses up to 20 previous messages for existing routing, intent resolution, task construction and ordinary prompt compaction. Loading more UI pages cannot enlarge the submission.
-5. A separate context worker lane pages detailed history from SQLite. The main-owned store retains complete message text within configured logical limits. It strips reasoning traces and image payloads.
-6. After task scope resolves, main selects historical evidence for the current question and filters task receipts recorded for another project root.
-7. The agent runner passes the selection to the shared prompt compiler. Both answer-only and tool-worker paths can include it as an optional evidence block. Current task and Eris instructions are compiled first.
-8. Streamed visible output, image references, thinking traces and specialist delegations are accumulated in main, including replacement events. Main and renderer share the same final reply formatter. Main saves `${requestId}:assistant` before publishing terminal success, incomplete or stopped state. The renderer's terminal save uses the same ID and does not duplicate it.
-9. Saved appends update a warm RAM entry. Conversation rewrites, rewinds and deletion invalidate the entry and fence in-flight hydration.
+## Ownership and namespace
 
-A storage failure after generation publishes a chat error rather than falsely reporting a successfully saved turn. Initial user-message storage failure prevents model execution.
+`memoryKey` binds the application user-data profile, canonical workspace identity/ID and thread. Another workspace cannot obtain its history merely by reusing a thread ID. A child worktree is a different execution identity; `sourceThreadId` alone does not map back to the original conversation namespace.
 
-## Source files
+Raw RAM history remains in `context-memory-store.ts` in main. The existing dedicated worker lane pages/searches canonical data; it is not a dedicated off-heap multi-GiB memory process. Request policy is separate from process resource configuration. Main owns task authority and disclosure decisions.
 
-- `electron/main/services/context-memory-store.ts`: bounded cache, lifecycle, deterministic selection and selection manifest.
-- `electron/main/services/context-memory.ts`: canonical profile/workspace/thread keys, worker hydration, durable controls and mutation integration.
-- `src/shared/context-memory.ts`: settings, manifests, inspection types and validated controls.
-- `electron/main/services/chat-database.ts`: monotonic context revision, bounded history pages and durable control records.
-- `electron/main/services/workspace-worker-client.ts`: dedicated `context` lane, separate from chat writes and repository indexing.
-- `electron/main/ipc/chat-stream.ts`: canonical admission history, memory selection and durable terminal reply ordering.
-- `electron/main/services/agent/context-compiler.ts`: optional `memory` evidence block within the model's existing input budget.
-- `electron/main/services/agent/prompts.ts` and `agent/loop.ts`: model-specific inclusion at worker compilation, recompilation and answer-only turns.
-- `src/features/chat/ContextMemoryInspector.tsx`: recall preview, explicit pins, exclusions and RAM reload.
+## Current settings and per-turn allocation
 
-## Default capacity
+The [schema](../src/shared/context-memory.ts) defaults to:
 
-The `agent.contextMemory` settings are schema validated and available under Settings → Agent:
+- enabled; 128 MiB process ceiling (16–512 MiB configurable);
+- 32 MiB/thread (4–128 MiB), bounded by effective process allowance;
+- 25,000 retained messages/thread (500–100,000);
+- eight warm threads (1–16), 30-minute idle expiry (1–120 minutes);
+- 150 ms foreground deadline (25–2,000 ms);
+- 8,192-token maximum recall setting (128–8,192);
+- remote recall sharing disabled.
 
-- `enabled`: true.
-- `maxMemoryMiB`: 128, configurable from 16 through 512.
-- `maxThreadMiB`: 32, configurable from 4 through 128; the effective thread cap is no larger than the global cap.
-- `maxMessages`: 25,000 per conversation, configurable from 500 through 100,000.
-- `warmThreads`: 8, configurable from 1 through 16.
-- `idleMinutes`: 30, configurable from 1 through 120.
-- `promptTokens`: 1,024 estimated tokens, configurable from 128 through 4,096.
-- `shareWithRemoteModels`: false.
+These are schema defaults, not proof of a user's saved values. The recall setting is a ceiling, not the amount inserted into every request. `allocateContext` starts recall at 15% of the model input budget, with reachable floor 128 and cap 8,192. Agent history starts at 10% (500 floor, 16,000 cap); tool-free chat history at 37.5% (1,000 floor, 48,000 cap). Floors cannot consume more than 25% of a very small input budget. Remaining capacity belongs to task/instructions/tools and current evidence. Packing and final adaptation can omit optional evidence further.
 
-The RAM budgets use conservative logical accounting: four times the UTF-8 serialized message/control size plus fixed per-record overhead. They are **not hard RSS ceilings**. V8 representation, snapshots held by active selections, SQLite connections, bounded worker transfers and concurrent hydration add temporary overhead. Two hydration jobs can run concurrently; excess attempts fall back to canonical recent history and can retry later.
+The compiler's system-context share is 55%; historical evidence is bounded behind fresh source evidence. Required task/instruction blocks cannot be silently cut. Native tokenization is used when available, with bounded work and explicit fallback; many transfer/RAM/token values remain estimates.
 
-Reducing settings trims already warm entries. Oldest retained messages leave RAM first when a thread exceeds its limit. Least recently used conversations leave RAM when the global or warm-thread limit is exceeded. Idle entries are swept approximately once per minute and also expire on access. The detailed transcript remains on disk.
+Source: [allocation](../src/shared/context-allocation.ts), [compiler](../electron/main/services/agent/context-compiler.ts), [measured compiler](../electron/main/services/agent/measured-context.ts), [capabilities](../electron/main/services/model-capabilities.ts).
 
-## Canonical continuity validation
+## Hydration, selection and pressure
 
-Warm lookups now validate a lightweight canonical header through the context worker. Entries are reused only when transcript revision, count and durable source epoch match. Conversation recreation gets a new epoch. Append merging rejects revision/count discontinuities and changed overlapping records instead of claiming the new revision with stale text. Source pages carry epoch identity so mixed-incarnation hydration is discarded. This is bounded metadata validation, not a full transcript read or the future durable outbox/index architecture.
+Hydration uses bounded worker pages, concurrency admission and source/header checks. It avoids installing mixed-incarnation history. Transfer, retained rows, scratch and active snapshots have distinct accounting. The foreground deadline/cancellation path can return recent-history fallback while optional warm-up is incomplete; it must not block send on unlimited archive hydration.
 
-## Hydration and consistency
+Selection is deterministic lexical recall, not an extra model call. It normalizes bounded Unicode-aware query terms, looks up postings with bounded match/candidate caps, combines salient/recent rows and ranks relevant source excerpts. Current bounds include 24 terms, 2,048 postings/term, 4,096 matched rows, 128 ranked candidates, 256 salient plus 12 recent seed rows, and up to 24 selected facts. Pins get at most eight slots and half the recall-character budget. Rendered excerpts are bounded to 1,200 characters.
 
-Conversation sources now also have database-assigned monotonic `contextSequence` values. Rewind and content replacement never reuse these source identities. Legacy ordinal cutoffs are bound to an `afterSequence` before a rewrite, and production context-control reads/writes use a locked canonical binding. Clearing older history rebinds its visible ordinal boundary; pin/exclusion edits retain the original stable cutoff. Existing rows and controls migrate transactionally, and old-format rows remain readable by the upgraded runtime. Older binaries do not understand the new control metadata; do not run pre-upgrade control writers against the migrated database. Server-owned sequence/revision metadata is excluded from the user-control content limit and remains included in actual RAM accounting.
+Current user/system/forgotten/out-of-cutoff/out-of-project sources are excluded. Ordinary excerpts already fully present in recent history are deduplicated; typed receipts can still supply distinct outcome metadata. User statements, decisions, pins, task receipts and unverified assistant claims retain different provenance.
 
-Each conversation has a monotonic `contextRevision`. Appends and saved rewrites increment it independently of timestamps. Retrying the same message ID does not add another row or advance the revision.
+Partial resident coverage can search the durable archive through bounded temporary admission. Critical pressure disables ordinary retention and uses a separately bounded durable/pin fallback rather than treating readable history as forgotten. Reservations and pressure tiers are logical accounting and measured host inputs, not exact RSS limits or an OOM guarantee.
 
-Each context page:
+Sources: [store](../electron/main/services/context-memory-store.ts), [recall index](../electron/main/services/context-recall-index.ts), [governor](../electron/main/services/inference-governor.ts).
 
-- Reads the header and rows in a SQLite read transaction.
-- Returns at most 500 records.
-- Transfers at most approximately 2 MB of serialized row data.
-- Advances its ordinal cursor over oversized rows, reports omissions and avoids an infinite retry at the same row.
-- Carries the revision, total count, next cursor and completion flag.
+## Privacy and request evidence scopes
 
-Hydration stops at configured count/byte limits and marks incomplete coverage. All pages in a snapshot must have the same revision. A changed revision abandons the mixed snapshot; the foreground lookup retries once. A generation token also fences a pending load after clear, append, settings disable or replacement. Activity in a different conversation does not invalidate the token. Tombstone bookkeeping is bounded.
+Recalled text is evidence and cannot authorize effects. Ordinary recent conversation and explicit attachments/project context are separate disclosure paths; remote recall opt-out is not a promise that no user input goes to a remotely chosen model.
 
-The newest coherent transcript is preferred over a stale but apparently complete snapshot. If hydration fails or its admission is busy, chat continues with the canonical recent history. A `memory-selected` task event records manifest metadata when selection completes; unavailable coverage is visible rather than presented as complete recall.
+`modelDestination` resolves the same connection used by transport. Native execution and genuine loopback model endpoints may receive recall by default. A LAN URL remains remote unless explicitly approved for recall; URL changes invalidate that exact approval. Approval to receive recall does not make a LAN endpoint eligible under Auto-local execution policy. Cleared endpoints refuse redirects.
 
-## Selection algorithm
+Each admitted chat runs in its own `AsyncLocalStorage` evidence scope. Leases remember their owner. Full exposure/derived-text withholding applies only to the owning scope or named task, so an unrelated request does not inherit another request's goal or authority. Recognized memory markers can still be stripped from another scope. Dependent background jobs capture their parent's scope before pumping; unrelated jobs start fresh scopes.
 
-Selection uses deterministic local code and does not require an embedding model or an additional LLM call:
+Source/control/policy changes revoke selected units and potentially derived subsequent messages. Dispatch checks run after asynchronous server preparation and after native allocation before serialization. A revoked native seed is released. Required references are revalidated and final native wire messages are repacked using measured capacity.
 
-1. Normalize up to 24 useful query terms.
-2. Scan retained records cooperatively, yielding to Electron every 128 records and honoring cancellation.
-3. Score lexical matches, explicit user constraints/preferences and recency.
-4. Keep at most 128 candidates while scanning, bounding temporary candidate storage.
-5. Extract a relevant excerpt around matches, rather than always taking the first sentence.
-6. Classify user statements, prior assistant answers, numbered recommendations, historical task receipts and explicit pins.
-7. Omit secret-like excerpts containing common credential assignment patterns or bearer credentials. This is a heuristic, not comprehensive secret detection.
-8. Select up to 24 facts within the configured recall budget, using the same conservative three-characters-per-token estimate as the context compiler.
-9. Let the shared compiler further truncate optional evidence to fit its system-context allocation, after the required task and instructions.
+Remaining boundary: a background child outliving the parent's lease, restarting, or losing its scope does not have a persistent derivation/source graph. #256 remains open; request scopes alone do not solve that lifecycle.
 
-The complete retained messages remain available in RAM even though the selected prompt contains excerpts. A query can therefore recall a buried relevant passage on a later turn without rereading every UI page.
+Sources: [destination](../electron/main/services/model-destination.ts), [leases](../electron/main/services/memory-dispatch.ts), [transport](../electron/main/services/chat-runtime.ts), [native runtime](../electron/main/services/builtin-model.ts).
 
-Selection IDs derive from source identity and excerpt location. Manifests record hashed source IDs, revision, generation, total and retained counts, earliest retained ordinal, logical size, coverage, selected IDs, estimated tokens and omitted candidate count. Raw recalled text is not copied into the `memory-selected` event.
+## Tool journal, eviction and pull
 
-## Trust, scope and privacy
+The active `RunJournal` records tool output before prompt insertion. It retains metadata even when content cannot be stored, with explicit omission reasons. Caps: 32 MiB/run, 64 MiB globally, chunks up to 1 MiB with UTF-8 boundaries. It measures bytes and hashes bounded slices before reservation; encoding happens only after admission, directly into retained chunks.
 
-Recalled content is historical **evidence**. It does not set tool permissions, shell approvals, execution scope or the current user goal. It is compiled after the authoritative task and instructions. Assistant prose is explicitly unverified. A recorded task outcome describes the original task, not the present repository state; a changed-files receipt is not proof that today's tests pass.
+Reading reserves up to twice stored bytes for decoded strings; search reserves six times for decoded/redacted/lowercase copies. `busy` means a retained entry could not obtain scratch and may become readable later. `omitted` means the content is unavailable; `unknown` is not a matching entry. Reservation refusal does not erase retained content or fabricate an empty successful read.
 
-Memory is keyed by canonical workspace, thread and application user-data profile. Conversations do not share recalled history. Workspace switching cannot retrieve another workspace's entry by reusing a thread ID. Historical task receipts with a different recorded project root are excluded from the model selection. Ordinary user statements remain scoped to their conversation: this implementation does not automatically classify every statement as a reusable project fact or promote facts across threads.
+Compaction can replace old tool output with reference stubs only when content remains recoverable; otherwise it records omission. The default model-summary setting is off. Optional summaries cite existing references and are not a replacement for raw evidence. These run-local handles are not durable journal storage (#225).
 
-The deterministic task-intake path continues to use canonical recent conversation and its existing durable typed prior task. Older RAM excerpts are not inserted into task-authority construction. Ambiguous references should be clarified rather than letting recalled assistant prose redefine the contract.
+`context_search` and `context_read` return bounded, source-aware run/thread evidence. Tools obey the current task/project, disclosure and source controls, explicit request/response/call/run budgets and secret filtering. Retrieved historical text never becomes instructions. Residual journal redaction/slicing allocations and exact physical peak residency still need measurement.
 
-Additional recalled history is sent by default to native local model references (`local:` and `builtin:`) and to servers on this machine, which `modelDestination()` identifies from the resolved connection URL, never from a name or provider label. For remote model workers it is omitted unless `shareWithRemoteModels` is enabled. A LAN host is remote unless the user approves that exact URL on the connection. Only the user profile can grant that approval, and editing the URL ends it. Requests to a destination cleared for recall refuse redirects. This check runs on worker recompilation too, so switching a worker to a remote backend does not automatically retain the local-only memory block. Ordinary recent history and existing project prompt behavior remain unchanged. Remote opt-in is treated as a risky workspace setting and cannot be enabled by an untrusted repository.
+Sources: [journal](../electron/main/services/agent/run-journal.ts), [pull](../electron/main/services/agent/context-pull.ts), [compaction](../electron/main/services/agent/compaction.ts), [summary coverage](fixes/224-compaction-summary-coverage.md).
 
-The Context IPC endpoint accepts only the main application's main frame, derives workspace scope in main, checks the thread exists and validates bounded control input. It never accepts an arbitrary filesystem path from the inspector.
+## Handoffs and results
 
-Controls carry an optional revision for legacy compatibility; absent revision means the initial revision zero. SQLite checks the expected revision atomically, increments successful writes, and rejects stale changes with `CONTEXT_CONTROLS_CONFLICT`. Identical retries return the committed state without adding a revision. The inspector can reload saved state and retry instead of overwriting another edit.
+Neither inline nor background child automatically gets the parent `MemoryPrompt`. Both get required inherited task constraints and an optional briefing through the unified handoff message shape. Constraints admit at most 12 × 300 characters including inherited constraints; required task overflow blocks before inference. Optional summary/source lists can still be omitted. A full child-source envelope and source-backed return receipts remain open work.
 
-## User controls
+Inline children cannot delegate further and intersect parent authority. Background stop traverses dependent descendants; discard joins completion with a 30-second bound and retains worktrees that remain busy. These lifecycle safeguards do not create durable recall provenance.
 
-The chat header's **Context** button opens a keyboard-accessible inspector with focus ownership, Escape dismissal and focus restoration.
+## Inspector, tests and remaining work
 
-Users can:
+The Context inspector supports preview, coverage/source metadata, pins, exclusions, ordinal/sequence cutoffs and reload. Controls use canonical revisions and conflict detection. A preview can be an estimate; actual dispatch records what survived compilation and adaptation. Settings exposes memory configuration plus active/historical resource information; the complete proposed VRAM/RAM tier UX remains #236.
 
-- See retained versus total message count, coverage, logical usage and revision.
-- Preview which facts a particular question would recall.
-- Pin up to 100 notes of up to 2,000 characters each.
-- Remove individual pins.
-- Store up to 750 KB of serialized recall controls, with at most 10,000 excluded source IDs.
-- Exclude an older source from additional memory recall.
-- Set a cutoff that stops recalling existing older history and clears pins.
-- Reload the RAM snapshot from the saved transcript.
-- Disable RAM recall or change its limits in Settings → Agent.
+Use the focused suites linked by [the handoff design](design/AGENT-HANDOFF-AND-RAM-CONTEXT.md) and [qualification profiles](../tests/qualification-profiles.json). Stateful replay and isolated exports do not certify packaged native memory behavior or real-model recall quality. Runtime assertions, source markers and expected-source oracles are more informative than raw question counts.
 
-The inspector reads canonical controls independently of optional RAM availability. Disabling recall or a failed hydration preserves editable pins/exclusions and the canonical cutoff message count; a controls read failure disables editing instead of fabricating empty state.
-
-These controls preserve the visible transcript. Excluding additional older recall does not delete the ordinary recent conversation window or erase secrets from existing chat history. Deleting the conversation removes its durable recall controls through the database foreign-key cascade and invalidates the RAM copy.
-
-## Relationship to existing memory and diagnostics
-
-`.eris/context.md` remains the existing project-summary/reference mechanism, with its separate auto/ask/off policy. RAM conversation recall does not silently write project summaries or promote assistant claims into project truth. The Summary extractor now handles a Summary section at end of file correctly, and its cache retains at most eight files no larger than 1 MiB each.
-
-Existing run-local compaction and native inference sessions are separate mechanisms today; Amendment 001 changes that for compaction. This change leaves native per-run session release intact. There is no cross-turn KV reuse, background summarizer or model swap for memory maintenance.
-
-Eris-Dev's independent question cases do not automatically consume production conversation memory. The shared compiler can expose a `memory` evidence block when supplied by a conversation-aware caller. The deterministic memory suites are included in the agents qualification profile used by normal builds. Live-model quality comparisons remain a separate evaluation; passing scripted tests does not establish that every model follows recalled instructions correctly.
-
-Each agent run also keeps a `RunJournal` of its full tool results, written before the prompt truncates them and released when the run ends. See `docs/fixes/221-run-journal.md`. Compaction does not use it yet, so it can still discard the prompt's copy.
-
-## Verification and regression coverage
-
-Automated coverage includes:
-
-- A 25,000-message RAM snapshot with recall of a constraint buried near the beginning.
-- A 10,001-message SQLite hydration, warm-cache reuse, eviction/recovery and durable pins.
-- Canonical paging independent of renderer page size.
-- Cross-thread/workspace keys and foreign-project task-receipt filtering.
-- User/assistant trust labeling, secret-like omission and permission-precedence text.
-- Monotonic revisions, duplicate append IDs and rewrite invalidation.
-- Generation fencing for late hydration, unrelated-thread independence, clear, append and disable.
-- Selection cancellation and clear races.
-- Byte/count limits, partial coverage, idle expiration and LRU eviction.
-- Consistent-revision retry, oversized-row cursor progress and reasoning omission.
-- Durable controls on restart, validation and delete cascade.
-- Production chat IPC integration with canonical history and a scripted runner.
-- Reply persistence before terminal success and explicit storage-failure reporting.
-- Native-local inclusion, remote omission and remote opt-in at worker prompt compilation.
-- Untrusted workspace rejection of remote recall opt-in.
-- Electron inspector preview/exclusion, modal focus, Escape and focus restoration.
-- Bundled worker context paging/control request handling.
-
-Run `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build`. For native UI/worker checks run `node scripts/check-client-workers.mjs` after building and `npm run check:accessibility`.
-
-## Limits and future extensions
-
-This implementation intentionally keeps runtime behavior bounded and testable. Semantic contradiction resolution, embeddings, multi-thread project fact promotion, file-content caches with repository fingerprints, comprehensive secret scanning and cross-turn native KV reuse are not implemented here. Very long messages, limited RAM budgets or very old conversations can produce partial coverage; the inspector and manifest disclose that limit.
-
-A future project-memory service should use explicit fact provenance, repository revision/content fingerprints, user-approved promotion and a separate invalidation contract. It should not infer that an old successful task receipt verifies a newly edited file.
+Remaining targets include durable run journals, child evidence provenance and namespace handles, aggregate delegation budgets, dedicated memory-process ownership, hardware-aware multi-GiB sizing, source-backed summaries/project facts, CPU embedding recall, stable-prefix and cross-turn KV experiments. Check live issues rather than reimplementing already-merged work packages from the original RAM proposal.

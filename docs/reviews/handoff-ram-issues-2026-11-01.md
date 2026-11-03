@@ -4,7 +4,11 @@ Reviewed latest integrated main at `e7e90ba290a60469f87b3e32dd2dd4c55597bc88` on
 
 Created 13 issues: eight bug tickets and five enhancements. Each contains pinned code links, evidence classification, reproduction or implementation fixtures, required changes, acceptance criteria and overlap/dependency boundaries.
 
-This is a historical audit index, not a live issue-status report. Later implementation work, including [PR #281](https://github.com/EricServices-Repo/Eris/pull/281), addresses some dispatch/allocation boundaries; review the current ticket and code before starting a fix.
+## Integration status at `0a54629` (2026-11-01)
+
+Integrated and closed: #255 request evidence scopes, #257 inherited child requirements, #258 required constraint packing/unified child messages, #261 dependent child cancellation and #266 journal allocation/scratch admission. Their fix reports live under `docs/fixes/` and their original reproductions below remain historical evidence.
+
+Open: #256 and #262–265/#267. #259/#260 also remain open, but PR #281 is merged and implements final post-preparation/post-allocation validation and native repacking; reconcile remaining acceptance with that source before coding another fix. [Current handoff design](../design/AGENT-HANDOFF-AND-RAM-CONTEXT.md) and [memory guide](../CONTEXT-MEMORY.md) describe the integrated behavior.
 
 ## Issues
 
@@ -38,7 +42,7 @@ The five new audit expectations failed against the pinned implementation; the ex
 
 The broad specialist-handle proposal remains #151; this review creates distinct implementation slices and concrete defects rather than recreating that umbrella. Existing #226, #229, #230 and #225 remain the owners of general context allocation, tokenizer accuracy, placement and durable journals. Closed #125/#126, #146, #149, #219/#220, #221 and #237 are referenced where later code exposes a remaining boundary or regression.
 
-## Suggested implementation order
+## Original audit implementation order (historical)
 
 1. #255 request isolation, #259 final revalidation, #256 durable child privacy lifecycle.
 2. #261 cancellation/worktree cleanup and #262 task-tree budgets.
@@ -48,3 +52,7 @@ The broad specialist-handle proposal remains #151; this review creates distinct 
 6. #267 full task-tree replay, adding each fixed boundary as a permanent scenario.
 
 Do not infer live-model or hardware certification from these deterministic cases.
+
+## Current sequencing
+
+Prioritize persistent child lineage and aggregate work budgets (#256/#262), then namespace/envelope/receipt integration (#263/#265/#264), with #267 acceptance scenarios alongside each boundary. Reconcile #259/#260 using the already-merged provider/native final guards. Do not reopen the five integrated fixes merely from the original audit list.

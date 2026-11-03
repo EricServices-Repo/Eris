@@ -1,28 +1,31 @@
-# GitHub workflow
+# GitHub development and release workflow
 
-`main` is the only integration and release branch for EricServices-Repo/Eris. The `dev` branch is retired. Pull requests and releases must use `main`.
+Reviewed against integrated `main` `0a54629` on 2026-11-01. Package version: **0.6.10**; published tag `v0.6.10` is the older immutable `f14e409` source. Later source changes require another build.
 
-## Changes and commits
+`main` is the integration/release source for EricServices-Repo/Eris. The earlier `dev` promotion model is retired for this workflow. Branch operations and release publication are separate permissions.
 
-- Work may be committed directly to `main` and pushed to GitHub when appropriate.
-- Feature and release work may also use a task or release branch and a pull request into `main`.
-- Do not force-push or rewrite `main` history. Use ordinary fast-forward commits or GitHub PR merges.
-- Keep local-only files such as `.agents/skills` and `.cursor/skills` out of commits.
-- CI runs for pull requests and pushes to `main`.
+## Contributions
 
-## Releases
+- Commit work on a descriptive feature/task branch, normally `codex/...`; rebuilds use `rebuild/vX.Y.Z`.
+- Push the named work branch and open/update a PR targeting `main`. Do not commit, merge or push directly to `main` or `dev` as part of the contributor/agent workflow.
+- Preserve unrelated working-tree changes. Review the entire PR diff, stage explicit intended paths, and run checks appropriate to the change.
+- Keep local skills, credentials, caches, generated build output/installers and scratch push archives out of commits.
+- Do not force-push shared history or retarget the integration source to bypass a check. PR creation does not authorize merging or release publication.
 
-- Prepare version and changelog changes on `main` or on a release branch that will be integrated into `main`.
-- Run `/update-github` from a clean checkout of the exact `origin/main` tip with the intended version already committed and no existing tag.
-- The release script creates and pushes only the tag and creates the GitHub Release. It does not push a branch tip.
-- The release workflow verifies that each tag points to a commit integrated into `main`, builds the macOS and Windows installers, and uploads the update feeds.
-- Verify the macOS DMG and ZIP, Windows installer, update feeds, and successful release CI before saying the release is complete.
+## Rebuild versus release
 
-## Enforcement
+A rebuild bumps package/lock root versions and changelog on a dedicated rebuild branch, qualifies/packages/launches the local macOS app, verifies its version/process and opens a PR to main. It is not a GitHub Release.
 
-- `.github/workflows/branch-policy.yml` allows pull requests into `main` from work branches.
-- `.github/workflows/ci.yml` runs on pull requests and pushes to `main`.
-- `.github/workflows/release.yml` accepts release tags only when their commit is an ancestor of `main`.
-- GitHub branch protection and rulesets are configured separately from repository files. The current `main` branch has no protection or ruleset preventing direct pushes.
+Release publication uses the already-integrated package version. Fetch origin/main; require a clean checkout with local HEAD equal to that exact tip, matching committed lock/changelog versions and no existing version tag. The release script creates/pushes the annotated version tag and release shell only. It does not commit or push a branch tip.
 
-Release matrix jobs use the resolved tag commit SHA, never moving main. Source changes require a new version/tag. Per-platform provenance records dependency/asset digests and signing status; replacing existing assets requires explicit `repair_existing`.
+Release CI resolves the tag once, validates its integrated source, builds macOS DMG/ZIP and Windows Eris/Eris-Dev installers, runs qualification/packaged launch checks and uploads both production update feeds and source/asset provenance. Verify macOS DMG/ZIP, Windows setup, latest-mac.yml, latest.yml and successful CI before reporting complete distribution.
+
+Source changes require a new version/tag. Explicit `repair_existing` can replace artifacts only for the same immutable source; it cannot silently move the tag. Do not delete/force tags without explicit authorization.
+
+## Repository checks versus hosting configuration
+
+The [branch-policy workflow](../.github/workflows/branch-policy.yml) validates PRs targeting main. It is not evidence that GitHub rulesets prohibit direct pushes. Rulesets, branch protection, environments and merge rights live outside these files and were not audited here. The stricter contributor rules above apply even if hosting permissions technically allow more.
+
+CI runs on PRs and pushes to main. Required checks and release evidence are declared in [CI](../.github/workflows/ci.yml), [release workflow](../.github/workflows/release.yml), [qualification profiles](../tests/qualification-profiles.json) and [release-source validation](../scripts/release-source.cjs).
+
+See [UPDATES.md](UPDATES.md) and [SIGNING.md](SIGNING.md) for updater assets and signing boundaries.

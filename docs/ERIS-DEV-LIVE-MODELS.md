@@ -1,5 +1,7 @@
 # Run question files through a model in Eris-Dev
 
+Reviewed against integrated `main` `0a54629` on 2026-11-01 (package v0.6.10). The published v0.6.10 tag is `f14e409`; later source fixes require another build.
+
 1. Open Eris-Dev and import the TXT, JSON or JSONL question file (up to 10,000 questions).
 2. Choose a local or API **Model** in the toolbar, then click **Run questions**. Live model testing is the default. For request inspection without inference, choose **Capture requests only (no model)** in the same picker.
 3. If you need another server, open **Settings → Connect a model server**, enter its API URL and optional key, then click **Connect**. Ollama commonly uses `http://localhost:11434/v1`.
@@ -23,3 +25,9 @@ Resume rejects changed settings, fixture or harness fingerprints. A cancelled ac
 ## Validation
 
 Automated coverage includes actual production request serialization and SSE parsing with a controlled provider fixture, selected-model pinning, answer persistence, provider failure classification, cancellation, resumed batch boundaries, and 23 persisted results across batches of 10/10/3. The app's prebuild qualification runs these tests. A successful harness test is distinct from measuring a real model's answer quality.
+
+## Automatic routing versus a pinned comparison
+
+The production IDE's Agent Auto and Auto-local/Auto-any execution policies are distinct. This live corpus runner intentionally pins its selected model, including the semantic intake calls intercepted by its adapter. Use production routing/model-switching fixtures or a dedicated automatic-policy scenario to evaluate Lite-coordinator handoff; do not infer that capability from a pinned corpus result.
+
+Capture records are taken at the shared transport seam. Actual native/server payloads can be revalidated, budgeted and adapted afterward. Correlate dispatch metadata and source/model provenance when reviewing omitted RAM evidence. Refer to [the current architecture](ARCHITECTURE.md) and [memory guide](CONTEXT-MEMORY.md), particularly the parent-lease lifetime limit for asynchronous children.

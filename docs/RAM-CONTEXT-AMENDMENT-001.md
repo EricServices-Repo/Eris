@@ -4,10 +4,19 @@
 - Amends: [ERIS-CONTEXT-002](RAM-CONTEXT-ARCHITECTURE.md)
 - Status: accepted target design; **not a claim that the target is built**
 - Date: 2026-10-31
-- Reviewed implementation: `842bde276230dfc91f3c6e16b56fbb7a91fa9bf2` (v0.6.7)
+- Original baseline: `842bde276230dfc91f3c6e16b56fbb7a91fa9bf2` (v0.6.7)
+- Implementation reconciliation: `0a54629`, 2026-11-01 (package v0.6.10; newer than released tag `f14e409`)
 - Tracking issue: #239
 
 Where this amendment and ERIS-CONTEXT-002 disagree, this amendment wins. Numbers marked *proposed* are starting points to benchmark, not measurements. [CONTEXT-MEMORY.md](CONTEXT-MEMORY.md) remains the record of what is implemented.
+
+## Current implementation reconciliation
+
+Implemented foundations: run-local journal and reference eviction; bounded context pull; optional reference-backed summaries; connection-aware recall locality; scaled input/history/recall allocation; loaded-native tokenization; measured allocation and post-load repacking; placement ladder; host-pressure/resident admission; request-scoped leases; inherited/required child constraints; subtree cancellation; journal allocation/scratch checks. Read [the implementation guide](CONTEXT-MEMORY.md), not the original baseline gaps, before coding.
+
+Remaining: durable run journals (#225), hardware-aware larger-tier sizing (#227), dedicated off-heap memory process (#228), host model double-residency measurement (#231), stable prompt prefix (#232), cross-turn/parked KV (#233), CPU embeddings (#234), contextual recall query (#235), complete tier UI (#236), and durable child provenance/task-tree budgets and replay (#256/#262–267).
+
+A2's durable journal is still a target: the implemented journal ends with the run. A5/A6 are now implemented under bounded admission/disclosure, not universally lossless persistence. A7's execution must distinguish approval to receive recall from on-device model selection. A8's GiB ranges remain proposed; the current schema is still capped at 512 MiB process / 128 MiB thread, with an 8,192-token recall ceiling. Hardware/live-model qualification is not implied by these statuses.
 
 ## A1. Goal
 
@@ -39,7 +48,7 @@ Host class therefore changes sizing policy (A8), and release evidence must recor
 
 ## A5. Compaction
 
-Eviction with handles is the default compaction. This replaces the separation in CONTEXT-MEMORY.md, where run-local compaction is unrelated to RAM memory.
+Eviction with handles is the default compaction. This target is now reflected by the implemented run-journal/compaction integration in CONTEXT-MEMORY.md. Durable conversation history and the run journal still have separate lifetimes.
 
 1. A tool result is written to the run journal before it enters the message array.
 2. Eviction replaces content in the prompt with a stub that holds a reference and a short description.
@@ -51,7 +60,7 @@ Eviction with handles is the default compaction. This replaces the separation in
 
 The model can retrieve from RAM on request, through tools that return bounded spans.
 
-Pull follows the same policy as push: exclusions, cutoffs, project scope, evidence revalidation, secret filtering and destination policy. Pulled content is historical evidence, labelled as such, and it can never change task authority, scope or approvals. A remote destination receives nothing unless `shareWithRemoteModels` allows it.
+Pull follows the same policy as push: exclusions, cutoffs, project scope, evidence revalidation, secret filtering and destination policy. Pulled content is historical evidence, labelled as such, and it can never change task authority, scope or approvals. Remote recall requires `shareWithRemoteModels` or the exact user-approved endpoint policy used by push. Approval does not make a LAN endpoint eligible under Auto-local.
 
 Pull may use a longer deadline than the send path, because the model is already waiting on a tool. Results stay capped per call and per run against the input budget.
 

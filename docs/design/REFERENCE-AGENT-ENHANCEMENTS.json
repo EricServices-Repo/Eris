@@ -1,0 +1,803 @@
+{
+  "schemaVersion": 1,
+  "status": "proposed",
+  "reviewDate": "2026-11-01",
+  "erisSource": "0a54629d0ea74fdb68680c6ae431246267e8229c",
+  "referenceRepository": "https://github.com/tanbiralam/claude-code",
+  "referenceSource": "6f6f12b37f529488b10e53928dd5508bb93535c7",
+  "document": "REFERENCE-AGENT-ENHANCEMENT-ARCHITECTURE.md",
+  "packages": [
+    {
+      "id": "R01",
+      "title": "Replayable execution kernel",
+      "priority": "P1",
+      "dependencies": [],
+      "existing": "The loop already coordinates execution and AgentWorkflow already gates outcomes; they should remain the behavioral baseline.",
+      "design": "Extract a pure event reducer in stages: admission/routing first, tool batches second, recovery/termination last. Effects run through explicit adapters and return immutable receipts. Preserve the current workflow as a composed completion gate. Persist event schema and reducer revision; maintain a state projection rather than serializing class instances. Start with shadow decisions on scripted runs, comparing commands without executing a second time. Do not rewrite the 4,474-line loop in one PR.",
+      "owners": [
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/agent/workflow.ts"
+      ],
+      "acceptance": "Given identical initial state and ordered events, the reducer emits identical commands and final state. Fault injection before/after every adapter response does not repeat acknowledged edits. Legacy and kernel paths agree on existing story, review, edit and recovery fixtures.",
+      "reference_ids": ["S01"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R02",
+      "title": "Immutable execution frame and dependency ownership",
+      "priority": "P1",
+      "dependencies": ["R01"],
+      "existing": "Current task contracts, trace fields and request-scoped evidence exist, but ownership is distributed across intake, loop and background runners.",
+      "design": "Create a versioned execution frame shared by all entry points. Separate source conversation namespace from execution worktree, trace attribution from authority, and immutable policy revisions from mutable progress. Inject clock, IDs, persistence, transport, resource admission and source resolvers. Copy frames structurally without deep-copying source content. Resolve revocable capability references at boundaries rather than assuming an immutable frame makes permissions permanent.",
+      "owners": [
+        "electron/main/ipc/chat-stream.ts",
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/background-agents.ts",
+        "src/shared/task-contract.ts"
+      ],
+      "acceptance": "Inline and background children receive equivalent task/source identity. Two simultaneous conversations cannot exchange scoped evidence. Replaying with a fixed clock/ID source yields the same decisions; renderer-supplied frame fields cannot manufacture host authority.",
+      "reference_ids": ["S01", "S12"],
+      "existing_issue_alignment": "#263; retain the integrated #255 request-scope fix."
+    },
+    {
+      "id": "R03",
+      "title": "Root task-tree work and resource budget broker",
+      "priority": "P1",
+      "dependencies": ["R01", "R02"],
+      "existing": "Individual adaptations, context allocations and journals are bounded, but aggregate descendant work remains a separate gap.",
+      "design": "Admit one root budget with subdivided reservations for active children, model requests, tool calls, retained bytes, wall time and optional remote spend. Reserve before spawning/loading/encoding, refund only unused reservations, and reconcile actual usage once. Add ancestor detection, depth limits, active-child limits and total task limits. Pending approvals release GPU leases. Distinguish elapsed time from compute time so a user waiting to approve does not silently consume an inference budget. Fair scheduling prevents one chat tree from starving unrelated chats.",
+      "owners": [
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/background-agents.ts",
+        "electron/main/services/context-memory-store.ts"
+      ],
+      "acceptance": "A delegating cycle and a fan-out burst terminate at admission with a useful budget receipt. Concurrent descendants cannot oversubscribe the root reservation. Stop/crash releases leases idempotently; measured usage cannot underflow or count twice.",
+      "reference_ids": ["S04", "S07"],
+      "existing_issue_alignment": "#262; integrate existing journal reservations rather than bypassing #266."
+    },
+    {
+      "id": "R04",
+      "title": "Typed failure and evidence-based recovery policy",
+      "priority": "P1",
+      "dependencies": ["R01", "R03"],
+      "existing": "Eris has bounded adaptations, attempted-model tracking and protections against shopping around refusals.",
+      "design": "Centralize failure categories: invalid request, unsupported protocol, transient provider, resource pressure, cancellation, permission/safety refusal, stale evidence, no progress and verification failure. Each category has finite permitted next actions and a user-facing explanation. Progress is new relevant evidence, meaningful task state, an actual effect or a resolved blocker; rewording a plan, spending tokens and repeating tree calls do not qualify. Maintain a root recovery ledger so switching role or model cannot reset the retry budget.",
+      "owners": [
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/agent/mid-run-adapt.ts",
+        "electron/main/services/auto-model-policy.ts"
+      ],
+      "acceptance": "A refusal never triggers alternate-model shopping. Repeated formatting failures can select an eligible alternative once within the existing adaptation limit. Long useful inspection is not cut off solely by step count, while repeated identical observations terminate with exact unfinished work.",
+      "reference_ids": ["S01", "S11"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R05",
+      "title": "Canonical intake and ambiguity receipts",
+      "priority": "P1",
+      "dependencies": ["R02"],
+      "existing": "Intake already uses structured task interpretation, and recent fixes distinguish creative answers from coding work.",
+      "design": "Persist a small interpretation receipt containing original message identity, resolved follow-up references, deliverable, destination, scope, authority and why a clarification is required. Resolve \u201cthose changes\u201d against typed recommendation IDs and the relevant conversation revision, not arbitrary recent assistant text. Preserve user corrections as new task revisions with explicit supersession. Ask only when alternative interpretations change effects or destination; useful authorized inspection can continue while waiting.",
+      "owners": [
+        "electron/main/ipc/chat-stream.ts",
+        "electron/main/services/task-intake.ts",
+        "src/shared/task-interpretation.ts",
+        "src/shared/task-contract.ts"
+      ],
+      "acceptance": "Test story-in-chat, story-to-file, review-only, implement-follow-up, project switch and contradictory explicit instructions. \u201cReview the AirBNB project\u201d cannot mutate a calculator file merely because it is first in a directory listing. Ambiguity receipts show the unresolved source reference.",
+      "reference_ids": ["S01", "S07"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R06",
+      "title": "Priority steering queue with explicit safe points",
+      "priority": "P1",
+      "dependencies": ["R01", "R05"],
+      "existing": "The client already supports queued user messages; this proposal adds orchestration semantics rather than another basic queue.",
+      "design": "Use typed messages for cancel, correction, clarification answer, additional task and ordinary continuation. Define precedence: cancellation first, authority-narrowing correction next, then causal FIFO within a task revision. Deliver at model/tool safe points; never inject a new user instruction into a half-parsed native tool call. Bound queue bytes/count and report backpressure. A steering acknowledgement records which task revision incorporated it. Interrupting a model stream and interrupting an owned command are separate operations.",
+      "owners": [
+        "electron/main/services/chat-job-controller.ts",
+        "electron/main/ipc/chat-stream.ts",
+        "src/shared/chat-jobs.ts"
+      ],
+      "acceptance": "Send a correction during generation, tool parsing, approval wait and child execution. It applies once at the next valid boundary, cannot be lost behind a completed turn, and cannot authorize replay of an already-started effect. Cancellation outranks queued continuations.",
+      "reference_ids": ["S07"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R07",
+      "title": "Versioned reviewable plan artifacts",
+      "priority": "P2",
+      "dependencies": ["R05", "R06"],
+      "existing": "Eris already creates turn plans and task contracts; a durable user-reviewable plan is a separate product contract.",
+      "design": "Promote complex plans to versioned artifacts with target scope, intended effects, dependencies, risk-relevant commands and acceptance checks. Bind approval to plan digest, task revision, workspace identity and authority ceiling. A new plan revision invalidates only affected approval scopes. Keep simple requests fast: no mandatory planning screen for a straightforward authorized edit. Distinguish a planning-only deliverable from an executable plan approved for implementation.",
+      "owners": [
+        "electron/main/services/task-intake.ts",
+        "src/shared/task-contract.ts",
+        "electron/main/services/agent/workflow.ts"
+      ],
+      "acceptance": "Editing an approved target/command invalidates its approval. A prose rewrite without effect changes does not unnecessarily restart work. A plan-only request completes without mutation; \u201cimplement this plan\u201d resolves the precise revision and keeps its verification criteria.",
+      "reference_ids": ["S14"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R08",
+      "title": "One role/model policy precedence trace",
+      "priority": "P1",
+      "dependencies": ["R02"],
+      "existing": "Fixed, Auto-local, Auto-any, explicit per-agent pins and coordinator/worker separation already exist.",
+      "design": "Expose one structured precedence resolver used by top-level, inline, background, recovery and debug paths. Record inherited policy, explicit override, admitted candidates, exclusion reasons and actual execution selection. Role selection cannot change a fixed model or locality ceiling. An explicit incompatible child pin produces a blocker with a suggested correction. Keep existing centralized candidate filtering; remove only duplicated interpretation at call sites after parity tests.",
+      "owners": [
+        "electron/main/services/auto-model-policy.ts",
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/background-agents.ts",
+        "electron/dev/runs.ts"
+      ],
+      "acceptance": "Use a cross-product of parent policies, child overrides, native/loopback/LAN/provider destinations and recovery states. All entry points make the same eligibility decision. A model that coordinated but did not execute is never shown as the worker.",
+      "reference_ids": ["S04", "S12"],
+      "existing_issue_alignment": "#268\u2013274 are integrated; this is consistency/inspection and broader acceptance, not reopening the original fixes."
+    },
+    {
+      "id": "R09",
+      "title": "Typed tool lifecycle and resource traits",
+      "priority": "P1",
+      "dependencies": ["R02"],
+      "existing": "The registry already defines schemas, tool access, effects, approval and discovery traits.",
+      "design": "Extend definitions with output validation, interrupt behavior, idempotency class, resource classes, result schema revision and context-modifier policy. Separate pure reads, snapshot reads, mutations, external effects and shared-runtime work. Traits are host-owned declarations verified against actual adapters. Normalize legacy tools through an adapter so the gateway remains the only effect admission path. Default unknown tools/traits to conservative serial scheduling and denied unsupported effects.",
+      "owners": [
+        "electron/main/services/tool-registry.ts",
+        "electron/main/services/agent/tool-gateway.ts"
+      ],
+      "acceptance": "Registry conformance checks cover every registered tool. Invalid outputs become structured failures before entering model context. A tool falsely declaring read-only cannot bypass a host mutation capability check. Existing deferred discovery and validation continue working.",
+      "reference_ids": ["S02"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R10",
+      "title": "Unified mixed-batch scheduler and effect barriers",
+      "priority": "P1",
+      "dependencies": ["R03", "R09"],
+      "existing": "The loop parallelizes wholly read-safe batches with cap four; mixed batches are serial. Workspace write locking already exists.",
+      "design": "Partition a complete tool batch into consecutive concurrency-safe groups separated by effect barriers. Preserve model call order for deterministic context/result application even if reads finish out of order. Use declared resource traits and canonical workspace scope to decide overlap. Keep native inference exclusive where required. Do not reorder a read across a preceding write or start tools from incomplete arguments. Introduce a single scheduler shared by streaming and non-streaming paths.",
+      "owners": [
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/agent/task-scheduler.ts",
+        "electron/main/services/agent/tool-gateway.ts"
+      ],
+      "acceptance": "A read/read/write/read batch executes two reads concurrently, then a write, then a fresh read. Slow first reads cannot reorder prompt evidence. Mutation failure blocks dependent calls; independent read failure does not strand terminal receipts. Peak safe-read concurrency stays within the configured cap.",
+      "reference_ids": ["S03"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R11",
+      "title": "Terminal tool receipts and uncertain-effect reconciliation",
+      "priority": "P1",
+      "dependencies": ["R10"],
+      "existing": "Native tool/result pairing and owned-command cancellation already exist, but kernel extraction needs an explicit terminal contract.",
+      "design": "Every accepted invocation reaches exactly one logical terminal state: succeeded, failed, cancelled-before-start, interrupted-with-known-effects, or uncertain. Record parse/validation failures without claiming an effect began. If cancellation occurs after a host command started, reconcile the workspace/checkpoint and command ownership before any retry. Produce protocol-valid terminal results for outstanding tool IDs without fabricating successful observations. Terminal receipt persistence and tool result rendering are separate steps.",
+      "owners": [
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/agent/tool-gateway.ts",
+        "electron/main/services/shell-run.ts"
+      ],
+      "acceptance": "Abort before admission, during a read, during a write, after command exit and before receipt commit. No tool ID is orphaned in a resumed model request. Unknown command effects never trigger blind retry; duplicate terminal events are idempotent or rejected on digest mismatch.",
+      "reference_ids": ["S01", "S03"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R12",
+      "title": "Structured tool outputs and actionable schema feedback",
+      "priority": "P1",
+      "dependencies": ["R09", "R11"],
+      "existing": "Tool input validation and text results are established; richer output semantics can improve recovery and evaluation.",
+      "design": "Introduce a result envelope with status, schema version, bounded summary, evidence/artifact references, effect receipt, structured error code and retryability. Field errors carry JSON paths and expected types without echoing secrets or megabytes of input. Keep human-readable results as projections from the envelope. Distinguish empty successful search results from invalid searches, resource rejection and unavailable files. Model repair instructions are short and specific to the failed schema.",
+      "owners": [
+        "electron/main/services/tool-registry.ts",
+        "electron/main/services/agent/tool-validation.ts",
+        "electron/main/services/agent/loop.ts"
+      ],
+      "acceptance": "Wrong argument type, unknown property, missing required field, empty result and output-validation failure produce different machine-readable records. Repair cannot broaden tool scope. Native/text adapters render equivalent semantic results and preserve original invocation identity.",
+      "reference_ids": ["S02", "S12"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R13",
+      "title": "Deferred discovery and schema revision epochs",
+      "priority": "P2",
+      "dependencies": ["R09", "R10"],
+      "existing": "Eris already searches/discovers tools; rebuilding discovery from scratch would add complexity without addressing the gap.",
+      "design": "Cache canonical schema bytes by registry revision, tool implementation version, protocol adapter and prompt profile. Keep dynamic eligibility and permissions outside that cache. Discovery returns stable IDs and schema hashes; invocation rechecks current availability. Invalidate schema epochs on extension changes and record them in dispatch receipts. Avoid presenting dozens of irrelevant tool descriptions to a small local model. Schema omission is an optimization, never a grant or denial of authority by itself.",
+      "owners": ["electron/main/services/tool-registry.ts", "electron/main/services/agent/loop.ts"],
+      "acceptance": "Disabling a tool after discovery prevents execution despite a cached schema. Identical registries yield identical bytes. A schema revision cannot reuse an incompatible tool call. Deferred-tool tasks retain their ability to discover the correct tool under a small context budget.",
+      "reference_ids": ["S02", "S10"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R14",
+      "title": "Bounded approval capability leases",
+      "priority": "P1",
+      "dependencies": ["R09", "R12"],
+      "existing": "Current gateway/host approvals and canonical scope checks must remain authoritative.",
+      "design": "Represent an approval as a host-owned lease bound to canonical resource, tool identity, normalized argument digest, task/plan revision, current policy and expiry. Revalidate after waits and before execution. Prevent time-of-check/time-of-use drift by checking current canonical paths and implementation-specific preconditions. A child can use an approval only within an explicitly delegated subset; a role name or inherited transcript statement cannot manufacture one. Revocation invalidates future effects without falsely undoing completed work.",
+      "owners": [
+        "electron/main/services/agent/tool-gateway.ts",
+        "electron/main/services/agent/tool-validation.ts",
+        "src/shared/task-contract.ts"
+      ],
+      "acceptance": "Change arguments, symlink target, worktree, plan revision or policy while waiting for approval. The stale lease cannot authorize the new effect. Duplicate approval delivery does not execute twice. Denied approvals remain denied across role/model recovery.",
+      "reference_ids": ["S02", "S06"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R15",
+      "title": "Shared immutable file-evidence handles",
+      "priority": "P2",
+      "dependencies": ["R12", "R14"],
+      "existing": "Freshness and partial-read protections exist; avoid replacing them with a broad mutable file cache.",
+      "design": "Add bounded immutable file snapshots keyed by canonical workspace identity, content digest and observed span. Handles retain complete/partial status and source policy dependencies. Share snapshot storage across descendants while tracking per-owner logical retention separately. Writes require a valid current read precondition, not merely any cached file with the same relative path. Evict unleased snapshots through the memory broker and report unavailable evidence rather than pretending an old read was fresh.",
+      "owners": [
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/context-memory-store.ts",
+        "electron/main/services/agent/tool-gateway.ts"
+      ],
+      "acceptance": "Two children share one immutable snapshot allocation. A partial read cannot satisfy whole-file rewrite freshness. Changing a file or switching to another worktree invalidates the relevant mutation precondition. Eviction preserves active leases and never crosses conversation privacy scope.",
+      "reference_ids": ["S12"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R16",
+      "title": "Durable bounded tool artifacts",
+      "priority": "P1",
+      "dependencies": ["R03", "R12"],
+      "existing": "Run journals already reserve before encoding and enforce byte limits, but recoverable handles remain run-local rather than a full durable artifact service.",
+      "design": "Persist large tool outputs as admitted, content-addressed artifacts with tenant/workspace scope, provenance, checksum, media type, expiry and bounded retrieval ranges. Use atomic temporary-write/rename plus metadata commit and orphan cleanup. Deduplication must not expose whether another private conversation has identical content. Preserve current busy-versus-omitted distinctions and UTF-safe chunking. Reserve transient encoding/search buffers before work; retaining a small handle cannot justify an unbounded decoded payload.",
+      "owners": [
+        "electron/main/services/agent/run-journal.ts",
+        "electron/main/services/context-memory-store.ts",
+        "electron/main/services/agent/context-pull.ts"
+      ],
+      "acceptance": "Crash at each file/metadata boundary; resume either finds a verified artifact or an explicit unavailable record. Oversized output is rejected before allocating beyond the lease. Corrupt checksum, missing file, expired source and disk-full cases do not fabricate tool evidence.",
+      "reference_ids": ["S08"],
+      "existing_issue_alignment": "#225; extend #266 admission semantics."
+    },
+    {
+      "id": "R17",
+      "title": "Artifact and verification completion receipts",
+      "priority": "P1",
+      "dependencies": ["R07", "R12", "R16"],
+      "existing": "AgentWorkflow already requires evidence and mutation for relevant tasks; richer receipts should strengthen that gate.",
+      "design": "Bind completion claims to canonical task revision, effect receipts, artifact digests, verification command/results and current workspace revision. Separate \u201ccommand exited zero\u201d from \u201cacceptance met\u201d; a test run before the final edit cannot verify the final diff. Support explicit skipped/unsupported verification with a reason and visible limitations. For answer-only work use a task-appropriate outcome contract rather than demanding pointless filesystem mutation.",
+      "owners": [
+        "electron/main/services/agent/workflow.ts",
+        "electron/main/services/agent/loop.ts",
+        "src/shared/task-contract.ts"
+      ],
+      "acceptance": "An edit followed by passing tests and another edit is no longer verified. A child claiming completion without cited artifacts cannot satisfy parent acceptance. Stories finish without workspace tools; coding requests cannot finish with suggestions only. Failed verification preserves changes and reports exact remaining criteria.",
+      "reference_ids": ["S07", "S14"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R18",
+      "title": "Versioned scoped handoff envelope",
+      "priority": "P1",
+      "dependencies": ["R02", "R03", "R16"],
+      "existing": "Inline/background handoff messages now share required task fields and bounded constraints; they do not transfer the RAM store.",
+      "design": "Extend the existing packet into a versioned envelope containing task revision, source namespace, execution workspace, authority ceiling, root budget lease, required constraints, acceptance criteria, evidence handles, dependencies and return schema. Store required fields structurally; optional prose summaries are independently cuttable. Admission measures the rendered envelope against the selected model window and rejects missing required information rather than silently truncating constraints. Unknown major versions fail with a compatibility error.",
+      "owners": [
+        "src/shared/agent-orchestration.ts",
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/background-agents.ts"
+      ],
+      "acceptance": "Inline/background serialization is semantically equivalent. Small windows retain every required constraint or produce explicit admission failure. Parent recommendations unrelated to the child remain excluded. Unsupported envelope versions cannot become unrestricted natural-language tasks.",
+      "reference_ids": ["S04", "S05"],
+      "existing_issue_alignment": "#151, #263, #265; preserve integrated #257/#258 bounds."
+    },
+    {
+      "id": "R19",
+      "title": "Persistent derivation and source-revocation leases",
+      "priority": "P1",
+      "dependencies": ["R16", "R18"],
+      "existing": "Request-owned evidence scopes prevent cross-request lease mixing; persistent child lineage after the parent lease ends remains unresolved.",
+      "design": "Persist a derivation graph connecting source conversation records/epochs, derived summaries, artifacts, handoffs and child results. Child leases reference approved source subsets and survive only for an explicitly authorized lifetime. Forget/revoke increments a source epoch and invalidates dependent dispatch, resume and export. A conservative implementation withholds derived content when precise dependency attribution is missing. Do not persist raw memory text merely to make an ephemeral privacy scope durable.",
+      "owners": [
+        "electron/main/services/context-memory.ts",
+        "electron/main/services/context-memory-store.ts",
+        "electron/main/services/background-agents.ts"
+      ],
+      "acceptance": "Revoke a source after spawning, during model loading, after the parent ends and across restart. Neither child resume nor model switching dispatches the revoked derivative. Unrelated tasks retain eligible evidence. A missing dependency graph fails closed without suppressing unrelated non-derived user instructions.",
+      "reference_ids": ["S04", "S05", "S08"],
+      "existing_issue_alignment": "#256; preserve #255 and existing final-dispatch validation."
+    },
+    {
+      "id": "R20",
+      "title": "Bounded typed agent mailbox",
+      "priority": "P2",
+      "dependencies": ["R03", "R18", "R19"],
+      "existing": "Background jobs and child results exist; peer messaging should be added as a controlled capability, not an unrestricted shared chat.",
+      "design": "Use typed messages for evidence, question, answer, task-state, integration-conflict and shutdown. Address stable task IDs and generations, never display names. Persist bounded messages with deduplication IDs, causal sequence, source dependencies, deadline and acknowledgement state. Deliver at safe points after resolving current recipient state and authority. At-least-once delivery requires idempotent consumption; message receipt does not imply task completion. Broadcast is opt-in and charges the root budget per recipient.",
+      "owners": [
+        "electron/main/services/background-agents.ts",
+        "src/shared/background-agents.ts",
+        "src/shared/agent-orchestration.ts"
+      ],
+      "acceptance": "Duplicate delivery is consumed once; cancelled/completed recipients reject late execution requests. Stop wins over a queued message. Expired questions do not block forever. An evidence message revoked before delivery is withheld. Mailbox bytes and fan-out cannot exceed admitted limits.",
+      "reference_ids": ["S06", "S07"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R21",
+      "title": "Task dependency graph and atomic ownership",
+      "priority": "P2",
+      "dependencies": ["R03", "R17", "R18"],
+      "existing": "Current child supervision is a foundation, but dependency/claim semantics should not be encoded only in prompts.",
+      "design": "Persist tasks with dependency edges, status revision, owner generation and acceptance receipt. Claim using compare-and-swap; validate no ancestor cycles before committing edges. A dependency is satisfied by an accepted completion receipt, not a natural-language status message. Distinguish task complete from integrated into the parent workspace. Detect abandoned owners on restart and return work to a recoverable state only after effect reconciliation.",
+      "owners": ["electron/main/services/background-agents.ts", "src/shared/background-agents.ts"],
+      "acceptance": "Two workers racing to claim produce one owner. Cyclic and missing dependencies are rejected. A completed child with an unintegrated diff cannot unblock a task requiring the integrated artifact. Crash recovery cannot silently create a second active owner.",
+      "reference_ids": ["S07"],
+      "existing_issue_alignment": "#262; graph-wide work accounting is shared with R03."
+    },
+    {
+      "id": "R22",
+      "title": "Durable child snapshots and fresh resume admission",
+      "priority": "P1",
+      "dependencies": ["R11", "R16", "R18", "R19"],
+      "existing": "Transcripts and background jobs provide useful state; durable safe resume requires all ownership boundaries to agree.",
+      "design": "Checkpoint child task/envelope revision, event sequence, protocol state, artifact references, source leases, model policy and worktree identity. On resume validate schema compatibility, source epochs, current authority, model eligibility, effect reconciliation and remaining root budget. If an expected worktree disappeared, block or request an explicitly scoped recovery; never fall back silently to the parent cwd. Resuming a transcript does not resurrect expired approvals or bypass current tool policy.",
+      "owners": [
+        "electron/main/services/background-agents.ts",
+        "electron/main/services/chat-job-controller.ts",
+        "electron/main/services/agent/loop.ts"
+      ],
+      "acceptance": "Restart after a child write, during approval, during native tool output and during compaction. Each produces either safe continued execution or an actionable blocker. Missing worktree and revoked source tests must prove no mutation occurs in the parent or another project.",
+      "reference_ids": ["S05"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R23",
+      "title": "Worktree ownership and conflict-aware integration",
+      "priority": "P1",
+      "dependencies": ["R15", "R21", "R22"],
+      "existing": "Eris already isolates background worktrees, blocks unsafe merge/discard and cancels dependent subtrees.",
+      "design": "Represent worktree ownership, active operations, base commit, changed paths and cleanup state explicitly. Integrate only settled child effects against the expected base; surface conflicts as structured artifacts. Keep filesystem cleanup failure visible and retryable instead of declaring successful discard after a failed removal. Preserve the existing wait-and-retain behavior for unfinished work. Do not weaken root-scope project locking until fine-grained alternatives have equivalent safety tests.",
+      "owners": [
+        "electron/main/services/background-agents.ts",
+        "electron/main/services/agent/task-scheduler.ts"
+      ],
+      "acceptance": "Discard with a still-running descendant retains the worktree. Permission-denied cleanup is reported as retained/cleanup-failed. Concurrent parent edits cause a conflict receipt rather than overwrite. A merge with an active descendant is refused and leaves all user work intact.",
+      "reference_ids": ["S04", "S05"],
+      "existing_issue_alignment": "Preserve #261; integration ownership complements #262/#263."
+    },
+    {
+      "id": "R24",
+      "title": "Source-backed child return receipts",
+      "priority": "P1",
+      "dependencies": ["R17", "R18", "R19"],
+      "existing": "Parent integration can use child summaries, but complete source-backed return evidence remains an open handoff requirement.",
+      "design": "Define a return envelope with task/envelope revision, outcome, observed facts, source dependencies, effect/artifact IDs, verification and unresolved questions. Validate it through host adapters before the parent treats it as evidence. Only scoped referenced material is pulled into the parent prompt. A child cannot declare an absent file or unexecuted test true by writing a convincing summary. Mark unsupported claims unverified and retain useful verified portions when safe.",
+      "owners": [
+        "src/shared/agent-orchestration.ts",
+        "electron/main/services/background-agents.ts",
+        "electron/main/services/agent/workflow.ts"
+      ],
+      "acceptance": "Inject hallucinated paths, stale digests, test names without command receipts and revoked sources. The parent cannot claim verified completion from them. A valid partial receipt transfers observed work and exact remaining acceptance criteria without resetting task identity.",
+      "reference_ids": ["S04", "S07", "S14"],
+      "existing_issue_alignment": "#264; connect to R17 rather than a second completion system."
+    },
+    {
+      "id": "R25",
+      "title": "User-approved scoped role memory",
+      "priority": "P2",
+      "dependencies": ["R19", "R24"],
+      "existing": "Conversation recall and project-memory facilities exist; role memory is a separate, explicitly approved reuse policy.",
+      "design": "Allow promoting validated recurring project facts to scoped role memory with source receipts, review state, expiry and scope. Separate user preferences from inferred conventions and successful task patterns. Proposed updates are compared and reviewed; agents cannot silently turn prior prose into permanent instructions. Store memory snapshots independently of model identity so replacing a model does not grant broader access. Forget/revoke propagates through the same derivation graph.",
+      "owners": [
+        "electron/main/services/project-memory.ts",
+        "electron/main/services/context-memory.ts",
+        "src/shared/context-evidence.ts"
+      ],
+      "acceptance": "A test-only assumption is never promoted automatically. Approved project facts are unavailable in another project without explicit permission. Changed source or user revocation invalidates a role snapshot. Old model output remains unverified until supported by current evidence.",
+      "reference_ids": ["S05", "S13"],
+      "existing_issue_alignment": "#152; related source-backed summary work #150."
+    },
+    {
+      "id": "R26",
+      "title": "Stable prompt prefixes and explicit schema epochs",
+      "priority": "P2",
+      "dependencies": ["R02", "R09", "R13"],
+      "existing": "Task compilation and model-specific preparation exist; stable prefix work remains an optimization target.",
+      "design": "Define canonical blocks: stable host instructions/profile, stable tool schema, current task authority, then variable evidence/history. Keep timestamps, volatile status and routing diagnostics out of reusable prefix blocks where protocol allows. Hash stable rendered bytes and schema/profile revisions. Permission changes invalidate dispatch eligibility even when schema bytes are unchanged. Prefix stability cannot justify including an unauthorized parent transcript in a child request.",
+      "owners": [
+        "electron/main/services/agent/context-compiler.ts",
+        "electron/main/services/agent/loop.ts"
+      ],
+      "acceptance": "Two equivalent turns with unchanged schemas produce identical prefix bytes. Revoking a tool still blocks invocation. Native and provider adapters report their actual prefix representation separately. Small local model tests compare correctness and prefill costs before enabling new ordering.",
+      "reference_ids": ["S04", "S10"],
+      "existing_issue_alignment": "#232; parked KV/session reuse #233 is a separate qualified optimization."
+    },
+    {
+      "id": "R27",
+      "title": "Provider-cache and native-KV attribution",
+      "priority": "P2",
+      "dependencies": ["R26"],
+      "existing": "Eris exposes usage and native context decisions, but a unified cache-miss explanation must preserve backend differences.",
+      "design": "Record provider-reported cache tokens separately from native session reuse, seeded tokens and measured prefill. Attribute changes to model identity, schema/profile epoch, source revocation, compaction, context-window change or eviction. Use digests and counters by default; do not retain raw prompts merely for a cache chart. An unexplained miss is a diagnostic observation, not proof of provider failure or permission leakage.",
+      "owners": [
+        "electron/main/services/agent/model-transition.ts",
+        "electron/main/services/context-dispatch.ts",
+        "src/shared/agent-telemetry.ts"
+      ],
+      "acceptance": "Forced schema/source/model changes produce the expected invalidation reason. A provider without cache metrics yields unknown rather than zero. Native reuse cannot appear as provider cache savings. Trace export remains useful with prompt bodies redacted.",
+      "reference_ids": ["S10"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R28",
+      "title": "Compaction at protocol-safe causal boundaries",
+      "priority": "P1",
+      "dependencies": ["R11", "R16", "R26"],
+      "existing": "Context packing, recoverable journal handles and compaction already exist; transitions and durable resume require stronger boundary records.",
+      "design": "Compact complete API rounds and tool result groups, preserving pending tool calls and required task/authority blocks. Replace large outputs with validated artifact handles and source-backed summaries, recording exactly which ranges were superseded. Apply a cooldown/attempt ledger to failed compaction so retrying a model request does not trigger recursive compaction loops. If required content alone exceeds the measured window, return explicit infeasibility rather than accepting silent overage.",
+      "owners": [
+        "electron/main/services/agent/context-compiler.ts",
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/agent/run-journal.ts"
+      ],
+      "acceptance": "Interleave streaming assistant segments, parallel tool results, a model switch and restart. The next payload remains protocol-valid and every summarized claim can resolve its source or is marked unavailable. Required constraints survive tight budgets; compaction failure has finite recovery.",
+      "reference_ids": ["S08", "S09"],
+      "existing_issue_alignment": "#150 source-backed summaries; preserve #258 required constraints."
+    },
+    {
+      "id": "R29",
+      "title": "Contextual recall queries and budgeted prefetch",
+      "priority": "P2",
+      "dependencies": ["R03", "R05", "R19"],
+      "existing": "RAM recall already exists with a bounded selection deadline and context allocation; better retrieval does not require copying entire history.",
+      "design": "Build a deterministic recall query from the current task, resolved follow-up references, active files, explicit entities and recent unresolved decisions. Prefetch only likely eligible source handles during idle periods under a separate low-priority reservation. Cancel stale prefetch on task/source revision change. Do not silently call a paid remote relevance model or load an embedding model into an occupied GPU. Treat semantic ranking as an optional separately measured extension.",
+      "owners": [
+        "electron/main/services/context-memory.ts",
+        "electron/main/services/context-memory-store.ts",
+        "electron/main/services/agent/context-pull.ts"
+      ],
+      "acceptance": "Follow-up references retrieve the intended decision rather than unrelated lexical matches. New source controls cancel pending prefetch. No hidden remote traffic occurs under Local policy. Latency measurements include prefetch CPU/IO and distinguish cache hits from improved retrieval relevance.",
+      "reference_ids": ["S13"],
+      "existing_issue_alignment": "#235; CPU embeddings #234 remain separate."
+    },
+    {
+      "id": "R30",
+      "title": "Measured capability qualification registry",
+      "priority": "P1",
+      "dependencies": ["R04", "R09", "R12"],
+      "existing": "Auto already uses declared capability restrictions, heuristics, versioned telemetry and evaluation results; stronger measurement should extend them.",
+      "design": "Qualify exact model/runtime/protocol/context fingerprints for structured tools, follow-up resolution, review, edit, creative response and long-context evidence. Keep confidence, sample count, freshness and failure categories. Rank only eligible candidates; model size, popularity and a single passing sample are not quality proof. Separate user-visible reliability from load cost and prefill latency. Quarantine repeatedly malformed protocols without permanently banning unrelated capabilities.",
+      "owners": [
+        "electron/main/services/auto-model-policy.ts",
+        "src/shared/agent-telemetry.ts",
+        "electron/dev/quality-runs.ts"
+      ],
+      "acceptance": "Replacing weights or changing protocol invalidates qualification. A model strong at stories but weak at tools can answer an eligible story without becoming the default coding worker. Stale/low-confidence scores fall back deterministically. Missing data never grants remote eligibility.",
+      "reference_ids": ["S02", "S11"],
+      "existing_issue_alignment": "Follow-on to integrated #272; reuse existing telemetry/fingerprint mechanisms."
+    },
+    {
+      "id": "R31",
+      "title": "Purpose-specific model and protocol profiles",
+      "priority": "P2",
+      "dependencies": ["R02", "R30"],
+      "existing": "The loop already adapts protocols and context for selected workers; profile quality needs controlled evaluation.",
+      "design": "Version compact profiles for coordinator, answer, inspect, edit and verification tasks, with model-family/protocol adaptations where measured. Share one authoritative task contract; do not maintain contradictory role prompts. A read-only review profile cannot contain an edit playbook demanding mutations. Keep tool examples small and syntactically valid for the actual adapter. Record profile revision in dispatch and qualify changes on the same fixture/model set.",
+      "owners": [
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/agent/context-compiler.ts",
+        "src/shared/agent-contract.ts"
+      ],
+      "acceptance": "Assert no instruction contradictions across role, task authority and tool ceiling. Compare quality with a stable baseline and evaluator. Native and text-tool variants produce equivalent effects. A profile update cannot silently broaden authority or invalidate Fixed selection.",
+      "reference_ids": ["S02", "S04", "S14"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R32",
+      "title": "Bounded provider retries and circuit breakers",
+      "priority": "P1",
+      "dependencies": ["R03", "R04", "R11"],
+      "existing": "Transport failures and model recovery exist, but retries need one ownership policy across request, stream and task layers.",
+      "design": "Classify retryable transport errors separately from task failures. Use bounded attempts, capped jittered backoff, total elapsed budget, cancellation and provider-directed delay where supported. A partial stream or external effect requires reconciliation, not automatic replay. Circuits are scoped to endpoint/runtime fingerprint and failure class; permission/refusal errors never open a model-shopping path. Surface whether the app is backing off, changing an eligible worker or blocked.",
+      "owners": [
+        "electron/main/services/openai-compatible.ts",
+        "electron/main/services/agent/loop.ts",
+        "electron/main/services/auto-model-policy.ts"
+      ],
+      "acceptance": "Inject connection reset before headers, rate limiting, partial output, malformed JSON and cancellation during backoff. Attempts consume one root ledger and cannot multiply across layers. A retry storm from several children stays inside the endpoint and root budgets.",
+      "reference_ids": ["S11"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R33",
+      "title": "Model transition transaction receipts",
+      "priority": "P1",
+      "dependencies": ["R19", "R26", "R30", "R32"],
+      "existing": "Transitions already release old KV, prepare the target under resource admission and recompile against measured capacity.",
+      "design": "Add a durable transition receipt linking previous/target fingerprints, reason, policy revision, source validation, resource reservation, protocol/profile changes and actual commit. Source revocation during target loading invalidates seeded KV and recomputes the payload. Preserve completed effects and pending task obligations across failures. Reject a transition that would need broader locality or authority. A failed load may leave no resident model, so rollback means consistent task state rather than promising the old worker remains loaded.",
+      "owners": [
+        "electron/main/services/agent/model-transition.ts",
+        "electron/main/services/context-dispatch.ts",
+        "electron/main/services/agent/loop.ts"
+      ],
+      "acceptance": "Fail before load, after old-session release, during measured allocation and just before commit. No receipt reports success without actual target dispatch. Earlier edits are not replayed. Revoke evidence during loading and verify the final native/provider payload excludes it.",
+      "reference_ids": ["S01", "S10"],
+      "existing_issue_alignment": "#274 implemented foundation; reconcile #259/#260 acceptance with existing late-dispatch guards."
+    },
+    {
+      "id": "R34",
+      "title": "Typed bounded extension lifecycle events",
+      "priority": "P2",
+      "dependencies": ["R03", "R09", "R14"],
+      "existing": "The registry and host authority checks provide a suitable boundary; arbitrary lifecycle scripts would create another uncontrolled agent system.",
+      "design": "Introduce opt-in before/after tool, approval, compaction, task completion and session events with typed inputs and outputs. Default to observational hooks. Any effectful extension must declare capabilities, inherit task ceilings and pass the same gateway, cancellation and root accounting. Bound time, returned bytes, invocations and recursion; hooks cannot trigger themselves indefinitely or grant new authority. Record implementation/version and decisions in the event journal.",
+      "owners": [
+        "electron/main/services/tool-registry.ts",
+        "electron/main/services/agent/tool-gateway.ts",
+        "electron/main/services/agent/workflow.ts"
+      ],
+      "acceptance": "A hanging hook times out without freezing the UI. A completion hook that continually blocks cannot cause infinite retries. A hook cannot run shell/network effects under a read-only task. Disabling an extension revokes future invocations despite cached schemas.",
+      "reference_ids": ["S14"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R35",
+      "title": "Finite independent completion validators",
+      "priority": "P1",
+      "dependencies": ["R04", "R17", "R24", "R34"],
+      "existing": "Current workflow checks are deterministic and valuable; an independent verifier should supplement them, not replace them with model opinion.",
+      "design": "Allow task-specific validators for required artifacts, diff scope, build/test receipts and source-backed response claims. Run cheap deterministic validators first. Optional verifier agents get read-only bounded envelopes and cannot approve their own unsupported assertions. A rejected completion returns finite actionable criteria and consumes root recovery budget. Keep \u201cunable to verify\u201d separate from \u201cverified false\u201d; neither may be rendered as success.",
+      "owners": [
+        "electron/main/services/agent/workflow.ts",
+        "electron/main/services/agent/loop.ts",
+        "electron/dev/quality-adapter.ts"
+      ],
+      "acceptance": "Inject a verifier that always rejects, a stale test receipt, a fabricated file and a valid creative answer. No infinite continuation occurs; real acceptance criteria determine the outcome. Independent evaluation identifies repeated routing/prompt regressions without using the producing model as the only judge.",
+      "reference_ids": ["S11", "S14"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R36",
+      "title": "Task activity, handoff and approval inspectors",
+      "priority": "P2",
+      "dependencies": ["R06", "R20", "R21", "R24"],
+      "existing": "Typed timeline phases already exist; the interface should project richer receipts instead of adding more unstructured status chatter.",
+      "design": "Present one clear task state, current worker/model, last meaningful evidence, active approval and remaining blocker. Expand to inspect child tree, source handles, budget charges and transition reasons. Separate assistant answer from execution log. Show pending versus acknowledged steering and explain why a task is waiting. Errors should name the failed boundary and recovery action rather than display raw internal prompts or a generic stuck message.",
+      "owners": [
+        "src/shared/task-timeline.ts",
+        "src/shared/background-agents.ts",
+        "src/shared/chat-jobs.ts"
+      ],
+      "acceptance": "Usability fixtures cover long inference, approval wait, child failure, model load, incomplete edit and successful answer. Every visible status maps to an actual event/receipt. Stopped tasks do not display active spinners; redacted traces never expose private source text in collapsed labels.",
+      "reference_ids": ["S06", "S07"],
+      "existing_issue_alignment": ""
+    },
+    {
+      "id": "R37",
+      "title": "Actual-wire correlation and redacted trace exports",
+      "priority": "P1",
+      "dependencies": ["R02", "R11", "R12", "R19"],
+      "existing": "Eris-Dev captures the common transport boundary; final provider/native adaptation and real effect correlation need explicit receipts.",
+      "design": "Assign correlation IDs from user message through task, child, model request, tool invocation, checkpoint and result. Capture structural metadata and payload digests at the final dispatch boundary; optionally retain user-approved redacted bodies. Record source/model/runtime, policies, profiles, schema epochs, admitted/measured context, omissions, timing and terminal states. Failed preparation produces an attempted-dispatch record, never a fake sent request. Export privacy review and revocation rules apply to derived traces.",
+      "owners": [
+        "electron/dev/capture.ts",
+        "electron/main/services/context-dispatch.ts",
+        "electron/main/services/agent/loop.ts",
+        "src/shared/agent-telemetry.ts"
+      ],
+      "acceptance": "Compare captured digest/manifest to the exact adapter payload in native and server tests. A dispatch prevented by revocation remains distinguishable from a model response failure. Exporting with redaction retains enough causal structure to reproduce orchestration while excluding secret/path/body fields according to policy.",
+      "reference_ids": ["S10", "S12"],
+      "existing_issue_alignment": "#267; existing late-dispatch tests are a starting point, not full replay proof."
+    },
+    {
+      "id": "R38",
+      "title": "Deterministic counterfactual and fault replay",
+      "priority": "P1",
+      "dependencies": ["R01", "R37"],
+      "existing": "Scripted transports and stateful scenarios already exist; deterministic reducer/event seams enable deeper reproduction.",
+      "design": "Replay normalized events and effect receipts with a fixed clock, IDs and recorded resource decisions. Provide fault schedules at admission, dispatch, tool execution, persistence, cancellation and resume. Counterfactual mode compares a proposed policy/profile against a baseline without executing recorded effects twice. External model outputs are recordings in deterministic mode; actual re-inference is labeled separately. Stop replay if required evidence is unavailable rather than substituting invented content.",
+      "owners": [
+        "electron/dev/scenario-adapter.ts",
+        "electron/dev/memory-replay.ts",
+        "electron/dev/snapshot.ts",
+        "electron/main/services/agent/loop.ts"
+      ],
+      "acceptance": "The same fixture has stable decisions across runs. Branching a replay cannot mutate the original workspace. A trace missing final payload/source identity is marked partially reproducible. Native tool pairing, child cancellation and post-edit verification survive randomized fault schedules.",
+      "reference_ids": ["S01", "S12"],
+      "existing_issue_alignment": "#267 end-to-end RAM/agent replay."
+    },
+    {
+      "id": "R39",
+      "title": "Paired live model and policy qualification",
+      "priority": "P1",
+      "dependencies": ["R30", "R37", "R38"],
+      "existing": "Existing Eris-Dev live runs, batches of ten and independent quality adapters provide the starting point.",
+      "design": "Add explicit modes: request capture, scripted replay, pinned-model live and production-policy live. The last mode must exercise actual Auto selection rather than transport pinning. Run paired baseline/candidate tasks with isolated workspaces and matched model/runtime/context fingerprints; record processed/total counts, skips and failures. Use task-specific artifact checks plus independent rubric grading. Keep concurrency one initially for local GPU inference and pause between batches on pressure or user stop. Save resumable batch receipts.",
+      "owners": [
+        "electron/dev/runs.ts",
+        "electron/dev/batches.ts",
+        "electron/dev/quality-runs.ts",
+        "electron/dev/scenario-adapter.ts"
+      ],
+      "acceptance": "A 10,000-question import is never reported as 10,000 live answers unless all completed receipts exist. Interrupted batches resume without duplicate edits or unbounded spending. Compare Auto candidate exclusions, selected worker, actual payload and independently graded artifact\u2014not only answer fluency.",
+      "reference_ids": ["S01", "S12"],
+      "existing_issue_alignment": "#267; extend existing live-model and scenario capabilities."
+    },
+    {
+      "id": "R40",
+      "title": "Layered migration and release qualification",
+      "priority": "P1",
+      "dependencies": ["R35", "R39"],
+      "existing": "Build qualification, smoke tests and release provenance already exist; architectural changes need layered gates rather than only a larger question corpus.",
+      "design": "Gate each new boundary with reducer/contract tests, adapter integration, deterministic scenarios and targeted live qualification. Keep package-specific feature flags and a rollback path to the legacy implementation until parity is established. Separate source test success, packaged launch, OS command ownership, GPU measurement and answer quality. Release provenance lists which runtime path and schema versions were enabled. Do not enable every new package simultaneously or claim hardware safety from mocked memory counters.",
+      "owners": [
+        "scripts/run-qualification.mjs",
+        "checks/README.md",
+        "checks/quality/README.md",
+        "electron/dev/runs.ts"
+      ],
+      "acceptance": "CI rejects contract/schema incompatibility and deterministic regression. macOS/Windows packaged checks exercise cancellation, restart, model discovery and pressure handling. Hardware/live reports include exact fingerprints and coverage. Rollback reads compatible durable records or stops with a supported migration message.",
+      "reference_ids": ["S01", "S03", "S12"],
+      "existing_issue_alignment": ""
+    }
+  ],
+  "referenceSources": [
+    {
+      "id": "S01",
+      "title": "Query state, immutable config and explicit dependencies",
+      "paths": ["src/query.ts", "src/query/config.ts", "src/query/deps.ts", "src/QueryEngine.ts"],
+      "urls": [
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/query.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/query/config.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/query/deps.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/QueryEngine.ts"
+      ]
+    },
+    {
+      "id": "S02",
+      "title": "Typed tool lifecycle",
+      "paths": ["src/Tool.ts", "src/services/tools/toolExecution.ts"],
+      "urls": [
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/Tool.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/services/tools/toolExecution.ts"
+      ]
+    },
+    {
+      "id": "S03",
+      "title": "Batch and streaming scheduling",
+      "paths": [
+        "src/services/tools/toolOrchestration.ts",
+        "src/services/tools/StreamingToolExecutor.ts"
+      ],
+      "urls": [
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/services/tools/toolOrchestration.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/services/tools/StreamingToolExecutor.ts"
+      ]
+    },
+    {
+      "id": "S04",
+      "title": "Subagent creation and context",
+      "paths": ["src/tools/AgentTool/runAgent.ts", "src/tools/AgentTool/forkSubagent.ts"],
+      "urls": [
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/tools/AgentTool/runAgent.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/tools/AgentTool/forkSubagent.ts"
+      ]
+    },
+    {
+      "id": "S05",
+      "title": "Resume and role memory",
+      "paths": ["src/tools/AgentTool/resumeAgent.ts", "src/tools/AgentTool/agentMemorySnapshot.ts"],
+      "urls": [
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/tools/AgentTool/resumeAgent.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/tools/AgentTool/agentMemorySnapshot.ts"
+      ]
+    },
+    {
+      "id": "S06",
+      "title": "Agent messages and durable mailbox",
+      "paths": ["src/tools/SendMessageTool/SendMessageTool.ts", "src/utils/teammateMailbox.ts"],
+      "urls": [
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/tools/SendMessageTool/SendMessageTool.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/utils/teammateMailbox.ts"
+      ]
+    },
+    {
+      "id": "S07",
+      "title": "Tasks and steering",
+      "paths": [
+        "src/utils/tasks.ts",
+        "src/tools/TaskUpdateTool/TaskUpdateTool.ts",
+        "src/utils/messageQueueManager.ts"
+      ],
+      "urls": [
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/utils/tasks.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/tools/TaskUpdateTool/TaskUpdateTool.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/utils/messageQueueManager.ts"
+      ]
+    },
+    {
+      "id": "S08",
+      "title": "Oversized tool results",
+      "paths": ["src/utils/toolResultStorage.ts"],
+      "urls": [
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/utils/toolResultStorage.ts"
+      ]
+    },
+    {
+      "id": "S09",
+      "title": "Compaction boundaries",
+      "paths": [
+        "src/services/compact/microCompact.ts",
+        "src/services/compact/autoCompact.ts",
+        "src/services/compact/grouping.ts"
+      ],
+      "urls": [
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/services/compact/microCompact.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/services/compact/autoCompact.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/services/compact/grouping.ts"
+      ]
+    },
+    {
+      "id": "S10",
+      "title": "Cache attribution",
+      "paths": ["src/services/api/promptCacheBreakDetection.ts", "src/utils/toolSchemaCache.ts"],
+      "urls": [
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/services/api/promptCacheBreakDetection.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/utils/toolSchemaCache.ts"
+      ]
+    },
+    {
+      "id": "S11",
+      "title": "Retries and stop conditions",
+      "paths": [
+        "src/services/api/withRetry.ts",
+        "src/query/stopHooks.ts",
+        "src/query/tokenBudget.ts"
+      ],
+      "urls": [
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/services/api/withRetry.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/query/stopHooks.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/query/tokenBudget.ts"
+      ]
+    },
+    {
+      "id": "S12",
+      "title": "Trace and file evidence",
+      "paths": [
+        "src/utils/agentContext.ts",
+        "src/utils/fileStateCache.ts",
+        "src/utils/toolErrors.ts"
+      ],
+      "urls": [
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/utils/agentContext.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/utils/fileStateCache.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/utils/toolErrors.ts"
+      ]
+    },
+    {
+      "id": "S13",
+      "title": "Scoped context and memory selection",
+      "paths": ["src/context.ts", "src/memdir/findRelevantMemories.ts"],
+      "urls": [
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/context.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/memdir/findRelevantMemories.ts"
+      ]
+    },
+    {
+      "id": "S14",
+      "title": "Plan, verification and extension events",
+      "paths": [
+        "src/tools/EnterPlanModeTool/EnterPlanModeTool.ts",
+        "src/tools/AgentTool/built-in/verificationAgent.ts",
+        "src/utils/hooks/hookEvents.ts"
+      ],
+      "urls": [
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/tools/EnterPlanModeTool/EnterPlanModeTool.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/tools/AgentTool/built-in/verificationAgent.ts",
+        "https://github.com/tanbiralam/claude-code/blob/6f6f12b37f529488b10e53928dd5508bb93535c7/src/utils/hooks/hookEvents.ts"
+      ]
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # Automatic model execution and recovery
 
-Implemented for GitHub issues #268–274, against main efcf7a1 (2026-11-01).
+Implemented for GitHub issues #268–274 and reviewed against integrated `main` `0a54629` on 2026-11-01 (package v0.6.10). PRs #280/#281 are integrated, not pending. The release tag `v0.6.10` is `f14e409`; later #255/#257/#258/#261/#266 changes need a subsequent build.
 
 ## User contract
 
@@ -45,10 +45,14 @@ A failed preparation does not commit the proposed worker or replay completed edi
 
 Server-window preparation is followed by reference validation and a fresh recall eligibility check before serialization. Native inference additionally calls `prepareMessages` after allocation while holding the inference lease. That callback revalidates task references and recall, releases a seeded session when evidence was revoked, then repacks against the measured allocation using the destination protocol. The dispatch inspector and token estimates describe the actual post-load payload.
 
-This protects a source forgotten during loading from entering the worker request. It does not replace separate open work on per-task lease isolation, durable child evidence lineage, aggregate task-tree budgets or lossless context handles. Canonical chat source history is not rewritten during a model transition.
+This protects a source forgotten during loading from entering the worker request. Request-owned evidence scopes now isolate unrelated leases (#255). Child requirements/constraints, subtree cancellation and journal admission are also integrated. Durable child evidence lineage, aggregate task-tree budgets and source-backed child handles remain separate open work; run-local recoverable handles already exist. Canonical chat source history is not rewritten during a model transition.
 
 ## Qualification
 
 `auto-model-policy.test.ts` exercises eligible-pool ordering, locality before scoring, endpoint changes, fixed pins, non-chat/resource exclusions, residency and task specialization. `model-switching.test.ts` runs real chat planning and the real agent loop through scripted transport, captures Lite routing to another local story worker, makes actual edits in temporary workspaces after recovery, and verifies an earlier write is not replayed. It also covers transition capacity, cancellation, admission failure, refusal policy and lost diagnostic scopes.
 
 `memory-dispatch.test.ts` revokes sources during mocked native/server preparation and captures the final adapter payload. These suites run in the agent build qualification profile. They are deterministic logic/transport tests, not live-model quality measurements, GPU certification or packaged Windows/macOS validation.
+
+## Later handoff integration
+
+Automatic model choice does not transfer the parent's RAM store to a child. Both child execution modes now share `handoffMessages`, while required inherited requirements and up to 12 constraints of 300 characters live in the canonical task. Optional summary remains cuttable. Background jobs preserve a dependent evidence scope while its parent lease lives; cancellation stops the subtree and discard waits up to 30 seconds before retaining an unfinished worktree. Model-switching acceptance must preserve these contracts and the run journal's `busy`/omission distinction.

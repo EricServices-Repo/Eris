@@ -4,6 +4,8 @@ Eris is a desktop IDE for writing software with agents. You open a project folde
 
 The agent decides how the turn is handled: whether to read, edit, review, or explain. The model menu decides which model runs that turn. Those are separate choices.
 
+The [documentation index](docs/README.md) distinguishes current implementation, remaining design targets and historical evidence.
+
 See the [architecture reference](docs/ARCHITECTURE.md) for the current implementation and [next fixes](docs/RECOMMENDATIONS.md) for the prioritized backlog.
 
 **[Download the latest release](https://github.com/EricServices-Repo/Eris/releases/latest)** for macOS (Apple Silicon) and Windows (x64).
@@ -21,7 +23,7 @@ The checked-in version is defined in [package.json](package.json).
 
 - Open a folder and work in that project. The terminal, tests, and agent commands run inside it.
 - Ask a question about the code, or hand the agent a change to make.
-- Pick **Auto** and let Eris choose the agent and, if you want, the model. Or pin both.
+- Choose **Agent Auto** for the role and independently choose **Auto-local**, **Auto-any**, or a **Fixed** model.
 - Review each edit as hunks in the open file. Accept writes it in. Reject restores the previous text.
 - Run **Composer Lite** on your machine, **Composer Full** on Cloud Agents, a downloaded GGUF, or a connected provider such as Ollama or an OpenAI-compatible API.
 - Sign in with an [EricServic.es](https://www.ericservic.es) account to sync preferences and use Cloud Agents. Local chat stays available without an account.
@@ -36,7 +38,7 @@ Type `@` to attach a file and `/` to attach a skill. Enter sends. Shift+Enter in
 
 ### Agents
 
-An agent is the role that processes the message: instructions, tools, and when it is finished. It does not replace the model you picked.
+An agent is the role that processes the message: instructions, permitted tools and completion criteria. A Fixed model remains pinned; automatic execution policy can select or recover with another eligible worker without changing the task authority.
 
 | Agent | What it does |
 |-------|----------------|
@@ -47,24 +49,24 @@ An agent is the role that processes the message: instructions, tools, and when i
 | **Fast** | Answers a short lookup in a few sentences. |
 | **Coder** | Implements one assigned change. Pin it, or let Composer delegate to it. |
 
-A delegated agent works in the same folder and shows its goal, tools, and result in the thread. Pin an agent when you want that role on every turn. The pin is remembered.
+An inline specialist works sequentially in the same workspace; background specialists can use their own worktrees. Required parent constraints and tool authority are retained, while optional briefing text is budgeted. Delegation is not automatic access to the whole parent conversation. Pin an agent when you want that role on every turn. The pin is remembered.
 
 ### Models
 
-The model menu lists every model that is ready:
+The model menu separates execution policy from Agent Auto:
 
-- **Auto** chooses one for the turn. An edit can use Composer Full when Cloud Agents are allowed. Otherwise it uses Composer Lite, then a ready local or connected model.
-- **Composer Lite** runs locally.
-- **Composer Full** runs on Cloud Agents. If Cloud is unavailable, that turn continues on Composer Lite.
-- **Local models** you download (GGUF) and **connected providers** that are enabled.
+- **Auto-local** evaluates fitting ready native GGUFs and genuine loopback model servers before ranking. LAN/remote endpoints are excluded even if approved to receive recalled context.
+- **Auto-any** may choose eligible configured remote or local models. Prompt and project disclosure follows the actual destination and separate memory-sharing settings.
+- **Fixed · model name** keeps the selected execution model. Fixed Composer Full does not silently become Lite if Cloud/local Full is unavailable.
+- **Composer Lite**, downloaded text GGUFs and connected providers are distinct execution destinations. Cloud Composer requires the compatible server/workspace path; locally downloaded Full is an explicit setting.
 
-A model you pick is the model that runs. The agent still shapes the instructions and the tools.
+Automatic selection uses task compatibility and fresh outcome/eval evidence when available, with transparent deterministic fallback. Bounded model-changing recovery preserves existing work and does not retry safety/permission refusals on a different model. Clear requests need not invoke a coordinator; ambiguous intake may use Lite before a different worker executes.
 
 ### Editor, Git, and terminal
 
-Edits stay out of the buffer until you accept them. Pending changes appear as hunks in the open file.
+Agent mutations can already affect workspace files. Pending review shows journal/checkpoint-backed hunks; rejecting attempts to restore the recorded preimage subject to conflict/safety checks. Review is not a promise that no disk write occurred.
 
-The IDE includes a file tree, Monaco editor, search, Git, a terminal, and diagnostics. Agent commands stay in the workspace and cannot install packages globally.
+The IDE includes a file tree, Monaco editor, search, Git, a terminal, and diagnostics. Agent commands use the workspace as their working directory, with task policy, trust and approvals. They execute trusted host code; the working directory is not an OS sandbox or a guarantee against all external effects.
 
 ### Project memory, rules, and skills
 
@@ -92,7 +94,7 @@ Usage for this device and the account is in Settings → Usage.
 
 ### Feedback and updates
 
-**Help → Report a Bug** files an issue on [EricServices-Repo/Eris](https://github.com/EricServices-Repo/Eris/issues). Diagnostics and logs are redacted before they are sent.
+**Help → Report a Bug** submits through the feedback relay to the configured Eris issue inbox, validating returned Eris/Eris-feedback links. See [EricServices-Repo/Eris](https://github.com/EricServices-Repo/Eris/issues). Diagnostics and logs are redacted before they are sent.
 
 Eris checks this repository for updates. Install from a release build to update in place. A locally built unsigned app can open the release page instead.
 
@@ -102,7 +104,7 @@ Eris checks this repository for updates. Install from a release build to update 
 2. Open a project folder (**File → Open**, or ⌘O / Ctrl+O).
 3. Start a chat (⌘L / Ctrl+L).
 4. Leave **Agent** on **Auto**, or pin Composer, Explainer, Reviewer, Fast, or Coder.
-5. Leave **Model** on **Auto**, or pick Composer Lite, Composer Full, a local model, or a connected provider.
+5. Choose **Auto-local** or **Auto-any** for automatic execution, or a **Fixed** model. Existing manual selections remain pinned.
 6. Describe the change or the question. Attach files with `@` when you want the agent to start from a specific path.
 7. In Agent mode, accept or reject the hunks in the editor before you keep the result.
 8. Optional: sign in under Settings → Account if you want Cloud Agents or synced preferences.

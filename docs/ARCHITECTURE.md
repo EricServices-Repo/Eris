@@ -1,259 +1,151 @@
 # Eris architecture
 
-Detailed implementation design: [Agent handoff and RAM context](design/AGENT-HANDOFF-AND-RAM-CONTEXT.md). This snapshot-based design traces chat/recall, inline and background delegation, model dispatch, memory leases, and explicit implementation gaps; read its source-version notes before applying it to newer code.
+Reviewed against integrated `main` `0a54629` on 2026-11-01. Package version: **0.6.10**. The published `v0.6.10` tag is `f14e409`; the five subsequent handoff/RAM fixes in this source baseline require a later build to appear in an installed app.
 
-## 2026-11-01 scoped review: Auto, conversation context, and agent boundaries
+This is the implemented system map. [Documentation index](README.md) identifies the deeper guides; [RAM target architecture](RAM-CONTEXT-ARCHITECTURE.md) and [Amendment 001](RAM-CONTEXT-AMENDMENT-001.md) explicitly separate remaining targets from shipped source. Historical review evidence is not a current backlog or live-model certification.
 
-Scope: chat intake and routing, canonical task contracts, generic answer prompts, answer finalization, specialist handoffs, model transport budgeting, and local context allocation. The integrated baseline was `fbd91e8` (v0.6.9). The changes below address the scoped review findings; they do not constitute live-model or packaged-platform certification.
-
-The existing story feedback report showed `Auto → Fast → answer`, `builtin:composer-lite`, tools `none`, followed by “I'm sorry, but I can't assist with that request.” That exact request was not blocked by a tool permission check. The model returned an unexplained refusal, and the answer-only completion path accepted it as completed. Related wording such as “Generate a story” could additionally match the imperative edit rules.
-
-### Chat to agent
-
-Explicit creative-writing requests without a file/project destination now receive an `answer` intent and a deterministic resolver bypass. A named file or requested workspace effect continues through the edit path. Generic response guidance explicitly supports general conversation and creative writing, follows the user's requested format/length, and does not treat an IDE identity as grounds for refusal. It preserves applicable safety restrictions.
-
-### Chat context and completion
-
-The finalizer previously repaired malformed output from the latest goal alone. Follow-ups such as “Make the ending happier” could therefore lose the earlier character names, tone, or constraints. Repair requests now retain original system blocks and conversational roles, remove only a duplicated latest user turn, and append that current request once. Existing outbound message budgeting still applies; this does not make history unbounded.
-
-A short unexplained or coding-role-only refusal for an explicit generic creative request receives one recovery attempt. A repeated refusal or failed repair is incomplete, not successful fulfillment. An explicit safety refusal is not retried by this mechanism. The raw draft and presentation audit remain available. This is a bounded recovery policy, not an unrestricted refusal override or a canned substitute for model output.
-
-### Agent to agent: retained safeguards and remaining design work
-
-`childTaskContract` intersects the child tool ceiling with the parent, inherits project scope and execution/external-effect restrictions, and clears parent follow-up result state. Inline specialists are sequential in the same workspace. Their tool events, diffs, incomplete state, and returned text are collected; a tool-free claim is marked unverified. Background result summaries report missing and failed children rather than treating queue completion as evidence.
-
-The handoff packet carries parent/subtask goals, summary, files, open questions and confidence. Its rendered text is currently supplied as optional project/conversation context to prompt compilation. Under pressure it can be shortened or omitted; the child task contract preserves authority, but not necessarily every nuance in the coordinator's prose. A future typed handoff context block should retain a bounded set of required parent constraints, report omitted evidence explicitly, and attach source IDs and the parent's memory manifest. A child should then request missing evidence rather than guessing. This review does not claim that this future design is implemented.
-
-### Agent to model: retained safeguards and remaining design work
-
-`chat-runtime.ts` budgets final outbound messages including history and tool schemas, while `model-protocol.ts` validates tool-call/result pairing. Structured native history and session helpers synchronize current seed history rather than treating a reused KV cache as authoritative conversation state. Context capability records distinguish measured allocation from a runtime plan.
-
-The important remaining gap is the first cold load: compilation/transport budgeting can use the plan before the model allocates a smaller window. The recent VRAM retry fix can shrink that window, but cannot by itself recompile the initial prompt. Warm/load the selected model before final native budgeting, then re-read measured capacity; repeat this after worker context recreation. Keep tokenizer estimates labeled as estimates until actual counts are available.
-
-### Validation boundary
-
-`tests/agent-creative-chat.test.ts` covers creative intent and resolver precedence, generic prompt guidance, history-preserving repairs, repeated refusals, and explicit safety refusals. `tests/agent-loop.test.ts` exercises the reported Auto/Fast answer-only path with scripted model output and verifies that recovery performs no workspace tool operations. These tests are included in the agent prebuild qualification profile. Validation passed: typecheck, lint, 124 test files / 1,349 tests, and the deterministic context gate including 14/14 synthetic recall labels. The focused context/conversation/orchestration/allocation/memory-dispatch/deliverable run passed 85 tests across eight suites. No hardware-specific absolute latency budget was evaluated. Scripted success proves control flow and contract handling, not the quality of a real model's story.
-
-REC-29: Local index vectors have an explicit versioned hash space; incompatible vectors trigger rebuild and lexical fallback. External embedding utility returns provenance with opt-in transfer policy and bounded cancellation. Workspace ranking remains local; see [contract and calibration](changes/REC-29-retrieval-provenance.md).
-
-## REC-34 · Chat virtualization and performance qualification
-
-HistoricalMessages retains a bounded selection range and one focused row, and searches loaded message data independently of mounted DOM. The scripted Electron/index fixtures measure UI and retrieval separately from model load and gate hardware-matched budgets. See [implementation, measurements and limits](changes/REC-34-chat-performance.md).
-
-Reviewed 2026-10-24 against commit `6038e16dcdf58044bd5245294931005f3094e804`, package version **0.4.15**. Updated for the local `main` implementation following this source review of the desktop IDE, Eris-Dev, cloud worker, and delivery workflows. It is not a new live-model benchmark, penetration test, or installation certification.
-
-This file describes the current implementation. [RECOMMENDATIONS.md](RECOMMENDATIONS.md) is the current prioritized implementation backlog. Historical AG, FR, MR, and ARCH review identifiers are evidence references, not an assertion that those findings remain open.
-
-REC-36: Language edits use advertised server capabilities, current-document preview tokens and the journaled mutation service with stale-buffer/disk checks. Debugging separates Node inspector from optional user-configured stdio DAP adapters with bounded lifecycles and explicit unsupported actions. See [capabilities, configuration and acceptance](changes/REC-36-capability-negotiation.md).
-
-## System and process boundaries
+## Process boundaries and state ownership
 
 ```mermaid
 flowchart LR
-  User[Developer] --> Renderer[React IDE and Monaco]
-  Renderer --> Preload[Typed preload API]
-  Preload --> Main[Electron main and IPC]
-  Main --> Turn[Task intake and agent runtime]
-  Turn --> Gateway[Tool gateway and approvals]
-  Gateway --> Workspace[Workspace, Git, PTY, LSP, MCP]
-  Turn --> Transport[Model transport]
-  Transport --> Native[GGUF utility process]
-  Transport --> API[Model API connections]
-  Main --> Worker[Workspace worker]
-  Main --> Store[Local settings, chats, jobs and evidence]
-  Main --> Cloud[Separate Cloud Agent service]
-  Dev[Eris-Dev] --> Turn
-  Dev --> Transport
+  UI[React renderer and Monaco] --> Preload[Typed preload API]
+  Preload --> IPC[Main-frame validated IPC]
+  IPC --> Intake[Chat admission and task intake]
+  Intake --> Context[Main-owned bounded RAM context]
+  Context --> DB[Workspace worker and SQLite]
+  Intake --> Agent[Agent loop and specialist jobs]
+  Agent --> Gateway[Tool gateway and approvals]
+  Gateway --> Host[Workspace, Git, commands, LSP and MCP]
+  Agent --> Wire[Model transport and eligibility]
+  Wire --> Native[GGUF utility process]
+  Wire --> API[Resolved API connection]
+  Agent --> Images[Dedicated image service and Python worker]
+  IPC --> Cloud[Separate Cloud Agent service]
+  Dev[Eris-Dev diagnostics] --> Intake
+  Dev --> Wire
 ```
 
-The production app and Eris-Dev are separate Electron applications. The cloud agent is a separate Node service with its own worker loop and deployment. Shared types or prompts do not make these execution environments equivalent.
+- **Renderer:** interaction, virtualized chat, editor/document models, previews and approvals. It cannot grant itself task authority or directly inspect the RAM store.
+- **Main:** validates senders/payloads, admits tasks, resolves authority/project identity, holds credentials, compiles prompts, owns RAM selection/evidence leases and coordinates effects.
+- **Workspace worker:** canonical chats, source/control revisions, archive/history access, repository/index work through separate worker lanes. The RAM store itself is still main-owned.
+- **Native runtime:** GGUF weights, measured context allocation, tokenization and run-local KV sessions. Normally an Electron utility process; an explicit in-process compatibility path remains.
+- **Image worker:** a separately managed Python/Diffusers runtime and model catalog; it does not become a chat model.
+- **Cloud Agent:** a separate Node service, deployment boundary, dependency tree and tool implementation.
+- **Eris-Dev:** a separate Electron app/profile sharing production intake and agent code behind diagnostics adapters.
 
-### REC-20 mutation publication and recovery
+Sources: [main startup](../electron/main/index.ts), [window isolation](../electron/main/window.ts), [preload](../electron/preload/index.ts), [workspace worker](../electron/main/workspace-worker.ts), [model runtime](../electron/main/services/builtin-model.ts).
 
-The task gateway captures canonical-root/file identities and passes them through the executor to text, patch, notebook, delete and rename operations. The mutation layer validates again after staging and immediately before publication. Text output is written/fsynced in a same-directory temporary file; existing-file replacement uses atomic rename, while new files and file rename destinations use exclusive hard links to avoid overwriting concurrent creates. Symlink components and files over the 16 MiB reversible limit fail closed. Nonempty directory deletion is refused rather than producing an unrecoverable directory-only checkpoint.
+## Canonical contracts
 
-Versioned transaction journals preserve preimages and prepared/applied/partial/conflicted states, linked to task/checkpoint ownership. A receipt persistence failure after an effect is reported as applied-but-incomplete, never successful nonmutation. `mutationRecovery` provides a bounded, read-only recovery inventory; prepared/partial operations require inspection, not automatic replay. Multiple file operations have individual receipts, not cross-file OS atomicity. Portable Node APIs cannot eliminate the last external replacement race for existing targets or guarantee power-loss durability across every filesystem; stronger isolation requires staging/worktrees and OS support.
+`TaskContract` v2 separates requested artifact, destination, project applicability, acceptance criteria, obligations, effect constraints and effective authority. A code example in chat does not authorize editing a file. Recalled instructions or a specialist summary cannot widen permissions.
 
-### Desktop shell and renderer
+A conversation is durable history; a task is the authorized goal; a job/attempt is one execution; a model is the inference destination; an agent is a role and tool ceiling. These identities must remain separate in routing, status, persistence and debugging.
 
-- [electron/main/index.ts](../electron/main/index.ts) owns startup and service shutdown; [window.ts](../electron/main/window.ts) creates the application window with `sandbox: true`, context isolation, and Node integration disabled. Navigation is restricted and external HTTP(S) links open through the OS.
-- [electron/preload/index.ts](../electron/preload/index.ts) exposes the IDE API. [src/shared/api.ts](../src/shared/api.ts) supplies compile-time types. Each privileged handler still needs its own runtime validation and sender authorization.
-- [src/hooks/useChatSession.ts](../src/hooks/useChatSession.ts) coordinates composing, streaming, approvals, questions, pending diffs, and reconnection. [src/state/chat-stream.ts](../src/state/chat-stream.ts) holds stream state; [src/state/documents.ts](../src/state/documents.ts) maintains the current editor buffer independently of tab snapshots.
-- Workspace scanning/indexing and chat-database work have worker paths. PTYs, language servers, MCP subprocesses, native inference, and image inference each have separate resource and cancellation lifecycles.
+Child contracts now also carry `inherited` semantic requirements. Language/framework information, effect prohibitions, bounded explicit requirements/files and the top-level request excerpt survive delegation. Language conflicts are recorded instead of silently changing the parent's stack. Obligations, recommendations and follow-up/result state remain with the parent unless separately assigned.
 
-The renderer owns interaction and presentation. Main owns task interpretation, effective authority, filesystem effects, credentials, and durable execution evidence.
+Sources: [task contract](../src/shared/task-contract.ts), [task intake](../electron/main/services/task-intake.ts), [task interpretation](../src/shared/task-interpretation.ts).
 
-## Core contracts
+## Chat → task → agent
 
-[TaskContract](../src/shared/task-contract.ts) version 2 separates the requested artifact, its destination, project applicability, effect constraints, obligations, and effective authority. A code example delivered in chat does not inherently permit editing a project. Generic advice does not inherently require project inspection.
+1. Validate the main-window/frame sender, versioned bounded submission, workspace/thread association and attachments before task admission.
+2. Admit the canonical request digest through task-owned queue/controller state. Same ID/content reattaches; conflicting content is rejected. Persist the current user source before inference.
+3. Load canonical recent history in main. UI pagination does not enlarge a thread-bound submission; normal renderer submissions do not supply the authoritative transcript.
+4. `planInitialChatTurn` creates the deterministic initial plan. `resolveChatTurnContract` resolves ambiguous meaning, replans when needed and saves a scoped task. Clear creative-writing requests without a file destination bypass edit routing.
+5. Automatic semantic intake may use ready Lite as coordinator; the selected execution worker can be another eligible local model. Record a coordinator only when its semantic/routing result was actually used. Clear requests can skip model coordination.
+6. Allocate history/recall against the selected model's input budget, bind applicable historical references and select optional RAM/archive evidence for the resolved project.
+7. Lease that evidence in the request's `AsyncLocalStorage` evidence scope, then build messages and enter the agent loop.
+8. Authorize each proposed tool effect, retain observations/checkpoints, verify completion and persist the visible assistant result before terminal delivery.
+9. Release sessions, memory evidence and task-owned resources on success, failure or cancellation.
 
-- **Conversation:** durable user-facing message history.
-- **Task:** interpreted user intent, selected project, constraints, obligations, and authority.
-- **Job/attempt:** one execution of a task, with cancellation, model use, progress, and terminal state.
-- **Tool observation:** an actual operation/result recorded independently of the model's claims.
-- **Deliverable assessment:** checks for visible output defects; it is not an answer-quality grade.
-- **Artifact:** a patch, image, export, or installer with a distinct creation, validation, and integration lifecycle.
-- **Recommendation:** an object with stable identity and source, selected by later turns and accounted for individually.
+The generic answer path has no workspace effects. A short unexplained creative refusal receives one same-model repair using the existing conversation; repeated refusal remains incomplete. Explicit safety refusals are not a reason to model-shop.
 
-[task-intake.ts](../electron/main/services/task-intake.ts) builds the contract. Project discovery is bounded to 250 visited directories and depth four. It uses folder names, manifests, and page titles as aliases. Follow-ups can inherit resolved project scope. Current recommendation selection prefers objects retained by the preceding task, with prose parsing as a legacy fallback; it no longer relies solely on numbered lists.
+Sources: [chat IPC](../electron/main/ipc/chat-stream.ts), [shared turn pipeline](../electron/main/services/chat-turn.ts), [resolver](../electron/main/services/task-resolver.ts), [job controller](../electron/main/services/chat-job-controller.ts), [agent loop](../electron/main/services/agent/loop.ts).
 
-## Chat to task to agent
+## Agent role versus execution-model policy
 
-```mermaid
-sequenceDiagram
-  participant UI as Chat UI
-  participant IPC as chat:stream
-  participant Turn as Shared chat-turn services
-  participant Agent as Agent loop
-  participant Model as Model transport
-  participant Tool as Gateway and executor
-  UI->>IPC: Current request, thread ID, attachments and preferences
-  IPC->>IPC: Workspace check and job lookup
-  IPC->>IPC: Save user message and load canonical recent history
-  IPC->>Turn: Plan, resolve intent and build task
-  Turn-->>IPC: Task contract and worker plan
-  IPC->>IPC: Recall budgeted evidence from detailed RAM history
-  IPC->>Agent: Task, compiled context and callbacks
-  loop Until completion, stop or budget
-    Agent->>Model: Validated conversation and tool schemas
-    Model-->>Agent: Text, tool calls and termination metadata
-    Agent->>Tool: Authorize and execute proposed actions
-    Tool-->>Agent: Result, evidence and diff
-    Agent-->>IPC: Progress and output events
-    IPC-->>UI: Stream updates
-  end
-  IPC->>Turn: Complete task and review outcome when applicable
-  IPC->>IPC: Save assistant reply before terminal delivery
-  IPC-->>UI: Complete, incomplete, failed or stopped
-```
+**Agent Auto** selects a role; the model picker separately exposes:
 
-[chat-turn.ts](../electron/main/services/chat-turn.ts) is the shared seam for planning, intent resolution, task intake, prompt construction, model choice, and outcome evidence. Production IPC and diagnostics reuse it. [chat-router.ts](../electron/main/services/chat-router.ts), [task-resolver.ts](../electron/main/services/task-resolver.ts), and [execution-plan.ts](../electron/main/services/execution-plan.ts) retain distinct responsibilities; they must agree on the contract rather than independently infer permission from text.
+- **Fixed:** retain the chosen model. Explicit agent model overrides become fixed execution choices; an override conflicting with Auto-local fails visibly.
+- **Auto-local:** native GGUFs and actual loopback model-server endpoints. Approved LAN recall endpoints remain remote for execution selection.
+- **Auto-any:** eligible local and enabled configured remote models. Cloud Composer additionally requires the Agent/workspace path and compatible server contract.
+- **Legacy `auto`:** follows the saved routing profile/cloud preference. Existing pins are not silently migrated.
 
-[agent/loop.ts](../electron/main/services/agent/loop.ts) coordinates model steps, tool proposals, bounded repair, recovery, context refresh, delegation, and finalization. [agent/workflow.ts](../electron/main/services/agent/workflow.ts) describes execution requirements. [agent/final-answer.ts](../electron/main/services/agent/final-answer.ts) and [deliverable-checks.ts](../src/shared/deliverable-checks.ts) handle final output framing and visible defects.
+`chooseExecutionModel` builds policy/resource/capability eligibility before telemetry/evaluation ranking. A ready Lite cannot bypass evaluation of installed fitting local workers. Unknown/non-fitting cold workers and non-chat models are excluded with reasons. Scores never admit a remote candidate excluded by Auto-local.
 
-Current safeguards include explicit effect constraints, component/verification obligations, generic-versus-project evidence requirements, deterministic invalid-tool repair, bounded recovery instructions, and evidence-aware completion. Recent tests cover protocol leakage, continuation of unfinished code, scope pronouns, recommendation accounting, and unsupported execution claims.
+With sufficient fresh evidence, intent-specific real outcomes precede eval results. Otherwise task-specialization and residency heuristics provide a stable fallback; file size is a fit estimate, not a quality score. Evidence expires after 30 days and is versioned by app/runtime identity, weight identity or endpoint, context configuration and protocol. Unknown provider-side changes behind an unchanged remote ID remain undetectable. Declared/inferred capability is not a measured quality or latency result.
 
-See [REC-38 deliverable/evidence contract](changes/REC-38-deliverable-evidence.md) for task-aware quoted content, original-output audit and bounded per-obligation review.
+Sources: [routing](../electron/main/services/chat-router.ts), [selection](../electron/main/services/auto-model-policy.ts), [routing evidence](../electron/main/services/routing-evidence.ts), [execution design](design/AUTO-MODEL-EXECUTION.md).
 
-### Foreground lifecycle boundary
+## Agent → agent
 
-[chat-submission.ts](../electron/main/services/chat-submission.ts) validates versioned, bounded submissions, sender/thread/workspace associations and attachment paths before admission. Renderer-supplied legacy plans do not grant authority.
+Inline delegation is selected for chat-run identities (`jobId` beginning `chat:`); enabled custom specialists can participate. Inline children run sequentially in the same workspace with nested delegation disabled. Background children use inherited or separate worktrees and persistent job records.
 
-[foreground-tasks.ts](../electron/main/services/foreground-tasks.ts) queues foreground execution FIFO with task-owned controllers and cancellation ownership. Global app-state fields describe only the currently executing task; a new request does not abort it.
+Both modes now use `handoffMessages`: optional system briefing plus user subgoal. Required parent/subtask goals and inherited constraints live in the required task block. `delegate_to_agent.constraints` admits at most 12 constraints of 300 characters each, including inherited constraints. Overflow is refused, and an oversized required task fails compilation rather than losing a constraint. Summary/files/questions remain optional evidence with omission accounting; constraints written only in summary remain vulnerable to omission.
 
-[chat-job-controller.ts](../electron/main/services/chat-job-controller.ts) syncs admission snapshots before acknowledgement, compares canonical request digests, indexes recovery by workspace/thread and surfaces storage failure. It retains bounded answer/event snapshots (240 events), 200 terminal tasks in memory and up to 500/30 days on disk. [chat-events.ts](../electron/main/services/chat-events.ts) owns event publication/replay and terminal transitions. Recovery is bounded snapshot replay, not an unlimited event journal. The renderer restores unfinished/unsaved terminal results and ignores duplicate terminal delivery.
+Neither child call site automatically receives or reselects the parent's `MemoryPrompt`. A briefing may contain derived recall, but is not a durable source-backed context envelope. Inline automatic children select for their own intent under the parent's execution policy; direct child/background/debug runners exclude the Cloud-only adapter. Child authority is intersected with the parent. Results distinguish observed changes/checks, unverified prose, incomplete/failed work and integration into another worktree.
 
-The [REC-37 timeline contract](changes/REC-37-task-timeline.md) defines typed queue/load/wait phases, owner-targeted Stop, independent timing spans and live interaction restoration.
+Background evidence scopes are captured before enqueue/pump execution; unrelated jobs get fresh scopes. Parent cancellation stops the dependent subtree, refuses new children beneath stopping jobs and stops queued descendants. Discard waits for completion/cleanup up to 30 seconds; on timeout it retains the worktree and exposes `worktreeRetained`. Repeated discard calls join one operation. Merge refuses while descendants still run. A child with its own worktree keeps its work for review.
 
-## Agent to tool
+Still missing: persistent child evidence lineage after the parent lease ends/restart, original conversation-to-worktree identity mapping, complete bounded/versioned handoff envelopes, aggregate task-tree work/depth limits and source-backed result receipts. See #256, #262–265 and #267 in the [handoff review index](reviews/handoff-ram-issues-2026-11-01.md).
 
-[TaskToolGateway](../electron/main/services/agent/tool-gateway.ts) checks project scope, task effect authority, external effects, command restrictions, and file baselines. It records reads and blocks stale writes to inspected files; partial reads cannot authorize rewriting the whole file. [workspace-fs.ts](../electron/main/services/workspace-fs.ts) provides workspace path enforcement, while [command-approval.ts](../electron/main/services/command-approval.ts) and workspace trust control command approvals.
+Sources: [handoff types](../src/shared/agent-orchestration.ts), [background lifecycle](../electron/main/services/background-agents.ts), [deep design](design/AGENT-HANDOFF-AND-RAM-CONTEXT.md).
 
-[agent/task-scheduler.ts](../electron/main/services/agent/task-scheduler.ts) serializes mutations across overlapping canonical roots, including parent projects and subprojects. This is implemented and should not remain listed as an unbuilt feature.
+## Agent → model and bounded recovery
 
-These controls are application policy. A shell process with a project `cwd` is not an OS filesystem or network sandbox. User-buffer concurrency, multiple-file transactions, external effects, and Git integration require their own receipts and conflict handling; a read hash does not make every effect atomic or reversible.
+All agent/intent/route/outcome/inline/compaction calls use `streamModelChat`. Diagnostics substitute scoped scripted/live adapters at that seam. `model-protocol.ts` validates complete tool exchanges and emits native function calls or text envelopes for the destination protocol.
 
-## Agent to agent
+Automatic recovery can change the actual model after no-progress, repeated empty/schema-format failures, verification failures or recoverable native/context failures. Attempted models are excluded and the existing two-adaptation budget bounds transitions. Recovery selects eligible local alternatives; it does not export already-derived local execution state to a remote model. Fixed choices, approval denials and safety refusals cannot trigger model shopping. Unavailable alternatives have explicit exclusion diagnostics.
 
-There are different coordination paths:
+`prepareModelTransition` rechecks admission, releases old KV, prepares the target through exclusive inference scheduling and serialized load/dispose, checks cancellation and reads measured capacity before rebuilding worker instructions. Task identity, authority, tool transcript, journal, action log, checkpoints and completed edits survive; a failed preparation does not commit the proposed worker.
 
-- Inline specialists run through the desktop worker runtime and inherit an intersected task authority ceiling.
-- [background-agents.ts](../electron/main/services/background-agents.ts) schedules jobs and their children, stores activity, and manages worktree-backed results.
-- [worktrees.ts](../electron/main/services/worktrees.ts) creates task branches from `HEAD`, optionally links `node_modules`, produces diffs, and merges branches.
-- [agent-orchestration.ts](../src/shared/agent-orchestration.ts) describes handoff packets and summarizes required-child results.
+Server preparation is followed by task-reference and recall validation before serialization. Native inference has an additional `prepareMessages` callback after allocation under the inference lease: revalidate, discard revoked session seeds, repack against measured capacity and report the actual payload. Required task/context that cannot fit fails explicitly.
 
-The scheduler and blackboard use typed waiting reasons, independent of status wording. Parents release capacity while awaiting children and cannot complete successfully with failed required-child results.
+The compiler uses native token counts when a loaded tokenizer is available, with bounded counting and labeled fallback. Cold/unavailable tokenizers and some provider/schema/history accounting remain estimated. The model capability record distinguishes measured allocation, runtime placement plan, server-observed/planned and configured ceilings. GPU fitting and allocation retry are safeguards, not live hardware certification.
 
-Worktrees record their integration branch and base SHA at creation. Integration holds the project write lock and verifies the same branch/base plus a clean destination before merging. Receipts distinguish child edits applied to a shared parent worktree from a commit integrated into the destination branch; the inbox displays that distinction.
+Sources: [transport](../electron/main/services/chat-runtime.ts), [protocol](../electron/main/services/model-protocol.ts), [transition](../electron/main/services/agent/model-transition.ts), [recovery](../electron/main/services/agent/mid-run-adapt.ts), [measured compiler](../electron/main/services/agent/measured-context.ts), [capabilities](../electron/main/services/model-capabilities.ts).
 
-## Agent to model
+## RAM, durable history and run evidence
 
-[model-transport.ts](../electron/main/services/model-transport.ts) is shared by agent, routing, intent, outcome, inline, and compaction calls. It supplies diagnostics adapters through `AsyncLocalStorage`. [model-protocol.ts](../electron/main/services/model-protocol.ts) validates tool call/result pairing and compiles native tool messages or text envelopes. Native and API backends report termination metadata through [chat-runtime.ts](../electron/main/services/chat-runtime.ts).
+Detailed RAM history remains a bounded main-process acceleration layer over SQLite. Namespace includes app/profile, canonical workspace identity and thread. Source/control revisions and stable source sequences protect hydration, rewind, replacement and cutoff behavior. Hydration/selection have admission, cancellation, foreground deadlines and pressure fallbacks. The lexical index, durable archive search, pins, decisions and typed working-state receipts are separate from the model's active window.
 
-[agent/context-compiler.ts](../electron/main/services/agent/context-compiler.ts) orders mandatory instructions and optional context and records inclusion/omission metadata. Task authority and complete tool exchanges must survive budgeting. Some budget paths still use character estimates, including `content.length / 3`; actual provider/native token counts are not universally available. [model-capabilities.ts](../electron/main/services/model-capabilities.ts) centralizes configured ceilings, output reserve and protocol metadata for transport/compaction. Usage records distinguish measured and estimated tokens. Configured context ceilings remain distinct from measured worker allocation; tokenizer/provider calibration is incomplete.
+Current schema defaults are 128 MiB process, 32 MiB/thread, 25,000 messages, eight warm threads, 30-minute idle expiry, 150 ms foreground deadline, an **8,192-token recall ceiling**, and remote sharing off. The per-turn recall allocation starts at 15% of the input budget, bounded by settings and floors/caps; Agent history starts at 10%, chat history at 37.5%. Compiler/transport packing can omit optional items further. Neither logical bytes nor token estimates are exact process RSS.
 
-### Local GGUF inference
+Evidence leases are now request-scoped. Full derived-text withholding applies to the owning scope or named task, avoiding replacement of an unrelated request. Recognized recalled-item markers are still stripped across scopes when necessary. Dependent jobs inherit the scope while the lease lives; losing the scope or outliving/restarting after the lease leaves a remaining lineage gap.
 
-[builtin-model.ts](../electron/main/services/builtin-model.ts), [local-model.ts](../electron/main/services/local-model.ts), and [llama-worker.ts](../electron/main/llama-worker.ts) manage GGUF models and sessions. Native inference normally runs in an Electron utility process. [llama-worker-channel.ts](../electron/main/services/llama-worker-channel.ts) rejects waiting callers on worker error, exit, abort, and load deadline.
+Run tool output is journaled in admitted bounded chunks before prompt insertion. Caps are 32 MiB/run and 64 MiB globally. Append measures bytes/hashes without a full encoded copy, reserves before encoding, and releases on failure. Reads reserve decoded-string scratch; searches reserve additional redaction/lowercase scratch. `busy` means content is retained but cannot currently be materialized; `omitted` means unavailable. Compaction uses recoverable handles when possible, explicit omission otherwise, and optional source-referenced summaries. Journal storage is run-local, not durable after run end.
 
-The current native runtime preserves structured history in one-shot and session paths, bounds reply reserve against effective context, and records stop reasons. Runtime worker failures propagate as `LocalModelWorkerError` instead of automatically loading a failing model into Electron main. An in-process compatibility path remains; do not describe all native execution as universally isolated.
+`context_search`/`context_read` provide bounded run/thread pull subject to scope, source validity, destination eligibility and call/run budgets. RAM recall, the journal, optional source retrieval, durable history, project `.eris/context.md`, compaction summaries and native KV remain distinct lifecycles. Multi-GiB automatic sizing, a dedicated off-heap memory process, durable journals, CPU embeddings and cross-turn KV parking remain targets.
 
-[inference-governor.ts](../electron/main/services/inference-governor.ts), GPU/VRAM fitting, and the local image-model service coordinate resource admission. Scripted worker tests establish control-path behavior, not recovery under actual GPU OOM, native faults, or desktop memory pressure.
+Sources: [memory guide](CONTEXT-MEMORY.md), [store](../electron/main/services/context-memory-store.ts), [evidence scope](../electron/main/services/memory-dispatch.ts), [journal](../electron/main/services/agent/run-journal.ts), [context pull](../electron/main/services/agent/context-pull.ts).
 
-Device/host reservation ownership, fairness and measurement limits are defined in [REC-32 admission](changes/REC-32-inference-admission.md). GPU discovery does not establish pooled VRAM.
+## Tool effects, editor and persistence
 
-## Workspace, editor and persistence
+The gateway enforces the task's scoped tool/effect ceiling and inspected-source freshness. File mutations use bounded reversible checkpoints and journals, preserve preimages, serialize overlapping operations and report applied-but-incomplete outcomes when receipt persistence fails. Pending diff review does not mean no disk effect occurred. Multiple operations are individually journaled, not one OS-atomic transaction.
 
-Workspace context, retrieval, code indexing, watching, Git, language servers, terminals, and inline assistance are separate services under `electron/main/services/`. The editor's current content lives in its document model; code operating on stored tab text must use a fresh document snapshot.
+Desktop tests/builds are trusted host code, with workspace trust, environment filtering, approval policy and owned descendant cleanup. A workspace working directory is not an OS sandbox. POSIX commands use owned process groups; Windows uses a build-prepared Job Object helper. Explicit isolated execution is refused when the desktop lacks an accepted isolated runner.
 
-Persistence uses several stores rather than a single task database: chats/chat database, settings, task store, task ledger, chat-job snapshots, checkpoints, sessions, agent runs, and background jobs. [task-ledger.ts](../electron/main/services/task-ledger.ts) writes metadata and hashes as JSONL; content snapshots remain in checkpoint storage. A metadata ledger is not a complete transactional replay journal.
+Monaco/document models own current unsaved editor text; stored tab snapshots are not authoritative buffers. Git review, LSP edits, optional DAP adapters, MCP processes and PTYs have separate capability/lifecycle boundaries. Credentials live in main under explicit file/vault policy; renderer APIs expose presence rather than stored values.
 
-[credential-store.ts](../electron/main/services/credential-store.ts) owns explicit local-file or OS-vault policy. Local reads do not invoke the vault. Synced atomic migration preserves unreadable legacy data; selecting the vault is an explicit user action that may prompt. Credential files use POSIX permissions or explicit Windows current-user ACLs. Renderer APIs return presence, never stored values, and filesystem IPC denies credential files. Eris-Dev uses the same abstraction. Real Windows ACL and vault-unlock behavior remain platform acceptance checks.
+Sources: [gateway](../electron/main/services/agent/tool-gateway.ts), [mutation design](fixes/REC-15-checkpoint-reversal.md), [commands](../electron/main/services/shell-run.ts), [language/debug capabilities](changes/REC-36-capability-negotiation.md), [credential store](../electron/main/services/credential-store.ts).
 
-Image runtime publication and repair follow [REC-33](changes/REC-33-image-runtime-repair.md): stable staged environments, atomic active pointers, version provenance and resumable model staging.
+## Images and Cloud
 
-## Cloud execution
+Image generation uses dedicated settings, managed PNG storage and a local Diffusers subprocess or configured Images API. Image weights are downloaded explicitly from Hugging Face, separately from chat models. A tool cannot choose arbitrary model endpoints or silently download weights. Local generation has host/device preflight, inference admission, cancellation, timeouts and MPS watermarks; see the [image guide](image-generation.md). These protect responsiveness without guaranteeing that every model fits every GPU.
 
-The [cloud-agent](../cloud-agent/README.md) service owns authentication, jobs, model inference, workspace materialization, events, artifacts, and optional GitHub PR creation. It is a separate implementation with a separate package lock and a smaller tool protocol.
+Cloud inline requires a compatible task-contract capability. The repository server advertises `taskContractVersion: 1` while v2 qualification remains incomplete, so the desktop v2 path must not assume compatibility. Automatic startup fallback uses the eligible local pool; Fixed Full does not silently become Lite. An interrupted Cloud stream that began workspace work stops with preserved changes rather than replaying operations automatically.
 
-The desktop requires a compatible `taskContractVersion` before v2 inline routing and explains local fallback. [task-policy.ts](../cloud-agent/src/task-policy.ts) now validates/persists v2 contracts and checks tool scope/effect permissions, readonly verification and publishing authority; resume cannot replace the original contract. Health explicitly remains at version 1 until full conformance, artifact-baseline and obligation accounting qualification. Artifact application errors fail the inline turn.
+Cloud commands use the separate Linux namespace/cgroup boundary, not desktop trust semantics. Deployment isolation, credentials, endpoint availability and signing remain operational facts requiring separate evidence. Repository stubs/configuration are not proof of production deployment.
 
-[job-sandbox.ts](../cloud-agent/src/job-sandbox.ts) runs Linux commands through bubblewrap namespaces and prlimit after joining a required delegated cgroup v2 subtree. Only the job/project workspace is mounted; network and service environment are excluded. Verification mounts it read-only. Aggregate CPU/memory/process limits, bounded tmpfs/files/output and wall deadlines apply; cancellation kills the whole cgroup. Missing namespaces, tools or delegation fail closed. The Docker image supplies tools, but deployment must supply working isolation/delegation; the production host was not changed or certified.
+Sources: [cloud service](../cloud-agent/README.md), [task policy](../cloud-agent/src/task-policy.ts), [cloud sandbox](../cloud-agent/src/job-sandbox.ts), [fleet contract](CLOUD_AGENT_FLEET.md).
 
-[workspace-paths.ts](../cloud-agent/src/workspace-paths.ts) rejects symlink components, absolute/traversal/drive paths and bounds reads before allocation. Tree/artifact traversal skips links. Git metadata is excluded from agent file tools; trusted clone/publish operations pass auth through a scoped Git environment and return fixed errors without credential-bearing command strings. The shell denylist is supplementary policy.
+## Eris-Dev, qualification and release
 
-## Eris-Dev and diagnostics
+Eris-Dev supports capture-only inspection, opt-in pinned live-model question batches, stateful memory scenarios and budgeted quality scenarios. Capture is not inference; live execution is not an answer-quality oracle; a 10,000-question deterministic routing pass is not 10,000 real model answers. Independent question cases remain isolated unless a stateful scenario explicitly shares thread/task history. See [Eris-Dev](ERIS-DEV.md), [live runs](ERIS-DEV-LIVE-MODELS.md) and [diagnostics](DIAGNOSTICS-RUNS.md).
 
-[Eris-Dev](ERIS-DEV.md) uses application ID `app.eris.dev`, separate application data, and no production updater. It can capture requests with scripted replies or run opted-in [live-model batches](ERIS-DEV-LIVE-MODELS.md). It reuses production turn assembly and the worker loop inside a diagnostics scope with temporary workspaces and blocked host effects.
+`npm run check` runs typecheck, lint and all Vitest suites. `build` gates on the agent profile; `build:dev-app` gates on the dev-app profile. Client renderer/worker, quality harness, context, recovery and packaged launch checks have separate scripts. Qualification profiles declare exclusions; source-linked scripted tests do not establish model quality, GPU OOM behavior, accessibility acceptance, deployment isolation or signed-update installation.
 
-The current implementation provides stable question IDs, import preview, resume compatibility, atomic export, key-aware sanitization, context/tool manifests, selected-case inspection, per-call termination, elapsed/deadline/cancellation causes, complete streamed output capture, deliverable findings, and explicit exported/processed/total coverage.
+Work belongs on feature/rebuild branches with PRs to `main`. The branch-policy workflow accepts PRs to main; repository rulesets are external configuration and were not audited here. Release requires a clean exact `origin/main` checkout, an already-integrated version/changelog, and a new immutable tag. CI builds macOS DMG/ZIP and Windows Eris/Eris-Dev installers, records source/lock/asset provenance and attaches both production update feeds. Source changes require a new version/tag; explicit repair replaces only artifacts of the same immutable source.
 
-REC-27 adds an Eris-Dev quality-suite adapter that calls the existing production capture/intake/runtime path. UI and maintained CLI bridge materialize synthetic isolated fixtures, reserve provider/output budgets, redact known credentials, preserve blocked effects and archive fixture/result digests. Saved reports support offline adjudication without new inference. Capability gaps remain not-exercised; capture does not establish answer correctness.
+The verified `v0.6.10` release workflow built from `f14e409`; this documentation baseline is newer. No test count in an earlier guide should be treated as a fresh execution result for the newer baseline.
 
-[DIAGNOSTICS-RUNS.md](DIAGNOSTICS-RUNS.md) documents the in-app diagnostics seam. Scripted adapters must make zero provider calls; live adapters exercise inference but still do not represent every production effect. Diagnostics block host commands, network effects, MCP, images, persistent delegation, and cloud execution at their service boundaries.
-
-A runtime completion, invariant pass, or deliverable pass is not proof that an answer is correct. `answerQuality` remains explicitly `not-evaluated` in Eris-Dev results. Historical partial captures must not become whole-corpus quality claims. Independent artifact oracles, realistic multi-turn cases, repeated model comparisons, and actual desktop interaction tests remain necessary.
-
-## Build, CI and release
-
-[package.json](../package.json) and its lockfile are the version and dependency sources. `npm run build` first runs the `agents` qualification profile; `build:dev-app` runs the `dev-app` profile. [qualification-profiles.json](../tests/qualification-profiles.json) enumerates coverage and exclusions. General `npm test` covers additional application behavior.
-
-[CI](../.github/workflows/ci.yml) runs typecheck, lint, tests, production build, and low-threshold audits for both dependency trees on macOS, plus an Eris-Dev Windows installer job. `check:client`, quality harness invariants, cloud typechecking, actual process recovery and packaged smoke checks are now CI steps. Packaged installation, real renderer interaction, live model answer quality, and all child-agent scheduling are not established by a green unit/build run.
-
-[GitHub policy](GITHUB-WORKFLOW.md) uses `main` as the only integration/release branch. Direct pushes are allowed; task/release PRs also target `main`. The retired `dev` promotion/version rules have been removed from enforced workflows and release validation.
-
-[scripts/release.mjs](../scripts/release.mjs) requires a clean checkout at the exact remote `main` tip for a no-bump release, then creates/pushes the tag and creates the release. It does not push branch commits. [release.yml](../.github/workflows/release.yml) builds macOS DMG/ZIP and Windows Eris/Eris-Dev NSIS installers, with both production updater feeds. Certificate configuration is optional; unsigned macOS builds use the manual-install fallback in [auto-update.ts](../electron/main/services/auto-update.ts).
-
-[release-source.cjs](../scripts/release-source.cjs) resolves the tag to one immutable SHA before the matrix starts, validates committed package/lock versions and ancestry in main, then records per-platform source/tag/lock hashes, signing state, workflow identity and asset checksums. Existing assets can only be replaced with explicit repair_existing input; source changes require a new tag/version.
-
-Feedback uses the server relay exclusively. No shared token is injected into the build; both builders exclude its legacy filename and run [check-packaged-secrets.cjs](../scripts/check-packaged-secrets.cjs) after packing, including a streaming scan of ASAR content. Historical release exposure/rotation has not been established.
-
-## Current work boundary
-
-The next fixes and acceptance criteria are maintained only in [RECOMMENDATIONS.md](RECOMMENDATIONS.md). Older review Markdown and superseded review/design backlogs have been removed. Historical JSON, JSONL, CSV, analyzer scripts, and ZIP evidence remain under `docs/reviews/` for reproducibility; their old findings are not automatically current defects.
-
-Operational guides remain in this directory. Update this architecture description when a responsibility or boundary changes, and update recommendations only after checking the current source and its validation evidence. The implementation passed 841 deterministic tests, five quality-harness checks, typechecks, lint without errors, build, client fixtures, a packaged macOS smoke and a real Electron utility-process recovery probe. CI adds the client/quality/recovery/packaged gates. Real live-model quality, cloud deployment, GPU and signed-update acceptance remain separate checks described in recommendations.
-
-## REC-31: trusted desktop commands
-
-Repository tests/builds execute trusted host code, not a read-only or network sandbox. `runWorkspaceCommand` requires workspace trust and refuses an explicitly requested isolated mode because the desktop has no accepted isolated runner. Explicit no-edit task constraints reject host commands. Command-name classification is not an effect guarantee; test/build scripts require command approval unless explicitly allowed or auto-approved by user policy. Receipts label host side effects as unobserved.
-
-Agent command environments use an allowlist and exclude inherited credentials and runtime injection variables; the interactive terminal retains its separate inherited environment. POSIX commands own a detached process group. Windows commands use a compiled helper and `PROC_THREAD_ATTRIBUTE_JOB_LIST` to enter a kill-on-close Job Object atomically during process creation; failure to establish ownership refuses execution. The helper is compiled from maintained C# source by Windows test/build preparation and copied as an executable resource; no compiler or PowerShell process runs during a chat command. Windows packaging refuses a missing helper. Cancellation, deadlines and output limits terminate the owned tree and settle within a bounded cleanup interval. Trusted code deliberately escaping a process group, kernel termination failures and unsupported host configurations are not an OS security boundary. Windows Job behavior still requires execution in Windows CI; macOS fixtures verify real child cleanup.
-
-Windows helper implementation follows [Microsoft’s process attribute contract](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute). Windows targets must prepare the helper on Windows (`npm run prepare:owned-command`); cross-packaging without a prepared helper is rejected. Generated executables/stamps remain ignored locally, while their C# source and build preparation are tracked.
-
-REC-35: Renderer dialogs share stacked focus/Tab/Escape ownership and restore background inert state. Review mnemonic keys are region-scoped; chat announces stable task states, not token deltas. See [keyboard contracts and acceptance matrix](changes/REC-35-keyboard-acceptance.md).
-
-
-## Detailed RAM conversation context
-
-The main process now owns a bounded detailed history cache, hydrated from the existing SQLite transcript over a dedicated context worker lane. Normal thread-bound submissions carry no renderer history; main supplies canonical recent messages for task intake and a separate budgeted historical evidence selection for model prompts. This removes UI paging from the context pipeline and prevents long loaded transcripts from exceeding submission limits.
-
-Default capacity is 128 MiB of conservatively estimated logical storage globally, 32 MiB and 25,000 messages per conversation, eight warm conversations and a 30-minute idle expiry. The full saved transcript remains durable. Revision-consistent pages, generation fencing, LRU/count/byte bounds and cooperative selection protect correctness and responsiveness. These are logical cache limits, not hard process RSS guarantees.
-
-Both answer-only and tool-worker compilers treat recalled facts as optional evidence after task authority. Native local models receive additional recall by default; remote workers require opt-in. Current user messages and final assistant replies use deterministic request IDs, with main saving the visible reply before terminal publication. A Context inspector supports preview, pins, exclusions and cutoffs; settings control budgets and remote sharing. Independent Eris-Dev cases remain isolated from production conversations.
-
-See [CONTEXT-MEMORY.md](CONTEXT-MEMORY.md) for lifecycle, data flow, settings, privacy rules, test coverage and remaining extensions.
-
-
-The next RAM/history design is specified in [RAM-CONTEXT-ARCHITECTURE.md](RAM-CONTEXT-ARCHITECTURE.md), including worker-owned resident segments, shared allocation reservations, cold archive search, typed reference binding, actual-sent context manifests, quality/performance gates and phased AI work packages. These are target requirements; consult [CONTEXT-MEMORY.md](CONTEXT-MEMORY.md) for current behavior.
+Sources: [test profiles](../tests/qualification-profiles.json), [release script](../scripts/release.mjs), [release workflow](../.github/workflows/release.yml), [update guide](UPDATES.md), [workflow rules](GITHUB-WORKFLOW.md), [remaining work](RECOMMENDATIONS.md).

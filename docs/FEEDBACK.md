@@ -1,5 +1,7 @@
 # Eris feedback
 
+Reviewed against integrated `main` `0a54629` on 2026-11-01. Package version: **0.6.10**; published tag `v0.6.10` is the older immutable `f14e409` source. Later source changes require another build.
+
 Help → Report a Bug submits to the EricServic.es feedback relay, which creates issues in the configured Eris inbox. The desktop never receives a shared GitHub issue-creation credential. User GitHub credentials are not used for feedback.
 
 The client posts the redacted title/body and fixed repository to `/api/eris/v1/feedback.php`; an optional EricServic.es bearer token identifies the account. Requests time out after 20 seconds. The client requests EricServices-Repo/Eris. The deployed relay can instead use the dedicated EricServices-Repo/Eris-feedback inbox. Only HTTPS issue URLs in these two repositories are accepted as success; the client preserves the actual repository in the returned link and history. GitHub-style `html_url` and client-style `htmlUrl` response fields are supported. The issue number comes from the validated URL, and a conflicting response number is rejected. Transport failures explain that submission could not be confirmed, because a timeout does not prove the server failed to create an issue. Invalid success responses warn that the report may already exist and should not be submitted again before contacting support; no report is recorded as submitted without a valid issue URL.
@@ -9,3 +11,7 @@ The relay must keep its issue-creation credential on the server, limited to Issu
 Both desktop builders exclude `resources/eris-feedback-token*`. The shared after-pack hook rejects legacy credential filenames and GitHub-token-shaped bytes, including ASAR payloads, without printing values. CI no longer injects a feedback secret. Synthetic regression fixtures exercise filenames and tokens crossing scan chunk boundaries.
 
 If an older release distributed a shared token, revoke/rotate it server-side and inspect/remove affected release assets. This implementation did not inspect real secret values or establish historical exposure.
+
+## Design boundary
+
+Feedback submission is an external network effect through the relay, separate from model transport and agent tool authority. A validated issue URL proves only that a recognized issue reference was returned, not that every attachment/log field is safe or that a defect is reproduced. Keep redaction and ambiguous-submit/retry behavior distinct from successful issue creation. See [bug-report.ts](../electron/main/services/bug-report.ts) and [architecture](ARCHITECTURE.md).
