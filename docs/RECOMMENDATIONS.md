@@ -1,12 +1,35 @@
 # Eris: next fixes
 
+## Current architecture reconciliation — 2026-11-01
+
+Reviewed integrated `main` `0a54629` (package v0.6.10), newer than release `f14e409`. [The documentation index](README.md) maps implementation versus remaining target design. The REC entries below retain their original review/acceptance provenance; they are not all open defects and their historical test totals are not new executions.
+
+Do not reimplement these merged fixes as absent: eligible local-before-Lite selection, locality before scoring, task-aware/versioned outcome ranking, explicit Fixed/Auto-local/Auto-any, actual Lite intake/worker handoff, bounded local model recovery, post-preparation/post-allocation recall checks, request-scoped leases (#255), inherited child semantics (#257), protected required constraints (#258), dependent subtree stop/discard (#261), and journal pre-allocation/scratch admission (#266).
+
+### Current remaining work
+
+1. **P1 durable child evidence lifetime (#256):** bind persisted/restarted/outliving children to source revisions and disclosure policy independently of an ended parent lease. AsyncLocalStorage isolation is implemented but not persistent lineage.
+2. **P1 aggregate task-tree budgets (#262):** cap ancestry/depth, cycles, model calls/tokens/elapsed work across children; the per-run adaptation limit is not a tree-wide budget.
+3. **Dispatch/cold-allocation acceptance (#259/#260):** both tickets remain open, while final server/native guards and measured repacking are already present. Reproduce against current code and reconcile the acceptance gaps before creating another competing dispatch/preparation path.
+4. **Child source/execution identity (#263):** explicitly map the original conversation namespace into inherited/separate worktrees without broad history access.
+5. **Source-backed child outcome receipts (#264):** preserve observed edits/checks and dependencies rather than importing assistant prose as verified completion.
+6. **Complete bounded/versioned envelope (#265):** the 12 × 300 required constraint field is implemented; source IDs, full schema/version and lifecycle validation remain broader work.
+7. **Task-tree RAM replay (#267):** extend existing isolated/stateful/controlled child tests into the full integration profile, with exact executed/blocked/not-exercised evidence.
+8. **Durable run journals (#225):** active handles and admitted reads exist, but evidence does not universally survive run end/restart.
+9. **Tier sizing/process/residency (#227/#228/#231):** automatic hardware-aware larger budgets, a dedicated off-heap memory process and physical host/GPU double-residency evidence. Current schema remains 512 MiB process / 128 MiB thread maximum, not the proposed GiB tier.
+10. **Recall and KV quality (#150/#152/#232–236):** source-backed summaries/project facts, stable-prefix/cross-turn parked KV, contextual query, CPU embeddings and complete tier UI. Gate each on measurable incremental benefit, privacy and reversible disable/fallback.
+
+Additional deployment, installed-platform, accessibility, signed-update and real-model quality acceptance in the REC ledger remains distinct from the source changes above. Exact source links and acceptance owners are in [the handoff guide](design/AGENT-HANDOFF-AND-RAM-CONTEXT.md), [memory implementation](CONTEXT-MEMORY.md) and [RAM target](RAM-CONTEXT-ARCHITECTURE.md).
+
+## Historical REC implementation and acceptance ledger
+
 REC-29 / #74 implemented vector-space invalidation, honest local-retrieval labels, explicit external transfer policy and bounded embedding utility. Small held-out calibration exposes the remaining semantic gap; learned workspace indexing is not enabled. See [evidence and remaining scope](changes/REC-29-retrieval-provenance.md).
 
 ## REC-34 · P2 · Chat and workspace performance budgets
 
 Implemented the measured selection/focus failures and loaded-history search, retained the existing virtualizer, and added reproducible hardware-scoped budgets with raw reports. Local M4 fixture acceptance passes; Windows performance, whole-app memory and live cancellation remain unqualified. See [REC-34 evidence](changes/REC-34-chat-performance.md).
 
-Reviewed **2026-10-24**, source baseline `6038e16dcdf58044bd5245294931005f3094e804`, version **0.4.15**. Read [ARCHITECTURE.md](ARCHITECTURE.md) for the current implementation. This file supersedes the dated Markdown review backlogs. Implementation is now in the local `main` checkout. Statuses below distinguish source changes from deployment and live-platform acceptance; the baseline SHA identifies the reviewed source, not a new committed release.
+Original REC review: **2026-10-24**, source baseline `6038e16dcdf58044bd5245294931005f3094e804`, version **0.4.15**. Read [ARCHITECTURE.md](ARCHITECTURE.md) for the current implementation. This file supersedes the dated Markdown review backlogs. This original ledger described its own then-current checkout; use the reconciliation above for the present source baseline. Statuses below distinguish source changes from deployment and live-platform acceptance; the baseline SHA identifies the reviewed source, not a new committed release.
 
 Priorities: **P0** is a distribution/security boundary to address before another affected release; **P1** is the next reliability or capability work; **P2** is hardening after those boundaries are stable. A source-confirmed gap is distinguished from a validation gap. No paid/live quality baseline, production cloud deployment, credential rotation, Windows installation, GPU fault certification, or signed update installation was performed. A local packaged macOS smoke test and actual Electron process recovery probe passed.
 
@@ -21,7 +44,7 @@ Do not reopen these as missing features without a new regression:
 - Worker exit/error, deadlines, cancellation, and generation termination are separately represented. Runtime native failure does not automatically reload the same failing model in Electron main.
 - Eris-Dev captures full deltas, records per-call termination, detects visibly broken deliverables, bounds repair/finalization, and labels export coverage. These checks do not grade answer correctness.
 - The Windows snapshot-failure fixture now uses the real snapshot size limit rather than Unix permission semantics.
-- `main` is the integration/release source, ordinary PRs into it are allowed, and direct pushes are permitted. The dependency lock contains patched Electron, fast-uri, and undici versions. CI audits both dependency trees.
+- `main` is the integration/release source, ordinary PRs into it are allowed, with work committed on task branches and integrated through PRs. The dependency lock contains patched Electron, fast-uri, and undici versions. CI audits both dependency trees.
 
 Evidence: [task-contract.ts](../src/shared/task-contract.ts), [task-intake.ts](../electron/main/services/task-intake.ts), [tool-gateway.ts](../electron/main/services/agent/tool-gateway.ts), [task-scheduler.ts](../electron/main/services/agent/task-scheduler.ts), [live-review regressions](../tests/eris-dev-live-review.test.ts), [snapshot regression](../tests/eris-dev-followup.test.ts), and [GitHub workflow](GITHUB-WORKFLOW.md).
 
@@ -213,7 +236,7 @@ Historical machine-readable material remains available:
 
 Dated review Markdown, the old agent-v2 narrative, the product-improvement backlog, and the superseded smoke/debug design proposal were removed. JSON/JSONL/CSV, analyzer scripts, ZIP evidence, operational guides, and regression tests were retained. The diagnostics guide now links to this backlog rather than presenting obsolete routing findings as current behavior.
 
-Implementation validation: desktop/cloud typechecks; **841 tests in 82 suites**, **5 quality-harness tests**, lint with zero errors (9 existing warnings); quality harness invariants; desktop build; client worker/renderer fixtures; packaged macOS smoke; actual Electron utility-process exit/cancellation/recovery probe. Test counts and remaining platform limitations are reported with this change. Live quality, production deployment and certificate-based installation acceptance remain open.
+Historical validation (original REC baseline, not a new run): desktop/cloud typechecks; **841 tests in 82 suites**, **5 quality-harness tests**, lint with zero errors (9 existing warnings); quality harness invariants; desktop build; client worker/renderer fixtures; packaged macOS smoke; actual Electron utility-process exit/cancellation/recovery probe. Test counts and remaining platform limitations are reported with this change. Live quality, production deployment and certificate-based installation acceptance remain open.
 
 ## REC-31 / #76 implementation follow-up
 

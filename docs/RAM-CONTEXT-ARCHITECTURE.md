@@ -3,14 +3,15 @@
 - Design ID: ERIS-CONTEXT-002
 - Status: implementation-ready target design; **not a claim that the target is already built**
 - Design date: 2026-10-29
-- Reviewed implementation: `37b3da2e2d8742766d1269754eef115d34ef465e`
+- Original design baseline: `37b3da2e2d8742766d1269754eef115d34ef465e`
+- Implementation reconciliation: integrated `main` `0a54629`, 2026-11-01, package v0.6.10 (newer than release tag `f14e409`)
 - Primary audience: AI coding agents, architecture reviewers, performance engineers and maintainers
 - Companion: [current implementation](CONTEXT-MEMORY.md), [system architecture](ARCHITECTURE.md)
 - Amended by: [Amendment 001, tiered VRAM and RAM memory](RAM-CONTEXT-AMENDMENT-001.md), which takes precedence where the two disagree
 
 ## 1. How an AI must use this specification
 
-This document describes the next architecture for the implementation introduced by PR #109. Read the current implementation before changing it. Names ending in `V2`, new schemas, API examples, limits and rollout phases below are **proposed contracts**, unless explicitly labeled current.
+This document preserves the target architecture introduced after PR #109 and reconciles its implementation status against current code. Many initial packages are now partly or substantially implemented; their original acceptance text is not an instruction to recreate them. Read the current implementation before changing it. Names ending in `V2`, new schemas, API examples, limits and rollout phases below are **proposed contracts**, unless explicitly labeled current.
 
 The words MUST, MUST NOT and SHOULD identify requirements. Performance figures are proposed acceptance targets, not measurements. The capacity examples are arithmetic estimates with stated assumptions. The prior 936-test result established deterministic/scripted behavior of the baseline; it did not establish the performance or live-model quality targets in this document.
 
@@ -76,91 +77,83 @@ Increasing one does not automatically increase the others. A 100,000-message sea
 - Using RAM as the only recovery source.
 - Implementing an entire new agent loop as one rewrite.
 
-## 3. Source-confirmed baseline
+## 3. Source-confirmed implementation baseline
 
-The following is current at the reviewed commit.
+Baseline: integrated `main` `0a54629`, 2026-11-01. [CONTEXT-MEMORY.md](CONTEXT-MEMORY.md) is the detailed current-behavior reference; [agent handoff](design/AGENT-HANDOFF-AND-RAM-CONTEXT.md) covers child semantics and model transitions.
 
 ### 3.1 Canonical history and admission
 
-`src/hooks/useChatSession.ts` submits the current message and thread ID with an empty history for normal thread-bound sends. Main validates the thread using a one-message read and appends a deterministic `${requestId}:user` record. Its returned canonical tail supplies at most 20 prior messages to the existing intake and prompt builder.
+Main admits/deduplicates validated submissions, persists user messages before inference and visible assistant results before terminal delivery, and owns canonical recent-history assembly. SQLite source/control revisions, epochs and non-reused source sequences support rewinds, replacements, cutoffs and hydration consistency. Historical reference binding is restricted to canonical sources and cannot promote recalled prose into authority.
 
-`electron/main/ipc/chat-stream.ts` persists the final assistant message before publishing terminal delivery. Main and renderer use `finalizePostedAnswer()` from `src/shared/posted-answer.ts`, including stopped and image-only cases. Main captures thinking, image references and specialist metadata for transcript persistence. These extra fields are excluded from the recall cache.
+### 3.2 RAM cache and ownership
 
-### 3.2 RAM cache
+The detailed store remains in main, with bounded retained records, incremental append/segments, lexical postings, scratch/snapshot reservations and LRU/count/idle controls. A worker lane reads/searches canonical storage; it is not the proposed dedicated off-heap memory process. Defaults: 128 MiB process, 32 MiB/thread, 25,000 messages, eight warm threads, 30-minute idle expiry. These are logical limits, not hard RSS guarantees.
 
-`electron/main/services/context-memory-store.ts` holds full cleaned `ChatMessage` objects in main. The cache uses profile/workspace/thread keys, monotonic revisions, generation tokens, logical byte estimates, count caps, idle expiry and LRU eviction.
+### 3.3 Hydration and foreground work
 
-Current defaults are 128 MiB globally, 32 MiB per conversation, 25,000 messages per conversation, eight warm conversations and a 30-minute idle period. Limits are conservative logical estimates, not hard RSS limits.
+Hydration uses bounded pages, concurrency admission, cancellation/generation/source checks and per-consumer scheduling. The default foreground recall deadline is 150 ms; cold/partial coverage can fall back and use bounded durable archive/pin paths. There is no promise to load the whole durable conversation before sending.
 
-### 3.3 Hydration
+### 3.4 Selection and compilation
 
-`electron/main/services/context-memory.ts` hydrates at most two conversations concurrently. The dedicated context worker lane reads up to 500 rows and approximately 2 MB of serialized data per page. Pages carry a consistent transcript revision. Oversized rows are skipped with partial coverage. A foreground lookup retries an inconsistent/missing hydration once.
+Bounded Unicode-aware lexical query/posting lookup ranks at most 128 candidates and selects at most 24 facts, with pin/recent/salient lanes and scope/source exclusions. Recall/history allocations scale to model input capacity. Recall starts at 15%, with an 8,192-token schema ceiling; history starts at 10% Agent / 37.5% chat. Required task/instructions precede optional current evidence/history.
 
-The current implementation may await the configured full hydration before selection. The ordinary recent-history fallback exists, but there is no short per-send recall deadline.
+The compiler supports bounded loaded-native tokenization and explicit estimates when unavailable. Final native serialization revalidates and repacks after measured allocation under the inference lease. Actual-send manifests distinguish selection, compiler omissions and destination adaptation.
 
-### 3.4 Selection and prompt compilation
+### 3.5 Privacy, pressure, journals and children
 
-Selection scans retained messages, tokenizes up to 24 ASCII-oriented query terms, scores matches/recency/salient user wording and retains up to 128 candidates. It yields every 128 records. It selects up to 24 fact excerpts and defaults to approximately 1,024 tokens of recall, using three characters per token.
+Request-scoped evidence leases separate unrelated tasks while preserving dependent-child checks during the parent's live lease. Destination classification uses the actual native/loopback/remote connection and exact recall approvals; execution-locality policy is distinct. Shared governor pressure/admission now includes context/journal reservations and resident/native work.
 
-The shared compiler includes required task/instructions first, then optional memory, project and retrieval blocks. It allocates 55% of the supplied input-token budget to this compiled system context. Optional blocks can be sliced to fit that character budget.
+Run-local journal handles, recoverable eviction, optional reference-backed summaries and bounded `context_search`/`context_read` are implemented. Journal append reserves before encoding; reads/searches reserve scratch and distinguish `busy` from omission. Persistent journals, multi-GiB automatic sizing and cross-turn KV parking remain targets.
 
-Historical excerpts do not enter deterministic task-authority construction. Existing durable typed prior-task recommendations and recent messages remain the intake source.
+Children inherit semantic requirements and explicit required constraints; optional briefings can still be cut. Subtree stop/discard waits are implemented. Durable child provenance after parent expiry, source/worktree mapping, aggregate task-tree budgets and typed result receipts remain open.
 
-### 3.5 Controls and policy
+## 4. Reconciled gaps and remaining target
 
-The Context inspector can preview selection, pin notes, exclude sources, set an ordinal cutoff and reload RAM. Controls are durable, bounded and main-frame validated. Additional recall is local by default; non-native model requests require remote opt-in. A workspace cannot enable this setting while untrusted.
+These entries retain the original GAP IDs for traceability. “Implemented boundary” does not mean every proposed performance/hardware acceptance gate has passed.
 
-Project `.eris/context.md`, source retrieval caches, run-local compaction and native inference/KV sessions remain separate mechanisms. The RAM cache is not yet an allocated client of the inference governor.
+### GAP-01: Detailed capacity versus message counts — partially addressed
 
-## 4. Gaps the target design must close
+A bounded RAM window cannot hold arbitrary detailed history. Durable archive search and critical-pressure/pin fallback now reduce permanent recall loss after RAM eviction. Dedicated off-heap ownership and hardware-aware larger tiers remain #227/#228; larger caps must not be described as larger model windows.
 
-These are architectural limitations inferred from source inspection, not newly measured production incidents.
+### GAP-02: Append/hydration amplification — implemented foundations, measurement remains
 
-### GAP-01: Large message counts do not imply large detailed capacity
+Incremental append/history structures and admitted transfer/snapshot ownership replace the original full-copy baseline in covered paths. The target memory-process migration and physical peak/copy measurements still need evidence; do not recreate an already-present incremental store.
 
-The current logical formula is roughly `4 × serialized UTF-8 bytes + 512` per record. With 25,000 records averaging 2 KiB of content and approximately 200 bytes of serialized metadata, the estimate is about 226.6 MiB. A 32 MiB thread cap therefore retains roughly 3,500 such records, not 25,000. Exact counts vary with real content.
+### GAP-03: Full-history query scan — superseded by bounded index
 
-Oldest-first trimming removes old decisions as well as old discussion. Once a message leaves the RAM cache, the current selector does not search it on disk.
+Unicode-aware postings, bounded candidate lanes and deduplication are present. Contextual query construction (#235) and opt-in CPU embeddings (#234) remain quality extensions. Lexical recall is not semantic equivalence.
 
-### GAP-02: Append and hydration do work proportional to existing history
+### GAP-04: Foreground hydration blocking — implemented deadline boundary
 
-A warm append constructs a map from all retained records, sorts the result and recomputes total bytes. Hydration repeatedly prepends pages. Allocation, serialization and container-copy costs grow with conversation size even when only one new message arrives.
+Foreground deadlines, cancellation/consumer isolation and recent-history fallback are present. Real platform p95/p99 behavior remains a measurement gate, not a conclusion from the 150 ms configured budget.
 
-### GAP-03: Query cost includes a full history scan
+### GAP-05: Mutable shared policy — implemented request boundary, async lineage remains
 
-Each selection lowercases message strings and tests query words. Excluded sources are checked using an array membership operation for each row. Candidate ranking repeatedly sorts a bounded array after it reaches capacity. Bounds prevent unbounded growth, but the CPU work and temporary allocations remain avoidable.
+Resource configuration and request disclosure are separated, and #255 scopes evidence exposure to its owner. Persisted children after parent lease expiry/restart still need durable lineage (#256). A process-local async scope is not a persistent authorization record.
 
-### GAP-04: Cold recall can delay the foreground send
+### GAP-06: Fact projection — partial
 
-A cold conversation may load many pages before the selector runs. The worker request timeout is much longer than a desirable UI interaction deadline. Cancellation is checked between pages rather than providing a complete per-consumer deadline and queue-preemption protocol.
+Decisions/supersession, working-state receipts and evidence dependencies exist. Source-backed summaries/project facts, cross-task derivation and comprehensive contradiction semantics remain #150/#152/#264. User-approved facts must not become automatic cross-thread sharing.
 
-### GAP-05: Policy and storage configuration share one mutable store configuration
+### GAP-07: Historical reference binding — implemented foundation
 
-The baseline fences policy changes and reapplies the caller's configuration after asynchronous I/O. This prevents the tested cross-workspace sharing-policy race. It can still invalidate unrelated pending work when workspaces have different budgets or policies. Privacy should be immutable request data, while resource allocation should be a separately owned process policy.
+Restricted canonical binding supports old task/recommendation references without treating optional excerpts as user authorization. Child source/execution namespace mapping remains #263; ambiguous references must remain explicit.
 
-### GAP-06: Facts are excerpts rather than durable semantic records
+### GAP-08: Selected versus sent context — implemented accounting, qualification remains
 
-A message containing “always” is not necessarily a current requirement. Two contradictory constraints can both be selected. Numbered prose is classified as a recommendation, but stable recommendation batches, decisions, obligations and their supersession are not represented by this cache itself.
+Whole evidence units, fresh-evidence priority, per-item inclusion/omission and actual dispatch records exist. Native tokenization and post-allocation native repacking are implemented; provider estimates, smaller-window failures and real-hardware acceptance still need qualification. #259/#260 remain open and must be reconciled against the current final-dispatch guards before new implementation.
 
-### GAP-07: Additional history is selected after task intake
+### GAP-09: Source validity — partial
 
-Older RAM evidence can improve an answer but cannot reliably bind an ambiguous old recommendation before the current task is created. The target needs a restricted reference-binding stage that preserves current-user authority.
+Epoch/revision/sequence checks, evidence dependencies, settings/control conflicts and current source validation are implemented. A complete persisted lineage graph for asynchronous children and source-backed return receipts remains missing.
 
-### GAP-08: The selection and sent context can differ
+### GAP-10: Transient residency — partial
 
-The selector reports selected IDs before the compiler truncates optional blocks. A selected memory item may never be fully sent. A single block-level digest cannot explain which fact was dropped or cut. Memory's current ordering can also crowd out fresh source evidence.
+Shared reservations/pressure, host sampling, resident-model accounting and #266 pre-allocation journal/scratch checks are present. Logical ledgers are not physical peak measurements. Native host double-residency (#231), large-tier automatic sizing and remaining redaction/materialization copies require separate work.
 
-### GAP-09: Source validity is incomplete
+### GAP-11: Replay and evidence — implemented scenarios, broader task-tree acceptance remains
 
-Historical changed-file receipts have task identity and project root, but not a complete current-repository validity proof. Ordinary user/assistant messages lack per-statement scope and supersession. Ordinal cutoffs need explicit behavior after rewinds and replacements that reuse ordinal positions.
-
-### GAP-10: RAM accounting does not cover all context-related residency
-
-Transfer copies, pinned old snapshots, candidate strings, SQLite page caches, connection maps and renderer preview copies are not all governed by one admission contract. Worker heap limits alone would not solve this.
-
-### GAP-11: Context-bearing diagnostic histories need isolation and replay
-
-Independent Eris-Dev cases must stay independent. Stateful multi-turn evaluation should deliberately test the real history path, with reproducible retrieval decisions and actual sent messages.
+Isolated stateful replay, exports and deterministic context gates exist. The complete multi-agent task-tree RAM replay is #267. Packaged launch/release checks are distinct from installed update acceptance, real model quality and hardware pressure certification.
 
 ## 5. Non-negotiable invariants
 
@@ -1250,11 +1243,15 @@ Each package should be independently reviewable. Preserve existing behavior unti
 
 ### MEM-01 — Baseline instrumentation and benchmark corpus
 
+**Implementation reconciliation (0a54629):** Deterministic corpus, context performance/gate and export instrumentation exist; hardware/live quality baselines remain separate.
+
 Priority: P0. Dependencies: none. Files: `context-memory-store.ts`, `context-memory.ts`, `tests/context-memory*.test.ts`, new benchmark harness, qualification profiles.
 
 Deliver pool/latency/copy counters, 1k/10k/25k/100k history fixtures, corpus checksums and platform metadata. Separate measured values from estimates. Acceptance: reproducible baseline artifacts and no raw private text in default metrics.
 
 ### MEM-02 — Immutable request policy and namespace descriptors
+
+**Implementation reconciliation (0a54629):** Request policy/namespace identity and request-owned evidence scopes are implemented. Durable post-parent child lineage remains #256.
 
 Priority: P0. Dependencies: MEM-01. Files: `src/shared/context-memory.ts`, `context-memory.ts`, IPC settings/chats, worker protocol and model dispatch.
 
@@ -1262,11 +1259,15 @@ Separate privacy/scope from the global store configuration; add revision/policy 
 
 ### MEM-03 — Deadlines, consumer cancellation and prioritized queue
 
+**Implementation reconciliation (0a54629):** Foreground deadlines, hydration consumer scheduling and cancellation/fallback are implemented; benchmark targets are not implied.
+
 Priority: P0. Dependencies: MEM-02. Files: workspace worker client/protocol, context facade and stream admission.
 
 Implement bounded foreground search and background hydration queues with per-consumer cancellation and stale-result rejection. Acceptance: a cancelled consumer does not abort another consumer's useful load; foreground optional recall falls back within its budget.
 
 ### MEM-04 — Shared memory admission and pressure integration
+
+**Implementation reconciliation (0a54629):** Shared context reservations/pressure and native/image admission exist. Automatic larger-tier sizing and exact physical residency remain open.
 
 Priority: P0. Dependencies: MEM-01/02. Files: inference governor, new host-memory reservation service, context coordinator/worker, diagnostic schemas.
 
@@ -1274,11 +1275,15 @@ Introduce owned/reserved/pinned accounting, pressure states and hysteresis witho
 
 ### MEM-05 — Incremental recent ring and segment store
 
+**Implementation reconciliation (0a54629):** Incremental resident structures exist in main; dedicated off-heap memory-process ownership remains #228.
+
 Priority: P1. Dependencies: MEM-03/04. Files: replacement worker-owned context store and protocol adapters.
 
 Replace whole-history map rebuilds, sorts and repeated prepend copies. Track bytes incrementally and use snapshot handles. Acceptance: append cost remains approximately flat from 1k through 100k archived messages; output/recovery parity fixtures pass.
 
 ### MEM-06 — Canonical event sequence, timeline and controls versions
+
+**Implementation reconciliation (0a54629):** Canonical epochs, monotonic source sequence, control revisions and rewrite/cutoff handling are implemented.
 
 Priority: P0 for rewind correctness. Dependencies: MEM-02. Files: chat database, storage migration, control schemas and history rewind callers.
 
@@ -1286,11 +1291,15 @@ Add nonreused event sequence/timeline identity and controls revision/CAS semanti
 
 ### MEM-07 — Outbox and bounded normalized context reads
 
+**Implementation reconciliation (0a54629):** Bounded normalized reads and change/recovery foundations exist. The illustrative full outbox schema below is not automatically the actual database schema.
+
 Priority: P1. Dependencies: MEM-06. Files: chat database/writer, workspace worker, durable schema migrations.
 
 Write context events transactionally with messages and add versioned, resumable bounded context reads. Acceptance: crash between commit and indexing recovers by replay; giant thinking metadata does not suppress searchable ordinary message content.
 
 ### MEM-08 — Capability-probed archive indexing
+
+**Implementation reconciliation (0a54629):** Bounded durable archive search and fallback exist; check actual capabilities before adding another index.
 
 Priority: P1. Dependencies: MEM-03/07. Files: worker-owned archive search/index service, SQLite migrations, packaging checks.
 
@@ -1298,11 +1307,15 @@ Implement bounded chunk indexing, scope joins, watermark reporting and tested up
 
 ### MEM-09 — Provenance and fact-state projection
 
+**Implementation reconciliation (0a54629):** Decision supersession, working-state projection and source dependencies exist. Complete persistent derivation and user-approved project facts remain partial.
+
 Priority: P1. Dependencies: MEM-06/07. Files: shared fact schemas, task store/outcome integration, worker derivation service.
 
 Add source-backed user constraints, decisions, recommendation batches and obligations. Acceptance: assistant claims cannot supersede user facts or mark failed verification successful; every projection can be traced to canonical sources.
 
 ### MEM-10 — Restricted historical reference binding
+
+**Implementation reconciliation (0a54629):** Restricted historical reference binding is implemented; child worktree/source mapping remains #263.
 
 Priority: P1. Dependencies: MEM-08/09. Files: chat-turn, task intake, task contract schemas, recommendation selection and diagnostic adapters.
 
@@ -1310,11 +1323,15 @@ Resolve eligible old artifact IDs before task creation without injecting arbitra
 
 ### MEM-11 — Bounded ranking and deduplication
 
+**Implementation reconciliation (0a54629):** Bounded Unicode lexical ranking/index/deduplication are implemented; contextual query and CPU embedding experiments remain #235/#234.
+
 Priority: P1. Dependencies: MEM-05/08/09. Files: retrieval/ranking worker and quality harness.
 
 Implement separate candidate lanes, Unicode/code tokenization, exclusion sets, bounded top-K and source-span deduplication. Acceptance: critical-fact/precision gates pass, candidate memory is independent of archive length and repeated recent history is not repacked.
 
 ### MEM-12 — Unified item-level compiler and tokenizer accounting
+
+**Implementation reconciliation (0a54629):** Item manifests, source-priority packing, native counting and final native allocation repacking exist. Provider calibration and acceptance for #259/#260 need reconciliation.
 
 Priority: P1. Dependencies: MEM-02/10/11. Files: context compiler/budget, model capabilities/protocol adapters, worker prompts and answer-only loop.
 
@@ -1322,11 +1339,15 @@ Pack indivisible evidence/tool units with reserved fresh-source capacity and exa
 
 ### MEM-13 — Source dependency invalidation
 
+**Implementation reconciliation (0a54629):** Source/header/dependency invalidation exists; persistent asynchronous child evidence/result provenance remains #256/#264.
+
 Priority: P1. Dependencies: MEM-09/12. Files: document store, workspace watcher, repository events, task evidence and context source dependency service.
 
 Invalidate selected evidence using file/document/branch/task dependency epochs. Acceptance: unsaved edits, branch switches and changed tests make old verification ineligible as current proof without hashing the entire repository on send.
 
 ### MEM-14 — Specialist evidence handles and budgets
+
+**Implementation reconciliation (0a54629):** Inherited child semantics, bounded required constraints and subtree cancellation are integrated. Scoped child handles, envelope versioning and aggregate task-tree budgets remain #151/#256/#262/#263/#265.
 
 Priority: P2. Dependencies: MEM-02/10/12. Files: agent handoffs, background agents, task/evidence schemas and loop integration.
 
@@ -1334,11 +1355,15 @@ Pass only assignment-relevant facts and source handles; return typed partial/fai
 
 ### MEM-15 — Inspector corrections and control consistency
 
+**Implementation reconciliation (0a54629):** Inspector snapshots, conflict-safe controls and effective memory settings exist. Full VRAM/RAM tier presentation remains #236.
+
 Priority: P1. Dependencies: MEM-06/09/12. Files: Context inspector, chats IPC/preload/API and settings UI.
 
 Expose retained/searchable/sent coverage, source navigation, supersede/correct controls and effective pressure budgets. Use compare-and-swap controls updates and stale-preview identity. Acceptance: two inspector views cannot silently overwrite each other's newer controls; source correction invalidates downstream previews.
 
 ### MEM-16 — Eris-Dev stateful replay and exports
+
+**Implementation reconciliation (0a54629):** Independent live batches, stateful scenarios, exports/replay and budgeted quality adapters exist. Whole task-tree replay remains #267.
 
 Priority: P1. Dependencies: MEM-10/12. Files: shared diagnostic service, Eris-Dev main/renderer and result schemas.
 
@@ -1346,11 +1371,15 @@ Implement isolated stateless versus deliberate stateful runs, actual-dispatch ca
 
 ### MEM-17 — Fault, pressure and platform qualification
 
+**Implementation reconciliation (0a54629):** Deterministic gates and packaged launch/recovery checks exist; source-matched hardware/live certification is separately gated and not implied by unit tests.
+
 Priority: P0 release gate. Dependencies: relevant preceding phases. Files: qualification profiles, worker/native check scripts and CI workflows.
 
 Run deletion/rewind/cancel/policy races, worker exit, WAL/connection pressure, packaged SQLite compatibility/correctness advisories, low host headroom and packaging probes on macOS and Windows. Acceptance: release evidence names which scripted, packaged and real-hardware conditions actually ran.
 
 ### MEM-18 — Optional summary/semantic/KV experiments
+
+**Implementation reconciliation (0a54629):** Recoverable run handles and optional referenced summaries are implemented; durable journals, dedicated memory process, CPU embeddings and cross-turn KV remain independent targets.
 
 Priority: P2, gated by evidence. Dependencies: Phase D accepted. Files: new optional derivation/vector/session adapters and model-pressure coordinator.
 
@@ -1440,7 +1469,7 @@ This scenario must be tested with actual supported model/hardware conditions bef
 
 ### 27.4 A local-to-remote recovery switch
 
-A local model bundle includes private old code excerpts. The agent decides to recover using a remote backend. The dispatcher detects the new destination and recompiles against its disclosure ceiling.
+Target-only scenario: a future explicitly authorized remote transition starts from a local bundle containing private old code excerpts. Current automatic failure recovery deliberately selects local alternatives; it does not automatically shop remote models. The dispatcher detects the new destination and recompiles against its disclosure ceiling.
 
 If remote recall is disabled, all older private memory items and derived bindings containing that text are removed or the dependent action pauses for a precise user choice. The old local bundle and KV session are not reused. A trace explains the omission without logging the private text.
 

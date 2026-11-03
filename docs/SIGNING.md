@@ -1,5 +1,7 @@
 # Code signing Eris releases
 
+Reviewed against integrated `main` `0a54629` on 2026-11-01. Package version: **0.6.10**; published tag `v0.6.10` is the older immutable `f14e409` source. Later source changes require another build.
+
 CI (`.github/workflows/release.yml`) signs installers when the secrets below are present.
 Without them, builds succeed **unsigned** (fine for local testing; not for production auto-update).
 
@@ -8,7 +10,7 @@ Without them, builds succeed **unsigned** (fine for local testing; not for produ
 ### 1. Get a certificate
 
 - **OV** or **EV** code-signing certificate from DigiCert, Sectigo, SSL.com, etc.
-- EV builds SmartScreen reputation faster; OV works but may warn until downloads accumulate.
+- Certificate possession/signing does not by itself establish SmartScreen acceptance; the repository does not qualify download reputation or installation behavior.
 - Export (or receive) a `.pfx` / `.p12` and password.  
   Cloud HSM / Azure Key Vault / DigiCert KeyLocker need a different CI integration — this doc covers a standard PFX.
 
@@ -85,3 +87,7 @@ spctl -a -vv dist/mac-arm64/Eris.app
 - [ ] Mac `MAC_CERT_*` + Apple notarization secrets set  
 - [ ] Tag a release (`v*`) and confirm CI logs say signing is enabled  
 - [ ] Confirm `Get-AuthenticodeSignature` / `codesign` / `spctl` on artifacts  
+
+## Verification boundary
+
+The release workflow selects configured certificate inputs and records signing state in per-platform provenance. Repository configuration does not establish that the secrets exist, a notarization succeeded, or an installed update was accepted by Gatekeeper/SmartScreen. Verify those properties on the actual artifact and target OS. Never commit certificate exports, passwords or local signing scratch files. See [release/update design](UPDATES.md) for immutable-source and manual-install fallback behavior.

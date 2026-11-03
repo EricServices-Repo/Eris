@@ -4,19 +4,15 @@
 
 **Review date:** 2026-11-01
 
-**Source snapshot:** `d7a10fd` — Auto creative-chat and answer-repair changes, based on integrated v0.6.9 (`fbd91e8`).
+**Source snapshot:** integrated `main` `0a54629` (2026-11-01), package v0.6.10.
 
-**Document status:** Implementation description, explicit limitations, and a separately labeled proposed next design. This document does not change runtime behavior or certify a live model.
+**Document status:** current implementation, explicit limitations and separately labeled remaining target design. The published v0.6.10 release is pinned to `f14e409`; the later #255/#257/#258/#261/#266 fixes need a subsequent build. This guide is not live-model or hardware certification.
 
-## Source-version and publication notes
+## Source-version notes
 
-This is the preserved implementation review of `d7a10fd`, not a claim that every behavior below still describes latest main. Throughout this document, “current” refers to that source snapshot. Relative source links open the reader's checkout; use the pinned commit when comparing historical behavior.
+The original review described `d7a10fd`; that baseline is superseded here. PRs #280–282 are integrated. Main also includes scaled context allocation, native tokenization, placement, request-scoped leases, inherited child requirements, protected handoff constraints, dependent-child cancellation and journal admission changes. Relative source links refer to the current checkout; compare the stated commit when investigating historical behavior.
 
-Main `efcf7a1` already contains later connection-aware recall locality, Ollama window preparation, run-journal/context-pull tools, scaled context allocation, native tokenizer and placement work. In particular, section 6.3's native-only destination description is historical: later code recognizes loopback endpoints and explicit endpoint recall approval, independently of execution-locality policy.
-
-[PR #280](https://github.com/EricServices-Repo/Eris/pull/280) adds automatic execution-model eligibility/ranking. [PR #281](https://github.com/EricServices-Repo/Eris/pull/281) adds coordinator/worker planning, bounded model-changing recovery and post-load dispatch validation/repacking. Those proposed changes supersede portions of sections 6, 7 and 12–13 when integrated. Their implementation document is included in that PR. Neither proposal should be assumed present in an installed binary.
-
-The companion [handoff/RAM issue index](../reviews/handoff-ram-issues-2026-11-01.md) records the separately pinned follow-up audit and links its actionable GitHub tickets.
+The [issue index](../reviews/handoff-ram-issues-2026-11-01.md) preserves reproduction provenance and now distinguishes integrated fixes from unresolved work. [Automatic execution](AUTO-MODEL-EXECUTION.md) explains role/model separation and switching.
 
 ## 1. The central distinction
 
@@ -87,6 +83,7 @@ interface AgentHandoffPacket {
   parentGoal?: string
   goal: string
   summary: string
+  constraints?: string[]
   files?: string[]
   openQuestions?: string[]
   confidence?: number
@@ -97,7 +94,7 @@ interface AgentHandoffPacket {
 
 There is no `conversationMemory`, memory-item list, recall manifest, lease handle or durable source snapshot in this packet. `files` names leads; it does not copy those files into the child prompt. `confidence` is sender metadata, not independently verified correctness.
 
-`formatHandoffForPrompt` renders the specialist identity, coordinator identity, parent request, assigned goal, task/scope/tool ceiling, summary, files, questions and confidence. It instructs the child to report to its coordinator rather than impersonate the final user-facing answer.
+`handoffMessages` now supplies both inline and background children with the same optional system briefing and user subgoal. Parent/subtask goals and inherited constraints are represented in the required task block. `formatHandoffForPrompt` still renders the full packet for routing/result display. Briefings remain evidence; they do not authorize new effects.
 
 ### 3.3 Compiled and dispatched context
 
@@ -150,7 +147,7 @@ The primary caller is [ipc/chat-stream.ts](../../electron/main/ipc/chat-stream.t
 5. Save the returned prompt in the request-local `conversationMemory` variable, create an evidence lease and record `memory-selected` in the task ledger.
 6. Build role/chat messages, then invoke the agent loop with that prompt explicitly supplied.
 
-The current question is excluded from historical recall because it is already the active request. Complete recent sources are excluded from duplicate historical excerpts. The recent-history admission budgets used here are 6,000 characters in Agent mode and 24,000 in Ask mode; these are not model token limits.
+The current question is excluded from historical recall because it is already the active request. Complete recent sources are excluded from duplicate historical excerpts. Recent-history admission now scales with the input budget: 10% for Agent and 37.5% for chat, with bounded floors/caps. Recall starts at 15%, subject to the 8,192-token ceiling and saved setting. See [allocation](../../src/shared/context-allocation.ts); these are prompt allocations, not expanded model windows.
 
 A recall failure normally falls back to canonical recent history. User cancellation propagates instead of being silently converted into recall fallback.
 
@@ -226,21 +223,15 @@ It then appends non-system conversational messages. Generic creative requests re
 
 Re-routing recompiles this context for the next worker model while retaining the canonical task and intersecting the next role's tool policy with that task. The destination gate is reevaluated for the new model rather than assuming the first model's eligibility remains valid.
 
-### 6.3 Destination policy
+### 6.3 Destination and execution policies
 
-`memoryForDestination` permits rendered recalled text for:
+`memoryForDestination` and final dispatch use `modelDestination`, resolving the actual transport connection. Native GGUFs and genuine loopback endpoints can receive recall by default. Remote endpoints need recall opt-in or an exact user-approved endpoint URL; LAN approval does not make a host local for Auto-local model selection. URL changes invalidate approval; cleared requests refuse redirects. Scripted transport is special only inside its diagnostics scope.
 
-- native GGUF references recognized by `isNativeGgufRef`;
-- the special simulated model only inside an active simulated diagnostics scope;
-- other model destinations only when the prompt permits remote sharing.
-
-When blocked, item metadata stays available for omission accounting but recalled text is withheld. A localhost OpenAI-compatible endpoint is not automatically treated as native/local by this predicate; the model reference and policy determine eligibility.
-
-`shareWithRemoteModels` defaults to false. This policy governs the recalled-memory mechanism. It must not be described as a blanket promise that all recent user messages, attachments or independently supplied project context are withheld from a remotely selected model.
+`shareWithRemoteModels` defaults false. This controls recalled evidence, not ordinary current/recent user messages, attachments or independently supplied project context. Auto-local constrains execution selection before scoring; Fixed and Auto-any are separate choices.
 
 ### 6.4 Context compiler budget
 
-The compiler reserves 55% of its input-token budget for the assembled system context, using character/Unicode-aware estimation. Required task/instruction blocks must fit; it throws instead of silently cutting the task contract. Memory, project and retrieval blocks are optional and have inclusion/omission manifests.
+The compiler reserves 55% of its input-token budget for the assembled system context, using measured native counts when a tokenizer is loaded and bounded counting succeeds, otherwise explicit character/Unicode-aware estimates. Required task/instruction blocks must fit; it throws instead of silently cutting the task contract. Memory, project and retrieval blocks are optional and have inclusion/omission manifests.
 
 When relevant current project evidence is present, the compiler orders required blocks first, then retrieval/project evidence, then historical memory. Historical memory is additionally capped to 40% of the remaining system-context allowance. This is intended to keep old conversation excerpts from displacing current source evidence.
 
@@ -248,9 +239,11 @@ Memory packing keeps whole rendered units that fit; it can skip a large item and
 
 ### 6.5 Last-boundary revalidation
 
-Every `streamModelChat` call goes through `withEligibleMemory` before a live provider or diagnostics adapter receives the request. This includes agent steps, answer repair, compaction, rerouting and other callers using that transport.
+Every `streamModelChat` call goes through `withEligibleMemory` before a live provider or diagnostics adapter receives the request. Provider dispatch repeats reference/recall validation after asynchronous server preparation. Native dispatch additionally invokes `prepareMessages` after allocation under the inference lease, rechecks eligibility, releases revoked seeds and repacks against measured capacity before serialization. This includes agent steps, answer repair, compaction, rerouting and other callers using that transport.
 
-For active leases it:
+Each admitted request now owns an evidence scope. Full exposure/derived-message filtering applies to leases owned by that scope or named task, preventing unrelated request B from receiving request A's goal/authority. Recognized item markers can still be stripped across scopes. Background jobs capture dependent scopes before enqueue/pump execution; unrelated jobs get fresh scopes. Scope loss or an expired parent lease remains a limitation.
+
+For applicable active leases it:
 
 1. Rechecks the durable source header when a source version was recorded.
 2. Clears/rewarms snapshots when revision, epoch, message count or controls revision changed.
@@ -282,7 +275,7 @@ The GGUF runtime loads the selected model, creates a context, and seeds structur
 
 `messagesToLlamaHistory` maps system/user/assistant roles into native history. Reused sessions synchronize seed messages with `setChatHistory`; the KV cache does not replace the authoritative transcript. One-shot calls use structured history too.
 
-VRAM context allocation can retry smaller windows after memory errors. Measured context size is recorded after load. **Remaining gap:** the first cold-load request can already have been budgeted against a larger plan before that measured allocation exists. RAM recall limits do not solve this ordering problem.
+VRAM context allocation can retry smaller windows after memory errors. Measured context size is recorded after load. **Implemented boundary:** final native serialization now repacks after allocation, using measured capacity and fresh eligibility. Earlier selection/compilation may still start from a planned window; required content that cannot fit is rejected, not silently deleted. #260 remains open for acceptance/reconciliation of the complete cold-load path. A schema default or passing mock does not certify real GPU fitting.
 
 Source: [builtin-model.ts](../../electron/main/services/builtin-model.ts), [llama-worker.ts](../../electron/main/llama-worker.ts), [llama-session.ts](../../src/shared/llama-session.ts), [model-capabilities.ts](../../electron/main/services/model-capabilities.ts), [model-protocol.ts](../../electron/main/services/model-protocol.ts).
 
@@ -318,17 +311,23 @@ The implementation chooses inline delegation when `options.jobId?.startsWith('ch
 - maps the parent's project-relative root into the child's execution workspace and rejects an escaping root;
 - intersects tool levels with the parent;
 - bounds edit, execution and external-effect permissions by the parent;
-- removes the parent's continuation/result state and creates child acceptance criteria.
+- removes the parent's continuation/result state and creates child acceptance criteria;
+- inherits required language/framework and effect limits separately from authority;
+- carries at most eight extracted requirements, twelve named files and a 600-character top-level request excerpt;
+- preserves up to twelve explicit/inherited handoff constraints of 300 characters each in the required task block and refuses overflow;
+- records incompatible child language choices; multiple explicitly named parent languages and conversion-source cases have narrowing rules.
 
-The inline branch sets both child chat/tools model fields to the current worker model. It is not an independent automatic model-choice request for every specialist. It passes approval callbacks and the cancellation signal, uses the current workspace, disables further child delegation, and reuses the MCP runtime.
+Framework incompatibilities and all natural-language nuances are not comprehensively detected. Named parent files are context, not an additional tool boundary. Parent obligations/recommendations are not silently copied as new child work.
+
+The inline branch selects a child model for its subgoal under the inherited automatic policy; a Fixed selection stays fixed and an explicit child-agent model override retains precedence. Direct child runners exclude the Cloud-only adapter. Parent/child model identity can differ without changing authority. It passes approval callbacks and the cancellation signal, uses the current workspace, disables further child delegation, and reuses the MCP runtime.
 
 ### 7.2 What the child receives from RAM
 
 The call supplies a system message rendered from the handoff packet and a user message containing the subgoal. It does **not** pass `options.conversationMemory`, call `conversationContext`, or grant direct access to the parent's RAM rows.
 
-The coordinator's prose summary may restate recalled facts, but that is not equivalent to a typed recall transfer. Source IDs, item eligibility and coverage are not carried in a dedicated memory envelope. In this inline branch, the handoff's system text is treated as project/conversation background by subsequent compilation and can lose detail under optional-context budgets.
+The coordinator's prose summary may restate recalled facts, but that is not equivalent to a typed recall transfer. Source IDs, item eligibility and coverage are not carried in a dedicated memory envelope. In both branches the optional briefing can lose detail under evidence budgets. Explicit `constraints` and inherited parent requirements are protected separately in the required task block.
 
-An active parent's process-local evidence lease can still restrict a child model call at `streamModelChat`, particularly when derived private context is transferred to a different destination/task. This is a dispatch restriction, not automatic child recall.
+An active parent's process-local evidence lease can still restrict a child model call at `streamModelChat`, particularly when derived private context is transferred to a different destination/task. This is an owner-scoped dispatch restriction, not automatic child recall. Unrelated request scopes must not inherit the parent goal or authority.
 
 ### 7.3 Returning results
 
@@ -348,9 +347,11 @@ Source: [agent/loop.ts](../../electron/main/services/agent/loop.ts), [task-intak
 
 The fallback delegation branch invokes `onDelegate`, which the chat/background runner uses to enqueue a background job. `delegateFromAgent` records a parent ID, source thread ID, model, agent ID, handoff, claim and worktree-inheritance choice.
 
-A job may run in an inherited parent worktree or a newly prepared worktree. When execution begins it creates a child contract from `job.handoff.task` if available; otherwise it creates a new contract. The rendered handoff is prepended to the job goal in the input user message. This differs from the inline branch, which puts the handoff in a system message. The loop takes its canonical goal from the supplied child task; the larger user message can remain in conversation history when it does not exactly equal that goal. It is not a typed recall block.
+A job may run in an inherited parent worktree or a newly prepared worktree. When execution begins it creates a child contract from `job.handoff.task` if available; otherwise it creates a new contract. The child receives the same `handoffMessages` shape as inline execution: optional system briefing and user goal, with inherited requirements/constraints in the canonical required task. It is not a typed recall envelope or automatic child memory selection.
 
 The background runner likewise does not supply `conversationMemory` or initiate a fresh `conversationContext`/`leaseMemoryEvidence` for that source thread at the call site. `sourceThreadId` is association metadata, not a guarantee that prior chat RAM is recalled.
+
+Stopping a parent now stops all dependent descendants, including queued jobs, and prevents new children beneath stopping ancestors. Discard joins completion/cleanup for up to 30 seconds before removing worktrees. A timeout retains the worktree with `worktreeRetained`; repeated calls join one operation, and merge refuses while descendants remain active. Children with separate worktrees retain their stopped work. Real abort-ignoring operations and removal failures still require operational inspection.
 
 Queue acceptance is not task completion. `awaitChildJobs` and result-summary logic report required-child outcomes. Missing/failed results remain unresolved. Results from a separate worktree must be inspected/applied before the coordinator claims they changed the user's active workspace.
 
@@ -362,9 +363,9 @@ Source: [background-agents.ts](../../electron/main/services/background-agents.ts
 
 ### 9.1 Worker compaction
 
-The loop can compact its active worker transcript separately from the RAM conversation store. It keeps the system context, builds a resume message, and retains a recent tail without splitting assistant tool calls from their results.
+The loop compacts its active worker transcript using an admitted run journal distinct from durable conversation history. Tool output is journaled before entering messages; recoverable entries can become handle stubs. Failed retention is an explicit omission, and a refused read scratch reservation produces `busy`, not missing evidence. It keeps the system context, builds a resume message, and retains a recent tail without splitting assistant tool calls from their results.
 
-The progress brief is generated from the compacted middle plus the goal/action log/files and prior brief, or from a deterministic fallback. The summarizer input is bounded, weighted toward newer messages and reports omitted/shortened coverage. Reference validation failures can force the local fallback. Model-based summarization still uses the common transport and its active memory checks.
+The default summary setting is off. Optional source-referenced progress summaries supplement recoverable evidence; deterministic fallback uses the goal/action log/files and explicit coverage/omission records. The summarizer input is bounded, weighted toward newer messages and reports omitted/shortened coverage. Reference validation failures can force the local fallback. Model-based summarization still uses the common transport and its active memory checks.
 
 After replacing the transcript, the loop releases the GGUF session so the new transcript is reseeded. Compaction does not expand RAM retention, restore forgotten history or convert unverified old assistant claims into observations.
 
@@ -372,7 +373,7 @@ After replacing the transcript, the loop releases the GGUF session so the new tr
 
 `finalizeAnswer` now preserves original system blocks and conversation roles when repairing protocol output or a qualifying unexplained creative refusal. It appends the current goal once and retains its presentation audit. Creative recovery is bounded; repeated unexplained rejection remains incomplete. Explicit safety refusals are not retried by this specific mechanism.
 
-This code is part of source snapshot `d7a10fd`. It must not be assumed present in an installed v0.6.9 binary simply because the documentation is being read from this branch.
+The repair is integrated, but installed binaries must still be identified by their release source/version. Scripted repair success does not certify a real model's answer quality.
 
 ## 10. Memory pressure, retention and defaults
 
@@ -389,7 +390,7 @@ Defaults from `ContextMemorySettingsSchema`:
 - Warm threads: eight; range one–16.
 - Idle expiry: 30 minutes; range one–120.
 - Foreground recall deadline: 150 ms; range 25–2,000 ms.
-- Optional recall prompt budget: 1,024 estimated tokens; range 128–4,096.
+- Optional recall ceiling: 8,192 tokens; range 128–8,192. The actual per-turn allocation scales with the model input budget.
 - Share recalled memory with remote models: false.
 
 These are schema defaults, not a statement that a user's saved configuration has those values. The active pressure allowance can be lower than configured retention. A 100,000-message durable conversation does not imply all messages are retained in RAM or sent to a model.
@@ -415,18 +416,18 @@ Useful inspection questions:
 
 ## 12. Current limitations that affect design decisions
 
-1. **No automatic child recall.** Neither delegation call site directly forwards/reselects the parent's `MemoryPrompt`.
-2. **Untyped handoff prose.** Inline handoff text competes with optional project context. Background handoff text is supplied in a user message and is subject to transcript/compaction and final-wire limits instead. Neither form is a required typed memory transfer.
-3. **No complete persistent derivation lineage.** Active dispatch leases conservatively protect exposure, but are not a universal source graph spanning every persisted asynchronous job.
-4. **Cold-load capacity ordering.** The first request can be compiled before actual native context size is known.
-5. **Estimated tokens and memory bytes.** Declared capabilities do not make every estimate a native tokenizer or exact allocator measurement.
-6. **Bounded lexical recall.** Relevant paraphrases may not match; retention and candidate caps intentionally limit the search space.
-7. **Prompt-only evidence is not tool observation.** A summary or previous answer cannot prove a file changed or a check passed.
-8. **Scripted tests do not certify live quality.** Passing contract tests does not prove coherent storytelling or correct multi-agent implementation on a real model.
+1. Child recall is not automatically reselected; `sourceThreadId` does not map a worktree to the original namespace.
+2. Explicit required constraints are protected, but untyped constraints written only in optional summary text can still be omitted. Per-source handoff manifests and a complete bounded/versioned envelope remain missing.
+3. Request scopes protect active leases, not persistent derived evidence after a parent ends or a child restarts (#256).
+4. Final native repacking uses measured allocation, but cold-load efficiency, tokenizer fallback and actual GPU/host residency still need acceptance evidence. Do not describe every provider count or logical byte charge as exact.
+5. The detailed history store is main-owned, bounded and lexical. Dedicated off-heap/multi-GiB sizing and CPU embeddings remain targets.
+6. Run journals are recoverable only while retained in the active run; decoded/redacted transient copies and durable persistence remain separate work.
+7. Background subtree cancellation is implemented, but aggregate task-tree inference/depth budgets and a universal typed result/source graph are not.
+8. A tool-free child claim is not a verified edit/check; unit/simulation counts do not establish live quality or real hardware behavior.
 
 ## 13. Proposed next design — not implemented
 
-The following describes a production-oriented extension, not the behavior of `d7a10fd`.
+The following extends the current baseline. Existing inherited constraints, request scopes, run handles and post-load repacking must be reused rather than reimplemented as missing features.
 
 ### 13.1 A typed child context envelope
 
@@ -453,9 +454,9 @@ Return a typed receipt containing status, source references, tool observations, 
 
 Attach derivation references before persisting a child/parent result, so later deletion, source edits or disclosure changes can invalidate derived evidence across asynchronous lifetimes.
 
-### 13.4 Load before final native budgeting
+### 13.4 Complete native allocation and transition acceptance
 
-For native models, obtain measured context allocation before final message compilation. Re-run destination filtering and budgeting after load/recovery. Fail explicitly when required task/constraint content cannot fit, and report which optional evidence was omitted. KV reuse must remain an optimization over reseedable canonical messages.
+Post-allocation validation/repacking and resource-admitted automatic transitions are implemented. Extend acceptance to real small-allocation/pressure conditions, preserve required constraints across re-creation, and improve earlier planned-window selection without duplicating the final guard. KV remains a reseedable optimization, not canonical history. Check #260 and current tests before implementing another preparation path.
 
 ### 13.5 Qualification requirements
 
@@ -504,12 +505,16 @@ Assume the durable thread contains the user's pinned instruction “Booking pric
 1. The current user request is saved and the booking project's task scope is resolved.
 2. `conversationContext` loads the thread's controls and eligible sources. The admitted pin is rendered as a marked `pinned` memory item with a source identity.
 3. The top-level request leases that item and passes `conversationMemory` to the coordinator loop.
-4. For a native model, `memoryForDestination` can admit the text. For a remote model with sharing disabled, the text is omitted and the bundle explains the destination-policy omission.
+4. For a native model, `memoryForDestination` can admit the text. For an unapproved remote model with sharing disabled, the text is omitted and the bundle explains the destination-policy omission.
 5. The coordinator reads the admitted context, edits the booking feature and calls `delegate_to_agent` with goal “Review the booking confirmation change.”
 6. The child task inherits the booking scope and cannot exceed the coordinator's authority. A reviewer retains a non-editing ceiling.
-7. If the coordinator's handoff summary says “Keep displayed prices in GBP,” the reviewer can receive that sentence as handoff text. If the coordinator omits it, the inline call does not automatically reselect the pin from RAM. The child's source inspection may still discover the currency in files, but RAM inheritance cannot be assumed.
+7. If the coordinator supplies “Keep displayed prices in GBP” in `constraints`, it survives in the required child task block. If supplied only in summary, it remains optional evidence and can be omitted. If the coordinator omits it, the inline call does not automatically reselect the pin from RAM. The child's source inspection may still discover the currency in files, but RAM inheritance cannot be assumed.
 8. The reviewer reports findings and tool evidence. The coordinator integrates the result, verifies as appropriate and posts the user-facing answer.
 9. The parent reply and its structured result/delegations are saved to canonical chat, which updates the RAM cache. Later recall can select eligible material from that saved result; this is a new selection, not permanent model memory.
 10. The parent's evidence lease ends when the request exits. Any background work still running needs its own future lifecycle/provenance mechanism for the guarantees described in section 13.
 
 This example illustrates a current limitation, not permission to paste local-only memory into any destination. Active dispatch checks still apply, and a handoff summary cannot override user privacy settings or task authority.
+
+## 16. Current executable reading map
+
+Use [child requirement tests](../../tests/child-task-requirements.test.ts), [handoff constraint tests](../../tests/handoff-constraints.test.ts), [background scope tests](../../tests/background-evidence-scope.test.ts), [subtree cancellation tests](../../tests/background-cancellation.test.ts), [journal tests](../../tests/run-journal.test.ts) and [model-switching tests](../../tests/model-switching.test.ts) for the newly integrated boundaries. Each suite is scripted or uses controlled fixtures; read its exclusions before claiming deployment or GPU acceptance.

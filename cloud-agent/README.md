@@ -1,12 +1,14 @@
 # Eris Cloud Agent
 
-Dockerized worker that runs Cloud Agent jobs for **every Eris install**.
+Reviewed against integrated `main` `0a54629` on 2026-11-01; package v0.6.10. Released tag `f14e409` is older than this source baseline. This is a separate service package (0.2.22), not the desktop package version. Health currently advertises task-contract v1; v2 enforcement/conformance is not yet advertised. Deployment availability and isolation must be verified on the actual host.
+
+Separately deployed worker that can accept Cloud Agent jobs from compatible authorized Eris clients. Repository configuration does not prove that a running deployment supports every desktop task contract.
 
 Inference runs **inside the container** with **Composer Full** (Qwen2.5-Coder-7B GGUF) via `node-llama-cpp`. Desktop Eris keeps **Composer Lite** locally; Cloud Agents use the full model. No external LLM API is required.
 
 **GPU:** The image includes CUDA libraries. With NVIDIA drivers + Container Toolkit on the host, the model runs on GPU (`ERIS_CLOUD_GPU=auto`). Without a GPU it falls back to CPU.
 
-**VM install / rebuild:** see **[INSTALL.md](./INSTALL.md)** — GPU or **CPU-only** (`./cloud-agent/scripts/rebuild.sh --cpu --install`). The Eris GitHub repo is **private**; clone with `gh auth`, SSH deploy key, or a PAT (anonymous clone will fail).
+**VM install / rebuild:** see **[INSTALL.md](./INSTALL.md)** — GPU or **CPU-only** (`./cloud-agent/scripts/rebuild.sh --cpu --install`). Use an authorized clone method for the configured repository; repository access policy is separate from this deployment contract.
 
 ## Client URL (no user configuration)
 
@@ -36,7 +38,7 @@ cd /opt/eris   # or your clone path
 
 ## Build & run (CPU-only)
 
-No NVIDIA driver or toolkit required. Clone the **private** repo first (see [INSTALL.md](./INSTALL.md)), then:
+No NVIDIA driver or toolkit required. Clone the repository with the required access first (see [INSTALL.md](./INSTALL.md)), then:
 
 ```bash
 cd /opt/eris   # authenticated clone of EricServices-Repo/Eris

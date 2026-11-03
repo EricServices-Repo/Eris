@@ -1,5 +1,7 @@
 # Quality comparisons
 
+Reviewed against integrated `main` `0a54629` on 2026-11-01; package v0.6.10. Released tag `f14e409` is older than this source baseline. See [the documentation index](../../docs/README.md) for the current architecture and evidence boundaries.
+
 `cases.json` is a versioned stratified fixture pack. Its obligations are independent
 of model replies. JSON equality can establish correctness for the exact JSON case;
 other cases require human adjudication. Syntax, topic words and a passing transport

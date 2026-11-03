@@ -1,0 +1,4118 @@
+{
+  "version": 1,
+  "reviewDate": "2026-11-02",
+  "timezone": "America/New_York",
+  "repository": "EricServices-Repo/Eris",
+  "sourceSha": "53787049bcd1b72231fae9d92d591fb406b76f95",
+  "sourcePackageVersion": "0.6.10",
+  "guide": {
+    "path": "docs/V1.0.1-RELEASE-CHECKLIST.md",
+    "originalSourceSha": "b59c766b9801ceef0ac851c27c3d986f0e5cc698",
+    "originalSha256": "ec395c7e60f148e4052e84c02fa36c31a453baa7d00ae17134224dc059d2d661"
+  },
+  "tracker": {
+    "number": 311,
+    "url": "https://github.com/EricServices-Repo/Eris/issues/311"
+  },
+  "summary": {
+    "codingAcceptance": 225,
+    "scenarios": 40,
+    "signoffs": 9,
+    "allIds": 274,
+    "newChildIssues": 40,
+    "newTrackerIssues": 1,
+    "idsCoveredByNewChildren": 273,
+    "idsCoveredByExistingIssue": 1,
+    "certifiedIds": 0
+  },
+  "implementationProvenance": {
+    "mergedPRs": [
+      300,
+      301,
+      302,
+      308,
+      309
+    ],
+    "closedRelatedIssues": [
+      227,
+      225,
+      152,
+      150
+    ],
+    "openCoordinationPRs": [
+      310,
+      340
+    ],
+    "relatedEpics": [
+      303,
+      304,
+      305,
+      306,
+      307
+    ]
+  },
+  "evidence": {
+    "stage": "source-ci-pr-review",
+    "candidateCiRun": 41375018848,
+    "ciUrl": "https://github.com/EricServices-Repo/Eris/actions/runs/41375018848",
+    "macTypecheck": "failed",
+    "windowsAgentQualification": {
+      "total": 1580,
+      "passed": 1565,
+      "failed": 12,
+      "skipped": 3
+    },
+    "newLiveOrHardwareOrPackagedTestsExecuted": false
+  },
+  "issues": [
+    {
+      "key": "scope",
+      "number": 312,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/312",
+      "title": "[P1] [v1.0.1] Freeze v1.0.1 supported scope, compatibility and conditional feature gates",
+      "classification": "Release scope decision",
+      "accountableRole": "Release lead",
+      "checklistIds": [
+        "REL-01",
+        "REL-02",
+        "REL-03",
+        "REL-04",
+        "REL-05",
+        "REL-06",
+        "REL-07",
+        "REL-08",
+        "RAM-09",
+        "A2A-10",
+        "REC-07",
+        "REC-08",
+        "REC-09",
+        "CFG-06",
+        "IMG-01",
+        "CLD-01"
+      ],
+      "dependsOn": [],
+      "relatedIssuesAndPRs": [
+        228,
+        151,
+        233,
+        234,
+        231,
+        304,
+        305
+      ]
+    },
+    {
+      "key": "summary-regression",
+      "number": 313,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/313",
+      "title": "[P1] [v1.0.1] Fix merged thread-summary wiring that breaks typecheck and Windows agent qualification",
+      "classification": "Confirmed CI regression",
+      "accountableRole": "Memory/runtime maintainer",
+      "checklistIds": [
+        "REC-05",
+        "TEST-02",
+        "TEST-03",
+        "TEST-04"
+      ],
+      "dependsOn": [],
+      "relatedIssuesAndPRs": [
+        150,
+        309,
+        304,
+        307
+      ]
+    },
+    {
+      "key": "context-profiles",
+      "number": 314,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/314",
+      "title": "[P1] [v1.0.1] Populate measured macOS and Windows context certification budget profiles",
+      "classification": "Source-confirmed release preparation gap",
+      "accountableRole": "Hardware qualification owner",
+      "checklistIds": [
+        "CERT-01",
+        "PERF-08"
+      ],
+      "dependsOn": [
+        312
+      ],
+      "relatedIssuesAndPRs": [
+        307,
+        147,
+        237
+      ]
+    },
+    {
+      "key": "context-evidence",
+      "number": 315,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/315",
+      "title": "[P1] [v1.0.1] Implement trusted exact-source packaged context/live-model evidence production and certification",
+      "classification": "Release certification tooling/evidence gap",
+      "accountableRole": "Release qualification owner",
+      "checklistIds": [
+        "CERT-02",
+        "CERT-03",
+        "CERT-04",
+        "CERT-05",
+        "CERT-06",
+        "CERT-07",
+        "CERT-08",
+        "CERT-09",
+        "CERT-10"
+      ],
+      "dependsOn": [
+        314,
+        347
+      ],
+      "relatedIssuesAndPRs": [
+        307,
+        147,
+        237
+      ]
+    },
+    {
+      "key": "signing",
+      "number": 316,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/316",
+      "title": "[P1] [v1.0.1] Require verified macOS notarization and Windows signing before production publication",
+      "classification": "Source-confirmed release policy gap",
+      "accountableRole": "Desktop release/security owner",
+      "checklistIds": [
+        "DIST-04",
+        "DIST-05",
+        "DIST-06"
+      ],
+      "dependsOn": [
+        312,
+        347
+      ],
+      "relatedIssuesAndPRs": []
+    },
+    {
+      "key": "dev-macos",
+      "number": 317,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/317",
+      "title": "[P1] [v1.0.1] Produce and publish the supported macOS Eris-Dev distributable",
+      "classification": "Source-confirmed distribution gap",
+      "accountableRole": "Desktop release maintainer",
+      "checklistIds": [
+        "DIST-03"
+      ],
+      "dependsOn": [
+        312,
+        316
+      ],
+      "relatedIssuesAndPRs": [
+        307
+      ]
+    },
+    {
+      "key": "artifact-manifest",
+      "number": 318,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/318",
+      "title": "[P1] [v1.0.1] Validate the complete production/debug artifact manifest and immutable-source provenance",
+      "classification": "Source-confirmed release validation gap",
+      "accountableRole": "Release build maintainer",
+      "checklistIds": [
+        "DIST-01",
+        "DIST-02",
+        "DIST-09",
+        "DIST-10",
+        "REL-06",
+        "REL-07"
+      ],
+      "dependsOn": [
+        316,
+        317,
+        315
+      ],
+      "relatedIssuesAndPRs": []
+    },
+    {
+      "key": "installed-acceptance",
+      "number": 319,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/319",
+      "title": "[P1] [v1.0.1] Qualify fresh install, supported upgrades, production updates and uninstall recovery",
+      "classification": "Installed-platform qualification gap",
+      "accountableRole": "Desktop QA/release owner",
+      "checklistIds": [
+        "DIST-07",
+        "DIST-08",
+        "DATA-08",
+        "SCN-39"
+      ],
+      "dependsOn": [
+        318,
+        345,
+        347
+      ],
+      "relatedIssuesAndPRs": []
+    },
+    {
+      "key": "packaged-interaction",
+      "number": 320,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/320",
+      "title": "[P1] [v1.0.1] Gate the full packaged chat-to-edit-to-verification-to-reload workflow",
+      "classification": "Source-confirmed qualification coverage gap",
+      "accountableRole": "Desktop QA maintainer",
+      "checklistIds": [
+        "TEST-08",
+        "SCN-35"
+      ],
+      "dependsOn": [
+        347
+      ],
+      "relatedIssuesAndPRs": [
+        307,
+        306,
+        303
+      ]
+    },
+    {
+      "key": "intake-qualification",
+      "number": 321,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/321",
+      "title": "[P1] [v1.0.1] Recertify task intake, follow-up interpretation and actual coding intent",
+      "classification": "Release qualification; existing implementation to preserve",
+      "accountableRole": "Agent QA owner",
+      "checklistIds": [
+        "INT-01",
+        "INT-02",
+        "INT-03",
+        "INT-04",
+        "INT-05",
+        "INT-06",
+        "INT-07",
+        "INT-08",
+        "INT-09",
+        "SCN-01",
+        "SCN-02",
+        "SCN-03",
+        "SCN-04",
+        "SCN-05",
+        "SCN-06"
+      ],
+      "dependsOn": [
+        347
+      ],
+      "relatedIssuesAndPRs": [
+        303,
+        307
+      ]
+    },
+    {
+      "key": "lifecycle-qualification",
+      "number": 322,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/322",
+      "title": "[P1] [v1.0.1] Qualify durable task transitions, no-progress recovery and truthful partial completion",
+      "classification": "Release fault/recovery qualification",
+      "accountableRole": "Agent runtime owner",
+      "checklistIds": [
+        "RUN-01",
+        "RUN-02",
+        "RUN-03",
+        "RUN-04",
+        "RUN-05",
+        "RUN-06",
+        "RUN-07",
+        "RUN-08",
+        "RUN-09",
+        "DATA-03",
+        "TEST-06",
+        "SCN-07",
+        "SCN-08"
+      ],
+      "dependsOn": [
+        347
+      ],
+      "relatedIssuesAndPRs": [
+        303,
+        307
+      ]
+    },
+    {
+      "key": "handoff-qualification",
+      "number": 323,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/323",
+      "title": "[P1] [v1.0.1] Recertify delegated authority, origin seals, persisted budgets and child integration",
+      "classification": "Release boundary qualification; foundations already merged",
+      "accountableRole": "Multi-agent QA owner",
+      "checklistIds": [
+        "A2A-01",
+        "A2A-02",
+        "A2A-03",
+        "A2A-04",
+        "A2A-05",
+        "A2A-06",
+        "A2A-07",
+        "A2A-08",
+        "SCN-22",
+        "SCN-23",
+        "SCN-24",
+        "SCN-25",
+        "SCN-26",
+        "SCN-27"
+      ],
+      "dependsOn": [
+        347
+      ],
+      "relatedIssuesAndPRs": [
+        267,
+        303,
+        304,
+        306,
+        307
+      ]
+    },
+    {
+      "key": "model-qualification",
+      "number": 324,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/324",
+      "title": "[P1] [v1.0.1] Qualify Auto selection, Fixed/Local policy and distinct worker recovery on real models",
+      "classification": "Release model-policy qualification",
+      "accountableRole": "Model orchestration owner",
+      "checklistIds": [
+        "MOD-01",
+        "MOD-02",
+        "MOD-03",
+        "MOD-04",
+        "MOD-05",
+        "MOD-06",
+        "MOD-07",
+        "MOD-08",
+        "MOD-09",
+        "SCN-09",
+        "SCN-10",
+        "SCN-11",
+        "SCN-12"
+      ],
+      "dependsOn": [
+        347
+      ],
+      "relatedIssuesAndPRs": [
+        305,
+        307
+      ]
+    },
+    {
+      "key": "wire-qualification",
+      "number": 325,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/325",
+      "title": "[P1] [v1.0.1] Qualify role-safe provider payloads, native prompt fit and bounded tool-protocol repair",
+      "classification": "Release protocol conformance qualification",
+      "accountableRole": "Inference protocol owner",
+      "checklistIds": [
+        "WIRE-01",
+        "WIRE-02",
+        "WIRE-03",
+        "WIRE-04",
+        "WIRE-05",
+        "WIRE-06",
+        "WIRE-07",
+        "WIRE-08",
+        "WIRE-09",
+        "SCN-13",
+        "SCN-14"
+      ],
+      "dependsOn": [
+        347
+      ],
+      "relatedIssuesAndPRs": [
+        305,
+        307
+      ]
+    },
+    {
+      "key": "ram-qualification",
+      "number": 326,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/326",
+      "title": "[P1] [v1.0.1] Recertify RAM recall isolation, pressure accounting and actual sent-source evidence",
+      "classification": "Release memory/privacy qualification",
+      "accountableRole": "Memory QA owner",
+      "checklistIds": [
+        "RAM-01",
+        "RAM-02",
+        "RAM-03",
+        "RAM-04",
+        "RAM-05",
+        "RAM-06",
+        "RAM-07",
+        "RAM-08",
+        "REC-01",
+        "REC-02",
+        "REC-03",
+        "SCN-17",
+        "SCN-18",
+        "SCN-19",
+        "SCN-20",
+        "SCN-21",
+        "SCN-28"
+      ],
+      "dependsOn": [
+        347,
+        313
+      ],
+      "relatedIssuesAndPRs": [
+        304,
+        307,
+        239
+      ]
+    },
+    {
+      "key": "fact-revocation",
+      "number": 327,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/327",
+      "title": "[P1] [v1.0.1] Invalidate revoked project facts inside active runs and derived prompt layers",
+      "classification": "Source/PR-confirmed privacy invalidation gap; reproduction to add",
+      "accountableRole": "Memory/privacy maintainer",
+      "checklistIds": [
+        "REC-06",
+        "RAM-03",
+        "WIRE-05",
+        "SCN-18"
+      ],
+      "dependsOn": [
+        347
+      ],
+      "relatedIssuesAndPRs": [
+        304,
+        308
+      ]
+    },
+    {
+      "key": "fact-storage",
+      "number": 328,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/328",
+      "title": "[P1] [v1.0.1] Bound approved project-fact retention and provide reliable edit, revoke and recovery controls",
+      "classification": "Source-confirmed lifecycle limit and release UX/privacy work",
+      "accountableRole": "Memory/settings maintainer",
+      "checklistIds": [
+        "REC-06",
+        "DATA-04",
+        "DATA-05",
+        "CFG-01",
+        "UX-05"
+      ],
+      "dependsOn": [
+        327,
+        347
+      ],
+      "relatedIssuesAndPRs": [
+        304,
+        308
+      ]
+    },
+    {
+      "key": "journal-policy",
+      "number": 329,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/329",
+      "title": "[P1] [v1.0.1] Qualify durable tool-output privacy, retention defaults, deletion and delegated coverage",
+      "classification": "Post-merge security/retention qualification gap",
+      "accountableRole": "Memory/security maintainer",
+      "checklistIds": [
+        "REC-04",
+        "SEC-08",
+        "DATA-05",
+        "A2A-10"
+      ],
+      "dependsOn": [
+        347
+      ],
+      "relatedIssuesAndPRs": [
+        304,
+        301,
+        151
+      ]
+    },
+    {
+      "key": "tier-safety",
+      "number": 330,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/330",
+      "title": "[P1] [v1.0.1] Fix integrated-GPU classification and preserve user intent in automatic RAM tier migration",
+      "classification": "Source-confirmed classification gap plus unmeasured policy decisions",
+      "accountableRole": "Memory/inference maintainer",
+      "checklistIds": [
+        "RAM-10",
+        "GPU-01",
+        "CFG-07",
+        "PERF-03"
+      ],
+      "dependsOn": [
+        312,
+        347
+      ],
+      "relatedIssuesAndPRs": [
+        304,
+        305,
+        300,
+        228
+      ]
+    },
+    {
+      "key": "summary-quality",
+      "number": 331,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/331",
+      "title": "[P1] [v1.0.1] Qualify deterministic thread-summary correctness, bounded scans and real recall benefit",
+      "classification": "Remaining acceptance after merged implementation",
+      "accountableRole": "Memory/retrieval QA owner",
+      "checklistIds": [
+        "REC-05",
+        "RAM-07",
+        "IDX-08"
+      ],
+      "dependsOn": [
+        313
+      ],
+      "relatedIssuesAndPRs": [
+        304,
+        309,
+        307
+      ]
+    },
+    {
+      "key": "tool-qualification",
+      "number": 332,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/332",
+      "title": "[P1] [v1.0.1] Qualify authoritative tool schemas, effect admission, output bounds and retry safety",
+      "classification": "Release tool/effect fault qualification",
+      "accountableRole": "Tools maintainer",
+      "checklistIds": [
+        "TOOL-01",
+        "TOOL-02",
+        "TOOL-03",
+        "TOOL-04",
+        "TOOL-05",
+        "TOOL-06",
+        "TOOL-07",
+        "TOOL-08",
+        "TOOL-09",
+        "SCN-31"
+      ],
+      "dependsOn": [
+        347
+      ],
+      "relatedIssuesAndPRs": [
+        303,
+        306,
+        307
+      ]
+    },
+    {
+      "key": "filesystem-qualification",
+      "number": 333,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/333",
+      "title": "[P1] [v1.0.1] Recertify realpath confinement, dirty buffers, checkpoints, Git and concurrent edits",
+      "classification": "Release data-integrity qualification",
+      "accountableRole": "Workspace/editor maintainer",
+      "checklistIds": [
+        "FS-01",
+        "FS-02",
+        "FS-03",
+        "FS-04",
+        "FS-05",
+        "FS-06",
+        "FS-07",
+        "FS-08",
+        "SCN-29",
+        "SCN-30"
+      ],
+      "dependsOn": [
+        347
+      ],
+      "relatedIssuesAndPRs": [
+        306,
+        307,
+        310
+      ]
+    },
+    {
+      "key": "command-qualification",
+      "number": 334,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/334",
+      "title": "[P1] [v1.0.1] Qualify command approvals, owned descendant cleanup, PTY, LSP and MCP lifecycle",
+      "classification": "Release host-integration qualification",
+      "accountableRole": "Host integration maintainer",
+      "checklistIds": [
+        "CMD-01",
+        "CMD-02",
+        "CMD-03",
+        "CMD-04",
+        "CMD-05",
+        "CMD-06",
+        "CMD-07",
+        "CMD-08",
+        "SCN-32"
+      ],
+      "dependsOn": [
+        347
+      ],
+      "relatedIssuesAndPRs": [
+        306,
+        307
+      ]
+    },
+    {
+      "key": "ipc-credentials",
+      "number": 335,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/335",
+      "title": "[P1] [v1.0.1] Complete candidate IPC, credential and network trust-boundary review",
+      "classification": "Security certification; no blanket new defect claim",
+      "accountableRole": "Security/platform owner",
+      "checklistIds": [
+        "SEC-01",
+        "SEC-02",
+        "SEC-04",
+        "SEC-10"
+      ],
+      "dependsOn": [
+        347
+      ],
+      "relatedIssuesAndPRs": []
+    },
+    {
+      "key": "supply-chain",
+      "number": 336,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/336",
+      "title": "[P1] [v1.0.1] Complete release dependency, download, packaged-secret and license qualification",
+      "classification": "Security/supply-chain release evidence",
+      "accountableRole": "Security/build owner",
+      "checklistIds": [
+        "SEC-03",
+        "SEC-05",
+        "SEC-06",
+        "SEC-07"
+      ],
+      "dependsOn": [
+        347,
+        318
+      ],
+      "relatedIssuesAndPRs": []
+    },
+    {
+      "key": "diagnostic-privacy",
+      "number": 337,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/337",
+      "title": "[P1] [v1.0.1] Qualify redacted support exports and valid feedback issue creation",
+      "classification": "Release support/privacy qualification",
+      "accountableRole": "Diagnostics/support maintainer",
+      "checklistIds": [
+        "SEC-08",
+        "SEC-09",
+        "DOC-05",
+        "SCN-40"
+      ],
+      "dependsOn": [
+        347,
+        335
+      ],
+      "relatedIssuesAndPRs": [
+        307
+      ]
+    },
+    {
+      "key": "native-hardware",
+      "number": 338,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/338",
+      "title": "[P1] [v1.0.1] Certify native worker recovery, shared leases and supported GPU pressure behavior",
+      "classification": "Live hardware/installed qualification",
+      "accountableRole": "Inference/hardware owner",
+      "checklistIds": [
+        "GPU-02",
+        "GPU-03",
+        "GPU-04",
+        "GPU-05",
+        "GPU-06",
+        "GPU-07",
+        "GPU-08",
+        "GPU-09",
+        "SCN-15",
+        "SCN-16"
+      ],
+      "dependsOn": [
+        330,
+        347
+      ],
+      "relatedIssuesAndPRs": [
+        305,
+        307
+      ]
+    },
+    {
+      "key": "image-release",
+      "number": 339,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/339",
+      "title": "[P1] [v1.0.1] Enforce supported image scope and qualify downloads, Metal safeguards and media lifecycle",
+      "classification": "Conditional feature implementation/qualification",
+      "accountableRole": "Image runtime owner",
+      "checklistIds": [
+        "IMG-01",
+        "IMG-02",
+        "IMG-03",
+        "IMG-04",
+        "IMG-05",
+        "IMG-06",
+        "IMG-07",
+        "IMG-08",
+        "SCN-16"
+      ],
+      "dependsOn": [
+        312,
+        338,
+        347
+      ],
+      "relatedIssuesAndPRs": []
+    },
+    {
+      "key": "cloud-release",
+      "number": 341,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/341",
+      "title": "[P1] [v1.0.1] Complete Cloud v2 conformance and real deployment isolation or disable incompatible execution",
+      "classification": "Conditional capability release blocker",
+      "accountableRole": "Cloud/security owner",
+      "checklistIds": [
+        "CLD-01",
+        "CLD-02",
+        "CLD-03",
+        "CLD-04",
+        "CLD-05",
+        "CLD-06",
+        "CLD-07"
+      ],
+      "dependsOn": [
+        312,
+        335,
+        347
+      ],
+      "relatedIssuesAndPRs": []
+    },
+    {
+      "key": "dev-release",
+      "number": 342,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/342",
+      "title": "[P1] [v1.0.1] Complete resumable Eris-Dev corpus runs, real-policy modes and independent grading",
+      "classification": "Release acceptance slice of existing evaluation epic",
+      "accountableRole": "Debug/quality maintainer",
+      "checklistIds": [
+        "DEV-01",
+        "DEV-02",
+        "DEV-03",
+        "DEV-04",
+        "DEV-07",
+        "DEV-08",
+        "DEV-09",
+        "DEV-10",
+        "TEST-05",
+        "TEST-09",
+        "SCN-37",
+        "SCN-38"
+      ],
+      "dependsOn": [
+        347,
+        313
+      ],
+      "relatedIssuesAndPRs": [
+        307,
+        267
+      ]
+    },
+    {
+      "key": "dev-models",
+      "number": 343,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/343",
+      "title": "[P1] [v1.0.1] Qualify Windows/macOS shared model discovery and Eris-Dev-owned downloads",
+      "classification": "Installed cross-app qualification",
+      "accountableRole": "Debug/model catalog owner",
+      "checklistIds": [
+        "DEV-05",
+        "DEV-06",
+        "SCN-36"
+      ],
+      "dependsOn": [
+        347,
+        336
+      ],
+      "relatedIssuesAndPRs": [
+        305,
+        307
+      ]
+    },
+    {
+      "key": "ux-release",
+      "number": 344,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/344",
+      "title": "[P1] [v1.0.1] Complete native desktop layout, chat usability and accessibility acceptance",
+      "classification": "Client release qualification",
+      "accountableRole": "Client UX/accessibility owner",
+      "checklistIds": [
+        "UX-01",
+        "UX-02",
+        "UX-03",
+        "UX-04",
+        "UX-05",
+        "UX-06",
+        "UX-07",
+        "UX-08",
+        "UX-09"
+      ],
+      "dependsOn": [
+        347,
+        328
+      ],
+      "relatedIssuesAndPRs": []
+    },
+    {
+      "key": "storage",
+      "number": 345,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/345",
+      "title": "[P1] [v1.0.1] Qualify storage migrations, canonical ordering, disk failures, cleanup and backup restore",
+      "classification": "Release persistence/data-integrity qualification",
+      "accountableRole": "Storage/platform owner",
+      "checklistIds": [
+        "DATA-01",
+        "DATA-02",
+        "DATA-04",
+        "DATA-05",
+        "DATA-06",
+        "DATA-07",
+        "SCN-33",
+        "SCN-34"
+      ],
+      "dependsOn": [
+        347
+      ],
+      "relatedIssuesAndPRs": []
+    },
+    {
+      "key": "performance",
+      "number": 346,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/346",
+      "title": "[P1] [v1.0.1] Calibrate supported-hardware SLOs and run whole-app memory, leak and large-workspace qualification",
+      "classification": "Measured performance release evidence",
+      "accountableRole": "Performance owner",
+      "checklistIds": [
+        "PERF-01",
+        "PERF-02",
+        "PERF-03",
+        "PERF-04",
+        "PERF-05",
+        "PERF-06",
+        "PERF-07",
+        "PERF-08"
+      ],
+      "dependsOn": [
+        347,
+        330
+      ],
+      "relatedIssuesAndPRs": [
+        305,
+        307
+      ]
+    },
+    {
+      "key": "ci",
+      "number": 347,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/347",
+      "title": "[P1] [v1.0.1] Restore exact-source CI and make full static/profile/qualification evidence auditable",
+      "classification": "Confirmed failing CI plus build-gate qualification",
+      "accountableRole": "Build/quality owner",
+      "checklistIds": [
+        "TEST-01",
+        "TEST-02",
+        "TEST-03",
+        "TEST-04",
+        "TEST-05",
+        "TEST-06",
+        "TEST-07",
+        "TEST-08",
+        "TEST-09"
+      ],
+      "dependsOn": [
+        313
+      ],
+      "relatedIssuesAndPRs": [
+        307
+      ]
+    },
+    {
+      "key": "retrieval",
+      "number": 348,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/348",
+      "title": "[P1] [v1.0.1] Qualify scoped current-source retrieval, index recovery, citations and external evidence",
+      "classification": "Retrieval quality/privacy release qualification",
+      "accountableRole": "Retrieval/workspace owner",
+      "checklistIds": [
+        "IDX-01",
+        "IDX-02",
+        "IDX-03",
+        "IDX-04",
+        "IDX-05",
+        "IDX-06",
+        "IDX-07",
+        "IDX-08"
+      ],
+      "dependsOn": [
+        347
+      ],
+      "relatedIssuesAndPRs": [
+        303,
+        307
+      ]
+    },
+    {
+      "key": "usage-budgets",
+      "number": 349,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/349",
+      "title": "[P1] [v1.0.1] Qualify shared run limits, retry amplification and honest usage attribution",
+      "classification": "Budget/accounting release acceptance",
+      "accountableRole": "Orchestration/usage owner",
+      "checklistIds": [
+        "BUD-01",
+        "BUD-02",
+        "BUD-03",
+        "BUD-04",
+        "BUD-05",
+        "BUD-06"
+      ],
+      "dependsOn": [
+        347
+      ],
+      "relatedIssuesAndPRs": [
+        303,
+        305,
+        307
+      ]
+    },
+    {
+      "key": "configuration",
+      "number": 350,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/350",
+      "title": "[P1] [v1.0.1] Recertify settings precedence, workspace trust, rules/skills and legacy agent migration",
+      "classification": "Configuration/extension authority qualification",
+      "accountableRole": "Configuration/security owner",
+      "checklistIds": [
+        "CFG-01",
+        "CFG-02",
+        "CFG-03",
+        "CFG-04",
+        "CFG-05",
+        "CFG-06",
+        "CFG-07",
+        "CFG-08"
+      ],
+      "dependsOn": [
+        347,
+        330
+      ],
+      "relatedIssuesAndPRs": []
+    },
+    {
+      "key": "documentation",
+      "number": 351,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/351",
+      "title": "[P1] [v1.0.1] Reconcile release/user/architecture guides and publish tested operator runbooks",
+      "classification": "Documentation/support release work",
+      "accountableRole": "Documentation/support owner",
+      "checklistIds": [
+        "DOC-01",
+        "DOC-02",
+        "DOC-03",
+        "DOC-04",
+        "DOC-05",
+        "DOC-06",
+        "DOC-07",
+        "REL-04"
+      ],
+      "dependsOn": [
+        312,
+        347
+      ],
+      "relatedIssuesAndPRs": []
+    },
+    {
+      "key": "final-certification",
+      "number": 352,
+      "url": "https://github.com/EricServices-Repo/Eris/issues/352",
+      "title": "[P1] [v1.0.1] Complete final v1.0.1 evidence ledger, candidate freeze and independent release signoff",
+      "classification": "Mandatory release governance/evidence",
+      "accountableRole": "Release lead",
+      "checklistIds": [
+        "SIGN-01",
+        "SIGN-02",
+        "SIGN-03",
+        "SIGN-04",
+        "SIGN-05",
+        "SIGN-06",
+        "SIGN-07",
+        "SIGN-08",
+        "SIGN-09"
+      ],
+      "dependsOn": [
+        312,
+        347,
+        315,
+        316,
+        318,
+        319,
+        320,
+        351
+      ],
+      "relatedIssuesAndPRs": []
+    }
+  ],
+  "items": [
+    {
+      "id": "REL-01",
+      "title": "Freeze the v1 product contract",
+      "detail": " (DECIDE). Write the supported macOS/Windows versions, CPU architectures, GPU backends, local/remote providers, agent modes and shipped optional capabilities. Every advertised capability must map to an acceptance scenario and an owner; anything excluded must have explicit product gating.",
+      "issues": [
+        312
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "REL-02",
+      "title": "Define v1.0.1 compatibility",
+      "detail": " (DECIDE). State which 0.6.x installations, database/settings versions, model directories, credentials and task records can upgrade. Define downgrade limitations and backup behavior before changing any persisted schema.",
+      "issues": [
+        312
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "REL-03",
+      "title": "Use isolated change branches",
+      "detail": " (VERIFY). Keep each implementation on a feature branch, with an issue and PR into the currently approved integration branch. Do not directly push to protected main/dev, rewrite unrelated local work, or assume an old branch policy overrides current repository configuration.",
+      "issues": [
+        312
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "REL-04",
+      "title": "Reconcile architecture against the candidate",
+      "detail": " (VERIFY). Update baseline SHAs and implemented-versus-proposed status in architecture, RAM, handoff, recommendations and usage guides. Remove claims now fixed by merged work and claims that still exceed implemented behavior; preserve dated historical evidence as historical.",
+      "issues": [
+        312,
+        351
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "REL-05",
+      "title": "Maintain an owned release ledger",
+      "detail": " (DECIDE). Create an issue or machine-readable ledger mapping every ID in this document to owner, state, PR, evidence and dependencies. A tracker issue is not an implementation unit; split changes when ownership or failure boundaries differ.",
+      "issues": [
+        312
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "REL-06",
+      "title": "Version all distribution identities coherently",
+      "detail": " (VERIFY). At release preparation, set production and Eris-Dev display/package versions, lockfile metadata, installer names and updater metadata to the approved version. Independently version protocol/schema contracts; a package bump must not silently redefine them.",
+      "issues": [
+        312,
+        318
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "REL-07",
+      "title": "Bind builds to immutable source",
+      "detail": " (VERIFY). Resolve the release tag, source commit and lockfile identity before compiling. Reject mismatches and ambiguous repair requests; rebuilding an asset must not move an existing tag or silently build the working checkout instead.",
+      "issues": [
+        312,
+        318
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "REL-08",
+      "title": "Establish candidate freeze and requalification rules",
+      "detail": " (OPERATE). Record the RC SHA and affected evidence dependencies. A code, model, runtime, lockfile, packaging or security-policy change invalidates the relevant evidence; never carry a green result across a changed boundary without documented analysis and rerun.",
+      "issues": [
+        312
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "INT-01",
+      "title": "Validate every inbound message at the boundary",
+      "detail": " (VERIFY). Reject malformed, oversized, empty or unauthorized chat submissions before allocating a task or opening a provider stream. Validate thread/workspace identity, attachments and selected controls in main rather than trusting renderer payloads.",
+      "issues": [
+        321
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "INT-02",
+      "title": "Preserve the actual user request",
+      "detail": " (VERIFY). Keep the latest instruction, relevant follow-up references and requested deliverable intact through routing and prompt compilation. Test that status strings, pasted transcripts and tool results cannot replace the current request or become higher-priority instructions.",
+      "issues": [
+        321
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "INT-03",
+      "title": "Separate advice from authorized implementation",
+      "detail": " (VERIFY). Review-only requests must stay read-only. An explicit follow-up such as “add those improvements to the code” must produce an editing contract with the prior recommendations carried forward, rather than retaining a Reviewer prohibition on edits.",
+      "issues": [
+        321
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "INT-04",
+      "title": "Handle ordinary conversation without workspace mutation",
+      "detail": " (VERIFY). Stories, explanations, brainstorming, design discussion and simple answers must reach an eligible chat model without forced tree/read/write sequences. Test Auto with no workspace and with an unrelated open repository.",
+      "issues": [
+        321
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "INT-05",
+      "title": "Resolve the correct project and artifact",
+      "detail": " (VERIFY). Honor the user's selected workspace and explicit paths. If an AirBNB task is issued while a calculator project is open, gather real evidence and report the mismatch instead of modifying an unrelated App.js or inventing PHP files.",
+      "issues": [
+        321
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "INT-06",
+      "title": "Carry explicit acceptance obligations",
+      "detail": " (VERIFY). Represent requested artifact, destination, change scope, constraints and success conditions in the task contract. Verify these obligations survive routing, delegation, model adaptation and completion checking without being diluted into a vague task summary.",
+      "issues": [
+        321
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "INT-07",
+      "title": "Interpret ambiguous follow-ups using bounded history",
+      "detail": " (VERIFY). Resolve “those changes,” “continue,” and “what changed” against eligible recent conversation evidence. Ask a focused question only when the ambiguity materially affects action; never fabricate an earlier recommendation or use another thread as authority.",
+      "issues": [
+        321
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "INT-08",
+      "title": "Enforce send admission and deduplication",
+      "detail": " (VERIFY). Repeated clicks, retried IPC, rapid follow-ups and renderer reloads must not start duplicate mutation runs. Give each accepted send a stable identity and explicit queued/running/rejected state, and report the same admission result on safe retry.",
+      "issues": [
+        321
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "INT-09",
+      "title": "Preserve steering and queued messages",
+      "detail": " (VERIFY). Define whether a new message steers, queues behind, or cancels a running task; preserve its text and attachments durably. Tests must show that new user constraints reach the correct execution before subsequent effects are admitted.",
+      "issues": [
+        321
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RUN-01",
+      "title": "Use explicit lifecycle state",
+      "detail": " (VERIFY). Keep admitted, queued, preparing, executing, awaiting approval, verifying, complete, cancelled and failed states distinguishable. Every terminal state must be reachable exactly once with a durable reason and all owned resources released.",
+      "issues": [
+        322
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RUN-02",
+      "title": "Detect progress from evidence",
+      "detail": " (VERIFY). A changed file, new source evidence, completed check or resolved obligation counts as progress. Reworded plans, identical tool calls and status spam do not; tests must prevent both infinite loops and premature stopping after legitimate multi-step inspection.",
+      "issues": [
+        322
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RUN-03",
+      "title": "Make recovery bounded and useful",
+      "detail": " (VERIFY). Limit retries and adaptations by root-run budget and deadline. Preserve successful work, select a genuinely different eligible recovery path when permitted, and return a concrete blocker when no actionable next step exists.",
+      "issues": [
+        322
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RUN-04",
+      "title": "Prevent advice-only completion of coding tasks",
+      "detail": " (VERIFY). For a mutation contract, require effect evidence or an explicit no-change justification grounded in the code. A paragraph saying “modify these files” must not satisfy “make these improvements”; independently inspect resulting changes and verification status.",
+      "issues": [
+        322
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RUN-05",
+      "title": "Handle partial success honestly",
+      "detail": " (VERIFY). If edits succeeded but tests failed, persistence failed or the run exhausted its budget, report applied changes and the unresolved failure separately. Never replace a partial result with a generic success sentence or claim all changed files are verified.",
+      "issues": [
+        322
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RUN-06",
+      "title": "Make cancellation interrupt every wait",
+      "detail": " (VERIFY). Stop must cancel queued inference, model loading, streaming, approvals, commands, child agents and retry timers. Late chunks or child completions must not revive a cancelled run or overwrite a newer chat answer.",
+      "issues": [
+        322
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RUN-07",
+      "title": "Retain artifact-aware completion validation",
+      "detail": " (VERIFY). Use appropriate checks for code, design documents, stories and image requests. Generated code should receive syntax/type/build checks when meaningful; a prose task must not be judged solely by file mutations or by the agent's own success claim.",
+      "issues": [
+        322
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RUN-08",
+      "title": "Create deterministic lifecycle transition coverage",
+      "detail": " (BUILD). Extend tests so every state transition, timeout and persistence failure is exercised through the actual runtime boundary. If extracting a reducer/kernel, prove event ordering, effect ownership and compatibility before replacing the existing loop.",
+      "issues": [
+        322
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RUN-09",
+      "title": "Expose actionable stop reasons",
+      "detail": " (VERIFY). Differentiate user cancellation, missing capability, model protocol failure, exhausted recovery, approval denial, context overflow and environmental failure in typed results. The chat must explain what happened and what remains without requiring users to decipher internal log fragments.",
+      "issues": [
+        322
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "A2A-01",
+      "title": "Retain a validated handoff envelope",
+      "detail": " (VERIFY). Validate required contract, scope, parent/root identity, evidence and budget fields at tool admission, enqueue and durable reload. Oversized required fields must fail explicitly; any shortened optional fields need bounded omission metadata.",
+      "issues": [
+        323
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "A2A-02",
+      "title": "Keep delegated authority narrower than the parent",
+      "detail": " (VERIFY). A child may receive only the tools, paths, effects, destinations and budget needed for its task. It cannot convert a review into a write, broaden provider disclosure, or infer authority from parent prose or role names.",
+      "issues": [
+        323
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "A2A-03",
+      "title": "Validate source identity independently of execution identity",
+      "detail": " (VERIFY). Verify host-sealed ContextOrigin binding, profile, source namespace/project, epochs and execution binding. Reject tampered, cross-profile, stale or incorrectly rebound handles, including after worktree changes and Windows path normalization.",
+      "issues": [
+        323
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "A2A-04",
+      "title": "Revalidate evidence after parent completion",
+      "detail": " (VERIFY). Persist enough source/version/disclosure metadata to check delayed children after the original request lease ends. A closed parent lease must not make valid evidence unusable or make expired evidence automatically trusted.",
+      "issues": [
+        323
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "A2A-05",
+      "title": "Enforce subtree-wide budgets after restart",
+      "detail": " (VERIFY). Retain depth, total children, aggregate work and deadline limits across enqueue/reload/recovery. Recursion, duplicate tasks and agent/goal cycles must fail predictably; fresh child counters must not reset a root's budget.",
+      "issues": [
+        323
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "A2A-06",
+      "title": "Cancel and drain the whole subtree",
+      "detail": " (VERIFY). Cancel descendants, commands and queued inference when the root is cancelled or its workspace closes. Ensure completion messages from a draining child cannot apply a result after cancellation, approval revocation or deadline expiry.",
+      "issues": [
+        323
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "A2A-07",
+      "title": "Integrate typed child outcomes exactly once",
+      "detail": " (VERIFY). Require child identity, result revision, evidence, actual effects, check results and unresolved obligations. Repeated delivery/reload must not duplicate canonical chat receipts; failed or unapplied prose cannot become a verified integrated change.",
+      "issues": [
+        323
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "A2A-08",
+      "title": "Detect integration conflicts and stale checks",
+      "detail": " (VERIFY). Compare source hashes before applying child results, preserve unrelated user changes and reject stale bases. Checks run before a merge remain historical until rerun on integrated output; execution success and integration success remain separate fields.",
+      "issues": [
+        323
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "A2A-09",
+      "title": "Qualify isolated multi-agent replay",
+      "detail": " (BUILD). Implement the production task-tree boundary in Eris-Dev/CI for #267 using temporary projects and no inherited user secrets. Replay parent recall, child evidence pulls, privacy changes, cancellation, restart and result import with deterministic failure injection.",
+      "issues": [
+        267
+      ],
+      "existingIssues": [
+        267
+      ],
+      "disposition": "existing-open-qualification",
+      "certified": false
+    },
+    {
+      "id": "A2A-10",
+      "title": "Resolve the specialist context-handle scope",
+      "detail": " (DECIDE). For #151, either implement source-scoped, read-only handles with lifetime/disclosure controls or explicitly limit specialist inheritance to the validated evidence already supported. Never copy the entire parent transcript or promise full RAM sharing from an origin seal alone.",
+      "issues": [
+        312,
+        329
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "MOD-01",
+      "title": "Keep agent role separate from model policy",
+      "detail": " (VERIFY). Auto agent selection, Composer/Coder/Reviewer roles and Fixed/Auto-local/Auto-any model policies must remain independent controls. Persist and display the effective combination so a role change cannot silently change privacy or model pinning.",
+      "issues": [
+        324
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "MOD-02",
+      "title": "Evaluate eligible installed models before Lite fallback",
+      "detail": " (VERIFY). Discover and validate ready models, capabilities and resource eligibility before defaulting to Composer Lite. A locally installed capable model must not be ignored because of stale renderer catalog state, startup order or a different application profile.",
+      "issues": [
+        324
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "MOD-03",
+      "title": "Filter locality before scoring",
+      "detail": " (VERIFY). Under Local policy exclude remote destinations before ranking, including LAN endpoints treated as remote by the policy. Consent for recalling text is not consent to send it to another endpoint; explicit remote mode must still pass disclosure checks.",
+      "issues": [
+        324
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "MOD-04",
+      "title": "Honor fixed model selection",
+      "detail": " (VERIFY). A pinned model must remain pinned across retries, delegation where promised, protocol fallback and context pressure. If it cannot execute the task, report why or obtain a permitted policy change; do not silently substitute another provider.",
+      "issues": [
+        324
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "MOD-05",
+      "title": "Calibrate task capability honestly",
+      "detail": " (VERIFY). Separate known capabilities, observed qualification and heuristics. Rank editing, tool use, structured output and long-context tasks using applicable fingerprinted evidence; unknown or stale scores must not masquerade as measured capability.",
+      "issues": [
+        324
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "MOD-06",
+      "title": "Perform a real coordinator-to-worker transition",
+      "detail": " (VERIFY). When Lite delegates execution, invoke the chosen eligible worker with the same task obligations, safe context and owned lease. A log announcing a handoff without a different actual model dispatch must fail the test.",
+      "issues": [
+        324
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "MOD-07",
+      "title": "Use a different eligible recovery model",
+      "detail": " (VERIFY). Track attempted model identities and failure reasons within the run. Recovery must not repeatedly pick the same failing model under a different label; enforce bounded adaptations and never route around an authority or safety refusal.",
+      "issues": [
+        324
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "MOD-08",
+      "title": "Preserve policy across asynchronous switches",
+      "detail": " (VERIFY). Before the next provider call, recheck model readiness, destination, current privacy controls, measured prompt fit and resource ownership. A queued switch must not send stale recalled text after a forget/revoke action.",
+      "issues": [
+        324
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "MOD-09",
+      "title": "Measure production Auto separately from pinned inference",
+      "detail": " (BUILD). Add a debug/qualification mode that exercises the production selector and switch path with a controlled catalog. Keep this separate from pinned-model benchmarking; record candidate eligibility, selected identity, exclusions and actual dispatched identity.",
+      "issues": [
+        324
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "WIRE-01",
+      "title": "Preserve trust and role boundaries on the wire",
+      "detail": " (VERIFY). System/project instructions, real user turns, assistant turns, tool calls/results and untrusted retrieved content must serialize with correct roles. Pasted logs, code comments and web pages cannot acquire instruction authority through concatenation.",
+      "issues": [
+        325
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "WIRE-02",
+      "title": "Retain stable-prefix ordering",
+      "detail": " (VERIFY). Test model-task/4 stable instructions/project prefix, prior conversation roles and volatile current-turn layers. Record an estimated prefix separately from provider/native cached-token measurements; changing order must not weaken required-context admission priority.",
+      "issues": [
+        325
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "WIRE-03",
+      "title": "Budget the complete provider payload",
+      "detail": " (VERIFY). Count or conservatively reserve model framing, tool schemas, native protocol overhead and answer capacity, not just visible message characters. Cover multibyte text, large schemas and providers with different context accounting.",
+      "issues": [
+        325
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "WIRE-04",
+      "title": "Measure the first native allocation before dispatch",
+      "detail": " (VERIFY). After a cold load, validate the actual allocated window against the required prompt and output reserve. If the native runtime allocated less than requested, recompile safely or fail explicitly; never trim required user instructions silently.",
+      "issues": [
+        325
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "WIRE-05",
+      "title": "Revalidate immediately before provider send",
+      "detail": " (VERIFY). After all asynchronous preparation, confirm contract, source versions, privacy policy, selected destination and active resource lease. Test revocation, model switch and workspace close during model load and just before the transport opens.",
+      "issues": [
+        325,
+        327
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "WIRE-06",
+      "title": "Validate tool call/result pairing",
+      "detail": " (VERIFY). Require unique call IDs, valid schemas and complete result pairing across native and text-tool protocols. Reject malformed mixed output, duplicate IDs and unmatched results without executing invented calls or losing already observed effects.",
+      "issues": [
+        325
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "WIRE-07",
+      "title": "Bound protocol repair",
+      "detail": " (VERIFY). Handle malformed JSON/tool syntax with a finite repair policy that cannot duplicate writes. A structured-output fallback must retain the same authorization, required context and destination rather than rebuilding a permissive generic prompt.",
+      "issues": [
+        325
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "WIRE-08",
+      "title": "Normalize streaming and finish reasons",
+      "detail": " (VERIFY). Cover partial UTF-8, chunk boundaries inside JSON, reasoning/content separation, finish-with-tool-call, provider errors and truncated output. Exactly one final result must reach the right run after cleanup, including when usage arrives late.",
+      "issues": [
+        325
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "WIRE-09",
+      "title": "Qualify each advertised backend",
+      "detail": " (VERIFY). Run conformance fixtures against native GGUF, supported loopback services and enabled remote APIs. Provider-specific adapters need explicit capability/timeout/error behavior; an OpenAI-compatible label is not proof of identical semantics.",
+      "issues": [
+        325
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RAM-01",
+      "title": "Keep durable history authoritative",
+      "detail": " (VERIFY). Treat RAM as a bounded cache, not the only transcript. Cold cache, eviction, restart and worker failure must recover eligible canonical records without losing messages or fabricating a complete cache from a partial page.",
+      "issues": [
+        326
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RAM-02",
+      "title": "Preserve namespace isolation",
+      "detail": " (VERIFY). Separate profile, project, thread, source epoch and execution identity. Test same-named projects, renamed worktrees, reopened paths, symlinks and Windows casing; no memory may leak merely because labels or relative filenames match.",
+      "issues": [
+        326
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RAM-03",
+      "title": "Respect control sequences and exclusions",
+      "detail": " (VERIFY). Forget, clear, retention cutoff, disabled recall and remote-disclosure changes must affect search, compilation, context pulls and delayed children. Add race tests where controls change after selection but before actual provider send.",
+      "issues": [
+        326,
+        327
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RAM-04",
+      "title": "Account reservations before allocation",
+      "detail": " (VERIFY). Bound encoded segments, decoded reads, search scratch, pending hydrations and metadata before allocating them. Failed admission/cancellation must release reservations; configured logical bytes must not be presented as whole-process RSS.",
+      "issues": [
+        326
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RAM-05",
+      "title": "Keep the send path bounded",
+      "detail": " (VERIFY). Do not scan the entire archive, synchronously summarize a long chat or allocate a full transcript on every send. Establish timeout/fallback behavior for cache hydration and optional recall so memory enrichment cannot stall a basic chat indefinitely.",
+      "issues": [
+        326
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RAM-06",
+      "title": "Test pressure-induced degradation",
+      "detail": " (VERIFY). Exercise shrinking budgets, simultaneous workloads, background indexing and low free memory. Evict optional recall before required task context, preserve canonical source data, and report pressure omission distinctly from “no relevant memory.”",
+      "issues": [
+        326
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RAM-07",
+      "title": "Qualify contextual follow-up recall",
+      "detail": " (VERIFY). Cover primary query terms, active-file hints, prior recommendations and the latest eligible user intent. Expansion must remain bounded and lower priority, exclude forgotten/other-project rows, and avoid logging private expanded text.",
+      "issues": [
+        326,
+        331
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RAM-08",
+      "title": "Validate inspector numbers and controls",
+      "detail": " (VERIFY). Show configured budget, logical retained bytes, current native window, estimated KV, actual device classification and historical samples with clear units. Unavailable measurements must show unknown; switching chats must not display another thread's private source details.",
+      "issues": [
+        326
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RAM-09",
+      "title": "Resolve dedicated memory-process scope before increasing limits",
+      "detail": " (DECIDE). For #228, implement bounded off-heap segments/IPC/crash recovery before enabling multi-GiB retention, or retain current safe limits and remove large-tier claims. A worker extraction must preserve source authority, reservations, revocation and foreground responsiveness.",
+      "issues": [
+        312
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "RAM-10",
+      "title": "Resolve hardware-aware tier sizing",
+      "detail": " (DECIDE). For #227, derive optional RAM from measured headroom and dedicated versus unified memory, with hard ceilings and manual override. If deferred, keep conservative settings and truthful diagnostics; never apply a dedicated-GPU formula to shared Metal memory.",
+      "issues": [
+        330
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "REC-01",
+      "title": "Keep compacted evidence addressable",
+      "detail": " (VERIFY). When tool output is removed from the prompt, retain valid bounded references while the run remains active. Verify exact bytes can be recovered through the model-visible reference after repeated compaction; a list of hidden test-side entries is weaker proof.",
+      "issues": [
+        326
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "REC-02",
+      "title": "Distinguish pull outcomes",
+      "detail": " (VERIFY). Return found, unknown, expired, omitted, denied and temporarily busy outcomes consistently. The model must not interpret unavailable evidence as proof a file or fact does not exist, and the caller must be able to retry only retryable failures.",
+      "issues": [
+        326
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "REC-03",
+      "title": "Bound context_search and context_read",
+      "detail": " (VERIFY). Enforce per-call output, decoded bytes, search scratch, source scope and deadline limits. Test hostile repeated searches and oversized reads; requested byte ranges must not bypass journal/global memory admission.",
+      "issues": [
+        326
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "REC-04",
+      "title": "Resolve post-run journal retention",
+      "detail": " (DECIDE). For #225, either persist indexed evidence with explicit retention, checksums, crash recovery and deletion controls or document that run-local refs expire. Do not claim later chats can recover arbitrary historical tool output from final prose alone.",
+      "issues": [
+        329
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "REC-05",
+      "title": "Resolve source-backed summaries",
+      "detail": " (DECIDE). For #150, qualify summaries as derived, revocable, source-linked evidence generated off the send path. If omitted, retain bounded lexical recall; never erase original eligible records or let stale summaries resurrect forgotten content.",
+      "issues": [
+        313,
+        331
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "REC-06",
+      "title": "Resolve approved project facts",
+      "detail": " (DECIDE). For #152, require user approval, source/owner attribution, versioning, deletion and provider disclosure controls. Default to thread isolation; inferred facts or successful child results must not become shared project memory automatically.",
+      "issues": [
+        327,
+        328
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "REC-07",
+      "title": "Evaluate optional CPU embeddings",
+      "detail": " (DECIDE). For #234, compare lexical and embedding retrieval on frozen labeled queries, including paraphrases and privacy controls. Enable only with bounded CPU/RAM/index cost, explicit model download and deletion semantics; zero VRAM usage must be measured rather than assumed.",
+      "issues": [
+        312
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "REC-08",
+      "title": "Evaluate KV reuse and parking",
+      "detail": " (DECIDE). For #233, prove native runtime support, stable-prefix identity, per-thread isolation, invalidation and memory accounting before retaining sessions across turns. Keep current per-run sessions if no measured gain; never restore forgotten content through a parked KV cache.",
+      "issues": [
+        312
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "REC-09",
+      "title": "Measure model-weight host residency",
+      "detail": " (OPERATE). For #231, distinguish process RSS, mapped/file-cache residency, GPU allocation and unified accounting on real hardware. Change mmap/load policy only when measurements justify it and recovery/model load behavior remains correct.",
+      "issues": [
+        312
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "TOOL-01",
+      "title": "Keep one authoritative tool contract",
+      "detail": " (VERIFY). Every exposed tool needs a schema, capability/effect classification, workspace scope, approval policy, timeout and bounded result policy. Test that discovery, provider schemas and execution enforce the same definitions, including disabled tools.",
+      "issues": [
+        332
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "TOOL-02",
+      "title": "Admit effects in trusted host code",
+      "detail": " (VERIFY). Model text, plugin descriptions and renderer events must not grant write/command/network authority. The host validates task scope and permission immediately before effects, and a denied effect returns a typed result rather than being retried through an alias.",
+      "issues": [
+        332
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "TOOL-03",
+      "title": "Require fresh reads for destructive edits",
+      "detail": " (VERIFY). Validate file identity/content version before replacement or deletion. Reject stale edits and ambiguous replacement matches; preserve external and unsaved user changes instead of assuming the model's last read is current.",
+      "issues": [
+        332
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "TOOL-04",
+      "title": "Make mutation status explicit",
+      "detail": " (VERIFY). Separate requested, authorized, started, applied, failed, verified and reverted effects. Record uncertain outcomes after interruption so recovery inspects actual state before repeating an operation that may already have changed the workspace.",
+      "issues": [
+        332
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "TOOL-05",
+      "title": "Preserve safe batch ordering",
+      "detail": " (VERIFY). Parallelize only proven independent read-only work within configured limits. Mixed read/write/command batches must respect dependencies and cancellation; unrelated paths alone do not prove commands have no overlapping effects.",
+      "issues": [
+        332
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "TOOL-06",
+      "title": "Keep large outputs bounded and recoverable",
+      "detail": " (VERIFY). Do not push unbounded terminal, search, directory or tool output into the prompt or renderer. Report truncation and retained reference scope; spool/persist only through bounded stores with ownership and cleanup.",
+      "issues": [
+        332
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "TOOL-07",
+      "title": "Treat tool outputs as untrusted data",
+      "detail": " (VERIFY). Defend against prompt instructions in repository files, stdout, retrieved pages and MCP responses. They may inform the task but cannot rewrite policy, destination, approval or user intent.",
+      "issues": [
+        332
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "TOOL-08",
+      "title": "Make repeated calls safe",
+      "detail": " (VERIFY). Deduplicate retried mutation admissions where possible and require state inspection for uncertain external effects. An automatic retry after timeout must not double-install, double-delete or execute the same command again without checking outcome.",
+      "issues": [
+        332
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "TOOL-09",
+      "title": "Qualify tool lifecycle fault replay",
+      "detail": " (BUILD). Inject schema failure, approval denial, cancellation before/after effect, journal failure and stream disconnect. Assert cleanup and truthful receipts; add typed invocation/result receipts incrementally rather than rewriting every tool at once.",
+      "issues": [
+        332
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "FS-01",
+      "title": "Constrain file effects to authorized real paths",
+      "detail": " (VERIFY). Normalize roots and verify realpath containment, symlink/reparse behavior and protected areas. Test Windows drive/UNC paths, path separators, traversal, case differences and time-of-check/time-of-use swaps at the filesystem boundary.",
+      "issues": [
+        333
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "FS-02",
+      "title": "Preserve dirty editor buffers",
+      "detail": " (VERIFY). Detect unsaved editor text before agent writes, reloads, branch changes or restores. Either coordinate against the current document version or require an explicit conflict decision; never silently overwrite an unsaved buffer with disk content.",
+      "issues": [
+        333
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "FS-03",
+      "title": "Provide inspectable actual diffs",
+      "detail": " (VERIFY). Generate diffs from real before/after bytes, not model explanations. Show created/deleted/binary/renamed files, line endings and failed effects clearly; a diff panel must not imply that unapplied work reached disk.",
+      "issues": [
+        333
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "FS-04",
+      "title": "Retain safe checkpoint preimages",
+      "detail": " (VERIFY). Capture required preimages before admitted edits and handle checkpoint persistence failure before destructive work. Revert must be scoped to the task and preserve later unrelated user edits or report a conflict.",
+      "issues": [
+        333
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "FS-05",
+      "title": "Handle multi-file partial failure",
+      "detail": " (VERIFY). If a later write fails, retain an exact applied/failed list and a tested recovery path. Do not describe a multi-file edit as atomic unless the storage mechanism truly provides that property.",
+      "issues": [
+        333
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "FS-06",
+      "title": "Keep editor lifecycle stable",
+      "detail": " (VERIFY). Verify tabs, cursor, selection, undo history, language service state and diff workers across streaming, tab switches and window restoration. Disposal must release models/listeners without discarding still-open documents.",
+      "issues": [
+        333
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "FS-07",
+      "title": "Keep Git actions explicit and scoped",
+      "detail": " (VERIFY). Show status/diff safely; require intended repository/branch for commit, push, checkout and reset tools. Preserve unrelated local work, handle missing Git/auth errors, and prevent model-derived shell strings from selecting destructive Git operations implicitly.",
+      "issues": [
+        333
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "FS-08",
+      "title": "Coordinate concurrent workspace writers",
+      "detail": " (VERIFY). Lock or schedule overlapping foreground, child and background edits by actual workspace/effect scope. Test worktree merges and parent/child collisions; no agent may treat another agent's in-flight file as a stable base.",
+      "issues": [
+        333
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CMD-01",
+      "title": "Describe desktop command trust accurately",
+      "detail": " (VERIFY). The default desktop command runner executes with the user's host privileges under policy; cwd is not an OS sandbox. Explicit isolation requests must select a qualified isolation implementation or fail closed, with the distinction visible in product documentation.",
+      "issues": [
+        334
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CMD-02",
+      "title": "Terminate owned process trees",
+      "detail": " (VERIFY). On cancellation, timeout, app shutdown and worker failure, kill owned descendants using the platform boundary, including Windows Job Object behavior. Tests must include grandchildren and commands that ignore a graceful signal.",
+      "issues": [
+        334
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CMD-03",
+      "title": "Scope approval to the exact command",
+      "detail": " (VERIFY). Bind approval to normalized executable/arguments, cwd, environment policy, task and effect class. Materially changed commands need a new decision; a broad previous approval must not authorize arbitrary later model-generated execution.",
+      "issues": [
+        334
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CMD-04",
+      "title": "Filter inherited environment and secrets",
+      "detail": " (VERIFY). Pass only intended environment values to commands, language servers, MCP and plugins. Do not dump credentials in logs or error messages; test failures without printing real tokens.",
+      "issues": [
+        334
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CMD-05",
+      "title": "Bound command resources and output",
+      "detail": " (VERIFY). Apply deadlines, output limits and configured concurrency; stream safely without blocking the main process. A successful exit code is not enough to prove a requested artifact exists or that descendants have terminated.",
+      "issues": [
+        334
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CMD-06",
+      "title": "Recover terminal and PTY failure",
+      "detail": " (VERIFY). Handle shell startup errors, PTY/native-module failure, closed windows and resize races. Terminal cleanup must not terminate unrelated user processes, and a failed terminal must not wedge chat cancellation.",
+      "issues": [
+        334
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CMD-07",
+      "title": "Qualify language-server boundaries",
+      "detail": " (VERIFY). Validate project roots and document versions, terminate owned server processes, and bound diagnostics/completion traffic. Support missing toolchains and non-ASCII paths without freezing the renderer or executing project scripts implicitly.",
+      "issues": [
+        334
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CMD-08",
+      "title": "Enforce MCP trust and lifecycle",
+      "detail": " (VERIFY). Require explicit server configuration/enablement and apply tool admission after discovery. Handle schema changes, server restart, malformed responses and transport timeouts; remote MCP tools must not inherit local-only disclosure permission.",
+      "issues": [
+        334
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SEC-01",
+      "title": "Restrict privileged IPC to trusted frames",
+      "detail": " (VERIFY). Keep context isolation and the narrow preload API; validate sender frame/origin and typed arguments for all privileged channels. Untrusted pages, subframes and malformed payloads must not reach filesystem, model, shell, credential or updater operations.",
+      "issues": [
+        335
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SEC-02",
+      "title": "Keep secrets outside renderer and prompts",
+      "detail": " (VERIFY). Credentials belong in the main-side vault under an explicit storage policy. Test OS secure-storage unavailable/locked scenarios, settings migration, export and logout; failure must not silently write plaintext or expose values to the model.",
+      "issues": [
+        335
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SEC-03",
+      "title": "Scan shipped files and dependencies for credentials",
+      "detail": " (VERIFY). Run packaged secret checks on both apps and platforms, including unpacked resources and generated config. If historical shared credentials were exposed, document revocation/rotation; deleting a current file alone does not revoke an old credential.",
+      "issues": [
+        336
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SEC-04",
+      "title": "Validate external URLs and provider destinations",
+      "detail": " (VERIFY). Constrain navigation/openExternal, downloads, redirects and service endpoints to the intended schemes and policies. Test loopback versus LAN/remote classification, redirect destination changes and protected local endpoints where relevant to a tool.",
+      "issues": [
+        335
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SEC-05",
+      "title": "Harden downloads and extraction",
+      "detail": " (VERIFY). Use bounded streaming, checksums/pinned revisions where supported, safe staging and atomic completion. Defend against traversal, archive bombs, incomplete files and unexpected executable content; failed downloads must not appear ready.",
+      "issues": [
+        336
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SEC-06",
+      "title": "Audit both dependency trees",
+      "detail": " (VERIFY). Review production and development findings for desktop and cloud-agent, lockfiles, native binaries and overrides. Fix exploitable shipped vulnerabilities; record justified non-applicable findings with owners/expiry rather than disabling audit or treating deprecation warnings as the same as install failure.",
+      "issues": [
+        336
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SEC-07",
+      "title": "Review dependency and model licenses",
+      "detail": " (VERIFY). Produce an attribution/license inventory covering npm/native components, bundled grammars, image runtime packages and downloadable model terms. Do not assume a repository or model's availability grants redistribution rights.",
+      "issues": [
+        336
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SEC-08",
+      "title": "Redact diagnostic exports by construction",
+      "detail": " (VERIFY). Default exports should exclude secrets, raw private prompts, absolute personal paths and attachment bytes unless explicitly opted in. Test indirect fields, nested tool errors and hashes; a redaction manifest is not proof every field is safe.",
+      "issues": [
+        329,
+        337
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SEC-09",
+      "title": "Validate feedback without embedded GitHub tokens",
+      "detail": " (VERIFY). Keep issue creation behind the configured relay and validate the returned repository/issue URL. Handle relay failure, spoofed links, offline use and attachment redaction; do not report an invalid response as a successful issue.",
+      "issues": [
+        337
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SEC-10",
+      "title": "Complete a threat-boundary review",
+      "detail": " (OPERATE). Review chat input → tools, child delegation, origin/recall, renderer/main, native/Python workers, remote endpoints, updater and extension boundaries. Close exploitable findings or disable the affected capability; archive the review against the candidate SHA.",
+      "issues": [
+        335
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "GPU-01",
+      "title": "Discover real device capacity conservatively",
+      "detail": " (VERIFY). Distinguish dedicated GPU memory, unified memory, CPU-only fallback and unknown telemetry. Validate both 8 GB Windows GPUs and Apple Silicon; do not add nominal GPU capacities together unless the runtime actually supports and qualifies that topology.",
+      "issues": [
+        330
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "GPU-02",
+      "title": "Admit workloads through one resource owner",
+      "detail": " (VERIFY). Coordinate chat, child agents, model loading and image generation through current shared admission/lease rules. A queued workload must not allocate before admission; failed setup and cancellation must release both active and resident accounting.",
+      "issues": [
+        338
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "GPU-03",
+      "title": "Account resident allocations without double counting",
+      "detail": " (VERIFY). Separate already-resident weights, new allocation, KV/context memory, runtime overhead and optional RAM. Test repeated turns with a resident model so the store is not unnecessarily wiped on every request.",
+      "issues": [
+        338
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "GPU-04",
+      "title": "Recover from insufficient VRAM/context",
+      "detail": " (VERIFY). When 8192 tokens cannot fit an 8 GB device, calculate a permitted smaller configuration or return an actionable explicit limit. Preserve required prompt obligations; avoid retrying the identical impossible allocation or freezing the application.",
+      "issues": [
+        338
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "GPU-05",
+      "title": "Supervise native worker failures",
+      "detail": " (VERIFY). Handle worker exit during load/generation, transport loss, startup timeout and invalid runtime responses. Report failure once, clear stale ready/busy state and prove a subsequent independent request can use a fresh worker.",
+      "issues": [
+        338
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "GPU-06",
+      "title": "Bound compatibility fallback",
+      "detail": " (VERIFY). If in-process native inference remains available, keep it explicit, constrained and documented. Do not silently route a worker crash into a less isolated path that can terminate the entire IDE.",
+      "issues": [
+        338
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "GPU-07",
+      "title": "Measure Apple Silicon pressure behavior",
+      "detail": " (OPERATE). Run long-context text and enabled image workloads on the supported M4 class, including low free memory. Record total/free/process/unified allocation and responsiveness; a scripted governor fixture is not proof the machine remains usable.",
+      "issues": [
+        338
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "GPU-08",
+      "title": "Measure supported Windows GPU behavior",
+      "detail": " (OPERATE). Exercise supported NVIDIA cards/drivers, partial offload, CPU fallback and low-VRAM failure in installed builds. Record actual backend/device/layers/window and recovery, not only the requested settings.",
+      "issues": [
+        338
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "GPU-09",
+      "title": "Cleanly shut down all workers",
+      "detail": " (VERIFY). On app quit, profile switch, unload and cancelled startup, stop native/utility/Python workers and release ports/leases. A stale process from one app must not make the next app falsely believe its model is loaded.",
+      "issues": [
+        338
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "IMG-01",
+      "title": "Freeze supported image functionality",
+      "detail": " (DECIDE). Specify generation-only versus editing, supported model families/backends, output limits and hardware minima. Disable unsupported operations at the tool/API boundary; do not imply masks, arbitrary Diffusers families or image-to-image are implemented.",
+      "issues": [
+        312,
+        339
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "IMG-02",
+      "title": "Keep image models out of the chat picker",
+      "detail": " (VERIFY). Downloads and runtime selection belong in Image Models settings and the image tool policy. Text-agent selection must not accidentally load an image model or treat its files as a ready chat model.",
+      "issues": [
+        339
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "IMG-03",
+      "title": "Make image installation explicit and repairable",
+      "detail": " (VERIFY). Require the intended model/runtime download, pinned artifact verification and safe format policy. Show progress, disk space, failure reason, cancel/resume and repair without presenting partial files as a usable installation.",
+      "issues": [
+        339
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "IMG-04",
+      "title": "Keep generation offline when configured local",
+      "detail": " (VERIFY). After dependencies/models are installed, prove local generation does not fetch hidden remote resources or disclose prompt/image data. Remote fallback must require its own explicit policy and disclosure admission.",
+      "issues": [
+        339
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "IMG-05",
+      "title": "Enforce Metal and shared-resource safeguards",
+      "detail": " (VERIFY). Recheck headroom immediately before load/generation, reject unsafe SDXL configurations and serialize exclusive GPU use as required. Test cancellation under memory pressure; passing a request-size check alone does not protect unified memory.",
+      "issues": [
+        339
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "IMG-06",
+      "title": "Bound request, response and runtime costs",
+      "detail": " (VERIFY). Enforce body/image dimensions, output size, steps, concurrency and deadlines for both API and local backends. Invalid output must not reach the renderer as a trusted image; clean failed temporary files and release leases.",
+      "issues": [
+        339
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "IMG-07",
+      "title": "Own media lifetime and export behavior",
+      "detail": " (VERIFY). Tie generated files to profile/chat ownership, use safe local URLs, and define deletion/retention/export semantics. If originals have no automatic GC, disclose it and provide a tested manual cleanup path without deleting exported user files.",
+      "issues": [
+        339
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "IMG-08",
+      "title": "Qualify enabled image backends in packaged apps",
+      "detail": " (OPERATE). Run install → generate → cancel → recover → reopen → export on each supported platform/backend. If this cannot be completed, disable generation for the affected configuration and make the reason visible before the tool attempts it.",
+      "issues": [
+        339
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CLD-01",
+      "title": "Resolve desktop/Cloud protocol compatibility",
+      "detail": " (DECIDE). Implement and qualify task-contract v2 on the Cloud service or keep incompatible remote task execution disabled. Health responses must accurately advertise supported versions/capabilities and the desktop must fail closed on mismatch.",
+      "issues": [
+        312,
+        341
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CLD-02",
+      "title": "Preserve least-authority remote tasks",
+      "detail": " (VERIFY). Send only the necessary source, task obligations, credentials policy and permitted effects. Local-only selection or memory consent must not be reinterpreted as Cloud permission, and server output must remain untrusted on reintegration.",
+      "issues": [
+        341
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CLD-03",
+      "title": "Prove server-side OS isolation",
+      "detail": " (OPERATE). On the real deployment, verify configured sandbox, filesystem mounts, network boundary, process/resource limits and fail-closed startup. A host command cwd or a repository deployment example is not proof of a production sandbox.",
+      "issues": [
+        341
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CLD-04",
+      "title": "Confine server filesystem operations",
+      "detail": " (VERIFY). Validate real paths, symlink traversal and authorized roots at execution time. Test remote read/write/extract endpoints and worktree import; a lexical startsWith path check is insufficient.",
+      "issues": [
+        341
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CLD-05",
+      "title": "Authenticate and isolate tenants",
+      "detail": " (VERIFY). Validate service authentication, token storage/rotation, job ownership and cross-user result access. Rate limits and cancellation must apply to the authenticated owner rather than a caller-provided job ID alone.",
+      "issues": [
+        341
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CLD-06",
+      "title": "Revalidate imported Cloud changes",
+      "detail": " (VERIFY). Apply source-base checks, bounded diffs, local approvals and post-integration verification before treating remote work as complete. Remote tests cannot certify the merged local workspace state.",
+      "issues": [
+        341
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CLD-07",
+      "title": "Qualify network and service failure",
+      "detail": " (OPERATE). Test disconnects during upload/execution/download, duplicate job submission, server restart, expiry and cancellation. Recovery must not duplicate effects or lose the distinction between unknown remote status and a failed task.",
+      "issues": [
+        341
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DEV-01",
+      "title": "Reuse production routing and compilation",
+      "detail": " (VERIFY). Debug mode must call the production contract/selector/compiler/dispatch boundaries it claims to test. Detect drift through shared modules and integration tests rather than maintaining a second simplified agent pipeline.",
+      "issues": [
+        342
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DEV-02",
+      "title": "Label evaluation modes accurately",
+      "detail": " (VERIFY). Separate question import, request capture, scripted response replay, real pinned-model inference, production Auto-policy evaluation, stateful conversation replay and independent artifact grading in UI and exported records.",
+      "issues": [
+        342
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DEV-03",
+      "title": "Import the full 10,000-question corpus safely",
+      "detail": " (VERIFY). Accept the documented text/JSON/JSONL formats with stable row IDs, useful row-level errors and an enforced 1–10,000 limit. Validate exact parsed count and preserve original text; do not count blank lines or metadata objects as questions.",
+      "issues": [
+        342
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DEV-04",
+      "title": "Execute bounded batches of ten",
+      "detail": " (VERIFY). Keep the selected concurrency and per-question limits visible, persist progress/checkpoints, and support pause/cancel/resume without duplicate counted results. A large file must not start 10,000 concurrent provider calls or retain all transcripts in renderer RAM.",
+      "issues": [
+        342
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DEV-05",
+      "title": "Discover shared Windows/macOS model installations",
+      "detail": " (VERIFY). Resolve Eris versus Eris-Dev profile paths, current user and supported legacy locations, including custom roots. Distinguish absent model, unreadable path, partial download and incompatible file; do not copy or delete the production model directory implicitly.",
+      "issues": [
+        343
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DEV-06",
+      "title": "Support explicit debug-app downloads",
+      "detail": " (VERIFY). Allow Eris-Dev to install its own qualified model through the same safe catalog/download logic when no shared model is available. Make storage location and ownership visible so debug cleanup cannot remove a production installation.",
+      "issues": [
+        343
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DEV-07",
+      "title": "Persist reproducible request and wire records",
+      "detail": " (BUILD). Export versioned run/question IDs, mode, model fingerprint, actual destination, prompt/compiler versions, resource settings, call counts, timing, outcome and omission reasons. Preserve redaction and distinguish compiled previews from the payload actually sent.",
+      "issues": [
+        342
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DEV-08",
+      "title": "Grade outcomes independently",
+      "detail": " (BUILD). For coding tasks inspect diffs and run fixture checks, for context tasks score source-backed answers, and for ordinary chat use an explicit rubric. A model's own “done” or a nonempty response is not a passing evaluation.",
+      "issues": [
+        342
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DEV-09",
+      "title": "Add stateful multi-turn and handoff workloads",
+      "detail": " (BUILD). Include review → implement, corrections, file changes, forgotten facts, child restart and result integration through production boundaries. Label independent single-question coverage separately from stateful scenario coverage; connect the multi-agent suite to #267.",
+      "issues": [
+        342
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DEV-10",
+      "title": "Keep diagnostic execution isolated",
+      "detail": " (VERIFY). Use temporary fixtures/profiles, bounded effects and service-side denial of forbidden commands/network/MCP/images/Cloud where applicable. A simulated coding response must not mutate the user's real repository or send stored private history unexpectedly.",
+      "issues": [
+        342
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "UX-01",
+      "title": "Make the complete chat composer usable",
+      "detail": " (VERIFY). Keep multiline input above attachments/send/model controls, an unsquashed send button, useful keyboard shortcuts and stable focus during streaming. Sent user messages must remain visually distinct and readable at narrow window widths.",
+      "issues": [
+        344
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "UX-02",
+      "title": "Respect native window controls and layouts",
+      "detail": " (VERIFY). On macOS keep traffic-light controls unobstructed; verify Windows titlebar, maximization, drag regions and display scaling. Panels should touch or separate consistently according to the adopted layout and retain usable minimum dimensions.",
+      "issues": [
+        344
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "UX-03",
+      "title": "Show effective model and task state",
+      "detail": " (VERIFY). Display selected versus actual model, Fixed/Auto policy, queued work, active agent and actionable failure reasons. Never show “no local models ready” while an eligible installed model is available or use stale status from another profile.",
+      "issues": [
+        344
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "UX-04",
+      "title": "Make task history understandable",
+      "detail": " (VERIFY). Expose actual effects, child execution/integration state, approvals, verification failures and partial completion in a compact timeline. Repeated “continuing” and reroute messages must not substitute for evidence or permanently dominate the conversation.",
+      "issues": [
+        344
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "UX-05",
+      "title": "Complete settings information architecture",
+      "detail": " (VERIFY). Keep GPUs, Composer, Text Models and Image Models discoverable under Models, with consistent catalog/download controls. Include memory configuration plus current/historical usage and explain estimates, limits and restart requirements accurately.",
+      "issues": [
+        328,
+        344
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "UX-06",
+      "title": "Preserve navigation and streaming performance",
+      "detail": " (VERIFY). Switching chats/panels must not lose drafts, scroll anchors, selections or the active run subscription. Virtualized long chats must retain search and keyboard navigation without rendering all historical rows.",
+      "issues": [
+        344
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "UX-07",
+      "title": "Meet keyboard and assistive-technology acceptance",
+      "detail": " (VERIFY). Test tab order, focus traps/return, accessible names, dialog semantics, menu selection and announced async states. Automated accessibility checks must be supplemented with keyboard and supported screen-reader passes.",
+      "issues": [
+        344
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "UX-08",
+      "title": "Qualify visual readability and interaction states",
+      "detail": " (VERIFY). Test dark/light themes where supported, contrast, zoom, high DPI, long paths, large fonts and reduced motion. Loading, disabled, error and empty states must provide a useful next action without relying only on color.",
+      "issues": [
+        344
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "UX-09",
+      "title": "Explain authority and recovery at the point of use",
+      "detail": " (VERIFY). Approval, remote disclosure, failed model load, invalid context and incomplete edits need concise actions tied to current state. Product text must not expose internal implementation detail unless it helps the user's decision.",
+      "issues": [
+        344
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DATA-01",
+      "title": "Make schema migration transactional",
+      "detail": " (VERIFY). Version SQLite/settings/task schemas, validate before applying, retain recoverable originals and report source-specific failures. Migration from existing JSON chats must not silently drop unreadable records or mark a partial import complete.",
+      "issues": [
+        345
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DATA-02",
+      "title": "Preserve canonical message ordering",
+      "detail": " (VERIFY). Test rapid append, partial assistant saves, duplicate delivery, reload and crash during writes. Stable IDs, revisions and transactions must prevent duplicated/missing turns or a newer stream being overwritten by stale persistence.",
+      "issues": [
+        345
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DATA-03",
+      "title": "Recover durable jobs without replaying effects blindly",
+      "detail": " (VERIFY). After restart, restore the true task state and reconcile uncertain effects with disk/process state. Do not restart cancelled/expired work or reuse stale approvals and source references automatically.",
+      "issues": [
+        322
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DATA-04",
+      "title": "Handle disk and database failures",
+      "detail": " (VERIFY). Inject disk full, permission denied, locked database, corrupted record and interrupted rename. Keep unsaved work recoverable and distinguish storage failure from model failure; never show saved when persistence failed.",
+      "issues": [
+        328,
+        345
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DATA-05",
+      "title": "Bound storage growth and cleanup",
+      "detail": " (VERIFY). Define retention for chats, archives, indexes, checkpoints, diagnostics, media and future durable journals. Cleanups must honor active references, privacy deletion and exports, and must not run destructive global cleanup solely because one cache is over budget.",
+      "issues": [
+        328,
+        329,
+        345
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DATA-06",
+      "title": "Support profile/workspace lifecycle",
+      "detail": " (VERIFY). Closing a workspace, switching profile, moving a repository and reopening an old task must invalidate the right in-memory leases and paths. An old window or worker must not continue writing into a newly selected workspace.",
+      "issues": [
+        345
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DATA-07",
+      "title": "Make backups and recovery testable",
+      "detail": " (VERIFY). Document what is backed up, where and how to restore after a failed upgrade. Prove the restore with a disposable profile, including attachments and relevant settings while keeping credentials under their explicit vault policy.",
+      "issues": [
+        345
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DATA-08",
+      "title": "Qualify upgrade from supported installed releases",
+      "detail": " (OPERATE). Use real installed pre-v1 builds with populated chats, models, settings and unfinished jobs. Upgrade into the candidate and verify data, model visibility, editor state and failure recovery; fresh-install smoke alone does not cover this.",
+      "issues": [
+        319
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "PERF-01",
+      "title": "Retain portable client invariants",
+      "detail": " (VERIFY). Gate mounted-row bounds, scroll anchoring, focus, selection and search independently of hardware timing. Current fixture budgets include at most 120 mounted rows and at most 8 px anchor error; changing them needs evidence and review.",
+      "issues": [
+        346
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "PERF-02",
+      "title": "Establish matched-hardware timing baselines",
+      "detail": " (OPERATE). Measure token-to-paint, typing, stop response, large diff and index usefulness with warm/cold separation. Use the checked-in M4 profile only on matching hardware; unmatched hosts report timings without inventing a passed matched profile.",
+      "issues": [
+        346
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "PERF-03",
+      "title": "Measure whole-application memory",
+      "detail": " (OPERATE). Sample main/renderer/utility/Python RSS, heap, native allocations, GPU and shared memory with overlap explained. Do not sum shared unified-memory or mapped pages as independent consumption or report a logical cache budget as total RAM.",
+      "issues": [
+        330,
+        346
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "PERF-04",
+      "title": "Run long-session and leak tests",
+      "detail": " (OPERATE). Exercise many turns, chat switches, file opens/closes, cancellations, model loads and image runs where enabled. Define a plateau/tolerance before testing and investigate retained listeners, editor models, journals and native handles after quiescence.",
+      "issues": [
+        346
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "PERF-05",
+      "title": "Keep heavy work off the UI/control path",
+      "detail": " (VERIFY). Bound sync parsing, diffing, indexing, export and archive operations. Large debug imports, tool results and model catalogs must not block Stop, typing or window interaction; use workers/streaming when measurements require it.",
+      "issues": [
+        346
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "PERF-06",
+      "title": "Qualify representative workspace sizes",
+      "detail": " (OPERATE). Use small, large and monorepo fixtures with ignored directories, symlinks and rapid file changes. Record cold index, incremental update, useful-evidence latency and query cancellation without presenting a synthetic 4,000-file fixture as every real project.",
+      "issues": [
+        346
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "PERF-07",
+      "title": "Prevent retry-driven resource amplification",
+      "detail": " (VERIFY). Cap concurrent loads, pending searches, result queues, model-switch attempts and command output. Repeated recoveries must not retain previous buffers/workers or cause load/unload thrashing between eligible models.",
+      "issues": [
+        346
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "PERF-08",
+      "title": "Adopt measured release SLOs before RC",
+      "detail": " (DECIDE). Choose supported-hardware budgets for foreground response, cancellation, first token, sustained throughput, peak memory and recovery. Existing context/tiered thresholds remain mandatory; any additional target in the release ledger is a proposal until calibrated and approved, not a measured achievement.",
+      "issues": [
+        314,
+        346
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "TEST-01",
+      "title": "Keep profile membership auditable",
+      "detail": " (VERIFY). Every critical runtime suite must run in a named prebuild/full-CI profile, with explicit exclusions and reason. Test profile drift so new tests are not silently omitted because of filename conventions or a hand-maintained include list.",
+      "issues": [
+        347
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "TEST-02",
+      "title": "Require clean install and static checks",
+      "detail": " (VERIFY). Run npm ci from committed lockfiles under the supported Node version, then desktop/cloud types and lint. Treat transient ECONNRESET as a network/install failure with bounded retry diagnostics; deprecation warnings do not explain away a failed installation.",
+      "issues": [
+        313,
+        347
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "TEST-03",
+      "title": "Gate production and debug builds separately",
+      "detail": " (VERIFY). Run agent qualification before production build and debug qualification before Eris-Dev build. The debug app must compile against the same current orchestration code, not stale generated output from an earlier successful production build.",
+      "issues": [
+        313,
+        347
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "TEST-04",
+      "title": "Test failure boundaries rather than prompt wording alone",
+      "detail": " (VERIFY). Assert actual route, provider payload, effect admission, disk state, cleanup and persisted receipts. Text matching on “I will edit” is insufficient; avoid tests that duplicate the implementation without independent observable assertions.",
+      "issues": [
+        313,
+        347
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "TEST-05",
+      "title": "Preserve corpus denominators and cases",
+      "detail": " (VERIFY). When chunking slow CI suites, keep every unique question and assertion and report total/processed/passed/failed/skipped. Do not lower coverage or count replayed duplicate rows to make a green build.",
+      "issues": [
+        342,
+        347
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "TEST-06",
+      "title": "Add systematic scheduling/fault coverage",
+      "detail": " (BUILD). Exercise adversarial ordering around async reads, lease acquisition, origin changes, cancellation, write application and persistence. Use fixed seeds and bounded randomized/state-machine tests where they find meaningful races; save reproducible failing traces.",
+      "issues": [
+        322,
+        347
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "TEST-07",
+      "title": "Run real process recovery probes",
+      "detail": " (VERIFY). Keep native helper/utility-process probes in platform CI and distinguish their fixture backend from GPU qualification. A mocked worker exit is useful unit coverage but cannot replace owned-process cleanup verification.",
+      "issues": [
+        347
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "TEST-08",
+      "title": "Add full packaged interaction qualification",
+      "detail": " (BUILD). Drive the production executable through send, approval, real fixture edit, diff review, verification result, reload and cancellation in an isolated profile. Test renderer → preload → main → worker boundaries; retain packaged launch smoke as a separate cheaper check.",
+      "issues": [
+        320,
+        347
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "TEST-09",
+      "title": "Keep evidence honest under skipped capabilities",
+      "detail": " (VERIFY). Missing credentials/GPU/model/toolchain must yield not-evaluated with a reason, not pass. Candidate release gates requiring that capability must fail until the corresponding platform evidence exists.",
+      "issues": [
+        342,
+        347
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CERT-01",
+      "title": "Populate real hardware-matched context profiles",
+      "detail": " (BUILD). The current context budget profiles array is empty. Collect baseline measurements and commit complete macOS/unified and Windows/dedicated profile limits required by the evaluator; do not invent observations or weaken checks to accommodate missing evidence.",
+      "issues": [
+        314
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CERT-02",
+      "title": "Produce exactly two candidate platform reports",
+      "detail": " (OPERATE). Supply one packaged darwin report and one packaged win32 report for the exact candidate SHA, covering one unified and one dedicated host. Reports must be real measurements, not edited deterministic output with hardware fields added.",
+      "issues": [
+        315
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CERT-03",
+      "title": "Bind reports to clean packaged artifacts",
+      "detail": " (OPERATE). Record clean-source status, Electron/packaged runtime, source SHA, lockfile SHA-256 and packaged entry SHA-256 as required by the evaluator. Dirty worktree or source-mismatched reports cannot certify a binary produced elsewhere.",
+      "issues": [
+        315
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CERT-04",
+      "title": "Complete all context workload sizes",
+      "detail": " (OPERATE). Run 1k, 10k, 25k and 100k record workloads and the complete query/sample matrix defined in checks/context-gate.ts. These are memory-record workload sizes, not a claim that 100k questions were answered by a live model.",
+      "issues": [
+        315
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CERT-05",
+      "title": "Run a frozen-model paired comparison",
+      "detail": " (OPERATE). Use the same model weights and frozen corpus across baseline/context variants and across platforms; retain seed, corpus hash, backend fingerprints, sent-source cases and independent correctness scores. Paired context accuracy must meet the configured 0.95 minimum and not regress below baseline.",
+      "issues": [
+        315
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CERT-06",
+      "title": "Collect real tiered hardware observations",
+      "detail": " (OPERATE). Measure actual prompt versus allocated window, GPU/total layers, pressure agreement, RAM spill, summary calls, repeated tools, prompt reevaluations and turn-1/turn-N first-token timing. Do not fill liveModel.tiered from a simulated governor.",
+      "issues": [
+        315
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CERT-07",
+      "title": "Preserve strict tiered thresholds",
+      "detail": " (VERIFY). Current budgets require 100% recoverable share and post-compaction recall, zero healthy-turn store wipes, at most 3 summary calls, 3 reexecuted tools and 10 prompt reevaluations, plus at most 1.5 turn-N latency ratio. Measure each according to the gate's semantics; record any future policy change as reviewed source, not an evidence edit.",
+      "issues": [
+        315
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CERT-08",
+      "title": "Pass the release evidence verifier",
+      "detail": " (OPERATE). Place the two reports in the expected evidence directory and run check:context:release on the exact source. Archive its context-release-verification.json with zero failures; scripted check:context passing alone does not satisfy this item.",
+      "issues": [
+        315
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CERT-09",
+      "title": "Keep publication fail-closed for 1.x",
+      "detail": " (VERIFY). The release policy requires strict certification whenever major version is at least 1, regardless of a false optional input. Test missing/expired/mismatched evidence and ensure installers are not published when this dependency fails.",
+      "issues": [
+        315
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CERT-10",
+      "title": "Preserve trusted evidence workflow provenance",
+      "detail": " (OPERATE). Upload ram-context-release-evidence from the intended controlled workflow and bind the release to its exact run ID/artifact. Verify source and hash relationships; artifact filenames and self-reported JSON are not alone proof of trustworthy measurement execution.",
+      "issues": [
+        315
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DIST-01",
+      "title": "Build native-platform artifacts from the candidate",
+      "detail": " (VERIFY). Produce supported macOS and Windows artifacts with pinned source/lockfiles, compatible native modules and the intended architecture. Verify runtime grammars, PTY, watcher and llama binaries are present and load from packaged paths.",
+      "issues": [
+        318
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DIST-02",
+      "title": "Keep production and debug artifacts separate",
+      "detail": " (VERIFY). Place production output in dist and Eris-Dev in dist-dev. Verify unique app IDs, profile roots, installer names and updater metadata; a Dev installer or channel must never replace production update assets.",
+      "issues": [
+        318
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DIST-03",
+      "title": "Complete macOS Eris-Dev distribution support",
+      "detail": " (DECIDE). The current macOS debug script builds an app directory while release CI publishes production DMG/ZIP and the Windows Dev installer. Define and implement the required macOS Eris-Dev deliverable/upload path rather than claiming a downloadable debug installer already exists.",
+      "issues": [
+        317
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DIST-04",
+      "title": "Sign and notarize production macOS artifacts",
+      "detail": " (OPERATE). Validate signing identity, hardened runtime, entitlements, notarization and stapling on final distributables. Test a downloaded/quarantined artifact on a clean machine; building successfully with identity discovery disabled is not equivalent.",
+      "issues": [
+        316
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DIST-05",
+      "title": "Sign production Windows installers",
+      "detail": " (OPERATE). Validate Authenticode identity, timestamp and final artifact signature with the supported verification tools. Test standard-user installation, security prompts and executable launch; unsigned fallback must not silently satisfy the production signing requirement.",
+      "issues": [
+        316
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DIST-06",
+      "title": "Make signing requirements enforceable",
+      "detail": " (BUILD). Require the selected production distribution signing policy in release CI rather than relying on optional secrets and log warnings. Separate unsigned development artifacts clearly and prevent them from being promoted accidentally to the production feed.",
+      "issues": [
+        316
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DIST-07",
+      "title": "Test fresh install, upgrade and uninstall",
+      "detail": " (OPERATE). Use clean and existing profiles, custom install paths, spaces/non-ASCII usernames and multiple app installations. Preserve user projects and documented retained models/data on uninstall; show failures without leaving a falsely ready app.",
+      "issues": [
+        319
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DIST-08",
+      "title": "Exercise a real update cycle",
+      "detail": " (OPERATE). Validate production feed/channel, version comparison, download hash/signature, install/restart and post-update data/model visibility. Test failed/incomplete downloads and offline behavior; a valid latest.yml does not prove the update installed.",
+      "issues": [
+        319
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DIST-09",
+      "title": "Validate the full artifact set before upload",
+      "detail": " (VERIFY). Require intended installers, archives, blockmaps, platform feed files, qualification declarations and provenance manifests rather than only a nonzero file count. Verify each refers to the correct version/architecture and no Dev feed overwrites production metadata.",
+      "issues": [
+        318
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DIST-10",
+      "title": "Verify provenance and recovery procedures",
+      "detail": " (OPERATE). Record per-artifact hashes, source/tag/lock identities and release qualification beside uploaded files. Test an approved repair procedure without moving the tag; define feed pause/rollback behavior consistent with database downgrade constraints.",
+      "issues": [
+        318
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "IDX-01",
+      "title": "Return current, scoped source evidence",
+      "detail": " (VERIFY). Bind retrieved snippets to canonical project/file identity and content version. Test changes between retrieval and edit; outdated snippets may be cited as historical evidence but cannot authorize stale replacements or prove current code behavior.",
+      "issues": [
+        348
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "IDX-02",
+      "title": "Honor exclusions before indexing and recall",
+      "detail": " (VERIFY). Apply workspace ignore/trust policy to traversal, watchers, indexing, search and context assembly. Secrets, generated/vendor directories and outside-root symlinks must not become searchable simply because a secondary lane skipped the primary filter.",
+      "issues": [
+        348
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "IDX-03",
+      "title": "Keep incremental indexes coherent",
+      "detail": " (VERIFY). Handle file create/delete/rename, atomic saves, missed watcher events and a worker restart. Provide a bounded reconciliation/rebuild path and visibly distinguish an incomplete index from a complete search with no matches.",
+      "issues": [
+        348
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "IDX-04",
+      "title": "Choose evidence before prescribing edits",
+      "detail": " (VERIFY). For code tasks inspect relevant implementations, rules, callers and tests instead of answering from filenames alone. Test cross-file references and competing similarly named applications; confidence in retrieval must not become authority to mutate a guessed target.",
+      "issues": [
+        348
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "IDX-05",
+      "title": "Ground claims and citations in real sources",
+      "detail": " (VERIFY). Paths, line references, search results and external links must correspond to retrieved evidence. A model-suggested file is not an existing file, and a citation must not imply a test was run or a web page was fetched when it was not.",
+      "issues": [
+        348
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "IDX-06",
+      "title": "Bound and qualify external web evidence",
+      "detail": " (VERIFY). If web tools are enabled, enforce network/disclosure policy, deadlines, body limits and redirect rules. Preserve source URLs/timestamps and untrusted-data framing; external instructions cannot alter the task contract or tools policy.",
+      "issues": [
+        348
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "IDX-07",
+      "title": "Handle offline and unavailable retrieval gracefully",
+      "detail": " (VERIFY). Missing index, failed embeddings, unavailable web or archive timeout must not block a simple answer indefinitely. Distinguish direct source inspection from a degraded search, and report when required evidence cannot be obtained.",
+      "issues": [
+        348
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "IDX-08",
+      "title": "Measure retrieval quality against labeled fixtures",
+      "detail": " (OPERATE). Freeze multi-language fixtures with relevant/irrelevant files, stale copies, ignored secrets and paraphrased requests. Measure actual selected/sent evidence and downstream artifact correctness, not just whether a search returned any text.",
+      "issues": [
+        331,
+        348
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "BUD-01",
+      "title": "Inventory every effective run limit",
+      "detail": " (VERIFY). Record foreground/subtree deadlines, steps, model calls, tool calls, prompt/output limits, child count and concurrency. Separate implemented limits from proposed shared token/cost budgets; UI values and persisted jobs must agree with enforced host values.",
+      "issues": [
+        349
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "BUD-02",
+      "title": "Close budget gaps exposed by advertised concurrency",
+      "detail": " (BUILD). Where multiple agents can jointly exceed an advertised token, spend or resource cap, add shared root admission/reservations or reduce supported concurrency. Never claim a global token/cost broker solely because aggregate steps and a deadline are already bounded.",
+      "issues": [
+        349
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "BUD-03",
+      "title": "Keep usage categories honest",
+      "detail": " (VERIFY). Separate provider-reported tokens/costs, native measured counts and character-based estimates. Correlate model switches, retries and child calls to the right root/thread; unknown pricing is unknown, not zero-cost remote usage.",
+      "issues": [
+        349
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "BUD-04",
+      "title": "Avoid double counting streamed usage",
+      "detail": " (VERIFY). Deduplicate late/final usage records and repeated persistence after reconnect. Test cancellation, partial output, provider error, replayed events and imported child results so totals neither omit real calls nor count receipts as new inference.",
+      "issues": [
+        349
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "BUD-05",
+      "title": "Protect usage history and exports",
+      "detail": " (VERIFY). Scope retention, settings and exported usage to the appropriate profile/account policy. Aggregate telemetry must not expose prompt text, secret endpoint query strings or another user's model activity; offline operation must not require telemetry upload.",
+      "issues": [
+        349
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "BUD-06",
+      "title": "Run adversarial amplification acceptance",
+      "detail": " (OPERATE). Combine repeated malformed calls, slow tools, child fan-out, model failure and cancellation near limits. The root must finish within its declared bounds and release resources; measure the total, including retries and verifier calls, rather than only successful inference.",
+      "issues": [
+        349
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CFG-01",
+      "title": "Validate configuration at every boundary",
+      "detail": " (VERIFY). Parse imported, persisted and renderer-provided settings with the current schema and safe defaults. Reject unsupported values and bound strings/lists; corrupted settings must offer recovery rather than disabling app startup or silently enabling remote capabilities.",
+      "issues": [
+        328,
+        350
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CFG-02",
+      "title": "Define precedence and snapshot semantics",
+      "detail": " (VERIFY). Document how user settings, workspace rules, selected mode and run contract combine. Security-relevant changes take effect at the next admission/dispatch boundary; a mutable global setting must not accidentally rewrite another run's already approved command.",
+      "issues": [
+        350
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CFG-03",
+      "title": "Treat workspace content according to trust",
+      "detail": " (VERIFY). Opening an untrusted repository must not execute setup commands, hooks, local plugins or language tooling with effects before the documented trust decision. Rules inside that repository are instructions within a bounded layer, not authorization to bypass host policy.",
+      "issues": [
+        350
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CFG-04",
+      "title": "Bound rule and skill discovery",
+      "detail": " (VERIFY). Use canonical allowed directories, size/count limits and deterministic ordering. Avoid scanning the whole home directory or importing unrelated local agent skills into generated project artifacts; report invalid files without dropping all valid configuration.",
+      "issues": [
+        350
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CFG-05",
+      "title": "Keep skills subordinate to user intent and authority",
+      "detail": " (VERIFY). A skill may guide workflow but cannot grant credentials, effects or provider disclosure. Explicit user corrections and current task obligations must survive skill expansion, delegation and compaction; injected skill text cannot become a trusted host decision.",
+      "issues": [
+        350
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CFG-06",
+      "title": "Qualify any enabled hooks or extensions",
+      "detail": " (DECIDE). If hooks/plugins execute code, define installation trust, supported lifecycle events, timeouts, effect ownership and cancellation. Keep unqualified arbitrary hook execution disabled; adopting an entire reference hook architecture is not itself a v1 requirement.",
+      "issues": [
+        312,
+        350
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CFG-07",
+      "title": "Keep configuration portable without leaking secrets",
+      "detail": " (VERIFY). Export only intended settings and references, with explicit handling for platform-specific model paths and vault entries. Reimport on another supported platform must explain unavailable paths/providers rather than substituting a remote model silently.",
+      "issues": [
+        330,
+        350
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "CFG-08",
+      "title": "Test legacy and custom agent definitions",
+      "detail": " (VERIFY). Migrate stored agents/roles and validate model/tool capability combinations. A legacy Reviewer read-only instruction must not accidentally override an authorized edit task after an explicit role transition; invalid definitions need a repairable UI error.",
+      "issues": [
+        350
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DOC-01",
+      "title": "Document the actual user journeys",
+      "detail": " (VERIFY). Cover installation, workspace trust, selecting/downloading models, Auto policies, normal chat, review versus edit, approvals, diff/undo, memory controls, image limits and recovery. Screenshots/examples must match the candidate UI and supported feature scope.",
+      "issues": [
+        351
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DOC-02",
+      "title": "Document implemented process ownership",
+      "detail": " (VERIFY). Update diagrams/contracts for renderer, main, workspace worker, native inference, image worker and optional Cloud. Clearly separate current code from proposed memory-process, mailbox, kernel and resource-broker designs.",
+      "issues": [
+        351
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DOC-03",
+      "title": "Expose useful correlated diagnostics",
+      "detail": " (VERIFY). Link chat/task/run/child/tool/model-request IDs and terminal reasons without private raw text by default. Report actual dispatch identity, context omission, pressure and verification outcomes so support can distinguish routing, model, tool and persistence failures.",
+      "issues": [
+        351
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DOC-04",
+      "title": "Document limitations without false success claims",
+      "detail": " (VERIFY). Explain host command trust, run-local refs if retained, optional-memory omissions, pinned debug mode, estimated usage and unsupported Cloud/image capabilities. A disabled feature must not remain advertised as production-ready.",
+      "issues": [
+        351
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DOC-05",
+      "title": "Reproduce support export and issue filing",
+      "detail": " (OPERATE). From an installed app, capture a failed task, preview/redact an export and submit through the configured feedback path. Confirm correct repository links and useful reproduction metadata while retaining user control of sensitive attachments.",
+      "issues": [
+        337,
+        351
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DOC-06",
+      "title": "Publish operator runbooks",
+      "detail": " (VERIFY). Document model corruption/re-download, worker crash, low VRAM, Metal pressure, database migration failure, stuck task, broken update and revoked credential recovery. Each runbook needs safe commands/actions and a clear escalation boundary.",
+      "issues": [
+        351
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "DOC-07",
+      "title": "Complete release notes and residual-risk review",
+      "detail": " (OPERATE). Summarize shipped scope, compatibility changes, known limitations and explicitly deferred issue IDs. Obtain accountable engineering, QA, security and release signoff against the final evidence bundle; do not describe unmeasured optimizations as delivered gains.",
+      "issues": [
+        351
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-01",
+      "title": "Story through Auto:",
+      "detail": " ask for a story with no repository, then with an unrelated repository open. Receive the requested story; no forced workspace edit, tool loop or “coding only” refusal.",
+      "issues": [
+        321
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-02",
+      "title": "Review then implement:",
+      "detail": " review a fixture AirBNB app for three improvements, then say “add those improvements.” Preserve the recommendations, switch to authorized editing, change the correct files and report actual verification.",
+      "issues": [
+        321
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-03",
+      "title": "Review-only safety:",
+      "detail": " request a review and suggestions without implementation. Read relevant sources, cite real paths and make zero filesystem mutations.",
+      "issues": [
+        321
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-04",
+      "title": "Wrong project:",
+      "detail": " select a calculator fixture and ask about the AirBNB site. Identify the missing/mismatched target; do not fabricate PHP files or overwrite calculator code.",
+      "issues": [
+        321
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-05",
+      "title": "Ambiguous and corrected follow-up:",
+      "detail": " correct a requirement mid-task. The next admitted effect must use the correction; an unresolved material ambiguity must produce a focused clarification.",
+      "issues": [
+        321
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-06",
+      "title": "Real coding deliverable:",
+      "detail": " implement a multi-file feature in a disposable application, run its independent checks and inspect the resulting artifact. A filename list or suggested code without applied changes fails.",
+      "issues": [
+        321
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-07",
+      "title": "Partial completion:",
+      "detail": " inject a failure after one of several writes. Preserve correct applied work, enumerate failed obligations and avoid a misleading complete state.",
+      "issues": [
+        322
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-08",
+      "title": "No-progress recovery:",
+      "detail": " make a small local model repeat the same read or produce advice instead of a tool call. Bounded recovery must either obtain a useful next step or stop with a precise incomplete outcome.",
+      "issues": [
+        322
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-09",
+      "title": "Eligible worker selection:",
+      "detail": " with Lite and a qualified local worker installed, verify the production Auto decision and actual worker dispatch for a coding task, not only its routing log.",
+      "issues": [
+        324
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-10",
+      "title": "Fixed model:",
+      "detail": " force the selected model to fail. Prove no silent substitution occurs and that retries remain bounded.",
+      "issues": [
+        324
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-11",
+      "title": "Local policy:",
+      "detail": " place a high-scoring remote/LAN model in the candidate list. It must never be selected under Local policy, including recovery and child delegation.",
+      "issues": [
+        324
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-12",
+      "title": "Distinct recovery:",
+      "detail": " fail the first eligible local worker and allow a second. Verify actual distinct identity, intact contract/context and released previous lease.",
+      "issues": [
+        324
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-13",
+      "title": "First cold native allocation:",
+      "detail": " request an 8192-token window on constrained hardware and force a smaller actual allocation. Required context must fit after safe recompilation or be refused explicitly.",
+      "issues": [
+        325
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-14",
+      "title": "Malformed tool protocol:",
+      "detail": " split JSON across stream chunks, duplicate call IDs and omit a result. No malformed or duplicate mutation may execute; repair must preserve authority and bound retries.",
+      "issues": [
+        325
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-15",
+      "title": "Worker crash and reuse:",
+      "detail": " kill a native worker during load and during generation. The app remains responsive, cleans state and completes a subsequent request using a fresh worker.",
+      "issues": [
+        338
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-16",
+      "title": "Text/image contention:",
+      "detail": " on supported image hardware, queue image and text work together, cancel one and apply pressure. Resource ownership and UI responsiveness remain correct.",
+      "issues": [
+        338,
+        339
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-17",
+      "title": "Long-thread follow-up:",
+      "detail": " refer to an older eligible decision using different wording. Verify selected source evidence and actual sent prompt; unrelated high-overlap rows must not displace the primary intent.",
+      "issues": [
+        326
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-18",
+      "title": "Forget during preparation:",
+      "detail": " pause model loading after recall selection, forget the relevant memory, then resume. No revoked text may reach the provider or a derived current-turn layer.",
+      "issues": [
+        326,
+        327
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-19",
+      "title": "Isolation collision:",
+      "detail": " use matching thread/project labels across profiles/worktrees. Neither archive search, RAM recall nor child import may leak content across identities.",
+      "issues": [
+        326
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-20",
+      "title": "Repeated compaction:",
+      "detail": " remove planted facts from visible tool text over 1/3/10 compactions. Recover exact originals through printed refs within their supported lifetime and admission limits.",
+      "issues": [
+        326
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-21",
+      "title": "Pull status:",
+      "detail": " exercise missing, expired, denied, busy and omitted evidence. Every result must retain the correct distinction; no empty-success substitute is acceptable.",
+      "issues": [
+        326
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-22",
+      "title": "Parent ended:",
+      "detail": " finish the parent before its queued child starts. Persisted source validation must decide correctly without relying on a live parent request lease.",
+      "issues": [
+        323
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-23",
+      "title": "Source edit before child execution:",
+      "detail": " change a cited file or revoke remote disclosure after enqueue. Reject stale/forbidden evidence at dispatch and report the reason.",
+      "issues": [
+        323
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-24",
+      "title": "Tampered origin:",
+      "detail": " alter source identity, execution root, epoch or seal; replay from another profile. All invalid handles fail closed without disclosing protected details.",
+      "issues": [
+        323
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-25",
+      "title": "Tree restart budget:",
+      "detail": " restart with nested pending children near root limits. Deadline, child count, work budget and cancellation ownership must not reset.",
+      "issues": [
+        323
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-26",
+      "title": "Duplicate child integration:",
+      "detail": " deliver the same child result twice and reload. Canonical outcome appears once; a new result revision is handled explicitly rather than overwriting unrelated state.",
+      "issues": [
+        323
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-27",
+      "title": "Stale child merge:",
+      "detail": " edit the target after child checks pass. Integration reports conflict or requires rebase; the old check is not marked verification of the new workspace.",
+      "issues": [
+        323
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-28",
+      "title": "Pressure stability:",
+      "detail": " run many turns with resident weights and optional recall under changing pressure. Preserve canonical history, release reservations and avoid unnecessary healthy-turn store wipes.",
+      "issues": [
+        326
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-29",
+      "title": "Dirty buffer:",
+      "detail": " edit a file unsaved in Monaco, then let an agent propose a disk edit. Preserve user text or surface a version conflict; never silently clobber it.",
+      "issues": [
+        333
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-30",
+      "title": "Path escape:",
+      "detail": " test traversal, symlink/reparse swap, UNC/drive paths and case variants through real file tools. Effects remain inside the admitted real roots.",
+      "issues": [
+        333
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-31",
+      "title": "Approval race:",
+      "detail": " deny/revoke approval immediately before a command or write. No effect occurs; a later changed command cannot reuse the old approval.",
+      "issues": [
+        332
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-32",
+      "title": "Descendant cleanup:",
+      "detail": " start a command with grandchildren, cancel, then close/reopen the app. No owned descendants remain and unrelated processes survive.",
+      "issues": [
+        334
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-33",
+      "title": "Disk full during save:",
+      "detail": " fail transcript/checkpoint/settings persistence after an effect. The app reports applied versus unsaved state and offers a safe recovery path.",
+      "issues": [
+        345
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-34",
+      "title": "Database migration:",
+      "detail": " upgrade a populated old profile, interrupt migration and recover. No silent loss, duplicate import or corruption of originals is permitted.",
+      "issues": [
+        345
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-35",
+      "title": "Packaged coding journey:",
+      "detail": " in the actual executable, send a fixture task, approve, observe the applied diff, run checks, reload and confirm persisted conversation/outcome.",
+      "issues": [
+        320
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-36",
+      "title": "Windows shared models:",
+      "detail": " install Eris and Eris-Dev with normal and custom paths. Discover the intended models; an absent model can be downloaded into an explicitly owned debug location.",
+      "issues": [
+        343
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-37",
+      "title": "Debug import and resume:",
+      "detail": " import exactly 10,000 questions, execute multiple ten-question batches, cancel, restart and resume. Prove no missing/duplicate counted rows and export exact processed/total denominators.",
+      "issues": [
+        342
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-38",
+      "title": "Restricted diagnostics:",
+      "detail": " attempt commands, web/MCP, persistent children, Cloud and images from a restricted replay mode. Service boundaries deny them even if the UI or model requests them.",
+      "issues": [
+        342
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-39",
+      "title": "Signed fresh install and update:",
+      "detail": " validate final downloaded artifacts, install as a normal user, update an existing populated profile and verify models/data/workers after restart.",
+      "issues": [
+        319
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SCN-40",
+      "title": "Export and feedback:",
+      "detail": " export a failing multi-agent run with sensitive fixture values, inspect redaction and submit feedback. The returned issue must belong to the configured Eris repository and contain no forbidden fixture secret.",
+      "issues": [
+        337
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SIGN-01",
+      "title": "Scope owner:",
+      "detail": " every applicable coding ID has a disposition and evidence; optional deferrals are enforced, documented and linked to follow-up issues.",
+      "issues": [
+        352
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SIGN-02",
+      "title": "Agent owner:",
+      "detail": " core task understanding, actual coding changes, bounded recovery, model policy and truthful outcomes pass the representative production-boundary and live scenarios.",
+      "issues": [
+        352
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SIGN-03",
+      "title": "Memory owner:",
+      "detail": " required context, origin/revocation, canonical history, pressure handling, child integration and supported journal lifetime meet their invariants.",
+      "issues": [
+        352
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SIGN-04",
+      "title": "Security owner:",
+      "detail": " no unresolved stop-ship authority, disclosure, credential or shipped-vulnerability findings; enabled remote/extension boundaries are qualified.",
+      "issues": [
+        352
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SIGN-05",
+      "title": "QA owner:",
+      "detail": " exact candidate CI plus full packaged interactions and independently graded real-model evidence pass with explicit denominators and no required skipped stages.",
+      "issues": [
+        352
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SIGN-06",
+      "title": "Hardware qualification owner:",
+      "detail": " complete matching macOS/unified and Windows/dedicated reports satisfy the existing strict release evaluator and calibrated performance budgets.",
+      "issues": [
+        352
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SIGN-07",
+      "title": "Distribution owner:",
+      "detail": " intended artifacts are signed/verified, install/upgrade/update paths pass, provenance/feed metadata is correct, and Eris-Dev cannot contaminate production updates or profile data.",
+      "issues": [
+        352
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SIGN-08",
+      "title": "Support/product owner:",
+      "detail": " current user/design docs, known limitations, troubleshooting/export flow and incident procedures match the binaries.",
+      "issues": [
+        352
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    },
+    {
+      "id": "SIGN-09",
+      "title": "Release lead:",
+      "detail": " final tag/source/lock/artifact/evidence identities agree; no intervening change invalidates qualification; release and recovery owners explicitly approve promotion.",
+      "issues": [
+        352
+      ],
+      "existingIssues": [],
+      "disposition": "open-release-work-or-qualification",
+      "certified": false
+    }
+  ],
+  "verification": {
+    "allCreatedIssuesReadBack": true,
+    "allBodiesMatch": true,
+    "sourceUnchangedAtFinalRead": true,
+    "allIdsCovered": true
+  }
+}

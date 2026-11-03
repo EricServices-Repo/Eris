@@ -1,6 +1,8 @@
 # Cloud Agent fleet management (EricServic.es)
 
-Manage Cloud Agent workers from **EricServic.es Admin**. Each worker heartbeats to the site, pulls config revisions, and can accept pushed settings.
+Reviewed against integrated `main` `0a54629` on 2026-11-01. Package version: **0.6.10**; published tag `v0.6.10` is the older immutable `f14e409` source. Later source changes require another build.
+
+This guide describes the repository fleet-management contract for **EricServic.es Admin**; the deployed website/VM configuration was not independently verified. Each worker heartbeats to the site, pulls config revisions, and can accept pushed settings.
 
 ## Flow
 
@@ -12,7 +14,7 @@ Manage Cloud Agent workers from **EricServic.es Admin**. Each worker heartbeats 
                                                           │
 ┌─────────────────────┐    PUT /v1/fleet/config (optional) │
 │  Cloud Agent VM     │───────────────────────────────────┘
-│  0.2.21+            │    also polls heartbeat.php every 60s
+│  Separate service  │    also polls heartbeat.php every 60s
 └─────────────────────┘
 ```
 
@@ -103,3 +105,9 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl restart eris-cloud-agent.service
 ```
+
+## Desktop compatibility and authority
+
+The cloud package has an independent service version (currently 0.2.22), not the desktop package version. Its health endpoint advertises task-contract version 1 while v2 conformance remains under qualification. Do not increase that capability just to enable desktop routing: the sandbox, authority, resume and artifact contracts must qualify first.
+
+Fleet model configuration does not override desktop task authorization or enable a Cloud-only adapter in direct child/debug runners. Local automatic fallback uses desktop eligibility; Fixed Full remains fixed. An interrupted inline stream that started workspace work stops rather than replaying operations on another worker. Deployment must provide the Linux isolation/cgroup requirements in [the cloud guide](../cloud-agent/README.md).

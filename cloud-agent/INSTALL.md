@@ -1,16 +1,18 @@
 # Eris Cloud Agent — VM install & rebuild
 
+Reviewed against integrated `main` `0a54629` on 2026-11-01; package v0.6.10. Released tag `f14e409` is older than this source baseline. This is a separate service package (0.2.22), not the desktop package version. Health currently advertises task-contract v1; v2 enforcement/conformance is not yet advertised. Deployment availability and isolation must be verified on the actual host.
+
 Ops notes for **agents.ericservic.es** (or any Linux VM with NVIDIA + Podman/Docker).
 
 Client URL (TLS): `https://agents.ericservic.es:443`
 
-**Source repo is private:** `EricServices-Repo/Eris` — anonymous `git clone` will fail. Authenticate (below) or copy a checkout onto the VM.
+**Source repository:** `EricServices-Repo/Eris`. Use the repository access required by your account/deployment, or copy an authorized checkout onto the VM. Repository visibility is not an installation guarantee.
 
 ---
 
 ## One-time host setup
 
-### 1. Clone the private Eris repo
+### 1. Clone the Eris repo
 
 ```bash
 sudo mkdir -p /opt/eris && sudo chown "$USER:$USER" /opt/eris
@@ -111,9 +113,9 @@ ls /usr/lib/systemd/system-generators/podman-system-generator 2>/dev/null || \
   ls /usr/lib/systemd/system-generators/*podman* 2>/dev/null
 ```
 
-### Step 2 — Get the private Eris source on the VM
+### Step 2 — Get the Eris source on the VM
 
-See [Clone the private Eris repo](#1-clone-the-private-eris-repo) above (`gh auth`, deploy key, PAT, or rsync). Then:
+See [Clone the Eris repo](#1-clone-the-eris-repo) above (`gh auth`, deploy key, PAT, or rsync). Then:
 
 ```bash
 cd /opt/eris

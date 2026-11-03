@@ -1,5 +1,7 @@
 # Client performance checks
 
+Reviewed against integrated `main` `0a54629` on 2026-11-01; package v0.6.10. Released tag `f14e409` is older than this source baseline. See [the documentation index](../docs/README.md) for the current architecture and evidence boundaries.
+
 Run `npm run check:client` from the repository root. This checks types, tests chat
 migration and partial saves, builds the app, exercises the compiled workspace
 worker, and opens a hidden Electron fixture using an isolated temporary profile.
@@ -32,3 +34,9 @@ chat/approval/diff/reload interaction remains a separate acceptance profile.
 
 `npm run check:quality` validates the budgeted quality harness. See
 [quality/README.md](quality/README.md) for opted-in live comparisons.
+
+## Agent and memory qualification
+
+`npm run check` includes all Vitest suites; `npm run test:agents` is the production prebuild gate and `npm run test:dev-app` gates Eris-Dev. Profile membership and exclusions are in [qualification-profiles.json](../tests/qualification-profiles.json). Current targeted boundaries include model selection/switching, request-scoped recall, child requirements/constraints, subtree cancellation and journal admission.
+
+`npm run check:context` is deterministic context qualification. Exact-source packaged/hardware/live evidence is separately evaluated by `check:context:release` and release policy; a skipped certification step is not a pass. No fixed historical test total is a completion criterion. Capture/routing corpus counts, complete agent-loop cases, provider calls, real GPU recovery and independently graded artifacts have different denominators.
