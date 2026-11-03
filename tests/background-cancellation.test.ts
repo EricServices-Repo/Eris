@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -15,7 +15,7 @@ const h = vi.hoisted(() => ({
   root: '',
   log: [] as string[],
   started: new Set<string>(),
-  ignoreAbort: new Map<string, { wait: Promise<void> }>(),
+  ignoreAbort: new Map<string, { wait: Promise<void>; release?: () => void }>(),
   planHold: null as null | Promise<void>,
   awaitChildren: new Map<string, Promise<void>>(),
   maxParallel: 6,
@@ -93,12 +93,23 @@ import {
   discardBackgroundJob,
   enqueueBackgroundJob,
   getBackgroundJob,
+  listBackgroundJobs,
   mergeBackgroundJob,
   stopBackgroundJob
 } from '../electron/main/services/background-agents'
 
 h.root = mkdtempSync(join(tmpdir(), 'eris-cancel-'))
 afterAll(() => rmSync(h.root, { recursive: true, force: true }))
+// A terminal status is recorded before receipt/ledger cleanup. Drain each owned run
+// before the next test resets its barriers or afterAll removes the storage directory.
+afterEach(async () => {
+  for (const paused of h.ignoreAbort.values()) paused.release?.()
+  const ids = listBackgroundJobs(h.root).map((job) => job.id)
+  for (const id of ids) stopBackgroundJob(id)
+  await until(() => {
+    for (const id of ids) expect(stopBackgroundJob(id)).toBe(false)
+  })
+})
 beforeEach(() => {
   h.log.length = 0
   h.removed.length = 0
