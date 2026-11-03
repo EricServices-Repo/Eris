@@ -152,28 +152,54 @@ export async function chooseExecutionModel(
   const eligible = candidates
     .filter((c) => c.eligible)
     .sort((a, b) => b.rank - a.rank || a.model.localeCompare(b.model))
-  for (const c of eligible)
-    c.reason = `eligible; heuristic task rank ${c.rank}; ${
-      resident?.ref === c.model
-        ? 'measured resident context, no reload'
-        : 'switch/load cost estimated; capability specialization inferred unless declared'
-    }`
   const refs = eligible.map((c) => c.model)
+  let model = eligible[0]?.model || ''
+  let basis: AutoModelChoice['basis'] = 'profile'
   if (settings.evals?.useScoresForRouting && refs.length) {
     const { bestModelForIntent } = await import('./agent-telemetry')
     const measured = bestModelForIntent(intent, refs, settings.evals.minRuns, settings)
-    if (measured && refs.includes(measured))
-      return { model: measured, basis: 'telemetry', policy, candidates }
-    const { bestEvalModelForIntent } = await import('./eval-store')
-    const evaluated = bestEvalModelForIntent(
-      intent,
-      refs,
-      settings.evals.minRuns,
-      undefined,
-      settings
-    )
-    if (evaluated && refs.includes(evaluated))
-      return { model: evaluated, basis: 'eval', policy, candidates }
+    if (measured && refs.includes(measured)) {
+      model = measured
+      basis = 'telemetry'
+    } else {
+      const { bestEvalModelForIntent } = await import('./eval-store')
+      const evaluated = bestEvalModelForIntent(
+        intent,
+        refs,
+        settings.evals.minRuns,
+        undefined,
+        settings
+      )
+      if (evaluated && refs.includes(evaluated)) {
+        model = evaluated
+        basis = 'eval'
+      }
+    }
   }
-  return { model: eligible[0]?.model || '', basis: 'profile', policy, candidates }
+  // Record the decision itself: what was chosen, on which evidence, and what beat every
+  // other eligible model (#305 MO-03). A measured choice must not read as a rank choice.
+  const winner = eligible.find((c) => c.model === model)
+  const evidence =
+    basis === 'telemetry'
+      ? `measured run outcomes for ${intent}`
+      : basis === 'eval'
+        ? `evaluation scores for ${intent}`
+        : 'heuristic task rank'
+  for (const c of eligible) {
+    const cost =
+      resident?.ref === c.model
+        ? 'measured resident context, no reload'
+        : 'switch/load cost estimated; capability specialization inferred unless declared'
+    c.reason =
+      c === winner
+        ? `selected by ${evidence}; heuristic task rank ${c.rank}; ${cost}`
+        : `eligible, not selected: ${model} won on ${evidence}${
+            basis !== 'profile'
+              ? ''
+              : winner!.rank === c.rank
+                ? ` (tied at ${c.rank}; broken by name)`
+                : ` (${winner!.rank} vs ${c.rank})`
+          }; ${cost}`
+  }
+  return { model, basis, policy, candidates }
 }

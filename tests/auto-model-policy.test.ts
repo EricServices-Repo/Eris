@@ -137,6 +137,39 @@ describe('production Auto model selection', () => {
       basis: 'telemetry'
     })
   })
+  it('records which model was selected and why each other eligible model lost', async () => {
+    const choice = await chooseExecutionModel(settings(), 'edit')
+    const reason = (m: string) => choice.candidates.find((c) => c.model === m)?.reason
+    expect(choice).toMatchObject({ model: 'local:qwen-coder', basis: 'profile' })
+    expect(reason('local:qwen-coder')).toMatch(
+      /^selected by heuristic task rank; heuristic task rank 28/
+    )
+    expect(reason('builtin:composer-lite')).toMatch(
+      /^eligible, not selected: local:qwen-coder won on heuristic task rank \(28 vs 10\)/
+    )
+    // Ineligible models keep their exclusion reason.
+    expect(reason('remote-coder')).toBe('excluded by Auto-local execution policy')
+  })
+  it('says a measured choice was measured, not ranked', async () => {
+    const s = settings()
+    s.evals.useScoresForRouting = true
+    state.winner = 'builtin:composer-lite'
+    const choice = await chooseExecutionModel(s, 'edit')
+    const reason = (m: string) => choice.candidates.find((c) => c.model === m)?.reason
+    expect(choice).toMatchObject({ model: 'builtin:composer-lite', basis: 'telemetry' })
+    expect(reason('builtin:composer-lite')).toMatch(/^selected by measured run outcomes for edit/)
+    expect(reason('local:qwen-coder')).toBe(
+      'eligible, not selected: builtin:composer-lite won on measured run outcomes for edit; switch/load cost estimated; capability specialization inferred unless declared'
+    )
+  })
+  it('names a tie-break by name instead of claiming a higher rank', async () => {
+    state.locals = [local('local:b-coder'), local('local:a-coder')]
+    const choice = await chooseExecutionModel(settings(), 'edit')
+    expect(choice.model).toBe('local:a-coder')
+    expect(choice.candidates.find((c) => c.model === 'local:b-coder')?.reason).toContain(
+      '(tied at 28; broken by name)'
+    )
+  })
   it('honors explicit policy independently of the legacy profile', () => {
     expect(executionPolicy(settings(), 'auto-any')).toBe('auto-any')
     expect(executionPolicy(settings(), 'auto-local')).toBe('auto-local')
