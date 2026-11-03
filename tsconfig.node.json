@@ -26,6 +26,7 @@
     "checks/tiered-gates.ts",
     "checks/handoff-replay.ts",
     "checks/context-recall-labels.ts",
+    "checks/paraphrase-recall.ts",
     "tests/**/*",
     "vitest.config.ts",
     "electron.dev.config.ts",

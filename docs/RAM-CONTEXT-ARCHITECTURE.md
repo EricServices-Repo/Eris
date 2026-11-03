@@ -783,7 +783,7 @@ Model-generated summaries run only in an admitted idle job with explicit local/r
 
 ### 12.9 Optional semantic retrieval
 
-Add embeddings only if the lexical/structured benchmark misses material paraphrase cases and a measured quality gain justifies memory/latency. Keep the vector index on disk with a bounded RAM cache. Record embedding model/version/dimension and namespace every vector.
+Add embeddings only if the lexical/structured benchmark misses material paraphrase cases and a measured quality gain justifies memory/latency. The benchmark is `checks/paraphrase-recall.ts`; its first result (ranking version 2) misses 8 of 22 paraphrases at recall@5, with synonyms and descriptions at or below 0.43 — see [docs/fixes/234-paraphrase-recall-measurement.md](fixes/234-paraphrase-recall-measurement.md). A quality gain from embeddings has not been measured. Keep the vector index on disk with a bounded RAM cache. Record embedding model/version/dimension and namespace every vector.
 
 No embedding generation runs synchronously on send. If the embedding model is absent, busy or disallowed, the deterministic path remains fully functional. Embedding upgrades rebuild derived indexes without changing canonical transcript truth.
 

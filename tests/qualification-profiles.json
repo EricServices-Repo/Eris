@@ -8,6 +8,7 @@
         "tests/model-context-allocation.test.ts",
         "tests/memory-tiers.test.ts",
         "tests/context-tier-budget.test.ts",
+        "tests/paraphrase-recall.test.ts",
         "tests/inference-device-class.test.ts",
         "tests/native-first-request.test.ts",
         "tests/llama-worker-context.test.ts",
