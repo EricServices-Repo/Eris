@@ -1,0 +1,306 @@
+{
+  "version": 1,
+  "issue": 231,
+  "recordedAt": "2026-11-02",
+  "source": "main 9afe507",
+  "hostClass": "unified-memory (not the dedicated-GPU host the issue requires)",
+  "command": "node scripts/measure-mmap.mjs --model <gguf> --repeats 3 --out <file>",
+  "reports": [
+    {
+      "version": 1,
+      "evidence": "live-hardware",
+      "model": "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
+      "modelBytes": 986048800,
+      "host": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "cpu": "Apple M4",
+        "totalMemoryBytes": 17179869184,
+        "gpu": "metal"
+      },
+      "fileCache": "not purged between samples (needs root); the GGUF is likely cached after sample 0",
+      "mmapOn": {
+        "loadMsMedian": 374,
+        "loadMs": [334, 374, 440],
+        "rssMiBMedian": 1252,
+        "freeDeltaMiBMedian": -218,
+        "availableDeltaMiBMedian": -222,
+        "fileCacheDeltaMiBMedian": 0,
+        "gpuLayers": 29
+      },
+      "mmapOff": {
+        "loadMsMedian": 453,
+        "loadMs": [444, 453, 486],
+        "rssMiBMedian": 1628,
+        "freeDeltaMiBMedian": -1452,
+        "availableDeltaMiBMedian": -997,
+        "fileCacheDeltaMiBMedian": -104,
+        "gpuLayers": 29
+      },
+      "samples": [
+        {
+          "order": 0,
+          "useMmap": true,
+          "loadMs": 334,
+          "gpuLayers": 29,
+          "gpu": "metal",
+          "rssBytes": 1312718848,
+          "vramUsedBytes": 1353613312,
+          "before": {
+            "freeBytes": 1628356608,
+            "availableBytes": 6872449024,
+            "fileCacheBytes": 4170481664
+          },
+          "after": {
+            "freeBytes": 1399259136,
+            "availableBytes": 6639403008,
+            "fileCacheBytes": 4170563584
+          }
+        },
+        {
+          "order": 1,
+          "useMmap": false,
+          "loadMs": 444,
+          "gpuLayers": 29,
+          "gpu": "metal",
+          "rssBytes": 1706754048,
+          "vramUsedBytes": 1353613312,
+          "before": {
+            "freeBytes": 1621098496,
+            "availableBytes": 6857179136,
+            "fileCacheBytes": 4170563584
+          },
+          "after": {
+            "freeBytes": 98287616,
+            "availableBytes": 5811535872,
+            "fileCacheBytes": 4061888512
+          }
+        },
+        {
+          "order": 2,
+          "useMmap": false,
+          "loadMs": 453,
+          "gpuLayers": 29,
+          "gpu": "metal",
+          "rssBytes": 1706360832,
+          "vramUsedBytes": 1353613312,
+          "before": {
+            "freeBytes": 1687666688,
+            "availableBytes": 6964297728,
+            "fileCacheBytes": 4062838784
+          },
+          "after": {
+            "freeBytes": 71516160,
+            "availableBytes": 5596348416,
+            "fileCacheBytes": 3920789504
+          }
+        },
+        {
+          "order": 3,
+          "useMmap": true,
+          "loadMs": 374,
+          "gpuLayers": 29,
+          "gpu": "metal",
+          "rssBytes": 1315700736,
+          "vramUsedBytes": 1353613312,
+          "before": {
+            "freeBytes": 1670889472,
+            "availableBytes": 6953975808,
+            "fileCacheBytes": 3920789504
+          },
+          "after": {
+            "freeBytes": 567459840,
+            "availableBytes": 5763481600,
+            "fileCacheBytes": 4130111488
+          }
+        },
+        {
+          "order": 4,
+          "useMmap": true,
+          "loadMs": 440,
+          "gpuLayers": 29,
+          "gpu": "metal",
+          "rssBytes": 1312489472,
+          "vramUsedBytes": 1353613312,
+          "before": {
+            "freeBytes": 773652480,
+            "availableBytes": 5970329600,
+            "fileCacheBytes": 4130127872
+          },
+          "after": {
+            "freeBytes": 991903744,
+            "availableBytes": 6197313536,
+            "fileCacheBytes": 4102258688
+          }
+        },
+        {
+          "order": 5,
+          "useMmap": false,
+          "loadMs": 486,
+          "gpuLayers": 29,
+          "gpu": "metal",
+          "rssBytes": 1707196416,
+          "vramUsedBytes": 1353613312,
+          "before": {
+            "freeBytes": 1216020480,
+            "availableBytes": 6372081664,
+            "fileCacheBytes": 4103323648
+          },
+          "after": {
+            "freeBytes": 174931968,
+            "availableBytes": 5609832448,
+            "fileCacheBytes": 4021370880
+          }
+        }
+      ]
+    },
+    {
+      "version": 1,
+      "evidence": "live-hardware",
+      "model": "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+      "modelBytes": 4683074336,
+      "host": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "cpu": "Apple M4",
+        "totalMemoryBytes": 17179869184,
+        "gpu": "metal"
+      },
+      "fileCache": "not purged between samples (needs root); the GGUF is likely cached after sample 0",
+      "mmapOn": {
+        "loadMsMedian": 2008,
+        "loadMs": [2785, 2008, 440],
+        "rssMiBMedian": 4749,
+        "freeDeltaMiBMedian": -1338,
+        "availableDeltaMiBMedian": -575,
+        "fileCacheDeltaMiBMedian": 3274,
+        "gpuLayers": 29
+      },
+      "mmapOff": {
+        "loadMsMedian": 2080,
+        "loadMs": [1961, 2080, 4024],
+        "rssMiBMedian": 799,
+        "freeDeltaMiBMedian": -316,
+        "availableDeltaMiBMedian": -2396,
+        "fileCacheDeltaMiBMedian": -4177,
+        "gpuLayers": 29
+      },
+      "samples": [
+        {
+          "order": 0,
+          "useMmap": true,
+          "loadMs": 2785,
+          "gpuLayers": 29,
+          "gpu": "metal",
+          "rssBytes": 4752883712,
+          "vramUsedBytes": 4807262208,
+          "before": {
+            "freeBytes": 1770389504,
+            "availableBytes": 6404112384,
+            "fileCacheBytes": 4021420032
+          },
+          "after": {
+            "freeBytes": 367067136,
+            "availableBytes": 4282236928,
+            "fileCacheBytes": 7453999104
+          }
+        },
+        {
+          "order": 1,
+          "useMmap": false,
+          "loadMs": 1961,
+          "gpuLayers": 29,
+          "gpu": "metal",
+          "rssBytes": 837959680,
+          "vramUsedBytes": 4807245824,
+          "before": {
+            "freeBytes": 635731968,
+            "availableBytes": 4277338112,
+            "fileCacheBytes": 7545257984
+          },
+          "after": {
+            "freeBytes": 304660480,
+            "availableBytes": 2463301632,
+            "fileCacheBytes": 2781003776
+          }
+        },
+        {
+          "order": 2,
+          "useMmap": false,
+          "loadMs": 2080,
+          "gpuLayers": 29,
+          "gpu": "metal",
+          "rssBytes": 944455680,
+          "vramUsedBytes": 4807245824,
+          "before": {
+            "freeBytes": 5690425344,
+            "availableBytes": 7762657280,
+            "fileCacheBytes": 2795552768
+          },
+          "after": {
+            "freeBytes": 259047424,
+            "availableBytes": 2563751936,
+            "fileCacheBytes": 2437218304
+          }
+        },
+        {
+          "order": 3,
+          "useMmap": true,
+          "loadMs": 2008,
+          "gpuLayers": 29,
+          "gpu": "metal",
+          "rssBytes": 4980064256,
+          "vramUsedBytes": 4807262208,
+          "before": {
+            "freeBytes": 5571641344,
+            "availableBytes": 7649968128,
+            "fileCacheBytes": 2489483264
+          },
+          "after": {
+            "freeBytes": 1840250880,
+            "availableBytes": 7484473344,
+            "fileCacheBytes": 6122602496
+          }
+        },
+        {
+          "order": 4,
+          "useMmap": true,
+          "loadMs": 440,
+          "gpuLayers": 29,
+          "gpu": "metal",
+          "rssBytes": 5034672128,
+          "vramUsedBytes": 4807262208,
+          "before": {
+            "freeBytes": 2072346624,
+            "availableBytes": 7614808064,
+            "fileCacheBytes": 6124666880
+          },
+          "after": {
+            "freeBytes": 1605730304,
+            "availableBytes": 7011352576,
+            "fileCacheBytes": 6173130752
+          }
+        },
+        {
+          "order": 5,
+          "useMmap": false,
+          "loadMs": 4024,
+          "gpuLayers": 29,
+          "gpu": "metal",
+          "rssBytes": 61079552,
+          "vramUsedBytes": 4807245824,
+          "before": {
+            "freeBytes": 1837219840,
+            "availableBytes": 7236960256,
+            "fileCacheBytes": 6188367872
+          },
+          "after": {
+            "freeBytes": 3002613760,
+            "availableBytes": 4724948992,
+            "fileCacheBytes": 1808646144
+          }
+        }
+      ]
+    }
+  ]
+}
