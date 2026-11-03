@@ -312,6 +312,12 @@ export interface CompileTaskContextInput {
   guidance: string
   /** Current-turn plan text: required, but never part of reusable instructions. */
   turnGuidance?: string
+  /**
+   * Instructions derived from this request, such as its response contract and obligations.
+   * Required and sent with the turn; never part of the reusable prefix, or that prefix
+   * would change with every request.
+   */
+  turnInstructions?: string
   memory?: string
   memoryItems?: readonly MemoryPromptItem[]
   /** Items were selected but this destination may not receive them. */
@@ -345,7 +351,10 @@ function contextBlocks(input: CompileTaskContextInput): ContextBlock[] {
   return [
     {
       kind: 'task',
-      content: `TASK CONTRACT\n${taskText}${input.turnGuidance ? '\nCURRENT PLAN\n' + input.turnGuidance : ''}`,
+      content:
+        `TASK CONTRACT\n${taskText}` +
+        (input.turnGuidance ? '\nCURRENT PLAN\n' + input.turnGuidance : '') +
+        (input.turnInstructions?.trim() ? '\n' + input.turnInstructions.trim() : ''),
       required: true
     },
     { kind: 'instructions', content: protocol + '\n' + input.guidance, required: true },
@@ -537,13 +546,18 @@ export function compileTaskContext(input: CompileTaskContextInput): {
   // may become an inspectable snapshot; larger compilations remain estimate-only.
   const taskJson = JSON.stringify(input.task)
   if (
-    taskJson.length + input.guidance.length + input.project.length + input.retrieval.length <=
+    taskJson.length +
+      input.guidance.length +
+      (input.turnInstructions?.length ?? 0) +
+      input.project.length +
+      input.retrieval.length <=
     128 * 1024
   ) {
     compilations.set(bundle, {
       task: JSON.parse(taskJson),
       guidance: input.guidance,
       turnGuidance: input.turnGuidance,
+      turnInstructions: input.turnInstructions,
       project: input.project,
       retrieval: input.retrieval,
       maxInputTokens: input.maxInputTokens,

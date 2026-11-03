@@ -631,8 +631,10 @@ async function* runAgentInternal(options: {
             : `${plan.agentName}…`
     }
     const tips: string[] = [...(modelsCatalog ? [modelsCatalog] : [])]
+    // Request-derived instructions travel with the turn so the reusable prefix stays stable.
+    const turnTips: string[] = []
     if (plan.intent !== 'capability')
-      tips.push(artifactResponseContract(interpretationOf(task), task.scope.applicability))
+      turnTips.push(artifactResponseContract(interpretationOf(task), task.scope.applicability))
     if (mode === 'ask') {
       tips.push(
         'You are in Ask mode. Answer clearly in markdown with concrete paths/symbols when relevant. ' +
@@ -640,7 +642,7 @@ async function* runAgentInternal(options: {
       )
     }
     if (plan.intent === 'capability' || isErisCapabilityQuestion(originalUserGoal)) {
-      tips.push(
+      turnTips.push(
         'The user asked about Eris AI models/providers. Answer ONLY from the [Eris AI models] catalog above. ' +
           'Do not retrieve, tree, or search the workspace for “models”.'
       )
@@ -653,6 +655,7 @@ async function* runAgentInternal(options: {
         task,
         toolsAvailable: false,
         guidance: tips.join('\n\n'),
+        turnInstructions: turnTips.join('\n\n'),
         turnGuidance: plan.executionPlan
           ? `Task plan:\n${plan.executionPlan.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}\nDone when: ${plan.executionPlan.doneWhen}`
           : undefined,

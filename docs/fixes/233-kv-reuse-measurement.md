@@ -55,3 +55,55 @@ Three repeats per row; medians reported, with all samples in
   not measured.
 - No crash-safety, mismatch-refusal or invalidation work: those are the
   implementation's acceptance items and remain open.
+
+## Follow-up: the Eris prompt prefix was not stable turn to turn
+
+The measurement above assumed that Eris's prompt keeps an identical prefix between
+turns. It didn't. The per-request **RESPONSE CONTRACT** (artifact, requested stack and
+the request's own obligations, from `artifactResponseContract`) was compiled into the
+`instructions` block, which is part of the reusable system prefix (#232). Two requests
+with different contracts therefore diverged inside the system message. A retained KV
+sequence could reuse only the part before it, and none of the conversation history.
+
+The contract now goes in a new `turnInstructions` input. The compiler appends it to
+the required task block in the current turn, after `TASK CONTRACT` and any
+`CURRENT PLAN`, in both the worker path (`buildPreservedWorkerMessages`) and the
+answer-only path (`loop.ts`). The Eris capability tip is also derived from the
+request, so it moved too. Admission is unchanged: the task block and the instructions
+block are both required.
+
+### Shared prefix between consecutive turns
+
+`tests/turn-prefix-stability.test.ts` builds a scripted five-request thread through
+`buildPreservedWorkerMessages`, all with the same role and intent. The requests differ
+in stack and obligations. The table shows the characters each prompt shares with the
+previous one, from the start.
+
+| Turn | Before: shared / total | After: shared / total |
+|---:|---:|---:|
+| 2 | 2,196 / 3,286 | 2,325 / 3,286 |
+| 3 | 2,196 / 3,381 | 2,428 / 3,381 |
+| 4 | 2,196 / 3,554 | 2,591 / 3,554 |
+| 5 | 2,196 / 3,599 | 2,784 / 3,599 |
+
+**Before, the shared prefix was a constant**: it ended inside the system message, so
+every turn re-evaluated the whole history. **After, it grows with the thread**: it is
+the system prefix plus everything before the previous request. On the 48-turn thread
+measured above, that is the difference between re-evaluating the whole history
+(the 52.9 s "fresh" case) and only the last exchange plus the new turn.
+
+### What still breaks the prefix
+
+- **The previous request itself.** It was sent in layered form (task contract, recall,
+  request) and comes back next turn as plain text, so reuse stops at its start. That
+  costs one exchange per turn.
+- **A change of role or intent.** The playbook and role lines are in the prefix and
+  depend on the turn's plan, so an edit turn after an answer turn diverges in the
+  system message.
+- **History trimming.** When older turns are dropped to fit the window, the history
+  shifts and reuse stops after the system message.
+- **Renderer-supplied project context** (`priorSystem`) is in the prefix. It was not
+  varied here.
+
+This is a deterministic, character-level measure on the compiled messages. It is not
+a token-level or native KV measurement, and no live model ran.
