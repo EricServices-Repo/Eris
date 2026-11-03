@@ -162,6 +162,7 @@ export class RunJournal {
   private reusedCalls = new Set<string>()
   private resident = new Map<string, Resident>()
   private seq = 0
+  private closed = false
   private stopPressure: () => void
   searchCount = 0
   residentBytes = 0
@@ -209,8 +210,14 @@ export class RunJournal {
     }
     if (this.calls.has(input.toolCallId)) this.reusedCalls.add(input.toolCallId)
     this.calls.set(input.toolCallId, entry.ref)
+    // A closed journal releases everything it held; a late append must not take a
+    // reservation nothing will release.
+    if (this.closed) return this.omit(entry, 'run-ended')
     const cost = bytes + ENTRY_OVERHEAD_BYTES
     if (cost > RUN_JOURNAL_MAX_BYTES) return this.omit(entry, 'over-run-cap')
+    // Evicting this run's older entries only helps if the new one could then fit. When
+    // it cannot fit even with all of them released, keep them and omit only this one.
+    if (cost > this.ceilingBytes()) return this.omit(entry, 'over-budget')
     while (
       this.resident.size &&
       (this.residentBytes + cost > RUN_JOURNAL_MAX_BYTES ||
@@ -232,6 +239,16 @@ export class RunJournal {
     }
     this.residentBytes += cost
     return entry
+  }
+
+  /**
+   * The most a new entry could ever be granted: the envelope less what other owners
+   * hold and cannot give back for it (reservations and pins). This run's own resident
+   * entries count as available, since they are what eviction would release.
+   */
+  private ceilingBytes() {
+    const { envelopeBytes, reservedBytes, pinnedBytes } = this.store.ledger
+    return envelopeBytes - (reservedBytes - this.residentBytes) - pinnedBytes
   }
 
   private fits = (cost: number) => globalBytes() + cost <= GLOBAL_JOURNAL_MAX_BYTES
@@ -384,6 +401,7 @@ export class RunJournal {
   }
 
   close() {
+    this.closed = true
     for (const ref of [...this.resident.keys()]) this.drop(ref, 'run-ended')
     this.stopPressure()
     open.delete(this)
