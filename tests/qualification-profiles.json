@@ -177,6 +177,7 @@
       "tests/vram-fit.test.ts",
       "tests/web-search.test.ts",
       "tests/workspace-fs.test.ts",
+      "tests/workspace-symlink-walk.test.ts",
       "tests/workspace-ignore.test.ts",
       "tests/workspace-trust.test.ts",
       "tests/workspace-watcher.test.ts",
