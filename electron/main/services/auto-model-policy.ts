@@ -1,5 +1,6 @@
 import type { AppSettings, ChatIntent } from '../../../src/shared/settings-schema'
 import { isExactBuiltinReady } from './builtin-model'
+import { getSecret } from './credentials'
 import { getLocalStatuses } from './local-model'
 import { modelDestination } from './model-destination'
 import { currentLoadedModel } from './model-runtime'
@@ -33,6 +34,14 @@ export function executionLocal(settings: AppSettings, model: string): boolean {
   if (model === 'builtin:composer')
     return settings.agent.routing.useLocalComposerFull === true && isExactBuiltinReady(model)
   return modelDestination(settings, model).locality !== 'remote'
+}
+
+function secretPresent(ref: string): boolean {
+  try {
+    return Boolean(getSecret(ref)?.trim())
+  } catch {
+    return false // an unreadable credential store cannot authenticate a request either
+  }
 }
 
 /**
@@ -121,8 +130,23 @@ export async function chooseExecutionModel(
   }
   for (const c of settings.models.connections) {
     if (!c.enabled || c.type === 'builtin') continue
+    // A connection that names a key but has none stored cannot authenticate: it is not
+    // ready, so Auto must not prefer it over a ready worker (#305 MO-03).
+    const keyMissing = Boolean(c.apiKeyRef.trim()) && !secretPresent(c.apiKeyRef)
+    const baseMissing = !c.baseUrl.trim()
     for (const model of c.models.filter((m) => m.trim() && !/^(local:|builtin:)/.test(m))) {
-      add(model, true, /embed|mmproj|clip|encoder/i.test(model) ? 'non-chat model' : '', 18)
+      add(
+        model,
+        true,
+        /embed|mmproj|clip|encoder/i.test(model)
+          ? 'non-chat model'
+          : baseMissing
+            ? 'connection has no base URL'
+            : keyMissing
+              ? 'connection API key is not stored'
+              : '',
+        18
+      )
     }
   }
   const eligible = candidates
