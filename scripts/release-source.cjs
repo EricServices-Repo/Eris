@@ -28,9 +28,73 @@ function resolveSource(tagInput, readGit = git) {
     lock_sha: hash(lockText)
   }
 }
+/**
+ * The exact assets one platform job may publish for a version. A nonzero file count is
+ * not a contract: one stray or stale file would satisfy it while the installer or the
+ * updater feed is missing. Blockmaps are allowed only beside the asset they describe.
+ */
+function releaseAssetContract(platform, version) {
+  if (!/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(String(version)))
+    throw new Error('Invalid release version')
+  if (platform === 'mac')
+    return {
+      required: [
+        `Eris-${version}-mac-arm64.dmg`,
+        `Eris-${version}-mac-arm64.zip`,
+        'latest-mac.yml',
+        'context-qualification-mac.json'
+      ],
+      blockmapped: [`Eris-${version}-mac-arm64.dmg`, `Eris-${version}-mac-arm64.zip`],
+      feed: 'latest-mac.yml'
+    }
+  if (platform === 'win')
+    return {
+      required: [
+        `Eris-${version}-win-x64-setup.exe`,
+        `Eris-Dev-${version}-win-x64-setup.exe`,
+        'latest.yml',
+        'context-qualification-win.json'
+      ],
+      blockmapped: [`Eris-${version}-win-x64-setup.exe`, `Eris-Dev-${version}-win-x64-setup.exe`],
+      feed: 'latest.yml'
+    }
+  throw new Error('Invalid release platform')
+}
+
+/** Throws naming every missing and unexpected asset; the feed must name this version. */
+function verifyReleaseAssets(names, platform, version, readFeed = () => '') {
+  const contract = releaseAssetContract(platform, version)
+  const present = new Set(names.filter((name) => !name.startsWith('release-provenance-')))
+  const allowed = new Set([
+    ...contract.required,
+    ...contract.blockmapped.map((name) => `${name}.blockmap`)
+  ])
+  const missing = contract.required.filter((name) => !present.has(name))
+  const unexpected = [...present].filter((name) => !allowed.has(name)).sort()
+  const problems = []
+  if (missing.length) problems.push(`missing ${missing.join(', ')}`)
+  if (unexpected.length) problems.push(`unexpected ${unexpected.join(', ')}`)
+  if (!missing.includes(contract.feed)) {
+    const feed = readFeed(contract.feed)
+    const declared = /^version:\s*['"]?([^'"\s]+)['"]?\s*$/m.exec(feed)?.[1]
+    if (declared !== version)
+      problems.push(
+        `${contract.feed} declares version ${declared ?? '(none)'}, expected ${version}`
+      )
+  }
+  if (problems.length)
+    throw new Error(
+      `Release assets for ${platform} ${version} do not match the contract: ${problems.join('; ')}`
+    )
+}
+
 async function manifest(dir) {
   const platform = process.env.RELEASE_PLATFORM
   if (!['mac', 'win'].includes(platform)) throw new Error('Invalid release platform')
+  const version = String(process.env.RELEASE_TAG || '').replace(/^v/, '')
+  verifyReleaseAssets(fs.readdirSync(dir), platform, version, (name) =>
+    fs.readFileSync(path.join(dir, name), 'utf8')
+  )
   const source = git('rev-parse', 'HEAD')
   if (source !== process.env.RELEASE_SOURCE_SHA || source !== process.env.RELEASE_TAG_SHA)
     throw new Error('Build source must match the resolved tag SHA')
@@ -100,7 +164,7 @@ async function manifest(dir) {
     ) + '\n'
   )
 }
-module.exports = { resolveSource, manifest }
+module.exports = { resolveSource, manifest, releaseAssetContract, verifyReleaseAssets }
 if (require.main === module) {
   if (process.argv[2] === 'manifest')
     manifest(process.argv[3]).catch((error) => {

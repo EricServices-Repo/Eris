@@ -213,6 +213,8 @@ jobs:
         shell: bash
         run: cp qualification/context-release-verification.json release-assets/context-qualification-${{ matrix.platform }}.json
 
+      # Fails unless release-assets/ holds exactly this platform's contracted assets
+      # (scripts/release-source.cjs releaseAssetContract) and the feed names this version.
       - name: Record artifact provenance
         shell: bash
         env:
