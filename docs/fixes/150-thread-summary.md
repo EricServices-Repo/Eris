@@ -10,7 +10,7 @@ Once raw messages leave RAM, a long conversation had no compact view of what was
 - **Failed work:** each unfinished item keeps its end state, such as `failed` or `stopped`. A task that finished later clears.
 - **Assistant prose never counts.** Prior answers stay unverified.
 - **Metadata:** version, kind, digest, thread, project, timeline and controls revisions, source epoch, messages read, excluded, unreadable, and items over each limit.
-- **Limits:** 24 decisions, 16 constraints and 16 unfinished tasks, newest first, at 240 characters each. The scan stops at 20,000 messages or 64 MiB and reports the shortfall.
+- **Limits:** 24 decisions, 16 constraints and 16 unfinished tasks, newest first, at 240 characters each. The scan stops at 20,000 messages, 64 MiB or 1.5 s of worker time (inside the caller's 2 s wait, so a timed-out read does not keep the worker busy), and reports the shortfall and which limit stopped it. Build time is reported as `elapsedMs`, outside the digest.
 - **Eligibility:** forget, cutoff and project scope use `recallExcluded`. The destination gate is the one every `context_read` passes. Text is redacted on the way out.
 
 Nothing is stored, so there is nothing to invalidate. A deleted or rewritten source is simply absent from the next read, and the digest changes.
@@ -25,7 +25,7 @@ If the summary is unavailable, the tool says so and `context_search` still works
 
 ## Known limits
 
-- A constraint is a line that starts with a fixed word. A constraint phrased any other way is missed, though `context_search` can still find it.
+- A constraint is a line that starts with a fixed word, optionally after a list marker (`-`, `*`, `•`, `1.`) or a short lead-in (please, also, and, important, note). A constraint phrased any other way is missed, though `context_search` can still find it.
 - The labelled comparison in the issue, exact retrieval against summaries, has not been run.
 - Child agents have no thread recall, so they cannot read it.
 

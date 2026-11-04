@@ -13,6 +13,11 @@ import { recallExcluded } from './context-memory-store'
 
 const MAX_SCANNED_ROWS = 20_000
 const MAX_SCANNED_BYTES = 64 * 1024 ** 2
+/**
+ * The caller stops waiting after 2 s, but the worker would keep scanning and hold up every
+ * request queued behind it. Stop well inside that and report the scan as incomplete.
+ */
+const MAX_SCAN_MS = 1500
 const MAX_ITEM_CHARS = 240
 const LIMITS: Record<ThreadSummaryItem['kind'], number> = {
   decision: 24,
@@ -20,8 +25,12 @@ const LIMITS: Record<ThreadSummaryItem['kind'], number> = {
   unfinished: 16
 }
 const DONE = /^(?:done|complete)$/
-/** A user's own imperative. Assistant text can never produce one of these. */
-const CONSTRAINT = /^\s*(?:remember\b|always\b|never\b|do not\b|don't\b|must\b)/i
+/**
+ * A user's own imperative. Assistant text can never produce one of these. A list marker or a
+ * short lead-in ("please", "important:") may come first, as users write rules in lists.
+ */
+const CONSTRAINT =
+  /^\s*(?:(?:[-*•]|\d{1,3}[.)])\s+)?(?:(?:please|also|and|important|note)\b[\s,:-]*)?(?:remember\b|always\b|never\b|do not\b|don['’]t\b|must\b)/iu
 
 const clip = (text: string) => text.replace(/\s+/g, ' ').trim().slice(0, MAX_ITEM_CHARS)
 
@@ -72,6 +81,8 @@ export function buildThreadSummary(
     counts[item.kind]++
     items.push(item)
   }
+  const started = performance.now()
+  let stoppedBy: ThreadSummary['coverage']['stoppedBy']
   let scanned = 0
   let excluded = 0
   let corrupt = 0
@@ -82,7 +93,15 @@ export function buildThreadSummary(
     )
     .iterate(id)
   for (const row of rows) {
-    if (scanned >= MAX_SCANNED_ROWS || bytes >= MAX_SCANNED_BYTES) break
+    stoppedBy =
+      scanned >= MAX_SCANNED_ROWS
+        ? 'messages'
+        : bytes >= MAX_SCANNED_BYTES
+          ? 'bytes'
+          : performance.now() - started >= MAX_SCAN_MS
+            ? 'time'
+            : undefined
+    if (stoppedBy) break
     scanned++
     const body = String(row.body)
     bytes += body.length
@@ -154,7 +173,8 @@ export function buildThreadSummary(
     scannedMessages: scanned,
     excludedMessages: excluded,
     corruptMessages: corrupt,
-    complete: scanned === total
+    complete: scanned === total,
+    ...(stoppedBy && scanned < total ? { stoppedBy } : {})
   }
   return {
     version: THREAD_SUMMARY_VERSION,
@@ -165,6 +185,8 @@ export function buildThreadSummary(
     scope,
     coverage,
     omitted,
-    items
+    items,
+    // Outside the digest: timing varies run to run, the content it describes does not.
+    elapsedMs: Math.round(performance.now() - started)
   }
 }

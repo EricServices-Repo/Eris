@@ -192,6 +192,57 @@ describe('deterministic thread summary', () => {
     expect(threadSummaryText(value)).toContain('24 items over the limit')
   })
 
+  it('recognizes rules written as a list or after a short lead-in', () => {
+    db.save(
+      thread([
+        user('l1', 'Ground rules:\n- Never commit generated files\n2. Always run lint first'),
+        user('l2', 'Please don’t touch the billing module'),
+        user('l3', 'Important: must keep the public API stable'),
+        user('l4', 'We never really settled the layout'),
+        assistant('l5', '- Never trust this assistant line')
+      ])
+    )
+    const rules = ofKind(summary(), 'constraint').map((item) => item.text)
+    expect(rules).toEqual(
+      expect.arrayContaining([
+        '- Never commit generated files',
+        '2. Always run lint first',
+        'Please don’t touch the billing module',
+        'Important: must keep the public API stable'
+      ])
+    )
+    expect(rules).toHaveLength(4)
+  })
+
+  it('stops a slow scan inside the caller deadline and says which limit stopped it', () => {
+    let clock = 0
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => (clock += 100))
+    try {
+      const value = summary()
+      expect(value.coverage.complete).toBe(false)
+      expect(value.coverage.stoppedBy).toBe('time')
+      expect(value.coverage.scannedMessages).toBeLessThan(LABELLED.length)
+      expect(value.coverage.scannedMessages).toBeGreaterThan(0)
+      expect(threadSummaryText(value)).toContain('older messages not read: time limit')
+    } finally {
+      now.mockRestore()
+    }
+    const full = summary()
+    expect(full.coverage.stoppedBy).toBeUndefined()
+    expect(full.elapsedMs).toBeGreaterThanOrEqual(0)
+  })
+
+  it('keeps the digest independent of how long the scan took', () => {
+    const first = summary()
+    let clock = 0
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => (clock += 1))
+    try {
+      expect(summary().digest).toBe(first.digest)
+    } finally {
+      now.mockRestore()
+    }
+  })
+
   it('says so for an empty conversation', () => {
     db.save(thread([]))
     expect(threadSummaryText(summary())).toContain('Nothing recorded yet.')
