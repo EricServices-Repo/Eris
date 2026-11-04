@@ -23,7 +23,7 @@ import {
   fitAtBoundary,
   NON_ASCII_CHARS_PER_TOKEN
 } from '../../../../src/shared/token-estimate'
-import { projectFactsPrompt } from '../project-facts'
+import { projectFactsPrompt, withoutEndedProjectFacts } from '../project-facts'
 import { createHash } from 'crypto'
 import { basename, relative } from 'path'
 
@@ -216,6 +216,20 @@ export function contextPullAllowed(model: string, settings: AppSettings) {
   const policy = ContextMemorySettingsSchema.parse(settings.agent.contextMemory ?? {})
   return policy.enabled && recallAllowedAt(model, settings, policy.shareWithRemoteModels)
 }
+
+/**
+ * Facts in outbound messages that may still go to `model`: active, enabled, and allowed at
+ * this destination under both the request's settings and the project's current ones.
+ */
+export const eligibleProjectFacts = <T extends { content?: unknown }>(
+  messages: T[],
+  model: string,
+  settings: AppSettings
+) =>
+  withoutEndedProjectFacts(
+    messages,
+    (_root, current) => contextPullAllowed(model, settings) && contextPullAllowed(model, current)
+  )
 
 export function memoryForDestination(
   prompt: MemoryPrompt | undefined,
