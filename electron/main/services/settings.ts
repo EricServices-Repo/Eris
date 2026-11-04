@@ -430,6 +430,26 @@ export function getLayeredSettings(workspacePath: string | null): {
   }
 }
 
+/**
+ * A budget saved before automatic sizing existed has no `mode`. Resolution infers it
+ * by comparing against today's defaults, so a later default change could silently flip
+ * a user between manual and automatic. Persist the inferred mode once so it survives
+ * upgrades: a custom budget stays manual, a saved default budget stays automatic.
+ */
+export function migrateContextMemoryModeInUserSettings(): void {
+  const user = getUserSettings() as Record<string, unknown>
+  const agent = user.agent as Record<string, unknown> | undefined
+  const saved = agent?.contextMemory as Record<string, unknown> | undefined
+  if (!saved || typeof saved !== 'object' || saved.mode !== undefined) return
+  if (saved.maxMemoryMiB === undefined && saved.maxThreadMiB === undefined) return
+  const mode = hasCustomMemoryBudget(user as SettingsPatch) ? 'manual' : 'auto'
+  writeJson(userSettingsPath(), {
+    ...user,
+    agent: { ...agent, contextMemory: { ...saved, mode } }
+  })
+  invalidateResolvedSettingsCache()
+}
+
 /** Migrate older user settings that still embed agent.subagents */
 export function stripLegacySubagentsFromUserSettings(): void {
   const user = getUserSettings() as Record<string, unknown>
