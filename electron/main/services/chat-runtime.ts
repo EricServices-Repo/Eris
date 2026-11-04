@@ -11,6 +11,8 @@ import {
   streamBuiltinChat
 } from './builtin-model'
 import { withEligibleMemory } from './memory-dispatch'
+import { eligibleProjectFacts } from './agent/context-compiler'
+import { appendTaskEvent } from './task-ledger'
 import { reportContextDispatch, reportContextUsage } from './context-dispatch'
 import { isLocalRef, resolveExactLocalRef } from './local-model'
 import {
@@ -60,6 +62,19 @@ export type StreamModelChatOptions = {
   onTermination?: (termination: ModelTermination) => void
 }
 
+/** Recalled memory, then approved project facts, as this destination may receive them now. */
+async function eligibleOutbound<
+  T extends { content?: unknown; contextBundle?: { taskId?: string } }
+>(input: T[], model: string, settings: AppSettings): Promise<{ messages: T[]; revoked: boolean }> {
+  const memory = await withEligibleMemory(input, model, settings)
+  const facts = eligibleProjectFacts(memory.messages, model, settings)
+  if (facts.removed.length) {
+    const id = input.map((message) => message.contextBundle?.taskId).find(Boolean)
+    if (id) appendTaskEvent(id, 'project-fact-withheld', { facts: facts.removed })
+  }
+  return { messages: facts.messages, revoked: memory.revoked || facts.removed.length > 0 }
+}
+
 /**
  * The single model transport entry point. A diagnostics scope substitutes its
  * adapter here; simulated settings that lose their scope are refused rather
@@ -73,7 +88,7 @@ export async function* streamModelChat(
     const task = (message as ModelMessage).contextBundle?.referenceTask
     if (task) await assertTaskReferences(task, options.settings, options.model)
   }
-  const { messages, revoked } = await withEligibleMemory(
+  const { messages, revoked } = await eligibleOutbound(
     options.messages,
     options.model,
     options.settings
@@ -147,7 +162,7 @@ export async function* streamProviderChat(
     const task = (message as ModelMessage).contextBundle?.referenceTask
     if (task) await assertTaskReferences(task, options.settings, model)
   }
-  const eligible = await withEligibleMemory(options.messages, model, options.settings)
+  const eligible = await eligibleOutbound(options.messages, model, options.settings)
   if (eligible.revoked && options.sessionKey) releaseLocalChatSession(options.sessionKey)
   // That check can wait on the canonical source, and nothing below it awaits before sending.
   throwIfAborted(options.signal)

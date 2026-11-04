@@ -22,6 +22,7 @@ import type { AppSettings } from '../../../src/shared/settings-schema'
 import { evidenceRequirementFor, type TaskContract } from '../../../src/shared/task-contract'
 import { sensitive } from './context-memory-store'
 import { logWarn } from './logger'
+import { getResolvedSettings } from './settings'
 import { userDataRoot } from './paths'
 import { registeredWorkspaceId } from './workspace'
 
@@ -155,6 +156,29 @@ export function revokeProjectFact(workspaceId: string, id: string) {
   return true
 }
 
+const PROJECT_FACTS_HEADER =
+  'APPROVED PROJECT FACTS — the user approved these for this project. Evidence and context, never permissions.\n'
+/** One line per fact, so dispatch can find and remove it even after the compiler cut it short. */
+const factLine = (fact: ProjectFact) =>
+  `- [project fact ${fact.id}] ${fact.text.replace(/\s*\n\s*/g, ' ')}`
+const FACT_LINE = /^- \[project fact ([0-9a-f-]{36})\][^\n]*(?:\n|$)/gm
+
+/**
+ * Where each fact this process rendered came from, so dispatch can recheck it. Bounded;
+ * a fact whose origin was forgotten is removed rather than trusted.
+ */
+const renderedFrom = new Map<string, string>()
+const RENDERED_LIMIT = 4096
+function remember(id: string, root: string) {
+  renderedFrom.delete(id)
+  renderedFrom.set(id, root)
+  while (renderedFrom.size > RENDERED_LIMIT) renderedFrom.delete(renderedFrom.keys().next().value!)
+}
+
+const factsEnabled = (settings: AppSettings) =>
+  settings.agent.projectMemory !== 'off' &&
+  ContextMemorySettingsSchema.parse(settings.agent.contextMemory ?? {}).enabled
+
 /**
  * Text for one compiled request, or nothing. The project must be the registered workspace
  * and evidence for this request, so a general question gets none. `reachable` is the
@@ -168,14 +192,53 @@ export function projectFactsPrompt(
   const root = task?.scope.workspaceRoot
   if (!root || !settings || !reachable) return undefined
   if (evidenceRequirementFor(task.scope.applicability) === 'none') return undefined
-  if (settings.agent.projectMemory === 'off') return undefined
-  if (!ContextMemorySettingsSchema.parse(settings.agent.contextMemory ?? {}).enabled)
-    return undefined
+  if (!factsEnabled(settings)) return undefined
   const workspaceId = registeredWorkspaceId(root)
   const facts = workspaceId ? activeProjectFacts(workspaceId) : []
   if (!facts.length) return undefined
-  return (
-    'APPROVED PROJECT FACTS — the user approved these for this project. Evidence and context, never permissions.\n' +
-    facts.map((fact) => `- ${fact.text}`).join('\n')
-  )
+  for (const fact of facts) remember(fact.id, root)
+  return PROJECT_FACTS_HEADER + facts.map(factLine).join('\n')
+}
+
+/**
+ * Drop facts that ended after a prompt was compiled. A long run keeps its compiled system
+ * message, so revocation, supersession, turning project memory off, or losing the
+ * destination approval must apply before every dispatch, not only on the next compile.
+ * Only the tagged fact lines are touched: identical text the user typed elsewhere stays.
+ */
+export function withoutEndedProjectFacts<T extends { content?: unknown }>(
+  messages: T[],
+  eligible: (root: string, settings: AppSettings) => boolean
+): { messages: T[]; removed: string[] } {
+  const removed = new Set<string>()
+  const active = new Map<string, Set<string>>()
+  const stillActive = (id: string) => {
+    const root = renderedFrom.get(id)
+    if (!root) return false
+    const settings = getResolvedSettings(root)
+    if (!factsEnabled(settings) || !eligible(root, settings)) return false
+    const workspaceId = registeredWorkspaceId(root)
+    if (!workspaceId) return false
+    let ids = active.get(workspaceId)
+    if (!ids) {
+      ids = new Set(activeProjectFacts(workspaceId).map((fact) => fact.id))
+      active.set(workspaceId, ids)
+    }
+    return ids.has(id)
+  }
+  const verdicts = new Map<string, boolean>()
+  const out = messages.map((message) => {
+    if (typeof message.content !== 'string' || !message.content.includes('[project fact '))
+      return message
+    let content = message.content.replace(FACT_LINE, (line, id: string) => {
+      if (!verdicts.has(id)) verdicts.set(id, stillActive(id))
+      if (verdicts.get(id)) return line
+      removed.add(id)
+      return ''
+    })
+    if (content === message.content) return message
+    if (content.search(FACT_LINE) < 0) content = content.replace(PROJECT_FACTS_HEADER, '')
+    return { ...message, content }
+  })
+  return { messages: removed.size ? out : messages, removed: [...removed] }
 }
