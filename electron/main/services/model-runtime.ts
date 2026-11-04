@@ -3,6 +3,8 @@ import type { PlacementStep } from './vram-fit'
 export interface LoadedModelFacts {
   ref: string
   contextSize: number
+  /** Settings request which produced this allocation, not the allocated size. */
+  requestedContext?: number
   trainContextSize?: number
   gpuLayers?: number
   totalLayers?: number

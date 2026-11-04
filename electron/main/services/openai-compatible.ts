@@ -1,3 +1,4 @@
+import { recordProviderContexts } from './provider-context'
 import { randomUUID } from 'crypto'
 import { modelSseEvents, ModelStreamError, MAX_MODEL_EVENT_BYTES } from './model-sse'
 export interface ChatRequestMessage {
@@ -321,5 +322,6 @@ export async function listOpenAIModels(baseUrl: string, apiKey?: string | null):
     throw new Error(`List models failed: HTTP ${res.status}${snippet ? ` · ${snippet}` : ''}`)
   }
   const data = (await res.json()) as { data?: Array<{ id: string }> }
+  recordProviderContexts(baseUrl, Array.isArray(data.data) ? data.data : [])
   return (data.data ?? []).map((m) => m.id).filter(Boolean)
 }

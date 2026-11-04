@@ -1,3 +1,4 @@
+import { modelInputBudget } from '../src/shared/model-context'
 import { describe, expect, it, vi } from 'vitest'
 import {
   CONTEXT_HEADROOM_BYTES,
@@ -60,8 +61,12 @@ describe('VRAM fit', () => {
   it('compacts from the loaded window and allows a 16k reply', () => {
     expect(REPLY_MAX_TOKENS).toBe(16_384)
     const settings = structuredClone(getDefaults())
-    expect(contextBudgetTokens(settings, 'builtin:composer-lite')).toBe(Math.floor(32_768 * 0.65))
-    expect(contextBudgetTokens(settings, 'builtin:composer')).toBe(Math.floor(32_768 * 0.65))
+    expect(contextBudgetTokens(settings, 'builtin:composer-lite')).toBe(
+      modelInputBudget(32_768, Math.floor(32_768 * 0.3))
+    )
+    expect(contextBudgetTokens(settings, 'builtin:composer')).toBe(
+      modelInputBudget(32_768, Math.floor(32_768 * 0.3))
+    )
   })
 
   it('compacts from the token budget instead of a message count', () => {

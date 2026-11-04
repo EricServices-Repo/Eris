@@ -57,6 +57,7 @@ let model: any = null
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let context: any = null
 let modelPath: string | null = null
+let requestedContextSize = 0
 let loadedContextSize = 4096
 let contextMin = 4096
 let contextMax = 16384
@@ -185,7 +186,7 @@ async function handleLoad(
   try {
     contextMax = Math.max(512, contextSize)
     contextMin = Math.min(contextMax, Math.max(512, minContext ?? contextSize))
-    if (modelPath === path && model) {
+    if (modelPath === path && model && requestedContextSize === contextSize) {
       if (!context) await ensureContext()
       post({
         type: 'loaded',
@@ -224,6 +225,7 @@ async function handleLoad(
       loadedContextSize = contextMax
     }
     modelPath = path
+    requestedContextSize = contextSize
     post({
       type: 'loaded',
       requestId,

@@ -81,6 +81,7 @@ import {
   buildWorkSummary,
   compactAgentMessages,
   contextBudgetTokens,
+  contextCompactionTarget,
   estimateTokens,
   microCompactAgentMessages,
   needsContextCompaction
@@ -1538,6 +1539,13 @@ async function* runAgentInternal(options: {
   async function* compactWorkerContext(
     opts: {
       force?: boolean
+      reason?:
+        | 'capacity'
+        | 'stagnation'
+        | 'empty-response'
+        | 'rejected-response'
+        | 'repeated-inspection'
+        | 'duplicate-tool'
       skipLiteSummary?: boolean
     } = {}
   ): AsyncGenerator<AgentRunnerEvent, void, unknown> {
@@ -1545,12 +1553,16 @@ async function* runAgentInternal(options: {
       contextBudgetTokens(options.settings, workerModel) -
       Math.ceil(JSON.stringify(openaiTools).length / 3) -
       128
+    boundRuntimeInstructions(workerMessages)
     const force = Boolean(opts.force)
     if (!needsContextCompaction(workerMessages, promptBudget, force)) return
+    const beforeTokens = estimateTokens(workerMessages)
+    const targetTokens = contextCompactionTarget(promptBudget)
+    const reason = opts.reason ?? 'capacity'
 
     // Stubs are only useful to a model allowed to read them back.
     const evidence = contextPullAllowed(workerModel, options.settings) ? runJournal : undefined
-    const micro = microCompactAgentMessages(workerMessages, promptBudget, evidence)
+    const micro = microCompactAgentMessages(workerMessages, targetTokens, evidence)
     if (micro.changed) {
       workerMessages.splice(0, workerMessages.length, ...micro.messages)
       yield {
@@ -1561,13 +1573,18 @@ async function* runAgentInternal(options: {
       }
       appendTaskEvent(task.taskId, 'context-evicted', {
         mode: 'micro',
+        reason,
+        beforeTokens,
+        afterTokens: estimateTokens(workerMessages),
+        targetTokens,
+        budgetTokens: promptBudget,
         evicted: micro.evicted,
         shortened: micro.shortened
       })
       // Every turn re-seeds history, so eviction keeps the unchanged prefix in KV.
       if (micro.shortened) releaseGgufSession()
       contextPull.noteCompaction()
-      if (micro.withinBudget && !force) return
+      if (estimateTokens(workerMessages) <= promptBudget) return
     }
     // Never swap Lite↔Full mid-run — node-llama-cpp holds one runtime; unloading
     // Full to summarize with Lite freezes the app for minutes and looks "broken".
@@ -1598,17 +1615,49 @@ async function* runAgentInternal(options: {
       evidence,
       summarizeEvicted: options.settings.agent.summarizeEvictedContext
     })
+    // A summary can itself be large. Recheck it and clean its retained evidence,
+    // never interpret a successful summary call as proof that the prompt now fits.
+    const packed = microCompactAgentMessages(compacted.messages, targetTokens, evidence)
+    const afterTokens = estimateTokens(packed.messages)
+    const changed =
+      workerMessages.length !== packed.messages.length ||
+      packed.messages.some((message, i) => {
+        const prior = workerMessages[i]
+        return (
+          !prior ||
+          message.content !== prior.content ||
+          message.role !== prior.role ||
+          message.tool_call_id !== prior.tool_call_id ||
+          JSON.stringify(message.tool_calls) !== JSON.stringify(prior.tool_calls)
+        )
+      })
+    const improved = changed && afterTokens < estimateTokens(workerMessages)
     appendTaskEvent(task.taskId, 'context-evicted', {
       mode: 'full',
+      reason,
+      beforeTokens,
+      afterTokens,
+      targetTokens,
+      budgetTokens: promptBudget,
+      changed: improved,
+      cannotFit: afterTokens > promptBudget,
       lossless: compacted.lossless,
       withEvidence: Boolean(evidence)
     })
-    workerMessages.length = 0
-    workerMessages.push(...compacted.messages)
-    contextMemory = compacted.memory || contextMemory
-    // History rewritten — drop KV session so the next turn re-seeds.
-    releaseGgufSession()
-    contextPull.noteCompaction()
+    if (improved) {
+      workerMessages.splice(0, workerMessages.length, ...packed.messages)
+      contextMemory = compacted.memory || contextMemory
+      // Only an actual rewrite needs to discard the cached sequence.
+      releaseGgufSession()
+      contextPull.noteCompaction()
+    }
+    if (estimateTokens(workerMessages) > promptBudget) {
+      throw new Error(
+        `Required task context exceeds this model's usable input budget (${promptBudget.toLocaleString('en-US')} tokens) after cleanup. ` +
+          'Increase the requested context in Settings → Models, choose a model with a larger supported window, or reduce attached context. ' +
+          'Existing file changes are preserved.'
+      )
+    }
   }
 
   const nudgeToTools = (reason: string): AgentChatMessage => ({
@@ -2014,7 +2063,11 @@ async function* runAgentInternal(options: {
           stagnationRecoveries++
           appendTaskEvent(task.taskId, 'no-progress-recovery', { step, idleSteps })
           yield { type: 'status', text: 'Recovering the next task step…' }
-          for await (const evt of compactWorkerContext({ force: true, skipLiteSummary: true }))
+          for await (const evt of compactWorkerContext({
+            force: true,
+            reason: 'stagnation',
+            skipLiteSummary: true
+          }))
             yield evt
           workerMessages.push({
             role: 'system',
@@ -2204,7 +2257,11 @@ async function* runAgentInternal(options: {
               workerMessages.splice(i, 1)
           }
           if (consecutiveEmptyReplies === 1)
-            for await (const evt of compactWorkerContext({ force: true, skipLiteSummary: true }))
+            for await (const evt of compactWorkerContext({
+              force: true,
+              reason: 'empty-response',
+              skipLiteSummary: true
+            }))
               yield evt
           workerMessages.push({
             role: 'system',
@@ -2428,6 +2485,7 @@ async function* runAgentInternal(options: {
           if (noProgressStreak >= MAX_NO_PROGRESS) {
             for await (const evt of compactWorkerContext({
               force: true,
+              reason: 'rejected-response',
               skipLiteSummary: true
             })) {
               yield evt
@@ -2672,6 +2730,7 @@ async function* runAgentInternal(options: {
         if (noProgressStreak >= MAX_NO_PROGRESS) {
           for await (const evt of compactWorkerContext({
             force: true,
+            reason: 'repeated-inspection',
             skipLiteSummary: true
           })) {
             yield evt
@@ -2727,6 +2786,7 @@ async function* runAgentInternal(options: {
         if (noProgressStreak >= MAX_NO_PROGRESS) {
           for await (const evt of compactWorkerContext({
             force: true,
+            reason: 'duplicate-tool',
             skipLiteSummary: true
           })) {
             yield evt

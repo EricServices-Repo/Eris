@@ -1,3 +1,5 @@
+import { providerContext } from './provider-context'
+import { boundedContextWindow } from '../../../src/shared/model-context'
 import { logWarn } from './logger'
 import { ollamaNativeHost } from './ollama'
 import { resolveConnectionForModel } from './model-catalog'
@@ -116,7 +118,7 @@ export async function prepareModelWindows(
 }
 
 const windowFor = (requested: number, maxContext: number) =>
-  Math.min(128000, Math.max(512, requested), maxContext)
+  boundedContextWindow(requested, maxContext)
 
 /** The `num_ctx` for a verified Ollama model, or null to use the OpenAI-compatible route. */
 export function ollamaRequestWindow(
@@ -141,13 +143,29 @@ export const placementsFor = (connection: ModelConnection) =>
 export const isPartlyOnCpu = (placement: OllamaPlacement) =>
   placement.sizeBytes > 0 && placement.vramBytes < placement.sizeBytes
 
+/** Endpoint-scoped user declarations; never infer capacity from a model name. */
+export function declaredModelLimits(settings: AppSettings, model: string) {
+  return resolveConnectionForModel(settings, model)?.modelLimits?.[model]
+}
+
+export function advertisedModelLimits(settings: AppSettings, model: string) {
+  const connection = resolveConnectionForModel(settings, model)
+  return connection && providerContext(connection.baseUrl, model)
+}
+
 /** What this server gives a request. Null leaves the caller's ceiling for hosted providers. */
 export function serverWindow(settings: AppSettings, model: string, requested: number) {
   const connection = resolveConnectionForModel(settings, model)
   if (connection?.type !== 'openai-compatible') return null
+  const advertised = providerContext(connection.baseUrl, model)
+  if (advertised && !isOllamaConnection(connection))
+    return {
+      contextCeiling: boundedContextWindow(requested, advertised.contextWindow),
+      contextSource: 'provider-declared' as const
+    }
   const target = ollamaRequestWindow(connection, model, requested)
   if (target === null)
-    return isLocalServer(connection)
+    return isLocalServer(connection) && !connection.modelLimits?.[model]
       ? {
           contextCeiling: Math.min(UNVERIFIED_WINDOW, Math.max(512, requested)),
           contextSource: 'unverified-window' as const

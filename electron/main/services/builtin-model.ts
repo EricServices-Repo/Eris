@@ -1,3 +1,4 @@
+import { discoverNativeContextWindow, nativeContextWindow } from './native-context'
 import { inferenceDevice } from './inference-device'
 import { LocalModelWorkerError, waitForWorkerMessage } from './llama-worker-channel'
 import { createHash, randomUUID } from 'crypto'
@@ -82,6 +83,7 @@ interface RuntimeState {
 }
 
 let runtime: RuntimeState | null = null
+let runtimeRequestedContext = 0
 let downloadAbort: AbortController | null = null
 /** Serializes downloads so cancel + restart cannot interleave writes. */
 let downloadGate: Promise<void> = Promise.resolve()
@@ -647,6 +649,7 @@ async function loadLlamaModule(): Promise<LlamaModule> {
 let llamaChild: any = null
 let llamaChildReady: Promise<void> | null = null
 let workerModelPath: string | null = null
+let workerRequestedContext = 0
 let preferInProcess = false
 let chatSeq = 0
 /** Sessions known to exist in the llama worker (or in-process map). */
@@ -859,7 +862,7 @@ export function contextPlan(
   const limits = contextLimits({
     tier: entry.tier,
     role: entry.role,
-    modelContext: entry.contextWindow,
+    modelContext: nativeContextWindow(entry.ref, entry.contextWindow),
     settingsContext
   })
   // `max` is the forecast before a load. `target` is where placement starts, because the
@@ -884,10 +887,12 @@ function logPlacement(modelPath: string, placement: ModelPlacement) {
 
 async function ensureRuntimeInProcess(
   modelPath: string,
-  entry: BuiltinModelManifestEntry
+  entry: BuiltinModelManifestEntry,
+  requestedContext = getResolvedSettings(appState.currentWorkspace).models.contextWindow
 ): Promise<RuntimeState> {
   return enqueueRuntime(async () => {
-    if (runtime?.modelPath === modelPath) return runtime
+    if (runtime?.modelPath === modelPath && runtimeRequestedContext === requestedContext)
+      return runtime
     await disposeRuntimeUnlocked()
 
     if (!isValidModelFile(modelPath, entry)) {
@@ -914,7 +919,8 @@ async function ensureRuntimeInProcess(
       gpuStatus.backendDeviceName
     )
 
-    const plan = contextPlan(entry, gpuStatus.vramBudgetBytes)
+    await discoverNativeContextWindow(entry.ref, modelPath)
+    const plan = contextPlan(entry, gpuStatus.vramBudgetBytes, requestedContext)
     logInfo('Loading builtin model (in-process)', {
       path: modelPath,
       gpu: llama.gpu,
@@ -968,10 +974,12 @@ async function ensureRuntimeInProcess(
     }
 
     runtime = { modelPath, llama, model, context }
+    runtimeRequestedContext = requestedContext
     const facts = allocationFacts(model, context)
     recordLoadedModel({
       ...facts,
       ref: entry.ref,
+      requestedContext,
       contextSize: facts.contextSize ?? plan.target,
       device: gpuStatus.backendDeviceName ?? (llama.gpu === false ? 'CPU' : String(llama.gpu)),
       placementSteps: placement.steps
@@ -1033,7 +1041,8 @@ async function textLease(entry: BuiltinModelManifestEntry, path: string) {
 async function ensureWorkerModel(
   modelPath: string,
   entry: BuiltinModelManifestEntry,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  requestedContext = getResolvedSettings(appState.currentWorkspace).models.contextWindow
 ): Promise<void> {
   if (signal?.aborted) {
     const error = new Error('Aborted')
@@ -1041,7 +1050,7 @@ async function ensureWorkerModel(
     throw error
   }
   await ensureLlamaChild()
-  if (workerModelPath === modelPath) return
+  if (workerModelPath === modelPath && workerRequestedContext === requestedContext) return
   // Model swap drops all KV sessions in the worker.
   activeChatSessions.clear()
   releaseAllInProcessSessions()
@@ -1057,7 +1066,8 @@ async function ensureWorkerModel(
   const requestId = `load-${Date.now()}`
   const preferEgpu = getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
   const { status: gpuStatus } = await applyLlamaGpuPreference(preferEgpu)
-  const plan = contextPlan(entry, gpuStatus.vramBudgetBytes)
+  await discoverNativeContextWindow(entry.ref, modelPath)
+  const plan = contextPlan(entry, gpuStatus.vramBudgetBytes, requestedContext)
   logInfo('Loading builtin model (utilityProcess)', {
     path: modelPath,
     egpu: gpuStatus.egpu?.name || null,
@@ -1086,10 +1096,12 @@ async function ensureWorkerModel(
     throw new Error(result.error || 'Failed to load model in worker')
   }
   workerModelPath = modelPath
+  workerRequestedContext = requestedContext
   const { contextSize, trainContextSize, gpuLayers, totalLayers, kvBytes, placement } = result
   if (placement) logPlacement(modelPath, placement)
   recordLoadedModel({
     ref: entry.ref,
+    requestedContext,
     contextSize: contextSize ?? plan.max,
     trainContextSize,
     gpuLayers,
@@ -1160,6 +1172,8 @@ async function* streamBuiltinChatInProcess(options: {
   jsonSchema?: Record<string, unknown>
   sessionKey?: string
   maxOutputTokens?: number
+  /** Exact request settings, including Eris-Dev overrides; not the global profile. */
+  contextWindow?: number
   onLoaded?: () => void
   /** Revalidated and repacked after actual allocation, while the inference lease is held. */
   prepareMessages?: () => Promise<Array<{ role: 'system' | 'user' | 'assistant'; content: string }>>
@@ -1167,7 +1181,7 @@ async function* streamBuiltinChatInProcess(options: {
 }): AsyncGenerator<string, void, unknown> {
   const llamaCpp = await loadLlamaModule()
   const { LlamaChatSession } = llamaCpp
-  const state = await ensureRuntimeInProcess(options.path, options.entry)
+  const state = await ensureRuntimeInProcess(options.path, options.entry, options.contextWindow)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let grammar: any = undefined
   if (options.jsonSchema) {
@@ -1380,12 +1394,14 @@ async function* streamBuiltinChatViaWorker(options: {
   jsonSchema?: Record<string, unknown>
   sessionKey?: string
   maxOutputTokens?: number
+  /** Exact request settings, including Eris-Dev overrides; not the global profile. */
+  contextWindow?: number
   onLoaded?: () => void
   /** Revalidated and repacked after actual allocation, while the inference lease is held. */
   prepareMessages?: () => Promise<Array<{ role: 'system' | 'user' | 'assistant'; content: string }>>
   onTermination?: (termination: ModelTermination) => void
 }): AsyncGenerator<string, void, unknown> {
-  await ensureWorkerModel(options.path, options.entry, options.signal)
+  await ensureWorkerModel(options.path, options.entry, options.signal, options.contextWindow)
   if (options.prepareMessages) options.messages = await options.prepareMessages()
   options.onLoaded?.()
   const child = llamaChild
@@ -1511,7 +1527,8 @@ async function* streamBuiltinChatViaWorker(options: {
 }
 
 type WarmResult = { ok: boolean; model?: string; error?: string }
-let warmInFlight: { modelRef: string; promise: Promise<WarmResult> } | null = null
+let warmInFlight: { modelRef: string; contextWindow: number; promise: Promise<WarmResult> } | null =
+  null
 
 /**
  * Background-load a selected or default ready GGUF so the next local chat turn
@@ -1527,7 +1544,8 @@ export function warmLocalInference(
   }
   const s = settings ?? getResolvedSettings(appState.currentWorkspace)
   const preferred = requestedModel || s.models.defaultModel || 'builtin:composer-lite'
-  if (warmInFlight?.modelRef === preferred) return warmInFlight.promise
+  if (warmInFlight?.modelRef === preferred && warmInFlight.contextWindow === s.models.contextWindow)
+    return warmInFlight.promise
 
   const previousWarm = warmInFlight?.promise.catch(() => undefined)
   const promise = (async () => {
@@ -1577,7 +1595,7 @@ export function warmLocalInference(
         signal
       })
       try {
-        await ensureWorkerModel(path, entry, signal)
+        await ensureWorkerModel(path, entry, signal, s.models.contextWindow)
       } finally {
         lease.release()
       }
@@ -1589,7 +1607,7 @@ export function warmLocalInference(
       return { ok: false, error: message }
     }
   })()
-  const active = { modelRef: preferred, promise }
+  const active = { modelRef: preferred, contextWindow: s.models.contextWindow, promise }
   warmInFlight = active
   void promise.then(
     () => {
@@ -1616,6 +1634,8 @@ export async function* streamBuiltinChat(options: {
   sessionKey?: string
   /** Called once with how generation ended (stop reason, limits, prompt size). */
   maxOutputTokens?: number
+  /** Exact request settings, including Eris-Dev overrides; not the global profile. */
+  contextWindow?: number
   onLoaded?: () => void
   /** Revalidated and repacked after actual allocation, while the inference lease is held. */
   prepareMessages?: () => Promise<Array<{ role: 'system' | 'user' | 'assistant'; content: string }>>

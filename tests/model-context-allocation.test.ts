@@ -1,3 +1,5 @@
+import { recordProviderContexts } from '../electron/main/services/provider-context'
+import { modelInputBudget } from '../src/shared/model-context'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppSettings } from '../src/shared/settings-schema'
 
@@ -58,7 +60,7 @@ describe('native context capacity', () => {
     expect(capabilities).toMatchObject({
       contextCeiling: 8192,
       contextSource: 'runtime-plan',
-      promptBudget: Math.floor(8192 * 0.65)
+      promptBudget: modelInputBudget(8192, Math.floor(8192 * 0.3))
     })
     expect(contextBudgetTokens(settings, 'local:big')).toBeLessThan(8192)
   })
@@ -67,7 +69,7 @@ describe('native context capacity', () => {
     expect(resolveModelCapabilities(settings, 'local:big')).toMatchObject({
       contextCeiling: 6144,
       contextSource: 'measured-allocation',
-      promptBudget: Math.floor(6144 * 0.65)
+      promptBudget: modelInputBudget(6144, Math.floor(6144 * 0.3))
     })
   })
   it('never applies one model’s allocation to another', () => {
@@ -131,5 +133,115 @@ describe('allocation records', () => {
   })
   it('tolerates a runtime without those fields', () => {
     expect(allocationFacts({}, null).contextSize).toBeUndefined()
+  })
+})
+
+describe('large model windows', () => {
+  it.each([8192, 16384, 32768, 65536, 128000, 250000, 262144, 1010000, 2097152])(
+    'keeps a configured %i provider window without hidden clamps',
+    (window) => {
+      const configured = {
+        models: { connections: [], contextWindow: window }
+      } as unknown as AppSettings
+      const cap = resolveModelCapabilities(configured, 'hosted-model')
+      expect(cap.contextCeiling).toBe(window)
+      expect(cap.promptBudget + cap.outputReserve).toBeLessThan(window)
+      if (window >= 250000) expect(cap.promptBudget).toBeGreaterThan(window * 0.9)
+    }
+  )
+  it('uses endpoint-scoped declarations without changing other models or claiming measurement', () => {
+    const configured = {
+      models: {
+        contextWindow: 32768,
+        connections: [
+          {
+            id: 'hosted',
+            type: 'openai-compatible',
+            enabled: true,
+            provider: 'custom',
+            baseUrl: 'https://example.com/v1',
+            models: ['large', 'small'],
+            modelLimits: {
+              large: { contextWindow: 262144, maxOutputTokens: 32768 },
+              small: { contextWindow: 8192 }
+            }
+          }
+        ]
+      }
+    } as unknown as AppSettings
+    expect(resolveModelCapabilities(configured, 'large')).toMatchObject({
+      requestedContext: 262144,
+      contextCeiling: 262144,
+      outputCap: 32768,
+      contextSource: 'user-declared'
+    })
+    expect(resolveModelCapabilities(configured, 'small').contextCeiling).toBe(8192)
+  })
+  it('respects a small measured allocation after planning a large local window', () => {
+    harness.local = entry({ contextWindow: 262144 })
+    harness.vram = 48 * G
+    const configured = {
+      models: { connections: [], contextWindow: 262144 }
+    } as unknown as AppSettings
+    expect(resolveModelCapabilities(configured, 'local:big').contextCeiling).toBe(262144)
+    recordLoadedModel({ ref: 'local:big', contextSize: 8192, trainContextSize: 262144 })
+    expect(resolveModelCapabilities(configured, 'local:big').contextCeiling).toBe(8192)
+  })
+})
+
+describe('provider-advertised windows', () => {
+  it('caps declarations by provider metadata and never applies one endpoint to another', () => {
+    recordProviderContexts('https://small.example/v1', [
+      { id: 'm', max_model_len: 8192, max_output_tokens: 1024 }
+    ])
+    const configured = (url: string) =>
+      ({
+        models: {
+          contextWindow: 262144,
+          connections: [
+            {
+              id: 'c',
+              provider: 'custom',
+              type: 'openai-compatible',
+              enabled: true,
+              baseUrl: url,
+              models: ['m'],
+              modelLimits: { m: { contextWindow: 262144, maxOutputTokens: 32768 } }
+            }
+          ]
+        }
+      }) as unknown as AppSettings
+    expect(resolveModelCapabilities(configured('https://small.example/v1'), 'm')).toMatchObject({
+      contextCeiling: 8192,
+      contextSource: 'provider-declared',
+      outputCap: 1024
+    })
+    expect(
+      resolveModelCapabilities(configured('https://different.example/v1'), 'm').contextCeiling
+    ).toBe(262144)
+    recordProviderContexts('https://small.example/v1', [{ id: 'm', context_length: NaN }])
+    expect(
+      resolveModelCapabilities(configured('https://small.example/v1'), 'm').contextSource
+    ).toBe('user-declared')
+  })
+})
+
+describe('context setting changes', () => {
+  it('does not reuse a smaller allocation from an old request after increasing the setting', () => {
+    harness.local = entry({ contextWindow: 262144 })
+    harness.vram = 48 * G
+    recordLoadedModel({ ref: 'local:big', contextSize: 8192, requestedContext: 32768 })
+    const configured = {
+      models: { connections: [], contextWindow: 262144 }
+    } as unknown as AppSettings
+    expect(resolveModelCapabilities(configured, 'local:big')).toMatchObject({
+      contextCeiling: 262144,
+      contextSource: 'runtime-plan'
+    })
+    recordLoadedModel({ ref: 'local:big', contextSize: 16384, requestedContext: 262144 })
+    expect(resolveModelCapabilities(configured, 'local:big')).toMatchObject({
+      contextCeiling: 16384,
+      contextSource: 'measured-allocation'
+    })
   })
 })

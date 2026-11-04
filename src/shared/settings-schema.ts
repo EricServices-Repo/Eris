@@ -1,3 +1,4 @@
+import { MAX_CONTEXT_TOKENS } from './model-context'
 import { ContextMemorySettingsSchema } from './context-memory'
 import type { TaskContract } from './task-contract'
 import { z } from 'zod'
@@ -55,6 +56,16 @@ export const ModelConnectionSchema = z.object({
   /** Key name in local secrets.json, never raw secret in settings JSON */
   apiKeyRef: z.string(),
   models: z.array(z.string()),
+  /** User-declared limits scoped to this endpoint and exact model ID. */
+  modelLimits: z
+    .record(
+      z.string(),
+      z.object({
+        contextWindow: z.number().int().min(512).max(MAX_CONTEXT_TOKENS),
+        maxOutputTokens: z.number().int().min(128).max(MAX_CONTEXT_TOKENS).optional()
+      })
+    )
+    .optional(),
   /**
    * Base URL the user approved for recall. It covers that exact URL only, so editing
    * the address ends the approval. Only the user profile may set it.
@@ -96,7 +107,7 @@ export const SettingsSchema = z.object({
   models: z.object({
     defaultModel: z.string(),
     temperature: z.number().min(0).max(2),
-    contextWindow: z.number().int().min(512).max(128000),
+    contextWindow: z.number().int().min(512).max(MAX_CONTEXT_TOKENS),
     connections: z.array(ModelConnectionSchema),
     /** Prefer an attached eGPU (or discrete GPU) for Local / Composer GGUFs. */
     preferEgpu: z.boolean().default(true),

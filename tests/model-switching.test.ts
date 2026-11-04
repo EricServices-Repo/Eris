@@ -1,3 +1,4 @@
+import { modelInputBudget } from '../src/shared/model-context'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -415,7 +416,7 @@ describe('bounded recovery admission', () => {
       releaseSession: () => h.released.push('old'),
       getSecret: () => null
     })
-    expect(budget).toBe(Math.floor(4096 * 0.65))
+    expect(budget).toBe(modelInputBudget(4096, Math.floor(4096 * 0.3)))
     expect(h.warm).toEqual(['local:worker'])
   })
   it('refuses a simulated transition if its scripted transport scope is lost', async () => {

@@ -31,7 +31,7 @@ export function buildWorkSummary(goal: string, actions: string[], workerNote: st
   return lines.join('\n')
 }
 
-/** Rough token estimate for local budgeting (chars/4). */
+/** Conservative token estimate for local budgeting (context units/3). */
 export function estimateTokens(messages: AgentChatMessage[]): number {
   let chars = 0
   for (const m of messages)
@@ -165,8 +165,15 @@ export function needsContextCompaction(
   budgetTokens: number,
   force: boolean
 ): boolean {
-  if (force) return messages.length > 4
+  // Recovery may reset a session, but is not evidence that the prompt is full.
+  // A forced no-op rewrite discards KV and can loop on short histories.
+  void force
   return estimateTokens(messages) > budgetTokens
+}
+
+/** Leave space for another bounded tool result instead of hovering at the ceiling. */
+export function contextCompactionTarget(budgetTokens: number): number {
+  return Math.max(1, Math.floor(budgetTokens * 0.8))
 }
 
 export function formatActionLogForResume(actionLog: string[], limit = 40): string {

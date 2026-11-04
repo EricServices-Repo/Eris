@@ -15,6 +15,8 @@ vi.mock('../electron/main/services/agent/stream', async (original) => ({
 import {
   compactAgentMessages,
   estimateTokens,
+  needsContextCompaction,
+  contextCompactionTarget,
   microCompactAgentMessages
 } from '../electron/main/services/agent/compaction'
 import { RunJournal } from '../electron/main/services/agent/run-journal'
@@ -270,5 +272,36 @@ describe('full compaction', () => {
     expect(model.calls.map((call) => call.purpose)).toEqual(['compaction'])
     expect(JSON.stringify(model.calls[0])).toContain('[ref:')
     expect(result.messages[1]!.content).toContain('held in full')
+  })
+})
+
+describe('compaction headroom and recovery', () => {
+  it.each([5, 6, 12])(
+    'does not compact %i small messages merely because recovery requested it',
+    (count) => {
+      const messages = Array.from({ length: count }, () => ({
+        role: 'user' as const,
+        content: 'small'
+      }))
+      expect(needsContextCompaction(messages, 8192, true)).toBe(false)
+      expect(
+        needsContextCompaction([{ role: 'user', content: 'x'.repeat(30000) }], 8192, true)
+      ).toBe(true)
+    }
+  )
+  it('leaves space for a subsequent small tool result after eviction', async () => {
+    const target = journal('headroom')
+    const messages = await run(target, 30)
+    const ceiling = 10000
+    const result = microCompactAgentMessages(messages, contextCompactionTarget(ceiling), target)
+    expect(result.changed).toBe(true)
+    expect(result.withinBudget).toBe(true)
+    expect(
+      needsContextCompaction(
+        [...result.messages, { role: 'user', content: 'next result '.repeat(100) }],
+        ceiling,
+        false
+      )
+    ).toBe(false)
   })
 })

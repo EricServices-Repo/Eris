@@ -43,7 +43,23 @@ export function MemoryTiers({ tiers }: { tiers: NonNullable<MemoryUsageStatus['t
           </small>
           {model && (
             <>
+              {model.requestedContext !== undefined && (
+                <p>Requested window: {model.requestedContext.toLocaleString()} tokens</p>
+              )}
+              <p>
+                Native model window: {model.trainContextSize?.toLocaleString() ?? 'Unavailable'}{' '}
+                tokens
+              </p>
               <p>Allocated window: {model.contextSize.toLocaleString()} tokens</p>
+              {model.inputBudget !== undefined && (
+                <p>
+                  Input budget: {model.inputBudget.toLocaleString()} tokens · includes instructions,
+                  tools and evidence
+                </p>
+              )}
+              {model.outputReserve !== undefined && (
+                <p>Reply reserve: {model.outputReserve.toLocaleString()} tokens</p>
+              )}
               <p>
                 GPU layers:{' '}
                 {layersKnown ? `${model.gpuLayers} / ${model.totalLayers}` : 'Unavailable'}

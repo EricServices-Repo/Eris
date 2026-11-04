@@ -11,6 +11,10 @@ export type MemoryUsageStatus = {
     model: null | {
       ref: string
       contextSize: number
+      requestedContext?: number
+      trainContextSize?: number
+      inputBudget?: number
+      outputReserve?: number
       gpuLayers?: number
       totalLayers?: number
       kvBytes?: number
