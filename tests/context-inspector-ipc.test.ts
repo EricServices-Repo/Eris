@@ -251,6 +251,18 @@ describe('RAM-CTX-042 project fact promotion', () => {
     } as never)
   })
 
+  it('passes the fact the user chose to replace and rejects a malformed one', async () => {
+    const supersedes = '00000000-0000-4000-8000-000000000001'
+    await promote({ threadId: 'same', pinId: 'pin-1', supersedes })
+    expect(promoteProjectFact).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: 'registered-A', pin, supersedes })
+    )
+    await expect(
+      promote({ threadId: 'same', pinId: 'pin-1', supersedes: '../other' })
+    ).rejects.toThrow()
+    expect(promoteProjectFact).toHaveBeenCalledTimes(1)
+  })
+
   it('takes the text from the saved pin, never from the request', async () => {
     await promote({ threadId: 'same', pinId: 'pin-1' })
     expect(promoteProjectFact).toHaveBeenCalledWith(
