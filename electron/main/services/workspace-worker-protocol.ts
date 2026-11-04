@@ -7,6 +7,7 @@ interface AdditionalWorkspaceResults {
   'context-archive-search': import('../../../src/shared/archive-context').ArchiveContextSearch
   'context-thread-summary': import('../../../src/shared/thread-summary').ThreadSummary | null
   'context-journal-write': boolean
+  'context-journal-clear': number
   'context-journal-search': import('../../../src/shared/context-journal').DurableJournalHit[]
   'context-journal-read': import('../../../src/shared/context-journal').DurableJournalRead
   'context-reference-sources': import('../../../src/shared/reference-binding').ReferenceSourceResult
@@ -74,6 +75,7 @@ export type WorkspaceRequest =
       projectRoot?: string | null
     }
   | { type: 'context-thread-summary'; dir: string; id: string; projectRoot?: string | null }
+  | { type: 'context-journal-clear'; dir: string }
   | { type: 'chat-close'; dir: string }
   | { type: 'chat-list'; dir: string }
   | { type: 'chat-get'; dir: string; id: string; page?: ChatPage }

@@ -367,6 +367,8 @@ export interface IdeApi {
     supersedes?: string
   }) => Promise<import('./project-facts').ProjectFact>
   revokeProjectFact: (id: string) => Promise<boolean>
+  /** Deletes saved tool output for the open workspace's chats and chats outside any workspace. */
+  clearSavedToolOutput: () => Promise<{ removed: number }>
   getChat: (id: string, page?: { before?: number; limit?: number }) => Promise<ChatThread | null>
   appendChatMessage: (
     id: string,

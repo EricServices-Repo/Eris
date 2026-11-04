@@ -169,7 +169,7 @@ export function settingFields(agentIds: string[]): SettingField[] {
     },
     {
       cat: 'memory',
-      hint: 'Tool output stays searchable after a run, with secrets filtered first. Turning this off stops new saves and does not change the current run.',
+      hint: 'Tool output stays searchable after a run, with secrets filtered first. Turning this off stops new saves and keeps what was saved; use Delete saved tool output in Memory to remove it. The current run is not changed.',
       label: 'Save tool output with the conversation',
       path: ['agent', 'contextMemory', 'persistToolOutput'],
       type: 'boolean'

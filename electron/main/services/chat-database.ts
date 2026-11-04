@@ -24,6 +24,7 @@ import {
 import { DatabaseSync } from 'node:sqlite'
 import { buildThreadSummary } from './context-thread-summary'
 import {
+  clearJournal,
   installJournalStore,
   purgeJournal,
   readJournal,
@@ -546,6 +547,20 @@ export class ChatDatabase {
       purgeJournal(this.db, thread.id, this.memoryControls(thread.id))
       return saved
     })
+  }
+  /**
+   * Purge saved tool output in every conversation here. Freed pages are zeroed and the
+   * write-ahead log is truncated, so the text does not linger in the database files.
+   */
+  journalClear() {
+    this.db.exec('PRAGMA secure_delete=ON')
+    try {
+      const removed = this.transaction(() => clearJournal(this.db))
+      this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+      return removed
+    } finally {
+      this.db.exec('PRAGMA secure_delete=OFF')
+    }
   }
   journalWrite(id: string, entry: DurableJournalEntry, maxBytes: number) {
     return this.transaction(() => writeJournalEntry(this.db, id, entry, maxBytes))

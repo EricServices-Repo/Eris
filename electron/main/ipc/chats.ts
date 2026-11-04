@@ -25,11 +25,7 @@ import { MemoryControlsSchema } from '../../../src/shared/context-memory'
 import { getResolvedSettings } from '../services/settings'
 import { deleteConversationEvidence } from './storage'
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
-import {
-  listProjectFacts,
-  promoteProjectFact,
-  revokeProjectFact
-} from '../services/project-facts'
+import { listProjectFacts, promoteProjectFact, revokeProjectFact } from '../services/project-facts'
 import { deleteRule, listRules, saveRule } from '../services/rules'
 import {
   listChats,
@@ -314,6 +310,20 @@ export function registerChatsIpc(): void {
   ipcMain.handle('contextMemory:revokeFact', (event, id: unknown) =>
     revokeProjectFact(factWorkspace(event).workspaceId, z.string().uuid().parse(id))
   )
+  ipcMain.handle('contextMemory:clearToolOutput', async (event) => {
+    if (
+      !appState.mainWindow ||
+      event.sender !== appState.mainWindow.webContents ||
+      event.senderFrame !== event.sender.mainFrame
+    )
+      throw new Error('Unauthorized tool output request')
+    const root = appState.currentWorkspace
+    const dirs = [userChatsDir(), ...(root ? [workspaceChatsDir(root)] : [])]
+    let removed = 0
+    for (const dir of dirs)
+      removed += await workspaceRequest({ type: 'context-journal-clear', dir })
+    return { removed }
+  })
   ipcMain.handle('chats:list', () => listChats(appState.currentWorkspace))
   ipcMain.handle(
     'chats:get',

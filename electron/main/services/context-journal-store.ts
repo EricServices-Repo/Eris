@@ -168,6 +168,16 @@ export function purgeJournal(db: DatabaseSync, id: string, controls: MemoryContr
   }
 }
 
+/**
+ * Delete every saved tool output in this database, on the user's request. Turning saving
+ * off only stops new saves; this is the separate purge. Returns the entries removed.
+ */
+export function clearJournal(db: DatabaseSync) {
+  const n = Number(db.prepare('SELECT COUNT(*) AS n FROM context_journal').get()!.n)
+  db.exec('DELETE FROM context_journal_terms; DELETE FROM context_journal;')
+  return n
+}
+
 function snippetFor(text: string | null, terms: readonly string[]) {
   if (!text) return ''
   const lower = text.toLowerCase()
