@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.13 — 2026-11-03
+
+- Rebuild with model-aware long context limits, reduced compaction churn, correct Eris-Dev context allocation, and integrated memory retention and dispatch fixes.
+
 ## 0.6.12 — 2026-11-03
 
 - Rebuild with safer agent task completion, protected journal memory accounting, clearer Auto model selection, stronger workspace mutation guards, and Eris-Dev corpus validation.
