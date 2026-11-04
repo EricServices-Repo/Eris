@@ -32,11 +32,17 @@ export type ThreadSummary = {
     corruptMessages: number
     /** False when the scan limits stopped before the oldest message. */
     complete: boolean
+    /** Which limit stopped an incomplete scan. */
+    stoppedBy?: 'messages' | 'bytes' | 'time'
   }
   /** Items that matched but did not fit, by kind. */
   omitted: Record<ThreadSummaryItem['kind'], number>
   items: ThreadSummaryItem[]
+  /** Worker time spent building it. Not part of the digest. */
+  elapsedMs?: number
 }
+
+const STOPPED = { messages: 'message limit', bytes: 'size limit', time: 'time limit' } as const
 
 const HEADINGS: Array<[ThreadSummaryItem['kind'], string]> = [
   ['unfinished', 'Unfinished work'],
@@ -51,7 +57,7 @@ export function threadSummaryText(summary: ThreadSummary) {
   const lines = [
     `Thread summary v${summary.version} · deterministic · ${summary.digest.slice(0, 12)} · ` +
       `${coverage.scannedMessages} of ${coverage.totalMessages} messages read` +
-      `${coverage.complete ? '' : ' (older messages not read)'} · ` +
+      `${coverage.complete ? '' : ` (older messages not read${coverage.stoppedBy ? `: ${STOPPED[coverage.stoppedBy]}` : ''})`} · ` +
       `${coverage.excludedMessages} excluded · ${coverage.corruptMessages} unreadable · ` +
       `${dropped} items over the limit`
   ]
