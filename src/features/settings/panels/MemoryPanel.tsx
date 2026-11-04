@@ -140,6 +140,7 @@ export function MemoryPanel({
   const [notice, setNotice] = useState('')
   const [saving, setSaving] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const refresh = useRef<() => void>(() => {})
   useEffect(() => {
     setUsage(null)
@@ -432,6 +433,46 @@ export function MemoryPanel({
           </form>
         )}
         <p role="status">{notice}</p>
+      </section>
+      <section className="memory-section" aria-label="Saved tool output">
+        <h3>Saved tool output</h3>
+        <p>
+          Turning off “Save tool output with the conversation” only stops new saves. Deleting
+          removes output already saved for chats in this workspace and chats outside any workspace.
+          The conversations themselves, and the run in progress, are not changed.
+        </p>
+        <div className="memory-actions">
+          <button
+            className="btn"
+            type="button"
+            disabled={clearing}
+            onClick={async () => {
+              if (
+                !window.confirm(
+                  'Permanently delete saved tool output for this workspace and for chats outside any workspace?'
+                )
+              )
+                return
+              setClearing(true)
+              setNotice('')
+              try {
+                const { removed } = await window.ide.clearSavedToolOutput()
+                setNotice(
+                  removed
+                    ? `Deleted ${removed} saved tool output ${removed === 1 ? 'entry' : 'entries'}.`
+                    : 'There was no saved tool output to delete.'
+                )
+                refresh.current()
+              } catch (failure) {
+                setNotice(`Could not delete saved tool output: ${String(failure)}`)
+              } finally {
+                setClearing(false)
+              }
+            }}
+          >
+            {clearing ? 'Deleting…' : 'Delete saved tool output'}
+          </button>
+        </div>
       </section>
     </div>
   )

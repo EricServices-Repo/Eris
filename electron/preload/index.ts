@@ -135,6 +135,7 @@ const api: IdeApi = {
   listProjectFacts: () => ipcRenderer.invoke('contextMemory:projectFacts'),
   promoteProjectFact: (input) => ipcRenderer.invoke('contextMemory:promoteFact', input),
   revokeProjectFact: (id) => ipcRenderer.invoke('contextMemory:revokeFact', id),
+  clearSavedToolOutput: () => ipcRenderer.invoke('contextMemory:clearToolOutput'),
   getChat: (id, page) => ipcRenderer.invoke('chats:get', id, page),
   appendChatMessage: (id, message, model, workspacePath) =>
     ipcRenderer.invoke('chats:append', id, message, model, workspacePath),

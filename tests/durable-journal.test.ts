@@ -99,6 +99,22 @@ describe('durable run journal', () => {
     expect(rows('context_journal_terms')).toBe(0)
   })
 
+  it('deletes every saved output on request and keeps the conversation', async () => {
+    db.journalWrite(THREAD, entry(), 16 * MIB)
+    db.journalWrite(THREAD, entry({ ref: 'bbbbbbbbbbbb', seq: 2 }), 16 * MIB)
+    expect(
+      await handleWorkspaceRequest({ type: 'context-journal-clear', dir: folder } as never)
+    ).toBe(2)
+    expect(rows('context_journal')).toBe(0)
+    expect(rows('context_journal_terms')).toBe(0)
+    expect(db.journalSearch(THREAD, 'ledger', 5)).toEqual([])
+    expect(db.get(THREAD)?.messages).toHaveLength(4)
+    // Later saves still work, and clearing an empty store is not an error.
+    expect(db.journalWrite(THREAD, entry(), 16 * MIB)).toBe(true)
+    expect(db.journalClear()).toBe(1)
+    expect(db.journalClear()).toBe(0)
+  })
+
   it('removes entries when the source that started the run is forgotten', () => {
     db.journalWrite(THREAD, entry(), 16 * MIB)
     db.memoryControls(THREAD, { ...db.memoryControls(THREAD), forgotten: ['m2'] })

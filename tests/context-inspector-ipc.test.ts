@@ -238,6 +238,30 @@ describe('Read-only memory usage IPC', () => {
     await expect(pending).rejects.toThrow('Workspace changed')
   })
 })
+describe('saved tool output purge', () => {
+  const clear = (source: unknown = event) =>
+    h.handlers.get('contextMemory:clearToolOutput')!(source, undefined) as Promise<{
+      removed: number
+    }>
+
+  it('clears chats outside a workspace and the open workspace, and sums the result', async () => {
+    vi.mocked(workspaceRequest)
+      .mockResolvedValueOnce(2 as never)
+      .mockResolvedValueOnce(3 as never)
+    await expect(clear()).resolves.toEqual({ removed: 5 })
+    const dirs = vi.mocked(workspaceRequest).mock.calls.map(([request]) => request)
+    expect(dirs).toEqual([
+      { type: 'context-journal-clear', dir: expect.any(String) },
+      { type: 'context-journal-clear', dir: expect.stringContaining('A') }
+    ])
+  })
+
+  it('refuses a request from anything but the main frame', async () => {
+    await expect(clear({ sender, senderFrame: {} })).rejects.toThrow('Unauthorized')
+    await expect(clear({ sender: {}, senderFrame: {} })).rejects.toThrow('Unauthorized')
+    expect(workspaceRequest).not.toHaveBeenCalled()
+  })
+})
 describe('RAM-CTX-042 project fact promotion', () => {
   const promote = (raw: unknown, source: unknown = event) =>
     h.handlers.get('contextMemory:promoteFact')!(source, raw) as Promise<{ text: string }>
