@@ -213,3 +213,37 @@ describe('reporting', () => {
     expect(facts).toMatchObject({ gpuLayers: 1, kvBytes: undefined })
   })
 })
+
+describe('native long-window safety', () => {
+  it.each([true, false])(
+    'bounds actual context creation to the trained window (GPU=%s)',
+    async (gpu) => {
+      const createContext = vi.fn(async (_model, options) => ({
+        contextSize: options.contextSize.max
+      }))
+      const placed = await placeModel({
+        load: async () => ({ trainContextSize: 8192 }),
+        createContext,
+        disposeModel: async () => {},
+        modelPath: 'm.gguf',
+        plan: { min: 16384, target: 262144 },
+        gpu,
+        allowCpuSpill: false
+      })
+      expect(placed.context.contextSize).toBe(8192)
+      expect(createContext.mock.calls.every(([, options]) => options.contextSize.max <= 8192)).toBe(
+        true
+      )
+    }
+  )
+  it('keeps full GPU offload while shrinking a 262K request to the allocated window', async () => {
+    const hardware = device({ biggestWindow: 8192 })
+    const result = await place(hardware, {
+      plan: { min: 8192, target: 262144 },
+      allowCpuSpill: false
+    })
+    expect(result.context).toEqual({ contextSize: 8192 })
+    expect(result.placement.allowedSpill).toBe(false)
+    expect(hardware.loads.every((load) => load.gpuLayers === 'max')).toBe(true)
+  })
+})

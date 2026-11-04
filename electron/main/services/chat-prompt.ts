@@ -1,3 +1,4 @@
+import { modelInputBudget } from '../../../src/shared/model-context'
 import type { AppSettings, ChatPromptInput } from '../../../src/shared/settings-schema'
 import { contractForAgent } from '../../../src/shared/agent-contract'
 import {
@@ -228,7 +229,10 @@ export function buildChatMessages(
   const allocation =
     options.allocation ??
     allocateContext(
-      Math.floor((settings.models.contextWindow || 32768) * 0.65),
+      modelInputBudget(
+        settings.models.contextWindow || 32768,
+        Math.min(16384, Math.floor((settings.models.contextWindow || 32768) * 0.3))
+      ),
       lean ? 'agent' : 'chat'
     )
   const { recent: history, summary: historySummary } = compactHistory(

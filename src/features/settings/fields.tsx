@@ -90,7 +90,7 @@ export function settingFields(agentIds: string[]): SettingField[] {
     {
       cat: 'composer',
       label: 'Context window',
-      hint: 'Tokens available to the model',
+      hint: 'Requested tokens (512–2,097,152). Native metadata and available memory determine the actual window; provider models can have individual overrides.',
       path: ['models', 'contextWindow'],
       type: 'number'
     },

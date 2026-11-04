@@ -1,3 +1,4 @@
+import { MAX_CONTEXT_TOKENS } from '../../src/shared/model-context'
 /** Dedicated development Electron entry, no renderer or production IPC surface. */
 import { app } from 'electron'
 import { z } from 'zod'
@@ -10,7 +11,7 @@ const Input = z
   .object({
     live: z.literal(true),
     models: z.array(z.string().min(1).max(2048)).min(1).max(8),
-    context: z.number().int().min(1024).max(131072).default(8192),
+    context: z.number().int().min(1024).max(MAX_CONTEXT_TOKENS).default(8192),
     repeats: z.number().int().min(1).max(10).default(2),
     maxCalls: z.number().int().min(1).max(10000),
     maxOutputTokens: z.number().int().min(128).max(10_000_000),

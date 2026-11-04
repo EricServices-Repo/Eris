@@ -1,3 +1,4 @@
+import { MAX_CONTEXT_TOKENS } from '@/shared/model-context'
 import { useMemo, useState } from 'react'
 import { isLoopbackUrl } from '@/shared/model-destination'
 import type { AppSettings, ModelConnection, ModelsStatus } from '@/shared/settings-schema'
@@ -71,6 +72,7 @@ const PRESETS: ConnectionPreset[] = [
 ]
 
 type Draft = {
+  modelLimits: NonNullable<ModelConnection['modelLimits']>
   toolProtocol?: ModelConnection['toolProtocol']
   recallApproved: boolean
   id: string
@@ -87,6 +89,7 @@ type Draft = {
 
 function toDraft(conn: ModelConnection, hasStoredKey: boolean): Draft {
   return {
+    modelLimits: conn.modelLimits ?? {},
     id: conn.id,
     name: conn.name,
     toolProtocol: conn.toolProtocol,
@@ -154,6 +157,7 @@ export function ModelConnectionsPanel({
     setInfo(null)
     setDraft({
       recallApproved: false,
+      modelLimits: {},
       id: `conn-${preset.provider}-${Date.now().toString(36)}`,
       name: preset.name,
       provider: preset.provider,
@@ -208,6 +212,7 @@ export function ModelConnectionsPanel({
         baseUrl,
         apiKeyRef,
         models: parseModels(draft.modelsText),
+        modelLimits: draft.modelLimits,
         ...(draft.recallApproved && !isLoopbackUrl(baseUrl) ? { recallApprovedUrl: baseUrl } : {})
       }
       const others = resolved.models.connections.filter((c) => c.id !== draft.id)
@@ -328,6 +333,53 @@ export function ModelConnectionsPanel({
           spellCheck={false}
         />
       </label>
+      {parseModels(draft.modelsText).map((model) => (
+        <div className="field" key={model}>
+          <span>{model} · context limit (tokens)</span>
+          <input
+            type="number"
+            min={512}
+            max={MAX_CONTEXT_TOKENS}
+            step={1}
+            placeholder="Use the global context setting"
+            value={draft.modelLimits[model]?.contextWindow ?? ''}
+            onChange={(e) => {
+              const next = { ...draft.modelLimits }
+              if (!e.target.value) delete next[model]
+              else next[model] = { ...next[model], contextWindow: Number(e.target.value) }
+              setDraft({ ...draft, modelLimits: next })
+            }}
+          />
+          <span className="model-conn-hint">
+            Set the window supported by this model and server, up to 2,097,152. This overrides the
+            global request; it does not certify server capacity.
+          </span>
+          {draft.modelLimits[model] && (
+            <label>
+              Maximum output tokens (optional)
+              <input
+                type="number"
+                min={128}
+                max={MAX_CONTEXT_TOKENS}
+                placeholder="16,384"
+                value={draft.modelLimits[model]?.maxOutputTokens ?? ''}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    modelLimits: {
+                      ...draft.modelLimits,
+                      [model]: {
+                        ...draft.modelLimits[model]!,
+                        maxOutputTokens: e.target.value ? Number(e.target.value) : undefined
+                      }
+                    }
+                  })
+                }
+              />
+            </label>
+          )}
+        </div>
+      ))}
       <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         <input
           type="checkbox"

@@ -1094,7 +1094,9 @@ function App() {
                       value={context}
                       onChange={(e) => setContext(Number(e.target.value))}
                     >
-                      {[4096, 8192, 16384, 32768].map((v) => (
+                      {[
+                        4096, 8192, 16384, 32768, 65536, 128000, 262144, 524288, 1010000, 2097152
+                      ].map((v) => (
                         <option key={v} value={v}>
                           {v.toLocaleString()} tokens
                         </option>

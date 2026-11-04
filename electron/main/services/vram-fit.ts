@@ -1,3 +1,4 @@
+import { boundedContextWindow, validContextWindow } from '../../../src/shared/model-context'
 /**
  * Fit local GGUFs to the VRAM Eris can actually use.
  * Shared-GPU free memory wins; otherwise the best GPU's free memory;
@@ -80,16 +81,11 @@ export function inferenceBudgetBytes(input: VramBudgetInput): number {
   return 0
 }
 
-function clamp(n: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, n))
-}
-
 /**
  * Context range passed to node-llama-cpp so it can grow up to what VRAM allows.
- * Composer Lite loads 32k. Larger local and full models may use up to 64k,
- * still bounded by the model card and the settings window.
+ * The model metadata and requested setting bound the window. The native allocator
+ * then finds what fits; a product-wide 32K/64K cap must not truncate newer models.
  */
-export const LITE_CONTEXT_MAX = 32_768
 /** Max tokens a built-in model may write in one reply. */
 export const REPLY_MAX_TOKENS = 16_384
 
@@ -109,7 +105,7 @@ export function localPerformanceContextMax(options: {
   modelBytes?: number
   vramBudgetBytes?: number
 }): number {
-  const requested = clamp(options.requested, 512, 65_536)
+  const requested = boundedContextWindow(options.requested)
   const modelBytes = Math.max(0, options.modelBytes ?? 0)
   const budgetBytes = Math.max(0, options.vramBudgetBytes ?? 0)
 
@@ -140,9 +136,9 @@ export function contextLimits(options: {
   settingsContext?: number
 }): { min: number; max: number } {
   const builtinLite = options.tier === 'lite' && options.role !== 'local'
-  const settings = clamp(options.settingsContext || 32768, 512, 131072)
-  const model = clamp(options.modelContext || settings, 512, 131072)
-  const cap = Math.min(settings, model, builtinLite ? LITE_CONTEXT_MAX : 65536)
+  const settings = boundedContextWindow(options.settingsContext || 32768)
+  const model = boundedContextWindow(options.modelContext || 32768)
+  const cap = Math.min(settings, model)
   const min = Math.min(builtinLite ? 4096 : 8192, cap)
   return { min, max: Math.max(min, cap) }
 }
@@ -286,10 +282,12 @@ export async function placeModel<M, C>(input: {
   /** A context failure must not leave model weights occupying VRAM. */
   const withContext = async (model: M, span: { min: number; max: number }, floor?: number) => {
     try {
+      const trained = (model as { trainContextSize?: number }).trainContextSize
+      const max = validContextWindow(trained) ? Math.min(span.max, trained) : span.max
       return await createContextWithVramFallback(
         (options) => createContext(model, options),
-        span,
-        floor
+        { min: Math.min(span.min, max), max },
+        floor === undefined ? undefined : Math.min(floor, max)
       )
     } catch (error) {
       await disposeModel(model)

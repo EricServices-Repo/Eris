@@ -293,3 +293,35 @@ describe('RAM-CTX-055 RAM tier sizing mode', () => {
     expect(resolved({ mode: 'manual', maxMemoryMiB: 1025 }).maxMemoryMiB).toBe(128)
   })
 })
+
+describe('large-context settings', () => {
+  it.each([250000, 262144, 1010000, 2097152])(
+    'round trips a %i-token context and per-endpoint limits',
+    (contextWindow) => {
+      const raw = structuredClone(getDefaults())
+      raw.models.contextWindow = contextWindow
+      raw.models.connections.push({
+        id: 'long',
+        name: 'Long model',
+        type: 'openai-compatible',
+        provider: 'custom',
+        enabled: true,
+        baseUrl: 'https://example.com/v1',
+        apiKeyRef: '',
+        models: ['m'],
+        modelLimits: { m: { contextWindow, maxOutputTokens: 32768 } }
+      })
+      const parsed = SettingsSchema.parse(JSON.parse(JSON.stringify(raw)))
+      expect(parsed.models.contextWindow).toBe(contextWindow)
+      expect(parsed.models.connections.at(-1)?.modelLimits?.m.contextWindow).toBe(contextWindow)
+    }
+  )
+  it.each([0, -1, Infinity, 262144.5, 2097153])(
+    'rejects an invalid context %s',
+    (contextWindow) => {
+      const raw = structuredClone(getDefaults())
+      raw.models.contextWindow = contextWindow
+      expect(SettingsSchema.safeParse(raw).success).toBe(false)
+    }
+  )
+})

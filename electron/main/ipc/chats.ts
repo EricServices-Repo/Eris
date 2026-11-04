@@ -1,3 +1,4 @@
+import { resolveModelCapabilities } from '../services/model-capabilities'
 import { inferenceGovernorStatus } from '../services/inference-governor'
 import { currentLoadedModel } from '../services/model-runtime'
 import { runJournalUsage } from '../services/agent/run-journal'
@@ -109,6 +110,9 @@ export function registerChatsIpc(): void {
     const namespace = activeThreadId ? memoryKey(root, activeThreadId) : undefined
     const dispatch = namespace ? lastContextDispatch(namespace) : undefined
     const loaded = currentLoadedModel()
+    const capability = loaded
+      ? resolveModelCapabilities(getResolvedSettings(root), loaded.ref)
+      : null
     const budget = configureContextTier()
     return {
       tiers: {
@@ -116,6 +120,10 @@ export function registerChatsIpc(): void {
           ? {
               ref: loaded.ref,
               contextSize: loaded.contextSize,
+              requestedContext: capability?.requestedContext,
+              trainContextSize: loaded.trainContextSize,
+              inputBudget: capability?.promptBudget,
+              outputReserve: capability?.outputReserve,
               gpuLayers: loaded.gpuLayers,
               totalLayers: loaded.totalLayers,
               kvBytes: loaded.kvBytes,

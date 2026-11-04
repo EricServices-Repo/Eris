@@ -1,9 +1,15 @@
+import { boundedContextWindow, modelInputBudget } from '../../../src/shared/model-context'
 import type { AppSettings } from '../../../src/shared/settings-schema'
 import { contextPlan, findBuiltinEntry, isBuiltinRef, isNativeGgufRef } from './builtin-model'
 import { lastGpuAccelStatus } from './gpu-accel'
 import { findLocalEntry, isLocalRef, localEntryAsBuiltin } from './local-model'
 import { loadedModelFacts } from './model-runtime'
-import { serverWindow, serverWindowFacts } from './ollama-runtime'
+import {
+  advertisedModelLimits,
+  declaredModelLimits,
+  serverWindow,
+  serverWindowFacts
+} from './ollama-runtime'
 import { contextLimits, REPLY_MAX_TOKENS } from './vram-fit'
 import { toolProtocolFor } from './tool-protocol'
 export interface ModelCapabilities {
@@ -14,7 +20,13 @@ export interface ModelCapabilities {
   outputCap: number
   outputReserve: number
   /** measured-allocation > runtime-plan > unverified-window > configured-ceiling. */
-  contextSource: 'measured-allocation' | 'runtime-plan' | 'unverified-window' | 'configured-ceiling'
+  contextSource:
+    | 'measured-allocation'
+    | 'runtime-plan'
+    | 'unverified-window'
+    | 'configured-ceiling'
+    | 'user-declared'
+    | 'provider-declared'
   tools: 'native-tools' | 'text-tools'
   jsonSchema: 'grammar' | 'unverified'
   /** How a compile counts right now: only a resident model can tokenize. */
@@ -30,7 +42,10 @@ export function nativeEntry(model: string) {
 function contextCapacity(settings: AppSettings, model: string, requestedContext: number) {
   const entry = nativeEntry(model)
   const measured = entry && loadedModelFacts(entry.ref)
-  if (measured)
+  if (
+    measured &&
+    (measured.requestedContext === undefined || measured.requestedContext === requestedContext)
+  )
     return { contextCeiling: measured.contextSize, contextSource: 'measured-allocation' as const }
   if (entry)
     return {
@@ -43,7 +58,7 @@ function contextCapacity(settings: AppSettings, model: string, requestedContext:
   return {
     contextCeiling: isBuiltinRef(model)
       ? contextLimits({ settingsContext: requestedContext }).max
-      : Math.min(128000, Math.max(512, requestedContext)),
+      : boundedContextWindow(requestedContext),
     contextSource: 'configured-ceiling' as const
   }
 }
@@ -69,22 +84,31 @@ export function contextProvenance(settings: AppSettings, model: string) {
 }
 /** Budgets follow the allocation; settings and the model card only bound what is requested. */
 export function resolveModelCapabilities(settings: AppSettings, model: string): ModelCapabilities {
-  const requestedContext = settings.models.contextWindow || 32768
+  const declared = declaredModelLimits(settings, model)
+  const requestedContext = boundedContextWindow(
+    declared?.contextWindow ?? settings.models.contextWindow
+  )
   const { contextCeiling, contextSource } = contextCapacity(settings, model, requestedContext)
   const native = isNativeGgufRef(model)
   const entry = nativeEntry(model)
+  const advertisedOutput = advertisedModelLimits(settings, model)?.maxOutputTokens
+  const outputLimit = declared?.maxOutputTokens ?? advertisedOutput ?? 16384
   const outputReserve = Math.max(
     128,
-    Math.min(native ? REPLY_MAX_TOKENS : 16384, Math.floor(contextCeiling * 0.3))
+    Math.min(
+      native ? REPLY_MAX_TOKENS : Math.min(outputLimit, advertisedOutput ?? outputLimit),
+      Math.floor(contextCeiling * 0.3)
+    )
   )
   return {
     model,
     requestedContext,
     contextCeiling,
-    promptBudget: Math.floor(contextCeiling * 0.65),
+    promptBudget: modelInputBudget(contextCeiling, outputReserve),
     outputCap: native ? REPLY_MAX_TOKENS : outputReserve,
     outputReserve,
-    contextSource,
+    contextSource:
+      declared && contextSource === 'configured-ceiling' ? 'user-declared' : contextSource,
     tools: toolProtocolFor(settings, model),
     jsonSchema: native ? 'grammar' : 'unverified',
     tokenCounting: entry && loadedModelFacts(entry.ref) ? 'native-tokenizer' : 'character-estimate'

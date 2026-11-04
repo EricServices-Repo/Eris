@@ -1,3 +1,4 @@
+import { modelInputBudget } from '../src/shared/model-context'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'http'
 import type { AddressInfo } from 'net'
@@ -41,7 +42,12 @@ function fakeOllama(behaviour: {
   show?: number
   chat?: string[]
 }) {
-  const seen: { chat: ChatBody[]; v1: number; show: number } = { chat: [], v1: 0, show: 0 }
+  const seen: {
+    chat: ChatBody[]
+    v1: number
+    show: number
+    v1Bodies: Array<{ messages: Array<{ content: string }> }>
+  } = { chat: [], v1: 0, show: 0, v1Bodies: [] }
   const server: Server = createServer((request, response) => {
     let raw = ''
     request.on('data', (chunk) => (raw += chunk))
@@ -74,6 +80,7 @@ function fakeOllama(behaviour: {
         return
       }
       seen.v1++
+      if (raw) seen.v1Bodies.push(JSON.parse(raw))
       response.setHeader('Content-Type', 'text/event-stream')
       response.end('data: {"choices":[{"delta":{"content":"compat"},"finish_reason":"stop"}]}\n\n')
     })
@@ -146,6 +153,61 @@ describe('Ollama window management', () => {
     })
   })
 
+  it('sends >128K input and a 262K window through the production provider adapter', async () => {
+    const fake = fakeOllama({ contextLength: 262144 })
+    server = fake.server
+    const settings = settingsFor(
+      connectionAt(await start(server), {
+        modelLimits: { m: { contextWindow: 262144 } }
+      })
+    )
+    const content = 'x'.repeat(450000)
+    for await (const _ of streamProviderChat({
+      settings,
+      model: 'm',
+      messages: [{ role: 'user', content }],
+      temperature: 0,
+      getSecret: noSecret
+    } as never));
+    expect(fake.seen.chat[0]?.options.num_ctx).toBe(262144)
+    expect(fake.seen.chat[0]?.messages[0]?.content).toBe(content)
+    expect(fake.seen.v1).toBe(0)
+  })
+
+  it('preserves >128K input through the OpenAI-compatible route with an explicit server limit', async () => {
+    const fake = fakeOllama({})
+    server = fake.server
+    const settings = settingsFor(
+      connectionAt(await start(server), {
+        id: 'vllm',
+        provider: 'custom',
+        modelLimits: { m: { contextWindow: 262144 } }
+      })
+    )
+    const content = 'x'.repeat(450000)
+    for await (const _ of streamProviderChat({
+      settings,
+      model: 'm',
+      messages: [{ role: 'user', content }],
+      temperature: 0,
+      getSecret: noSecret
+    } as never));
+    expect(fake.seen.chat).toHaveLength(0)
+    expect(fake.seen.v1Bodies[0]?.messages[0]?.content).toBe(content)
+    expect(fake.seen.show).toBe(0)
+  })
+
+  it('limits a large declaration to Ollama model metadata', async () => {
+    const fake = fakeOllama({ contextLength: 8192 })
+    server = fake.server
+    const connection = connectionAt(await start(server), {
+      modelLimits: { m: { contextWindow: 262144 } }
+    })
+    const settings = settingsFor(connection)
+    await prepareModelWindows(settings, ['m'], noSecret)
+    expect(resolveModelCapabilities(settings, 'm').contextCeiling).toBe(8192)
+  })
+
   it('honours keep-loaded per connection', async () => {
     const fake = fakeOllama({})
     server = fake.server
@@ -176,7 +238,9 @@ describe('Ollama window management', () => {
       requested: 16384,
       loaded: 16384
     })
-    expect(resolveModelCapabilities(settings, 'm').promptBudget).toBe(Math.floor(16384 * 0.65))
+    expect(resolveModelCapabilities(settings, 'm').promptBudget).toBe(
+      modelInputBudget(16384, Math.floor(16384 * 0.3))
+    )
   })
 
   it('budgets to a smaller loaded window, but ignores a record from another num_ctx', async () => {

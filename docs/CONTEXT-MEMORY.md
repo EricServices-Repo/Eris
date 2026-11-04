@@ -30,6 +30,12 @@ This table reconciles integrated source `d92fc75` (2026-11-02). The detailed sec
 
 RAM makes evidence retrievable; it does not enlarge the context window. Unified-memory Macs share physical capacity between app state, model weights, KV and other workloads.
 
+## Context-window and compaction update (#385)
+
+The current source removes the generic native 64K/provider 128K caps. Requested windows up to 2,097,152 tokens are validated; actual native allocation still follows GGUF training metadata, settings and resource admission. Existing explicit settings remain unchanged. Provider connections can declare per-model context/output limits, and model-list capacity metadata bounds those requests when supplied. Input budgeting subtracts explicit reply/framing reserves instead of reserving 35% of every large window.
+
+Recovery alone no longer forces compaction. Over-budget cleanup targets headroom, rechecks its result, and refuses ineffective repeated rewriting. Memory settings distinguish requested, trained, allocated and usable input values. See [implementation, configuration and qualification boundaries](fixes/385-model-context-and-compaction.md). This scoped source update does not certify native 262K hardware performance or add YaRN extension.
+
 ## Canonical send and persistence
 
 Normal thread-bound renderer submissions carry no authoritative history. Main validates ownership, admits the task and persists `${requestId}:user`; optimistic retries use the same ID. Canonical recent messages feed intake. After task/project scope resolves, `conversationContext` selects separate historical evidence, excluding the active source and complete sources already represented by admitted recent history.

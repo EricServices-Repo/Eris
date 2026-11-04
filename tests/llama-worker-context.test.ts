@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 /** Drives the real worker entry over its message port with a scripted native runtime. */
 const h = vi.hoisted(() => ({
   sizes: [] as number[],
+  requested: [] as number[],
   posted: [] as Array<Record<string, unknown>>,
   prompts: [] as string[],
   sequencesLeft: 1,
@@ -21,14 +22,17 @@ vi.mock('node-llama-cpp', () => {
       this.disposed = true
     }
   }
-  const createContext = async () => ({
-    contextSize: h.sizes.shift() ?? 512,
-    get sequencesLeft() {
-      return h.sequencesLeft
-    },
-    getSequence: () => ({ dispose() {} }),
-    dispose: async () => {}
-  })
+  const createContext = async (options: { contextSize: { max: number } }) => {
+    h.requested.push(options.contextSize.max)
+    return {
+      contextSize: h.sizes.shift() ?? 512,
+      get sequencesLeft() {
+        return h.sequencesLeft
+      },
+      getSequence: () => ({ dispose() {} }),
+      dispose: async () => {}
+    }
+  }
   const model = {
     tokenize: (text: string) => new Array(Math.ceil(text.length / 4)),
     trainContextSize: 131072,
@@ -111,4 +115,19 @@ describe('llama worker context checks', () => {
     expect(posted('context-allocated').at(-1)).toMatchObject({ contextSize: 1024 })
     expect(h.prompts).toHaveLength(0)
   })
+})
+
+it('reallocates a same-path model when the requested window changes', async () => {
+  const before = posted('loaded').length
+  h.sizes = [8192]
+  h.send!({
+    type: 'load',
+    modelPath: '/m.gguf',
+    contextSize: 262144,
+    contextMin: 8192,
+    requestId: 'bigger-window'
+  })
+  await until(() => posted('loaded').length > before)
+  expect(h.requested.at(-1)).toBe(131072) // model trainContextSize is a hard boundary
+  expect(posted('loaded').at(-1)).toMatchObject({ contextSize: 8192, requestId: 'bigger-window' })
 })

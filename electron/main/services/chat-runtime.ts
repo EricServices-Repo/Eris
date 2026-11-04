@@ -342,6 +342,7 @@ export async function* streamProviderChat(
             }))
         },
         modelRef: model,
+        contextWindow: capabilities.requestedContext,
         maxOutputTokens: capabilities.outputCap,
         messages: compiled
           .filter((m) => m.role === 'system' || m.role === 'user' || m.role === 'assistant')

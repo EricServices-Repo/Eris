@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({
   allocate: 2048 as number | null,
   sent: [] as Array<Array<{ role: string; content: string }>>,
   generated: 0,
+  requestedContext: undefined as number | undefined,
   events: [] as Array<{ type: string; data: Record<string, unknown> }>
 }))
 const local = {
@@ -40,10 +41,12 @@ vi.mock('../electron/main/services/builtin-model', async (original) => {
     ...actual,
     streamBuiltinChat: async function* (request: {
       modelRef: string
+      contextWindow?: number
       messages: Array<{ role: string; content: string }>
       prepareMessages?: () => Promise<Array<{ role: string; content: string }>>
       onTermination?: (termination: { reason: string }) => void
     }) {
+      h.requestedContext = request.contextWindow
       if (h.allocate) recordLoadedModel({ ref: request.modelRef, contextSize: h.allocate })
       const messages = request.prepareMessages ? await request.prepareMessages() : request.messages
       h.sent.push(messages)
@@ -254,4 +257,11 @@ describe('the worker’s last check', () => {
       256
     )
   })
+})
+
+it('passes the request window into native loading rather than consulting only the saved profile', async () => {
+  await send([{ role: 'user', content: 'hi' }], {
+    settings: { ...settings, models: { ...settings.models, contextWindow: 262144 } }
+  })
+  expect(h.requestedContext).toBe(262144)
 })

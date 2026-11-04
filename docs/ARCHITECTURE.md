@@ -4,6 +4,10 @@ Reviewed against integrated `main` `0a54629` on 2026-11-01. Package version: **0
 
 This is the implemented system map. [Documentation index](README.md) identifies the deeper guides; [RAM target architecture](RAM-CONTEXT-ARCHITECTURE.md) and [Amendment 001](RAM-CONTEXT-AMENDMENT-001.md) explicitly separate remaining targets from shipped source. Historical review evidence is not a current backlog or live-model certification.
 
+## Context pipeline update (#385)
+
+The #385 source changes replace generic native/provider context caps with model metadata, endpoint-scoped declarations and measured allocation; accepted requests extend to 2,097,152 tokens. The local allocator retains resource safety and trained-window bounds. Compaction now requires actual capacity pressure, targets headroom and verifies reduction instead of rewriting repeatedly during recovery. See [the detailed context design and configuration](fixes/385-model-context-and-compaction.md). This is a scoped update to the baseline above, not a fresh certification of every subsystem or a released-build claim.
+
 ## Process boundaries and state ownership
 
 ```mermaid

@@ -1,3 +1,4 @@
+import { MAX_CONTEXT_TOKENS } from '../../src/shared/model-context'
 import { mkdirSync, readFileSync, writeFileSync, renameSync, statSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
@@ -14,7 +15,7 @@ import { productionQualityAdapter } from './quality-adapter'
 export const QualityInputSchema = z
   .object({
     models: z.array(z.string().min(1).max(2048)).min(1).max(8),
-    context: z.number().int().min(512).max(128000),
+    context: z.number().int().min(512).max(MAX_CONTEXT_TOKENS),
     repeats: z.number().int().min(1).max(10),
     maxCalls: z.number().int().min(1).max(2000),
     maxOutputTokens: z.number().int().min(128).max(2000000),

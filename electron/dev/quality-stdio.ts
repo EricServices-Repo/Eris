@@ -1,3 +1,4 @@
+import { MAX_CONTEXT_TOKENS } from '../../src/shared/model-context'
 import { createInterface } from 'readline'
 import { z } from 'zod'
 import { productionQualityAdapter } from './quality-adapter'
@@ -15,7 +16,7 @@ export async function qualityStdio(): Promise<void> {
     const input = z
       .object({
         live: z.literal(true),
-        context: z.number().int().min(512).max(128000),
+        context: z.number().int().min(512).max(MAX_CONTEXT_TOKENS),
         model: z.string().min(1).max(2048),
         repeat: z.number().int().min(0).max(9),
         maxCalls: z.number().int().min(1).max(16),
