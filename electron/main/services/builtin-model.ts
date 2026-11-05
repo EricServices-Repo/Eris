@@ -854,6 +854,21 @@ export async function disposeRuntime(): Promise<void> {
   return enqueueRuntime(() => disposeRuntimeUnlocked())
 }
 
+/** Metadata-only cold preparation. No weights, GPU context or native session is loaded. */
+export async function prepareNativeModelWindow(ref: string, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted()
+  if (nativeContextWindow(ref, 0) > 0) return
+  if (isBuiltinRef(ref)) {
+    const entry = findBuiltinEntry(ref)
+    if (entry) await discoverNativeContextWindow(ref, localModelPath(entry), signal)
+  } else if (ref.startsWith('local:')) {
+    const { findLocalEntry, localModelFilePath } = await import('./local-model')
+    signal?.throwIfAborted()
+    const entry = findLocalEntry(ref)
+    if (entry) await discoverNativeContextWindow(ref, localModelFilePath(entry), signal)
+  }
+}
+
 export function contextPlan(
   entry: BuiltinModelManifestEntry,
   vramBudgetBytes?: number,
@@ -888,9 +903,11 @@ function logPlacement(modelPath: string, placement: ModelPlacement) {
 async function ensureRuntimeInProcess(
   modelPath: string,
   entry: BuiltinModelManifestEntry,
-  requestedContext = getResolvedSettings(appState.currentWorkspace).models.contextWindow
+  requestedContext = getResolvedSettings(appState.currentWorkspace).models.contextWindow,
+  signal?: AbortSignal
 ): Promise<RuntimeState> {
   return enqueueRuntime(async () => {
+    signal?.throwIfAborted()
     if (runtime?.modelPath === modelPath && runtimeRequestedContext === requestedContext)
       return runtime
     await disposeRuntimeUnlocked()
@@ -919,7 +936,8 @@ async function ensureRuntimeInProcess(
       gpuStatus.backendDeviceName
     )
 
-    await discoverNativeContextWindow(entry.ref, modelPath)
+    await discoverNativeContextWindow(entry.ref, modelPath, signal)
+    signal?.throwIfAborted()
     const plan = contextPlan(entry, gpuStatus.vramBudgetBytes, requestedContext)
     logInfo('Loading builtin model (in-process)', {
       path: modelPath,
@@ -1066,7 +1084,8 @@ async function ensureWorkerModel(
   const requestId = `load-${Date.now()}`
   const preferEgpu = getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
   const { status: gpuStatus } = await applyLlamaGpuPreference(preferEgpu)
-  await discoverNativeContextWindow(entry.ref, modelPath)
+  await discoverNativeContextWindow(entry.ref, modelPath, signal)
+  signal?.throwIfAborted()
   const plan = contextPlan(entry, gpuStatus.vramBudgetBytes, requestedContext)
   logInfo('Loading builtin model (utilityProcess)', {
     path: modelPath,
@@ -1181,7 +1200,12 @@ async function* streamBuiltinChatInProcess(options: {
 }): AsyncGenerator<string, void, unknown> {
   const llamaCpp = await loadLlamaModule()
   const { LlamaChatSession } = llamaCpp
-  const state = await ensureRuntimeInProcess(options.path, options.entry, options.contextWindow)
+  const state = await ensureRuntimeInProcess(
+    options.path,
+    options.entry,
+    options.contextWindow,
+    options.signal
+  )
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let grammar: any = undefined
   if (options.jsonSchema) {

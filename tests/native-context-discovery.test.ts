@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-const h = vi.hoisted(() => ({ metadata: {} as object, reads: 0 }))
+import { dirname, join } from 'node:path'
+const h = vi.hoisted(() => ({
+  metadata: {} as object,
+  reads: 0,
+  onRead: undefined as undefined | (() => void)
+}))
 vi.mock('node-llama-cpp', () => ({
   readGgufFileInfo: async () => {
     h.reads++
+    h.onRead?.()
     return { metadata: h.metadata }
   }
 }))
@@ -13,7 +18,13 @@ import {
   discoverNativeContextWindow,
   nativeContextWindow
 } from '../electron/main/services/native-context'
-import { contextPlan } from '../electron/main/services/builtin-model'
+import {
+  contextPlan,
+  findBuiltinEntry,
+  localModelPath
+} from '../electron/main/services/builtin-model'
+import { prepareModelWindows } from '../electron/main/services/ollama-runtime'
+import { getDefaults } from '../electron/main/services/settings'
 import type { BuiltinModelManifestEntry } from '../src/shared/settings-schema'
 const dirs: string[] = []
 afterEach(() => dirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true })))
@@ -58,4 +69,37 @@ describe('native GGUF context discovery', () => {
     await discoverNativeContextWindow('local:qwen35', path + '.missing')
     expect(nativeContextWindow('local:qwen35', 8192)).toBe(8192)
   })
+})
+
+it('prepares GGUF capacity before the initial turn budget without loading weights', async () => {
+  const entry = findBuiltinEntry('builtin:composer-lite')!
+  const path = localModelPath(entry)
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, 'metadata-only-fixture')
+  h.metadata = { general: { architecture: 'qwen35' }, qwen35: { context_length: 262144 } }
+  const settings = structuredClone(getDefaults())
+  settings.models.contextWindow = 262144
+  await prepareModelWindows(settings, [entry.ref], () => null)
+  expect(contextPlan(entry, 48 * 1024 ** 3, settings.models.contextWindow).target).toBe(262144)
+})
+
+it('honors cancellation before and during metadata reads without caching a result', async () => {
+  const path = file()
+  const already = new AbortController()
+  already.abort(new Error('stop metadata'))
+  const before = h.reads
+  await expect(discoverNativeContextWindow('local:cancel', path, already.signal)).rejects.toThrow(
+    'stop metadata'
+  )
+  expect(h.reads).toBe(before)
+  const during = new AbortController()
+  h.onRead = () => during.abort(new Error('stop while reading'))
+  try {
+    await expect(discoverNativeContextWindow('local:cancel', path, during.signal)).rejects.toThrow(
+      'stop while reading'
+    )
+    expect(nativeContextWindow('local:cancel', 32768)).toBe(32768)
+  } finally {
+    h.onRead = undefined
+  }
 })

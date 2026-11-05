@@ -100,7 +100,7 @@ export async function probeOllamaModel(
   probes.set(key(connection, model), { maxContext, at: Date.now() })
 }
 
-/** Probe the models a turn will use, before any budget is computed. Never throws. */
+/** Prepare model metadata before any budget is computed. Cancellation propagates. */
 export async function prepareModelWindows(
   settings: AppSettings,
   models: readonly string[],
@@ -109,6 +109,12 @@ export async function prepareModelWindows(
 ): Promise<void> {
   await Promise.all(
     [...new Set(models)].map(async (model) => {
+      signal?.throwIfAborted()
+      if (model.startsWith('builtin:') || model.startsWith('local:')) {
+        const { prepareNativeModelWindow } = await import('./builtin-model')
+        await prepareNativeModelWindow(model, signal)
+        return
+      }
       const connection = resolveConnectionForModel(settings, model)
       if (!connection || !isOllamaConnection(connection)) return
       const apiKey = connection.apiKeyRef ? getSecret(connection.apiKeyRef) : null

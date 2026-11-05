@@ -86,5 +86,18 @@ export type ModelTokenizer = { id: string; tokenize: Tokenize }
 export function modelTokenizer(model: string): ModelTokenizer | null {
   const entry = nativeEntry(model)
   const id = entry && loadedModelFacts(entry.ref) ? residentTokenizerId(entry.ref) : null
-  return id ? { id, tokenize: (texts, signal) => tokenizeWithLoadedModel(texts, signal) } : null
+  return id && entry
+    ? {
+        id,
+        tokenize: async (texts, signal) => {
+          // A concurrent turn may replace the resident model before or during this await.
+          // Never put another model's counts in the captured tokenizer's cache.
+          if (!loadedModelFacts(entry.ref) || residentTokenizerId(entry.ref) !== id) return null
+          const result = await tokenizeWithLoadedModel(texts, signal)
+          return loadedModelFacts(entry.ref) && residentTokenizerId(entry.ref) === id
+            ? result
+            : null
+        }
+      }
+    : null
 }

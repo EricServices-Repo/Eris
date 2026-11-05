@@ -21,6 +21,7 @@ vi.mock('../electron/main/services/local-model', () => ({
   isLocalRef: (ref: string) => ref.startsWith('local:'),
   findLocalEntry: () => local,
   localEntryAsBuiltin: (entry: unknown) => entry,
+  localModelFilePath: () => '/nonexistent-qualification-model.gguf',
   resolveExactLocalRef: (ref: string) => ref
 }))
 vi.mock('../electron/main/services/tool-protocol', () => ({ toolProtocolFor: () => 'text-tools' }))
@@ -264,4 +265,19 @@ it('passes the request window into native loading rather than consulting only th
     settings: { ...settings, models: { ...settings.models, contextWindow: 262144 } }
   })
   expect(h.requestedContext).toBe(262144)
+})
+
+it('admits a cold 262K native request before enforcing its measured allocation', async () => {
+  local.contextWindow = 262144
+  h.allocate = 262144
+  const content = 'x'.repeat(450000)
+  try {
+    await send([{ role: 'user', content }], {
+      settings: { ...settings, models: { ...settings.models, contextWindow: 262144 } }
+    })
+    expect(h.sent[0]?.at(-1)?.content).toContain(content)
+    expect(h.generated).toBe(1)
+  } finally {
+    local.contextWindow = 131072
+  }
 })

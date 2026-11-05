@@ -65,7 +65,8 @@ const evidenceStub = (message: AgentChatMessage, evidence: EvidenceStore | undef
 export function microCompactAgentMessages(
   messages: AgentChatMessage[],
   budgetTokens: number,
-  evidence?: EvidenceStore
+  evidence?: EvidenceStore,
+  tokenCount: (messages: AgentChatMessage[]) => number = estimateTokens
 ): {
   messages: AgentChatMessage[]
   changed: boolean
@@ -73,7 +74,7 @@ export function microCompactAgentMessages(
   evicted: number
   shortened: number
 } {
-  if (estimateTokens(messages) <= budgetTokens) {
+  if (tokenCount(messages) <= budgetTokens) {
     return { messages, changed: false, withinBudget: true, evicted: 0, shortened: 0 }
   }
 
@@ -94,7 +95,7 @@ export function microCompactAgentMessages(
     : nonSystemIndexes
 
   for (const index of order) {
-    if (estimateTokens(compacted) <= budgetTokens) break
+    if (tokenCount(compacted) <= budgetTokens) break
     const message = compacted[index]!
     if (message.content.startsWith(EVICTION_STUB_PREFIX)) continue
     const stub = evidenceStub(message, evidence)
@@ -127,7 +128,7 @@ export function microCompactAgentMessages(
   return {
     messages: compacted,
     changed: evicted + shortened > 0,
-    withinBudget: estimateTokens(compacted) <= budgetTokens,
+    withinBudget: tokenCount(compacted) <= budgetTokens,
     evicted,
     shortened
   }
