@@ -1,3 +1,5 @@
+import { homedir } from 'os'
+import { redactBugReportText } from '../../../src/shared/bug-report-sanitize'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import type { AppSettings } from '../../../src/shared/settings-schema'
@@ -84,24 +86,20 @@ function cleanGoal(goal: string): string {
   return goal.replace(/\s+/g, ' ').trim().slice(0, 140)
 }
 
+/**
+ * Notes and the bootstrapped Summary land in .eris/context.md, which is often committed.
+ * Use the shared redactor: a local copy here missed `Authorization: Bearer <token>`
+ * (only "Bearer" was redacted) and bare provider keys such as sk-proj-… or hf_….
+ */
 function redactSecrets(text: string): string {
-  return text
-    .replace(
-      /\b(api[_-]?key|token|secret|password|passwd|authorization)\b\s*[:=]\s*\S+/gi,
-      '$1=(redacted)'
-    )
-    .replace(/\bBearer\s+[A-Za-z0-9._\-]+/gi, 'Bearer (redacted)')
+  return redactBugReportText(text, homedir())
 }
 
 function buildRunNote(input: AgentRunMemoryInput): string | null {
   if (input.aborted) return null
   const goal = cleanGoal(input.goal)
-  const files = [...new Set(input.filesTouched)]
-    .filter(Boolean)
-    .slice(0, MAX_FILES)
-  const actions = [...new Set(input.actionLog)]
-    .filter(Boolean)
-    .slice(-MAX_ACTIONS)
+  const files = [...new Set(input.filesTouched)].filter(Boolean).slice(0, MAX_FILES)
+  const actions = [...new Set(input.actionLog)].filter(Boolean).slice(-MAX_ACTIONS)
   const hasSignal = files.length > 0 || actions.length > 0
   if (!hasSignal && !input.answerSnippet?.trim()) return null
 
@@ -109,11 +107,7 @@ function buildRunNote(input: AgentRunMemoryInput): string | null {
   if (goal) bits.push(goal)
   if (files.length) bits.push(`files: ${files.join(', ')}`)
   if (actions.length) {
-    bits.push(
-      `did: ${actions
-        .map((a) => a.replace(/\s+/g, ' ').trim().slice(0, 60))
-        .join('; ')}`
-    )
+    bits.push(`did: ${actions.map((a) => a.replace(/\s+/g, ' ').trim().slice(0, 60)).join('; ')}`)
   } else if (input.answerSnippet?.trim()) {
     bits.push(input.answerSnippet.replace(/\s+/g, ' ').trim().slice(0, 120))
   }
@@ -131,17 +125,14 @@ function buildAskUserNote(question: string, reply: string): string {
 }
 
 /** Bootstrap a short Summary when the pin is empty and we learned something. */
-function maybeBootstrapSummary(
-  workspacePath: string,
-  input: AgentRunMemoryInput
-): string | null {
+function maybeBootstrapSummary(workspacePath: string, input: AgentRunMemoryInput): string | null {
   const pin = getWorkspaceContext(workspacePath).pin.trim()
   if (pin) return null
   const files = [...new Set(input.filesTouched)].filter(Boolean).slice(0, 5)
   if (!files.length && !input.actionLog.length) return null
   const goal = cleanGoal(input.goal)
   const lines = [
-    goal ? `Focus: ${goal}` : '',
+    goal ? `Focus: ${redactSecrets(goal)}` : '',
     files.length ? `Recent paths: ${files.join(', ')}` : '',
     'Auto-filled by Eris project memory — edit freely.'
   ].filter(Boolean)
