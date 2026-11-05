@@ -207,7 +207,9 @@ function GpuAccelCard({
           disabled={busy}
           onChange={(e) => void setPrefer(e.target.checked)}
         />
-        <span>Prefer best GPU</span>
+        <span title="Prefer the best GPU while keeping other GPUs available for models that need more memory.">
+          Prefer best GPU
+        </span>
       </label>
       <label className="gpu-accel-toggle">
         <input

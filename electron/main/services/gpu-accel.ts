@@ -292,6 +292,10 @@ function statusMessage(options: {
     return `${priority}. Sharing one model across ${options.vramShare.length} GPUs (${options.vramShare.join(', ')}) via ${backendLabel || 'GPU'} so large models use their combined VRAM.`
   }
 
+  if (options.deviceCount > 1 && (options.backend === 'cuda' || options.backend === 'vulkan')) {
+    return `${priority}. Preferred GPU: ${options.preferred?.name || 'automatic'}. Other GPUs remain available to ${options.backend} for layer placement before CPU fallback; actual sharing depends on the model and backend.`
+  }
+
   if (options.tier === 'egpu' && options.egpu) {
     return `${priority}. Using eGPU (${options.egpu.name}) via ${backendLabel || 'GPU'}.`
   }
@@ -405,31 +409,8 @@ export async function applyLlamaGpuPreference(preferEgpu = true): Promise<{
   status: GpuAccelStatus
 }> {
   const status = await getGpuAccelStatus(preferEgpu)
-  const env: Record<string, string> = {}
-  // Best GPU when preference is on: eGPU → discrete → integrated.
-  const preferred = preferEgpu ? status.preferredGpu : null
-
-  if (preferEgpu && status.backend === 'cuda') {
-    const cuda = await listNvidiaCudaDevices()
-    if (preferred) {
-      const match =
-        cuda.find((d) => preferred.name.toLowerCase().includes(d.name.toLowerCase())) ||
-        cuda.find((d) =>
-          d.name.toLowerCase().includes(preferred.name.toLowerCase().slice(0, 12))
-        ) ||
-        (preferred.kind === 'external' || preferred.kind === 'discrete'
-          ? cuda[cuda.length - 1]
-          : cuda[0] || null)
-      if (match) {
-        env.CUDA_VISIBLE_DEVICES = String(match.index)
-      }
-    }
-  }
-
-  if (preferEgpu && status.backend === 'vulkan' && preferred)
-    env.GGML_VK_VISIBLE_DEVICES = String(Math.max(0, preferred.index))
-  if (preferEgpu && preferred?.kind === 'external' && status.backend === 'metal')
-    env.GGML_METAL_DEVICES = '1'
+  const cuda = preferEgpu && status.backend === 'cuda' ? await listNvidiaCudaDevices() : []
+  const env = llamaGpuPreferenceEnv(preferEgpu, status, cuda)
 
   const key = JSON.stringify(env)
   const changed = key !== appliedEnvKey
@@ -437,7 +418,11 @@ export async function applyLlamaGpuPreference(preferEgpu = true): Promise<{
     process.env[k] = v
   }
   // Clear previously applied keys that are no longer set
-  for (const k of ['CUDA_VISIBLE_DEVICES', 'GGML_VK_VISIBLE_DEVICES'] as const) {
+  for (const k of [
+    'CUDA_VISIBLE_DEVICES',
+    'GGML_VK_VISIBLE_DEVICES',
+    'GGML_METAL_DEVICES'
+  ] as const) {
     if (!(k in env) && appliedEnvKey.includes(k)) {
       delete process.env[k]
     }
@@ -447,6 +432,31 @@ export async function applyLlamaGpuPreference(preferEgpu = true): Promise<{
     logInfo('Applied llama GPU preference env', env)
   }
   return { changed, env, status }
+}
+
+/** Preference must not hide the devices needed for full GPU offload. */
+export function llamaGpuPreferenceEnv(
+  enabled: boolean,
+  status: Pick<GpuAccelStatus, 'backend' | 'preferredGpu'>,
+  cuda: Array<{ index: number; name: string }>
+): Record<string, string> {
+  const env: Record<string, string> = {}
+  const preferred = enabled ? status.preferredGpu : null
+  if (!preferred) return env
+  if (status.backend === 'cuda') {
+    const name = preferred.name.trim().toLowerCase()
+    const match = cuda.find((d) => d.name.trim().toLowerCase() === name)
+    if (match) {
+      // CUDA reorders these backend-native IDs: prefer the best, retain the rest.
+      env.CUDA_VISIBLE_DEVICES = [match, ...cuda.filter((d) => d.index !== match.index)]
+        .map((d) => d.index)
+        .join(',')
+    }
+  }
+  // OS display-adapter indices are not Vulkan physical-device IDs. Leave Vulkan
+  // discovery unfiltered so its allocator can place layers across all GPUs.
+  if (status.backend === 'metal' && preferred.kind === 'external') env.GGML_METAL_DEVICES = '1'
+  return env
 }
 
 /** Options for getLlama() after preference is applied. */

@@ -7,12 +7,55 @@ import {
   humanMacBus,
   gpusForVramShare,
   HIGH_VRAM_BYTES,
+  llamaGpuPreferenceEnv,
   pickBestGpu,
   rankGpuKind
 } from '../electron/main/services/gpu-accel'
 import type { GpuDeviceInfo } from '../src/shared/settings-schema'
 
 describe('gpu / eGPU support', () => {
+  const preferred: GpuDeviceInfo = {
+    name: 'NVIDIA GeForce RTX 5050',
+    kind: 'discrete',
+    index: 7,
+    vramBytes: 8 * 1024 ** 3
+  }
+  const cuda = [
+    { name: 'NVIDIA GeForce RTX 4060', index: 0 },
+    { name: preferred.name, index: 1 }
+  ]
+
+  it('prioritizes the preferred CUDA GPU without hiding the second 8GB card', () => {
+    expect(llamaGpuPreferenceEnv(true, { backend: 'cuda', preferredGpu: preferred }, cuda)).toEqual(
+      { CUDA_VISIBLE_DEVICES: '1,0' }
+    )
+  })
+
+  it('lets Vulkan discover all GPUs instead of masking with an OS adapter index', () => {
+    expect(llamaGpuPreferenceEnv(true, { backend: 'vulkan', preferredGpu: preferred }, [])).toEqual(
+      {}
+    )
+  })
+
+  it('does not guess CUDA device IDs when the preferred adapter cannot be matched', () => {
+    expect(
+      llamaGpuPreferenceEnv(
+        true,
+        {
+          backend: 'cuda',
+          preferredGpu: { ...preferred, name: 'Unknown GPU' }
+        },
+        cuda
+      )
+    ).toEqual({})
+    expect(
+      llamaGpuPreferenceEnv(false, { backend: 'cuda', preferredGpu: preferred }, cuda)
+    ).toEqual({})
+    expect(
+      llamaGpuPreferenceEnv(true, { backend: 'cuda', preferredGpu: preferred }, [cuda[1]!])
+    ).toEqual({ CUDA_VISIBLE_DEVICES: '1' })
+  })
+
   it('defaults preferEgpu on for Local model acceleration', () => {
     const defaults = JSON.parse(
       readFileSync(join(__dirname, '../resources/defaults.json'), 'utf8')
