@@ -98,3 +98,60 @@ it('does not let an untrusted repository opt older conversation recall into remo
     riskyWorkspaceSettings({ agent: { contextMemory: { shareWithRemoteModels: true } } })
   ).toContain('Send older recalled conversation context to remote models')
 })
+
+describe('untrusted repositories cannot widen remote disclosure', () => {
+  const widening = {
+    agent: { routing: { profile: 'max', preferCloudComposer: true } },
+    intelligence: { remoteEmbeddingPolicy: 'workspace-content' }
+  }
+
+  it('drops profile, Cloud Composer and remote-embedding escalations until trusted', () => {
+    setSettings(
+      'user',
+      {
+        agent: { routing: { profile: 'local', preferCloudComposer: false } },
+        intelligence: { remoteEmbeddingPolicy: 'disabled' }
+      },
+      null
+    )
+    try {
+      const ws = newWorkspace(widening)
+      expect(riskyWorkspaceSettings(widening)).toEqual([
+        'Choose when agent work is sent to Cloud models',
+        'Run agent tools on Cloud Composer',
+        'Send workspace text to a remote embedding model'
+      ])
+      const untrusted = getResolvedSettings(ws)
+      expect(untrusted.agent.routing.profile).toBe('local')
+      expect(untrusted.agent.routing.preferCloudComposer).toBe(false)
+      expect(untrusted.intelligence.remoteEmbeddingPolicy).toBe('disabled')
+
+      setWorkspaceTrusted(ws, true)
+      const trusted = getResolvedSettings(ws)
+      expect(trusted.agent.routing.profile).toBe('max')
+      expect(trusted.agent.routing.preferCloudComposer).toBe(true)
+      expect(trusted.intelligence.remoteEmbeddingPolicy).toBe('workspace-content')
+    } finally {
+      setSettings(
+        'user',
+        {
+          agent: { routing: { profile: 'auto', preferCloudComposer: true } },
+          intelligence: { remoteEmbeddingPolicy: 'disabled' }
+        },
+        null
+      )
+    }
+  })
+
+  it('still lets an untrusted repository restrict disclosure', () => {
+    const restricting = {
+      agent: { routing: { profile: 'local', preferCloudComposer: false } },
+      intelligence: { remoteEmbeddingPolicy: 'disabled' }
+    }
+    expect(riskyWorkspaceSettings(restricting)).toEqual([])
+    expect(stripRiskyWorkspaceSettings(restricting)).toEqual(restricting)
+    const untrusted = getResolvedSettings(newWorkspace(restricting))
+    expect(untrusted.agent.routing.profile).toBe('local')
+    expect(untrusted.agent.routing.preferCloudComposer).toBe(false)
+  })
+})

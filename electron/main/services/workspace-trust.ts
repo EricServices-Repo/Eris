@@ -2,8 +2,16 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { join, resolve } from 'path'
 import { userDataRoot } from './paths'
 
-/** Workspace-layer settings a cloned repo must not apply until the user trusts the folder. */
-export const RISKY_WORKSPACE_SETTINGS: Array<{ path: string[]; label: string }> = [
+/**
+ * Workspace-layer settings a cloned repo must not apply until the user trusts the folder.
+ * `restricts` marks values that only narrow what leaves the machine; an untrusted repo
+ * may still apply those, because they can never widen disclosure beyond the profile.
+ */
+export const RISKY_WORKSPACE_SETTINGS: Array<{
+  path: string[]
+  label: string
+  restricts?: (value: unknown) => boolean
+}> = [
   {
     path: ['agent', 'contextMemory', 'shareWithRemoteModels'],
     label: 'Send older recalled conversation context to remote models'
@@ -25,7 +33,25 @@ export const RISKY_WORKSPACE_SETTINGS: Array<{ path: string[]; label: string }> 
     path: ['intelligence', 'languageServers'],
     label: 'Start language servers (runs local commands)'
   },
-  { path: ['evals', 'allowUnsafeCommands'], label: 'Let eval agents run commands without approval' }
+  {
+    path: ['evals', 'allowUnsafeCommands'],
+    label: 'Let eval agents run commands without approval'
+  },
+  {
+    path: ['agent', 'routing', 'profile'],
+    label: 'Choose when agent work is sent to Cloud models',
+    restricts: (value) => value === 'local'
+  },
+  {
+    path: ['agent', 'routing', 'preferCloudComposer'],
+    label: 'Run agent tools on Cloud Composer',
+    restricts: (value) => value === false
+  },
+  {
+    path: ['intelligence', 'remoteEmbeddingPolicy'],
+    label: 'Send workspace text to a remote embedding model',
+    restricts: (value) => value === 'disabled'
+  }
 ]
 
 interface TrustStore {
@@ -88,14 +114,20 @@ export function setWorkspaceTrusted(workspacePath: string, trusted: boolean): vo
   trustChangedHook?.()
 }
 
-function hasPath(obj: unknown, path: string[]): boolean {
+function valueAt(obj: unknown, path: string[]): unknown {
   let cur = obj as Record<string, unknown> | undefined
   for (const key of path) {
-    if (!cur || typeof cur !== 'object' || !(key in cur)) return false
+    if (!cur || typeof cur !== 'object' || !(key in cur)) return undefined
     cur = cur[key] as Record<string, unknown> | undefined
   }
-  if (Array.isArray(cur)) return cur.length > 0
-  return cur !== undefined
+  return cur
+}
+
+function isRiskyValue(obj: unknown, risky: (typeof RISKY_WORKSPACE_SETTINGS)[number]): boolean {
+  const value = valueAt(obj, risky.path)
+  if (value === undefined) return false
+  if (Array.isArray(value)) return value.length > 0
+  return !risky.restricts?.(value)
 }
 
 function deletePath(obj: Record<string, unknown>, path: string[]): void {
@@ -113,13 +145,13 @@ function deletePath(obj: Record<string, unknown>, path: string[]): void {
 
 /** Labels of risky settings present in a workspace layer. */
 export function riskyWorkspaceSettings(layer: unknown): string[] {
-  return RISKY_WORKSPACE_SETTINGS.filter((r) => hasPath(layer, r.path)).map((r) => r.label)
+  return RISKY_WORKSPACE_SETTINGS.filter((r) => isRiskyValue(layer, r)).map((r) => r.label)
 }
 
 /** Workspace layer with risky keys removed (copy). */
 export function stripRiskyWorkspaceSettings<T extends Record<string, unknown>>(layer: T): T {
   const copy = { ...layer } as Record<string, unknown>
-  for (const r of RISKY_WORKSPACE_SETTINGS) deletePath(copy, r.path)
+  for (const r of RISKY_WORKSPACE_SETTINGS) if (isRiskyValue(layer, r)) deletePath(copy, r.path)
   return copy as T
 }
 
