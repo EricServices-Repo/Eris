@@ -13,8 +13,6 @@ import { userDataRoot } from './paths'
 /** Public issues inbox (created via API — never opens a browser). */
 export const ERIS_FEEDBACK_OWNER = 'EricServices-Repo'
 export const ERIS_FEEDBACK_REPO = 'Eris'
-/** The deployed relay still files in the dedicated feedback inbox. */
-const ERIS_FEEDBACK_INBOXES = new Set(['eris', 'eris-feedback'])
 
 const MAX_LOG_CHARS = 48_000
 const MAX_ISSUE_BODY = 55_000
@@ -309,7 +307,7 @@ async function submitViaEricServices(preview: BugReportPreview): Promise<BugRepo
   }
 }
 
-/** Only the product repository and its deployed feedback inbox are trusted. */
+/** A submission succeeds only when the relay returns the requested product repository. */
 function erisIssue(url: string | undefined): { htmlUrl: string; number: number } | null {
   if (!url) return null
   try {
@@ -325,11 +323,13 @@ function erisIssue(url: string | undefined): { htmlUrl: string; number: number }
     )
       return null
     const match = /^\/EricServices-Repo\/([^/]+)\/issues\/([1-9]\d*)\/?$/i.exec(parsed.pathname)
-    if (!match || !ERIS_FEEDBACK_INBOXES.has(match[1]!.toLowerCase())) return null
+    if (!match || match[1]!.toLowerCase() !== ERIS_FEEDBACK_REPO.toLowerCase()) return null
     const number = Number(match[2])
     if (!Number.isSafeInteger(number)) return null
-    const repo = match[1]!.toLowerCase() === 'eris' ? 'Eris' : 'Eris-feedback'
-    return { htmlUrl: `https://github.com/${ERIS_FEEDBACK_OWNER}/${repo}/issues/${number}`, number }
+    return {
+      htmlUrl: `https://github.com/${ERIS_FEEDBACK_OWNER}/${ERIS_FEEDBACK_REPO}/issues/${number}`,
+      number
+    }
   } catch {
     return null
   }
@@ -351,7 +351,7 @@ export async function submitBugReport(input: BugReportInput): Promise<BugReportR
     return {
       ok: false,
       error:
-        'The feedback service did not return a valid Eris issue link. Your report may already exist; contact support before submitting it again.',
+        'The feedback service did not return a valid Eris issue link in EricServices-Repo/Eris. Your report may already exist in another repository; contact support before submitting it again.',
       via: 'ericservices'
     }
   const result = { ...relay, ...issue }

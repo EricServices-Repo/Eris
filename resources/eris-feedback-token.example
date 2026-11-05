@@ -1,4 +1,4 @@
-# Copy to eris-feedback-token (gitignored) or set ERIS_FEEDBACK_GITHUB_TOKEN.
-# Fine-grained PAT: EricServices-Repo/Eris-feedback → Issues: Read and write.
-# Prefer production path: EricServic.es /api/eris/v1/feedback.php (server-side token).
+# Configure ERIS_FEEDBACK_GITHUB_TOKEN on the feedback relay server only.
+# Server-side only. Fine-grained PAT: EricServices-Repo/Eris → Issues: Read and write.
+# Endpoint: EricServic.es /api/eris/v1/feedback.php. Never package this credential.
 github_pat_REPLACE_ME
