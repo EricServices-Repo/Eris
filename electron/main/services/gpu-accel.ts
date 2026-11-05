@@ -174,23 +174,40 @@ async function listNvidiaCudaDevices(): Promise<
   }
 }
 
-async function enrichNvidiaVram(devices: GpuDeviceInfo[]): Promise<GpuDeviceInfo[]> {
-  const cuda = await listNvidiaCudaDevices()
+const gpuName = (name: string) => name.trim().toLowerCase().replace(/\s+/g, ' ')
+
+/**
+ * Attach nvidia-smi memory figures to OS-listed adapters (Windows AdapterRAM stops at
+ * 4 GiB). A figure is used only for an adapter with exactly the same name: a shared
+ * prefix such as "NVIDIA GeForce" would hand one card another card's memory and
+ * overstate the admission budget. Cards sharing one name cannot be told apart from
+ * the OS listing, so each gets the smallest total and free figures in that group.
+ * Exported for unit tests.
+ */
+export function matchNvidiaVram(
+  devices: GpuDeviceInfo[],
+  cuda: Array<{ name: string; vramBytes?: number; vramFreeBytes?: number }>
+): GpuDeviceInfo[] {
   if (!cuda.length || !devices.length) return devices
   return devices.map((device) => {
-    const name = device.name.toLowerCase()
-    const match =
-      cuda.find(
-        (d) =>
-          name.includes(d.name.toLowerCase()) || d.name.toLowerCase().includes(name.slice(0, 12))
-      ) || null
-    if (!match) return device
+    const group = cuda.filter((d) => gpuName(d.name) === gpuName(device.name))
+    if (!group.length) return device
     const next = { ...device }
-    if (match.vramBytes && match.vramBytes > (device.vramBytes ?? 0))
-      next.vramBytes = match.vramBytes
-    if (match.vramFreeBytes && match.vramFreeBytes > 0) next.vramFreeBytes = match.vramFreeBytes
+    const totals = group.map((d) => d.vramBytes)
+    if (totals.every((n): n is number => typeof n === 'number' && n > 0)) {
+      const total = Math.min(...totals)
+      if (total > (device.vramBytes ?? 0)) next.vramBytes = total
+    }
+    const free = group.map((d) => d.vramFreeBytes)
+    if (free.every((n): n is number => typeof n === 'number' && n > 0))
+      next.vramFreeBytes = Math.min(...free)
     return next
   })
+}
+
+async function enrichNvidiaVram(devices: GpuDeviceInfo[]): Promise<GpuDeviceInfo[]> {
+  if (!devices.length) return devices
+  return matchNvidiaVram(devices, await listNvidiaCudaDevices())
 }
 
 /**
