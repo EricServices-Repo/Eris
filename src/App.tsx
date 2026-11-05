@@ -317,6 +317,10 @@ export default function App() {
     setActiveSkills,
     showRightPanel
   })
+  useEffect(() => window.ide.onEricServicesProfileSynced(() => {
+    void refreshWorkspaceList()
+  }), [refreshWorkspaceList])
+
   const windowWorkspaceRef = useRef(workspacePath)
   windowWorkspaceRef.current = workspacePath
   const { breakpoints, setBreakpoints } = useBreakpoints(workspacePath)
@@ -1568,6 +1572,7 @@ export default function App() {
               setSettings(resolved)
               void refreshModels(resolved)
               void refreshSkills()
+              void refreshWorkspaceList()
             }}
             onRerunSetup={() => {
               void window.ide.resetOnboarding().then(() => setShowSetupWizard(true))

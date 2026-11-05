@@ -1,8 +1,10 @@
+import { attachRestoredProject } from '../services/profile-workspaces'
 import { ipcMain, dialog } from 'electron'
 import { existsSync } from 'fs'
 import {
   openWorkspaceDialog,
   rememberWorkspace,
+  initializeWorkspaceFolder,
   getWorkspaceMeta,
   setWorkspaceMeta,
   listWorkspaces,
@@ -115,9 +117,22 @@ export function registerWorkspaceIpc(): void {
     return path
   })
 
-  ipcMain.handle('workspace:openById', (_e, id: string) => {
+  ipcMain.handle('workspace:openById', async (_e, id: string) => {
     const record = getWorkspaceById(id)
-    if (!record || !existsSync(record.path)) return null
+    if (!record) return null
+    if (record.cloudRestored || !existsSync(record.path)) {
+      if (!appState.mainWindow) return null
+      const choice = await dialog.showOpenDialog(appState.mainWindow, {
+        title: `Connect folder for ${record.name}`,
+        message: `This project and its chats were restored from your EricServic.es profile. Choose its local checkout or an empty folder. Project files are not uploaded.${record.repositoryUrl ? '\nRepository: ' + record.repositoryUrl : ''}`,
+        properties: ['openDirectory', 'createDirectory']
+      })
+      if (choice.canceled || !choice.filePaths[0]) return null
+      initializeWorkspaceFolder(choice.filePaths[0])
+      await attachRestoredProject(record, choice.filePaths[0])
+      record.path = choice.filePaths[0]
+    }
+    if (!existsSync(record.path)) return null
     appState.currentWorkspace = record.path
     const remembered = rememberWorkspace(record.path, { id: record.id, name: record.name })
     logInfo('Workspace opened', { id, path: record.path, name: record.name })

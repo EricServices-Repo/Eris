@@ -165,6 +165,7 @@
       "tests/diff-review-stats.test.ts",
       "tests/document-store.test.ts",
       "tests/ericservices-sync.test.ts",
+      "tests/profile-workspaces.test.ts",
       "tests/eris-plan.test.ts",
       "tests/evals.test.ts",
       "tests/gpu-accel.test.ts",

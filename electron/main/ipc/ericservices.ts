@@ -27,11 +27,29 @@ import { appState } from '../app-state'
 import { getSecret, storeSecret } from './shared'
 
 export function registerEricServicesIpc(): void {
+  let backgroundSyncRunning = false
+  const profileTimer = setInterval(() => {
+    const settings = getResolvedSettings(appState.currentWorkspace)
+    if (
+      backgroundSyncRunning ||
+      !settings.ericServices.linked ||
+      settings.ericServices.syncEnabled === false
+    )
+      return
+    backgroundSyncRunning = true
+    void (async () => {
+      await syncEricServicesProfile('bidirectional')
+    })()
+      .catch(() => undefined)
+      .finally(() => {
+        backgroundSyncRunning = false
+      })
+  }, 60000)
+  profileTimer.unref()
+
   ipcMain.handle('ericServices:status', async (_e, opts?: { cached?: boolean }) => {
     const settings = getResolvedSettings(appState.currentWorkspace)
-    const token = settings.ericServices.tokenRef
-      ? getSecret(settings.ericServices.tokenRef)
-      : null
+    const token = settings.ericServices.tokenRef ? getSecret(settings.ericServices.tokenRef) : null
     const base = buildEricServicesStatus(settings, Boolean(token))
     if (opts?.cached || !token || !settings.ericServices.linked) return base
     const me = await ericServicesFetchMe(settings.ericServices.apiBase, token)
@@ -161,7 +179,12 @@ export function registerEricServicesIpc(): void {
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, waitMs))
       const polled = await ericServicesPollDeviceLogin(apiBase, started.deviceCode)
-      if (!polled.ok) return { ok: false, error: polled.error || 'Browser sign-in failed', userCode: started.userCode }
+      if (!polled.ok)
+        return {
+          ok: false,
+          error: polled.error || 'Browser sign-in failed',
+          userCode: started.userCode
+        }
       if (polled.status === 'expired' || polled.status === 'denied') {
         return { ok: false, error: 'Browser sign-in was not approved.', userCode: started.userCode }
       }
@@ -183,7 +206,8 @@ export function registerEricServicesIpc(): void {
           },
           appState.currentWorkspace
         )
-        let sync: { ok: boolean; error?: string; direction?: string; changes?: string[] } | undefined
+        let sync:
+          { ok: boolean; error?: string; direction?: string; changes?: string[] } | undefined
         if (settings.ericServices.syncEnabled !== false) {
           sync = await syncEricServicesProfile('pull', polled.token)
           if (!sync.ok) sync = await syncEricServicesProfile('push', polled.token)
@@ -205,7 +229,11 @@ export function registerEricServicesIpc(): void {
         }
       }
     }
-    return { ok: false, error: 'Timed out waiting for approval in the browser.', userCode: started.userCode }
+    return {
+      ok: false,
+      error: 'Timed out waiting for approval in the browser.',
+      userCode: started.userCode
+    }
   })
 
   ipcMain.handle('ericServices:devices', async () => {
@@ -243,9 +271,7 @@ export function registerEricServicesIpc(): void {
 
   ipcMain.handle('ericServices:logout', async () => {
     const settings = getResolvedSettings(appState.currentWorkspace)
-    const token = settings.ericServices.tokenRef
-      ? getSecret(settings.ericServices.tokenRef)
-      : null
+    const token = settings.ericServices.tokenRef ? getSecret(settings.ericServices.tokenRef) : null
     if (token) {
       await ericServicesLogout(settings.ericServices.apiBase, token).catch(() => undefined)
     }
@@ -268,7 +294,28 @@ export function registerEricServicesIpc(): void {
     return buildEricServicesStatus(getResolvedSettings(appState.currentWorkspace), false)
   })
 
-  async function syncEricServicesProfile(
+  let syncQueue: Promise<unknown> = Promise.resolve()
+  function syncEricServicesProfile(
+    direction: 'pull' | 'push' | 'bidirectional',
+    tokenOverride?: string | null
+  ): ReturnType<typeof performEricServicesProfileSync> {
+    const next = syncQueue
+      .then(() => performEricServicesProfileSync(direction, tokenOverride))
+      .then((result) => {
+        if (
+          result.ok &&
+          direction !== 'push' &&
+          appState.mainWindow &&
+          !appState.mainWindow.isDestroyed()
+        )
+          appState.mainWindow.webContents.send('ericServices:profile-synced')
+        return result
+      })
+    syncQueue = next.catch(() => undefined)
+    return next
+  }
+
+  async function performEricServicesProfileSync(
     direction: 'pull' | 'push' | 'bidirectional',
     tokenOverride?: string | null
   ): Promise<{
@@ -292,17 +339,20 @@ export function registerEricServicesIpc(): void {
     if (direction === 'pull' || direction === 'bidirectional') {
       const remote = await ericServicesPullSettings(settings.ericServices.apiBase, token)
       if (!remote.ok) return { ok: false, error: remote.error, direction: 'pull' }
-      const applied = applyProfileBundle(remote.bundle)
+      const remoteAt = remote.updatedAt || ''
+      const localAt = settings.ericServices.lastSyncedAt || ''
+      const remoteNewer = Boolean(remoteAt) && remoteAt !== localAt
+      const applied = remoteNewer
+        ? await applyProfileBundle(remote.bundle)
+        : { settings: null, skillsImported: 0, projectsImported: 0, chatsImported: 0 }
       const settingsPatch = applied.settings || remote.settings
-      const remoteAt = remote.updatedAt ? Date.parse(remote.updatedAt) : NaN
-      const localAt = settings.ericServices.lastSyncedAt
-        ? Date.parse(settings.ericServices.lastSyncedAt)
-        : NaN
-      const remoteNewer =
-        Number.isFinite(remoteAt) && (!Number.isFinite(localAt) || remoteAt > localAt)
       if (settingsPatch && Object.keys(settingsPatch).length > 0 && remoteNewer) {
         const localResolved = getResolvedSettings(appState.currentWorkspace)
         const changes = summarizeProfileChanges(localResolved, settingsPatch)
+        if (applied.projectsImported || applied.chatsImported)
+          changes.push(
+            `${applied.projectsImported || 0} projects and ${applied.chatsImported || 0} chats restored`
+          )
         if (applied.skillsImported > 0) {
           changes.push(
             `${applied.skillsImported} user skill${applied.skillsImported === 1 ? '' : 's'} imported`
@@ -322,17 +372,19 @@ export function registerEricServicesIpc(): void {
           },
           appState.currentWorkspace
         )
-        void syncMcpRuntime(getResolvedSettings(appState.currentWorkspace), appState.currentWorkspace).catch(
-          () => undefined
-        )
-        return {
-          ok: true,
-          direction: 'pull',
-          updatedAt: remote.updatedAt,
-          changes,
-          missingKeys: missingKeys(),
-          status: buildEricServicesStatus(getResolvedSettings(appState.currentWorkspace), true)
-        }
+        void syncMcpRuntime(
+          getResolvedSettings(appState.currentWorkspace),
+          appState.currentWorkspace
+        ).catch(() => undefined)
+        if (direction === 'pull')
+          return {
+            ok: true,
+            direction: 'pull',
+            updatedAt: remote.updatedAt,
+            changes,
+            missingKeys: missingKeys(),
+            status: buildEricServicesStatus(getResolvedSettings(appState.currentWorkspace), true)
+          }
       }
       if (!remoteNewer && direction === 'pull') {
         return {
@@ -346,7 +398,7 @@ export function registerEricServicesIpc(): void {
           status: buildEricServicesStatus(getResolvedSettings(appState.currentWorkspace), true)
         }
       }
-      if (remoteNewer && applied.skillsImported > 0) {
+      if (direction === 'pull' && remoteNewer && applied.skillsImported > 0) {
         setSettings(
           'user',
           {
@@ -360,7 +412,9 @@ export function registerEricServicesIpc(): void {
           ok: true,
           direction: 'pull',
           updatedAt: remote.updatedAt,
-          changes: [`${applied.skillsImported} user skill${applied.skillsImported === 1 ? '' : 's'} imported`],
+          changes: [
+            `${applied.skillsImported} user skill${applied.skillsImported === 1 ? '' : 's'} imported`
+          ],
           missingKeys: missingKeys(),
           status: buildEricServicesStatus(getResolvedSettings(appState.currentWorkspace), true)
         }
@@ -377,18 +431,18 @@ export function registerEricServicesIpc(): void {
 
     const resolved = getResolvedSettings(appState.currentWorkspace)
     const local = buildSyncableSettings(resolved)
-    const bundle = buildProfileBundle(resolved)
+    const bundle = await buildProfileBundle(resolved)
     const pushed = await ericServicesPushSettings(
       settings.ericServices.apiBase,
       token,
       local,
-      settings.ericServices.lastSyncedAt || null,
+      resolved.ericServices.lastSyncedAt || null,
       bundle
     )
     if (!pushed.ok) {
       // Conflict: remote newer — pull instead when bidirectional
       if (direction === 'bidirectional' && (pushed.bundle || pushed.settings)) {
-        const applied = applyProfileBundle(pushed.bundle)
+        const applied = await applyProfileBundle(pushed.bundle)
         const settingsPatch = applied.settings || pushed.settings
         const localResolved = getResolvedSettings(appState.currentWorkspace)
         const changes = settingsPatch
@@ -410,9 +464,10 @@ export function registerEricServicesIpc(): void {
           },
           appState.currentWorkspace
         )
-        void syncMcpRuntime(getResolvedSettings(appState.currentWorkspace), appState.currentWorkspace).catch(
-          () => undefined
-        )
+        void syncMcpRuntime(
+          getResolvedSettings(appState.currentWorkspace),
+          appState.currentWorkspace
+        ).catch(() => undefined)
         return {
           ok: true,
           direction: 'pull',
@@ -443,19 +498,14 @@ export function registerEricServicesIpc(): void {
     }
   }
 
-  ipcMain.handle(
-    'ericServices:sync',
-    async (_e, direction?: 'pull' | 'push' | 'bidirectional') => {
-      return syncEricServicesProfile(direction || 'bidirectional')
-    }
-  )
+  ipcMain.handle('ericServices:sync', async (_e, direction?: 'pull' | 'push' | 'bidirectional') => {
+    return syncEricServicesProfile(direction || 'bidirectional')
+  })
 
   ipcMain.handle('ericServices:openAccount', async () => {
     const settings = getResolvedSettings(appState.currentWorkspace)
     const base = settings.ericServices.apiBase.replace(/\/+$/, '')
-    const url = settings.ericServices.linked
-      ? `${base}/account/eris.php`
-      : `${base}/loginform.php`
+    const url = settings.ericServices.linked ? `${base}/account/eris.php` : `${base}/loginform.php`
     await shell.openExternal(url)
     return { ok: true, url }
   })

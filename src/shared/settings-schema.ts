@@ -299,6 +299,9 @@ export interface WorkspaceMeta {
 }
 
 export interface WorkspaceRecord {
+  /** Portable profile metadata; local folder paths are never uploaded. */
+  repositoryUrl?: string
+  cloudRestored?: boolean
   id: string
   name: string
   path: string
