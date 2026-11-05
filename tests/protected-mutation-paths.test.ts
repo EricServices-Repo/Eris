@@ -189,3 +189,28 @@ describe('protected mutation paths (#306 IW-03)', () => {
     expect(gateway.authorize(root, call('write_file', { path: 'app.ts', content: 'x' }))).toBeNull()
   })
 })
+
+describe('mkdir through a symlinked ancestor (#333)', () => {
+  it.each(['gitlink/hooks/new', 'gitlink/refs/heads/x', 'stateLink/runs/new'])(
+    'refuses %s when the link points at Git metadata or Eris state',
+    (path) => {
+      const root = fixture()
+      symlinkSync('.git', join(root, 'gitlink'))
+      symlinkSync('.eris', join(root, 'stateLink'))
+      const result = executeTool(root, call('mkdir', { path }))
+      expect(result.ok).toBe(false)
+      expect(result.detail).toMatch(/Git metadata|Eris workspace state/)
+      expect(
+        existsSync(join(root, path.replace('gitlink', '.git').replace('stateLink', '.eris')))
+      ).toBe(false)
+    }
+  )
+
+  it('still creates folders through a link to an ordinary project folder', () => {
+    const root = fixture()
+    mkdirSync(join(root, 'src'))
+    symlinkSync('src', join(root, 'srcLink'))
+    expect(executeTool(root, call('mkdir', { path: 'srcLink/lib' })).ok).toBe(true)
+    expect(existsSync(join(root, 'src', 'lib'))).toBe(true)
+  })
+})
