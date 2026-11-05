@@ -211,3 +211,70 @@ describe('immutable release source', () => {
     ).toThrow('not integrated')
   })
 })
+
+describe('release asset contract', () => {
+  const { verifyReleaseAssets } = createRequire(import.meta.url)(
+    '../scripts/release-source.cjs'
+  ) as {
+    verifyReleaseAssets: (
+      names: string[],
+      platform: string,
+      version: string,
+      readFeed?: (name: string) => string
+    ) => void
+  }
+  const feed = (version: string) => () => `version: ${version}\nfiles: []\n`
+  const mac = [
+    'Eris-1.2.3-mac-arm64.dmg',
+    'Eris-1.2.3-mac-arm64.dmg.blockmap',
+    'Eris-1.2.3-mac-arm64.zip',
+    'latest-mac.yml',
+    'context-qualification-mac.json',
+    'release-provenance-mac.json'
+  ]
+  const win = [
+    'Eris-1.2.3-win-x64-setup.exe',
+    'Eris-1.2.3-win-x64-setup.exe.blockmap',
+    'Eris-Dev-1.2.3-win-x64-setup.exe',
+    'latest.yml',
+    'context-qualification-win.json'
+  ]
+
+  it('accepts the exact platform assets, with optional blockmaps', () => {
+    expect(() => verifyReleaseAssets(mac, 'mac', '1.2.3', feed('1.2.3'))).not.toThrow()
+    expect(() => verifyReleaseAssets(win, 'win', '1.2.3', feed('1.2.3'))).not.toThrow()
+  })
+
+  it('rejects a set that only has a nonzero count', () => {
+    expect(() =>
+      verifyReleaseAssets(['context-qualification-win.json'], 'win', '1.2.3', feed('1.2.3'))
+    ).toThrow(
+      /missing Eris-1\.2\.3-win-x64-setup\.exe, Eris-Dev-1\.2\.3-win-x64-setup\.exe, latest\.yml/
+    )
+  })
+
+  it('rejects stale, foreign-platform and orphan blockmap assets', () => {
+    expect(() =>
+      verifyReleaseAssets(
+        [...mac, 'Eris-1.2.2-mac-arm64.dmg', 'latest.yml', 'Eris-1.2.3-mac-x64.zip.blockmap'],
+        'mac',
+        '1.2.3',
+        feed('1.2.3')
+      )
+    ).toThrow('unexpected Eris-1.2.2-mac-arm64.dmg, Eris-1.2.3-mac-x64.zip.blockmap, latest.yml')
+  })
+
+  it('rejects an updater feed for another version', () => {
+    expect(() => verifyReleaseAssets(win, 'win', '1.2.3', feed('1.2.2'))).toThrow(
+      'latest.yml declares version 1.2.2, expected 1.2.3'
+    )
+    expect(() => verifyReleaseAssets(win, 'win', '1.2.3', () => '')).toThrow(
+      'declares version (none)'
+    )
+  })
+
+  it('rejects an unknown platform or version', () => {
+    expect(() => verifyReleaseAssets(win, 'linux', '1.2.3')).toThrow('Invalid release platform')
+    expect(() => verifyReleaseAssets(win, 'win', '')).toThrow('Invalid release version')
+  })
+})
