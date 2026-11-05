@@ -179,6 +179,7 @@
       "tests/project-memory.test.ts",
       "tests/settings.test.ts",
       "tests/usage-window.test.ts",
+      "tests/usage-sync-day.test.ts",
       "tests/vram-fit.test.ts",
       "tests/web-search.test.ts",
       "tests/workspace-fs.test.ts",

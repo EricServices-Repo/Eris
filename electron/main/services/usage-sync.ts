@@ -25,11 +25,38 @@ let remoteDiskLoaded = false
 let remoteAllowance: {
   cloudJobs?: { used: number; limit: number | null; remaining: number | null; exhausted: boolean }
 } | null = null
-let pendingDelta: DayUsageTotals = {
+/**
+ * Unsent usage, keyed by the local day it was recorded. A delta posted later (a retry
+ * after a failed push, or a flush that crosses midnight) still counts toward its own
+ * day, not the rolling allowance of the day the push finally happens.
+ */
+let pendingByDay = new Map<string, DayUsageTotals>()
+
+const emptyTotals = (): DayUsageTotals => ({
   requests: 0,
   inputTokens: 0,
   outputTokens: 0,
   cloudJobs: 0
+})
+
+const isEmptyTotals = (t: DayUsageTotals) =>
+  t.requests === 0 && t.inputTokens === 0 && t.outputTokens === 0 && t.cloudJobs === 0
+
+function addPending(day: string, delta: Partial<DayUsageTotals>): void {
+  const into = pendingByDay.get(day) ?? emptyTotals()
+  into.requests += Math.max(0, Math.round(delta.requests || 0))
+  into.inputTokens += Math.max(0, Math.round(delta.inputTokens || 0))
+  into.outputTokens += Math.max(0, Math.round(delta.outputTokens || 0))
+  into.cloudJobs += Math.max(0, Math.round(delta.cloudJobs || 0))
+  if (isEmptyTotals(into)) pendingByDay.delete(day)
+  else pendingByDay.set(day, into)
+}
+
+/** Unsent usage per day (for diagnostics and tests). */
+export function pendingUsageDeltas(): Array<DayUsageTotals & { day: string }> {
+  return [...pendingByDay.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([day, totals]) => ({ day, ...totals }))
 }
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 let flushing = false
@@ -79,7 +106,9 @@ function usageCachePath(): string {
   return join(userDataRoot(), 'usage-remote.json')
 }
 
-function normalizeRemoteDay(raw: Partial<RemoteUsageDay> | null | undefined): RemoteUsageDay | null {
+function normalizeRemoteDay(
+  raw: Partial<RemoteUsageDay> | null | undefined
+): RemoteUsageDay | null {
   if (!raw || typeof raw.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw.day)) return null
   return {
     day: raw.day,
@@ -96,8 +125,7 @@ function loadRemoteUsageDisk(): Record<string, RemoteUsageDay> {
     const path = usageCachePath()
     if (!existsSync(path)) return {}
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as
-      | RemoteUsageDay
-      | { days?: Record<string, RemoteUsageDay> }
+      RemoteUsageDay | { days?: Record<string, RemoteUsageDay> }
     if (parsed && typeof (parsed as RemoteUsageDay).day === 'string') {
       const one = normalizeRemoteDay(parsed as RemoteUsageDay)
       return one ? { [one.day]: one } : {}
@@ -214,14 +242,18 @@ export function getEffectiveWindowTotals(windowDays = USAGE_WINDOW_DAYS): DayUsa
 }
 
 /** Profile-only totals inside the rolling window. Null when nothing has been pulled. */
-export function getRemoteWindowTotals(windowDays = USAGE_WINDOW_DAYS): (DayUsageTotals & {
-  from: string
-  to: string
-  days: number
-}) | null {
+export function getRemoteWindowTotals(windowDays = USAGE_WINDOW_DAYS):
+  | (DayUsageTotals & {
+      from: string
+      to: string
+      days: number
+    })
+  | null {
   ensureRemoteDisk()
   const keys = rollingDayKeys(windowDays)
-  const present = keys.map((key) => remoteDays[key]).filter((day): day is RemoteUsageDay => Boolean(day))
+  const present = keys
+    .map((key) => remoteDays[key])
+    .filter((day): day is RemoteUsageDay => Boolean(day))
   if (present.length === 0) return null
   return {
     ...sumDayTotals(present),
@@ -231,19 +263,9 @@ export function getRemoteWindowTotals(windowDays = USAGE_WINDOW_DAYS): (DayUsage
   }
 }
 
-export function queueUsageDelta(delta: Partial<DayUsageTotals>): void {
-  pendingDelta.requests += Math.max(0, Math.round(delta.requests || 0))
-  pendingDelta.inputTokens += Math.max(0, Math.round(delta.inputTokens || 0))
-  pendingDelta.outputTokens += Math.max(0, Math.round(delta.outputTokens || 0))
-  pendingDelta.cloudJobs += Math.max(0, Math.round(delta.cloudJobs || 0))
-  if (
-    pendingDelta.requests === 0 &&
-    pendingDelta.inputTokens === 0 &&
-    pendingDelta.outputTokens === 0 &&
-    pendingDelta.cloudJobs === 0
-  ) {
-    return
-  }
+export function queueUsageDelta(delta: Partial<DayUsageTotals>, at = new Date()): void {
+  addPending(todayKey(at), delta)
+  if (pendingByDay.size === 0) return
   if (flushTimer) return
   flushTimer = setTimeout(() => {
     flushTimer = null
@@ -256,68 +278,55 @@ export async function flushUsageDelta(): Promise<void> {
   if (flushing) return
   const auth = authContext()
   if (!auth) {
-    pendingDelta = { requests: 0, inputTokens: 0, outputTokens: 0, cloudJobs: 0 }
+    pendingByDay = new Map()
     return
   }
-  const delta = { ...pendingDelta }
-  if (
-    delta.requests === 0 &&
-    delta.inputTokens === 0 &&
-    delta.outputTokens === 0 &&
-    delta.cloudJobs === 0
-  ) {
-    return
-  }
-  pendingDelta = { requests: 0, inputTokens: 0, outputTokens: 0, cloudJobs: 0 }
+  if (pendingByDay.size === 0) return
+  const batches = pendingUsageDeltas()
+  pendingByDay = new Map()
   flushing = true
   try {
-    const res = await fetch(usageUrl(auth.apiBase), {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${auth.token}`,
-        'X-Eris-Client': 'eris-desktop'
-      },
-      body: JSON.stringify({
-        day: todayKey(),
-        delta,
-        source: 'eris-desktop'
-      }),
-      signal: AbortSignal.timeout(12_000)
-    })
-    const data = (await res.json().catch(() => ({}))) as {
-      ok?: boolean
-      error?: string
-      usage?: RemoteUsageDay
-      day?: string
-    }
-    if (!res.ok || data.ok === false) {
-      // Re-queue so a blip does not drop metering. 409 means the site cap was reached.
-      if (res.status !== 409) {
-        pendingDelta.requests += delta.requests
-        pendingDelta.inputTokens += delta.inputTokens
-        pendingDelta.outputTokens += delta.outputTokens
-        pendingDelta.cloudJobs += delta.cloudJobs
+    for (const { day, ...delta } of batches) {
+      try {
+        const res = await fetch(usageUrl(auth.apiBase), {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${auth.token}`,
+            'X-Eris-Client': 'eris-desktop'
+          },
+          body: JSON.stringify({ day, delta, source: 'eris-desktop' }),
+          signal: AbortSignal.timeout(12_000)
+        })
+        const data = (await res.json().catch(() => ({}))) as {
+          ok?: boolean
+          error?: string
+          usage?: RemoteUsageDay
+          day?: string
+        }
+        if (!res.ok || data.ok === false) {
+          // Re-queue so a blip does not drop metering. 409 means the site cap was reached.
+          if (res.status !== 409) addPending(day, delta)
+          logWarn('Profile usage push failed', {
+            status: res.status,
+            day,
+            error: data.error || res.statusText
+          })
+          continue
+        }
+        if (data.usage && data.day) {
+          const remote = normalizeRemoteDay({ ...data.usage, day: data.day })
+          if (remote) rememberRemoteDays([remote])
+        }
+      } catch (err) {
+        addPending(day, delta)
+        logWarn('Profile usage push error', {
+          day,
+          error: err instanceof Error ? err.message : String(err)
+        })
       }
-      logWarn('Profile usage push failed', {
-        status: res.status,
-        error: data.error || res.statusText
-      })
-      return
     }
-    if (data.usage && data.day) {
-      const day = normalizeRemoteDay({ ...data.usage, day: data.day })
-      if (day) rememberRemoteDays([day])
-    }
-  } catch (err) {
-    pendingDelta.requests += delta.requests
-    pendingDelta.inputTokens += delta.inputTokens
-    pendingDelta.outputTokens += delta.outputTokens
-    pendingDelta.cloudJobs += delta.cloudJobs
-    logWarn('Profile usage push error', {
-      error: err instanceof Error ? err.message : String(err)
-    })
   } finally {
     flushing = false
   }
@@ -335,26 +344,29 @@ export async function pullUsageFromProfile(): Promise<RemoteUsageDay | null> {
   syncState = 'syncing'
   try {
     const res = await fetch(
-      usageUrl(
-        auth.apiBase,
-        `day=${encodeURIComponent(todayKey())}&days=${USAGE_WINDOW_DAYS}`
-      ),
+      usageUrl(auth.apiBase, `day=${encodeURIComponent(todayKey())}&days=${USAGE_WINDOW_DAYS}`),
       {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${auth.token}`,
-        'X-Eris-Client': 'eris-desktop'
-      },
-      signal: AbortSignal.timeout(10_000)
-    })
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${auth.token}`,
+          'X-Eris-Client': 'eris-desktop'
+        },
+        signal: AbortSignal.timeout(10_000)
+      }
+    )
     const data = (await res.json().catch(() => ({}))) as {
       ok?: boolean
       day?: string
       usage?: RemoteUsageDay
       days?: RemoteUsageDay[]
       allowance?: {
-        cloudJobs?: { used: number; limit: number | null; remaining: number | null; exhausted: boolean }
+        cloudJobs?: {
+          used: number
+          limit: number | null
+          remaining: number | null
+          exhausted: boolean
+        }
       }
       error?: string
     }
