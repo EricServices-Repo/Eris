@@ -9,6 +9,23 @@ const BLOCKED_HOST =
 const PRIVATE_IP =
   /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.|169\.254\.|127\.|0\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/
 
+/** In-memory session for the hidden reader: no shared cookies, and its own request filter. */
+const WEB_READER_PARTITION = 'eris-web-reader'
+
+/** IPv6 loopback, unspecified, unique-local, link-local, IPv4-mapped and NAT64 addresses. */
+function privateIpv6(host: string): boolean {
+  if (!host.startsWith('[')) return false
+  const ip = host.slice(1, -1).toLowerCase()
+  return (
+    ip === '::' ||
+    ip === '::1' ||
+    /^f[cd][0-9a-f]{0,2}:/.test(ip) ||
+    /^fe[89ab][0-9a-f]?:/.test(ip) ||
+    ip.startsWith('::ffff:') ||
+    ip.startsWith('64:ff9b:')
+  )
+}
+
 export interface WebSearchHit {
   title: string
   url: string
@@ -27,10 +44,41 @@ export function publicHttpsUrl(raw: string): string {
     throw new Error('Addresses with a username or password are blocked.')
   }
   const host = url.hostname.replace(/\.$/, '')
-  if (!host || BLOCKED_HOST.test(host) || PRIVATE_IP.test(host) || host === '::1') {
+  if (!host || BLOCKED_HOST.test(host) || PRIVATE_IP.test(host) || privateIpv6(host)) {
     throw new Error('Local and private addresses are blocked.')
   }
   return url.toString()
+}
+
+/**
+ * Every request the hidden reader makes (redirects, frames, scripts, fetch/XHR from the
+ * page) must pass the same public-https check as the URL the agent asked for. Checking
+ * only the first URL let a page redirect to, or script requests against, localhost, the
+ * LAN or a cloud metadata address and hand the response text back to the model.
+ */
+export function webReaderRequestAllowed(raw: string): boolean {
+  if (/^(?:data|blob):/i.test(raw) || raw === 'about:blank') return true
+  try {
+    publicHttpsUrl(raw)
+    return true
+  } catch {
+    return false
+  }
+}
+
+let readerSessionGuarded = false
+
+async function guardedReaderSession() {
+  const { session } = await import('electron')
+  const reader = session.fromPartition(WEB_READER_PARTITION)
+  if (!readerSessionGuarded) {
+    reader.webRequest.onBeforeRequest((details, callback) =>
+      callback({ cancel: !webReaderRequestAllowed(details.url) })
+    )
+    reader.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+    readerSessionGuarded = true
+  }
+  return reader
 }
 
 export function searchPageUrl(query: string): string {
@@ -85,11 +133,18 @@ async function readBrowserPage(
   const win = new BrowserWindow({
     show: false,
     webPreferences: {
+      session: await guardedReaderSession(),
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false
     }
   })
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  const refuseNavigation = (event: { preventDefault: () => void }, target: string) => {
+    if (!webReaderRequestAllowed(target)) event.preventDefault()
+  }
+  win.webContents.on('will-navigate', refuseNavigation)
+  win.webContents.on('will-redirect', refuseNavigation)
   const close = () => {
     if (!win.isDestroyed()) win.destroy()
   }
@@ -170,9 +225,13 @@ export async function searchWeb(query: string, signal?: AbortSignal): Promise<st
       continue
     }
     hits.push({
-      title: String(row.title || url).replace(/\s+/g, ' ').trim(),
+      title: String(row.title || url)
+        .replace(/\s+/g, ' ')
+        .trim(),
       url,
-      snippet: String(row.snippet || '').replace(/\s+/g, ' ').trim()
+      snippet: String(row.snippet || '')
+        .replace(/\s+/g, ' ')
+        .trim()
     })
   }
   return formatSearchHits(query, hits)
