@@ -1,4 +1,4 @@
-import { isPathInside } from './workspace-boundary'
+import { isPathInside, realpathAllowMissing } from './workspace-boundary'
 export { isPathInside, realpathAllowMissing } from './workspace-boundary'
 import {
   publishWorkspaceText,
@@ -355,7 +355,12 @@ export function mkdirWorkspace(
   userPath: string
 ): { path: string; created: boolean } {
   const abs = resolveInWorkspace(workspacePath, userPath)
-  const reason = protectedMutationReason(relative(assertWorkspaceRoot(workspacePath), abs))
+  const root = assertWorkspaceRoot(workspacePath)
+  // mkdir -p follows symlinked ancestors, so check where the folder would really land:
+  // `link/hooks/x` with `link -> .git` must be refused like `.git/hooks/x`.
+  const reason =
+    protectedMutationReason(relative(root, abs)) ??
+    protectedMutationReason(relative(realpathAllowMissing(root), realpathAllowMissing(abs)))
   if (reason) throw new WorkspaceFsError(`${reason}: ${userPath}`)
   const created = !existsSync(abs)
   mkdirSync(abs, { recursive: true })
