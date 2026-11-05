@@ -8,6 +8,7 @@ import {
   gpusForVramShare,
   HIGH_VRAM_BYTES,
   llamaGpuPreferenceEnv,
+  matchNvidiaVram,
   pickBestGpu,
   rankGpuKind
 } from '../electron/main/services/gpu-accel'
@@ -105,5 +106,62 @@ describe('gpu / eGPU support', () => {
     ]
     expect(gpusForVramShare(devices).map((d) => d.name)).toEqual(['RTX 4070', 'RTX 3060'])
     expect(gpusForVramShare(devices.filter((d) => d.name !== 'RTX 4070'))).toEqual([])
+  })
+
+  describe('nvidia-smi memory for Windows adapters (#305)', () => {
+    const GiB = 1024 ** 3
+    // Win32_VideoController.AdapterRAM is a uint32, so large cards report about 4 GiB.
+    const capped = 4 * GiB - 1
+
+    it('never gives one card the memory of a different card that shares a name prefix', () => {
+      const listed: GpuDeviceInfo[] = [
+        { name: 'NVIDIA GeForce GTX 1050', kind: 'discrete', index: 0, vramBytes: 2 * GiB },
+        { name: 'NVIDIA GeForce RTX 4090', kind: 'discrete', index: 1, vramBytes: capped }
+      ]
+      const cuda = [
+        { name: 'NVIDIA GeForce RTX 4090', vramBytes: 24 * GiB, vramFreeBytes: 22 * GiB },
+        { name: 'NVIDIA GeForce GTX 1050', vramBytes: 2 * GiB, vramFreeBytes: 1 * GiB }
+      ]
+      const [small, big] = matchNvidiaVram(listed, cuda)
+      expect(small).toMatchObject({ vramBytes: 2 * GiB, vramFreeBytes: 1 * GiB })
+      expect(big).toMatchObject({ vramBytes: 24 * GiB, vramFreeBytes: 22 * GiB })
+      expect(pickBestGpu([small!, big!])?.name).toBe('NVIDIA GeForce RTX 4090')
+    })
+
+    it('keeps the OS figure for an adapter nvidia-smi does not name', () => {
+      const listed: GpuDeviceInfo[] = [
+        { name: 'NVIDIA GeForce GTX 1650', kind: 'discrete', index: 0, vramBytes: capped }
+      ]
+      const cuda = [
+        { name: 'NVIDIA GeForce RTX 3090', vramBytes: 24 * GiB, vramFreeBytes: 20 * GiB }
+      ]
+      expect(matchNvidiaVram(listed, cuda)).toEqual(listed)
+    })
+
+    it('uses the smallest free memory when two cards share a name', () => {
+      const listed: GpuDeviceInfo[] = [
+        { name: 'NVIDIA GeForce RTX 3060', kind: 'discrete', index: 0, vramBytes: capped },
+        { name: 'NVIDIA GeForce RTX 3060', kind: 'discrete', index: 1, vramBytes: capped }
+      ]
+      const cuda = [
+        { name: 'NVIDIA GeForce RTX 3060', vramBytes: 12 * GiB, vramFreeBytes: 11 * GiB },
+        { name: 'NVIDIA GeForce RTX 3060', vramBytes: 12 * GiB, vramFreeBytes: 3 * GiB }
+      ]
+      for (const device of matchNvidiaVram(listed, cuda))
+        expect(device).toMatchObject({ vramBytes: 12 * GiB, vramFreeBytes: 3 * GiB })
+    })
+
+    it('matches names regardless of case and spacing, and never lowers a reported total', () => {
+      const listed: GpuDeviceInfo[] = [
+        { name: '  nvidia  GeForce RTX 4070 ', kind: 'discrete', index: 0, vramBytes: 12 * GiB }
+      ]
+      const cuda = [
+        { name: 'NVIDIA GeForce RTX 4070', vramBytes: 11 * GiB, vramFreeBytes: 9 * GiB }
+      ]
+      expect(matchNvidiaVram(listed, cuda)[0]).toMatchObject({
+        vramBytes: 12 * GiB,
+        vramFreeBytes: 9 * GiB
+      })
+    })
   })
 })
