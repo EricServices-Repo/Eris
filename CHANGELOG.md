@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.14 — 2026-11-04
+
+- Rebuild with cold-start long-context fixes, shared prompt accounting, safer memory revalidation, and integrated feedback and GPU/workspace safeguards.
+
 ## 0.6.13 — 2026-11-03
 
 - Rebuild with model-aware long context limits, reduced compaction churn, correct Eris-Dev context allocation, and integrated memory retention and dispatch fixes.
