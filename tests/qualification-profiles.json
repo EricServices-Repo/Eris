@@ -181,6 +181,7 @@
       "tests/usage-window.test.ts",
       "tests/vram-fit.test.ts",
       "tests/web-search.test.ts",
+      "tests/web-reader-egress.test.ts",
       "tests/workspace-fs.test.ts",
       "tests/workspace-symlink-walk.test.ts",
       "tests/workspace-ignore.test.ts",
