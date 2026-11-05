@@ -82,16 +82,16 @@ describe('feedback stays on the relay boundary', () => {
   })
 })
 
-describe('deployed feedback inbox compatibility', () => {
+describe('product repository feedback routing', () => {
   it.each(['htmlUrl', 'html_url'])(
-    'accepts the deployed inbox using %s and records the actual issue',
+    'accepts the product repository using %s and records the actual issue',
     async (field) => {
       const request = vi.fn(
         async () =>
           new Response(
             JSON.stringify({
               ok: true,
-              [field]: 'https://github.com/EricServices-Repo/Eris-feedback/issues/8'
+              [field]: 'https://github.com/EricServices-Repo/Eris/issues/8'
             })
           )
       )
@@ -99,42 +99,50 @@ describe('deployed feedback inbox compatibility', () => {
       expect(await submitBugReport(input)).toMatchObject({
         ok: true,
         number: 8,
-        htmlUrl: 'https://github.com/EricServices-Repo/Eris-feedback/issues/8'
+        htmlUrl: 'https://github.com/EricServices-Repo/Eris/issues/8'
       })
       expect(request).toHaveBeenCalledTimes(1)
       expect(listFeedbackHistory()).toMatchObject([
-        { number: 8, htmlUrl: 'https://github.com/EricServices-Repo/Eris-feedback/issues/8' }
+        { number: 8, htmlUrl: 'https://github.com/EricServices-Repo/Eris/issues/8' }
       ])
     }
   )
 
-  it('keeps distinct issue histories when both trusted inboxes return the same number', async () => {
-    for (const repo of ['Eris', 'Eris-feedback']) {
-      vi.stubGlobal(
-        'fetch',
-        async () =>
-          new Response(
-            JSON.stringify({
-              ok: true,
-              htmlUrl: `https://github.com/EricServices-Repo/${repo}/issues/8`,
-              number: 8
-            })
-          )
-      )
-      expect((await submitBugReport(input)).ok).toBe(true)
-    }
-    expect(listFeedbackHistory()).toHaveLength(2)
+  it('requests only the main repository and rejects a relay that files in the old inbox', async () => {
+    const request = vi.fn(
+      async (_url: string | URL | Request, _options?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            htmlUrl: 'https://github.com/EricServices-Repo/Eris-feedback/issues/8',
+            number: 8
+          })
+        )
+    )
+    vi.stubGlobal('fetch', request)
+    expect(buildBugReportPreview(input).targetRepo).toBe('EricServices-Repo/Eris')
+    expect(await submitBugReport(input)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('EricServices-Repo/Eris')
+    })
+    expect(request).toHaveBeenCalledTimes(1)
+    const options = request.mock.calls[0]?.[1] as RequestInit | undefined
+    expect(JSON.parse(String(options?.body))).toMatchObject({
+      owner: 'EricServices-Repo',
+      repo: 'Eris'
+    })
+    expect(listFeedbackHistory()).toHaveLength(0)
   })
 
   it.each([
     'https://github.com/other/Eris-feedback/issues/8',
     'https://github.com/EricServices-Repo/Eris-feedback-evil/issues/8',
-    'https://github.com.evil.test/EricServices-Repo/Eris-feedback/issues/8',
-    'http://github.com/EricServices-Repo/Eris-feedback/issues/8',
-    'https://user:pass@github.com/EricServices-Repo/Eris-feedback/issues/8',
-    'https://github.com:444/EricServices-Repo/Eris-feedback/issues/8',
+    'https://github.com.evil.test/EricServices-Repo/Eris/issues/8',
+    'http://github.com/EricServices-Repo/Eris/issues/8',
+    'https://user:pass@github.com/EricServices-Repo/Eris/issues/8',
+    'https://github.com:444/EricServices-Repo/Eris/issues/8',
     'https://github.com/EricServices-Repo/Eris-feedback/pull/8',
-    'https://github.com/EricServices-Repo/Eris-feedback/issues/8?redirect=elsewhere',
+    'https://github.com/EricServices-Repo/Eris/issues/8?redirect=elsewhere',
     'https://github.com/EricServices-Repo/Eris-feedback/issues/0',
     'https://github.com/EricServices-Repo/Eris-feedback/issues/9007199254740992'
   ])('rejects untrusted or malformed success URL %s', async (htmlUrl) => {
@@ -153,7 +161,7 @@ describe('deployed feedback inbox compatibility', () => {
         new Response(
           JSON.stringify({
             ok: true,
-            htmlUrl: 'https://github.com/EricServices-Repo/Eris-feedback/issues/8',
+            htmlUrl: 'https://github.com/EricServices-Repo/Eris/issues/8',
             number: 9
           })
         )
