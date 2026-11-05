@@ -12,7 +12,7 @@ import { appendToolObservation } from '../model-protocol'
 import { acquireProjectWrite } from './task-scheduler'
 import { generateImage, saveImageToWorkspace } from '../image-generation'
 import { ImageSizeSchema } from '../../../../src/shared/image-generation-schema'
-import { existsSync, readFileSync, realpathSync, statSync } from 'fs'
+import { existsSync, realpathSync, statSync } from 'fs'
 import {
   asksForRecommendations,
   asksWhatTheProjectDoes,
@@ -62,7 +62,9 @@ import {
   recordMkdirOp,
   recordRenameOp,
   recordWriteOp,
-  snapshotBeforeWrite
+  readPreimage,
+  snapshotBeforeWrite,
+  snapshotPreimage
 } from '../checkpoints'
 import { runWorkspaceCommand } from '../shell-run'
 import {
@@ -4029,9 +4031,9 @@ async function* runAgentInternal(options: {
               call.name === 'apply_patch'
                 ? '' // resolved inside tool
                 : argString(call.args, 'path')
-            let before: string | null = writePath
-              ? snapshotBeforeWrite(workspacePath, checkpoint.id, writePath)
-              : null
+            // Exact bytes: undo must restore a file that is not valid UTF-8 unchanged.
+            const preimage = writePath ? snapshotPreimage(workspacePath, writePath) : null
+            let before: string | null = preimage?.text ?? null
             let afterContent: string | null =
               call.name === 'write_file' && typeof call.args.content === 'string'
                 ? call.args.content
@@ -4143,7 +4145,8 @@ async function* runAgentInternal(options: {
                 checkpoint.id,
                 result.path,
                 before,
-                afterContent
+                afterContent,
+                preimage?.base64
               )
               if (!rec)
                 throw new Error(
@@ -4249,13 +4252,14 @@ async function* runAgentInternal(options: {
           } else if (call.name === 'delete_path') {
             const delPath = argString(call.args, 'path')
             let before = ''
+            let beforeBase64: string | undefined
             let wasDirectory = false
             if (delPath) {
               try {
                 const abs = resolveInWorkspace(workspacePath, delPath)
                 if (existsSync(abs)) {
                   wasDirectory = statSync(abs).isDirectory()
-                  if (!wasDirectory) before = readFileSync(abs, 'utf8')
+                  if (!wasDirectory) ({ text: before, base64: beforeBase64 } = readPreimage(abs))
                 }
               } catch {
                 // ignore
@@ -4268,7 +4272,8 @@ async function* runAgentInternal(options: {
                 checkpoint.id,
                 delPath,
                 before,
-                wasDirectory
+                wasDirectory,
+                beforeBase64
               )
               if (!rec)
                 throw new Error(

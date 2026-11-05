@@ -14,7 +14,7 @@ import {
   type CloudJobArtifacts,
   type EnqueueCloudJobRequest
 } from '../../../src/shared/cloud-agents'
-import { createCheckpoint, recordWriteOp, snapshotBeforeWrite } from './checkpoints'
+import { createCheckpoint, recordWriteOp, snapshotPreimage } from './checkpoints'
 import { writeWorkspaceFile, resolveInWorkspace } from './workspace-fs'
 
 export interface CloudAppliedDiff {
@@ -635,9 +635,10 @@ export async function applyCloudJobArtifacts(
       const file = pack.files[i]!
       const path = file.path.replace(/\\/g, '/').replace(/^\/+/, '')
       if (!path || path.includes('..')) continue
-      const before = snapshotBeforeWrite(workspacePath, checkpoint.id, path)
+      const preimage = snapshotPreimage(workspacePath, path)
+      const before = preimage?.text ?? null
       writeWorkspaceFile(workspacePath, path, file.content)
-      recordWriteOp(workspacePath, checkpoint.id, path, before, file.content)
+      recordWriteOp(workspacePath, checkpoint.id, path, before, file.content, preimage?.base64)
       diffs.push({
         id: `${checkpoint.id}:${i}`,
         checkpointId: checkpoint.id,
