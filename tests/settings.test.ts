@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { tmpdir } from 'os'
 import { setWorkspaceTrusted } from '../electron/main/services/workspace-trust'
@@ -324,4 +324,41 @@ describe('large-context settings', () => {
       expect(SettingsSchema.safeParse(raw).success).toBe(false)
     }
   )
+})
+
+describe('unreadable settings files', () => {
+  const backups = (path: string) =>
+    readdirSync(dirname(path)).filter((name) => name.startsWith(`${basename(path)}.corrupt-`))
+  const basename = (path: string) => path.split(/[\\/]/).pop()!
+
+  it('keeps a hand-edited user file that does not parse before saving a change', () => {
+    const broken = '{ "editor": { "fontSize": 18, }, "models": { "connections": [] } }'
+    mkdirSync(dirname(userSettingsPath()), { recursive: true })
+    for (const name of backups(userSettingsPath())) rmSync(join(dirname(userSettingsPath()), name))
+    writeFileSync(userSettingsPath(), broken)
+    invalidateResolvedSettingsCache()
+
+    setSettings('user', { editor: { tabSize: 4 } }, null)
+
+    const kept = backups(userSettingsPath())
+    expect(kept).toHaveLength(1)
+    expect(readFileSync(join(dirname(userSettingsPath()), kept[0]!), 'utf8')).toBe(broken)
+    expect(JSON.parse(readFileSync(userSettingsPath(), 'utf8'))).toEqual({ editor: { tabSize: 4 } })
+    expect(
+      readdirSync(dirname(userSettingsPath())).filter((name) => name.endsWith('.tmp'))
+    ).toEqual([])
+    writeUserSettings({})
+  })
+
+  it('does not back up a readable file', () => {
+    writeUserSettings({ editor: { fontSize: 15 } })
+    const before = backups(userSettingsPath()).length
+    setSettings('user', { editor: { tabSize: 2 } }, null)
+    expect(backups(userSettingsPath())).toHaveLength(before)
+    expect(JSON.parse(readFileSync(userSettingsPath(), 'utf8')).editor).toEqual({
+      fontSize: 15,
+      tabSize: 2
+    })
+    writeUserSettings({})
+  })
 })

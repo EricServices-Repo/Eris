@@ -1,7 +1,17 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
+import { randomUUID } from 'crypto'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from 'fs'
 import { dirname } from 'path'
 import type { AppSettings, SettingsPatch, SettingsScope } from '../../../src/shared/settings-schema'
 import { SettingsSchema } from '../../../src/shared/settings-schema'
+import { storageFailure } from './evidence-records'
 import { defaultsPath, userSettingsPath, workspaceSettingsPath, userDataRoot } from './paths'
 import {
   isWorkspaceTrusted,
@@ -39,9 +49,34 @@ function readJson<T>(path: string): T | null {
   }
 }
 
+/**
+ * A settings file that does not parse reads as an empty layer, so the next write would
+ * replace the user's hand-edited file with only the patched keys. Keep a copy first.
+ */
+function preserveUnreadableSettings(path: string): void {
+  if (!existsSync(path)) return
+  try {
+    const value: unknown = JSON.parse(readFileSync(path, 'utf8'))
+    if (value && typeof value === 'object' && !Array.isArray(value)) return
+    throw new Error('Settings file is not a JSON object')
+  } catch (error) {
+    const backup = `${path}.corrupt-${randomUUID()}`
+    copyFileSync(path, backup)
+    storageFailure(path, new Error(`Unreadable settings kept at ${backup}: ${String(error)}`))
+  }
+}
+
+/** Write-then-rename so an interrupted save never leaves a torn settings file. */
 function writeJson(path: string, data: unknown): void {
   mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, JSON.stringify(data, null, 2), 'utf8')
+  preserveUnreadableSettings(path)
+  const temp = `${path}.${randomUUID()}.tmp`
+  try {
+    writeFileSync(temp, JSON.stringify(data, null, 2), 'utf8')
+    renameSync(temp, path)
+  } finally {
+    rmSync(temp, { force: true })
+  }
 }
 
 let cachedDefaults: AppSettings | null = null
