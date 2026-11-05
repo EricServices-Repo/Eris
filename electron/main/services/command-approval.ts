@@ -1,7 +1,10 @@
 import { reportChatActivityFor } from './chat-activity'
 import { randomUUID } from 'crypto'
 import type { WebContents } from 'electron'
+import { existsSync, statSync } from 'fs'
+import { join } from 'path'
 import type { AppSettings } from '../../../src/shared/settings-schema'
+import { workspaceLocalBinDirs } from './workspace-env'
 
 export type CommandApprovalKind = 'run' | 'push' | 'mcp'
 export type CommandApprovalDecision = 'allow' | 'always' | 'deny'
@@ -46,6 +49,36 @@ export function isSafeCommand(command: string): boolean {
   return SAFE_PATTERNS.some((re) => re.test(cmd))
 }
 
+const WINDOWS_EXECUTABLE_SUFFIXES = ['', '.exe', '.cmd', '.bat', '.com', '.ps1']
+
+/**
+ * The workspace file a command's executable would resolve to, if any. Agent commands
+ * search the workspace's local bins (node_modules/.bin, .venv, bin, ...) before the host
+ * PATH, and Windows cmd also searches the working folder first, so a repository can ship
+ * its own `git` or `ls`. Such a command runs repository code, not the host tool it names.
+ */
+export function workspaceShadowedExecutable(
+  command: string,
+  workspacePath: string,
+  platform: NodeJS.Platform = process.platform
+): string | null {
+  const name = command.trim().split(/\s+/, 1)[0] ?? ''
+  if (!name || /[/\\]/.test(name)) return null
+  const dirs = workspaceLocalBinDirs(workspacePath)
+  if (platform === 'win32') dirs.unshift(workspacePath)
+  const suffixes = platform === 'win32' ? WINDOWS_EXECUTABLE_SUFFIXES : ['']
+  for (const dir of dirs)
+    for (const suffix of suffixes) {
+      const candidate = join(dir, `${name}${suffix}`)
+      try {
+        if (existsSync(candidate) && statSync(candidate).isFile()) return candidate
+      } catch {
+        // An unreadable entry is not proof of a shadowing executable.
+      }
+    }
+  return null
+}
+
 export function normalizeCommand(command: string): string {
   return command.trim().replace(/\s+/g, ' ')
 }
@@ -74,13 +107,20 @@ export function commandNeedsApproval(
   settings: AppSettings | undefined,
   kind: CommandApprovalKind,
   command: string,
-  workspaceAllowed: string[] = []
+  workspaceAllowed: string[] = [],
+  workspacePath?: string | null
 ): boolean {
   if (!settings || settings.agent.commandApproval === 'auto') return false
   const norm = normalizeCommand(command)
   const allowed = [...settings.agent.allowedCommands, ...workspaceAllowed]
   if (allowed.some((c) => normalizeCommand(c) === norm)) return false
-  if (kind === 'run' && isSafeCommand(norm)) return false
+  // "Safe" names a host inspection tool; a repository binary under that name is not one.
+  if (
+    kind === 'run' &&
+    isSafeCommand(norm) &&
+    !(workspacePath && workspaceShadowedExecutable(norm, workspacePath))
+  )
+    return false
   return true
 }
 

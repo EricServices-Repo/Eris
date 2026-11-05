@@ -1020,7 +1020,7 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
       approveCommand: async (kind, command) => {
         const resolved = getResolvedSettings(job.workspacePath)
         const allowed = workspaceAllowedCommands(job.workspacePath)
-        if (!commandNeedsApproval(resolved, kind, command, allowed)) return true
+        if (!commandNeedsApproval(resolved, kind, command, allowed, job.workspacePath)) return true
         if (!sender || sender.isDestroyed()) return false
         patch(job.id, (j) => ({
           ...j,

@@ -919,7 +919,8 @@ export function registerChatStreamIpc(): void {
               approveCommand: async (kind, command) => {
                 const live = getResolvedSettings(workspacePath)
                 const workspaceAllowed = workspaceAllowedCommands(workspacePath)
-                if (!commandNeedsApproval(live, kind, command, workspaceAllowed)) return true
+                if (!commandNeedsApproval(live, kind, command, workspaceAllowed, workspacePath))
+                  return true
                 flushStreamChunks()
                 publish('chat:phase', {
                   requestId,
