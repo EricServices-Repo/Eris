@@ -7,6 +7,7 @@
         "tests/agent-capabilities.test.ts",
         "tests/model-context-allocation.test.ts",
         "tests/native-context-discovery.test.ts",
+        "tests/prompt-token-counter.test.ts",
         "tests/memory-tiers.test.ts",
         "tests/context-tier-budget.test.ts",
         "tests/paraphrase-recall.test.ts",

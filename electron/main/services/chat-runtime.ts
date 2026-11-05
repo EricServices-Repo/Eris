@@ -1,7 +1,14 @@
+import { eligibleOutbound } from './eligible-outbound'
+import { createPromptTokenCounter } from './agent/prompt-token-counter'
 import { assertTaskReferences } from './reference-binding'
 import { reportChatActivity } from './chat-activity'
 import { resolveModelCapabilities } from './model-capabilities'
-import { compileModelMessages, budgetModelMessages, type ModelMessage } from './model-protocol'
+import {
+  compileModelMessages,
+  budgetModelMessages,
+  modelPromptMessages,
+  type ModelMessage
+} from './model-protocol'
 import { estimateContextTokens } from '../../../src/shared/token-estimate'
 import type { AppSettings } from '../../../src/shared/settings-schema'
 import {
@@ -10,9 +17,6 @@ import {
   resolveExactBuiltinRef,
   streamBuiltinChat
 } from './builtin-model'
-import { withEligibleMemory } from './memory-dispatch'
-import { eligibleProjectFacts } from './agent/context-compiler'
-import { appendTaskEvent } from './task-ledger'
 import { reportContextDispatch, reportContextUsage } from './context-dispatch'
 import { isLocalRef, resolveExactLocalRef } from './local-model'
 import {
@@ -60,19 +64,6 @@ export type StreamModelChatOptions = {
   purpose?: ModelPurpose
   /** Called once when the provider reports how generation ended. */
   onTermination?: (termination: ModelTermination) => void
-}
-
-/** Recalled memory, then approved project facts, as this destination may receive them now. */
-async function eligibleOutbound<
-  T extends { content?: unknown; contextBundle?: { taskId?: string } }
->(input: T[], model: string, settings: AppSettings): Promise<{ messages: T[]; revoked: boolean }> {
-  const memory = await withEligibleMemory(input, model, settings)
-  const facts = eligibleProjectFacts(memory.messages, model, settings)
-  if (facts.removed.length) {
-    const id = input.map((message) => message.contextBundle?.taskId).find(Boolean)
-    if (id) appendTaskEvent(id, 'project-fact-withheld', { facts: facts.removed })
-  }
-  return { messages: facts.messages, revoked: memory.revoked || facts.removed.length > 0 }
 }
 
 /**
@@ -130,10 +121,11 @@ function apiFinishReason(finishReason: string | null): ModelTermination['reason'
 function packForAllocation(
   messages: ModelMessage[],
   allocated: ReturnType<typeof resolveModelCapabilities>,
-  plannedTokens: number
+  plannedTokens: number,
+  countWire: Awaited<ReturnType<typeof createPromptTokenCounter>>['countWire']
 ) {
   try {
-    return budgetModelMessages(messages, allocated.promptBudget, 'text-tools')
+    return budgetModelMessages(messages, allocated.promptBudget, 'text-tools', countWire)
   } catch (err) {
     if (allocated.contextCeiling >= plannedTokens) throw err
     const size = (tokens: number) => tokens.toLocaleString('en-US')
@@ -182,26 +174,22 @@ export async function* streamProviderChat(
   const capabilities = currentCapabilities()
   const plannedTokens = capabilities.contextCeiling
   const protocol = capabilities.tools
-  const inputMessages = options.messages.map((message) => {
-    const { contextBundle: _accounting, ...wire } = message as ModelMessage
-    return { ...wire, content: wire.content ?? '' }
-  }) as ModelMessage[]
-  if (protocol === 'text-tools' && options.tools?.length)
-    inputMessages.splice(1, 0, {
-      role: 'system',
-      content:
-        'Available tools (JSON schemas):\n' +
-        JSON.stringify(options.tools.map((tool) => tool.function))
-    })
+  const inputMessages = modelPromptMessages(
+    options.messages as ModelMessage[],
+    options.tools ?? [],
+    protocol
+  )
   const schemaTokens =
     protocol === 'text-tools' || !options.tools?.length
       ? 0
       : estimateContextTokens(JSON.stringify(options.tools))
-  const budgeted = budgetModelMessages(
-    inputMessages,
-    capabilities.promptBudget - schemaTokens,
-    protocol
-  )
+  // A native forecast can be deliberately smaller than what placement will fit.
+  // Validate the transcript now, but defer fitting until prepareMessages observes
+  // the actual allocation. Otherwise a cold 262K request can fail against an 8K
+  // planning forecast without ever giving the allocator a chance to run.
+  const budgeted = isNativeGgufRef(model)
+    ? { messages: inputMessages }
+    : budgetModelMessages(inputMessages, capabilities.promptBudget - schemaTokens, protocol)
   let compiled = compileModelMessages(budgeted.messages, {
     protocol,
     contextWindow: capabilities.contextCeiling,
@@ -295,22 +283,31 @@ export async function* streamProviderChat(
             const task = (message as ModelMessage).contextBundle?.referenceTask
             if (task) await assertTaskReferences(task, options.settings, model)
           }
-          const latest = await withEligibleMemory(options.messages, model, options.settings)
+          const countable = await eligibleOutbound(options.messages, model, options.settings)
+          if (countable.revoked && options.sessionKey) releaseLocalChatSession(options.sessionKey)
+          const counter = await createPromptTokenCounter(
+            model,
+            countable.messages as ModelMessage[],
+            options.tools ?? [],
+            'text-tools',
+            options.signal
+          )
+          // Tokenization may wait on the worker. Recheck source controls after it,
+          // and do no more asynchronous work before returning the final prompt.
+          for (const message of options.messages) {
+            const task = (message as ModelMessage).contextBundle?.referenceTask
+            if (task) await assertTaskReferences(task, options.settings, model)
+          }
+          const latest = await eligibleOutbound(options.messages, model, options.settings)
           if (latest.revoked && options.sessionKey) releaseLocalChatSession(options.sessionKey)
           throwIfAborted(options.signal)
           const allocated = currentCapabilities()
-          const wire = latest.messages.map((message) => {
-            const { contextBundle: _bundle, ...value } = message as ModelMessage
-            return { ...value, content: value.content ?? '' }
-          }) as ModelMessage[]
-          if (options.tools?.length)
-            wire.splice(1, 0, {
-              role: 'system',
-              content:
-                'Available tools (JSON schemas):\n' +
-                JSON.stringify(options.tools.map((tool) => tool.function))
-            })
-          const packed = packForAllocation(wire, allocated, plannedTokens)
+          const wire = modelPromptMessages(
+            latest.messages as ModelMessage[],
+            options.tools ?? [],
+            'text-tools'
+          )
+          const packed = packForAllocation(wire, allocated, plannedTokens, counter.countWire)
           compiled = compileModelMessages(packed.messages, {
             protocol: 'text-tools',
             contextWindow: allocated.contextCeiling,

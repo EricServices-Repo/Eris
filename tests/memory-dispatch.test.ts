@@ -14,8 +14,23 @@ const h = vi.hoisted(() => ({
   beforePrepare: async (..._args: unknown[]): Promise<void> => {},
   realPrepare: null as unknown as typeof prepareModelWindows,
   nativePrepare: async () => {},
+  beforeCount: async () => {},
   released: [] as string[]
 }))
+vi.mock('../electron/main/services/agent/prompt-token-counter', async (original) => {
+  const actual =
+    await original<typeof import('../electron/main/services/agent/prompt-token-counter')>()
+  return {
+    ...actual,
+    createPromptTokenCounter: async (
+      ...args: Parameters<typeof actual.createPromptTokenCounter>
+    ) => {
+      const counter = await actual.createPromptTokenCounter(...args)
+      await h.beforeCount()
+      return counter
+    }
+  }
+})
 vi.mock('../electron/main/services/ollama-runtime', async (original) => {
   const actual = await original<typeof import('../electron/main/services/ollama-runtime')>()
   h.realPrepare = actual.prepareModelWindows
@@ -150,6 +165,7 @@ beforeEach(() => {
   h.sent.length = h.events.length = h.released.length = 0
   h.beforePrepare = async () => {}
   h.nativePrepare = async () => {}
+  h.beforeCount = async () => {}
   release = () => undefined
   contextMemoryStore.clear()
   contextMemoryStore.configure(settings().agent.contextMemory)
@@ -912,4 +928,25 @@ describe('layered current-turn recall revocation (#232)', () => {
         .join('\n')
     ).toContain('"taskId":"task"')
   })
+})
+
+it('revalidates forgotten recall after asynchronous native prompt counting', async () => {
+  const prompt = await recall()
+  lease(prompt)
+  h.beforeCount = () => forget('a').then(() => {})
+  for await (const _ of streamProviderChat({
+    settings: settings(),
+    model: LOCAL,
+    messages: [
+      { role: 'system', content: prompt.text },
+      { role: 'user', content: 'What about checkout?' }
+    ],
+    temperature: 0,
+    getSecret: () => null,
+    sessionKey: 'native-count-race'
+  }));
+  const wire = JSON.stringify(h.sent.at(-1)?.messages)
+  expect(wire).not.toContain('PRIVATE-A')
+  expect(wire).toContain('KEPT-B')
+  expect(h.released).toContain('native-count-race')
 })

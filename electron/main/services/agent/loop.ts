@@ -1,3 +1,6 @@
+import { eligibleOutbound } from '../eligible-outbound'
+import { createPromptTokenCounter } from './prompt-token-counter'
+import { resolveModelCapabilities } from '../model-capabilities'
 import { prepareModelTransition, prohibitsModelRecovery } from './model-transition'
 import { compileMeasuredContext } from './measured-context'
 import { contextProvenance } from '../model-capabilities'
@@ -83,8 +86,7 @@ import {
   contextBudgetTokens,
   contextCompactionTarget,
   estimateTokens,
-  microCompactAgentMessages,
-  needsContextCompaction
+  microCompactAgentMessages
 } from './compaction'
 import { executeTool } from './execute-tool'
 import { toolArgumentRepair, validateToolArguments } from './tool-validation'
@@ -917,6 +919,8 @@ async function* runAgentInternal(options: {
     throw new Error(
       'The available tools exceed this model context window. Increase context or reduce connected tools.'
     )
+  let countedModel = ''
+  let countWorkerTokens: (messages: AgentChatMessage[]) => number = estimateTokens
   const workerMessages: AgentChatMessage[] = await buildPreservedWorkerMessages({
     messages,
     workspacePath,
@@ -981,7 +985,11 @@ async function* runAgentInternal(options: {
     }),
     allowed: () => contextPullAllowed(workerModel, options.settings),
     budgetTokens: () => promptBudget,
-    remainingTokens: () => promptBudget - estimateTokens(workerMessages),
+    remainingTokens: () =>
+      promptBudget -
+      (countedModel === workerModel
+        ? countWorkerTokens(workerMessages)
+        : estimateTokens(workerMessages)),
     record: (event) => appendTaskEvent(task.taskId, 'context-pulled', event)
   })
 
@@ -1549,20 +1557,39 @@ async function* runAgentInternal(options: {
       skipLiteSummary?: boolean
     } = {}
   ): AsyncGenerator<AgentRunnerEvent, void, unknown> {
-    promptBudget =
-      contextBudgetTokens(options.settings, workerModel) -
-      Math.ceil(JSON.stringify(openaiTools).length / 3) -
-      128
+    const startedAt = performance.now()
+    promptBudget = contextBudgetTokens(options.settings, workerModel)
     boundRuntimeInstructions(workerMessages)
-    const force = Boolean(opts.force)
-    if (!needsContextCompaction(workerMessages, promptBudget, force)) return
-    const beforeTokens = estimateTokens(workerMessages)
+    const countable = await eligibleOutbound(workerMessages, workerModel, options.settings)
+    if (countable.revoked) {
+      workerMessages.splice(0, workerMessages.length, ...countable.messages)
+      releaseGgufSession()
+    }
+    const counter = await createPromptTokenCounter(
+      workerModel,
+      workerMessages,
+      openaiTools,
+      resolveModelCapabilities(options.settings, workerModel).tools,
+      options.signal
+    )
+    // Source controls can change while native token counts are being prepared.
+    const current = await eligibleOutbound(workerMessages, workerModel, options.settings)
+    if (current.revoked) {
+      workerMessages.splice(0, workerMessages.length, ...current.messages)
+      releaseGgufSession()
+    }
+    throwIfAborted(options.signal)
+    const countTokens = counter.count
+    countedModel = workerModel
+    countWorkerTokens = countTokens
+    const beforeTokens = countTokens(workerMessages)
+    if (beforeTokens <= promptBudget) return
     const targetTokens = contextCompactionTarget(promptBudget)
     const reason = opts.reason ?? 'capacity'
 
     // Stubs are only useful to a model allowed to read them back.
     const evidence = contextPullAllowed(workerModel, options.settings) ? runJournal : undefined
-    const micro = microCompactAgentMessages(workerMessages, targetTokens, evidence)
+    const micro = microCompactAgentMessages(workerMessages, targetTokens, evidence, countTokens)
     if (micro.changed) {
       workerMessages.splice(0, workerMessages.length, ...micro.messages)
       yield {
@@ -1574,8 +1601,10 @@ async function* runAgentInternal(options: {
       appendTaskEvent(task.taskId, 'context-evicted', {
         mode: 'micro',
         reason,
+        tokenCounting: counter.method,
+        durationMs: Math.round(performance.now() - startedAt),
         beforeTokens,
-        afterTokens: estimateTokens(workerMessages),
+        afterTokens: countTokens(workerMessages),
         targetTokens,
         budgetTokens: promptBudget,
         evicted: micro.evicted,
@@ -1584,7 +1613,7 @@ async function* runAgentInternal(options: {
       // Every turn re-seeds history, so eviction keeps the unchanged prefix in KV.
       if (micro.shortened) releaseGgufSession()
       contextPull.noteCompaction()
-      if (estimateTokens(workerMessages) <= promptBudget) return
+      if (countTokens(workerMessages) <= promptBudget) return
     }
     // Never swap Lite↔Full mid-run — node-llama-cpp holds one runtime; unloading
     // Full to summarize with Lite freezes the app for minutes and looks "broken".
@@ -1617,8 +1646,31 @@ async function* runAgentInternal(options: {
     })
     // A summary can itself be large. Recheck it and clean its retained evidence,
     // never interpret a successful summary call as proof that the prompt now fits.
-    const packed = microCompactAgentMessages(compacted.messages, targetTokens, evidence)
-    const afterTokens = estimateTokens(packed.messages)
+    const eligibleSummary = await eligibleOutbound(
+      compacted.messages,
+      workerModel,
+      options.settings
+    )
+    const summaryCounter = await createPromptTokenCounter(
+      workerModel,
+      eligibleSummary.messages,
+      openaiTools,
+      resolveModelCapabilities(options.settings, workerModel).tools,
+      options.signal
+    )
+    const finalSummary = await eligibleOutbound(
+      eligibleSummary.messages,
+      workerModel,
+      options.settings
+    )
+    throwIfAborted(options.signal)
+    const packed = microCompactAgentMessages(
+      finalSummary.messages,
+      targetTokens,
+      evidence,
+      summaryCounter.count
+    )
+    const afterTokens = summaryCounter.count(packed.messages)
     const changed =
       workerMessages.length !== packed.messages.length ||
       packed.messages.some((message, i) => {
@@ -1631,10 +1683,12 @@ async function* runAgentInternal(options: {
           JSON.stringify(message.tool_calls) !== JSON.stringify(prior.tool_calls)
         )
       })
-    const improved = changed && afterTokens < estimateTokens(workerMessages)
+    const improved = changed && afterTokens < summaryCounter.count(workerMessages)
     appendTaskEvent(task.taskId, 'context-evicted', {
       mode: 'full',
       reason,
+      tokenCounting: summaryCounter.method,
+      durationMs: Math.round(performance.now() - startedAt),
       beforeTokens,
       afterTokens,
       targetTokens,
@@ -1647,11 +1701,12 @@ async function* runAgentInternal(options: {
     if (improved) {
       workerMessages.splice(0, workerMessages.length, ...packed.messages)
       contextMemory = compacted.memory || contextMemory
+      countWorkerTokens = summaryCounter.count
       // Only an actual rewrite needs to discard the cached sequence.
       releaseGgufSession()
       contextPull.noteCompaction()
     }
-    if (estimateTokens(workerMessages) > promptBudget) {
+    if (countWorkerTokens(workerMessages) > promptBudget) {
       throw new Error(
         `Required task context exceeds this model's usable input budget (${promptBudget.toLocaleString('en-US')} tokens) after cleanup. ` +
           'Increase the requested context in Settings → Models, choose a model with a larger supported window, or reduce attached context. ' +

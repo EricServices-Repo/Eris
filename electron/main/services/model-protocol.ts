@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import type { ChatRequestMessage } from './openai-compatible'
+import type { ChatRequestMessage, OpenAIToolDef } from './openai-compatible'
 import { contextUnits } from '../../../src/shared/token-estimate'
 
 function decodedArguments(value: string): unknown {
@@ -48,7 +48,15 @@ export function compileModelMessages(
   capabilities: ModelCapabilities
 ): ChatRequestMessage[] {
   validateModelTranscript(messages)
-  if (capabilities.protocol === 'native-tools') return messages.map((message) => ({ ...message }))
+  return adaptModelMessagesForAccounting(messages, capabilities.protocol)
+}
+
+/** Accounting also sees in-flight calls before their results exist. Never dispatch this without validation. */
+export function adaptModelMessagesForAccounting(
+  messages: readonly ModelMessage[],
+  protocol: ModelCapabilities['protocol']
+): ChatRequestMessage[] {
+  if (protocol === 'native-tools') return messages.map((message) => ({ ...message }))
   return messages.map((message) => {
     if (message.role === 'tool')
       return {
@@ -72,23 +80,39 @@ export function compileModelMessages(
   })
 }
 
+/** Strip accounting metadata and inject the exact schema envelope sent to text-tool models. */
+export function modelPromptMessages(
+  messages: readonly ModelMessage[],
+  tools: readonly OpenAIToolDef[],
+  protocol: ModelCapabilities['protocol']
+): ModelMessage[] {
+  const wire = messages.map(({ contextBundle: _bundle, ...message }) => ({
+    ...message,
+    content: message.content ?? ''
+  }))
+  if (protocol === 'text-tools' && tools.length)
+    wire.splice(1, 0, {
+      role: 'system',
+      content:
+        'Available tools (JSON schemas):\n' + JSON.stringify(tools.map((tool) => tool.function))
+    })
+  return wire
+}
+
+export function serializeModelMessage(message: ChatRequestMessage): string {
+  return JSON.stringify({
+    role: message.role,
+    content: message.content,
+    ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
+    ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {})
+  })
+}
+
 /** Conservative wire estimate, including roles, call IDs, JSON escaping and message framing. */
 export function estimateModelMessagesTokens(messages: readonly ChatRequestMessage[]): number {
   return Math.ceil(
-    messages.reduce(
-      (sum, message) =>
-        sum +
-        contextUnits(
-          JSON.stringify({
-            role: message.role,
-            content: message.content,
-            ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
-            ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {})
-          })
-        ) +
-        16,
-      0
-    ) / 3
+    messages.reduce((sum, message) => sum + contextUnits(serializeModelMessage(message)) + 16, 0) /
+      3
   )
 }
 
@@ -96,14 +120,15 @@ export function estimateModelMessagesTokens(messages: readonly ChatRequestMessag
 export function budgetModelMessages(
   messages: ModelMessage[],
   maxTokens: number,
-  protocol: ModelCapabilities['protocol'] = 'native-tools'
+  protocol: ModelCapabilities['protocol'] = 'native-tools',
+  tokenCount?: (wire: readonly ChatRequestMessage[]) => number
 ): { messages: ModelMessage[]; estimatedTokens: number } {
   if (!Number.isFinite(maxTokens) || maxTokens <= 0)
     throw new Error('The model context budget must be positive and finite.')
   // Budget the actual adapter representation: text tool envelopes add tokens and
   // native calls include argument strings and IDs. Count schemas separately once.
   const size = (items: ModelMessage[]) =>
-    estimateModelMessagesTokens(
+    (tokenCount ?? estimateModelMessagesTokens)(
       compileModelMessages(items, { protocol, contextWindow: Infinity, outputReserve: 0 })
     )
   const pinned = messages.filter((message) => message.role === 'system')
