@@ -1,4 +1,12 @@
-import { mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync
+} from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -18,6 +26,7 @@ import {
   writeWorkspaceFile,
   WorkspaceFsError
 } from '../electron/main/services/workspace-fs'
+import { applyCloudPatchFiles } from '../electron/main/services/cloud-agents-client'
 
 // #306 IW-05: undo restores the exact preimage, not a UTF-8 re-encoding of it.
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0xfe, 0x80])
@@ -141,5 +150,63 @@ describe('text edits on files that are not valid UTF-8 (#306)', () => {
     writeFileSync(join(root, 'a.ts'), 'export const café = 1\n', 'utf8')
     searchReplaceInFile(root, 'a.ts', '= 1', '= 2')
     expect(readFileSync(join(root, 'a.ts'), 'utf8')).toBe('export const café = 2\n')
+  })
+})
+
+describe('cloud patch apply receipts (#306)', () => {
+  const file = (path: string, content: string, before: string | null = null) => ({
+    path,
+    content,
+    before
+  })
+
+  it('points each diff at its own checkpoint receipt', () => {
+    writeFileSync(join(root, 'b.ts'), 'b0\n')
+    writeFileSync(join(root, 'c.ts'), 'c0\n')
+    const applied = applyCloudPatchFiles(root, [
+      file('a.ts', 'a1\n'),
+      file('b.ts', 'b1\n'),
+      file('c.ts', 'c1\n')
+    ])
+    expect(applied.ok).toBe(true)
+    const ops = loadCheckpoint(root, applied.checkpointId)!.ops
+    for (const diff of applied.diffs) expect(ops[diff.opIndex]).toMatchObject({ path: diff.path })
+
+    // Undoing b restores b, and leaves c applied.
+    const b = applied.diffs.find((diff) => diff.path === 'b.ts')!
+    restoreCheckpointOp(root, applied.checkpointId, b.opIndex)
+    expect(readFileSync(join(root, 'b.ts'), 'utf8')).toBe('b0\n')
+    expect(readFileSync(join(root, 'c.ts'), 'utf8')).toBe('c1\n')
+  })
+
+  it('refuses the whole bundle, before any write, when a path leaves the workspace', () => {
+    const applied = applyCloudPatchFiles(root, [
+      file('a.ts', 'a1\n'),
+      file('../outside.ts', 'x'),
+      file('c.ts', 'c1\n')
+    ])
+    expect(applied).toMatchObject({ ok: false, checkpointId: '', diffs: [] })
+    expect(applied.error).toMatch(/outside the workspace/)
+    expect(() => readFileSync(join(root, 'a.ts'))).toThrow()
+    expect(() => readFileSync(join(root, 'c.ts'))).toThrow()
+  })
+
+  it('applies a file whose name merely contains two dots', () => {
+    const applied = applyCloudPatchFiles(root, [file('notes..md', 'n\n')])
+    expect(applied.ok).toBe(true)
+    expect(applied.diffs.map((diff) => diff.path)).toEqual(['notes..md'])
+  })
+
+  it('keeps the checkpoint and applied diffs when a later write fails', () => {
+    // A directory where the second file should go makes that write fail.
+    writeFileSync(join(root, 'a.ts'), 'a0\n')
+    mkdirSync(join(root, 'dir.ts'))
+    const applied = applyCloudPatchFiles(root, [file('a.ts', 'a1\n'), file('dir.ts', 'x')])
+    expect(applied.ok).toBe(false)
+    expect(applied.checkpointId).not.toBe('')
+    expect(applied.diffs.map((diff) => diff.path)).toEqual(['a.ts'])
+    expect(applied.error).toMatch(/Applied 1 of 2/)
+    restoreCheckpointOp(root, applied.checkpointId, applied.diffs[0]!.opIndex)
+    expect(readFileSync(join(root, 'a.ts'), 'utf8')).toBe('a0\n')
   })
 })

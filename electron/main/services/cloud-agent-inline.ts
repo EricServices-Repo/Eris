@@ -360,7 +360,8 @@ export async function* runCloudAgentInline(options: {
     if (current.hasArtifacts || (current.artifactCount && current.artifactCount > 0)) {
       yield { type: 'status', text: 'Applying file changes…' }
       const applied = await applyCloudJobArtifacts(workspacePath, current.id, options.task)
-      if (applied.ok && applied.diffs.length) {
+      // Files written before a failure stay reviewable and undoable.
+      if (applied.diffs.length) {
         yield { type: 'checkpoint', checkpointId: applied.checkpointId }
         for (const d of applied.diffs) {
           yield {
@@ -380,7 +381,8 @@ export async function* runCloudAgentInline(options: {
           type: 'thinking',
           text: `\n— Applied ${applied.diffs.length} file${applied.diffs.length === 1 ? '' : 's'}\n`
         }
-      } else if (applied.error) {
+      }
+      if (!applied.ok && applied.error) {
         logWarn('Cloud inline apply artifacts', { error: applied.error })
         throw new Error(`Cloud result could not be applied: ${applied.error}`)
       }

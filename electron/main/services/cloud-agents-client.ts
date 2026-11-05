@@ -577,6 +577,104 @@ export async function fetchCloudJobArtifacts(id: string): Promise<CloudJobArtifa
   }
 }
 
+export type CloudApplyResult = {
+  ok: boolean
+  checkpointId: string
+  /** Files written, even when a later file failed; each can be undone from Diff Review. */
+  diffs: CloudAppliedDiff[]
+  truncated: boolean
+  error?: string
+}
+
+/**
+ * Write a cloud patch bundle under one checkpoint. Every path is checked before the
+ * first write, so an unusable bundle changes nothing. Each diff carries the index of
+ * its own checkpoint receipt. If a write fails part way, the result keeps the
+ * checkpoint and the files already written so they stay reviewable and undoable.
+ */
+export function applyCloudPatchFiles(
+  workspacePath: string,
+  files: CloudJobArtifacts['files'],
+  task?: TaskContract
+): Omit<CloudApplyResult, 'truncated'> {
+  const planned: Array<{ path: string; content: string; before: string | null }> = []
+  const rejected: string[] = []
+  for (const file of files) {
+    const path = file.path.replace(/\\/g, '/').replace(/^\/+/, '')
+    try {
+      if (!path) throw new Error('empty path')
+      resolveInWorkspace(workspacePath, path)
+      planned.push({ path, content: file.content, before: file.before })
+    } catch {
+      rejected.push(JSON.stringify(file.path.slice(0, 200)))
+    }
+  }
+  if (rejected.length)
+    return {
+      ok: false,
+      checkpointId: '',
+      diffs: [],
+      error: `Cloud patch has ${rejected.length} file path(s) outside the workspace or empty (${rejected.slice(0, 5).join(', ')}); nothing was applied.`
+    }
+  if (task) {
+    const gateway = new TaskToolGateway(task)
+    for (const file of planned) {
+      const denied = gateway.authorize(workspacePath, {
+        name: 'write_file',
+        args: { path: file.path, content: file.content },
+        raw: ''
+      })
+      if (denied) throw new Error(denied)
+      const abs = resolveInWorkspace(workspacePath, file.path)
+      const current = existsSync(abs) ? readFileSync(abs, 'utf8') : null
+      if (current !== file.before)
+        throw new Error(
+          `Cloud patch for ${file.path} is stale; inspect and rebase it before applying.`
+        )
+    }
+  }
+  const checkpoint = createCheckpoint(workspacePath)
+  const diffs: CloudAppliedDiff[] = []
+  for (const file of planned) {
+    try {
+      const preimage = snapshotPreimage(workspacePath, file.path)
+      const before = preimage?.text ?? null
+      writeWorkspaceFile(workspacePath, file.path, file.content)
+      const record = recordWriteOp(
+        workspacePath,
+        checkpoint.id,
+        file.path,
+        before,
+        file.content,
+        preimage?.base64
+      )
+      if (!record) throw new Error('checkpoint receipt is unavailable')
+      const opIndex = record.ops.length - 1
+      diffs.push({
+        id: `${checkpoint.id}:${opIndex}`,
+        checkpointId: checkpoint.id,
+        opIndex,
+        path: file.path,
+        before,
+        after: file.content,
+        op: 'write',
+        status: 'pending'
+      })
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      return {
+        ok: false,
+        checkpointId: checkpoint.id,
+        diffs,
+        error:
+          `Applied ${diffs.length} of ${planned.length} cloud file(s); ${file.path} failed: ${reason}` +
+          (diffs.length ? ' Review or undo the applied files in Diff Review.' : '')
+      }
+    }
+  }
+  return { ok: true, checkpointId: checkpoint.id, diffs }
+}
+
 /**
  * Pull the cloud patch bundle and write it into the local workspace under a checkpoint
  * so Diff Review can Keep / Undo each file.
@@ -585,13 +683,7 @@ export async function applyCloudJobArtifacts(
   workspacePath: string,
   jobId: string,
   task?: TaskContract
-): Promise<{
-  ok: boolean
-  checkpointId: string
-  diffs: CloudAppliedDiff[]
-  truncated: boolean
-  error?: string
-}> {
+): Promise<CloudApplyResult> {
   if (!workspacePath) {
     return {
       ok: false,
@@ -612,56 +704,21 @@ export async function applyCloudJobArtifacts(
         error: 'Artifact bundle is empty'
       }
     }
-    if (task) {
-      const gateway = new TaskToolGateway(task)
-      for (const file of pack.files) {
-        const denied = gateway.authorize(workspacePath, {
-          name: 'write_file',
-          args: { path: file.path, content: file.content },
-          raw: ''
-        })
-        if (denied) throw new Error(denied)
-        const path = resolveInWorkspace(workspacePath, file.path)
-        const current = existsSync(path) ? readFileSync(path, 'utf8') : null
-        if (current !== file.before)
-          throw new Error(
-            `Cloud patch for ${file.path} is stale; inspect and rebase it before applying.`
-          )
-      }
-    }
-    const checkpoint = createCheckpoint(workspacePath)
-    const diffs: CloudAppliedDiff[] = []
-    for (let i = 0; i < pack.files.length; i++) {
-      const file = pack.files[i]!
-      const path = file.path.replace(/\\/g, '/').replace(/^\/+/, '')
-      if (!path || path.includes('..')) continue
-      const preimage = snapshotPreimage(workspacePath, path)
-      const before = preimage?.text ?? null
-      writeWorkspaceFile(workspacePath, path, file.content)
-      recordWriteOp(workspacePath, checkpoint.id, path, before, file.content, preimage?.base64)
-      diffs.push({
-        id: `${checkpoint.id}:${i}`,
-        checkpointId: checkpoint.id,
-        opIndex: i,
-        path,
-        before,
-        after: file.content,
-        op: 'write',
-        status: 'pending'
+    const applied = applyCloudPatchFiles(workspacePath, pack.files, task)
+    if (applied.ok)
+      logInfo('Cloud artifacts applied', {
+        jobId,
+        files: applied.diffs.length,
+        truncated: pack.truncated,
+        checkpointId: applied.checkpointId
       })
-    }
-    logInfo('Cloud artifacts applied', {
-      jobId,
-      files: diffs.length,
-      truncated: pack.truncated,
-      checkpointId: checkpoint.id
-    })
-    return {
-      ok: true,
-      checkpointId: checkpoint.id,
-      diffs,
-      truncated: pack.truncated
-    }
+    else
+      logError('Cloud artifacts apply failed', {
+        jobId,
+        error: applied.error,
+        applied: applied.diffs.length
+      })
+    return { ...applied, truncated: pack.truncated }
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err)
     logError('Cloud artifacts apply failed', { jobId, error })

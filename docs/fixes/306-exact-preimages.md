@@ -58,3 +58,32 @@ the previous code.
   is separate work.
 - Rename receipts are unchanged. Undoing a rename moves the file back without
   rewriting its content.
+
+## Cloud patch apply receipts
+
+`applyCloudJobArtifacts` had three further receipt defects. The apply step is now
+`applyCloudPatchFiles` (exported for tests).
+
+- **Wrong-file undo.** Each diff carried its index in the bundle as `opIndex`, not
+  the index of its checkpoint receipt. A skipped path shifted every later diff, so
+  undoing one file in Diff Review reversed a different file, or failed with "op not
+  found".
+- **Silent partial apply.** Paths that were empty or contained `..` were skipped
+  with `continue`, and the result still said `ok: true`. The substring test also
+  skipped legitimate names such as `notes..md`. Now every path is checked with
+  `resolveInWorkspace` before the first write. One unusable path refuses the whole
+  bundle and nothing is written. Authorization, the stale check and the write all
+  use the same normalized path.
+- **Undo lost after a mid-apply failure.** When a later write threw, the result had
+  no checkpoint and no diffs, though earlier files were already on disk. The result
+  now keeps the checkpoint and the applied diffs and says how many of the total were
+  applied. Inline Cloud runs emit those diffs before raising the error. The Agents
+  Inbox shows an `ok: false` result as an error instead of treating it as success.
+
+Three cases in `tests/checkpoint-exact-preimage.test.ts` fail against the previous
+loop: the escape refusal, `notes..md`, and the kept receipts. The receipt-index case
+guards the fix; the old mis-indexing appeared only after a skip, which no longer
+happens.
+
+Applying a bundle without a task (Agents Inbox) still skips the stale-base check,
+because older Cloud servers may not send `before`. That check is not changed here.
