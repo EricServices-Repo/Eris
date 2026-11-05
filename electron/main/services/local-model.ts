@@ -33,6 +33,7 @@ import {
   createThrottledProgress,
   DOWNLOAD_IDLE_TIMEOUT_MS,
   downloadFetch,
+  classifyResumeRange,
   findResumablePartial,
   formatDownloadNetworkError,
   hashFileInto,
@@ -42,11 +43,7 @@ import {
   stablePartialPath,
   type DownloadPhase
 } from './http-download'
-import {
-  parseHfGgufFileUrl,
-  resolveHfGgufFile,
-  type HfGgufFile
-} from './hf-gguf'
+import { parseHfGgufFileUrl, resolveHfGgufFile, type HfGgufFile } from './hf-gguf'
 
 function formatApproxSize(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
@@ -57,10 +54,7 @@ function formatApproxSize(bytes: number): string {
 let downloadAbort: AbortController | null = null
 let downloadGate: Promise<void> = Promise.resolve()
 let activeDownloadId: string | null = null
-const progressById = new Map<
-  string,
-  { downloaded: number; total: number; phase?: DownloadPhase }
->()
+const progressById = new Map<string, { downloaded: number; total: number; phase?: DownloadPhase }>()
 const downloadErrorById = new Map<string, string>()
 
 function verifiedSidecarPath(modelPath: string): string {
@@ -195,10 +189,7 @@ export function entryFromHfFile(
   }
 }
 
-function emitLocalProgress(
-  id: string,
-  onProgress?: (status: LocalModelStatus) => void
-): void {
+function emitLocalProgress(id: string, onProgress?: (status: LocalModelStatus) => void): void {
   if (!onProgress) return
   const status = getLocalStatuses().find((s) => s.id === id)
   if (status) onProgress(status)
@@ -209,8 +200,7 @@ async function currentInferenceBudgetBytes(): Promise<number> {
   const { appState } = await import('../app-state')
   const { getGpuAccelStatus } = await import('./gpu-accel')
   const { inferenceBudgetBytes } = await import('./vram-fit')
-  const prefer =
-    getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
+  const prefer = getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
   const gpu = await getGpuAccelStatus(prefer)
   return inferenceBudgetBytes({
     vramShareFreeBytes: gpu.vramShareFreeBytes,
@@ -227,9 +217,7 @@ export async function downloadLocalFromHf(
   options?: { filename?: string }
 ): Promise<LocalModelStatus> {
   const direct = parseHfGgufFileUrl(repoIdOrUrl)
-  const budgetBytes = direct
-    ? 0
-    : await currentInferenceBudgetBytes()
+  const budgetBytes = direct ? 0 : await currentInferenceBudgetBytes()
   const file = await resolveHfGgufFile(repoIdOrUrl, {
     filename: options?.filename || direct?.filename,
     budgetBytes
@@ -268,9 +256,8 @@ export function isLocalRef(model: string): boolean {
 export function findLocalEntry(idOrRef: string): LocalModelManifestEntry | null {
   const key = idOrRef.replace(/^local:/, '')
   return (
-    listLocalCatalog().find(
-      (m) => m.id === key || m.ref === idOrRef || m.ref === `local:${key}`
-    ) ?? null
+    listLocalCatalog().find((m) => m.id === key || m.ref === idOrRef || m.ref === `local:${key}`) ??
+    null
   )
 }
 
@@ -349,13 +336,10 @@ export function getLocalStatuses(): LocalModelStatus[] {
     const valid = installed && isValidLocalFile(path, entry)
     const live = progressById.get(entry.id)
     const pausedBytes = !installed && !live ? peekPartialBytes(path) : 0
-    const downloadedBytes = installed
-      ? statSync(path).size
-      : live?.downloaded ?? pausedBytes
+    const downloadedBytes = installed ? statSync(path).size : (live?.downloaded ?? pausedBytes)
     const total = live?.total || entry.approxBytes
     const downloading = activeDownloadId === entry.id
-    const phase =
-      downloading ? live?.phase || 'downloading' : null
+    const phase = downloading ? live?.phase || 'downloading' : null
     let progress = total > 0 ? Math.min(1, downloadedBytes / total) : valid ? 1 : 0
     if (phase === 'verifying') progress = Math.max(progress, 0.96)
     if (phase === 'finalizing') progress = Math.max(progress, 0.99)
@@ -459,7 +443,7 @@ export async function downloadLocalModel(
   const earlyPartial = findResumablePartial(target)
   progressById.set(entry.id, {
     downloaded: earlyPartial?.size ?? progressById.get(entry.id)?.downloaded ?? 0,
-    total: entry.approxBytes > 0 ? entry.approxBytes : progressById.get(entry.id)?.total ?? 0,
+    total: entry.approxBytes > 0 ? entry.approxBytes : (progressById.get(entry.id)?.total ?? 0),
     phase: 'downloading'
   })
   // Immediate UI update so Settings lists the row as downloading before the first byte.
@@ -523,6 +507,23 @@ export async function downloadLocalModel(
       })
       unlinkQuiet(partial)
       existing = 0
+    } else if (existing > 0 && res.status === 206) {
+      const range = classifyResumeRange(res.headers, existing)
+      if (range === 'restart') {
+        logWarn('Local model server resent the whole file; restarting the partial', {
+          id: entry.id,
+          existing
+        })
+        unlinkQuiet(partial)
+        existing = 0
+      } else if (range === 'mismatch') {
+        unlinkQuiet(partial)
+        throw new Error(
+          `Download failed: the server resumed at a different byte than requested (${
+            res.headers.get('content-range') || 'no Content-Range'
+          }). The partial file was discarded as corrupt; retry to download from the start.`
+        )
+      }
     } else if (!(res.ok || res.status === 206) || (!res.body && res.status !== 416)) {
       throw new Error(
         `Download failed: HTTP ${res.status} (${res.via}). Retry, or open the model URL in a browser.`
@@ -635,8 +636,7 @@ export async function downloadLocalModel(
     return done
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    const discard =
-      /checksum|HTML instead|corrupt|not a valid/i.test(message)
+    const discard = /checksum|HTML instead|corrupt|not a valid/i.test(message)
     if (discard) unlinkQuiet(partial)
     // Abort / stall / network: keep .partial so the next attempt resumes.
     if (!/abort/i.test(message)) {

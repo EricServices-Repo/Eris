@@ -64,6 +64,26 @@ export function resolveContentRangeTotal(headers: Headers): number | null {
   return Number.isFinite(n) && n > 0 ? n : null
 }
 
+/**
+ * How to treat a 206 reply to `Range: bytes=<existing>-`. Appending is only correct
+ * when Content-Range starts exactly at `existing`. A reply that starts at 0 is the
+ * whole file and replaces the partial. Any other offset (or a missing or unparseable
+ * header) cannot be placed safely. Appending it would publish a corrupt file, and
+ * most local models have no catalog hash to catch that.
+ */
+export function classifyResumeRange(
+  headers: Headers,
+  existingBytes: number
+): 'append' | 'restart' | 'mismatch' {
+  const match = /^bytes\s+(\d+)-(\d+)\/(?:\d+|\*)\s*$/i.exec(
+    (headers.get('content-range') || '').trim()
+  )
+  if (!match) return 'mismatch'
+  const start = Number(match[1])
+  if (start === existingBytes) return 'append'
+  return start === 0 ? 'restart' : 'mismatch'
+}
+
 /** Stable partial path so canceled downloads can resume with Range. */
 export function stablePartialPath(target: string): string {
   return `${target}.partial`
@@ -179,7 +199,10 @@ export function resolveResumeDownloadTotal(
   return resolveDownloadTotal(headers, approxBytes)
 }
 
-export function createThrottledProgress(emit: () => void, intervalMs = DOWNLOAD_PROGRESS_THROTTLE_MS) {
+export function createThrottledProgress(
+  emit: () => void,
+  intervalMs = DOWNLOAD_PROGRESS_THROTTLE_MS
+) {
   let last = 0
   let pending = false
   let timer: ReturnType<typeof setTimeout> | null = null
