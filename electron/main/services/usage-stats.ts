@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
+import { atomicEvidenceJson, readEvidence } from './evidence-records'
 import { userDataRoot } from './paths'
 
 function notifyProfileUsageDelta(delta: {
@@ -87,16 +87,18 @@ function emptyDay(date: string): DayUsage {
   }
 }
 
+/**
+ * An unreadable or torn usage.json is quarantined and reported as a storage failure,
+ * never silently replaced: overwriting it would erase the rolling allowance history.
+ */
 function loadFile(): UsageFile {
-  const path = usagePath()
-  if (!existsSync(path)) return { version: 1, days: {} }
-  try {
-    const raw = JSON.parse(readFileSync(path, 'utf8')) as UsageFile
-    if (!raw || typeof raw !== 'object' || !raw.days) return { version: 1, days: {} }
-    return { version: 1, days: raw.days }
-  } catch {
-    return { version: 1, days: {} }
-  }
+  const file = readEvidence(usagePath(), (raw) => {
+    const days = (raw as { days?: unknown } | null)?.days
+    if (!days || typeof days !== 'object' || Array.isArray(days))
+      throw new Error('usage.json has no day records')
+    return { version: 1, days: days as Record<string, DayUsage> } satisfies UsageFile
+  })
+  return file ?? { version: 1, days: {} }
 }
 
 function prune(file: UsageFile): UsageFile {
@@ -107,9 +109,9 @@ function prune(file: UsageFile): UsageFile {
   return file
 }
 
+/** Write-then-rename: an interrupted save leaves the previous usage.json intact. */
 function saveFile(file: UsageFile): void {
-  mkdirSync(userDataRoot(), { recursive: true })
-  writeFileSync(usagePath(), JSON.stringify(prune(file), null, 2), 'utf8')
+  atomicEvidenceJson(usagePath(), prune(file))
 }
 
 /** Rough token estimate when providers don't report usage. */
