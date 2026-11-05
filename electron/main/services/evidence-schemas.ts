@@ -146,6 +146,7 @@ const op = z.discriminatedUnion('kind', [
     path,
     before: z.string().nullable(),
     after: z.string(),
+    beforeBase64: z.string().optional(),
     ...common
   }),
   z.object({
@@ -153,6 +154,7 @@ const op = z.discriminatedUnion('kind', [
     path,
     before: z.string(),
     wasDirectory: z.boolean(),
+    beforeBase64: z.string().optional(),
     ...common
   }),
   z.object({

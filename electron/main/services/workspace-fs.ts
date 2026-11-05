@@ -185,6 +185,24 @@ export function writeWorkspaceFile(
   }
 }
 
+const strictUtf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+
+/**
+ * Text edits rewrite the whole file from its decoded text. A file that is not valid
+ * UTF-8 (Latin-1 source, binary data) would come back with every undecodable byte
+ * replaced, far outside the requested change, so it is refused instead.
+ */
+function readTextForEdit(abs: string, userPath: string): string {
+  const raw = readFileSync(abs)
+  try {
+    return strictUtf8.decode(raw)
+  } catch {
+    throw new WorkspaceFsError(
+      `${userPath} is not valid UTF-8 text. A text edit would rewrite bytes outside the change; leave it unchanged or replace the whole file with write_file.`
+    )
+  }
+}
+
 /** Replace an exact substring in a file. Fails if missing or ambiguous (unless replaceAll). */
 export function searchReplaceInFile(
   workspacePath: string,
@@ -199,7 +217,7 @@ export function searchReplaceInFile(
   const abs = resolveInWorkspace(workspacePath, userPath)
   if (!existsSync(abs)) throw new WorkspaceFsError(`Not found: ${userPath}`)
   if (statSync(abs).isDirectory()) throw new WorkspaceFsError(`Is a directory: ${userPath}`)
-  const before = readFileSync(abs, 'utf8')
+  const before = readTextForEdit(abs, userPath)
   const count = before.split(oldString).length - 1
   if (count === 0) {
     throw new WorkspaceFsError(`old_string not found in ${userPath}`)
@@ -234,7 +252,8 @@ export function applyUnifiedPatch(
   const { relPath, hunkBody } = parseUnifiedPatch(patchText)
   plan = prepareMutationPlan(workspacePath, [relPath], plan)
   const abs = resolveInWorkspace(workspacePath, relPath)
-  const before = existsSync(abs) && !statSync(abs).isDirectory() ? readFileSync(abs, 'utf8') : ''
+  const before =
+    existsSync(abs) && !statSync(abs).isDirectory() ? readTextForEdit(abs, relPath) : ''
   const after = applyHunkLines(before, hunkBody)
   publishWorkspaceText(workspacePath, relPath, after, plan)
   invalidateWorkspaceTreeCache(workspacePath)

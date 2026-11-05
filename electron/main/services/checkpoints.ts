@@ -23,8 +23,8 @@ import { resolveInWorkspace, toWorkspaceRelative } from './workspace-fs'
 
 type CheckpointOperation =
   | { kind: 'binary-create'; path: string }
-  | { kind: 'write'; path: string; before: string | null; after: string }
-  | { kind: 'delete'; path: string; before: string; wasDirectory: boolean }
+  | { kind: 'write'; path: string; before: string | null; after: string; beforeBase64?: string }
+  | { kind: 'delete'; path: string; before: string; wasDirectory: boolean; beforeBase64?: string }
   | { kind: 'rename'; from: string; to: string; before: string | null }
   | { kind: 'mkdir'; path: string }
 
@@ -65,6 +65,31 @@ function postimage(path: string): CheckpointPostimage | undefined {
   }
 }
 const textDigest = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex')
+const strictUtf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+
+/**
+ * File content before a change. `text` is what diffs show. When the file is not valid
+ * UTF-8, `text` is a lossy display copy and `base64` holds the exact bytes undo
+ * restores; writing `text` back would replace every undecodable byte.
+ */
+export type Preimage = { text: string; base64?: string }
+
+export function readPreimage(abs: string): Preimage {
+  const raw = readFileSync(abs)
+  try {
+    return { text: strictUtf8.decode(raw) }
+  } catch {
+    return { text: raw.toString('utf8'), base64: raw.toString('base64') }
+  }
+}
+
+type RecordedPreimage = { before: string; beforeBase64?: string }
+const preimageBytes = (op: RecordedPreimage) =>
+  op.beforeBase64 === undefined
+    ? Buffer.from(op.before, 'utf8')
+    : Buffer.from(op.beforeBase64, 'base64')
+const preimageDigest = (op: RecordedPreimage) =>
+  createHash('sha256').update(preimageBytes(op)).digest('hex')
 
 export interface CheckpointRecord {
   schemaVersion?: 1
@@ -139,19 +164,24 @@ export function loadCheckpoint(workspacePath: string, id: string): CheckpointRec
   )
 }
 
-/** Snapshot current file content before an agent write (null if new file). */
-export function snapshotBeforeWrite(
-  workspacePath: string,
-  checkpointId: string,
-  userPath: string
-): string | null {
+/** Exact current file content before an agent write (null if new file). */
+export function snapshotPreimage(workspacePath: string, userPath: string): Preimage | null {
   const abs = resolveInWorkspace(workspacePath, userPath)
   if (!existsSync(abs) || statSync(abs).isDirectory()) return null
   try {
-    return readFileSync(abs, 'utf8')
+    return readPreimage(abs)
   } catch {
     return null
   }
+}
+
+/** Display text of the file before an agent write (null if new file). */
+export function snapshotBeforeWrite(
+  workspacePath: string,
+  _checkpointId: string,
+  userPath: string
+): string | null {
+  return snapshotPreimage(workspacePath, userPath)?.text ?? null
 }
 
 export function recordWriteOp(
@@ -159,7 +189,9 @@ export function recordWriteOp(
   checkpointId: string,
   userPath: string,
   before: string | null,
-  after: string
+  after: string,
+  /** Exact preimage bytes when `before` is only a lossy display copy. */
+  beforeBase64?: string
 ): CheckpointRecord | null {
   const record = loadCheckpoint(workspacePath, checkpointId)
   if (!record) return null
@@ -169,6 +201,7 @@ export function recordWriteOp(
     path: rel,
     before,
     after,
+    ...(before !== null && beforeBase64 !== undefined ? { beforeBase64 } : {}),
     operationId: randomUUID(),
     postimage: postimage(resolveInWorkspace(workspacePath, userPath))
   })
@@ -181,12 +214,21 @@ export function recordDeleteOp(
   checkpointId: string,
   userPath: string,
   before: string,
-  wasDirectory: boolean
+  wasDirectory: boolean,
+  /** Exact preimage bytes when `before` is only a lossy display copy. */
+  beforeBase64?: string
 ): CheckpointRecord | null {
   const record = loadCheckpoint(workspacePath, checkpointId)
   if (!record) return null
   const rel = toWorkspaceRelative(workspacePath, resolveInWorkspace(workspacePath, userPath))
-  record.ops.push({ kind: 'delete', path: rel, before, wasDirectory, operationId: randomUUID() })
+  record.ops.push({
+    kind: 'delete',
+    path: rel,
+    before,
+    wasDirectory,
+    ...(!wasDirectory && beforeBase64 !== undefined ? { beforeBase64 } : {}),
+    operationId: randomUUID()
+  })
   saveRecord(record)
   return record
 }
@@ -281,21 +323,25 @@ function applyReverseOp(workspacePath: string, op: CheckpointFileOp): boolean {
   } else if (op.kind === 'write') {
     // An interrupted prior undo may already have restored the preimage.
     if (op.before === null && !current) return false
-    if (op.before !== null && current?.digest === textDigest(op.before) && op.before !== op.after)
+    if (
+      op.before !== null &&
+      current?.digest === preimageDigest({ before: op.before, beforeBase64: op.beforeBase64 }) &&
+      (op.beforeBase64 !== undefined || op.before !== op.after)
+    )
       return false
     // Text rollback compares content: later agent writes may have atomically replaced
     // the inode before a newer operation restored this exact postimage.
     if (!matches(undefined, textDigest(op.after))) return conflict('file-changed')
     if (op.before === null) unlinkSync(abs)
-    else writeFileSync(abs, op.before, 'utf8')
+    else writeFileSync(abs, preimageBytes({ before: op.before, beforeBase64: op.beforeBase64 }))
   } else if (op.kind === 'delete') {
     if (current) {
-      if (!op.wasDirectory && current.digest === textDigest(op.before)) return false
+      if (!op.wasDirectory && current.digest === preimageDigest(op)) return false
       return conflict('target-exists')
     }
     mkdirSync(dirname(abs), { recursive: true })
     if (op.wasDirectory) mkdirSync(abs)
-    else writeFileSync(abs, op.before, { encoding: 'utf8', flag: 'wx' })
+    else writeFileSync(abs, preimageBytes(op), { flag: 'wx' })
   } else if (op.kind === 'rename') {
     const original = resolveInWorkspace(workspacePath, op.from)
     const originalState = postimage(original)

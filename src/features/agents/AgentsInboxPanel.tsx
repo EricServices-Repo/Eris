@@ -231,7 +231,11 @@ export function AgentsInboxPanel({ onOpenPath, onOpenChat }: Props) {
                       className="btn btn-primary"
                       disabled={busy}
                       onClick={() =>
-                        void runAction(job.id, () => window.ide.applyCloudJobArtifacts(job.id))
+                        void runAction(job.id, async () => {
+                          const applied = await window.ide.applyCloudJobArtifacts(job.id)
+                          if (!applied.ok)
+                            throw new Error(applied.error || 'Cloud patch was not applied')
+                        })
                       }
                     >
                       Apply patches
