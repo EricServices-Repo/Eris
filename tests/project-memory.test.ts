@@ -99,12 +99,7 @@ describe('project memory', () => {
   it('remembers ask_user replies and supports undo', () => {
     const root = ws()
     const before = getWorkspaceContext(root).body
-    const result = rememberAskUserReply(
-      root,
-      settings('auto'),
-      'Which UI library?',
-      'Use React'
-    )
+    const result = rememberAskUserReply(root, settings('auto'), 'Which UI library?', 'Use React')
     expect(result.wrote).toBe(true)
     expect(getWorkspaceContext(root).body).toMatch(/Use React/)
     const undone = undoLastProjectMemory(root)
@@ -116,13 +111,28 @@ describe('project memory', () => {
 
   it('redacts obvious secrets from notes', () => {
     const root = ws()
-    rememberAskUserReply(
-      root,
-      settings('auto'),
-      'token?',
-      'api_key=sk-secret-value-123'
-    )
+    rememberAskUserReply(root, settings('auto'), 'token?', 'api_key=sk-secret-value-123')
     expect(getWorkspaceContext(root).body).toMatch(/redacted/i)
     expect(getWorkspaceContext(root).body).not.toMatch(/sk-secret/)
+  })
+})
+
+describe('project memory never writes credentials to .eris/context.md', () => {
+  it('redacts scheme credentials and provider keys in notes and the bootstrapped summary', () => {
+    const root = mkdtempSync(join(tmpdir(), 'eris-mem-secret-'))
+    try {
+      rememberAgentRun(root, settings('auto'), {
+        goal: 'Call the API with sk-proj-AbCdEf_GhIjKlMnOpQrStUv and retry',
+        filesTouched: ['src/api.ts'],
+        actionLog: ['Ran curl -H "Authorization: Bearer abc123def456ghi" https://api.example'],
+        aborted: false
+      })
+      const context = readFileSync(join(root, '.eris', 'context.md'), 'utf8')
+      expect(context).not.toContain('abc123def456ghi')
+      expect(context).not.toContain('sk-proj-AbCdEf_GhIjKlMnOpQrStUv')
+      expect(context).toContain('[redacted')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
