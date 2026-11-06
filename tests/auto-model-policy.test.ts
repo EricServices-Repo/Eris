@@ -1,3 +1,4 @@
+import { recordNativeLatency } from '../electron/main/services/model-latency'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const state = vi.hoisted(() => ({
   locals: [] as Array<Record<string, unknown>>,
@@ -79,6 +80,22 @@ describe('production Auto model selection', () => {
       expect(choice.candidates.find((c) => c.model === 'local:qwen-coder')?.eligible).toBe(true)
     }
   )
+  it('uses comparable local latency only for a short answer without quality evidence', async () => {
+    const s = settings()
+    s.models.contextWindow = 16384
+    state.resident = { ref: 'builtin:composer-lite', contextSize: 16384 }
+    for (const latency of [180, 200, 220]) {
+      recordNativeLatency(s, 'builtin:composer-lite', 'warm-answer', latency)
+      recordNativeLatency(s, 'local:qwen-coder', 'warm-answer', latency * 2)
+      recordNativeLatency(s, 'local:qwen-coder', 'load', 5000)
+    }
+    expect((await chooseExecutionModel(s, 'answer')).model).toBe('builtin:composer-lite')
+    expect((await chooseExecutionModel(s, 'edit')).model).toBe('local:qwen-coder')
+    s.evals.useScoresForRouting = true
+    state.winner = 'local:qwen-coder'
+    expect((await chooseExecutionModel(s, 'answer')).model).toBe('local:qwen-coder')
+  })
+
   it('filters remote scoring candidates before ranking, including approved LAN hosts', async () => {
     const s = settings()
     s.evals.useScoresForRouting = true

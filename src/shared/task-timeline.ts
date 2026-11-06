@@ -2,6 +2,8 @@ export const TASK_PHASES = [
   'queued',
   'admitted',
   'routing',
+  'history',
+  'prompt',
   'loading',
   'prefill',
   'generating',
@@ -19,6 +21,8 @@ export const taskPhaseLabels: Record<TaskPhase, string> = {
   queued: 'Queued',
   admitted: 'Starting',
   routing: 'Understanding request',
+  history: 'Gathering conversation context',
+  prompt: 'Preparing the model prompt',
   loading: 'Preparing local model',
   prefill: 'Waiting for first model chunk',
   generating: 'Generating',
@@ -55,6 +59,7 @@ export interface TaskTimeline {
   queueWaitMs: number | null
   loadingMs: number
   dispatchToFirstChunkMs: number | null
+  phaseMs?: Partial<Record<TaskPhase, number>>
   firstChunkAt?: number
   lastFailure?: { origin: string; errorCode?: string; at: number }
 }
@@ -77,10 +82,13 @@ export function transitionTaskTimeline(
   const row: TaskTimelineEntry = { ...input, taskId, at, reason: input.reason?.slice(0, 500) }
   const previous = current?.current,
     entries = current ? [...current.entries] : []
+  const phaseMs = { ...current?.phaseMs }
   let loadingMs = current?.loadingMs ?? 0
   if (previous && previous.phase !== input.phase) {
     entries[entries.length - 1] = { ...previous, endedAt: at }
-    if (previous.phase === 'loading') loadingMs += Math.max(0, at - previous.at)
+    const elapsed = Math.max(0, at - previous.at)
+    phaseMs[previous.phase] = (phaseMs[previous.phase] ?? 0) + elapsed
+    if (previous.phase === 'loading') loadingMs += elapsed
   }
   if (previous?.phase === input.phase)
     entries[entries.length - 1] = { ...previous, ...row, at: previous.at }
@@ -98,6 +106,7 @@ export function transitionTaskTimeline(
     queueWaitMs:
       current?.queueWaitMs ?? (queued && admitted ? Math.max(0, admitted.at - queued.at) : null),
     loadingMs,
+    phaseMs,
     dispatchToFirstChunkMs:
       current?.dispatchToFirstChunkMs ??
       (input.phase === 'generating' && input.source === 'transport' && dispatch !== undefined

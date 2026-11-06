@@ -53,10 +53,14 @@ export const MAX_QUEUED_MESSAGES = 3
 const messageKey = (message: ChatMessage) => message.id
 const EMPTY_MESSAGES: ChatMessage[] = []
 
+type RetryRoute = { route?: 'tools' | 'answer'; agentId?: string }
+type RetryAgent = { id: string; name: string }
+
 export const HistoricalMessages = memo(function HistoricalMessages({
   messages,
   onOpenPath,
   onRerouteLast,
+  retryAgents,
   streaming,
   searchOpen = false,
   onCloseSearch,
@@ -64,7 +68,8 @@ export const HistoricalMessages = memo(function HistoricalMessages({
 }: {
   messages: ChatMessage[]
   onOpenPath: (path: string) => void
-  onRerouteLast?: (route: 'tools' | 'answer') => void
+  onRerouteLast?: (choice: RetryRoute) => void
+  retryAgents?: RetryAgent[]
   streaming: boolean
   searchOpen?: boolean
   onCloseSearch?: () => void
@@ -226,28 +231,41 @@ export const HistoricalMessages = memo(function HistoricalMessages({
               {message.role === 'assistant' && (
                 <AnswerFeedback message={message} question={questions.get(message.id) || ''} />
               )}
-              {message.role === 'assistant' &&
-                index === visible.length - 1 &&
-                !streaming &&
-                onRerouteLast && (
-                  <details className="msg-reroute message-details">
-                    <summary>Adjust routing</summary>
-                    <button
-                      type="button"
-                      className="btn btn-link"
-                      onClick={() => onRerouteLast('tools')}
+              {index === visible.length - 1 && !streaming && onRerouteLast && (
+                <details className="msg-reroute message-details">
+                  <summary>Retry with a different route</summary>
+                  <label>
+                    Change agent{' '}
+                    <select
+                      value=""
+                      onChange={(event) => {
+                        if (event.target.value) onRerouteLast({ agentId: event.target.value })
+                      }}
                     >
-                      Needed tools
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-link"
-                      onClick={() => onRerouteLast('answer')}
-                    >
-                      Just a question
-                    </button>
-                  </details>
-                )}
+                      <option value="">Choose an agent</option>
+                      {retryAgents?.map((agent) => (
+                        <option key={agent.id} value={agent.id}>
+                          {agent.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    className="btn btn-link"
+                    onClick={() => onRerouteLast({ route: 'tools' })}
+                  >
+                    Needed tools
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-link"
+                    onClick={() => onRerouteLast({ route: 'answer' })}
+                  >
+                    Just a question
+                  </button>
+                </details>
+              )}
             </div>
           </div>
         )}
@@ -322,7 +340,8 @@ interface Props {
   onMemoryDismiss?: () => void
   onMemoryUndo?: () => void
   /** Re-run the last user message with a forced route */
-  onRerouteLast?: (intent: 'tools' | 'answer') => void
+  onRerouteLast?: (choice: RetryRoute) => void
+  retryAgents?: RetryAgent[]
   /** Live session checkpoints while the current agent run is streaming. */
   liveSessionSteps?: Array<{ step: number; summary: string; opThrough: number }>
 }
@@ -507,6 +526,7 @@ export function ChatPanel({
   onMemoryDismiss,
   onMemoryUndo,
   onRerouteLast,
+  retryAgents,
   liveSessionSteps = []
 }: Props) {
   const { thinkingBuffer, answerBuffer, agentStatus, toolActivity } = useStore(chatStream)
@@ -722,7 +742,8 @@ export function ChatPanel({
     byName.set('auto-local', { name: 'auto-local', ready: true, source: 'builtin' })
     byName.set('auto-any', { name: 'auto-any', ready: true, source: 'builtin' })
     // Persisted legacy Auto follows the policy in Settings until the user chooses explicitly.
-    if (selectedModel === 'auto') byName.set('auto', { name: 'auto', ready: true, source: 'builtin' })
+    if (selectedModel === 'auto')
+      byName.set('auto', { name: 'auto', ready: true, source: 'builtin' })
     byName.set('builtin:composer-lite', {
       name: 'builtin:composer-lite',
       ready: composerReady,
@@ -1039,8 +1060,9 @@ export function ChatPanel({
             <div className="chat-empty agent-welcome">
               <h2>Chat runs one agent</h2>
               <p>
-                Agent Auto picks the role. Auto-local and Auto-any select execution models; Fixed keeps your chosen model. Ask never edits. Pin an agent when you want
-                that role every time.
+                Agent Auto picks the role. Auto-local and Auto-any select execution models; Fixed
+                keeps your chosen model. Ask never edits. Pin an agent when you want that role every
+                time.
               </p>
               <ul className="agent-roster">
                 {CHAT_AGENT_CONTRACTS.map((agent) => (
@@ -1075,6 +1097,7 @@ export function ChatPanel({
                 messages={history?.messages ?? activeThread?.messages ?? EMPTY_MESSAGES}
                 onOpenPath={onOpenPath}
                 onRerouteLast={onRerouteLast}
+                retryAgents={retryAgents}
                 streaming={streaming}
               />
               {history?.gap && onLoadNewer && (

@@ -28,6 +28,18 @@ Automated coverage includes actual production request serialization and SSE pars
 
 ## Automatic routing versus a pinned comparison
 
-The production IDE's Agent Auto and Auto-local/Auto-any execution policies are distinct. This live corpus runner intentionally pins its selected model, including the semantic intake calls intercepted by its adapter. Use production routing/model-switching fixtures or a dedicated automatic-policy scenario to evaluate Lite-coordinator handoff; do not infer that capability from a pinned corpus result.
+The production IDE's Agent Auto and Auto-local/Auto-any execution policies are distinct. This live corpus runner intentionally pins its selected model, including the semantic intake calls intercepted by its adapter. Use production routing/model-switching fixtures or a dedicated automatic-policy scenario to evaluate routing and recovery. The desktop path skips classification for clear turns and does not load a cold native model merely to classify an ambiguous turn.
 
 Capture records are taken at the shared transport seam. Actual native/server payloads can be revalidated, budgeted and adapted afterward. Correlate dispatch metadata and source/model provenance when reviewing omitted RAM evidence. Refer to [the current architecture](ARCHITECTURE.md) and [memory guide](CONTEXT-MEMORY.md), particularly the parent-lease lifetime limit for asynchronous children.
+
+### Routing and latency qualification
+
+The agent build profile checks final agents, workspace bindings and edit authority for hand-labeled desktop turns, alongside the broader question corpus and workspace-edit smoke tests. The routing regressions also verify zero model classification calls for a standalone question, a single bounded same-model call for an ambiguous question, and conservative fallback when a provider ignores cancellation.
+
+Live Eris-Dev JSONL rows include the time from case start to the first non-empty answer event, model preparation, prompt build, and tool time where available. Batch JSON reports include platform, architecture, and nearest-rank median and p95 per model and residency cohort. Native residency is sampled at case entry for the exact context profile. Server-side residency is reported as unknown. Batch percentiles use completed answers without a failing deterministic deliverable check. Keep failures in the case counts and report sample sizes alongside latency.
+
+For release qualification, run the same hand-labeled cases with packaged Eris on Windows and macOS. Capture cold and warm starts separately, compare outcome and permission correctness before comparing latency, and retain the model, backend, and device profile alongside the results. Scripted cases exercise routing and effects but supply no live latency evidence.
+
+The desktop classifier uses a 1.5-second deadline and a 96-token reply limit for unresolved turns. Native cold starts and Auto-selected remote destinations use the conservative fallback instead of sending a second request. Retry controls preserve the latest turn's in-session attachment references, editor snapshots, skill selection, and model policy. A retry appends a separate attempt and keeps the original checkpoints. These snapshots are held only for the latest submitted turn in the window.
+
+Auto's short-answer preference requires comparable samples and a predicted first-output gain of at least 20 percent before changing the heuristic choice. It uses a rolling, in-process sample window for the active native settings profile. Workspace edits continue to use quality evidence. Opt-in outcome records count a verified edit only after a passing check on the last mutation, and elapsed time breaks ties between models with enough verified completions.

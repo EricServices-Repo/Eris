@@ -1,4 +1,7 @@
-import { isExactBuiltinReady } from './builtin-model'
+import { modelDestination } from './model-destination'
+import { isNativeGgufRef } from '../../../src/shared/model-destination'
+import { resolveModelCapabilities } from './model-capabilities'
+import { activeDiagnosticsScope } from './model-transport'
 import { bindTaskReferences, type ResolvedReference } from './reference-binding'
 import { realpathSync } from 'fs'
 import type {
@@ -45,8 +48,10 @@ export interface ChatTurnInput {
   model: string
   mode?: 'ask' | 'agent'
   manualAgentId?: string | null
+  fileNames?: string[]
   previousAgentId?: string | null
   forceRoute?: 'tools' | 'answer'
+  preserveModelSelection?: boolean
   history?: ChatPromptInput['history']
   threadId?: string | null
   skillIds?: string[]
@@ -76,12 +81,14 @@ export function planInitialChatTurn(input: ChatTurnInput): Promise<TurnPlan> {
     settings: input.settings,
     context: {
       text: input.text,
+      fileNames: input.fileNames,
       selectedModel: input.model || input.settings.models.defaultModel,
       mode: input.mode === 'ask' ? 'ask' : 'agent',
       manualAgentId: input.manualAgentId ?? null,
       previousAgentId: input.previousAgentId ?? null,
       skipModelRouter: true,
       forceRoute: input.forceRoute,
+      preserveModelSelection: input.preserveModelSelection,
       previousMessages: previousMessages(input.history)
     },
     getSecret: input.getSecret,
@@ -103,8 +110,19 @@ export async function resolveChatTurnContract(
   resolution: IntentResolution
 }> {
   let plan = initial
-  const coordinatorModel = plan.modelExecution && plan.modelExecution.policy !== 'fixed' &&
-    isExactBuiltinReady('builtin:composer-lite') ? 'builtin:composer-lite' : plan.models.chat
+  // Keep classification on the selected destination so it does not evict the worker
+  // just to make a routing hint. Only the final plan grants tool authority.
+  const coordinatorModel = plan.mode === 'agent' && plan.requiresTools
+    ? plan.models.tools
+    : plan.models.chat
+  const skipInference = activeDiagnosticsScope() ? undefined
+    : isNativeGgufRef(coordinatorModel) &&
+        resolveModelCapabilities(input.settings, coordinatorModel).contextSource !== 'measured-allocation'
+      ? 'cold-native-routing-skipped'
+      : plan.modelExecution?.policy !== 'fixed' &&
+          modelDestination(input.settings, coordinatorModel).locality === 'remote'
+        ? 'remote-auto-routing-skipped'
+        : undefined
   const resolution: IntentResolution = input.forceRoute
     ? {
         intent: plan.intent,
@@ -122,7 +140,8 @@ export async function resolveChatTurnContract(
         history: input.history,
         signal: input.signal,
         getSecret: input.getSecret,
-        timeoutMs: input.resolverTimeoutMs
+        timeoutMs: input.resolverTimeoutMs,
+        skipInference
       })
   const semanticIntent = resolution.intent
   if (semanticIntent !== plan.intent) {
@@ -135,7 +154,10 @@ export async function resolveChatTurnContract(
         selectedModel: input.model,
         manualAgentId: input.manualAgentId ?? null,
         resolvedIntent: semanticIntent,
+        fileNames: input.fileNames,
+        previousAgentId: input.previousAgentId ?? null,
         skipModelRouter: true,
+        preserveModelSelection: input.preserveModelSelection,
         previousMessages: previousMessages(input.history)
       },
       getSecret: input.getSecret,
@@ -149,12 +171,13 @@ export async function resolveChatTurnContract(
   } catch {
     /* reported by runtime */
   }
-  await prepareModelWindows(
-    input.settings,
-    [plan.models.chat, plan.models.tools],
-    input.getSecret,
-    input.signal
-  )
+  if (resolution.rule !== 'missing-file-reference')
+    await prepareModelWindows(
+      input.settings,
+      [plan.models.chat, plan.models.tools],
+      input.getSecret,
+      input.signal
+    )
   let references = input.referenceBinding
   if (!references && input.threadId && input.priorTask === undefined) {
     try {

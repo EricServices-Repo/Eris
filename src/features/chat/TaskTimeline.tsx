@@ -17,6 +17,7 @@ export function TaskTimelineView({ job }: { job: ChatJobSnapshot }) {
     <section className="task-timeline" aria-label="Task execution timeline">
       <p role="status">
         {taskPhaseLabels[timeline.current.phase]} · Task {job.id.slice(0, 8)}
+        {active && ` · ${duration(Math.max(0, Date.now() - timeline.current.at))} in this stage`}
         {timeline.current.queuePosition ? ` · Queue #${timeline.current.queuePosition}` : ''}
       </p>
       {timeline.current.reason && <p>{timeline.current.reason}</p>}
@@ -46,11 +47,42 @@ export function TaskTimelineView({ job }: { job: ChatJobSnapshot }) {
       {error && <p role="alert">{error}</p>}
       <details>
         <summary>Timing and evidence</summary>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => {
+            void navigator.clipboard
+              .writeText(
+                JSON.stringify(
+                  {
+                    taskId: job.id,
+                    status: job.status,
+                    phaseMs: timeline.phaseMs,
+                    queueWaitMs: timeline.queueWaitMs,
+                    dispatchToFirstChunkMs: timeline.dispatchToFirstChunkMs
+                  },
+                  null,
+                  2
+                )
+              )
+              .catch(() => setError('Could not copy timing.'))
+          }}
+        >
+          Copy timing
+        </button>
         <p>
           Queue: {duration(timeline.queueWaitMs)} · Model preparation:{' '}
           {duration(timeline.loadingMs)} · Dispatch to first model chunk:{' '}
           {duration(timeline.dispatchToFirstChunkMs)}
         </p>
+        {timeline.phaseMs && (
+          <p>
+            {(['routing', 'history', 'prompt', 'prefill', 'generating', 'tool'] as const)
+              .filter((phase) => timeline.phaseMs?.[phase] !== undefined)
+              .map((phase) => `${taskPhaseLabels[phase]} ${duration(timeline.phaseMs![phase]!)}`)
+              .join(' · ')}
+          </p>
+        )}
         <p>
           Dispatch timing includes transport/prefill. It excludes the foreground queue and measured
           model preparation; this is not token-to-paint latency.

@@ -14,6 +14,9 @@ export type AgentOutcomeRecord = {
   runs: number
   /** Runs that completed their task without cancellation or an incomplete outcome (including non-mutating answers). */
   succeeded: number
+  /** Completed edits with a passing check after the last change. */
+  verifiedEdits?: number
+  verifiedEditTotalMs?: number
   /** Runs that stopped at a step/verify budget before finishing. */
   incomplete: number
   /** Runs the user aborted. */
@@ -77,9 +80,24 @@ export function bestTelemetryModelForIntent(
     .filter((r) => r.intent === intent && ready.has(r.model) && r.runs >= minRuns)
     .map((r) => {
       const s = summarizeOutcome(r)
-      return { model: r.model, score: s.successRate * (0.5 + 0.5 * s.keepRate), avgSteps: s.avgSteps }
+      const verified = intent === 'edit' ? (r.verifiedEdits ?? 0) : 0
+      const speed =
+        verified >= 3 && r.verifiedEditTotalMs !== undefined
+          ? r.verifiedEditTotalMs / verified
+          : undefined
+      return {
+        model: r.model,
+        score: s.successRate * (0.5 + 0.5 * s.keepRate) + (0.25 * verified) / Math.max(1, r.runs),
+        speed,
+        avgSteps: s.avgSteps
+      }
     })
-    .sort((a, b) => b.score - a.score || a.avgSteps - b.avgSteps)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        (a.speed ?? Infinity) - (b.speed ?? Infinity) ||
+        a.avgSteps - b.avgSteps
+    )
   const top = ranked[0]
   if (!top || top.score <= 0) return null
   return top.model

@@ -1,5 +1,7 @@
+import { isNativeGgufRef } from '../../src/shared/model-destination'
+import { resolveModelCapabilities } from '../main/services/model-capabilities'
 import { randomUUID } from 'crypto'
-import { prepareContextBudget } from '../main/services/agent/context-budget'
+import { contextBudgetTokens, prepareContextBudget } from '../main/services/agent/context-budget'
 import { allocateContext } from '../../src/shared/context-allocation'
 import type {
   ContextCompaction,
@@ -148,6 +150,15 @@ export async function captureQuestion(
   const live = options.live
   const settings = live?.settings ?? captureSettings(context)
   if (live) {
+    result.latency = {
+      model: live.model,
+      residency: !isNativeGgufRef(live.model)
+        ? 'unknown'
+        : resolveModelCapabilities(settings, live.model).contextSource === 'measured-allocation'
+          ? 'warm'
+          : 'cold',
+      firstAnswerMs: null
+    }
     result.sourceMode = 'live'
     result.timing = 'end-to-end'
     result.intentReplySource = 'live'
@@ -345,9 +356,14 @@ export async function captureQuestion(
         result.agent = plan.agentName
         result.intent = plan.intent
         result.artifact = interpretationOf(task).artifact
-        phaseStarted = Date.now()
         const destination = plan.mode === 'agent' ? plan.models.tools : plan.models.chat
-        const budget = await prepareContextBudget(settings, destination, controller.signal)
+        phaseStarted = Date.now()
+        const budget =
+          interpretationOf(task).resolution?.rule === 'missing-file-reference'
+            ? contextBudgetTokens(settings, destination)
+            : await prepareContextBudget(settings, destination, controller.signal)
+        if (live) result.phases.modelPreparationMs = Date.now() - phaseStarted
+        phaseStarted = Date.now()
         const messages = buildChatTurnMessages(
           workspace,
           settings,
@@ -381,8 +397,12 @@ export async function captureQuestion(
           approveCommand: async () => false,
           approveMcpTool: async () => false
         })) {
+          if (event.type === 'tool' && event.tool.durationMs !== undefined)
+            result.phases.toolMs = (result.phases.toolMs ?? 0) + event.tool.durationMs
           if (event.type === 'progress' && event.incomplete) incomplete = true
           if (event.type === 'answer') {
+            if (result.latency?.firstAnswerMs === null && event.text.trim())
+              result.latency.firstAnswerMs = Date.now() - started
             // Answer events are deltas unless they explicitly replace the answer so far.
             const answer =
               event.replace || result.response === null ? event.text : result.response + event.text

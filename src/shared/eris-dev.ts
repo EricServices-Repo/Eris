@@ -63,6 +63,43 @@ export interface DevStages {
   answerQuality: 'not-evaluated'
 }
 
+export interface DevLatency {
+  model: string
+  residency: 'cold' | 'warm' | 'unknown'
+  firstAnswerMs: number | null
+}
+
+/** Percentiles of completed live answers only. A failed run is still visible in its case row. */
+export function summarizeDevLatency(results: readonly DevSummary[]) {
+  const groups = new Map<
+    string,
+    { model: string; residency: DevLatency['residency']; samples: number[] }
+  >()
+  for (const row of results) {
+    const timing = row.latency
+    if (
+      row.completion?.status !== 'completed' ||
+      row.deliverable?.status === 'fail' ||
+      !timing ||
+      timing.firstAnswerMs === null
+    )
+      continue
+    const key = JSON.stringify([timing.model, timing.residency])
+    const group = groups.get(key) ?? {
+      model: timing.model,
+      residency: timing.residency,
+      samples: []
+    }
+    group.samples.push(timing.firstAnswerMs)
+    groups.set(key, group)
+  }
+  return [...groups.values()].map(({ samples, ...cohort }) => {
+    samples.sort((a, b) => a - b)
+    const percentile = (rank: number) => samples[Math.ceil(rank * samples.length) - 1]!
+    return { ...cohort, count: samples.length, medianMs: percentile(0.5), p95Ms: percentile(0.95) }
+  })
+}
+
 export interface DevSummary {
   /** Zero-based position in this run; display adds one. */
   index: number
@@ -79,6 +116,7 @@ export interface DevSummary {
   status: DevStages['reachability']
   stages: DevStages
   /** Model transport completion is separate from whether the agent finished its task. */
+  latency?: DevLatency
   completion?: { status: 'completed' | 'incomplete' | 'failed' | 'cancelled'; reason?: string }
   /**
    * Deterministic checks on the final answer (protocol leaks, truncated code,
@@ -173,7 +211,14 @@ export interface DevResult extends DevSummary {
   findingsDetail: DevFinding[]
   events: string[]
   /** Local pre-inference phases. Not model latency and not generation speed. */
-  phases: { routeMs: number; resolveMs: number; promptMs: number; toBoundaryMs: number }
+  phases: {
+    routeMs: number
+    resolveMs: number
+    modelPreparationMs?: number
+    promptMs: number
+    toolMs?: number
+    toBoundaryMs: number
+  }
   timing: 'pre-inference' | 'end-to-end'
   durationMs: number
 }

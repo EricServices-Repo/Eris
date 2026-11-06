@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -340,5 +340,61 @@ describe('LR-017 invariants detect scope and artifact loss independently', () =>
     expect(
       results.filter((result) => result.findingIds.length).map((r) => [r.question, r.findingIds])
     ).toEqual([])
+  })
+})
+
+describe('release routing examples from desktop reports', () => {
+  it('asks which files to generate when the conversation has no referenced files', async () => {
+    const result = await captureQuestion(
+      0,
+      'Generate those files',
+      fixture(PHP),
+      8192,
+      'agent',
+      new AbortController().signal
+    )
+    expect((result.task as TaskContract).authority.edit).toBe(false)
+    expect((result.task as TaskContract).interpretation?.resolution).toMatchObject({
+      rule: 'missing-file-reference'
+    })
+    expect(result.detail).toContain('Which files should I generate')
+    expect(result.requests.some((request) => request.purpose === 'agent')).toBe(false)
+  })
+
+  it.each([
+    ['Go code the project', 'agent', 'Composer', true],
+    ['Go code the project', 'ask', 'Explainer', false],
+    ['Review this project and recommend three improvements', 'agent', 'Reviewer', false],
+    ['Code those changes', 'agent', 'Composer', true],
+    ['Generate those files', 'agent', 'Composer', true]
+  ] as const)('routes %s in %s to %s', async (text, mode, agentName, edits) => {
+    const workspace = fixture(PHP)
+    const result = await captureQuestion(
+      0,
+      text,
+      workspace,
+      8192,
+      mode,
+      new AbortController().signal,
+      {
+        question: {
+          history: [
+            { role: 'user', content: 'Review this project.' },
+            { role: 'assistant', content: '1. Add the booking form in index.php.' }
+          ]
+        }
+      }
+    )
+    expect(result.status, result.detail).toBe('captured')
+    expect(result.agent).toBe(agentName)
+    const task = result.task as TaskContract
+    expect(task.scope.projectRoot).toBe(realpathSync(workspace))
+    expect(task.authority.edit).toBe(edits)
+    const request = result.requests.find((entry) => entry.purpose === 'agent')
+    expect(
+      request?.tools.some(
+        (tool) => (tool as { function: { name: string } }).function.name === 'write_file'
+      )
+    ).toBe(edits)
   })
 })

@@ -352,6 +352,7 @@ export default function App() {
     setPendingDiffs,
     sendMessage,
     rerouteLast,
+    canRerouteLast,
     stopChat,
     newChat
   } = useChatSession({
@@ -1045,7 +1046,8 @@ export default function App() {
                     setMemoryNotice(null)
                     void window.ide.undoProjectMemory()
                   }}
-                  onRerouteLast={(route) => void rerouteLast(route)}
+                  onRerouteLast={canRerouteLast ? (choice) => void rerouteLast(choice) : undefined}
+                  retryAgents={agents.filter((agent) => agent.enabled)}
                   liveSessionSteps={liveSessionSteps}
                   queuedMessages={messageQueue}
                   onQueueMessage={(text, files, skillIds) => {

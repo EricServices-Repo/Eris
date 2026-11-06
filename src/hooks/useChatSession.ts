@@ -15,6 +15,7 @@ import type {
   ChatIntent,
   ChatThread,
   ChatMessage,
+  ChatPromptInput,
   ModelInfo,
   SkillRecord
 } from '@/shared/settings-schema'
@@ -41,6 +42,12 @@ import {
 } from '@/state/chat-stream'
 import { snapshotTab } from '@/state/documents'
 import { mergeChatTail } from '@/shared/chat-pages'
+
+function latestUserMessageId(messages: readonly ChatMessage[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--)
+    if (messages[i]?.role === 'user') return messages[i]?.id
+  return undefined
+}
 
 export type ToolActivityItem = {
   id: string
@@ -128,7 +135,15 @@ export function useChatSession({
   const [liveSessionSteps, setLiveSessionSteps] = useState<
     Array<{ step: number; summary: string; opThrough: number }>
   >([])
-  const lastTurnRef = useRef<{ text: string; intent: ChatIntent; agentId: string } | null>(null)
+  const lastTurnRef = useRef<{
+    messageId: string
+    threadId: string
+    workspacePath: string | null
+    model: string
+    prompt: ChatPromptInput
+    intent: ChatIntent
+    agentId: string
+  } | null>(null)
   const [chatMode, setChatMode] = useState<ChatMode>('agent')
   const [messageQueue, setMessageQueue] = useState<QueuedChatMessage[]>([])
   const messageQueueRef = useRef<QueuedChatMessage[]>([])
@@ -381,8 +396,9 @@ export function useChatSession({
       skillIds: string[] = [],
       opts?: {
         forceRoute?: 'tools' | 'answer'
-        /** Use this thread instead of activeThread (reroute trims the last turn first) */
         thread?: ChatThread
+        retry?: { prompt: ChatPromptInput; model: string }
+        agentId?: string
       }
     ) => {
       if (streaming) return
@@ -512,8 +528,10 @@ export function useChatSession({
         requestThreadIdRef.current = thread.id
 
         const selected = selectedModel || settings.models.defaultModel || 'builtin:composer-lite'
-        const runModel = selected
-        lastTurnRef.current = { text, intent: 'answer', agentId: selectedAgentId }
+        const runModel = opts?.retry?.model ?? selected
+        const runMode =
+          opts?.forceRoute === 'tools' ? 'agent' : (opts?.retry?.prompt.mode ?? chatMode)
+        const runAgentId = opts?.agentId ?? opts?.retry?.prompt.agentId ?? selectedAgentId
         setRouteLabel('Resolving task and project…')
         routeMetaRef.current = {
           agentId: selectedAgentId,
@@ -532,7 +550,9 @@ export function useChatSession({
           files.length > 0 ? `Attached: ${files.map((f) => f.name).join(', ')}` : '',
           skillNames.length > 0 ? `Skills: ${skillNames.join(', ')}` : ''
         ].filter(Boolean)
-        const displayContent = extras.length > 0 ? `${text}\n\n${extras.join('\n')}` : text
+        const displayContent =
+          opts?.retry?.prompt.displayContent ??
+          (extras.length > 0 ? `${text}\n\n${extras.join('\n')}` : text)
 
         const userMsg = {
           id: `${requestId}:user`,
@@ -569,20 +589,10 @@ export function useChatSession({
         setThinkingBuffer('')
         setAnswerBuffer('')
 
-        const ok = await window.ide.streamChat({
-          requestId,
-          model: runModel,
-          agentId: selectedAgentId === 'auto' ? undefined : selectedAgentId,
-          mode: chatMode,
-          forceRoute: opts?.forceRoute,
-          workspacePath,
-          threadId: thread.id,
-          prompt: {
+        const prompt: ChatPromptInput = {
+          ...(opts?.retry?.prompt ?? {
             text,
             displayContent,
-            mode: chatMode,
-            agentId: selectedAgentId,
-
             skillIds,
             openFile: openTab
               ? { path: openTab.path, language: openTab.language, content: openTab.content }
@@ -594,9 +604,31 @@ export function useChatSession({
                 ? { path: f.path, name: f.name, language: open.language, content: open.content }
                 : { path: f.path, name: f.name }
             }),
-            history: [], // Main process owns canonical history, independent of UI pagination.
-            threadId: thread.id
-          }
+            history: []
+          }),
+          mode: runMode,
+          agentId: runAgentId,
+          threadId: thread.id
+        }
+        lastTurnRef.current = {
+          messageId: userMsg.id,
+          threadId: thread.id,
+          workspacePath,
+          model: runModel,
+          prompt,
+          intent: 'answer',
+          agentId: runAgentId
+        }
+        const ok = await window.ide.streamChat({
+          requestId,
+          model: runModel,
+          agentId: runAgentId === 'auto' ? undefined : runAgentId,
+          mode: runMode,
+          forceRoute: opts?.forceRoute,
+          preserveModelSelection: opts?.retry !== undefined,
+          workspacePath,
+          threadId: thread.id,
+          prompt
         })
         if (!ok && requestIdRef.current === requestId) {
           setStreaming(false)
@@ -636,28 +668,35 @@ export function useChatSession({
   )
 
   const rerouteLast = useCallback(
-    async (route: 'tools' | 'answer') => {
+    async (choice: { route?: 'tools' | 'answer'; agentId?: string }) => {
       const thread = activeThreadRef.current
-      if (!thread || streaming) return
-      const idx = thread.messages.map((m) => m.role).lastIndexOf('user')
-      if (idx < 0) return
-      const lastUser = thread.messages[idx]!
-      const text = lastTurnRef.current?.text ?? lastUser.content
-      void window.ide.recordRoutingFeedback({
-        text,
-        from: lastTurnRef.current?.intent ?? 'answer',
-        to: route,
-        agentId: lastTurnRef.current?.agentId ?? ''
+      const original = lastTurnRef.current
+      if (
+        !thread ||
+        streaming ||
+        !original ||
+        original.threadId !== thread.id ||
+        original.workspacePath !== workspacePath ||
+        latestUserMessageId(thread.messages) !== original.messageId
+      )
+        return
+      if (choice.route)
+        void window.ide.recordRoutingFeedback({
+          text: original.prompt.text,
+          from: original.intent,
+          to: choice.route,
+          agentId: original.agentId
+        })
+      // Append a new attempt. The prior transcript, evidence and checkpoint receipts
+      // must survive a retry, including runs that already changed files.
+      await sendMessage(original.prompt.text, [], [], {
+        forceRoute: choice.route,
+        agentId: choice.agentId,
+        retry: { prompt: original.prompt, model: original.model },
+        thread
       })
-      const trimmed = await window.ide.saveChat({
-        ...thread,
-        messages: thread.messages.slice(0, idx)
-      })
-      setActiveThread(trimmed)
-      if (route === 'tools') setChatMode('agent')
-      await sendMessage(text, [], [], { forceRoute: route, thread: trimmed })
     },
-    [sendMessage, streaming, activeThreadRef, setActiveThread]
+    [sendMessage, streaming, activeThreadRef, workspacePath]
   )
 
   // When the active reply finishes, send the next queued message (FIFO, max 3).
@@ -706,18 +745,29 @@ export function useChatSession({
       schedulePaint()
     })
     const offRouted = window.ide.onChatRouted(
-      ({ requestId, agentId, agentName, model, reason, toolsModel, task, intent }) => {
+      ({
+        requestId,
+        agentId,
+        agentName,
+        model,
+        reason,
+        toolsModel,
+        task,
+        intent,
+        modelSelection
+      }) => {
         if (requestId !== requestIdRef.current) return
         routeMetaRef.current = { agentId, agentName, model }
         if (lastTurnRef.current && intent)
           lastTurnRef.current = {
             ...lastTurnRef.current,
             intent: intent as ChatIntent,
+            model: modelSelection || lastTurnRef.current.model,
             agentId: agentId ?? ''
           }
         if (task)
           setRouteLabel(
-            `${task.deliverable} · ${task.scope.projectRoot?.split(/[\\/]/).pop() || 'Project unresolved'} · ${task.authority.edit ? 'Changes allowed' : 'Read only'}`
+            `${agentName || 'Auto'} · ${task.deliverable} · ${task.scope.projectRoot?.split(/[\\/]/).pop() || 'Project unresolved'} · ${task.authority.edit ? 'Changes allowed' : 'Read only'}`
           )
         else if (reason) setRouteLabel(reason)
         else if (agentName) {
@@ -1131,6 +1181,11 @@ export function useChatSession({
     activeCheckpointId,
     sendMessage,
     rerouteLast,
+    canRerouteLast:
+      Boolean(lastTurnRef.current) &&
+      lastTurnRef.current?.threadId === activeThread?.id &&
+      lastTurnRef.current?.workspacePath === workspacePath &&
+      latestUserMessageId(activeThread?.messages ?? []) === lastTurnRef.current?.messageId,
     stopChat,
     newChat
   }

@@ -1,3 +1,4 @@
+import { recordNativeLatency } from '../model-latency'
 import type { AppSettings } from '../../../../src/shared/settings-schema'
 import { isNativeGgufRef, warmLocalInference } from '../builtin-model'
 import { activeDiagnosticsScope, assertProviderCallAllowed } from '../model-transport'
@@ -29,6 +30,7 @@ export async function prepareContextBudget(
     model,
     reason: 'Allocating local context before packing the prompt'
   })
+  const started = performance.now()
   const result = await warmLocalInference(settings, model, signal, {
     contextWindow: capabilities.requestedContext
   })
@@ -39,5 +41,7 @@ export async function prepareContextBudget(
     throw new Error(
       `Cannot prepare ${model}: ${result.error || 'the local runtime did not report an allocated context window'}`
     )
+  if (!activeDiagnosticsScope())
+    recordNativeLatency(settings, model, 'load', performance.now() - started)
   return measured.promptBudget
 }

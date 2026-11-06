@@ -324,8 +324,10 @@ export function registerChatStreamIpc(): void {
             model,
             mode,
             manualAgentId: agentId ?? null,
+            fileNames: payload.prompt?.attachments.map((file) => file.name),
             previousAgentId,
             forceRoute: payload.forceRoute,
+            preserveModelSelection: payload.preserveModelSelection,
             history: payload.prompt?.history,
             threadId: payload.threadId ?? payload.prompt?.threadId,
             skillIds: payload.prompt?.skillIds,
@@ -387,6 +389,12 @@ export function registerChatStreamIpc(): void {
             }
             return false
           }
+          publish('chat:phase', {
+            requestId,
+            phase: 'history',
+            source: 'intake',
+            reason: 'Selecting recent history and recall'
+          })
           // One split per turn, so what recall treats as covered is what the prompt sends.
           let allocation: ContextAllocation
           try {
@@ -394,9 +402,12 @@ export function registerChatStreamIpc(): void {
               (turnPlan.mode === 'agent' ? turnPlan.models.tools : turnPlan.models.chat) ||
               model ||
               settings.models.defaultModel
-            const budget = turnPlan.cloudPreferred
-              ? contextBudgetTokens(settings, selectedModel)
-              : await prepareContextBudget(settings, selectedModel, controller.signal)
+            const budget =
+              turnPlan.cloudPreferred ||
+              (workspacePath && turnPlan.task?.scope.state !== 'resolved') ||
+              turnPlan.task?.interpretation?.resolution?.rule === 'missing-file-reference'
+                ? contextBudgetTokens(settings, selectedModel)
+                : await prepareContextBudget(settings, selectedModel, controller.signal)
             allocation = allocateContext(budget, turnPlan.mode === 'agent' ? 'agent' : 'chat')
           } catch (error) {
             if (controller.signal.aborted) publish('chat:done', { requestId, aborted: true })
@@ -407,6 +418,12 @@ export function registerChatStreamIpc(): void {
               })
             return false
           }
+          publish('chat:phase', {
+            requestId,
+            phase: 'history',
+            source: 'intake',
+            reason: 'Selecting recent history and recall'
+          })
           if (contextThreadId && payload.prompt) {
             try {
               await scopeChatSource(
@@ -458,6 +475,12 @@ export function registerChatStreamIpc(): void {
               })
             }
           }
+          publish('chat:phase', {
+            requestId,
+            phase: 'prompt',
+            source: 'intake',
+            reason: 'Building the outbound prompt'
+          })
           const promptBuildStartedAt = Date.now()
           try {
             if (payload.prompt) {
@@ -523,6 +546,9 @@ export function registerChatStreamIpc(): void {
           const telemetryOn = settings.general.telemetry?.agentOutcomes === true
           let telemetrySteps = 0
           let telemetryMutated = false
+          let verifiedAfterLastEdit = false
+          let editOwner: string | undefined
+          let mixedEditOwners = false
           let usedCloud = false
           let firstModelOutputMs: number | null = null
           const noteFirstAgentOutput = (evt: { type: string; text?: string }) => {
@@ -548,7 +574,14 @@ export function registerChatStreamIpc(): void {
                 steps: telemetrySteps,
                 mutated: telemetryMutated,
                 incomplete: outcome === 'incomplete',
-                aborted: outcome === 'aborted'
+                aborted: outcome === 'aborted',
+                verifiedEditMs:
+                  verifiedAfterLastEdit &&
+                  !usedCloud &&
+                  !mixedEditOwners &&
+                  editOwner === resolvedModel
+                    ? Date.now() - requestReceivedAt
+                    : undefined
               })
             } catch {
               /* telemetry is best-effort */
@@ -587,7 +620,11 @@ export function registerChatStreamIpc(): void {
               toolPolicy: turnPlan.toolPolicy,
               executionPlan: turnPlan.executionPlan,
               task: turnPlan.task,
-              toolsModel: turnPlan.models.tools
+              toolsModel: turnPlan.models.tools,
+              modelSelection:
+                turnPlan.modelExecution?.policy === 'fixed'
+                  ? turnPlan.modelExecution.selection
+                  : turnPlan.modelExecution?.policy
             })
             pendingThinking += `Route: ${turnPlan.reason}${turnPlan.classifiedIntent && turnPlan.classifiedIntent !== turnPlan.intent ? ` (classified ${turnPlan.classifiedIntent})` : ''} · tools ${turnPlan.toolPolicy}\n`
             if (turnPlan.executionPlan) {
@@ -1034,7 +1071,15 @@ export function registerChatStreamIpc(): void {
               if (evt.type === 'evidence' && evt.evidence.path && evidencePaths.size < 32)
                 evidencePaths.add(evt.evidence.path)
               if (evt.type === 'diff' && evidencePaths.size < 32) evidencePaths.add(evt.diff.path)
-              if (evt.type === 'tool' && evt.tool.name === 'verify') observedCheck = true
+              if (evt.type === 'diff' || (evt.type === 'evidence' && evt.evidence.mutated)) {
+                verifiedAfterLastEdit = false
+                editOwner ??= resolvedModel
+                if (editOwner !== resolvedModel) mixedEditOwners = true
+              }
+              if (evt.type === 'tool' && evt.tool.name === 'verify') {
+                observedCheck = true
+                if (evt.tool.status !== 'running') verifiedAfterLastEdit = evt.tool.status === 'ok'
+              }
               if (evt.type === 'thinking') {
                 pendingThinking += evt.text
                 scheduleStreamFlush()

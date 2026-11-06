@@ -57,6 +57,7 @@ describe('owned task phases and FIFO cancellation', () => {
     expect(t.loadingMs).toBe(500)
     expect(t.dispatchToFirstChunkMs).toBe(100)
     t = transitionTaskTimeline('a', t, { phase: 'done', at: 1000 }, 1000)
+    expect(t.phaseMs).toMatchObject({ queued: 100, loading: 500, prefill: 100, generating: 100 })
     expect(transitionTaskTimeline('a', t, { phase: 'generating', source: 'transport' }, 1200)).toBe(
       t
     )

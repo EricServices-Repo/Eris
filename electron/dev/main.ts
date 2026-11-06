@@ -1,3 +1,4 @@
+import { summarizeDevLatency } from '../../src/shared/eris-dev'
 import { DevMemoryReplay, finishMemoryTrace } from './memory-replay'
 import { DevMemoryModeSchema } from '../../src/shared/dev-memory-replay'
 import { qualityStdio } from './quality-stdio'
@@ -258,6 +259,7 @@ function summaryOf(result: DevResult): DevSummary {
     status: result.status,
     stages: result.stages,
     completion: result.completion,
+    ...(result.latency ? { latency: result.latency } : {}),
     ...(result.deliverable ? { deliverable: result.deliverable } : {}),
     agent: result.agent,
     intent: result.intent,
@@ -417,7 +419,14 @@ async function run(
         await new Promise((resolve) => setTimeout(resolve, 0))
       }
       if (live) {
-        const report = { ...batch, completedAt: new Date().toISOString(), results: batchResults }
+        const report = {
+          ...batch,
+          completedAt: new Date().toISOString(),
+          platform: process.platform,
+          arch: process.arch,
+          latency: summarizeDevLatency(batchResults),
+          results: batchResults
+        }
         const path = join(dir, `batch-${batch.number}.json`)
         await writeFile(`${path}.tmp`, JSON.stringify(report))
         await rename(`${path}.tmp`, path)

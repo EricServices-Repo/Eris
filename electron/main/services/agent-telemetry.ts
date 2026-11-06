@@ -78,6 +78,7 @@ export function recordAgentRun(input: {
   mutated: boolean
   incomplete: boolean
   aborted: boolean
+  verifiedEditMs?: number
   settings?: AppSettings
 }): void {
   noteAgentRunContext(input.model, input.intent)
@@ -92,7 +93,14 @@ export function recordAgentRun(input: {
     r.totalSteps += Math.max(0, Math.round(input.steps))
     if (input.aborted) r.aborted += 1
     else if (input.incomplete) r.incomplete += 1
-    else r.succeeded += 1
+    else {
+      r.succeeded += 1
+      if (input.intent === 'edit' && input.mutated &&
+          input.verifiedEditMs !== undefined && Number.isFinite(input.verifiedEditMs)) {
+        r.verifiedEdits = (r.verifiedEdits ?? 0) + 1
+        r.verifiedEditTotalMs = (r.verifiedEditTotalMs ?? 0) + Math.max(0, input.verifiedEditMs)
+      }
+    }
   })
 }
 
