@@ -2276,7 +2276,24 @@ async function* runAgentInternal(options: {
         ) {
           consecutiveToolErrors = Math.max(consecutiveToolErrors, 3)
           appendTaskEvent(task.taskId, 'model-execution-failed', { model: workerModel, detail })
+          yield { type: 'status', text: detail }
           if (yield* tryMidRunAdapt('recoverable model execution failure')) continue
+        }
+        if (nativeFailure && filesTouched.length) {
+          workflow.block(detail)
+          yield {
+            type: 'progress',
+            step,
+            actionLog: [...actionLog],
+            filesTouched: [...filesTouched],
+            incomplete: true
+          }
+          yield {
+            type: 'answer',
+            text: `${detail} Completed changes are preserved: ${filesTouched.join(', ')}.`,
+            replace: true
+          }
+          return
         }
         throw error
       }

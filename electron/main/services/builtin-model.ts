@@ -1,6 +1,10 @@
 import { discoverNativeContextWindow, nativeContextWindow } from './native-context'
 import { inferenceDevice } from './inference-device'
-import { LocalModelWorkerError, waitForWorkerMessage } from './llama-worker-channel'
+import {
+  LocalModelWorkerError,
+  waitForWorkerMessage,
+  watchWorkerSilence
+} from './llama-worker-channel'
 import { createHash, randomUUID } from 'crypto'
 import {
   closeSync,
@@ -1409,6 +1413,7 @@ async function* streamBuiltinChatInProcess(options: {
 }
 
 async function* streamBuiltinChatViaWorker(options: {
+  admissionMs: number
   modelRef: string
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
   temperature: number
@@ -1425,7 +1430,9 @@ async function* streamBuiltinChatViaWorker(options: {
   prepareMessages?: () => Promise<Array<{ role: 'system' | 'user' | 'assistant'; content: string }>>
   onTermination?: (termination: ModelTermination) => void
 }): AsyncGenerator<string, void, unknown> {
+  const loadStarted = performance.now()
   await ensureWorkerModel(options.path, options.entry, options.signal, options.contextWindow)
+  const loadedAt = performance.now()
   if (options.prepareMessages) options.messages = await options.prepareMessages()
   options.onLoaded?.()
   const child = llamaChild
@@ -1447,14 +1454,25 @@ async function* streamBuiltinChatViaWorker(options: {
     notify = null
   }
 
+  let firstChunkAt: number | undefined
+  let timedOut: 'prefill' | 'generation' | undefined
+  const dispatchedAt = performance.now()
+  const watchdog = watchWorkerSilence((phase) => {
+    if (done) return
+    timedOut = phase
+    done = true
+    wake()
+  })
   const onMsg = (raw: unknown) => {
     const msg = (
       raw && typeof raw === 'object' && 'data' in (raw as object)
         ? (raw as { data: WorkerMsg }).data
         : raw
     ) as WorkerMsg
-    if (msg.id !== id) return
+    if (done || msg.id !== id) return
     if (msg.type === 'chunk' && msg.text) {
+      firstChunkAt ??= performance.now()
+      watchdog.chunk()
       queue.push(msg.text)
       wake()
     } else if (msg.type === 'done') {
@@ -1490,32 +1508,32 @@ async function* streamBuiltinChatViaWorker(options: {
   options.signal?.addEventListener('abort', onAbort)
   if (options.signal?.aborted) onAbort()
 
-  const split = options.sessionKey ? splitSessionPrompt(options.messages) : null
-  if (options.signal?.aborted) {
-    // No job is posted after cancellation during loading.
-  } else if (options.sessionKey && split) {
-    postToWorker({
-      type: 'chat-turn',
-      id,
-      sessionKey: options.sessionKey,
-      userMessage: split.userMessage,
-      seedMessages: split.seed,
-      temperature: options.temperature,
-      maxTokens: options.maxOutputTokens ?? REPLY_MAX_TOKENS,
-      jsonSchema: options.jsonSchema
-    })
-  } else {
-    postToWorker({
-      type: 'chat',
-      id,
-      messages: options.messages,
-      temperature: options.temperature,
-      maxTokens: options.maxOutputTokens ?? REPLY_MAX_TOKENS,
-      jsonSchema: options.jsonSchema
-    })
-  }
-
   try {
+    const split = options.sessionKey ? splitSessionPrompt(options.messages) : null
+    if (options.signal?.aborted) {
+      // No job is posted after cancellation during loading.
+    } else if (options.sessionKey && split) {
+      postToWorker({
+        type: 'chat-turn',
+        id,
+        sessionKey: options.sessionKey,
+        userMessage: split.userMessage,
+        seedMessages: split.seed,
+        temperature: options.temperature,
+        maxTokens: options.maxOutputTokens ?? REPLY_MAX_TOKENS,
+        jsonSchema: options.jsonSchema
+      })
+    } else {
+      postToWorker({
+        type: 'chat',
+        id,
+        messages: options.messages,
+        temperature: options.temperature,
+        maxTokens: options.maxOutputTokens ?? REPLY_MAX_TOKENS,
+        jsonSchema: options.jsonSchema
+      })
+    }
+
     while (!done || queue.length > 0) {
       if (options.signal?.aborted) {
         const err = new Error('Aborted')
@@ -1532,6 +1550,12 @@ async function* streamBuiltinChatViaWorker(options: {
       err.name = 'AbortError'
       throw err
     }
+    if (timedOut)
+      throw new LocalModelWorkerError(
+        timedOut === 'prefill'
+          ? 'did not produce its first output before the prefill deadline'
+          : 'stopped producing output during generation'
+      )
     if (caughtError) {
       if (String(caughtError).startsWith('Local model worker exited'))
         throw new LocalModelWorkerError(String(caughtError).replace(/^Local model worker\s+/, ''))
@@ -1539,6 +1563,18 @@ async function* streamBuiltinChatViaWorker(options: {
     }
     if (termination) options.onTermination?.(termination)
   } finally {
+    watchdog.stop()
+    const endedAt = performance.now()
+    logInfo('Local model step timing', {
+      model: options.modelRef,
+      admissionMs: options.admissionMs,
+      loadMs: Math.round(loadedAt - loadStarted),
+      prepareMs: Math.round(dispatchedAt - loadedAt),
+      firstChunkMs: firstChunkAt === undefined ? null : Math.round(firstChunkAt - dispatchedAt),
+      generationMs: firstChunkAt === undefined ? null : Math.round(endedAt - firstChunkAt),
+      dispatchMs: Math.round(endedAt - dispatchedAt),
+      ...(timedOut ? { timedOut } : {})
+    })
     options.signal?.removeEventListener('abort', onAbort)
     try {
       child.removeListener?.('message', onMsg)
@@ -1547,6 +1583,9 @@ async function* streamBuiltinChatViaWorker(options: {
     } catch {
       // ignore
     }
+    // An unresponsive native call can still hold GPU resources. Retire that worker
+    // before returning the exclusive inference lease or loading a recovery model.
+    if (timedOut && llamaChild === child) await disposeRuntime()
   }
 }
 
@@ -1710,7 +1749,12 @@ export async function* streamBuiltinChat(options: {
     // Fall back to in-process on worker failures (including sequence races).
     if (!preferInProcess) {
       try {
-        for await (const chunk of streamBuiltinChatViaWorker({ ...options, entry, path })) {
+        for await (const chunk of streamBuiltinChatViaWorker({
+          ...options,
+          entry,
+          path,
+          admissionMs: lease.waitMs
+        })) {
           lease.markMaterialized?.()
           yield chunk
         }

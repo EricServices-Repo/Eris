@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -106,8 +106,39 @@ describe('checkpoint through-rewind', () => {
 })
 
 import { EventEmitter } from 'events'
-import { waitForWorkerMessage } from '../electron/main/services/llama-worker-channel'
+import {
+  waitForWorkerMessage,
+  watchWorkerSilence
+} from '../electron/main/services/llama-worker-channel'
 describe('native model worker response lifecycle', () => {
+  it('bounds prefill silence and renews the generation deadline only on output', () => {
+    vi.useFakeTimers()
+    try {
+      const timeout = vi.fn()
+      const prefill = watchWorkerSilence(timeout)
+      vi.advanceTimersByTime(180_000)
+      expect(timeout).toHaveBeenLastCalledWith('prefill')
+      prefill.stop()
+
+      const generation = watchWorkerSilence(timeout)
+      vi.advanceTimersByTime(170_000)
+      generation.chunk()
+      vi.advanceTimersByTime(89_000)
+      generation.chunk()
+      vi.advanceTimersByTime(89_000)
+      expect(timeout).toHaveBeenCalledTimes(1)
+      vi.advanceTimersByTime(1_000)
+      expect(timeout).toHaveBeenLastCalledWith('generation')
+      generation.stop()
+
+      watchWorkerSilence(timeout).stop()
+      vi.advanceTimersByTime(180_000)
+      expect(timeout).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('rejects on exit and removes listeners from the original worker', async () => {
     const worker = new EventEmitter()
     const waiting = waitForWorkerMessage<{ type: string }>(worker, (m) => m.type === 'loaded')
