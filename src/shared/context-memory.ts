@@ -176,11 +176,40 @@ export type ContextDispatch = {
   /** Conservative estimate for the whole request; never a provider measurement. */
   estimatedTokens: number
   /** The window this request was packed for, and the plan it replaced if a load changed it. */
-  context?: { source: string; tokens: number; plannedTokens?: number }
+  context?: {
+    source: string
+    tokens: number
+    plannedTokens?: number
+    requestedContext?: number
+    forecastTokens?: number
+    promptBudget?: number
+    outputReserve?: number
+  }
   counts: ContextBundleCounts
   /** Present on a run's first dispatch and whenever an item's status changes. */
   items?: ContextBundleItem[]
   at: number
+}
+export interface ContextUsage {
+  model: string
+  estimatedTokens: number
+  measuredPromptTokens: number | null
+  source: 'estimate-only' | 'provider-measured'
+  /** Includes transport overhead. A provider's internal prefill time may be unavailable. */
+  dispatchToFirstChunkMs?: number
+}
+export interface ContextCompaction {
+  mode: 'micro' | 'full'
+  reason: string
+  tokenCounting: string
+  durationMs: number
+  beforeTokens: number
+  afterTokens: number
+  budgetTokens: number
+  targetTokens: number
+  changed: boolean
+  kvResetRequested: boolean
+  cannotFit?: boolean
 }
 export type MemoryPrompt = {
   sourceVersion?: ContextHeader

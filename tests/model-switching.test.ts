@@ -403,10 +403,11 @@ describe('bounded recovery admission', () => {
     ).rejects.toThrow('no longer eligible')
     expect(h.released).toEqual([])
   })
-  it('releases KV then uses measured target capacity after resource preparation', async () => {
+  it('releases KV and recomputes the prompt budget after switching from 32K to 8K', async () => {
+    recordLoadedModel({ ref: 'builtin:composer-lite', contextSize: 32768 })
     h.prepareHook = () => {
       expect(h.released).toEqual(['old'])
-      recordLoadedModel({ ref: 'local:worker', contextSize: 4096 })
+      recordLoadedModel({ ref: 'local:worker', contextSize: 8192 })
     }
     const budget = await prepareModelTransition({
       settings: settings(),
@@ -416,7 +417,7 @@ describe('bounded recovery admission', () => {
       releaseSession: () => h.released.push('old'),
       getSecret: () => null
     })
-    expect(budget).toBe(modelInputBudget(4096, Math.floor(4096 * 0.3)))
+    expect(budget).toBe(modelInputBudget(8192, Math.floor(8192 * 0.3)))
     expect(h.warm).toEqual(['local:worker'])
   })
   it('refuses a simulated transition if its scripted transport scope is lost', async () => {

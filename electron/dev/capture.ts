@@ -1,4 +1,11 @@
 import { randomUUID } from 'crypto'
+import { prepareContextBudget } from '../main/services/agent/context-budget'
+import { allocateContext } from '../../src/shared/context-allocation'
+import type {
+  ContextCompaction,
+  ContextDispatch,
+  ContextUsage
+} from '../../src/shared/context-memory'
 import { streamProviderChat } from '../main/services/chat-runtime'
 import type { PreparedLiveModel } from './models'
 import type {
@@ -170,7 +177,7 @@ export async function captureQuestion(
   let incomplete = false
   // Ledger events arrive before the request they describe; attach them to it.
   let pendingContext: unknown
-  let pendingDispatch: unknown
+  let pendingDispatch: ContextDispatch | undefined
   let pendingToolManifest: unknown
   const adapter: ModelAdapter = {
     kind: live ? 'live' : 'scripted',
@@ -202,6 +209,7 @@ export async function captureQuestion(
           ? { toolManifest: pendingToolManifest }
           : {})
       }
+      pendingDispatch = undefined
       result.requests.push(call)
       if (live) {
         if (request.purpose === 'agent') captured = true
@@ -284,9 +292,27 @@ export async function captureQuestion(
         onTaskEvent: (event) => {
           if (event.type === 'context-compiled') pendingContext = event.data
           else if (event.type === 'context-dispatched') {
-            pendingDispatch = event.data
-            const call = result.requests[result.requests.length - 1]
-            if (call?.purpose === 'agent') call.dispatch = event.data
+            const dispatch = event.data as ContextDispatch
+            if (!dispatch.adapted) pendingDispatch = dispatch
+            else {
+              const call = result.requests.at(-1)
+              if (call) call.dispatch = dispatch
+            }
+          } else if (event.type === 'context-usage') {
+            const call = result.requests.at(-1)
+            if (call) call.contextUsage = event.data as ContextUsage
+          } else if (event.type === 'context-evicted') {
+            const entry = event.data as ContextCompaction
+            const summary = (result.compaction ??= {
+              attempts: 0,
+              unchanged: 0,
+              kvResetRequests: 0,
+              events: []
+            })
+            summary.attempts++
+            if (!entry.changed) summary.unchanged++
+            if (entry.kvResetRequested) summary.kvResetRequests++
+            if (summary.events.length < 100) summary.events.push(entry)
           } else if (event.type === 'tool-manifest') pendingToolManifest = event.data
           else if (event.type === 'route-decision') result.routeDecision = event.data
           else if (event.type === 'retrieval') result.retrieval = event.data
@@ -320,6 +346,8 @@ export async function captureQuestion(
         result.intent = plan.intent
         result.artifact = interpretationOf(task).artifact
         phaseStarted = Date.now()
+        const destination = plan.mode === 'agent' ? plan.models.tools : plan.models.chat
+        const budget = await prepareContextBudget(settings, destination, controller.signal)
         const messages = buildChatTurnMessages(
           workspace,
           settings,
@@ -331,7 +359,9 @@ export async function captureQuestion(
             history: options.question?.history ?? [],
             skillIds: []
           },
-          plan
+          plan,
+          undefined,
+          allocateContext(budget, plan.mode === 'agent' ? 'agent' : 'chat')
         )
         result.phases.promptMs = Date.now() - phaseStarted
         phaseStarted = Date.now()

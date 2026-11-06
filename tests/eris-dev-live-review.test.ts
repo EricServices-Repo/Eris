@@ -364,6 +364,18 @@ describe('MR-002/MR-007/MR-009/MR-012 live capture', () => {
     expect(result.response).toContain('pool = Pool(5)')
     expect(result.response).not.toMatch(/ASSISTANT:|"name":"tree"/)
     expect(result.deliverable?.status).toBe('pass')
+    expect(result.requests.find((request) => request.purpose === 'agent')).toMatchObject({
+      dispatch: {
+        adapted: true,
+        context: {
+          requestedContext: 8192,
+          tokens: 8192,
+          promptBudget: expect.any(Number),
+          outputReserve: expect.any(Number)
+        }
+      },
+      contextUsage: { dispatchToFirstChunkMs: expect.any(Number) }
+    })
     expect(result.requests[result.requests.length - 1]?.termination).toMatchObject({
       reason: 'eos',
       raw: 'stop'

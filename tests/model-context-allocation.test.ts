@@ -111,9 +111,12 @@ describe('native context capacity', () => {
     )
   })
   it('exposes the source and the value for compile events', () => {
-    expect(contextProvenance(settings, 'local:big')).toEqual({
+    expect(contextProvenance(settings, 'local:big')).toMatchObject({
       source: 'runtime-plan',
-      tokens: 8192
+      tokens: 8192,
+      forecastTokens: 8192,
+      promptBudget: expect.any(Number),
+      outputReserve: expect.any(Number)
     })
   })
 })

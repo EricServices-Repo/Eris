@@ -12,9 +12,13 @@ import { join } from 'path'
  */
 const harness = vi.hoisted(() => ({
   replies: [] as string[],
+  allocatedContext: 0,
+  contextLoads: [] as number[],
   prompts: [] as string[],
   nativeCalls: [] as Array<Array<{ id: string; name: string; arguments: string }> | undefined>,
-  transcripts: [] as Array<Array<{ role: string; content: string; tool_calls?: unknown[] }>>,
+  transcripts: [] as Array<
+    Array<{ role: string; content: string; tool_calls?: unknown[]; tool_call_id?: string }>
+  >,
   requestModes: [] as Array<{ constrained: boolean; sessionKey?: string }>,
   releasedSessions: [] as string[],
   retrievedPaths: [] as string[],
@@ -53,6 +57,32 @@ vi.mock('../electron/main/services/builtin-model', async () => {
   )
   return {
     ...actual,
+    findBuiltinEntry: (ref: string) => {
+      const entry = actual.findBuiltinEntry(ref)
+      return entry && harness.allocatedContext
+        ? {
+            ...entry,
+            tier: 'full',
+            role: 'local',
+            contextWindow: 262144,
+            approxBytes: 100 * 1024 ** 3
+          }
+        : entry
+    },
+    warmLocalInference: async (
+      ...[, ref, signal, foreground]: Parameters<typeof actual.warmLocalInference>
+    ) => {
+      if (!harness.allocatedContext) return { ok: false, error: 'skipped' }
+      signal?.throwIfAborted()
+      if (!ref || !foreground) throw new Error('Expected exact foreground allocation')
+      harness.contextLoads.push(foreground.contextWindow)
+      recordLoadedModel({
+        ref,
+        requestedContext: foreground.contextWindow,
+        contextSize: harness.allocatedContext
+      })
+      return { ok: true, model: ref }
+    },
     releaseLocalChatSession: (key: string) => {
       harness.releasedSessions.push(key)
     },
@@ -108,6 +138,8 @@ vi.mock('../electron/main/services/code-index', () => ({
 
 import { runAgentWithWorkspaceTools } from '../electron/main/services/agent/loop'
 
+import { clearLoadedModel, recordLoadedModel } from '../electron/main/services/model-runtime'
+import { resolveModelCapabilities } from '../electron/main/services/model-capabilities'
 import { getDefaults } from '../electron/main/services/settings'
 import type { AgentChatMessage, AgentRunnerEvent } from '../electron/main/services/agent/types'
 import type { TurnPlan } from '../src/shared/settings-schema'
@@ -147,6 +179,9 @@ beforeEach(() => {
       ''
     ].join('\n')
   )
+  clearLoadedModel()
+  harness.allocatedContext = 0
+  harness.contextLoads.length = 0
   harness.nativeCalls.length = 0
   harness.transcripts.length = 0
   harness.replies.length = 0
@@ -219,6 +254,62 @@ function expectCompleted(events: AgentRunnerEvent[]): void {
 }
 
 describe('chat agent complex smoke test', () => {
+  it('keeps a prompt larger than the 8K cold forecast and its subsequent tool observation', async () => {
+    const settings = getDefaults()
+    settings.models.contextWindow = 262144
+    harness.allocatedContext = 262144
+    const model = 'builtin:composer-lite'
+    expect(resolveModelCapabilities(settings, model)).toMatchObject({
+      contextCeiling: 8192,
+      contextSource: 'runtime-plan'
+    })
+    const history = 'Historical design detail. '.repeat(1600)
+    harness.replies.push(
+      JSON.stringify({ name: 'read_file', path: 'src/retry.ts' }),
+      'The retry delay starts at 250 ms and is capped at 4 seconds.'
+    )
+    const events = await drain(
+      runAgentWithWorkspaceTools({
+        workspacePath,
+        settings,
+        model,
+        messages: [
+          { role: 'user', content: 'Save this reference for the next question.' },
+          { role: 'assistant', content: history },
+          { role: 'user', content: 'How does retry timing work in this project?' }
+        ],
+        temperature: 0,
+        getSecret: () => null,
+        mode: 'agent',
+        turnPlan: workspaceQuestionPlan(),
+        mcp: 'off'
+      })
+    )
+    expect(harness.contextLoads).toEqual([262144])
+    expect(harness.prompts[0]).toContain(history)
+    const nextPrompt = harness.transcripts
+      .slice(1)
+      .find((messages) =>
+        messages.some((message) => message.content.includes('export const MAX_RETRIES = 3'))
+      )
+    const observation = nextPrompt?.find((message) =>
+      message.content.includes('export const MAX_RETRIES = 3')
+    )
+    expect(observation).toMatchObject({ role: 'tool', tool_call_id: expect.any(String) })
+    expect(nextPrompt).toContainEqual(
+      expect.objectContaining({
+        role: 'assistant',
+        tool_calls: expect.arrayContaining([
+          expect.objectContaining({ id: observation?.tool_call_id })
+        ])
+      })
+    )
+    expect(
+      events.some((event) => event.type === 'status' && event.text === 'Compacting context…')
+    ).toBe(false)
+    expectCompleted(events)
+  })
+
   it('answers a workspace question after inspecting files instead of asking the user to paste them', async () => {
     const retryBefore = readFileSync(join(workspacePath, 'src', 'retry.ts'), 'utf8')
     harness.replies.push(

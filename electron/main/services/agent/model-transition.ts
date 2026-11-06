@@ -1,9 +1,10 @@
 import type { AppSettings, TurnPlan } from '../../../../src/shared/settings-schema'
 import { chooseExecutionModel } from '../auto-model-policy'
-import { isNativeGgufRef, warmLocalInference } from '../builtin-model'
+import { isNativeGgufRef } from '../builtin-model'
 import { activeDiagnosticsScope, assertProviderCallAllowed } from '../model-transport'
 import { prepareModelWindows } from '../ollama-runtime'
 import { resolveModelCapabilities } from '../model-capabilities'
+import { prepareContextBudget } from './context-budget'
 
 const checkAbort = (signal?: AbortSignal) => {
   if (signal?.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
@@ -43,11 +44,7 @@ export async function prepareModelTransition(options: {
   if (activeDiagnosticsScope()?.adapter.kind !== 'scripted') {
     assertProviderCallAllowed(options.settings, options.to)
     if (isNativeGgufRef(options.to)) {
-      const result = await warmLocalInference(options.settings, options.to, options.signal)
-      if (!result.ok)
-        throw new Error(
-          `Cannot prepare ${options.to}: ${result.error || 'resource admission failed'}`
-        )
+      return prepareContextBudget(options.settings, options.to, options.signal)
     } else {
       await prepareModelWindows(options.settings, [options.to], options.getSecret, options.signal)
     }
