@@ -10,6 +10,23 @@ export class LocalModelWorkerError extends Error {
     this.name = 'LocalModelWorkerError'
   }
 }
+/** A long prefill gets its own deadline. Streaming must continue making progress. */
+export function watchWorkerSilence(onTimeout: (phase: 'prefill' | 'generation') => void) {
+  let timer: ReturnType<typeof setTimeout> | undefined = setTimeout(
+    () => onTimeout('prefill'),
+    180_000
+  )
+  return {
+    chunk() {
+      clearTimeout(timer)
+      timer = setTimeout(() => onTimeout('generation'), 90_000)
+    },
+    stop() {
+      clearTimeout(timer)
+    }
+  }
+}
+
 export function waitForWorkerMessage<T>(
   child: WorkerEventSource,
   predicate: (message: T) => boolean,

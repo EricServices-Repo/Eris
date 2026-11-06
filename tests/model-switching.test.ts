@@ -1,3 +1,4 @@
+import { LocalModelWorkerError } from '../electron/main/services/llama-worker-channel'
 import { modelInputBudget } from '../src/shared/model-context'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync } from 'fs'
@@ -251,6 +252,40 @@ describe('coordinator to worker at the actual transport boundary', () => {
       expect.objectContaining({ type: 'adapt', model: 'local:worker' })
     )
   })
+
+  it('recovers from generation silence after a write without writing the same bytes again', async () => {
+    const write = '{"name":"write_file","arguments":{"path":"hello.txt","content":"hello"}}'
+    let originalCalls = 0
+    let recoveryCalls = 0
+    const result = await scripted(
+      'Create hello.txt containing hello',
+      (request) => {
+        if (request.model === 'builtin:composer-lite') {
+          if (originalCalls++ === 0) return write
+          throw new LocalModelWorkerError('stopped producing output during generation')
+        }
+        if (recoveryCalls++ === 0) return write
+        return 'DONE: Created hello.txt containing hello.'
+      },
+      basePlan()
+    )
+    expect(readFileSync(join(root, 'hello.txt'), 'utf8')).toBe('hello')
+    expect(result.events).toContainEqual(
+      expect.objectContaining({ type: 'adapt', model: 'local:worker' })
+    )
+    expect(result.events.filter((event) => event.type === 'diff')).toHaveLength(1)
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: 'tool',
+        tool: expect.objectContaining({
+          name: 'write_file',
+          status: 'error',
+          failure: expect.objectContaining({ code: 'precondition_failed' })
+        })
+      })
+    )
+  })
+
   it('changes the actual worker after repeated no-progress and preserves edits', async () => {
     let writes = 0
     const result = await scripted(
