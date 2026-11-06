@@ -12,6 +12,8 @@ export default tseslint.config(
       'dist/**',
       '**/dist/**',
       'cloud-agent/**',
+      'website/build/**',
+      'website/.docusaurus/**',
       'release/**',
       'node_modules/**',
       'resources/**',

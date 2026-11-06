@@ -1,4 +1,6 @@
 out
+website/build
+website/.docusaurus
 dist
 release
 node_modules
