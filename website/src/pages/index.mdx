@@ -1,0 +1,42 @@
+---
+title: Eris Documentation
+description: Guides for using Eris, understanding its architecture, and testing changes with Eris-Dev.
+hide_table_of_contents: true
+---
+
+import Link from '@docusaurus/Link';
+
+<div className="eris-home">
+  <header className="eris-hero">
+    <span className="eris-eyebrow">ERIS / DOCUMENTATION</span>
+    <h1>Build with Eris.</h1>
+    <p>Learn how to use the AI workspace, follow a request from chat to execution, and test changes with Eris-Dev.</p>
+    <div className="eris-actions">
+      <Link className="button button--primary" to="/ERIS_USAGE/">Get started</Link>
+      <Link className="button button--secondary" to="/guides/">Browse all guides</Link>
+    </div>
+  </header>
+  <section aria-labelledby="explore-guides">
+    <h2 id="explore-guides">Explore the docs</h2>
+    <div className="eris-guide-grid">
+      <Link className="eris-guide-card" to="/ARCHITECTURE/">
+        <span className="eris-eyebrow">DESIGN</span>
+        <strong>System architecture</strong>
+        <span>See how chat, agents, models, and tools fit together.</span>
+        <span className="eris-card-action">Read the architecture →</span>
+      </Link>
+      <Link className="eris-guide-card" to="/CONTEXT-MEMORY/">
+        <span className="eris-eyebrow">CONTEXT</span>
+        <strong>Conversation memory</strong>
+        <span>Understand what Eris retains and how it retrieves relevant context.</span>
+        <span className="eris-card-action">Explore memory →</span>
+      </Link>
+      <Link className="eris-guide-card" to="/ERIS-DEV/">
+        <span className="eris-eyebrow">DEVELOPMENT</span>
+        <strong>Eris-Dev</strong>
+        <span>Capture requests, replay scenarios, and test with real models.</span>
+        <span className="eris-card-action">Open the developer guide →</span>
+      </Link>
+    </div>
+  </section>
+</div>

@@ -1,3 +1,8 @@
+---
+slug: /guides
+sidebar_label: Guide index
+---
+
 # Architecture and design guide index
 
 Routing and request-execution guides updated on 2026-11-06 against local `codex/simplify-request-execution`, based on `7975140d` (v0.6.16), including uncommitted source changes. Older subsystem guides retain their own reviewed baselines. This index does not certify an installed or released build.
