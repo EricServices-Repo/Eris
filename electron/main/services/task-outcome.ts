@@ -4,10 +4,12 @@ import { contextBudgetTokens } from './agent/context-budget'
 import type { AppSettings } from '../../../src/shared/settings-schema'
 import { interpretationOf, type TaskContract } from '../../../src/shared/task-contract'
 import { streamModelChat } from './chat-runtime'
+import { createTaskDeadline, drainUntilStopped } from './task-deadline'
 export type TaskVerdict = {
   verdict: 'supported' | 'partial' | 'unresolved'
   reason: string
   coverage?: ReturnType<typeof selectOutcomeEvidence>
+  failure?: 'timeout' | 'transport-error' | 'malformed-json' | 'schema-invalid' | 'reference-unavailable' | 'response-limit'
 }
 /** Bounded semantic check complements deterministic scope, mutation and verification gates. */
 export async function reviewTaskOutcome(input: {
@@ -18,17 +20,18 @@ export async function reviewTaskOutcome(input: {
   model: string
   signal?: AbortSignal
   getSecret: (key: string) => string | null
+  /** Test/diagnostics deadline; production uses 15 seconds. */
+  timeoutMs?: number
 }): Promise<TaskVerdict> {
-  const controller = new AbortController()
-  const cancel = () => controller.abort(input.signal?.reason)
-  if (input.signal?.aborted) cancel()
-  else input.signal?.addEventListener('abort', cancel, { once: true })
-  const timer = setTimeout(() => controller.abort(), 15000)
+  const deadline = createTaskDeadline(input.signal, input.timeoutMs ?? 15000)
+  let failure: TaskVerdict['failure'] = 'reference-unavailable'
   try {
+    input.signal?.throwIfAborted()
     await assertTaskReferences(input.task, input.settings, input.model)
     const report = {
       request: input.task.originalText,
       deliverable: input.task.deliverable,
+      requested: input.task.requested,
       artifact: interpretationOf(input.task).artifact,
       obligations: interpretationOf(input.task).obligations.map((obligation) => obligation.text),
       project: input.task.scope.projectRoot,
@@ -56,11 +59,12 @@ export async function reviewTaskOutcome(input: {
         coverage: selection
       }
     let response = ''
-    for await (const chunk of streamModelChat({
+    failure = 'transport-error'
+    const ended = await drainUntilStopped(streamModelChat({
       settings: input.settings,
       model: input.model,
       temperature: 0,
-      signal: controller.signal,
+      signal: deadline.signal,
       getSecret: input.getSecret,
       purpose: 'outcome',
       builtinJsonSchema: {
@@ -83,12 +87,23 @@ export async function reviewTaskOutcome(input: {
           content: JSON.stringify({ ...report, selection })
         }
       ]
-    })) {
+    }), deadline, (chunk) => {
       response += chunk
-      if (response.length > 10000) throw new Error('Outcome response exceeds budget')
+      if (response.length > 10000) {
+        failure = 'response-limit'
+        throw new Error('Outcome response exceeds budget')
+      }
+    })
+    input.signal?.throwIfAborted()
+    if (ended === 'timeout') return {
+      verdict: 'unresolved', failure: 'timeout',
+      reason: 'Semantic assessment timed out; this does not establish whether the implementation succeeded.'
     }
+    failure = 'malformed-json'
     const result = JSON.parse(response) as TaskVerdict
+    failure = 'schema-invalid'
     if (
+      result &&
       ['supported', 'partial', 'unresolved'].includes(result.verdict) &&
       typeof result.reason === 'string'
     )
@@ -104,17 +119,18 @@ export async function reviewTaskOutcome(input: {
         coverage: selection
       }
   } catch {
+    if (deadline.stopReason() === 'timeout') failure = 'timeout'
     if (input.signal?.aborted) {
       const error = new Error('Aborted')
       error.name = 'AbortError'
       throw error
     }
   } finally {
-    clearTimeout(timer)
-    input.signal?.removeEventListener('abort', cancel)
+    deadline.dispose()
   }
   return {
     verdict: 'unresolved',
-    reason: 'The semantic outcome check did not produce a valid verdict within its budget.'
+    failure,
+    reason: `Semantic assessment unavailable (${failure}); no supported verdict was established.`
   }
 }

@@ -106,6 +106,8 @@ export interface IntentResolution {
   /** Set when a conservative rule changed the intent the resolver would otherwise return. */
   downgrade?: { from: ChatIntent; to: ChatIntent; rule: string }
   durationMs: number
+  /** Requested files resolved before model inference; never permission to write them. */
+  targetFiles?: string[]
 }
 
 /** The single resolved reading of a request that routing, prompts and outcome checks share. */
@@ -177,6 +179,14 @@ export interface InheritedRequirements {
 }
 
 export interface TaskContract {
+  /** Requested work is retained even when mode, routing or capability blocks execution. */
+  requested?: {
+    intent: ChatIntent
+    artifact: RequestedArtifact
+    destination: ArtifactDestination
+    targetFiles: string[]
+    state: 'resolved' | 'needs-reference' | 'needs-clarification'
+  }
   contextOrigin?: import('./context-origin').ContextOrigin
   referenceBinding?: import('./reference-binding').TaskReferenceBinding
   version: 2
@@ -239,6 +249,14 @@ const ARTIFACT_FOR_DELIVERABLE: Record<TaskContract['deliverable'], RequestedArt
   'execution-report': 'execution-report'
 }
 
+/** Cheap intake failures must not allocate a model simply to display a clarification. */
+export function taskIntakeBlocked(task: TaskContract | undefined, mode: 'ask' | 'agent'): boolean {
+  if (!task) return false
+  return (task.requested !== undefined && task.requested.state !== 'resolved') ||
+    task.interpretation?.resolution?.rule === 'missing-file-reference' ||
+    (mode !== 'ask' && task.requested?.artifact === 'patch' && !task.authority.edit)
+}
+
 /** Compatibility default for contracts persisted before interpretations were recorded. */
 export function interpretationOf(contract: TaskContract): TaskInterpretation {
   if (contract.interpretation) return contract.interpretation
@@ -271,6 +289,9 @@ export function intersectToolPolicy(
 export function taskContractConflicts(contract: TaskContract): string[] {
   const conflicts: string[] = []
   const { authority, deliverable } = contract
+  if (contract.requested?.state !== undefined && contract.requested.state !== 'resolved' &&
+      (authority.edit || authority.execute !== 'none' || authority.externalEffects))
+    conflicts.push('Unresolved requested work cannot authorize effects.')
   if (deliverable === 'patch' && !authority.edit)
     conflicts.push('A patch deliverable requires edit authority.')
   if (authority.edit && authority.tools !== 'edit' && authority.tools !== 'full')

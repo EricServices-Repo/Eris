@@ -1,5 +1,7 @@
 # Agent handoff and RAM context design
 
+**2026-11-06 reconciliation:** The snapshot below is historical. Current `AgentHandoffPacket` also includes `version`, `truncated`, and source-backed `evidence`; `ContextOrigin` provides sealed source/execution mapping; `TASK_TREE_LIMITS` and background enforcement bound the task tree; `ChildOutcome` carries observed effects/checks and integration state. These are implemented foundations, not missing features. The latest [request execution design](REQUEST-EXECUTION.md) additionally separates requested work from effective authority and removes role-driven child intent coercion. Historical limitations and proposed sections below must be checked against these current contracts before implementation.
+
 **Project:** Eris desktop IDE
 
 **Review date:** 2026-11-01
@@ -79,11 +81,14 @@ type MemoryPrompt = {
 
 ```ts
 interface AgentHandoffPacket {
+  version?: number
+  truncated?: HandoffOptionalField[]
   task?: TaskContract
   parentGoal?: string
   goal: string
   summary: string
   constraints?: string[]
+  evidence?: HandoffEvidence[]
   files?: string[]
   openQuestions?: string[]
   confidence?: number
@@ -92,7 +97,7 @@ interface AgentHandoffPacket {
 }
 ```
 
-There is no `conversationMemory`, memory-item list, recall manifest, lease handle or durable source snapshot in this packet. `files` names leads; it does not copy those files into the child prompt. `confidence` is sender metadata, not independently verified correctness.
+The packet does not contain the parent's `conversationMemory` or RAM store. It can contain host-generated `HandoffEvidence` with source root/thread, disclosure ceiling, source version and item IDs/digests/dependencies. Optional truncation is recorded. The task can also carry a sealed `ContextOrigin` mapping source conversation to execution workspace. These are provenance and validation mechanisms, not permission to copy arbitrary history. `files` names leads; it does not copy their contents into the child prompt. `confidence` is sender metadata, not independently verified correctness.
 
 `handoffMessages` now supplies both inline and background children with the same optional system briefing and user subgoal. Parent/subtask goals and inherited constraints are represented in the required task block. `formatHandoffForPrompt` still renders the full packet for routing/result display. Briefings remain evidence; they do not authorize new effects.
 
@@ -117,7 +122,11 @@ sequenceDiagram
     participant Model as Native runtime or provider
     UI->>Chat: prompt, history, thread, model, mode
     Chat->>DB: Persist current user source
-    Chat->>Chat: Resolve route and canonical TaskContract
+    Chat->>Chat: Initial route and candidate selection
+    Chat->>DB: Bind eligible historical references when needed
+    Chat->>Chat: Resolve file operands or bounded semantic intent
+    Chat->>Chat: TaskContract requested work and effective authority
+    Note over Chat,Model: Blocked intake returns clarification without worker/context preparation
     Chat->>DB: Scope the current source to the resolved project
     Chat->>RAM: conversationContext(root, thread, query, scope)
     RAM->>DB: Warm/revalidate pages or search durable archive as needed
@@ -141,7 +150,7 @@ sequenceDiagram
 The primary caller is [ipc/chat-stream.ts](../../electron/main/ipc/chat-stream.ts):
 
 1. Persist the user message with a stable request-derived source ID; the path is designed to tolerate optimistic persistence using the same ID.
-2. Resolve the turn and save its canonical task contract.
+2. Create the initial route, bind eligible historical references, resolve file operands/semantic intent, and save the canonical task with separate requested and effective work. `taskIntakeBlocked` prevents model/context preparation for unresolved work and Agent-mode read-only patch assignments. General RAM recall remains a later evidence-selection stage.
 3. Associate the current user source with the task's resolved project.
 4. When a thread and structured prompt are available, call `conversationContext` with the workspace root, thread, latest user text, project scope, current-user exclusion and IDs already covered by admitted recent history.
 5. Save the returned prompt in the request-local `conversationMemory` variable, create an evidence lease and record `memory-selected` in the task ledger.
@@ -308,6 +317,7 @@ The implementation chooses inline delegation when `options.jobId?.startsWith('ch
 
 - assigns a new task ID and records `parentTaskId`;
 - changes the child's original text and deliverable to the assigned subgoal;
+- creates child-specific `requested` metadata and removes the parent's requested output list;
 - maps the parent's project-relative root into the child's execution workspace and rejects an escaping root;
 - intersects tool levels with the parent;
 - bounds edit, execution and external-effect permissions by the parent;
@@ -321,11 +331,13 @@ Framework incompatibilities and all natural-language nuances are not comprehensi
 
 The inline branch selects a child model for its subgoal under the inherited automatic policy; a Fixed selection stays fixed and an explicit child-agent model override retains precedence. Direct child runners exclude the Cloud-only adapter. Parent/child model identity can differ without changing authority. It passes approval callbacks and the cancellation signal, uses the current workspace, disables further child delegation, and reuses the MCP runtime.
 
+Assignment intent is no longer coerced by the specialist's tool capability. A writable specialist asked for an explanation does not acquire an edit assignment. A read-only specialist assigned a patch encounters a capability conflict rather than silently converting the patch to a review. “Check whether …” routes to inspection through the ordinary intake classifier.
+
 ### 7.2 What the child receives from RAM
 
 The call supplies a system message rendered from the handoff packet and a user message containing the subgoal. It does **not** pass `options.conversationMemory`, call `conversationContext`, or grant direct access to the parent's RAM rows.
 
-The coordinator's prose summary may restate recalled facts, but that is not equivalent to a typed recall transfer. Source IDs, item eligibility and coverage are not carried in a dedicated memory envelope. In both branches the optional briefing can lose detail under evidence budgets. Explicit `constraints` and inherited parent requirements are protected separately in the required task block.
+The coordinator's prose summary may restate recalled facts, but that is not equivalent to transferring the recall store. Current handoff evidence metadata and context-origin capabilities retain source identity and disclosure restrictions; background execution revalidates captured evidence. In both branches the optional briefing can lose detail under evidence budgets. Explicit `constraints` and inherited parent requirements are protected separately in the required task block.
 
 An active parent's process-local evidence lease can still restrict a child model call at `streamModelChat`, particularly when derived private context is transferred to a different destination/task. This is an owner-scoped dispatch restriction, not automatic child recall. Unrelated request scopes must not inherit the parent goal or authority.
 
@@ -414,7 +426,9 @@ Useful inspection questions:
 7. Was the model context measured or only planned at dispatch time?
 8. Did the job finish, merely queue a child, or return an unverified claim?
 
-## 12. Current limitations that affect design decisions
+## 12. Historical limitations and current reconciliation
+
+The numbered findings below preserve the 2026-11-01 baseline. They are not an unchecked current backlog. Since that baseline, versioned evidence envelopes and context-origin mapping address parts of items 1–3; task-tree limits and child outcome receipts address parts of item 7. Consult the current source and [request execution guide](REQUEST-EXECUTION.md) before opening implementation work. Hardware acceptance and complete semantic correctness remain distinct from these implemented foundations.
 
 1. Child recall is not automatically reselected; `sourceThreadId` does not map a worktree to the original namespace.
 2. Explicit required constraints are protected, but untyped constraints written only in optional summary text can still be omitted. Per-source handoff manifests and a complete bounded/versioned envelope remain missing.
@@ -425,9 +439,9 @@ Useful inspection questions:
 7. Background subtree cancellation is implemented, but aggregate task-tree inference/depth budgets and a universal typed result/source graph are not.
 8. A tool-free child claim is not a verified edit/check; unit/simulation counts do not establish live quality or real hardware behavior.
 
-## 13. Proposed next design — not implemented
+## 13. Original target design — partially implemented
 
-The following extends the current baseline. Existing inherited constraints, request scopes, run handles and post-load repacking must be reused rather than reimplemented as missing features.
+The following preserves the original target design. Sections 13.1 and 13.3 now have implemented foundations in `HandoffEvidence`, `ContextOrigin` and `ChildOutcome`; they must not be read as requests to create duplicate contracts. Reuse existing inherited constraints, source validation, task-tree limits, request scopes, run handles and post-load repacking. Independent child recall selection and full per-obligation assignment remain separate integration work.
 
 ### 13.1 A typed child context envelope
 

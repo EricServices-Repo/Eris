@@ -140,7 +140,7 @@ describe('simulated diagnostics runs', () => {
     expect(summary.label).toBe('SIMULATED MODEL RESPONSES')
     expect(summary.responseSource).toBe('scripted')
     expect(summary.model.provider).toBe('none (scripted)')
-    expect(summary.verdict).toBe('PASS')
+    expect(summary.verdict, JSON.stringify(store.readDebugRun(summary.runId)?.cases.filter(item => item.status !== 'passed'))).toBe('PASS')
     expect(summary.passed).toBe(summary.planned)
 
     const detail = store.readDebugRun(summary.runId)!

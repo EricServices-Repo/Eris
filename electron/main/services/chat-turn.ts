@@ -12,6 +12,7 @@ import type {
 } from '../../../src/shared/settings-schema'
 import {
   interpretationOf,
+  taskIntakeBlocked,
   type IntentResolution,
   type TaskContract,
   type TaskTurnResult
@@ -110,6 +111,36 @@ export async function resolveChatTurnContract(
   resolution: IntentResolution
 }> {
   let plan = initial
+  let canonicalRoot = input.workspacePath
+  try {
+    if (input.workspacePath) canonicalRoot = realpathSync(input.workspacePath)
+  } catch {
+    /* reported by runtime */
+  }
+  let references = input.referenceBinding
+  if (!references && input.threadId && input.priorTask === undefined) {
+    try {
+      references = await bindTaskReferences({
+        root: canonicalRoot,
+        threadId: input.threadId,
+        text: input.text,
+        settings: input.settings,
+        models: [plan.models.chat, plan.models.tools],
+        recentSourceIds: input.history?.flatMap((message) => (message.id ? [message.id] : []))
+      })
+    } catch {
+      input.signal?.throwIfAborted()
+      references = {
+        binding: {
+          status: 'unavailable',
+          remotePolicy: 'local-only',
+          sources: [],
+          reason: 'Historical references could not be checked; clarify before editing.'
+        },
+        recommendations: []
+      }
+    }
+  }
   // Keep classification on the selected destination so it does not evict the worker
   // just to make a routing hint. Only the final plan grants tool authority.
   const coordinatorModel = plan.mode === 'agent' && plan.requiresTools
@@ -141,7 +172,11 @@ export async function resolveChatTurnContract(
         signal: input.signal,
         getSecret: input.getSecret,
         timeoutMs: input.resolverTimeoutMs,
-        skipInference
+        skipInference,
+        reference: references && {
+          status: references.binding.status,
+          paths: references.recommendations.flatMap(item => item.targets ?? [])
+        }
       })
   const semanticIntent = resolution.intent
   if (semanticIntent !== plan.intent) {
@@ -165,42 +200,6 @@ export async function resolveChatTurnContract(
     })
   }
   if (resolution.source === 'semantic') plan = { ...plan, models: { ...plan.models, coordinator: coordinatorModel } }
-  let canonicalRoot = input.workspacePath
-  try {
-    if (input.workspacePath) canonicalRoot = realpathSync(input.workspacePath)
-  } catch {
-    /* reported by runtime */
-  }
-  if (resolution.rule !== 'missing-file-reference')
-    await prepareModelWindows(
-      input.settings,
-      [plan.models.chat, plan.models.tools],
-      input.getSecret,
-      input.signal
-    )
-  let references = input.referenceBinding
-  if (!references && input.threadId && input.priorTask === undefined) {
-    try {
-      references = await bindTaskReferences({
-        root: canonicalRoot,
-        threadId: input.threadId,
-        text: input.text,
-        settings: input.settings,
-        models: [plan.models.chat, plan.models.tools],
-        recentSourceIds: input.history?.flatMap((message) => (message.id ? [message.id] : []))
-      })
-    } catch {
-      references = {
-        binding: {
-          status: 'unavailable',
-          remotePolicy: 'local-only',
-          sources: [],
-          reason: 'Historical references could not be checked; clarify before editing.'
-        },
-        recommendations: []
-      }
-    }
-  }
   const task = createTaskContract({
     referenceBinding: references,
     taskId: input.requestId,
@@ -217,6 +216,10 @@ export async function resolveChatTurnContract(
     resolution
   })
   plan.task = task
+  // Reference and scope problems are cheap intake results, not model-load requests.
+  if (!taskIntakeBlocked(task, plan.mode) &&
+      (task.scope.state === 'resolved' || task.scope.applicability === 'generic'))
+    await prepareModelWindows(input.settings, [plan.models.chat, plan.models.tools], input.getSecret, input.signal)
   // The workflow follows the resolved scope: a generic request has no inspection step.
   if (plan.executionPlan)
     plan.executionPlan = executionPlanFor(plan.mode, plan.intent, task.scope.applicability)
@@ -231,6 +234,7 @@ export async function resolveChatTurnContract(
       toolPolicy: plan.toolPolicy,
       trace: plan.routeTrace
     },
+    requested: task.requested,
     interpretation: task.interpretation,
     authority: task.authority
   })
@@ -251,7 +255,9 @@ export function completeChatTurnTask(
   return {
     ...task,
     result: {
-      terminal: outcome.terminal,
+      terminal: outcome.terminal === 'complete' && task.requested &&
+        (task.requested.state !== 'resolved' || (task.requested.artifact === 'patch' && !task.authority.edit))
+        ? 'incomplete' : outcome.terminal,
       offeredRecommendations: offersAdvice ? extractRecommendations(outcome.answer) : [],
       changedFiles: [...new Set(outcome.changedFiles)].sort(),
       answerDigest: stableHash(outcome.answer),

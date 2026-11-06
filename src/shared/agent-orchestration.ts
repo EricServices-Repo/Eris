@@ -111,6 +111,7 @@ export const HANDOFF_LIMITS = {
 
 /** Every field of a task, so a new one has to be added here and nothing unknown is saved. */
 const TASK_FIELDS: Record<keyof TaskContract, true> = {
+  requested: true,
   referenceBinding: true,
   contextOrigin: true,
   version: true,

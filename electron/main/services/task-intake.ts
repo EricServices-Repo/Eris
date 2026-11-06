@@ -30,12 +30,14 @@ import {
 } from '../../../src/shared/task-interpretation'
 import {
   asksToLocateCode,
+  asksForCodeDestination,
   asksWorkspaceQuestion,
   mentionsSourcePath
 } from '../../../src/shared/agent-contract'
 import type { TurnPlan } from '../../../src/shared/settings-schema'
 import { namedProjectTarget } from './agent/project-target'
 import { executionPlanFor } from './execution-plan'
+import { resolveFileRequest } from '../../../src/shared/file-request'
 
 const skip = new Set([
   'node_modules',
@@ -386,9 +388,32 @@ export function createTaskContract(input: {
   // Each forbidden effect is removed on its own: no edits keeps approved checks,
   // no commands keeps the patch.
   const forbidden = effectConstraints(input.text)
+  const requestedIntent = input.resolution?.source === 'fallback' &&
+    asksForCodeDestination(input.text) &&
+    ['edit-to-plan', 'run-to-explore'].includes(input.resolution.downgrade?.rule ?? '')
+    ? input.resolution.initialIntent : input.plan.intent
+  const requestedReading = interpretRequest({
+    text: input.text, intent: requestedIntent, canEdit: !forbidden.edit,
+    revision: 1, route: input.plan.routeTrace
+  })
+  const fileRequest = requestedIntent === 'edit'
+    ? resolveFileRequest(input.text, input.history, input.referenceBinding && {
+        status: input.referenceBinding.binding.status,
+        paths: input.referenceBinding.recommendations.flatMap(item => item.targets ?? [])
+      })
+    : null
+  const requested: NonNullable<TaskContract['requested']> = {
+    intent: requestedIntent,
+    artifact: requestedReading.artifact,
+    destination: requestedReading.destination,
+    targetFiles: input.resolution?.targetFiles ?? fileRequest?.paths ?? [],
+    state: referenceBlocked || (fileRequest && fileRequest.state !== 'resolved')
+      ? 'needs-reference'
+      : requestedIntent !== input.plan.intent ? 'needs-clarification' : 'resolved'
+  }
   const noCommands = forbidden.execution || forbidden.verification
   const policy =
-    input.plan.toolPolicy === 'none' || referenceBlocked
+    input.plan.toolPolicy === 'none' || referenceBlocked || requested.state !== 'resolved'
       ? 'none'
       : input.plan.mode === 'ask' || (forbidden.edit && (noCommands || input.plan.intent !== 'run'))
         ? 'read'
@@ -470,6 +495,7 @@ export function createTaskContract(input: {
   }
   return {
     version: 2,
+    requested,
     taskId: input.taskId ?? randomUUID(),
     revision: 1,
     threadId: input.threadId ?? null,
@@ -730,6 +756,15 @@ export function childTaskContract(
     throw new Error('The inherited project scope escapes its workspace.')
   return {
     ...parent,
+    // A child owns its assignment; never inherit the parent's requested artifacts.
+    requested: {
+      intent: plan.intent,
+      artifact: interpretRequest({ text: goal, intent: plan.intent, canEdit: true,
+        revision: parent.revision, route: plan.routeTrace }).artifact,
+      destination: plan.intent === 'edit' ? 'workspace' : 'chat',
+      targetFiles: plan.intent === 'edit' ? resolveFileRequest(goal)?.paths ?? [] : [],
+      state: 'resolved'
+    },
     contextOrigin: parent.contextOrigin
       ? bindContextOrigin(parent.contextOrigin, { root, projectRoot, taskId })
       : undefined,

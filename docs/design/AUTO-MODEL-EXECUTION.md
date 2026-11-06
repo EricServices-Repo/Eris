@@ -1,6 +1,6 @@
 # Automatic model execution and recovery
 
-Implemented for GitHub issues #268–274 and reviewed against integrated `main` `0a54629` on 2026-11-01 (package v0.6.10). PRs #280/#281 are integrated, not pending. The release tag `v0.6.10` is `f14e409`; later #255/#257/#258/#261/#266 changes need a subsequent build.
+Originally implemented for GitHub issues #268–274. Coordinator/intake behavior updated on 2026-11-06 against local `codex/simplify-request-execution`, based on `7975140d` (v0.6.16), including uncommitted changes. Model-ranking and transition policies are retained. This is source documentation, not a new release or hardware qualification claim.
 
 ## User contract
 
@@ -23,13 +23,19 @@ Production evidence is tied to the app/runtime routing version, local weight has
 
 ## Coordinator and execution worker
 
-`planChatTurn` records the actual model that returned a bounded routing hint as `models.coordinator`, separately from `models.chat/tools`. The shared main chat-turn pipeline also uses ready Lite for automatic semantic intake, then records the actual semantic coordinator before dispatching the selected worker. Deterministic routing can skip the coordinator call. A coordinator is never reported as having run when the hint was skipped, invalid or timed out.
+The primary chat path calls `planChatTurn` with `skipModelRouter: true`. After historical reference binding, `resolveChatTurnContract` uses the initial plan's tool model for tool-requiring Agent requests, otherwise its chat model, for any necessary semantic interpretation. It does not automatically load Lite to classify every message. Production skips classifier inference for a cold native model or an automatic remote destination. Explicit file creation with resolved operands bypasses inference altogether.
+
+Only an accepted semantic decision records `models.coordinator`. A route change may then select a different worker. The separate optional routing-hint path in `planChatTurn` can also record the model whose hint was actually used. Skipped, invalid and timed-out classification must not be reported as a successful coordinator handoff.
+
+Model selection and model preparation are separate. Initial selection still occurs before complete intake. Model-window and native context preparation are deferred for blocked intake through `taskIntakeBlocked`, shared by desktop chat and Eris-Dev. Missing/ambiguous file lists and Agent-mode permission conflicts produce an explanation before execution inference. Ask-mode explanations remain eligible for a model call.
 
 When the worker differs, the agent loop emits a model-handoff ledger entry and adaptation event, prepares the target, and compiles the original task for it. Tool-free stories use the chosen chat worker without acquiring edit authority. Coding, review and planning use the same selector. Inline child tasks select for their own intent under the inherited policy; fixed choices and explicit child-agent overrides retain precedence.
 
 ## Recovery transaction
 
 The existing two-adaptation budget bounds recovery. The loop tracks attempted execution models and excludes them from subsequent selection. Recoverable repeated empty output/no progress/tool-format or verification failures may choose a distinct eligible local worker. Recovery deliberately does not transfer already-derived local execution state to a remote endpoint. Safety and permission refusals do not trigger model shopping. No available alternative records an explicit diagnostic with exclusion reasons.
+
+An intake failure is not a worker failure. Resolve missing references and explicit capability conflicts before entering recovery. Requested work remains separate from effective permissions, and recovery cannot satisfy an outstanding patch merely by changing its response into a plan. The current implementation does not include a general failure-diagnosis engine or automatic contract-revision planner.
 
 A transition occurs between completed streams/tool batches:
 
@@ -45,9 +51,11 @@ A failed preparation does not commit the proposed worker or replay completed edi
 
 Server-window preparation is followed by reference validation and a fresh recall eligibility check before serialization. Native inference additionally calls `prepareMessages` after allocation while holding the inference lease. That callback revalidates task references and recall, releases a seeded session when evidence was revoked, then repacks against the measured allocation using the destination protocol. The dispatch inspector and token estimates describe the actual post-load payload.
 
-This protects a source forgotten during loading from entering the worker request. Request-owned evidence scopes now isolate unrelated leases (#255). Child requirements/constraints, subtree cancellation and journal admission are also integrated. Durable child evidence lineage, aggregate task-tree budgets and source-backed child handles remain separate open work; run-local recoverable handles already exist. Canonical chat source history is not rewritten during a model transition.
+This protects a source forgotten during loading from entering the worker request. Request-owned evidence scopes isolate unrelated leases. Current handoffs also have versioned evidence metadata, sealed source/execution origins, task-tree limits and structured child outcome receipts. These implemented foundations must be reused; broader task-capability ranking and per-obligation child assignment remain proposals. Canonical chat source history is not rewritten during a model transition.
 
 ## Qualification
+
+The routing changes add `requested-work.test.ts` and extend `task-meaning.test.ts`, `agent-request-coherence.test.ts` and `chat-agent-smoke.test.ts`. They cover classifier bypass, reference failures, requested/effective state, actual file creation and abort-ignoring outcome evaluators. See [request execution validation](REQUEST-EXECUTION.md#validation-of-this-implementation) for the recorded source-build results and limits.
 
 `auto-model-policy.test.ts` exercises eligible-pool ordering, locality before scoring, endpoint changes, fixed pins, non-chat/resource exclusions, residency and task specialization. `model-switching.test.ts` runs real chat planning and the real agent loop through scripted transport, captures Lite routing to another local story worker, makes actual edits in temporary workspaces after recovery, and verifies an earlier write is not replayed. It also covers transition capacity, cancellation, admission failure, refusal policy and lost diagnostic scopes.
 

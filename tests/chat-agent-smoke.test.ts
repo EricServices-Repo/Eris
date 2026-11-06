@@ -137,6 +137,7 @@ vi.mock('../electron/main/services/code-index', () => ({
 }))
 
 import { runAgentWithWorkspaceTools } from '../electron/main/services/agent/loop'
+import { planInitialChatTurn, resolveChatTurnContract } from '../electron/main/services/chat-turn'
 
 import { clearLoadedModel, recordLoadedModel } from '../electron/main/services/model-runtime'
 import { resolveModelCapabilities } from '../electron/main/services/model-capabilities'
@@ -254,6 +255,30 @@ function expectCompleted(events: AgentRunnerEvent[]): void {
 }
 
 describe('chat agent complex smoke test', () => {
+  it('runs a file-generation follow-up through intake and actually creates every requested file', async () => {
+    const settings = getDefaults()
+    const text = 'generate those files here in the project'
+    const history = [{ role: 'assistant' as const, content: 'Create src/booking.ts, src/calendar.ts, and src/registration.ts.' }]
+    const input = { requestId: 'file-generation-smoke', workspacePath, settings, text,
+      model: 'builtin:composer-lite', mode: 'agent' as const, history, getSecret: () => null }
+    const { plan, task } = await resolveChatTurnContract(input, await planInitialChatTurn(input))
+    expect(task.requested?.targetFiles).toHaveLength(3)
+    expect(task.authority.edit).toBe(true)
+    expect(harness.prompts).toHaveLength(0)
+    const content = (name: string) => `/** Validates and stores a ${name} request for the booking application. */\nexport function ${name}(name: string, date: string) {\n  if (!name.trim()) throw new Error('A name is required')\n  const timestamp = Date.parse(date)\n  if (!Number.isFinite(timestamp)) throw new Error('A valid date is required')\n  return { name: name.trim(), date: new Date(timestamp).toISOString(), status: 'confirmed' }\n}\n`
+    harness.replies.push(
+      JSON.stringify({ name: 'tree', path: '.' }),
+      ...['booking', 'calendar', 'registration'].map(name => JSON.stringify({ name: 'write_file', path: `src/${name}.ts`, content: content(name) })),
+      'DONE: Created src/booking.ts, src/calendar.ts, and src/registration.ts with input validation. Verification passed.'
+    )
+    const events = await drain(runAgentWithWorkspaceTools({ workspacePath, settings,
+      model: input.model, messages: [...history, { role: 'user', content: text }],
+      temperature: 0, getSecret: () => null, mode: 'agent', turnPlan: plan, mcp: 'off' }))
+    for (const name of ['booking', 'calendar', 'registration'])
+      expect(readFileSync(join(workspacePath, `src/${name}.ts`), 'utf8')).toBe(content(name))
+    expect(harness.verifyCalls).toBeGreaterThan(0)
+    expectCompleted(events)
+  })
   it('keeps a prompt larger than the 8K cold forecast and its subsequent tool observation', async () => {
     const settings = getDefaults()
     settings.models.contextWindow = 262144

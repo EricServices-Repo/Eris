@@ -7,7 +7,7 @@ import { sourcePathsIn } from './agent-contract'
 import type { RecommendationStatus, TaskRecommendation } from './task-contract'
 
 const ADVICE =
-  /\b(?:should|consider|add|use|avoid|replace|move|validate|handle|enforce|reject|remove|rename|extract|split|cache|document|test|guard|limit|check|ensure|prefer|upgrade|update|bump|refactor|introduce|implement|fix|migrate|switch|adopt|wrap|log|expose|return|retry|store|hash|encrypt|sanitize|escape|index|paginate|debounce|throttle|cap|bound|configure|enable|disable|require|restrict|lock|pin)\b/i
+  /\b(?:should|consider|add|create|generate|write|use|avoid|replace|move|validate|handle|enforce|reject|remove|rename|extract|split|cache|document|test|guard|limit|check|ensure|prefer|upgrade|update|bump|refactor|introduce|implement|fix|migrate|switch|adopt|wrap|log|expose|return|retry|store|hash|encrypt|sanitize|escape|index|paginate|debounce|throttle|cap|bound|configure|enable|disable|require|restrict|lock|pin)\b/i
 /** An item that opens with an advice verb: “Validate attempts…”, “Consider caching…”. */
 const IMPERATIVE = new RegExp(
   `^(?:please\\s+)?(?:you\\s+should\\s+|we\\s+should\\s+)?${ADVICE.source}`,
