@@ -316,8 +316,10 @@ export function EricServicesAccountPanel({
                 <p className="es-account-hint">
                   Syncs editor, chat font, updates channel, agent routing &amp; approvals, model
                   connections, embeddings, language servers, evals routing, background agents, MCP
-                  configs, GitHub prefs, and user skills. API keys, tokens, secret env values, log
-                  paths, and workspace git links stay on this device.
+                  configs, Ollama connections, project lists, repository links, project chats, and skills.
+                  Sync runs every minute while signed in. Project files, downloaded models, API keys,
+                  tokens, and secret environment values stay on each computer. Restored projects ask
+                  you to choose a local folder when opened.
                 </p>
               </div>
               <label className="es-toggle">

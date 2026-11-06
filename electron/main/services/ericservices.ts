@@ -1,10 +1,12 @@
-import type { AppSettings, McpServerConfig, SettingsPatch } from '../../../src/shared/settings-schema'
+import type { SyncedProject } from './profile-workspaces'
+import type { ChatThread } from '../../../src/shared/settings-schema'
+import type {
+  AppSettings,
+  McpServerConfig,
+  SettingsPatch
+} from '../../../src/shared/settings-schema'
 import { parseErisPlanFromProfile, type ErisPlanId } from '../../../src/shared/eris-plan'
-import {
-  exportUserSkillsForSync,
-  importUserSkillsFromSync,
-  type SyncableSkill
-} from './skills'
+import { exportUserSkillsForSync, importUserSkillsFromSync, type SyncableSkill } from './skills'
 
 export interface EricServicesProfile {
   username: string
@@ -44,9 +46,11 @@ export interface EricServicesStatus {
 
 /** Extended profile payload (settings + skills). Website may store as opaque JSON. */
 export interface ErisProfileBundle {
-  version: 1
+  version: 1 | 2
   settings: SettingsPatch
   userSkills: SyncableSkill[]
+  projects?: SyncedProject[]
+  chats?: ChatThread[]
 }
 
 export type ErisSyncEnvelope = {
@@ -85,6 +89,7 @@ async function erisFetch(
   let res: Response
   try {
     res = await fetch(`${apiRoot(apiBase)}${path}`, {
+      signal: AbortSignal.timeout(30000),
       ...rest,
       headers
     })
@@ -253,10 +258,7 @@ export function buildSyncableSettings(settings: AppSettings): SettingsPatch {
 /**
  * Apply a pulled profile patch while rehydrating secrets that never leave the device.
  */
-export function mergePulledUserSettings(
-  remote: SettingsPatch,
-  local: AppSettings
-): SettingsPatch {
+export function mergePulledUserSettings(remote: SettingsPatch, local: AppSettings): SettingsPatch {
   const patch: SettingsPatch = { ...remote }
   if (remote.mcp?.servers) {
     const localById = new Map((local.mcp?.servers || []).map((s) => [s.id, s]))
@@ -288,9 +290,7 @@ export function mergePulledUserSettings(
     }
   }
   if (remote.intelligence?.languageServers) {
-    const localById = new Map(
-      (local.intelligence?.languageServers || []).map((s) => [s.id, s])
-    )
+    const localById = new Map((local.intelligence?.languageServers || []).map((s) => [s.id, s]))
     patch.intelligence = {
       ...(patch.intelligence || {}),
       languageServers: remote.intelligence.languageServers.map((rs) => {
@@ -333,28 +333,34 @@ export function mergePulledUserSettings(
 }
 
 /** Full profile envelope for push (settings + user skills). */
-export function buildProfileBundle(settings: AppSettings): ErisProfileBundle {
+export async function buildProfileBundle(settings: AppSettings): Promise<ErisProfileBundle> {
+  const { exportProfileWorkspaces } = await import('./profile-workspaces')
+  const workspaces = await exportProfileWorkspaces()
   return {
-    version: 1,
+    version: 2,
+    ...workspaces,
     settings: buildSyncableSettings(settings),
     userSkills: exportUserSkillsForSync()
   }
 }
 
-export function applyProfileBundle(bundle: ErisProfileBundle | null | undefined): {
+export async function applyProfileBundle(bundle: ErisProfileBundle | null | undefined): Promise<{
   settings: SettingsPatch | null
   skillsImported: number
-} {
+  projectsImported?: number
+  chatsImported?: number
+}> {
   if (!bundle || typeof bundle !== 'object') {
     return { settings: null, skillsImported: 0 }
   }
-  const settings =
-    bundle.settings && typeof bundle.settings === 'object' ? bundle.settings : null
+  const settings = bundle.settings && typeof bundle.settings === 'object' ? bundle.settings : null
   let skillsImported = 0
   if (Array.isArray(bundle.userSkills) && bundle.userSkills.length > 0) {
     skillsImported = importUserSkillsFromSync(bundle.userSkills).imported
   }
-  return { settings, skillsImported }
+  const { importProfileWorkspaces } = await import('./profile-workspaces')
+  const imported = await importProfileWorkspaces(bundle.projects || [], bundle.chats || [])
+  return { settings, skillsImported, ...imported }
 }
 
 function parseBundleFromData(data: Record<string, unknown>): ErisProfileBundle | null {
@@ -362,7 +368,9 @@ function parseBundleFromData(data: Record<string, unknown>): ErisProfileBundle |
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
     const b = raw as Partial<ErisProfileBundle>
     return {
-      version: 1,
+      version: b.version === 2 ? 2 : 1,
+      projects: Array.isArray(b.projects) ? b.projects : undefined,
+      chats: Array.isArray(b.chats) ? b.chats : undefined,
       settings: (b.settings as SettingsPatch) || (data.settings as SettingsPatch) || {},
       userSkills: Array.isArray(b.userSkills) ? (b.userSkills as SyncableSkill[]) : []
     }
@@ -418,7 +426,8 @@ export async function ericServicesStartDeviceLogin(
     ok: true,
     deviceCode,
     userCode,
-    verificationUrl: typeof result.data.verificationUrl === 'string' ? result.data.verificationUrl : '',
+    verificationUrl:
+      typeof result.data.verificationUrl === 'string' ? result.data.verificationUrl : '',
     interval: typeof result.data.interval === 'number' ? result.data.interval : 3
   }
 }
@@ -523,7 +532,7 @@ export async function ericServicesPullSettings(
   const bundle = parseBundleFromData(result.data)
   return {
     ok: true,
-    settings: bundle?.settings ?? ((result.data.settings as SettingsPatch | null) ?? null),
+    settings: bundle?.settings ?? (result.data.settings as SettingsPatch | null) ?? null,
     bundle,
     updatedAt: (result.data.updatedAt as string | null) ?? null
   }
@@ -574,7 +583,10 @@ export async function ericServicesPushSettings(
 }
 
 /** Short lines describing what a pulled profile would change on this device. */
-export function summarizeProfileChanges(before: AppSettings, remote: SettingsPatch | null): string[] {
+export function summarizeProfileChanges(
+  before: AppSettings,
+  remote: SettingsPatch | null
+): string[] {
   if (!remote) return []
   const lines: string[] = []
   const theme = remote.editor?.theme
@@ -614,9 +626,7 @@ export function summarizeProfileChanges(before: AppSettings, remote: SettingsPat
 }
 
 /** Enabled hosted connections that arrived without a key on this device. */
-export function connectionsMissingKeys(
-  settings: AppSettings
-): Array<{ id: string; name: string }> {
+export function connectionsMissingKeys(settings: AppSettings): Array<{ id: string; name: string }> {
   const needsKey = new Set(['openai', 'openai-compatible', 'anthropic', 'azure', 'custom'])
   return (settings.models.connections || [])
     .filter((c) => c.enabled && needsKey.has(c.type) && !String(c.apiKeyRef || '').trim())
@@ -635,9 +645,10 @@ export function isEricServicesAuthenticated(
   return Boolean(settings.ericServices?.linked && token)
 }
 
-export function planPatchFromProfile(
-  profile: EricServicesProfile | null | undefined
-): { plan: ErisPlanId; planLimits: AppSettings['ericServices']['planLimits'] } {
+export function planPatchFromProfile(profile: EricServicesProfile | null | undefined): {
+  plan: ErisPlanId
+  planLimits: AppSettings['ericServices']['planLimits']
+} {
   const parsed = parseErisPlanFromProfile(profile)
   return {
     plan: parsed.plan,

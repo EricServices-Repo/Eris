@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.15 — 2026-11-04
+
+- Sync project lists, repository links, full conversations, skills, MCP configuration, and Ollama connections with the EricServic.es profile; restore projects across computers and preserve diverged chat histories.
+
 ## 0.6.14 — 2026-11-04
 
 - Rebuild with cold-start long-context fixes, shared prompt accounting, safer memory revalidation, and integrated feedback and GPU/workspace safeguards.

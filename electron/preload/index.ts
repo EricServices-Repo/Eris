@@ -228,6 +228,7 @@ const api: IdeApi = {
   ericServicesDevices: () => ipcRenderer.invoke('ericServices:devices'),
   ericServicesRevokeDevice: (id) => ipcRenderer.invoke('ericServices:revokeDevice', id),
   ericServicesLogout: () => ipcRenderer.invoke('ericServices:logout'),
+  onEricServicesProfileSynced: (cb) => subscribe('ericServices:profile-synced', cb),
   ericServicesSync: (direction) => ipcRenderer.invoke('ericServices:sync', direction),
   ericServicesOpenAccount: () => ipcRenderer.invoke('ericServices:openAccount'),
   ericServicesOpenUpgrade: () => ipcRenderer.invoke('ericServices:openUpgrade'),

@@ -763,6 +763,7 @@ export interface IdeApi {
     lastSyncedAt: string
     syncEnabled: boolean
   }>
+  onEricServicesProfileSynced: (cb: () => void) => () => void
   ericServicesSync: (direction?: 'pull' | 'push' | 'bidirectional') => Promise<{
     ok: boolean
     error?: string
