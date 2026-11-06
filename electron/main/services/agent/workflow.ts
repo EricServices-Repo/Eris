@@ -3,6 +3,7 @@ import { asksToImplementChanges } from '../../../../src/shared/agent-contract'
 import { evidenceRequirementFor } from '../../../../src/shared/task-contract'
 import { pathsIn } from '../../../../src/shared/recommendations'
 import { requestTextForIntent } from '../../../../src/shared/task-interpretation'
+import { requestedFilesProblem } from './requested-files'
 
 export type AgentWorkflowPhase =
   'planned' | 'answering' | 'preflight' | 'executing' | 'verifying' | 'completed' | 'blocked'
@@ -83,12 +84,13 @@ export class AgentWorkflow {
   private mutations = 0
   private sourceReads = 0
   private commandObservations = 0
+  private observedFiles = new Set<string>()
   private verification: AgentWorkflowSnapshot['verification'] = 'not-run'
   private blockedReason: string | undefined
 
   readonly contract: AgentOutcomeContract
 
-  constructor(plan: TurnPlan, goal = '') {
+  constructor(private readonly plan: TurnPlan, goal = '') {
     this.contract = outcomeContractFor(plan, goal)
   }
 
@@ -104,6 +106,8 @@ export class AgentWorkflow {
     this.toolCalls += 1
     if (result.name === 'run') this.commandObservations += 1
     if (result.ok) this.successfulToolCalls += 1
+    if (result.ok && result.path && (result.mutated || ['read_file', 'notebook_read'].includes(result.name ?? '')))
+      this.observedFiles.add(result.path)
     if (
       result.ok &&
       ['read_file', 'notebook_read'].includes(result.name ?? '') &&
@@ -129,6 +133,13 @@ export class AgentWorkflow {
     /** Files written this turn; checked against the request's named targets. */
     filesTouched?: string[]
   }): { ok: boolean; reason?: string } {
+    const task = this.plan.task
+    if (this.plan.mode !== 'ask' && task?.requested?.artifact === 'patch' && !task.authority.edit)
+      return { ok: false, reason: 'The requested workspace changes are blocked by this task’s mode, reference resolution or tool permissions.' }
+    if (task?.authority.edit && task.requested?.targetFiles.length) {
+      const problem = requestedFilesProblem(task, [...this.observedFiles, ...(input.filesTouched ?? [])])
+      if (problem) return { ok: false, reason: problem }
+    }
     if (
       this.contract.requiresWorkspaceEvidence &&
       this.successfulToolCalls === 0 &&
@@ -146,11 +157,12 @@ export class AgentWorkflow {
         reason: 'No project source was inspected. A directory listing does not ground this task.'
       }
     }
-    if (this.contract.requiresMutation && !input.workspaceMutated) {
+    if (this.contract.requiresMutation && !input.workspaceMutated && !task?.requested?.targetFiles.length) {
       return { ok: false, reason: 'This edit request did not change the workspace.' }
     }
     if (
       this.contract.requiresMutation &&
+      !task?.requested?.targetFiles.length &&
       this.contract.targetFiles.length &&
       input.filesTouched &&
       !input.filesTouched.some((changed) =>

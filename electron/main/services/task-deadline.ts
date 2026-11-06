@@ -50,6 +50,7 @@ export async function drainUntilStopped<T>(
   onItem: (item: T) => void
 ): Promise<'completed' | TaskStopReason> {
   const iterator = source[Symbol.asyncIterator]()
+  let completed = false
   let onStop: (() => void) | undefined
   const stopped = new Promise<'stopped'>((resolve) => {
     onStop = () => resolve('stopped')
@@ -63,10 +64,12 @@ export async function drainUntilStopped<T>(
       next.catch(() => undefined)
       const step = await Promise.race([next, stopped])
       if (step === 'stopped') {
-        void Promise.resolve(iterator.return?.()).catch(() => undefined)
         return deadline.stopReason() ?? 'cancelled'
       }
-      if (step.done) return 'completed'
+      if (step.done) {
+        completed = true
+        return 'completed'
+      }
       onItem(step.value)
     }
   } catch (error) {
@@ -75,5 +78,8 @@ export async function drainUntilStopped<T>(
     throw error
   } finally {
     if (onStop) deadline.signal.removeEventListener('abort', onStop)
+    // Also close a producer when an output-limit/validation callback throws.
+    // An abort-ignoring producer must never delay the caller's terminal result.
+    if (!completed) void Promise.resolve().then(() => iterator.return?.()).catch(() => undefined)
   }
 }

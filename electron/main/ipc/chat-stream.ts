@@ -55,6 +55,7 @@ import {
   USER_QUESTION_TIMEOUT_MS
 } from '../services/user-question'
 import { finalizePostedAnswer } from '../../../src/shared/posted-answer'
+import { taskIntakeBlocked } from '../../../src/shared/task-contract'
 import type { ChatMessage, ChatDelegation, TurnPlan } from '../../../src/shared/settings-schema'
 import { AGENT_HANDOFF_CHARS, summarizeAgentResults } from '../../../src/shared/agent-orchestration'
 import { saveTask } from '../services/task-store'
@@ -405,7 +406,7 @@ export function registerChatStreamIpc(): void {
             const budget =
               turnPlan.cloudPreferred ||
               (workspacePath && turnPlan.task?.scope.state !== 'resolved') ||
-              turnPlan.task?.interpretation?.resolution?.rule === 'missing-file-reference'
+              taskIntakeBlocked(turnPlan.task, turnPlan.mode)
                 ? contextBudgetTokens(settings, selectedModel)
                 : await prepareContextBudget(settings, selectedModel, controller.signal)
             allocation = allocateContext(budget, turnPlan.mode === 'agent' ? 'agent' : 'chat')

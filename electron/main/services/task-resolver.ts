@@ -3,6 +3,7 @@ import type { AppSettings, ChatIntent } from '../../../src/shared/settings-schem
 import type { IntentResolution } from '../../../src/shared/task-contract'
 import { streamModelChat } from './chat-runtime'
 import { createTaskDeadline, drainUntilStopped } from './task-deadline'
+import { resolveFileRequest } from '../../../src/shared/file-request'
 import {
   asksForCodeDestination,
   asksForCodeExample,
@@ -15,7 +16,6 @@ import {
   asksToImplementChanges,
   asksWorkspaceQuestion,
   needsWebLookup,
-  mentionsSourcePath,
   withoutLeadingScope
 } from '../../../src/shared/agent-contract'
 import {
@@ -54,6 +54,7 @@ export interface ResolveTaskInput {
   model: string
   mode: 'ask' | 'agent'
   history?: Array<{ role: string; content: string }>
+  reference?: { status: 'bound' | 'ambiguous' | 'unavailable'; paths: string[] }
   signal?: AbortSignal
   getSecret: (key: string) => string | null
   timeoutMs?: number
@@ -181,20 +182,20 @@ export async function resolveTaskDecision(input: ResolveTaskInput): Promise<Inte
   input.signal?.throwIfAborted()
   const bypass = resolverBypassRule(input.text, input.fallback)
   const text = requestTextForIntent(input.text)
-  if (
-    input.mode === 'agent' &&
-    input.fallback === 'edit' &&
-    /^(?:please\s+)?generate\s+(?:those|these|the listed)\s+files[.!]?$/i.test(text.trim())
-  ) {
-    if (input.history?.slice(-2).some((message) => mentionsSourcePath(message.content)))
-      return done({ intent: 'edit', source: 'bypass', rule: 'generate-referenced-files' })
+  const files = input.fallback === 'edit'
+    ? resolveFileRequest(input.text, input.history, input.reference)
+    : null
+  if (files) {
+    if (files.state === 'resolved')
+      return done({ intent: 'edit', source: 'bypass', rule: 'generate-referenced-files', targetFiles: files.paths })
     return done({
-      intent: 'plan',
+      intent: 'edit',
       source: 'fallback',
-      rule: 'missing-file-reference',
-      downgrade: { from: 'edit', to: 'plan', rule: 'missing-file-reference' }
+      rule: files.state === 'ambiguous' ? 'ambiguous-file-reference' : 'missing-file-reference'
     })
   }
+  if (input.reference && input.reference.status !== 'bound')
+    return done({ intent: input.fallback, source: 'bypass', rule: 'unresolved-reference' })
   if (
     !bypass &&
     input.fallback === 'answer' &&

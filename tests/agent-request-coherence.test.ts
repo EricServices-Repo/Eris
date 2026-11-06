@@ -366,7 +366,10 @@ describe('release routing examples from desktop reports', () => {
     ['Go code the project', 'ask', 'Explainer', false],
     ['Review this project and recommend three improvements', 'agent', 'Reviewer', false],
     ['Code those changes', 'agent', 'Composer', true],
-    ['Generate those files', 'agent', 'Composer', true]
+    ['Generate those files', 'agent', 'Composer', true],
+    ['Generate those files here in the project', 'agent', 'Composer', true],
+    ['Please generate those files in this project.', 'agent', 'Composer', true],
+    ['Create those files here', 'agent', 'Composer', true]
   ] as const)('routes %s in %s to %s', async (text, mode, agentName, edits) => {
     const workspace = fixture(PHP)
     const result = await captureQuestion(

@@ -25,8 +25,6 @@ import { formatAvailableModelsPrompt } from '../model-catalog'
 import {
   effectiveToolPolicy,
   filterToolsByPolicy,
-  intentNeedsMutation,
-  intentNeedsTools,
   isErisCapabilityQuestion,
   minCeiling,
   planChatTurn,
@@ -545,13 +543,27 @@ async function* runAgentInternal(options: {
     }
     return
   }
-  if (interpretationOf(task).resolution?.rule === 'missing-file-reference') {
+  if (task.requested?.state === 'needs-reference' ||
+      interpretationOf(task).resolution?.rule === 'missing-file-reference') {
     yield { type: 'progress', step: 0, actionLog: [], filesTouched: [], incomplete: true }
     yield {
       type: 'answer',
-      text: 'Which files should I generate, and what should each one do?',
+      text: task.referenceBinding?.reason ||
+        (interpretationOf(task).resolution?.rule === 'ambiguous-file-reference'
+          ? 'More than one file list is available. Which list should I generate in this project?'
+          : 'Which files should I generate, and what should each one do?'),
       replace: true
     }
+    return
+  }
+  if (task.requested?.state === 'needs-clarification') {
+    yield { type: 'progress', step: 0, actionLog: [], filesTouched: [], incomplete: true }
+    yield { type: 'answer', text: 'Should I make these changes in the project, or explain the approach in chat? I could not resolve that distinction, so no changes were made.', replace: true }
+    return
+  }
+  if (mode !== 'ask' && task.requested?.artifact === 'patch' && !task.authority.edit) {
+    yield { type: 'progress', step: 0, actionLog: [], filesTouched: [], incomplete: true }
+    yield { type: 'answer', text: 'This request needs workspace edits, but the selected agent has read-only tools. Select Auto or an editing agent to apply the changes.', replace: true }
     return
   }
   let chatModel = plan.models.chat
@@ -589,24 +601,10 @@ async function* runAgentInternal(options: {
   }
   const modelsCatalog =
     plan.intent === 'capability' ? formatAvailableModelsPrompt(options.settings, chatModel) : ''
-  // Safety net: "review/improve the project folder" must never go answer-only just
-  // because a weak router labeled the turn as answer.
+  // Intake owns meaning. Execution consumes scope and capabilities, not chat wording.
   const forceWorkspaceTools =
-    evidenceRequirementFor(task.scope.applicability) !== 'none' &&
-    Boolean(options.workspacePath) &&
-    mode === 'agent' &&
-    plan.intent !== 'capability' &&
-    (/\b(improv(e|es|ed|ing|ement|ements)|polish|enhance|refactor)\b/i.test(originalUserGoal) ||
-      (/\breview\b/i.test(originalUserGoal) &&
-        /\b(project|folder|codebase|workspace|repo|app|code|calculator)\b/i.test(
-          originalUserGoal
-        )) ||
-      // "how do I launch / make it work / build the .app" must inspect the workspace
-      /\b(launch|run|start|open|build)\b[\s\S]{0,40}\b(app|application|\.app|xcode|scheme|project)\b/i.test(
-        originalUserGoal
-      ) ||
-      /\bmake\b[\s\S]{0,32}\b(it\s+)?(so\s+it\s+)?works?\b/i.test(originalUserGoal) ||
-      /\b(get|make)\b[\s\S]{0,24}\b(it|this|the app)\b[\s\S]{0,24}\bwork/i.test(originalUserGoal))
+    evidenceRequirementFor(task.scope.applicability) === 'required' &&
+    task.authority.tools !== 'none' && Boolean(options.workspacePath)
   const webQuestion = needsWebLookup(originalUserGoal)
   const answerOnly =
     !workflow.contract.requiresMutation &&
@@ -3837,15 +3835,9 @@ async function* runAgentInternal(options: {
                 signal: options.signal
               })
               const specialistCeiling = specialist?.tools ?? 'read'
-              const specialistCanEdit = ['edit', 'full'].includes(specialistCeiling)
-              if (specialistPlan.agentId !== agentId || !intentNeedsTools(specialistPlan.intent)) {
-                specialistPlan.agentId = agentId
-                specialistPlan.agentName = specialist?.name || agentId
-                if (!specialistCanEdit && intentNeedsMutation(specialistPlan.intent))
-                  specialistPlan.intent = 'review'
-                if (!intentNeedsTools(specialistPlan.intent))
-                  specialistPlan.intent = specialistCanEdit ? 'edit' : 'explore'
-              }
+              // The assignment chooses intent. The specialist only limits capabilities.
+              specialistPlan.agentId = agentId
+              specialistPlan.agentName = specialist?.name || agentId
               specialistPlan.toolPolicy = specialist
                 ? effectiveToolPolicy(specialist, specialistPlan.intent, 'agent')
                 : minCeiling(specialistPlan.toolPolicy, specialistCeiling)

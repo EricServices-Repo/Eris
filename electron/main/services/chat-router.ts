@@ -280,6 +280,7 @@ function classifyIntentRule(
 
   if (
     /\b(where is|which file|what file|find|locate|grep|look (at|for)|show me|open)\b/i.test(t) ||
+    /^(?:please\s+)?check\s+(?:whether|if)\b/i.test(t) ||
     /\bsearch\s+(?:for|in|the|this|my|our)\b/i.test(t) ||
     /\b(explore|inspect|list files|tree)\b/i.test(t) ||
     /\bwhat (files?|does|is in)\b/i.test(t)

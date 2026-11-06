@@ -58,6 +58,13 @@ const task = z
     revision: z.number().int().nonnegative(),
     originalText: text,
     intent: ChatIntentSchema,
+    requested: z.object({
+      intent: ChatIntentSchema,
+      artifact: interpretation.shape.artifact,
+      destination: interpretation.shape.destination,
+      targetFiles: z.array(path).max(100),
+      state: z.enum(['resolved', 'needs-reference', 'needs-clarification'])
+    }).strict().optional(),
     deliverable: z.enum(['answer', 'review', 'plan', 'patch', 'execution-report']),
     scope: z
       .object({

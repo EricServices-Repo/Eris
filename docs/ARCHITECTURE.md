@@ -1,6 +1,12 @@
 # Eris architecture
 
-Reviewed against integrated `main` `0a54629` on 2026-11-01. Package version: **0.6.10**. The published `v0.6.10` tag is `f14e409`; the five subsequent handoff/RAM fixes in this source baseline require a later build to appear in an installed app.
+## Request execution update (2026-11-06)
+
+The current source separates requested work from effective permissions, binds references before semantic classification, resolves explicit file creation without classifier inference, and prepares model windows after intake. Execution uses the scoped contract rather than another phrase scanner. Child capabilities no longer change assigned intent. Required file sets are checked against actual scoped outputs, and semantic outcome assessment has a hard deadline with typed failure reasons. See [request resolution and execution](design/REQUEST-EXECUTION.md) for implementation details, compatibility and remaining proposals. This is a source update, not a released-build or hardware qualification claim.
+
+The historical baseline below predates current versioned handoff evidence, context-origin mappings, aggregate task-tree limits and source-backed child outcomes. Those foundations now exist in `agent-orchestration.ts`, `context-origin.ts`, `background-agents.ts` and `child-outcome.ts`; references to their absence in older review material are superseded.
+
+Request routing, task contracts and coordinator behavior updated on 2026-11-06 against local `codex/simplify-request-execution`, based on `7975140d`, package **0.6.16**, including uncommitted changes. Unchanged subsystem descriptions retain the original 2026-11-01 baseline `0a54629`. These source updates are not a new release or an installed-app claim.
 
 This is the implemented system map. [Documentation index](README.md) identifies the deeper guides; [RAM target architecture](RAM-CONTEXT-ARCHITECTURE.md) and [Amendment 001](RAM-CONTEXT-AMENDMENT-001.md) explicitly separate remaining targets from shipped source. Historical review evidence is not a current backlog or live-model certification.
 
@@ -43,6 +49,8 @@ Sources: [main startup](../electron/main/index.ts), [window isolation](../electr
 
 `TaskContract` v2 separates requested artifact, destination, project applicability, acceptance criteria, obligations, effect constraints and effective authority. A code example in chat does not authorize editing a file. Recalled instructions or a specialist summary cannot widen permissions.
 
+The optional `requested` record preserves intent, artifact, destination, file targets and resolution state separately from the effective `deliverable`/`interpretation`. Authority remains the enforcement boundary. Old saved tasks load without this additive field; they are not assigned inferred new permissions. `model-task/5` includes the requested-work record in the required model-facing task block. Ask can finish an explanation while the requested patch remains incomplete in stored task state.
+
 A conversation is durable history; a task is the authorized goal; a job/attempt is one execution; a model is the inference destination; an agent is a role and tool ceiling. These identities must remain separate in routing, status, persistence and debugging.
 
 Child contracts now also carry `inherited` semantic requirements. Language/framework information, effect prohibitions, bounded explicit requirements/files and the top-level request excerpt survive delegation. Language conflicts are recorded instead of silently changing the parent's stack. Obligations, recommendations and follow-up/result state remain with the parent unless separately assigned.
@@ -54,11 +62,11 @@ Sources: [task contract](../src/shared/task-contract.ts), [task intake](../elect
 1. Validate the main-window/frame sender, versioned bounded submission, workspace/thread association and attachments before task admission.
 2. Admit the canonical request digest through task-owned queue/controller state. Same ID/content reattaches; conflicting content is rejected. Persist the current user source before inference.
 3. Load canonical recent history in main. UI pagination does not enlarge a thread-bound submission; normal renderer submissions do not supply the authoritative transcript.
-4. `planInitialChatTurn` creates the deterministic initial plan. `resolveChatTurnContract` resolves ambiguous meaning, replans when needed and saves a scoped task. Clear creative-writing requests without a file destination bypass edit routing.
-5. Automatic semantic intake may use ready Lite as coordinator; the selected execution worker can be another eligible local model. Record a coordinator only when its semantic/routing result was actually used. Clear requests can skip model coordination.
-6. Allocate history/recall against the selected model's input budget, bind applicable historical references and select optional RAM/archive evidence for the resolved project.
+4. `planInitialChatTurn` creates the deterministic initial plan. `resolveChatTurnContract` binds applicable historical references before semantic inference, resolves explicit file-creation operands without a classifier call, and replans when the resolved intent changes. Clear creative-writing requests without a file destination bypass edit routing.
+5. Remaining semantic intake uses the initial plan's chat/tool destination, not an unconditional Lite coordinator. Production skips cold native and automatic remote classifier calls. Record `models.coordinator` only for a semantic result actually used. Build the scoped task with requested work and effective authority; unresolved references or destination-bound interpretation conflicts do not authorize effects.
+6. Prepare model windows after intake. Shared `taskIntakeBlocked` guards in desktop chat and Eris-Dev avoid context preparation for unresolved work and Agent-mode read-only patch assignments. Allocate history/recall against the selected model's input budget and select optional RAM/archive evidence for the resolved project. Initial model selection still precedes complete intake; capability/cost ranking from a compiled task is a remaining proposal.
 7. Lease that evidence in the request's `AsyncLocalStorage` evidence scope, then build messages and enter the agent loop.
-8. Authorize each proposed tool effect, retain observations/checkpoints, verify completion and persist the visible assistant result before terminal delivery.
+8. Authorize each proposed tool effect, retain observations/checkpoints, verify completion and persist the visible assistant result before terminal delivery. Explicit file sets require every output to exist, be nonempty, remain in the selected project and have a read/mutation observation. Existing inspected outputs need no gratuitous write. Semantic assessment has a hard deadline and typed failure reasons; nonempty files alone do not establish correctness.
 9. Release sessions, memory evidence and task-owned resources on success, failure or cancellation.
 
 The generic answer path has no workspace effects. A short unexplained creative refusal receives one same-model repair using the existing conversation; repeated refusal remains incomplete. Explicit safety refusals are not a reason to model-shop.
@@ -84,13 +92,15 @@ Sources: [routing](../electron/main/services/chat-router.ts), [selection](../ele
 
 Inline delegation is selected for chat-run identities (`jobId` beginning `chat:`); enabled custom specialists can participate. Inline children run sequentially in the same workspace with nested delegation disabled. Background children use inherited or separate worktrees and persistent job records.
 
+Assignment meaning is independent of specialist capability. Inline dispatch no longer turns an answer into an edit because the worker can write, or an edit into a review because it cannot. `childTaskContract` creates child-specific requested work and intersects authority with the parent. A child does not inherit the parent's entire requested file set.
+
 Both modes now use `handoffMessages`: optional system briefing plus user subgoal. Required parent/subtask goals and inherited constraints live in the required task block. `delegate_to_agent.constraints` admits at most 12 constraints of 300 characters each, including inherited constraints. Overflow is refused, and an oversized required task fails compilation rather than losing a constraint. Summary/files/questions remain optional evidence with omission accounting; constraints written only in summary remain vulnerable to omission.
 
 Neither child call site automatically receives or reselects the parent's `MemoryPrompt`. A briefing may contain derived recall, but is not a durable source-backed context envelope. Inline automatic children select for their own intent under the parent's execution policy; direct child/background/debug runners exclude the Cloud-only adapter. Child authority is intersected with the parent. Results distinguish observed changes/checks, unverified prose, incomplete/failed work and integration into another worktree.
 
 Background evidence scopes are captured before enqueue/pump execution; unrelated jobs get fresh scopes. Parent cancellation stops the dependent subtree, refuses new children beneath stopping jobs and stops queued descendants. Discard waits for completion/cleanup up to 30 seconds; on timeout it retains the worktree and exposes `worktreeRetained`. Repeated discard calls join one operation. Merge refuses while descendants still run. A child with its own worktree keeps its work for review.
 
-Still missing: persistent child evidence lineage after the parent lease ends/restart, original conversation-to-worktree identity mapping, complete bounded/versioned handoff envelopes, aggregate task-tree work/depth limits and source-backed result receipts. See #256, #262–265 and #267 in the [handoff review index](reviews/handoff-ram-issues-2026-11-01.md).
+The current source implements versioned bounded handoff envelopes and evidence metadata, sealed conversation-to-worktree origin mappings, aggregate task-tree limits and structured child outcome receipts. Qualification and further integration must be assessed against those implementations; the [handoff review index](reviews/handoff-ram-issues-2026-11-01.md) also contains historical findings.
 
 Sources: [handoff types](../src/shared/agent-orchestration.ts), [background lifecycle](../electron/main/services/background-agents.ts), [deep design](design/AGENT-HANDOFF-AND-RAM-CONTEXT.md).
 

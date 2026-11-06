@@ -1,12 +1,13 @@
 # Architecture and design guide index
 
-Reviewed against integrated `main` `0a54629` on 2026-11-01; package v0.6.10. Released tag `f14e409` is older than this source baseline.
+Routing and request-execution guides updated on 2026-11-06 against local `codex/simplify-request-execution`, based on `7975140d` (v0.6.16), including uncommitted source changes. Older subsystem guides retain their own reviewed baselines. This index does not certify an installed or released build.
 
-Use the guide matching the boundary being changed. Read its source baseline before turning an example or historical finding into an implementation task. App package version alone cannot distinguish release `f14e409` from later unreleased handoff fixes.
+Use the guide matching the boundary being changed. Read its source baseline before turning an example or historical finding into an implementation task. Package version alone does not establish whether local unreleased changes are present.
 
 ## Current implementation
 
 - [System architecture](ARCHITECTURE.md): process ownership, chat → task/agent, agent → agent/model, tools, memory, diagnostics and release boundaries.
+- [Request resolution and execution](design/REQUEST-EXECUTION.md): authoritative guide for the simplified routing path, requested versus effective work, reference resolution, model-load guards, child assignments, file-set completion and evaluator deadlines. Start here for chat-routing changes.
 - [Detailed handoff and RAM context](design/AGENT-HANDOFF-AND-RAM-CONTEXT.md): contracts, lifecycle, trust hierarchy, inherited requirements, bounded constraints, scopes and result integration.
 - [Automatic model execution](design/AUTO-MODEL-EXECUTION.md): Fixed/Auto-local/Auto-any, task eligibility/ranking, real coordinator/worker execution and safe bounded switching.
 - [Conversation memory](CONTEXT-MEMORY.md): implemented retention/recall, scaled allocation, journals/pull, revocation and pressure fallback.
@@ -14,6 +15,8 @@ Use the guide matching the boundary being changed. Read its source baseline befo
 - [Image generation](image-generation.md): explicit model download, dedicated service/runtime, media ownership and shared-resource/Metal safeguards.
 
 ## Remaining target design
+
+- [Router architecture review](reviews/2026-11-06-router-architecture-review.md): the original 12 findings and 20 proposed implementation packages. This is a pre-change review; use the implementation-status mapping in [request execution](design/REQUEST-EXECUTION.md#implementation-status-against-the-review) before treating a finding as an open defect.
 
 - [Reference-informed agent enhancement architecture](design/REFERENCE-AGENT-ENHANCEMENT-ARCHITECTURE.md): 40 proposed packages with pinned external source, current-code boundaries, runtime contracts, durable handoff, resource budgets, migration and acceptance; [machine-readable index](design/REFERENCE-AGENT-ENHANCEMENTS.json).
 - [RAM architecture and work packages](RAM-CONTEXT-ARCHITECTURE.md): reconciled implementation baseline/gaps plus remaining proposed worker/process, durability, quality and rollout contracts. MEM/GAP IDs are retained; do not assume every original task is still unimplemented.

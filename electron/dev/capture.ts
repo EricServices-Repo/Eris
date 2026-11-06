@@ -20,7 +20,7 @@ import type {
 import { assessDeliverable, deliverableContext } from '../../src/shared/deliverable-checks'
 import type { AppSettings } from '../../src/shared/settings-schema'
 import type { IntentResolution, TaskContract } from '../../src/shared/task-contract'
-import { interpretationOf } from '../../src/shared/task-contract'
+import { interpretationOf, taskIntakeBlocked } from '../../src/shared/task-contract'
 import { getDefaults } from '../main/services/settings'
 import {
   runInDiagnosticsScope,
@@ -359,7 +359,7 @@ export async function captureQuestion(
         const destination = plan.mode === 'agent' ? plan.models.tools : plan.models.chat
         phaseStarted = Date.now()
         const budget =
-          interpretationOf(task).resolution?.rule === 'missing-file-reference'
+          taskIntakeBlocked(task, plan.mode)
             ? contextBudgetTokens(settings, destination)
             : await prepareContextBudget(settings, destination, controller.signal)
         if (live) result.phases.modelPreparationMs = Date.now() - phaseStarted
