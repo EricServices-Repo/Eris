@@ -23,6 +23,7 @@ import {
   toolAllowedByPolicy
 } from '../electron/main/services/chat-router'
 import { recordRoutingCorrection } from '../electron/main/services/routing-feedback'
+import { resolveTaskDecision } from '../electron/main/services/task-resolver'
 import { getDefaults } from '../electron/main/services/settings'
 import type { AgentDefinition } from '../src/shared/settings-schema'
 
@@ -375,6 +376,35 @@ describe('planChatTurn', () => {
     })
     expect(lookup.agentId).toBe('fast')
     expect(lookup.toolPolicy).toBe('read')
+  })
+
+  it('routes “Go code the project” to Composer only when edits are allowed', async () => {
+    const planFor = (text: string, mode: 'ask' | 'agent') =>
+      planChatTurn({
+        ...base,
+        settings: getDefaults(),
+        context: { text, mode, selectedModel: 'builtin:composer-lite' }
+      })
+    expect(await planFor('Go code the project', 'agent')).toMatchObject({
+      intent: 'edit',
+      agentId: 'composer',
+      toolPolicy: 'edit',
+      requiresTools: true
+    })
+    await expect(
+      resolveTaskDecision({
+        text: 'Go code the project',
+        fallback: 'edit',
+        model: 'builtin:composer-lite',
+        mode: 'agent',
+        settings: getDefaults(),
+        getSecret: () => null
+      })
+    ).resolves.toMatchObject({ intent: 'edit', source: 'bypass', rule: 'code-workspace' })
+    expect(['none', 'read']).toContain((await planFor('Go code the project', 'ask')).toolPolicy)
+    expect(['none', 'read']).toContain(
+      (await planFor('How would you code the project?', 'agent')).toolPolicy
+    )
   })
 
   it('routes mutating requests to an editing agent even when a read-only agent is pinned', async () => {
