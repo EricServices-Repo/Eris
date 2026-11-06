@@ -1,3 +1,4 @@
+import { summarizeDevLatency, type DevSummary } from '../src/shared/eris-dev'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
@@ -695,4 +696,23 @@ describe('Eris-Dev corpus row errors (#307 EV-03)', () => {
     expect(prepareQuestions(rows(10_000), '.jsonl').questions).toHaveLength(10_000)
     expect(failure(() => prepareQuestions(rows(10_001), '.jsonl'))).toMatch(/limit is 10,000/)
   })
+})
+
+it('groups completed live latency by model and residency', () => {
+  const row = (residency: 'cold' | 'warm', firstAnswerMs: number, completed = true) =>
+    ({
+      completion: { status: completed ? 'completed' : 'failed' },
+      latency: { model: 'local:test', residency, firstAnswerMs }
+    }) as DevSummary
+  expect(
+    summarizeDevLatency([
+      row('cold', 4000),
+      row('warm', 120),
+      row('warm', 200),
+      row('warm', 1, false)
+    ])
+  ).toEqual([
+    { model: 'local:test', residency: 'cold', count: 1, medianMs: 4000, p95Ms: 4000 },
+    { model: 'local:test', residency: 'warm', count: 2, medianMs: 120, p95Ms: 200 }
+  ])
 })

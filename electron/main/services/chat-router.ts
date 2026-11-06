@@ -749,6 +749,7 @@ export async function planChatTurn(options: {
     forceRoute ??
     (mode === 'agent' &&
     !options.context.resolvedIntent &&
+    !asksToCodeWorkspace(text) &&
     !asksToImplementChanges(text) &&
     !explicitSpecialistIntent
       ? learnedRouteFor(text, corrections)
@@ -766,6 +767,7 @@ export async function planChatTurn(options: {
   const followId = agentForFollowUp(text, options.context.previousAgentId)
   if (
     mode === 'agent' &&
+    !forceRoute &&
     followId &&
     !explicitSpecialistIntent &&
     !options.context.resolvedIntent
@@ -870,6 +872,7 @@ export async function planChatTurn(options: {
 
   const toolPolicy = effectiveToolPolicy(agent, intent, mode)
   const agentModelOverride =
+    !options.context.preserveModelSelection &&
     (!pickedModel || isAutoModelChoice(pickedModel)) && agent.model.trim() && !isAutoModelChoice(agent.model)
       ? agent.model.trim()
       : ''

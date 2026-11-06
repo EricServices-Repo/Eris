@@ -1,3 +1,5 @@
+import { estimatedNativeAnswerMs } from './model-latency'
+import { isNativeGgufRef } from '../../../src/shared/model-destination'
 import type { AppSettings, ChatIntent } from '../../../src/shared/settings-schema'
 import { isExactBuiltinReady } from './builtin-model'
 import { getSecret } from './credentials'
@@ -13,6 +15,7 @@ export type ModelCandidate = {
   reason: string
   rank: number
   locality: string
+  estimatedAnswerMs?: number
 }
 export type AutoModelChoice = {
   model: string
@@ -176,15 +179,52 @@ export async function chooseExecutionModel(
       }
     }
   }
+  let usedLatency = false
+  if (
+    basis === 'profile' &&
+    (intent === 'answer' || intent === 'capability') &&
+    isNativeGgufRef(model)
+  ) {
+    for (const candidate of eligible) {
+      if (!isNativeGgufRef(candidate.model)) continue
+      candidate.estimatedAnswerMs = estimatedNativeAnswerMs(
+        settings,
+        candidate.model,
+        resident?.ref === candidate.model
+      )
+    }
+    const baseline = eligible[0]
+    // Keep quality scores, fixed selections and workspace tasks outside this
+    // tiebreak. Change the decision only when measurements show a material gain.
+    let bestMs = baseline.estimatedAnswerMs
+    if (bestMs !== undefined) {
+      const threshold = bestMs * 0.8
+      for (const candidate of eligible) {
+        const ms = candidate.estimatedAnswerMs
+        if (
+          candidate.rank >= baseline.rank - 8 &&
+          ms !== undefined &&
+          ms < threshold &&
+          ms < bestMs
+        ) {
+          model = candidate.model
+          bestMs = ms
+          usedLatency = true
+        }
+      }
+    }
+  }
   // Record the decision itself: what was chosen, on which evidence, and what beat every
   // other eligible model (#305 MO-03). A measured choice must not read as a rank choice.
   const winner = eligible.find((c) => c.model === model)
   const evidence =
     basis === 'telemetry'
       ? `measured run outcomes for ${intent}`
-      : basis === 'eval'
-        ? `evaluation scores for ${intent}`
-        : 'heuristic task rank'
+      : usedLatency
+        ? 'measured first-output latency for short answers'
+        : basis === 'eval'
+          ? `evaluation scores for ${intent}`
+          : 'heuristic task rank'
   for (const c of eligible) {
     const cost =
       resident?.ref === c.model
@@ -194,7 +234,7 @@ export async function chooseExecutionModel(
       c === winner
         ? `selected by ${evidence}; heuristic task rank ${c.rank}; ${cost}`
         : `eligible, not selected: ${model} won on ${evidence}${
-            basis !== 'profile'
+            basis !== 'profile' || usedLatency
               ? ''
               : winner!.rank === c.rank
                 ? ` (tied at ${c.rank}; broken by name)`

@@ -64,6 +64,7 @@ export const ChatSubmissionSchema = z
     mode: z.enum(['ask', 'agent']).optional(),
     workspacePath: path.nullable().optional(),
     forceRoute: z.enum(['tools', 'answer']).optional(),
+    preserveModelSelection: z.boolean().optional(),
     // Accepted only for older clients. It never owns planning or authority.
     turnPlan: z.unknown().optional(),
     planningDurationMs: z.number().finite().min(0).max(3600000).optional(),

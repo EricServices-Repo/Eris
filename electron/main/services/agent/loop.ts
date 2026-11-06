@@ -545,6 +545,15 @@ async function* runAgentInternal(options: {
     }
     return
   }
+  if (interpretationOf(task).resolution?.rule === 'missing-file-reference') {
+    yield { type: 'progress', step: 0, actionLog: [], filesTouched: [], incomplete: true }
+    yield {
+      type: 'answer',
+      text: 'Which files should I generate, and what should each one do?',
+      replace: true
+    }
+    return
+  }
   let chatModel = plan.models.chat
   let workerModel = plan.models.tools
   const attemptedModels = new Set([workerModel])

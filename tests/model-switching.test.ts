@@ -1,3 +1,4 @@
+import { resolveTaskDecision } from '../electron/main/services/task-resolver'
 import { LocalModelWorkerError } from '../electron/main/services/llama-worker-channel'
 import { modelInputBudget } from '../src/shared/model-context'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -180,11 +181,13 @@ describe('coordinator to worker at the actual transport boundary', () => {
     )
     expect(h.warm).toEqual([]) // scripted diagnostics never allocate real models
   })
-  it('uses Lite intake and a local worker in the main chat-turn pipeline', async () => {
+  it.each([
+    ['What is a reasonable way to organize a small application?', false],
+    ['Give me an idea for organizing a small application.', true]
+  ] as const)('uses at most one same-model intake call for %s', async (text, classify) => {
     const s = markSimulatedSettings(settings())
     const requests: ModelTransportRequest[] = []
     const output: Array<Record<string, unknown>> = []
-    const text = 'What is a reasonable way to organize a small application?'
     await runInDiagnosticsScope(
       {
         runId: 'main-chat-handoff',
@@ -213,7 +216,7 @@ describe('coordinator to worker at the actual transport boundary', () => {
         }
         const initial = await planInitialChatTurn(input)
         const { plan } = await resolveChatTurnContract(input, initial)
-        expect(plan.models.coordinator).toBe('builtin:composer-lite')
+        expect(plan.models.coordinator).toBe(classify ? 'local:worker' : undefined)
         for await (const event of runAgentWithWorkspaceTools({
           workspacePath: root,
           settings: s,
@@ -228,10 +231,41 @@ describe('coordinator to worker at the actual transport boundary', () => {
           output.push(event as unknown as Record<string, unknown>)
       }
     )
-    expect(requests.find((r) => r.purpose === 'intent')?.model).toBe('builtin:composer-lite')
+    expect(requests.filter((r) => r.purpose === 'intent').map((r) => r.model)).toEqual(
+      classify ? ['local:worker'] : []
+    )
+    expect(requests.some((r) => r.purpose === 'route')).toBe(false)
     expect(requests.find((r) => r.purpose === 'agent')?.model).toBe('local:worker')
-    expect(output).toContainEqual(expect.objectContaining({ type: 'adapt', model: 'local:worker' }))
+    expect(output.some((event) => event.type === 'adapt')).toBe(false)
   })
+
+  it('falls back within the routing deadline even when the provider ignores abort', async () => {
+    const resolution = await runInDiagnosticsScope(
+      {
+        runId: 'unresponsive-classifier',
+        mode: 'simulated',
+        onBlockedEffect: () => {},
+        adapter: {
+          kind: 'scripted',
+          async *stream() {
+            yield await new Promise<string>(() => {})
+          }
+        }
+      },
+      () =>
+        resolveTaskDecision({
+          text: 'Could we make this easier to use?',
+          fallback: 'edit',
+          settings: markSimulatedSettings(settings()),
+          model: 'local:worker',
+          mode: 'agent',
+          getSecret: () => null,
+          timeoutMs: 20
+        })
+    )
+    expect(resolution).toMatchObject({ intent: 'plan', source: 'fallback', failure: 'timeout' })
+  })
+
   it('recovers a native execution failure using another eligible worker', async () => {
     let calls = 0
     const result = await scripted(

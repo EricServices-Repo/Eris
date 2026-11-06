@@ -44,6 +44,22 @@ describe('agent telemetry', () => {
     expect(bestTelemetryModelForIntent(records, 'edit', ['good', 'meh'], 3)).toBe('good')
   })
 
+  it('ranks verified edits ahead of unverified completions and uses elapsed time for equal quality', () => {
+    const records = [
+      rec({ model: 'unverified', runs: 5, succeeded: 5 }),
+      rec({ model: 'slow', runs: 5, succeeded: 5, verifiedEdits: 4, verifiedEditTotalMs: 40_000 }),
+      rec({ model: 'fast', runs: 5, succeeded: 5, verifiedEdits: 4, verifiedEditTotalMs: 20_000 })
+    ]
+    expect(
+      bestTelemetryModelForIntent(
+        records,
+        'edit',
+        records.map((row) => row.model),
+        3
+      )
+    ).toBe('fast')
+  })
+
   it('returns null when nothing has enough runs or is a candidate', () => {
     const records = [rec({ model: 'good', intent: 'edit', runs: 1, succeeded: 1 })]
     expect(bestTelemetryModelForIntent(records, 'edit', ['good'], 3)).toBeNull()

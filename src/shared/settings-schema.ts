@@ -536,6 +536,7 @@ export interface ChatTurnContext {
   /** Main-process task intake only. */
   resolvedIntent?: ChatIntent
   skipModelRouter?: boolean
+  preserveModelSelection?: boolean
   text: string
   fileNames?: string[]
   manualAgentId?: string | null

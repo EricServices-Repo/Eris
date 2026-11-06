@@ -399,6 +399,7 @@ export interface IdeApi {
     mode?: 'ask' | 'agent'
     workspacePath?: string | null
     forceRoute?: 'tools' | 'answer'
+    preserveModelSelection?: boolean
     turnPlan?: TurnPlan
     threadId?: string | null
     planningDurationMs?: number
@@ -518,6 +519,7 @@ export interface IdeApi {
       intent?: string
       task?: import('./task-contract').TaskContract
       toolsModel?: string
+      modelSelection?: string
     }) => void
   ) => () => void
   checkpointReview: (

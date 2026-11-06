@@ -1,3 +1,4 @@
+import { recordNativeLatency } from './model-latency'
 import { eligibleOutbound } from './eligible-outbound'
 import { createPromptTokenCounter } from './agent/prompt-token-counter'
 import { assertTaskReferences } from './reference-binding'
@@ -213,10 +214,10 @@ export async function* streamProviderChat(
   const purpose = options.purpose ?? 'agent'
   const phase = (value: 'loading' | 'prefill' | 'generating' | 'integrating', reason: string) =>
     reportChatActivity(
-      purpose === 'agent' || value === 'loading'
-        ? value
-        : purpose === 'intent' || purpose === 'route'
-          ? 'routing'
+      purpose === 'intent' || purpose === 'route'
+        ? 'routing'
+        : purpose === 'agent' || value === 'loading'
+          ? value
           : 'integrating',
       { source: 'transport', purpose, model, reason }
     )
@@ -230,8 +231,17 @@ export async function* streamProviderChat(
   const chunkSeen = () => {
     if (firstChunk) {
       firstChunk = false
-      if (dispatchedAt !== undefined)
+      if (dispatchedAt !== undefined) {
         dispatchToFirstChunkMs = Math.round(performance.now() - dispatchedAt)
+        if (
+          purpose === 'agent' &&
+          isNativeGgufRef(model) &&
+          !options.tools?.length &&
+          inputEstimate <= 4096 &&
+          !activeDiagnosticsScope()
+        )
+          recordNativeLatency(options.settings, model, 'warm-answer', dispatchToFirstChunkMs)
+      }
       phase('generating', 'First model output chunk received')
     }
   }
@@ -290,6 +300,13 @@ export async function* streamProviderChat(
       for await (const chunk of streamBuiltinChat({
         onLoaded: () => dispatched('Local model ready; request dispatched'),
         prepareMessages: async () => {
+          if (purpose === 'agent')
+            reportChatActivity('prompt', {
+              source: 'transport',
+              purpose,
+              model,
+              reason: 'Packing and validating native input'
+            })
           throwIfAborted(options.signal)
           for (const message of options.messages) {
             const task = (message as ModelMessage).contextBundle?.referenceTask
