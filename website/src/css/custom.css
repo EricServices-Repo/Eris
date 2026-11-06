@@ -1,0 +1,143 @@
+/* Brand palette and Poppins typography from EricServic.es. */
+:root {
+  --eris-blue: #3bacf0;
+  --eris-green: #88d200;
+  --eris-navy: #04091e;
+  --ifm-color-primary: #086499;
+  --ifm-color-primary-dark: #075a8a;
+  --ifm-color-primary-darker: #075582;
+  --ifm-color-primary-darkest: #06466b;
+  --ifm-color-primary-light: #096ea8;
+  --ifm-color-primary-lighter: #0973b0;
+  --ifm-color-primary-lightest: #0a82c7;
+  --ifm-font-color-base: #222;
+  --ifm-font-family-base: 'Poppins', system-ui, sans-serif;
+  --ifm-line-height-base: 1.65;
+  --ifm-code-font-size: 90%;
+  --ifm-global-radius: 0.65rem;
+  --ifm-navbar-height: 4rem;
+  --eris-border: #dce4ed;
+  --eris-card-bg: #f9f9ff;
+  --eris-muted: #505b67;
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #78cbfc;
+  --ifm-color-primary-dark: #5bbefa;
+  --ifm-color-primary-darker: #49b6f9;
+  --ifm-color-primary-darkest: #23a2ed;
+  --ifm-color-primary-light: #96d7fd;
+  --ifm-color-primary-lighter: #a5defd;
+  --ifm-color-primary-lightest: #d1efff;
+  --ifm-font-color-base: #eef4fb;
+  --ifm-background-color: #0c1327;
+  --ifm-background-surface-color: #121d33;
+  --eris-border: #293b56;
+  --eris-card-bg: #121d33;
+  --eris-muted: #b6c7dc;
+}
+
+.navbar,
+.footer {
+  --ifm-font-color-base: #eef4fb;
+  --ifm-navbar-background-color: var(--eris-navy);
+  --ifm-navbar-link-color: #eef4fb;
+  --ifm-navbar-link-hover-color: #78cbfc;
+  --ifm-footer-background-color: var(--eris-navy);
+  --ifm-footer-title-color: #fff;
+  --ifm-footer-link-color: #cfdbec;
+  --ifm-footer-link-hover-color: #78cbfc;
+  color: #eef4fb;
+}
+
+.navbar-sidebar .menu__link,
+.navbar-sidebar__back {
+  color: #eef4fb;
+}
+
+.navbar {
+  border-bottom: 1px solid var(--eris-border);
+  box-shadow: none;
+}
+
+.navbar__title { letter-spacing: -0.025em; }
+.menu__link { font-size: 0.9rem; }
+.theme-doc-markdown h1 { letter-spacing: -0.04em; }
+.theme-doc-markdown h2 { margin-top: 2.2rem; letter-spacing: -0.025em; }
+.theme-doc-markdown p { max-width: 75ch; }
+.table-of-contents { font-size: 0.84rem; }
+
+.eris-home {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 0.75rem 0 2.5rem;
+}
+
+.eris-hero {
+  padding: clamp(1.5rem, 6vw, 5rem);
+  border: 1px solid var(--eris-border);
+  border-radius: 1.4rem;
+  background: var(--eris-blue);
+  color: var(--eris-navy);
+}
+
+.eris-eyebrow {
+  color: var(--ifm-color-primary);
+  font-size: 0.75rem;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+}
+
+.eris-hero h1 {
+  margin: 0.65rem 0 0.8rem;
+  font-size: clamp(2.6rem, 7vw, 5rem);
+  line-height: 1.04;
+  letter-spacing: -0.065em;
+}
+
+.eris-hero .eris-eyebrow { color: var(--eris-navy); }
+.eris-hero p { max-width: 51ch; font-size: 1.15rem; }
+.eris-actions .button {
+  border-radius: 999px;
+  padding-inline: 1.3rem;
+  color: var(--eris-navy);
+}
+.eris-actions .button--primary {
+  --ifm-button-background-color: var(--eris-green);
+  --ifm-button-border-color: var(--eris-green);
+}
+.eris-actions .button--primary:hover {
+  --ifm-button-background-color: #9be220;
+  --ifm-button-border-color: #9be220;
+}
+.eris-actions { display: flex; flex-wrap: wrap; gap: 0.65rem; }
+.eris-home h2 { margin: 2.5rem 0 1rem; letter-spacing: -0.035em; }
+
+.eris-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  gap: 1rem;
+}
+
+.eris-guide-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 1.4rem;
+  border: 1px solid var(--eris-border);
+  border-radius: 1rem;
+  color: var(--eris-muted);
+  background: var(--eris-card-bg);
+}
+
+.eris-guide-card:is(:hover, :focus-visible) {
+  border-color: var(--ifm-color-primary);
+  color: var(--eris-muted);
+  text-decoration: none;
+}
+
+.eris-guide-card strong { color: var(--ifm-font-color-base); font-size: 1.2rem; }
+.eris-card-action { margin-top: auto; padding-top: 0.6rem; color: var(--ifm-color-primary); font-weight: 650; }
+.eris-home :focus-visible { outline: 2px solid var(--ifm-color-primary); outline-offset: 4px; }
+.eris-hero :focus-visible { outline-color: var(--eris-navy); }
+.footer { border-top: 1px solid var(--eris-border); }

@@ -40,12 +40,16 @@ export default {
   trailingSlash: true,
   onBrokenLinks: 'throw',
   markdown: { format: 'detect', mermaid: true },
+  stylesheets: [
+    'https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap'
+  ],
   themes: ['@docusaurus/theme-mermaid'],
   presets: [
     [
       'classic',
       {
         blog: false,
+        theme: { customCss: './src/css/custom.css' },
         docs: {
           path: '../docs',
           routeBasePath: '/',
@@ -56,9 +60,34 @@ export default {
     ]
   ],
   themeConfig: {
+    colorMode: { respectPrefersColorScheme: true },
     navbar: {
-      title: 'Eris Documentation',
-      items: [{ href: repository, label: 'GitHub', position: 'right' }]
+      title: 'Eris Docs',
+      items: [
+        { to: '/guides/', label: 'Guides', position: 'left' },
+        { to: '/ARCHITECTURE/', label: 'Architecture', position: 'left' },
+        { to: '/ERIS-DEV/', label: 'Eris-Dev', position: 'left' },
+        { href: repository, label: 'GitHub', position: 'right' }
+      ]
+    },
+    footer: {
+      links: [
+        {
+          title: 'Documentation',
+          items: [
+            { label: 'Guide index', to: '/guides/' },
+            { label: 'Using Eris', to: '/ERIS_USAGE/' }
+          ]
+        },
+        {
+          title: 'Project',
+          items: [
+            { label: 'EricServic.es', href: 'https://www.ericservic.es/products/eris.php' },
+            { label: 'Source code', href: repository },
+            { label: 'Releases', href: `${repository}/releases` }
+          ]
+        }
+      ]
     }
   }
 }
