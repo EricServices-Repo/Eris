@@ -25,6 +25,7 @@ import {
   asksForRecommendations,
   asksForPlan,
   asksForVerification,
+  asksToCodeWorkspace,
   asksToImplementChanges,
   asksWhatTheProjectDoes,
   asksWorkspaceQuestion,
@@ -177,6 +178,7 @@ function classifyIntentRule(
 
   const t = withoutLeadingScope(text)
   if (!t) return { intent: 'answer', rule: 'empty' }
+  if (asksToCodeWorkspace(t)) return { intent: 'edit', rule: 'code-workspace' }
   // An explicit implementation request can contain command-like nouns ('make all').
   if (
     asksToImplementChanges(t) ||
@@ -629,6 +631,7 @@ export async function planChatTurn(options: {
 
   const routeScore = Number(route.reason.match(/Matched keywords \(score (\d+)\)/)?.[1] || 0)
   const explicitIntent =
+    asksToCodeWorkspace(text) ||
     asksToImplementChanges(text) ||
     asksForPlan(text) ||
     asksForVerification(text) ||
@@ -690,7 +693,9 @@ export async function planChatTurn(options: {
       // Explicit requests to apply changes outrank a router that labels the
       // same follow-up as another review. Preserve the deterministic edit route.
       const llmDowngradesExplicitEdit =
-        asksToImplementChanges(text) && heuristicIntent === 'edit' && hint.intent !== 'edit'
+        (asksToImplementChanges(text) || asksToCodeWorkspace(text)) &&
+        heuristicIntent === 'edit' &&
+        hint.intent !== 'edit'
       if (!llmStripsTools && !llmDowngradesExplicitEdit) {
         if (hint.intent !== intent) overrides.push(`llm-intent:${hint.intent}`)
         intent = hint.intent

@@ -11,6 +11,7 @@ import {
   asksForRecommendations,
   asksForPlan,
   asksForVerification,
+  asksToCodeWorkspace,
   asksToImplementChanges,
   asksWorkspaceQuestion,
   needsWebLookup,
@@ -73,6 +74,7 @@ export function resolverBypassRule(text: string, fallback: ChatIntent): string |
   // A requested code artifact with no destination may belong in chat. Resolve the
   // destination before an imperative grants edit authority; never bypass into a patch.
   if (fallback === 'edit' && unresolvedCodeDestination(t)) return null
+  if (asksToCodeWorkspace(t)) return 'code-workspace'
   if (asksToImplementChanges(t)) return 'implement-changes'
   if (asksForRecommendations(t)) return 'recommendations'
   if (asksForPlan(t)) return 'explicit-plan'

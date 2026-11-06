@@ -98,6 +98,13 @@ export function asksWhatTheProjectDoes(text: string): boolean {
   )
 }
 
+/** An imperative to write code with the open workspace as its destination. */
+export function asksToCodeWorkspace(text: string): boolean {
+  return /^(?:please\s+)?(?:go\s+(?:ahead\s+and\s+)?|now\s+)?code\s+(?:this|the|my|our)\s+(?:project|repo(?:sitory)?|codebase|workspace|app(?:lication)?)\b/i.test(
+    text.trim()
+  )
+}
+
 /** The user is asking to apply previously discussed changes, not list them. */
 export function asksToImplementChanges(text: string): boolean {
   let t = text.trim()
