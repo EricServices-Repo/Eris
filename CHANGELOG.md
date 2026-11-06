@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.16 — 2026-11-05
+
+- Improve chat routing, preserve request details on agent retries, and show where chat and model processing spend time.
+
 ## 0.6.15 — 2026-11-04
 
 - Sync project lists, repository links, full conversations, skills, MCP configuration, and Ollama connections with the EricServic.es profile; restore projects across computers and preserve diverged chat histories.
