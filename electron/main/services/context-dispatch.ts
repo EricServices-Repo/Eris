@@ -6,6 +6,7 @@ import {
   type ContextBundle,
   type ContextBundleItem,
   type ContextDispatch,
+  type ContextUsage,
   type ContextPreview,
   type MemoryPrompt
 } from '../../../src/shared/context-memory'
@@ -176,13 +177,18 @@ export function reportContextUsage(input: {
   outbound: readonly WireMessage[]
   model: string
   measuredPromptTokens: number | null
+  dispatchToFirstChunkMs?: number
 }): void {
   const bundle = input.compiled.find((message) => message.contextBundle)?.contextBundle
   if (!bundle) return
-  appendTaskEvent(bundle.taskId, 'context-usage', {
+  const usage: ContextUsage = {
     model: input.model,
     estimatedTokens: estimateContextTokens(textOf(input.outbound)),
     measuredPromptTokens: input.measuredPromptTokens,
+    ...(input.dispatchToFirstChunkMs !== undefined
+      ? { dispatchToFirstChunkMs: input.dispatchToFirstChunkMs }
+      : {}),
     source: input.measuredPromptTokens === null ? 'estimate-only' : 'provider-measured'
-  })
+  }
+  appendTaskEvent(bundle.taskId, 'context-usage', usage)
 }

@@ -64,12 +64,21 @@ function contextCapacity(settings: AppSettings, model: string, requestedContext:
 }
 /** Recorded with each compile, so a report can tell a measurement from a plan. */
 export function contextProvenance(settings: AppSettings, model: string) {
-  const { contextCeiling, contextSource } = resolveModelCapabilities(settings, model)
+  const { contextCeiling, contextSource, requestedContext, promptBudget, outputReserve } =
+    resolveModelCapabilities(settings, model)
   const entry = nativeEntry(model)
-  const measured = entry ? loadedModelFacts(entry.ref) : null
+  const measured =
+    contextSource === 'measured-allocation' && entry ? loadedModelFacts(entry.ref) : null
+  const forecastTokens = entry
+    ? contextPlan(entry, lastGpuAccelStatus()?.vramBudgetBytes, requestedContext).max
+    : undefined
   return {
     source: contextSource,
     tokens: contextCeiling,
+    requestedContext,
+    forecastTokens,
+    promptBudget,
+    outputReserve,
     ...(measured
       ? {
           gpuLayers: measured.gpuLayers,

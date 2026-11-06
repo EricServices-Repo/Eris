@@ -998,7 +998,7 @@ async function ensureRuntimeInProcess(
       ...facts,
       ref: entry.ref,
       requestedContext,
-      contextSize: facts.contextSize ?? plan.target,
+      contextSize: facts.contextSize ?? 0,
       device: gpuStatus.backendDeviceName ?? (llama.gpu === false ? 'CPU' : String(llama.gpu)),
       placementSteps: placement.steps
     })
@@ -1121,7 +1121,7 @@ async function ensureWorkerModel(
   recordLoadedModel({
     ref: entry.ref,
     requestedContext,
-    contextSize: contextSize ?? plan.max,
+    contextSize: contextSize ?? 0,
     trainContextSize,
     gpuLayers,
     totalLayers,
@@ -1561,20 +1561,26 @@ let warmInFlight: { modelRef: string; contextWindow: number; promise: Promise<Wa
 export function warmLocalInference(
   settings?: AppSettings,
   requestedModel?: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  foreground?: { contextWindow: number }
 ): Promise<WarmResult> {
-  if (process.env.VITEST || process.env.ERIS_SKIP_LLAMA_WARM === '1') {
+  if (process.env.VITEST || (!foreground && process.env.ERIS_SKIP_LLAMA_WARM === '1')) {
     return Promise.resolve({ ok: false, error: 'skipped' })
   }
   const s = settings ?? getResolvedSettings(appState.currentWorkspace)
   const preferred = requestedModel || s.models.defaultModel || 'builtin:composer-lite'
-  if (warmInFlight?.modelRef === preferred && warmInFlight.contextWindow === s.models.contextWindow)
+  if (
+    !foreground &&
+    warmInFlight?.modelRef === preferred &&
+    warmInFlight.contextWindow === s.models.contextWindow
+  )
     return warmInFlight.promise
 
   const previousWarm = warmInFlight?.promise.catch(() => undefined)
   const promise = (async () => {
     try {
-      await previousWarm
+      if (!foreground) await previousWarm
+      signal?.throwIfAborted()
       let entry: BuiltinModelManifestEntry | null = null
       let path = ''
 
@@ -1615,11 +1621,22 @@ export function warmLocalInference(
         owner: entry.ref,
         ...(await textLease(entry, path)),
         exclusiveGpu: true,
-        priority: 5,
+        priority: foreground ? 20 : 5,
         signal
       })
       try {
-        await ensureWorkerModel(path, entry, signal, s.models.contextWindow)
+        const contextWindow = foreground?.contextWindow ?? s.models.contextWindow
+        if (!preferInProcess) {
+          try {
+            await ensureWorkerModel(path, entry, signal, contextWindow)
+          } catch (error) {
+            if (!preferInProcess) await disposeRuntime().catch(() => undefined)
+            signal?.throwIfAborted()
+            if (!preferInProcess) throw error
+          }
+        }
+        if (preferInProcess) await ensureRuntimeInProcess(path, entry, contextWindow, signal)
+        lease.markMaterialized?.()
       } finally {
         lease.release()
       }
@@ -1631,6 +1648,7 @@ export function warmLocalInference(
       return { ok: false, error: message }
     }
   })()
+  if (foreground) return promise
   const active = { modelRef: preferred, contextWindow: s.models.contextWindow, promise }
   warmInFlight = active
   void promise.then(

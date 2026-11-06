@@ -13,7 +13,7 @@ import {
 import { foregroundTasks } from '../services/foreground-tasks'
 import { getChat, appendChatMessage, scopeChatSource } from '../services/chats'
 import { compactHistory } from '../services/chat-prompt'
-import { contextBudgetTokens } from '../services/agent/context-budget'
+import { contextBudgetTokens, prepareContextBudget } from '../services/agent/context-budget'
 import {
   allocateContext,
   historyChars,
@@ -388,15 +388,25 @@ export function registerChatStreamIpc(): void {
             return false
           }
           // One split per turn, so what recall treats as covered is what the prompt sends.
-          const allocation: ContextAllocation = allocateContext(
-            contextBudgetTokens(
-              settings,
+          let allocation: ContextAllocation
+          try {
+            const selectedModel =
               (turnPlan.mode === 'agent' ? turnPlan.models.tools : turnPlan.models.chat) ||
-                model ||
-                settings.models.defaultModel
-            ),
-            turnPlan.mode === 'agent' ? 'agent' : 'chat'
-          )
+              model ||
+              settings.models.defaultModel
+            const budget = turnPlan.cloudPreferred
+              ? contextBudgetTokens(settings, selectedModel)
+              : await prepareContextBudget(settings, selectedModel, controller.signal)
+            allocation = allocateContext(budget, turnPlan.mode === 'agent' ? 'agent' : 'chat')
+          } catch (error) {
+            if (controller.signal.aborted) publish('chat:done', { requestId, aborted: true })
+            else
+              publish('chat:error', {
+                requestId,
+                error: error instanceof Error ? error.message : String(error)
+              })
+            return false
+          }
           if (contextThreadId && payload.prompt) {
             try {
               await scopeChatSource(

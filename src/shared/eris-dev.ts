@@ -119,6 +119,7 @@ export interface DevCapture {
   /** Context compiler manifest for this request: blocks, trust, truncation, budget. */
   context?: unknown
   dispatch?: unknown
+  contextUsage?: import('./context-memory').ContextUsage
   /** Tool capability record in effect for this request. */
   toolManifest?: unknown
 }
@@ -163,6 +164,12 @@ export interface DevResult extends DevSummary {
   routeDecision?: unknown
   retrieval?: unknown
   workflowLint?: unknown
+  compaction?: {
+    attempts: number
+    unchanged: number
+    kvResetRequests: number
+    events: import('./context-memory').ContextCompaction[]
+  }
   findingsDetail: DevFinding[]
   events: string[]
   /** Local pre-inference phases. Not model latency and not generation speed. */

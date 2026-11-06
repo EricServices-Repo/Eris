@@ -43,6 +43,7 @@ vi.mock('../electron/main/services/builtin-model', async (original) => {
     streamBuiltinChat: async function* (request: {
       modelRef: string
       contextWindow?: number
+      onLoaded?: () => void
       messages: Array<{ role: string; content: string }>
       prepareMessages?: () => Promise<Array<{ role: string; content: string }>>
       onTermination?: (termination: { reason: string }) => void
@@ -50,6 +51,7 @@ vi.mock('../electron/main/services/builtin-model', async (original) => {
       h.requestedContext = request.contextWindow
       if (h.allocate) recordLoadedModel({ ref: request.modelRef, contextSize: h.allocate })
       const messages = request.prepareMessages ? await request.prepareMessages() : request.messages
+      request.onLoaded?.()
       h.sent.push(messages)
       h.generated++
       yield 'ok'
@@ -168,10 +170,14 @@ describe('the first native request after a smaller allocation', () => {
     ])
     const dispatches = h.events.filter((event) => event.type === 'context-dispatched')
     expect(dispatches).toHaveLength(1)
-    expect(dispatches[0]!.data.context).toEqual({
+    expect(dispatches[0]!.data.context).toMatchObject({
       source: 'measured-allocation',
       tokens: 2048,
-      plannedTokens: 8192
+      plannedTokens: 8192,
+      requestedContext: 32768,
+      forecastTokens: 8192,
+      outputReserve: 614,
+      promptBudget: expect.any(Number)
     })
   })
 
@@ -181,9 +187,15 @@ describe('the first native request after a smaller allocation', () => {
       { role: 'system', content: 'Instructions', contextBundle },
       { role: 'user', content: 'Goal' }
     ])
-    expect(h.events.find((event) => event.type === 'context-dispatched')!.data.context).toEqual({
+    const context = h.events.find((event) => event.type === 'context-dispatched')!.data.context
+    expect(context).toMatchObject({
       source: 'measured-allocation',
-      tokens: 8192
+      tokens: 8192,
+      forecastTokens: 8192
+    })
+    expect(context).not.toHaveProperty('plannedTokens')
+    expect(h.events.find((event) => event.type === 'context-usage')?.data).toMatchObject({
+      dispatchToFirstChunkMs: expect.any(Number)
     })
   })
 

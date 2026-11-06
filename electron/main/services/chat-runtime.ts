@@ -2,7 +2,7 @@ import { eligibleOutbound } from './eligible-outbound'
 import { createPromptTokenCounter } from './agent/prompt-token-counter'
 import { assertTaskReferences } from './reference-binding'
 import { reportChatActivity } from './chat-activity'
-import { resolveModelCapabilities } from './model-capabilities'
+import { contextProvenance, resolveModelCapabilities } from './model-capabilities'
 import {
   compileModelMessages,
   budgetModelMessages,
@@ -201,7 +201,7 @@ export async function* streamProviderChat(
       outbound: compiled,
       adapted: true,
       ...options,
-      context: { source: capabilities.contextSource, tokens: capabilities.contextCeiling }
+      context: contextProvenance(options.settings, model)
     })
   let inputEstimate =
     estimateMessagesTokens(
@@ -221,9 +221,17 @@ export async function* streamProviderChat(
       { source: 'transport', purpose, model, reason }
     )
   let firstChunk = true
+  let dispatchedAt: number | undefined
+  let dispatchToFirstChunkMs: number | undefined
+  const dispatched = (reason: string) => {
+    dispatchedAt = performance.now()
+    phase('prefill', reason)
+  }
   const chunkSeen = () => {
     if (firstChunk) {
       firstChunk = false
+      if (dispatchedAt !== undefined)
+        dispatchToFirstChunkMs = Math.round(performance.now() - dispatchedAt)
       phase('generating', 'First model output chunk received')
     }
   }
@@ -232,12 +240,16 @@ export async function* streamProviderChat(
   let reportedPrompt: number | null = null
   let reportedCompletion: number | null = null
 
+  let finished = false
   const finish = () => {
+    if (finished) return
+    finished = true
     reportContextUsage({
       compiled: options.messages,
       outbound: compiled,
       model,
-      measuredPromptTokens: reportedPrompt
+      measuredPromptTokens: reportedPrompt,
+      dispatchToFirstChunkMs
     })
     try {
       recordModelUsage({
@@ -276,7 +288,7 @@ export async function* streamProviderChat(
       }
       phase('loading', 'Waiting for local resources and model readiness')
       for await (const chunk of streamBuiltinChat({
-        onLoaded: () => phase('prefill', 'Local model ready; request dispatched'),
+        onLoaded: () => dispatched('Local model ready; request dispatched'),
         prepareMessages: async () => {
           throwIfAborted(options.signal)
           for (const message of options.messages) {
@@ -326,8 +338,7 @@ export async function* streamProviderChat(
             outbound: compiled,
             adapted: true,
             context: {
-              source: allocated.contextSource,
-              tokens: allocated.contextCeiling,
+              ...contextProvenance(options.settings, model),
               ...(allocated.contextCeiling === plannedTokens ? {} : { plannedTokens })
             }
           })
@@ -382,7 +393,7 @@ export async function* streamProviderChat(
 
     provider = connection.provider || connection.name || 'custom'
     const apiKey = connection.apiKeyRef ? options.getSecret(connection.apiKeyRef) : null
-    phase('prefill', 'Provider request dispatched; network time is included')
+    dispatched('Provider request dispatched; network time is included')
     const numCtx = ollamaRequestWindow(connection, model, capabilities.requestedContext)
     const stream =
       numCtx === null
@@ -449,8 +460,9 @@ export async function* streamProviderChat(
       errorCode: (err as { code?: string }).code ?? 'UNCLASSIFIED',
       reason: 'Model call did not complete; preserving partial evidence'
     })
-    // Still count partial output if the stream produced anything before failing
-    if (outputText) finish()
     throw err
+  } finally {
+    // An agent can close a stream as soon as a complete tool call arrives.
+    if (outputText) finish()
   }
 }

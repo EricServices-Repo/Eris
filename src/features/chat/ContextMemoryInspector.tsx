@@ -161,6 +161,19 @@ export function ContextMemoryInspector({
                 {snapshot.lastDispatch.counts.omitted} left out.
               </p>
             )}
+            {snapshot?.lastDispatch?.context && (
+              <p>
+                Requested{' '}
+                {snapshot.lastDispatch.context.requestedContext?.toLocaleString() ?? 'unknown'} ·
+                forecast{' '}
+                {snapshot.lastDispatch.context.forecastTokens?.toLocaleString() ?? 'unknown'} ·
+                effective {snapshot.lastDispatch.context.tokens.toLocaleString()} (
+                {snapshot.lastDispatch.context.source}) · usable input{' '}
+                {snapshot.lastDispatch.context.promptBudget?.toLocaleString() ?? 'unknown'} · reply
+                reserve {snapshot.lastDispatch.context.outputReserve?.toLocaleString() ?? 'unknown'}{' '}
+                tokens
+              </p>
+            )}
             <form
               onSubmit={(e) => {
                 e.preventDefault()

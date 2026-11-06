@@ -1,6 +1,7 @@
 import { eligibleOutbound } from '../eligible-outbound'
 import { createPromptTokenCounter } from './prompt-token-counter'
 import { resolveModelCapabilities } from '../model-capabilities'
+import { prepareContextBudget } from './context-budget'
 import { prepareModelTransition, prohibitsModelRecovery } from './model-transition'
 import { compileMeasuredContext } from './measured-context'
 import { contextProvenance } from '../model-capabilities'
@@ -85,7 +86,6 @@ import {
   boundRuntimeInstructions,
   buildWorkSummary,
   compactAgentMessages,
-  contextBudgetTokens,
   contextCompactionTarget,
   estimateTokens,
   microCompactAgentMessages
@@ -667,7 +667,7 @@ async function* runAgentInternal(options: {
         ...memoryForDestination(options.conversationMemory, chatModel, options.settings, task),
         project: priorSystem,
         retrieval: '',
-        maxInputTokens: contextBudgetTokens(options.settings, chatModel)
+        maxInputTokens: await prepareContextBudget(options.settings, chatModel, options.signal)
       },
       chatModel
     )
@@ -914,7 +914,7 @@ async function* runAgentInternal(options: {
     })
   }
   let promptBudget =
-    contextBudgetTokens(options.settings, workerModel) -
+    (await prepareContextBudget(options.settings, workerModel, options.signal)) -
     Math.ceil(JSON.stringify(openaiTools).length / 3) -
     128
   if (promptBudget < 512)
@@ -1466,7 +1466,7 @@ async function* runAgentInternal(options: {
       // Install the new agent's actual instructions, not just its display name.
       // Retain execution evidence and the original task's authority ceiling.
       promptBudget =
-        contextBudgetTokens(options.settings, workerModel) -
+        (await prepareContextBudget(options.settings, workerModel, options.signal)) -
         Math.ceil(JSON.stringify(openaiTools).length / 3) -
         128
       if (promptBudget < 512)
@@ -1560,7 +1560,7 @@ async function* runAgentInternal(options: {
     } = {}
   ): AsyncGenerator<AgentRunnerEvent, void, unknown> {
     const startedAt = performance.now()
-    promptBudget = contextBudgetTokens(options.settings, workerModel)
+    promptBudget = await prepareContextBudget(options.settings, workerModel, options.signal)
     boundRuntimeInstructions(workerMessages)
     const countable = await eligibleOutbound(workerMessages, workerModel, options.settings)
     if (countable.revoked) {
@@ -1610,7 +1610,9 @@ async function* runAgentInternal(options: {
         targetTokens,
         budgetTokens: promptBudget,
         evicted: micro.evicted,
-        shortened: micro.shortened
+        shortened: micro.shortened,
+        changed: true,
+        kvResetRequested: Boolean(micro.shortened && ggufSessionKey)
       })
       // Every turn re-seeds history, so eviction keeps the unchanged prefix in KV.
       if (micro.shortened) releaseGgufSession()
@@ -1696,6 +1698,7 @@ async function* runAgentInternal(options: {
       targetTokens,
       budgetTokens: promptBudget,
       changed: improved,
+      kvResetRequested: Boolean(improved && ggufSessionKey),
       cannotFit: afterTokens > promptBudget,
       lossless: compacted.lossless,
       withEvidence: Boolean(evidence)
