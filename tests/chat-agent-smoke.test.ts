@@ -11,6 +11,7 @@ import { join } from 'path'
  * make the requested edits, verify them, and return a useful final answer.
  */
 const harness = vi.hoisted(() => ({
+  receiptFailure: '' as '' | 'missing' | 'throw',
   replies: [] as string[],
   allocatedContext: 0,
   contextLoads: [] as number[],
@@ -30,6 +31,15 @@ const harness = vi.hoisted(() => ({
     detail: string
   }>
 }))
+
+vi.mock('../electron/main/services/checkpoints', async original => {
+  const actual = await original<typeof import('../electron/main/services/checkpoints')>()
+  return { ...actual, recordWriteOp: (...args: Parameters<typeof actual.recordWriteOp>) => {
+    if (harness.receiptFailure === 'missing') return null
+    if (harness.receiptFailure === 'throw') throw new Error('synthetic disk full')
+    return actual.recordWriteOp(...args)
+  } }
+})
 
 vi.mock('../electron/main/services/chat-runtime', () => ({
   streamModelChat: async function* (options: {
@@ -148,6 +158,7 @@ import type { TurnPlan } from '../src/shared/settings-schema'
 let workspacePath: string
 
 beforeEach(() => {
+  harness.receiptFailure = ''
   workspacePath = mkdtempSync(join(tmpdir(), 'eris-chat-smoke-'))
   setWorkspaceTrusted(workspacePath, true)
   mkdirSync(join(workspacePath, 'src'), { recursive: true })
@@ -255,6 +266,20 @@ function expectCompleted(events: AgentRunnerEvent[]): void {
 }
 
 describe('chat agent complex smoke test', () => {
+  it.each(['missing', 'throw'] as const)('preserves an applied edit when checkpoint evidence is %s', async failure => {
+    harness.receiptFailure = failure
+    const content = 'export const receiptFaultWasApplied = true\n'.repeat(8)
+    harness.replies.push(JSON.stringify({ name: 'write_file', path: 'src/receipt.ts', content }))
+    const events = await drain(runAgentWithWorkspaceTools({ workspacePath, settings: getDefaults(),
+      model: 'builtin:composer-lite', messages: [{ role: 'user', content: 'Create src/receipt.ts in this project' }],
+      temperature: 0, getSecret: () => null, mode: 'agent', turnPlan: fullEditPlan(), mcp: 'off' }))
+    expect(readFileSync(join(workspacePath, 'src/receipt.ts'), 'utf8')).toBe(content)
+    expect(events).toContainEqual(expect.objectContaining({ type: 'progress', incomplete: true,
+      filesTouched: expect.arrayContaining(['src/receipt.ts']) }))
+    expect(lastAnswer(events)).toContain('evidence could not be saved')
+    expect(harness.prompts).toHaveLength(1)
+    expect(harness.verifyCalls).toBe(0)
+  })
   it('runs a file-generation follow-up through intake and actually creates every requested file', async () => {
     const settings = getDefaults()
     const text = 'generate those files here in the project'

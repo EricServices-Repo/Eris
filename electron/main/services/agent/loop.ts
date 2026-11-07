@@ -2963,6 +2963,9 @@ async function* runAgentInternal(options: {
         const call = toolCalls[i]
         const id = `${task.taskId}:t${toolExecRounds}_${i}`
         const resultStart = resultParts.length
+        let result: { ok: boolean; detail: string; mutated: boolean; path?: string } = {
+          ok: false, detail: 'Tool did not complete.', mutated: false
+        }
         let releaseWrite: (() => void) | undefined
         try {
           const toolStartedAt = parallelReadStartTimes.get(i) ?? Date.now()
@@ -3165,7 +3168,6 @@ async function* runAgentInternal(options: {
             }
           }
 
-          let result: { ok: boolean; detail: string; mutated: boolean; path?: string }
 
           const approvalKind =
             toolContract?.approval === 'command'
@@ -4476,6 +4478,22 @@ async function* runAgentInternal(options: {
             `TOOL_RESULT ${call.name}${result.path ? ` path=${result.path}` : ''}${journaled ? trustLabel(journaled.trust) : ''}:\n${truncateForModel(result.detail)}` +
               (result.ok ? '' : `\nRECOVERY: ${toolFailureRecovery(call.name, result.detail)}`)
           )
+        } catch (error) {
+          if (!result.mutated) throw error
+          // The effect happened before its receipt failed. Stop this attempt so
+          // recovery cannot repeat an operation whose durable outcome is uncertain.
+          const changedPath = result.path ?? argString(call.args, 'path')
+          if (changedPath && !filesTouched.includes(changedPath)) filesTouched.push(changedPath)
+          workspaceMutated = true
+          const reason = 'A workspace change was applied, but its evidence could not be saved. Inspect the changed files and checkpoint storage before continuing.'
+          actionLog.push(reason)
+          yield { type: 'workspace-changed' }
+          yield { type: 'progress', step, actionLog: [...actionLog], filesTouched: [...filesTouched], incomplete: true }
+          if (options.signal?.aborted) throw error
+          appendTaskEvent(task.taskId, 'mutation-evidence-failed', { tool: call.name, path: changedPath })
+          yield { type: 'status', text: 'Incomplete · mutation evidence unavailable' }
+          yield { type: 'answer', text: `${reason}\nApplied change: ${changedPath || 'workspace effect'}. Verification is incomplete.`, replace: true }
+          return
         } finally {
           releaseWrite?.()
           workerMessages.push({
