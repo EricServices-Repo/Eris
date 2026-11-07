@@ -53,6 +53,7 @@ export default {
         docs: {
           path: '../docs',
           routeBasePath: '/',
+          sidebarPath: './sidebars.mjs',
           beforeDefaultRemarkPlugins: [repositoryLinks],
           editUrl: ({ docPath }) => `${repository}/edit/main/docs/${docPath}`
         }
@@ -60,6 +61,7 @@ export default {
     ]
   ],
   themeConfig: {
+    docs: { sidebar: { autoCollapseCategories: true } },
     colorMode: { respectPrefersColorScheme: true },
     navbar: {
       title: 'Eris Docs',
