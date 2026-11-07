@@ -67,7 +67,8 @@ const vitest = spawnSync(
 )
 
 const results = existsSync(raw) ? JSON.parse(readFileSync(raw, 'utf8')) : null
-const qualification = qualifyResults(root, profile.files, results, vitest.status)
+const qualification = qualifyResults(root, profile.files, results, vitest.status,
+  (profile.platformExclusions ?? []).filter(entry => entry.platform === process.platform))
 if (source.commit !== git('rev-parse', 'HEAD') || source.lockfile !== sha256(join(root, 'package-lock.json')) ||
     source.untrackedDigest !== untrackedDigest() ||
     source.diffDigest !== createHash('sha256').update(git('diff', 'HEAD', '--', '.') ?? 'unknown').digest('hex') ||
@@ -98,6 +99,7 @@ const report = {
   files: profile.files,
   counts: qualification.counts,
   qualificationFailures: qualification.failures,
+  platformExclusions: qualification.exclusions,
   failed,
   // What a green run of this profile does not show. Stated in every report.
   notRun: profile.notRun ?? [],
