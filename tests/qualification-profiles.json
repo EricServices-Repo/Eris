@@ -3,6 +3,20 @@
   "profiles": {
     "agents": {
       "description": "Deterministic agent routing, contracts, tools, diagnostics and capture qualification. Gates npm run build.",
+      "platformExclusions": [
+        {
+          "platform": "win32",
+          "file": "tests/context-memory-identity.test.ts",
+          "fullName": "database incarnation reopens a replaced file instead of serving the old handle",
+          "reason": "Windows does not permit unlinking an open SQLite database; this fixture exercises POSIX live-file replacement. Closed-handle replacement is tested on Windows."
+        },
+        {
+          "platform": "win32",
+          "file": "tests/context-memory-identity.test.ts",
+          "fullName": "database incarnation keeps a journal delivered with the replacement database",
+          "reason": "Windows does not permit unlinking an open SQLite database; this fixture exercises POSIX live-file replacement with a delivered journal."
+        }
+      ],
       "files": [
         "tests/agent-capabilities.test.ts",
         "tests/model-context-allocation.test.ts",
