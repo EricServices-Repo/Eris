@@ -34,7 +34,7 @@ vi.mock('../electron/main/services/task-resolver', () => ({
   })
 }))
 vi.mock('../electron/main/services/task-outcome', () => ({
-  reviewTaskOutcome: async () => ({ verdict: 'supported', reason: 'test verdict' })
+  reviewTaskOutcome: vi.fn(async () => ({ verdict: 'supported', reason: 'test verdict' }))
 }))
 vi.mock('../electron/main/services/builtin-model', async () => {
   const actual = await vi.importActual<typeof import('../electron/main/services/builtin-model')>(
@@ -185,6 +185,28 @@ describe('chat:stream command approval', () => {
 })
 
 describe('main-process task authority', () => {
+  it('reports applied changes as incomplete when final task persistence fails', async () => {
+    const store = await import('../electron/main/services/task-store')
+    const actual = store.saveTask
+    let saves = 0
+    vi.spyOn(store, 'saveTask').mockImplementation(task => {
+      if (++saves === 2) throw new Error('synthetic task storage fault')
+      actual(task)
+    })
+    const requestId = randomUUID()
+    runner.script = async function* () {
+      yield { type: 'progress', step: 1, actionLog: ['Edited booking.ts'], filesTouched: ['booking.ts'] }
+      yield { type: 'answer', text: 'Implemented booking validation.' }
+    }
+    expect(await stream(undefined, requestId)).toBe(true)
+    const { getChatJob } = await import('../electron/main/services/chat-job-controller')
+    expect(getChatJob(requestId)?.status).toBe('incomplete')
+    const answer = sent.filter(e => e.channel === 'chat:answer').at(-1)?.payload.chunk
+    expect(answer).toContain('Implemented booking validation.')
+    expect(answer).toContain('Task result could not be saved')
+    expect(answer).toContain('booking.ts')
+    expect(sent.find(e => e.channel === 'chat:done')?.payload.incomplete).toBe(true)
+  })
   it('admits a corrected request after stop without reviving the earlier task', async () => {
     const originalId = randomUUID()
     const correctedId = randomUUID()
@@ -257,6 +279,34 @@ describe('main-process task authority', () => {
 })
 
 describe('canonical RAM history at the production chat IPC boundary', () => {
+  it('persists execution and verification evidence separately from evaluator timeout', async () => {
+    const chats = await import('../electron/main/services/chats')
+    const { reviewTaskOutcome } = await import('../electron/main/services/task-outcome')
+    vi.mocked(reviewTaskOutcome).mockResolvedValueOnce({
+      verdict: 'unresolved', failure: 'timeout', reason: 'Semantic assessment timed out.'
+    })
+    const requestId = randomUUID(), threadId = randomUUID()
+    const thread = { id: threadId, title: 'Booking', model: 'builtin:composer-lite', messages: [], createdAt: 1, updatedAt: 1 }
+    vi.spyOn(chats, 'getChat').mockResolvedValue(thread)
+    vi.spyOn(chats, 'appendChatMessage').mockImplementation(async (_root, _id, message) => ({ ...thread, messages: [message] }))
+    const memory = await import('../electron/main/services/context-memory')
+    vi.spyOn(memory, 'conversationContext').mockRejectedValue(Error('cache unavailable'))
+    runner.script = async function* () {
+      yield { type: 'progress', step: 1, actionLog: ['Changed booking.ts'], filesTouched: ['booking.ts'] }
+      yield { type: 'tool', tool: { id: 'v', name: 'verify', status: 'ok', detail: 'Fixture checks passed' } }
+      yield { type: 'answer', text: 'Implemented and tested booking validation.' }
+    }
+    expect(await stream({ text: 'Implement booking validation', threadId }, requestId)).toBe(true)
+    const saved = vi.mocked(chats.appendChatMessage).mock.calls.find(call => call[2].role === 'assistant')![2]
+    expect(saved.contextResult).toMatchObject({
+      terminal: 'incomplete', changedFiles: ['booking.ts'], completion: {
+        execution: 'completed', verification: 'passed', persistence: 'saved',
+        assessment: { status: 'unresolved', failure: 'timeout' }
+      }
+    })
+    expect(saved.content).toContain('Implemented and tested booking validation.')
+    expect(saved.content).toContain('Semantic assessment timed out')
+  })
   it('ignores renderer paging, recalls buried facts and persists the answer before terminal delivery', async () => {
     const chats = await import('../electron/main/services/chats')
     const { contextMemoryStore } = await import('../electron/main/services/context-memory-store')

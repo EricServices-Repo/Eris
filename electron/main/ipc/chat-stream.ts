@@ -199,6 +199,7 @@ export function registerChatStreamIpc(): void {
           const contextThreadId = payload.threadId ?? payload.prompt?.threadId
           let conversationMemory: MemoryPrompt | undefined
           let workingState: ThreadWorkingStateBuilder | undefined
+          let completionEvidence: import('../../../src/shared/task-contract').TaskCompletionEvidence | undefined
           const persistReply = async (terminal: string) => {
             if (!contextThreadId) return true
             const { content, thinking } = finalizePostedAnswer(
@@ -228,6 +229,7 @@ export function registerChatStreamIpc(): void {
                 agentId: replyAgentId ?? turnPlan?.agentId,
                 agentName: replyAgentName,
                 contextResult: {
+                  completion: completionEvidence,
                   workingState: workingState?.snapshot(terminal),
                   taskId: requestId,
                   terminal,
@@ -548,6 +550,7 @@ export function registerChatStreamIpc(): void {
           let telemetrySteps = 0
           let telemetryMutated = false
           let verifiedAfterLastEdit = false
+          let verificationState: 'passed' | 'failed' | 'not-run' = 'not-run'
           let editOwner: string | undefined
           let mixedEditOwners = false
           let usedCloud = false
@@ -1074,12 +1077,16 @@ export function registerChatStreamIpc(): void {
               if (evt.type === 'diff' && evidencePaths.size < 32) evidencePaths.add(evt.diff.path)
               if (evt.type === 'diff' || (evt.type === 'evidence' && evt.evidence.mutated)) {
                 verifiedAfterLastEdit = false
+                verificationState = 'not-run'
                 editOwner ??= resolvedModel
                 if (editOwner !== resolvedModel) mixedEditOwners = true
               }
               if (evt.type === 'tool' && evt.tool.name === 'verify') {
                 observedCheck = true
-                if (evt.tool.status !== 'running') verifiedAfterLastEdit = evt.tool.status === 'ok'
+                if (evt.tool.status !== 'running') {
+                  verifiedAfterLastEdit = evt.tool.status === 'ok'
+                  verificationState = verifiedAfterLastEdit ? 'passed' : 'failed'
+                }
               }
               if (evt.type === 'thinking') {
                 pendingThinking += evt.text
@@ -1225,6 +1232,12 @@ export function registerChatStreamIpc(): void {
                 }
               }
             }
+            completionEvidence = {
+              execution: runIncomplete ? 'incomplete' : 'completed',
+              verification: verificationState,
+              assessment: { status: 'not-run' },
+              persistence: contextThreadId ? 'saved' : 'not-required'
+            }
             if (turnPlan.task && needsOutcomeReview(turnPlan, runIncomplete)) {
               publish('chat:status', {
                 requestId,
@@ -1241,6 +1254,9 @@ export function registerChatStreamIpc(): void {
                 getSecret
               })
               publish('chat:outcome', { requestId, ...verdict })
+              completionEvidence.assessment = {
+                status: verdict.verdict, failure: verdict.failure, reason: verdict.reason
+              }
               if (verdict.verdict !== 'supported') {
                 runIncomplete = true
                 flushStreamChunks()
@@ -1262,9 +1278,18 @@ export function registerChatStreamIpc(): void {
                   })
                 )
               } catch (error) {
+                completionEvidence.persistence = 'failed'
+                runIncomplete = true
                 logWarn('Task result was not saved', {
                   requestId,
                   error: error instanceof Error ? error.message : String(error)
+                })
+                const changed = memoryFiles.length ? memoryFiles : (run?.filesTouched ?? [])
+                flushStreamChunks()
+                publish('chat:status', { requestId, text: 'Incomplete · task result could not be saved' })
+                publish('chat:answer', {
+                  requestId, replace: true,
+                  chunk: `${visibleAnswer}\n\nTask result could not be saved. Applied changes are preserved${changed.length ? `: ${changed.join(', ')}` : '.'} Follow-up recovery is unavailable until storage is repaired; inspect the files before retrying.`
                 })
               }
             }
