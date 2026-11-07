@@ -9,6 +9,34 @@ export interface TaskDeadline {
   dispose(): void
 }
 
+/** Stop delivery from an abort-ignoring model adapter; never used to abandon filesystem effects. */
+export async function* modelStreamWithAbort<T>(source: AsyncIterable<T>, signal?: AbortSignal): AsyncGenerator<T, void, unknown> {
+  const iterator = source[Symbol.asyncIterator]()
+  let completed = false
+  let onAbort: () => void = () => {}
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }))
+    if (signal?.aborted) onAbort()
+    else signal?.addEventListener('abort', onAbort, { once: true })
+  })
+  aborted.catch(() => undefined)
+  const check = () => { if (signal?.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' }) }
+  try {
+    check()
+    for (;;) {
+      const next = iterator.next()
+      next.catch(() => undefined)
+      const result = await Promise.race([next, aborted])
+      check()
+      if (result.done) { completed = true; return }
+      yield result.value
+    }
+  } finally {
+    signal?.removeEventListener('abort', onAbort)
+    if (!completed) void Promise.resolve().then(() => iterator.return?.()).catch(() => undefined)
+  }
+}
+
 /**
  * Child abort scope for one task: linked to the run's cancellation signal and
  * aborted after `timeoutMs`. The stop reason records which one fired first.

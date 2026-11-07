@@ -11,6 +11,7 @@ import { resolveTaskIntent, resolveTaskDecision } from '../electron/main/service
 import { reviewTaskOutcome } from '../electron/main/services/task-outcome'
 import { createTaskContract } from '../electron/main/services/task-intake'
 import { getDefaults } from '../electron/main/services/settings'
+import { modelStreamWithAbort } from '../electron/main/services/task-deadline'
 import type { TurnPlan } from '../src/shared/settings-schema'
 beforeEach(() => {
   model.requests.length = 0
@@ -24,6 +25,24 @@ const options = () => ({
   mode: 'agent' as const,
   settings: getDefaults(),
   getSecret: () => null
+})
+describe('abort-ignoring model transport', () => {
+  it('releases the caller when the pending model step never settles', async () => {
+    const controller = new AbortController()
+    const source = { [Symbol.asyncIterator]: () => ({ next: () => new Promise<IteratorResult<string>>(() => {}) }) }
+    const next = modelStreamWithAbort(source, controller.signal).next()
+    const rejection = expect(next).rejects.toMatchObject({ name: 'AbortError' })
+    controller.abort('timeout')
+    await rejection
+  })
+  it('does not invoke a pre-cancelled adapter', async () => {
+    const next = vi.fn()
+    const controller = new AbortController()
+    controller.abort('cancelled')
+    const source = { [Symbol.asyncIterator]: () => ({ next }) }
+    await expect(modelStreamWithAbort(source, controller.signal).next()).rejects.toMatchObject({ name: 'AbortError' })
+    expect(next).not.toHaveBeenCalled()
+  })
 })
 describe('task meaning resolution', () => {
   it.each([undefined, 'cold-native-routing-skipped', 'remote-auto-routing-skipped'] as const)(

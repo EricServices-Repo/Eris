@@ -131,6 +131,8 @@ export const SettingsSchema = z.object({
     constrainLocalToolCalls: z.boolean().default(true),
     /** Maximum model/tool rounds for a single run before saving an incomplete checkpoint. */
     maxStepsPerRun: z.number().int().min(10).max(200).default(60),
+    /** Elapsed execution budget shared by all steps, retries and inline specialists. */
+    maxRunMinutes: z.number().int().min(1).max(120).default(15),
     /**
      * Living project memory (.eris/context.md):
      * auto = write after agent runs / ask_user replies;
