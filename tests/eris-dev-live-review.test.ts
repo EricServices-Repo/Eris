@@ -301,6 +301,27 @@ describe('MR-002/MR-007/MR-009/MR-012 live capture', () => {
     body.messages.some((m) => m.content?.includes('Interpret the latest request'))
   const QUESTION = 'I need a practical example of connection pooling in Python?'
 
+  it('executes production Auto-local selection and records the actual worker', async () => {
+    const live = liveModel()
+    live.model = 'auto-local'
+    const connection = live.settings.models.connections[0]!
+    connection.baseUrl = 'http://127.0.0.1:1234/v1'
+    connection.apiKeyRef = ''
+    const sent: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body))
+      sent.push(body.model)
+      return sse(isIntent(body) ? '{"intent":"answer","confidence":0.95}' : 'A quiet fox explored the forest and found its way home.')
+    }))
+    const result = await captureQuestion(0, 'Write a short story about a fox', null, 8192,
+      'ask', new AbortController().signal, { live })
+    expect(result.requests.filter(request => request.purpose === 'agent').map(request => request.model))
+      .toEqual(['test-selected-model'])
+    expect(sent).not.toContain('auto-local')
+    expect(result.inference?.model).toBe('test-selected-model')
+    expect(result.stages.inference).toBe('completed')
+  })
+
   it('keeps every streamed delta and records a deadline, not a generic error', async () => {
     vi.stubGlobal(
       'fetch',

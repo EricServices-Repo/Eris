@@ -202,7 +202,7 @@ export async function captureQuestion(
         request = {
           ...request,
           settings,
-          model: live.model,
+          model: live.model === 'auto-local' ? request.model : live.model,
           getSecret: live.getSecret,
           ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {})
         }
@@ -223,6 +223,10 @@ export async function captureQuestion(
       pendingDispatch = undefined
       result.requests.push(call)
       if (live) {
+        if (request.purpose === 'agent') {
+          result.inference!.model = request.model
+          result.latency!.model = request.model
+        }
         if (request.purpose === 'agent') captured = true
         if (request.purpose === 'agent' && options.fault) {
           const message = `Injected ${options.fault} at agent transport before provider invocation`
@@ -347,7 +351,7 @@ export async function captureQuestion(
             ? `Intent resolver · ${resolution.source}:${resolution.rule} · live model ${live.model}`
             : describeResolution(resolution)
         )
-        if (live) {
+        if (live && live.model !== 'auto-local') {
           plan.models = { chat: live.model, tools: live.model, router: live.model }
           plan.cloudPreferred = false
           plan.error = undefined
@@ -400,6 +404,7 @@ export async function captureQuestion(
           if (event.type === 'tool' && event.tool.durationMs !== undefined)
             result.phases.toolMs = (result.phases.toolMs ?? 0) + event.tool.durationMs
           if (event.type === 'progress' && event.incomplete) incomplete = true
+          if (event.type === 'progress') result.changedFiles = [...new Set(event.filesTouched)].slice(0, 100)
           if (event.type === 'answer') {
             if (result.latency?.firstAnswerMs === null && event.text.trim())
               result.latency.firstAnswerMs = Date.now() - started

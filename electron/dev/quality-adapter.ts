@@ -1,10 +1,11 @@
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, realpathSync, statSync } from 'fs'
 import { tmpdir, homedir } from 'os'
 import { join, dirname, isAbsolute } from 'path'
 import { createHash } from 'crypto'
 import { captureQuestion } from './capture'
 import { prepareLiveModel } from './models'
 import { CaptureSanitizer } from './sanitize'
+import { isPathInside } from '../main/services/workspace-fs'
 import type { QualityAdapter, QualityResult } from '../../src/shared/quality'
 export const QUALITY_ADAPTER_VERSION = 'eris-production-diagnostics-1'
 /** Maintained adapter: fixture files and production intake/transport/tool path, never a separate prompt implementation. */
@@ -78,12 +79,21 @@ export function productionQualityAdapter(
           return value ? [value] : []
         })
         const files: Record<string, string> = {}
+        const omittedFiles: string[] = []
+        let outputBytes = 0
         if (workspace)
-          for (const path of Object.keys(test.project!)) {
+          for (const path of [...new Set([...Object.keys(test.project!), ...(result.changedFiles ?? [])])]) {
             try {
-              files[path] = readFileSync(join(workspace, path), 'utf8')
+              const target = realpathSync(join(workspace, path))
+              const size = statSync(target).size
+              if (!isPathInside(realpathSync(workspace), target) || Object.keys(files).length >= 100 || outputBytes + size > 2_000_000) {
+                omittedFiles.push(path)
+                continue
+              }
+              files[path] = readFileSync(target, 'utf8')
+              outputBytes += size
             } catch {
-              /* missing files remain absent evidence */
+              omittedFiles.push(path)
             }
           }
         const output: QualityResult = {
@@ -110,6 +120,7 @@ export function productionQualityAdapter(
             events: result.events,
             termination: result.termination?.cause,
             files,
+            omittedFiles,
             execution: 'diagnostics; host effects remain blocked',
             deliverable: result.deliverable
           }

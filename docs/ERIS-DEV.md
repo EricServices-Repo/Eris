@@ -7,7 +7,7 @@ Eris-Dev is a separate Electron app (`app.eris.dev`) with its own data/profile a
 ## Choose the kind of evidence
 
 - **Capture requests only:** no real inference. Capture common transport requests and supply labeled semantic-intent fixtures; stop at the first agent request. A response is not generated.
-- **Run questions with a selected model:** opt-in real native/API inference through production provider transport, including subsequent bounded tool steps in a temporary workspace. The selected model is pinned across the run.
+- **Run questions with a selected model:** opt-in real native/API inference through production provider transport, including subsequent bounded tool steps in a temporary workspace. A named model pins execution. Auto-local uses the production eligible local-model selector, and each captured call records its actual worker.
 - **Stateful memory scenarios:** explicit test continuity over an isolated thread, source history and prior task, rather than automatically joining unrelated imported questions.
 - **Quality scenarios:** budgeted synthetic fixtures, task/deliverable evidence and separately reviewed results. A green request invariant is not an answer-quality score.
 

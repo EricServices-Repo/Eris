@@ -42,7 +42,7 @@ function settings(): AppSettings {
 export async function devModels(): Promise<DevModelOption[]> {
   const current = settings()
   const status = await getModelsStatus(current, () => null)
-  return status.models
+  const models = status.models
     .filter((m) => m.ready)
     .map((m) => ({
       id: m.source === 'connection' ? JSON.stringify([m.connectionId, m.name]) : m.name,
@@ -51,6 +51,7 @@ export async function devModels(): Promise<DevModelOption[]> {
           ? `${current.models.connections.find((c) => c.id === m.connectionId)?.name ?? 'API'} · ${m.name}`
           : `${m.source} · ${m.name}`
     }))
+  return models.length ? [{ id: 'auto-local', label: 'Auto-local · production routing' }, ...models] : models
 }
 
 export async function connectDevModel(input: {
@@ -83,7 +84,7 @@ export async function prepareLiveModel(id: string, context: number) {
     const [connectionId, name] = JSON.parse(id) as [string, string]
     selected.models.connections = selected.models.connections.filter((c) => c.id === connectionId)
     model = name
-  } else
+  } else if (id !== 'auto-local')
     selected.models.connections = selected.models.connections.filter((c) => c.type === 'builtin')
   selected.models.defaultModel = model
   selected.models.contextWindow = context
