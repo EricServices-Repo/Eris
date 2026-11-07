@@ -12,7 +12,9 @@ Reviewed against integrated `main` `0a54629` on 2026-11-01 (package v0.6.10). Th
 
 ## Execution and evidence
 
-Live mode uses the selected model for both semantic intent requests and agent requests through the production provider transport. The production router still decides when an intent call is unnecessary. The selected model is pinned across the run; automatic model substitutions and Cloud Composer handoffs are disabled. Native GGUF inference uses the same utility-process worker as Eris.
+Choose a named model for a pinned comparison, or **Auto-local · production routing** to exercise the production local-model selector and eligible local recovery pool. Auto-local requests retain the router's selected worker at the provider boundary. Each request records its actual model, and latency records identify the execution worker. Cloud execution remains unavailable in this diagnostics mode. Native GGUF inference uses the same utility-process worker as Eris.
+
+Quality-suite exports include newly created files observed in production progress receipts, alongside original fixture files, for independent review. Evidence reads remain inside the fixture, with 100-file and 2 MB limits and explicit omission lists. File contents and a completed response require independent grading before they can establish artifact correctness.
 
 Each live question gets a fresh copy of the selected fixture/project, so edits cannot contaminate later questions. Diagnostics guards block host shell commands, web/MCP/image effects and background delegation. This mode records model and agent behavior; it cannot establish that generated code passes tests. Answer quality stays **not evaluated** until separately reviewed. Imported history belongs to its question; questions are not automatically combined into a conversation.
 
@@ -28,7 +30,7 @@ Automated coverage includes actual production request serialization and SSE pars
 
 ## Automatic routing versus a pinned comparison
 
-The production IDE's Agent Auto and Auto-local/Auto-any execution policies are distinct. This live corpus runner intentionally pins its selected model, including the semantic intake calls intercepted by its adapter. Use production routing/model-switching fixtures or a dedicated automatic-policy scenario to evaluate routing and recovery. The desktop path skips classification for clear turns and does not load a cold native model merely to classify an ambiguous turn.
+The production IDE's Agent Auto chooses a role independently of model policy. In Eris-Dev, a named model pins execution; Auto-local exercises the production local selection policy. Automatic remote selection is not exposed by this runner. Limits, redaction and diagnostics effect restrictions apply to both choices. Record the selected policy and actual per-call models when comparing runs.
 
 Capture records are taken at the shared transport seam. Actual native/server payloads can be revalidated, budgeted and adapted afterward. Correlate dispatch metadata and source/model provenance when reviewing omitted RAM evidence. Refer to [the current architecture](ARCHITECTURE.md) and [memory guide](CONTEXT-MEMORY.md), particularly the parent-lease lifetime limit for asynchronous children.
 

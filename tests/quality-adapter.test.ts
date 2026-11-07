@@ -47,12 +47,14 @@ describe('supported production quality adapter', () => {
         expect(options?.maxCalls).toBe(6)
         expect(options?.maxOutputTokens).toBe(100)
         writeFileSync(join(workspace!, 'counter.js'), 'after')
+        writeFileSync(join(workspace!, 'created.js'), 'export const created = true')
         return {
           response: 'private-custom-credential',
           completion: { status: 'completed' },
           requests: [{ messages: [{ role: 'user', content: 'private-custom-credential' }] }],
           events: ['Blocked command: npm test'],
-          inference: { calls: 2 }
+          inference: { calls: 2 },
+          changedFiles: ['created.js', '../outside.js']
         } as unknown as DevResult
       }
     })
@@ -68,7 +70,8 @@ describe('supported production quality adapter', () => {
     expect(result.calls).toBe(2)
     expect(JSON.stringify(result)).not.toContain('private-custom-credential')
     expect(JSON.stringify(result)).not.toContain(root!)
-    expect(result.observed?.files).toEqual({ 'counter.js': 'after' })
+    expect(result.observed?.files).toEqual({ 'counter.js': 'after', 'created.js': 'export const created = true' })
+    expect(result.observed?.omittedFiles).toContain('../outside.js')
     expect(existsSync(root!)).toBe(false)
   })
   it('refuses traversal fixtures before preparing a model', async () => {

@@ -178,6 +178,8 @@ export type DevTerminationCause =
   | 'worker-exited'
 
 export interface DevResult extends DevSummary {
+  /** Paths observed in production progress receipts, including partial runs. */
+  changedFiles?: string[]
   memory?: import('./dev-memory-replay').DevMemoryTrace
   task?: unknown
   requests: DevCapture[]
