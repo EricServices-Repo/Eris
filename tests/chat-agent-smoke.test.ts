@@ -280,6 +280,20 @@ function expectCompleted(events: AgentRunnerEvent[]): void {
 }
 
 describe('chat agent complex smoke test', () => {
+  it('keeps custom parent abort reasons as cancellation rather than a runtime failure', async () => {
+    const controller = new AbortController()
+    controller.abort('user requested stop')
+    const run = async () => {
+      for await (const _event of runAgentWithWorkspaceTools({
+        workspacePath, settings: getDefaults(), model: 'builtin:composer-lite',
+        messages: [{ role: 'user', content: 'Create src/stopped.ts' }], temperature: 0,
+        getSecret: () => null, turnPlan: fullEditPlan(), mcp: 'off', signal: controller.signal
+      })) { /* no effect may follow pre-cancellation */ }
+    }
+    await expect(run()).rejects.toMatchObject({ name: 'AbortError' })
+    expect(harness.prompts).toHaveLength(0)
+    expect(existsSync(join(workspacePath, 'src/stopped.ts'))).toBe(false)
+  })
   it('stops at the shared elapsed budget and preserves an applied file before a stalled next step', async () => {
     harness.replies.push(JSON.stringify({ name: 'write_file', arguments: { path: 'src/timed.ts', content: 'export const saved = true\n' } }))
     harness.stallAfterReplies = true

@@ -372,7 +372,8 @@ export async function* runAgentWithWorkspaceTools(
     }
     throwIfAborted(deadline.signal)
   } catch (error) {
-    if (options.signal?.aborted || deadline.stopReason() !== 'timeout') throw error
+    if (options.signal?.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
+    if (deadline.stopReason() !== 'timeout') throw error
     const reason = 'Run time limit reached. This task is incomplete; inspect the preserved changes before starting another request.'
     yield { type: 'progress', step: lastStep, filesTouched, actionLog: [...actionLog, reason], incomplete: true }
     yield { type: 'status', text: 'Incomplete · run time limit reached' }
