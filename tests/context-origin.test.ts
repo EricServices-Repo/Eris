@@ -136,11 +136,11 @@ describe('host-sealed conversation origin (#263)', () => {
     await saveMemoryControls(source, 't', { ...emptyMemoryControls(), forgotten: ['fact'] })
     await expect(resolveContextOrigin(bound, execution())).rejects.toThrow('changed')
   })
-  it.skipIf(process.platform === 'win32')(
+  it(
     'canonicalizes source aliases and keeps nested child scope',
     async () => {
       const alias = join(folder, 'alias')
-      symlinkSync(source, alias)
+      symlinkSync(source, alias, process.platform === 'win32' ? 'junction' : 'dir')
       const fromAlias = await createContextOrigin({
         sourceRoot: alias,
         projectRoot: join(alias, 'app'),
