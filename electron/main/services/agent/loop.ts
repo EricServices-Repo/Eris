@@ -1,3 +1,4 @@
+import { createTaskDeadline } from '../task-deadline'
 import { eligibleOutbound } from '../eligible-outbound'
 import { createPromptTokenCounter } from './prompt-token-counter'
 import { resolveModelCapabilities } from '../model-capabilities'
@@ -41,7 +42,6 @@ import {
   setContextSummary
 } from '../workspace-context'
 import { runVerify } from '../verify'
-import { createTaskDeadline } from '../task-deadline'
 import type { OpenAIToolDef } from '../chat-runtime'
 import {
   COMPOSER_OPENAI_TOOLS,
