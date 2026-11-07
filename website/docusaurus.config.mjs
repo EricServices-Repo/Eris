@@ -1,4 +1,5 @@
 import { dirname, relative, resolve, sep } from 'node:path'
+import { env } from 'node:process'
 import { fileURLToPath, URL } from 'node:url'
 
 const repository = 'https://github.com/EricServices-Repo/Eris'
@@ -43,22 +44,24 @@ export default {
   stylesheets: [
     'https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap'
   ],
-  themes: ['@docusaurus/theme-mermaid'],
-  presets: [
+  // Register the features this site uses without pulling in the unused SVG loader.
+  themes: [
+    ['@docusaurus/theme-classic', { customCss: './src/css/custom.css' }],
+    '@docusaurus/theme-mermaid'
+  ],
+  plugins: [
     [
-      'classic',
+      '@docusaurus/plugin-content-docs',
       {
-        blog: false,
-        theme: { customCss: './src/css/custom.css' },
-        docs: {
-          path: '../docs',
-          routeBasePath: '/',
-          sidebarPath: './sidebars.mjs',
-          beforeDefaultRemarkPlugins: [repositoryLinks],
-          editUrl: ({ docPath }) => `${repository}/edit/main/docs/${docPath}`
-        }
+        path: '../docs',
+        routeBasePath: '/',
+        sidebarPath: './sidebars.mjs',
+        beforeDefaultRemarkPlugins: [repositoryLinks],
+        editUrl: ({ docPath }) => `${repository}/edit/main/docs/${docPath}`
       }
-    ]
+    ],
+    '@docusaurus/plugin-content-pages',
+    ...(env.NODE_ENV === 'production' ? ['@docusaurus/plugin-sitemap'] : [])
   ],
   themeConfig: {
     docs: { sidebar: { autoCollapseCategories: true } },
