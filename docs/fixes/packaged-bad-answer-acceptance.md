@@ -1,0 +1,9 @@
+# Packaged bad-answer regression acceptance
+
+`node scripts/check-packaged-app.cjs --auto` now requires three isolated scripted production-path cases in addition to renderer/preload checks. The installed bundle runs the production router, contract compiler, prompts and tool executor for the question patterns in #406, #407 and #413. Two cases create three rental-configuration fixture files and check actual disk data against independent field expectations. The third cancels after the first write, verifies that file and its observed mutation remain, and rejects later writes.
+
+The fixture uses JSON so its independent data oracle works on macOS and Windows without an installed PHP runtime. It does not certify the original PHP website, real local-model quality, GPU performance, or renderer send interaction. These exclusions are in the versioned report. The adapter is scripted; provider traffic and host commands remain blocked by production diagnostics safeguards.
+
+The existing isolated smoke profile is required. Fixture roots are removed after each case, user data remains isolated, and no updater/warmup runs. The checker rejects missing case IDs, partial denominators or failed cases. CI archives reports under `out/qualification/packaged-chat-{windows,macos}.json`; reports include platform, architecture, app version and build-stamped source/lock identity. Publishing a new installer remains a separate release action.
+
+The source regression suite runs the same acceptance function before packaging. Required release acceptance still includes real-model execution of the original conversation on supported Windows hardware and independent PHP application checks.
