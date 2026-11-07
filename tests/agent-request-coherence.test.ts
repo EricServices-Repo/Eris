@@ -3,6 +3,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { captureQuestion } from '../electron/dev/capture'
+import { runBadAnswerSmoke } from '../checks/bad-answer-smoke'
 import { classifyIntent } from '../electron/main/services/chat-router'
 import { conservativeFallback } from '../electron/main/services/task-resolver'
 import { requestInvariantFindings } from '../electron/main/services/agent/request-invariants'
@@ -31,6 +32,13 @@ const Q43 =
   'Show me both a simple and a more robust version of error boundaries that support retry?'
 
 const roots: string[] = []
+it('executes the packaged bad-answer scenarios with independent fixture checks', async () => {
+  const parent = mkdtempSync(join(tmpdir(), 'eris-bad-answer-acceptance-'))
+  roots.push(parent)
+  const report = await runBadAnswerSmoke(parent)
+  expect(report, JSON.stringify(report)).toMatchObject({ total: 3, passed: 3, liveModel: false, providerCalls: 0 })
+  expect(report.cases.find(result => result.issue === 406)).toMatchObject({ stopped: true, changedFiles: ['index.json'] })
+})
 function fixture(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), 'eris-coherence-'))
   for (const [name, content] of Object.entries(files)) writeFileSync(join(root, name), content)

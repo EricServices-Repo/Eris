@@ -38,9 +38,16 @@ child.once('exit', (code) => {
     const report = JSON.parse(readFileSync(output, 'utf8'))
     if (code !== 0 || !report.ok || !report.packaged)
       throw new Error(report.error || 'App failed smoke checks')
+    const acceptance = report.chatAcceptance
+    if (acceptance?.total !== 3 || acceptance.passed !== 3 || acceptance.mode !== 'scripted-production-tools' ||
+        acceptance.liveModel !== false || acceptance.providerCalls !== 0 ||
+        ![406, 407, 413].every(issue => acceptance.cases?.some(result => result.issue === issue && result.passed)))
+      throw new Error('Packaged bad-answer acceptance evidence is missing or failed')
     console.log(JSON.stringify(report))
-    if (process.env.ERIS_SMOKE_REPORT)
+    if (process.env.ERIS_SMOKE_REPORT) {
+      require('node:fs').mkdirSync(require('node:path').dirname(process.env.ERIS_SMOKE_REPORT), { recursive: true })
       require('node:fs').copyFileSync(output, process.env.ERIS_SMOKE_REPORT)
+    }
   } catch (error) {
     console.error(error.message, logs)
     process.exitCode = 1

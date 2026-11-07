@@ -41,6 +41,8 @@ jobs:
 
       - name: Windows worker recovery and packaged preload smoke
         run: npm run check:recovery && node scripts/check-packaged-app.cjs --auto
+        env:
+          ERIS_SMOKE_REPORT: out/qualification/packaged-chat-windows.json
 
       - name: Upload Eris-Dev Windows installer
         uses: actions/upload-artifact@v4
@@ -139,6 +141,8 @@ jobs:
 
       - name: Smoke packaged renderer and preload
         run: node scripts/check-packaged-app.cjs --auto
+        env:
+          ERIS_SMOKE_REPORT: out/qualification/packaged-chat-macos.json
 
       - name: Audit desktop, tooling, and cloud worker dependencies
         run: npm run audit:security

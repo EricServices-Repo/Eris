@@ -163,8 +163,11 @@ app.whenReady().then(async () => {
             maxDepth: 0
           })
           result.workerReady = Array.isArray(tree)
+          const { runBadAnswerSmoke } = await import('../../checks/bad-answer-smoke')
+          result.chatAcceptance = await runBadAnswerSmoke(process.env.ERIS_SMOKE_ROOT!)
           const ok =
             result.workerReady &&
+            result.chatAcceptance.total === 3 && result.chatAcceptance.passed === 3 &&
             result.catalogChecked &&
             result.rendererMounted &&
             result.nodeIsolated &&
@@ -177,6 +180,7 @@ app.whenReady().then(async () => {
               packaged: app.isPackaged,
               platform: process.platform,
               arch: process.arch,
+              source: __ERIS_SOURCE_IDENTITY__,
               ...result
             }),
             { mode: 0o600 }
