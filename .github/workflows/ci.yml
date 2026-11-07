@@ -95,7 +95,7 @@ jobs:
           set -euo pipefail
           mkdir -p out/qualification/cancellation
           for seed in 17 43 101 199 307; do
-            npx vitest run tests/background-cancellation.test.ts tests/chat-job-terminal.test.ts --sequence.shuffle --sequence.seed="$seed" --reporter=json --outputFile="out/qualification/cancellation/seed-$seed.json"
+            npx vitest run tests/background-cancellation.test.ts tests/chat-job-terminal.test.ts tests/task-tree-budget.test.ts --sequence.shuffle --sequence.seed="$seed" --reporter=json --outputFile="out/qualification/cancellation/seed-$seed.json"
           done
 
       - name: Desktop client smoke (scripted, no provider calls)
