@@ -338,6 +338,7 @@ export interface ChatMessage {
   agentName?: string
   model?: string
   contextResult?: {
+    completion?: import('./task-contract').TaskCompletionEvidence
     childOutcome?: import('./child-outcome').ChildOutcome
     workingState?: import('./thread-working-state').ThreadWorkingState
     taskId: string

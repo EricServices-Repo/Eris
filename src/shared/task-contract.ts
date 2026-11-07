@@ -88,6 +88,18 @@ export interface TaskTurnResult {
   recommendationStatus?: RecommendationStatus[]
 }
 
+/** Independent finalization dimensions; evaluator availability is not execution evidence. */
+export interface TaskCompletionEvidence {
+  execution: 'completed' | 'incomplete'
+  verification: 'passed' | 'failed' | 'not-run'
+  assessment: {
+    status: 'supported' | 'partial' | 'unresolved' | 'not-run'
+    failure?: string
+    reason?: string
+  }
+  persistence: 'saved' | 'failed' | 'not-required'
+}
+
 /** How the resolver reached the final intent. Stable rule IDs, not prose. */
 export interface IntentResolution {
   intent: ChatIntent
