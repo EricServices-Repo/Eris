@@ -4489,7 +4489,7 @@ async function* runAgentInternal(options: {
           actionLog.push(reason)
           yield { type: 'workspace-changed' }
           yield { type: 'progress', step, actionLog: [...actionLog], filesTouched: [...filesTouched], incomplete: true }
-          if (options.signal?.aborted) throw error
+          throwIfAborted(options.signal)
           appendTaskEvent(task.taskId, 'mutation-evidence-failed', { tool: call.name, path: changedPath })
           yield { type: 'status', text: 'Incomplete · mutation evidence unavailable' }
           yield { type: 'answer', text: `${reason}\nApplied change: ${changedPath || 'workspace effect'}. Verification is incomplete.`, replace: true }

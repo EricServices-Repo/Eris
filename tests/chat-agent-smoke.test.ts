@@ -12,6 +12,7 @@ import { join } from 'path'
  */
 const harness = vi.hoisted(() => ({
   receiptFailure: '' as '' | 'missing' | 'throw',
+  receiptAfterWrite: () => {},
   replies: [] as string[],
   allocatedContext: 0,
   contextLoads: [] as number[],
@@ -35,6 +36,7 @@ const harness = vi.hoisted(() => ({
 vi.mock('../electron/main/services/checkpoints', async original => {
   const actual = await original<typeof import('../electron/main/services/checkpoints')>()
   return { ...actual, recordWriteOp: (...args: Parameters<typeof actual.recordWriteOp>) => {
+    harness.receiptAfterWrite()
     if (harness.receiptFailure === 'missing') return null
     if (harness.receiptFailure === 'throw') throw new Error('synthetic disk full')
     return actual.recordWriteOp(...args)
@@ -159,6 +161,7 @@ let workspacePath: string
 
 beforeEach(() => {
   harness.receiptFailure = ''
+  harness.receiptAfterWrite = () => {}
   workspacePath = mkdtempSync(join(tmpdir(), 'eris-chat-smoke-'))
   setWorkspaceTrusted(workspacePath, true)
   mkdirSync(join(workspacePath, 'src'), { recursive: true })
@@ -266,6 +269,23 @@ function expectCompleted(events: AgentRunnerEvent[]): void {
 }
 
 describe('chat agent complex smoke test', () => {
+  it('preserves the applied path when cancellation coincides with missing receipt evidence', async () => {
+    const controller = new AbortController()
+    harness.receiptFailure = 'missing'
+    harness.receiptAfterWrite = () => controller.abort()
+    harness.replies.push(JSON.stringify({ name: 'write_file', path: 'src/cancelled.ts', content: 'export const applied = true\n'.repeat(8) }))
+    const events: AgentRunnerEvent[] = []
+    const run = async () => {
+      for await (const event of runAgentWithWorkspaceTools({ workspacePath, settings: getDefaults(),
+        model: 'builtin:composer-lite', messages: [{ role: 'user', content: 'Create src/cancelled.ts in this project' }],
+        temperature: 0, getSecret: () => null, signal: controller.signal, mode: 'agent', turnPlan: fullEditPlan(), mcp: 'off' })) events.push(event)
+    }
+    await expect(run()).rejects.toMatchObject({ name: 'AbortError' })
+    expect(readFileSync(join(workspacePath, 'src/cancelled.ts'), 'utf8')).toContain('applied = true')
+    expect(events).toContainEqual(expect.objectContaining({ type: 'progress', incomplete: true,
+      filesTouched: expect.arrayContaining(['src/cancelled.ts']) }))
+    expect(harness.prompts).toHaveLength(1)
+  })
   it.each(['missing', 'throw'] as const)('preserves an applied edit when checkpoint evidence is %s', async failure => {
     harness.receiptFailure = failure
     const content = 'export const receiptFaultWasApplied = true\n'.repeat(8)
