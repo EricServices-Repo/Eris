@@ -1,5 +1,11 @@
 # Conversation memory, evidence and context
 
+## Current source reconciliation — 2026-11-07
+
+Reviewed main `067470e`. Current source includes durable tool-output storage, approved project facts, thread-summary services, versioned child evidence and scoped origin-based recall. The detailed historical sections below retain earlier review snapshots; their references to these foundations as future work are superseded. See [recommendation reconciliation](RECOMMENDATIONS.md), [request execution](design/REQUEST-EXECUTION.md) and [recovery runbooks](RECOVERY-RUNBOOKS.md) for current behavior and acceptance boundaries.
+
+The RAM store remains main-owned and bounded. Model context is constrained by declared capability and measured allocation. Required task state, eligible recall, durable history and native KV have separate ownership and lifetimes. Consult [the release issue/evidence ledger](reviews/v1.0.1-release-issues-2026-11-02.md) for qualification obligations.
+
 Reviewed against integrated `main` `0a54629` on 2026-11-01. Package version: **0.6.10**. The published `v0.6.10` tag is `f14e409`; the five subsequent handoff/RAM fixes in this source baseline require a later build to appear in an installed app.
 
 This guide describes implemented behavior. The [RAM architecture](RAM-CONTEXT-ARCHITECTURE.md) and [tier amendment](RAM-CONTEXT-AMENDMENT-001.md) contain additional targets; their names and sizing examples are not all implemented APIs.

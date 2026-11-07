@@ -1,6 +1,6 @@
 # Request resolution and execution
 
-Implementation update, 2026-11-06, against local `codex/simplify-request-execution`, based on `7975140d` (v0.6.16), including uncommitted changes. Both source bundles were compiled; no new installer/release or installed-app replacement is implied.
+Implementation update, 2026-11-06, against integrated main `067470e` (v0.6.16). Both source bundles were compiled; no new installer/release or installed-app replacement is implied.
 
 ## Design decision
 

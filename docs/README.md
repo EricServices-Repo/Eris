@@ -5,7 +5,7 @@ sidebar_label: Guide index
 
 # Architecture and design guide index
 
-Routing and request-execution guides updated on 2026-11-06 against local `codex/simplify-request-execution`, based on `7975140d` (v0.6.16), including uncommitted source changes. Older subsystem guides retain their own reviewed baselines. This index does not certify an installed or released build.
+Routing and request-execution guides updated on 2026-11-06 against integrated main `067470e` (v0.6.16). Older subsystem guides retain their own reviewed baselines. This index does not certify an installed or released build.
 
 Use the guide matching the boundary being changed. Read its source baseline before turning an example or historical finding into an implementation task. Package version alone does not establish whether local unreleased changes are present.
 
@@ -29,6 +29,8 @@ Use the guide matching the boundary being changed. Read its source baseline befo
 - [Recommendations](RECOMMENDATIONS.md): current source-checked handoff/memory work plus the historical REC implementation/acceptance ledger.
 
 ## Operational and contribution contracts
+
+- [Recovery runbooks](RECOVERY-RUNBOOKS.md): low memory, damaged downloads, worker/task failure, storage, updates and revoked credentials, with escalation boundaries and acceptance records.
 
 - [GitHub workflow](GITHUB-WORKFLOW.md): task branches/PRs to main, rebuild versus release, immutable tag and repair rules.
 - [Updates](UPDATES.md), [signing](SIGNING.md): updater assets/provenance and separately verified installation/signing acceptance.

@@ -35,6 +35,7 @@ export default {
       doc('GITHUB-WORKFLOW', 'GitHub workflow')
     ]),
     section('Deployment and releases', [
+      doc('RECOVERY-RUNBOOKS', 'Recovery runbooks'),
       doc('UPDATES', 'App updates'),
       doc('SIGNING', 'Signing and notarization'),
       doc('CLOUD_AGENT_FLEET', 'Cloud agent fleet'),
