@@ -293,6 +293,8 @@ export interface WorkerTermination {
   maxOutputTokens: number
   promptTokens: number
   contextTokens: number
+  outputTokens?: number
+  outputTokenSource: 'measured' | 'unavailable'
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -332,11 +334,13 @@ async function runPromptOneshot(options: {
     const budget = replyBudget(options.maxTokens, options.messages)
 
     const grammar = await buildGrammar(options.jsonSchema)
+    let outputTokens: number | undefined
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const promptOpts: any = {
       temperature: options.temperature,
       signal: options.signal,
       maxTokens: budget.maxTokens,
+      onToken(tokens: unknown[]) { outputTokens = (outputTokens ?? 0) + tokens.length },
       ...(grammar ? { grammar } : {}),
       onTextChunk(chunk: string) {
         options.onChunk(chunk)
@@ -348,7 +352,9 @@ async function runPromptOneshot(options: {
       ...(typeof raw === 'string' ? { raw } : {}),
       maxOutputTokens: budget.maxTokens,
       promptTokens: budget.promptTokens,
-      contextTokens: loadedContextSize
+      contextTokens: loadedContextSize,
+      outputTokens,
+      outputTokenSource: outputTokens === undefined ? 'unavailable' : 'measured'
     }
   } finally {
     try {
@@ -394,12 +400,14 @@ async function runSessionTurn(options: {
     { role: 'user', content: options.userMessage }
   ])
   const grammar = await buildGrammar(options.jsonSchema)
+  let outputTokens: number | undefined
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const promptOpts: any = {
     temperature: options.temperature,
     signal: options.signal,
     maxTokens: budget.maxTokens,
     stopOnAbortSignal: true,
+    onToken(tokens: unknown[]) { outputTokens = (outputTokens ?? 0) + tokens.length },
     ...(grammar ? { grammar } : {}),
     onTextChunk(chunk: string) {
       options.onChunk(chunk)
@@ -411,7 +419,9 @@ async function runSessionTurn(options: {
     ...(typeof raw === 'string' ? { raw } : {}),
     maxOutputTokens: budget.maxTokens,
     promptTokens: budget.promptTokens,
-    contextTokens: loadedContextSize
+    contextTokens: loadedContextSize,
+    outputTokens,
+    outputTokenSource: outputTokens === undefined ? 'unavailable' : 'measured'
   }
 }
 

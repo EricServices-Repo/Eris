@@ -14,8 +14,9 @@ vi.mock('node-llama-cpp', () => {
   class LlamaChatSession {
     disposed = false
     setChatHistory() {}
-    async prompt(text: string) {
+    async prompt(text: string, options: { onToken?: (tokens: number[]) => void }) {
       h.prompts.push(text)
+      options.onToken?.([100, 101])
       return 'ok'
     }
     dispose() {
@@ -96,6 +97,8 @@ describe('llama worker context checks', () => {
     chat('fits', 'x'.repeat(4000))
     await until(() => h.posted.some((msg) => msg.id === 'fits' && msg.type === 'done'))
     expect(h.prompts).toHaveLength(1)
+    expect(h.posted.find(msg => msg.id === 'fits' && msg.type === 'done')?.termination)
+      .toMatchObject({ outputTokens: 2, outputTokenSource: 'measured' })
   })
 
   it('rejects an oversized prompt before generating anything', async () => {

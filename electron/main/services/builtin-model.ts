@@ -1574,7 +1574,8 @@ async function* streamBuiltinChatViaWorker(options: {
       generationMs: firstChunkAt === undefined ? null : Math.round(endedAt - firstChunkAt),
       dispatchMs: Math.round(endedAt - dispatchedAt),
       outputTokens: termination?.outputTokens ?? null,
-      outputTokensPerDispatchSecond: termination?.outputTokens !== undefined && endedAt > dispatchedAt
+      outputTokenSource: termination?.outputTokenSource ?? 'unavailable',
+      outputTokensPerDispatchSecond: termination?.outputTokenSource === 'measured' && termination.outputTokens !== undefined && endedAt > dispatchedAt
         ? Math.round(termination.outputTokens * 1000 / (endedAt - dispatchedAt) * 100) / 100
         : null,
       ...(timedOut ? { timedOut } : {})
