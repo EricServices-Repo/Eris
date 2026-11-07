@@ -1,6 +1,6 @@
 # Automatic model execution and recovery
 
-Originally implemented for GitHub issues #268–274. Coordinator/intake behavior updated on 2026-11-06 against local `codex/simplify-request-execution`, based on `7975140d` (v0.6.16), including uncommitted changes. Model-ranking and transition policies are retained. This is source documentation, not a new release or hardware qualification claim.
+Originally implemented for GitHub issues #268–274. Coordinator/intake behavior updated on 2026-11-06 against integrated main `067470e` (v0.6.16). Model-ranking and transition policies are retained. This is source documentation, not a new release or hardware qualification claim.
 
 ## User contract
 

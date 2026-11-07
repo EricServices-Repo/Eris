@@ -1,25 +1,16 @@
 # Eris: next fixes
 
-## Current architecture reconciliation — 2026-11-01
+## Current architecture reconciliation — 2026-11-07
 
-Reviewed integrated `main` `0a54629` (package v0.6.10), newer than release `f14e409`. [The documentation index](README.md) maps implementation versus remaining target design. The REC entries below retain their original review/acceptance provenance; they are not all open defects and their historical test totals are not new executions.
+Reviewed integrated main `067470e`, package v0.6.16. The historical REC ledger below preserves its original evidence. The [documentation index](README.md), [request execution guide](design/REQUEST-EXECUTION.md) and [recovery runbooks](RECOVERY-RUNBOOKS.md) describe current boundaries and acceptance procedures.
 
-Do not reimplement these merged fixes as absent: eligible local-before-Lite selection, locality before scoring, task-aware/versioned outcome ranking, explicit Fixed/Auto-local/Auto-any, actual Lite intake/worker handoff, bounded local model recovery, post-preparation/post-allocation recall checks, request-scoped leases (#255), inherited child semantics (#257), protected required constraints (#258), dependent subtree stop/discard (#261), and journal pre-allocation/scratch admission (#266).
+Implemented foundations include requested/effective task separation, deterministic file-reference resolution, per-file output checks, versioned handoff evidence, sealed context origins, scoped specialist recall, aggregate task-tree limits and typed child outcomes. Main-owned RAM remains bounded. Thread summaries and approved project facts have implementations and source/control checks; durable tool-output storage also has an implementation. Read the corresponding source and tests before treating earlier missing-feature descriptions as current work.
 
-### Current remaining work
+Remaining engineering and qualification work includes task-capability/cost ranking, richer independent artifact evaluation, exact-source installed-platform acceptance, hardware context/latency profiles, dedicated off-heap memory storage, and measured justification for cross-turn KV parking or learned CPU embeddings. Existing controls and fixtures require candidate qualification before production signoff.
 
-1. **P1 durable child evidence lifetime (#256):** bind persisted/restarted/outliving children to source revisions and disclosure policy independently of an ended parent lease. AsyncLocalStorage isolation is implemented but not persistent lineage.
-2. **P1 aggregate task-tree budgets (#262):** cap ancestry/depth, cycles, model calls/tokens/elapsed work across children; the per-run adaptation limit is not a tree-wide budget.
-3. **Dispatch/cold-allocation acceptance (#259/#260):** both tickets remain open, while final server/native guards and measured repacking are already present. Reproduce against current code and reconcile the acceptance gaps before creating another competing dispatch/preparation path.
-4. **Child source/execution identity (#263):** explicitly map the original conversation namespace into inherited/separate worktrees without broad history access.
-5. **Source-backed child outcome receipts (#264):** preserve observed edits/checks and dependencies rather than importing assistant prose as verified completion.
-6. **Complete bounded/versioned envelope (#265):** the 12 × 300 required constraint field is implemented; source IDs, full schema/version and lifecycle validation remain broader work.
-7. **Task-tree RAM replay (#267):** extend existing isolated/stateful/controlled child tests into the full integration profile, with exact executed/blocked/not-exercised evidence.
-8. **Durable run journals (#225):** active handles and admitted reads exist, but evidence does not universally survive run end/restart.
-9. **Tier sizing/process/residency (#227/#228/#231):** automatic hardware-aware larger budgets, a dedicated off-heap memory process and physical host/GPU double-residency evidence. Current schema remains 512 MiB process / 128 MiB thread maximum, not the proposed GiB tier.
-10. **Recall and KV quality (#150/#152/#232–236):** source-backed summaries/project facts, stable-prefix/cross-turn parked KV, contextual query, CPU embeddings and complete tier UI. Gate each on measurable incremental benefit, privacy and reversible disable/fallback.
+Current user-facing failures and release qualification remain tracked in GitHub. Original issue bodies can predate their fixes. In particular, #413 has merged routing and file-generation regression work, #330 has an integrated-device classification fix, and #328 has bounded fact-history and file-read protections. Their remaining release acceptance should be evaluated separately.
 
-Additional deployment, installed-platform, accessibility, signed-update and real-model quality acceptance in the REC ledger remains distinct from the source changes above. Exact source links and acceptance owners are in [the handoff guide](design/AGENT-HANDOFF-AND-RAM-CONTEXT.md), [memory implementation](CONTEXT-MEMORY.md) and [RAM target](RAM-CONTEXT-ARCHITECTURE.md).
+The [274-obligation issue/evidence ledger](reviews/v1.0.1-release-issues-2026-11-02.md) retains the release mapping. Update candidate evidence and accountable signoffs there and in #311 after exercising the exact candidate. Automated source checks, installed walkthroughs, live-model behavior and hardware measurements each need their own records.
 
 ## Historical REC implementation and acceptance ledger
 

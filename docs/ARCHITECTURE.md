@@ -6,7 +6,7 @@ The current source separates requested work from effective permissions, binds re
 
 The historical baseline below predates current versioned handoff evidence, context-origin mappings, aggregate task-tree limits and source-backed child outcomes. Those foundations now exist in `agent-orchestration.ts`, `context-origin.ts`, `background-agents.ts` and `child-outcome.ts`; references to their absence in older review material are superseded.
 
-Request routing, task contracts and coordinator behavior updated on 2026-11-06 against local `codex/simplify-request-execution`, based on `7975140d`, package **0.6.16**, including uncommitted changes. Unchanged subsystem descriptions retain the original 2026-11-01 baseline `0a54629`. These source updates are not a new release or an installed-app claim.
+Request routing, task contracts and coordinator behavior updated on 2026-11-06 against integrated main `067470e`, package **0.6.16**. Unchanged subsystem descriptions retain the original 2026-11-01 baseline `0a54629`. These source updates are not a new release or an installed-app claim.
 
 This is the implemented system map. [Documentation index](README.md) identifies the deeper guides; [RAM target architecture](RAM-CONTEXT-ARCHITECTURE.md) and [Amendment 001](RAM-CONTEXT-AMENDMENT-001.md) explicitly separate remaining targets from shipped source. Historical review evidence is not a current backlog or live-model certification.
 
