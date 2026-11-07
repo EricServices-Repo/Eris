@@ -344,6 +344,44 @@ describe('LR-017 invariants detect scope and artifact loss independently', () =>
 })
 
 describe('release routing examples from desktop reports', () => {
+  it('switches a review follow-up to editing while retaining all accepted recommendations', async () => {
+    const root = fixture(PHP)
+    const history = [
+      { role: 'user' as const, content: 'Review this project and recommend three improvements.' },
+      { role: 'assistant' as const, content: '1. Add date validation in index.php.\n2. Add search filters in index.php.\n3. Add a confirmation view in index.php.' }
+    ]
+    const result = await captureQuestion(0, 'Add those improvements to the code', root, 8192,
+      'agent', new AbortController().signal, { question: { history } })
+    const task = result.task as TaskContract
+    expect(result.status, result.detail).toBe('captured')
+    expect(task).toMatchObject({ deliverable: 'patch', authority: { edit: true } })
+    expect(task.recommendations).toHaveLength(3)
+    expect(task.scope.projectRoot).toBe(realpathSync(root))
+    const request = result.requests.find(entry => entry.purpose === 'agent')!
+    expect(JSON.stringify(request.messages)).toContain('confirmation view')
+    expect(JSON.stringify(request.tools)).toContain('write_file')
+  })
+
+  it('stops conflicting file references before the model or workspace effects', async () => {
+    const root = fixture(PHP)
+    const result = await captureQuestion(0, 'Generate those files here in the project', root, 8192,
+      'agent', new AbortController().signal, { question: { history: [
+        { role: 'assistant', content: 'Create index.php.' },
+        { role: 'assistant', content: 'Create calendar.php.' }
+      ] } })
+    expect((result.task as TaskContract).requested?.state).toBe('needs-reference')
+    expect((result.task as TaskContract).authority.edit).toBe(false)
+    expect(result.requests.filter(entry => entry.purpose === 'agent')).toHaveLength(0)
+  })
+
+  it('refuses an unavailable named project instead of editing the open calculator', async () => {
+    const root = fixture({ 'package.json': '{"name":"calculator"}', 'index.js': 'export const x = 1\n' })
+    const result = await captureQuestion(0, 'Fix the Airbnb website project', root, 8192,
+      'agent', new AbortController().signal)
+    expect((result.task as TaskContract).scope.state).not.toBe('resolved')
+    expect(result.requests.filter(entry => entry.purpose === 'agent')).toHaveLength(0)
+  })
+
   it('asks which files to generate when the conversation has no referenced files', async () => {
     const result = await captureQuestion(
       0,

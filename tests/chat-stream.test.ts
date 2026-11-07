@@ -185,6 +185,31 @@ describe('chat:stream command approval', () => {
 })
 
 describe('main-process task authority', () => {
+  it('admits a corrected request after stop without reviving the earlier task', async () => {
+    const originalId = randomUUID()
+    const correctedId = randomUUID()
+    const plans: TurnPlan[] = []
+    reply = null
+    runner.script = async function* (options) {
+      plans.push(options.turnPlan)
+      const pending = options.approveCommand('run', 'npm install legacy-package')
+      queueMicrotask(() => void handlers['chat:stop']!({ sender }, originalId))
+      expect(await pending).toBe(false)
+      throw Object.assign(new Error('Stopped for correction'), { name: 'AbortError' })
+    }
+    expect(await stream({ text: 'Add booking validation and install legacy-package' }, originalId)).toBe(false)
+    runner.script = async function* (options) {
+      plans.push(options.turnPlan)
+      expect(options.messages.at(-1)?.content).toContain('Do not install any dependencies')
+      yield { type: 'answer', text: 'I will use the existing dependencies.' }
+    }
+    expect(await stream({ text: 'Add booking validation. Do not install any dependencies.' }, correctedId)).toBe(true)
+    expect(plans[1]?.task?.originalText).toBe('Add booking validation. Do not install any dependencies.')
+    const { getChatJob } = await import('../electron/main/services/chat-job-controller')
+    expect(getChatJob(originalId)?.status).toBe('stopped')
+    expect(getChatJob(correctedId)?.status).toBe('done')
+    expect(sent.filter(event => event.channel === 'chat:done' && event.payload.requestId === originalId)).toHaveLength(1)
+  })
   it('ignores a renderer editing plan when the request is a review', async () => {
     let actual: TurnPlan | undefined
     runner.script = async function* (options) {
