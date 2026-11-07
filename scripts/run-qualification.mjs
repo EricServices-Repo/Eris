@@ -17,8 +17,9 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { qualifyResults } from './qualification-evidence.mjs'
 
-const REPORT_VERSION = 1
+const REPORT_VERSION = 2
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const name = process.argv[2]
 const config = JSON.parse(readFileSync(join(root, 'tests/qualification-profiles.json'), 'utf8'))
@@ -34,6 +35,22 @@ const outDir = join(root, 'out', 'qualification')
 mkdirSync(outDir, { recursive: true })
 const raw = join(outDir, `${name}.vitest.json`)
 rmSync(raw, { force: true })
+const git = (...args) => {
+  try { return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim() }
+  catch { return null }
+}
+const sha256 = path => existsSync(path) ? createHash('sha256').update(readFileSync(path)).digest('hex') : null
+const untrackedDigest = () => {
+  const files = (git('ls-files', '--others', '--exclude-standard') ?? '').split('\n').filter(Boolean).sort()
+  return createHash('sha256').update(JSON.stringify(files.map(file => [file, sha256(join(root, file))]))).digest('hex')
+}
+const source = {
+  commit: git('rev-parse', 'HEAD'),
+  diffDigest: createHash('sha256').update(git('diff', 'HEAD', '--', '.') ?? 'unknown').digest('hex'),
+  lockfile: sha256(join(root, 'package-lock.json')),
+  profiles: sha256(join(root, 'tests/qualification-profiles.json')),
+  untrackedDigest: untrackedDigest()
+}
 
 const vitest = spawnSync(
   process.execPath,
@@ -49,17 +66,15 @@ const vitest = spawnSync(
   { cwd: root, stdio: 'inherit' }
 )
 
-const git = (...args) => {
-  try {
-    return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
-  } catch {
-    return null
-  }
-}
-const sha256 = (path) =>
-  existsSync(path) ? createHash('sha256').update(readFileSync(path)).digest('hex') : null
-
 const results = existsSync(raw) ? JSON.parse(readFileSync(raw, 'utf8')) : null
+const qualification = qualifyResults(root, profile.files, results, vitest.status)
+if (source.commit !== git('rev-parse', 'HEAD') || source.lockfile !== sha256(join(root, 'package-lock.json')) ||
+    source.untrackedDigest !== untrackedDigest() ||
+    source.diffDigest !== createHash('sha256').update(git('diff', 'HEAD', '--', '.') ?? 'unknown').digest('hex') ||
+    source.profiles !== sha256(join(root, 'tests/qualification-profiles.json'))) {
+  qualification.pass = false
+  qualification.failures.push('Source inputs changed during qualification')
+}
 const failed = (results?.testResults ?? []).flatMap((file) =>
   (file.assertionResults ?? [])
     .filter((test) => test.status === 'failed')
@@ -72,25 +87,21 @@ const report = {
   description: profile.description,
   created: new Date().toISOString(),
   commit: git('rev-parse', 'HEAD') ?? 'unknown',
+  source,
+  runtime: { node: process.version, platform: process.platform, arch: process.arch },
+  ci: { runId: process.env.GITHUB_RUN_ID ?? null, attempt: process.env.GITHUB_RUN_ATTEMPT ?? null },
   dirty: status === null ? null : status.length > 0,
   corpus: {
     path: 'tests/fixtures/10000-natural-diverse-coding-questions.txt',
     sha256: sha256(join(root, 'tests/fixtures/10000-natural-diverse-coding-questions.txt'))
   },
   files: profile.files,
-  counts: results
-    ? {
-        files: results.numTotalTestSuites,
-        tests: results.numTotalTests,
-        passed: results.numPassedTests,
-        failed: results.numFailedTests,
-        skipped: results.numPendingTests + (results.numTodoTests ?? 0)
-      }
-    : null,
+  counts: qualification.counts,
+  qualificationFailures: qualification.failures,
   failed,
   // What a green run of this profile does not show. Stated in every report.
   notRun: profile.notRun ?? [],
-  outcome: vitest.status === 0 && results?.success !== false ? 'passed' : 'failed'
+  outcome: qualification.pass ? 'passed' : 'failed'
 }
 const path = join(outDir, `${name}.json`)
 writeFileSync(path, JSON.stringify(report, null, 2) + '\n')

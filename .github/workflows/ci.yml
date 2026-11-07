@@ -50,6 +50,15 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Upload Windows qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qualification-windows-${{ github.sha }}
+          path: out/qualification/**/*.json
+          if-no-files-found: warn
+          retention-days: 14
+
   check:
     runs-on: macos-latest
     steps:
@@ -76,6 +85,18 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Qualification report invariants
+        run: node --test scripts/qualification-evidence.test.mjs
+
+      - name: Seeded cancellation lifecycle qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/qualification/cancellation
+          for seed in 17 43 101 199 307; do
+            npx vitest run tests/background-cancellation.test.ts tests/chat-job-terminal.test.ts --sequence.shuffle --sequence.seed="$seed" --reporter=json --outputFile="out/qualification/cancellation/seed-$seed.json"
+          done
 
       - name: Desktop client smoke (scripted, no provider calls)
         run: npm run check:client
@@ -121,3 +142,12 @@ jobs:
 
       - name: Audit desktop, tooling, and cloud worker dependencies
         run: npm run audit:security
+
+      - name: Upload qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qualification-macos-${{ github.sha }}
+          path: out/qualification/**/*.json
+          if-no-files-found: warn
+          retention-days: 14
