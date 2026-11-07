@@ -222,10 +222,17 @@ describe('legitimate work', () => {
 
   it('gives each root its own budget', async () => {
     h.agent = async function* (run) {
-      if (run.agentId === 'a') for (let i = 0; i < 20; i++) await tell(run, 'b', `T${i}`)
+      // Fill the root's remaining slots and attempt one overflow. Repeated
+      // rejected delegations only add synchronous persistence under CI load.
+      if (run.agentId === 'a')
+        for (let i = 0; i < TASK_TREE_LIMITS.agents; i++) await tell(run, 'b', `T${i}`)
     }
-    root('One')
+    const first = root('One')
     await quiet()
+    expect(job(first.id).budgetExhausted).toBe('agents')
+    expect(everything().filter((item) => item.tree?.rootId === first.id)).toHaveLength(
+      TASK_TREE_LIMITS.agents
+    )
     const second = root('Two')
     await quiet()
     expect(job(second.id).budgetExhausted).toBe('agents')

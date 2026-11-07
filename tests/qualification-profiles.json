@@ -134,6 +134,14 @@
     },
     "dev-app": {
       "description": "Eris-Dev capture app. Gates npm run build:dev-app.",
+      "platformExclusions": [
+        {
+          "platform": "win32",
+          "file": "tests/eris-dev-model-discovery.test.ts",
+          "fullName": "Eris-Dev shared model discovery without symlink privileges replaces an old catalog symlink before editing local metadata",
+          "reason": "File symlink creation requires elevated privileges on Windows; shared model discovery without symlinks is tested on Windows."
+        }
+      ],
       "files": [
         "tests/eris-dev.test.ts",
         "tests/eris-dev-model-discovery.test.ts",
