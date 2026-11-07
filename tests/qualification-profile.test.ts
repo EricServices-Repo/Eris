@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
  * classified into a profile or into general, so it cannot silently miss the gate.
  */
 const config = JSON.parse(readFileSync(join(__dirname, 'qualification-profiles.json'), 'utf8')) as {
-  profiles: Record<string, { files: string[]; notRun?: string[] }>
+  profiles: Record<string, { files: string[]; notRun?: string[]; platformExclusions?: Array<{platform: string; file: string; fullName: string; reason: string}> }>
   general: { files: string[] }
 }
 const classified = new Set([
@@ -16,6 +16,20 @@ const classified = new Set([
 ])
 
 describe('qualification profiles', () => {
+  it('requires explicit platform, selected file, exact test name and reason for each exclusion', () => {
+    for (const profile of Object.values(config.profiles)) {
+      const identities = new Set<string>()
+      for (const entry of profile.platformExclusions ?? []) {
+        expect(['win32', 'darwin', 'linux']).toContain(entry.platform)
+        expect(profile.files).toContain(entry.file)
+        expect(entry.fullName.trim().length).toBeGreaterThan(0)
+        expect(entry.reason.trim().length).toBeGreaterThan(20)
+        const identity = JSON.stringify([entry.platform, entry.file, entry.fullName])
+        expect(identities.has(identity)).toBe(false)
+        identities.add(identity)
+      }
+    }
+  })
   it('classify every test file', () => {
     const files = readdirSync(__dirname)
       .filter((name) => name.endsWith('.test.ts'))
