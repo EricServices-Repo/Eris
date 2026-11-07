@@ -1,3 +1,4 @@
+import { createTaskDeadline } from '../task-deadline'
 import { eligibleOutbound } from '../eligible-outbound'
 import { createPromptTokenCounter } from './prompt-token-counter'
 import { resolveModelCapabilities } from '../model-capabilities'
@@ -354,9 +355,32 @@ export async function* runAgentWithWorkspaceTools(
   options: Parameters<typeof runAgentInternal>[0]
 ): ReturnType<typeof runAgentInternal> {
   const unpin = pinEvidence()
+  const deadline = createTaskDeadline(options.signal, (options.settings.agent.maxRunMinutes ?? 15) * 60_000)
+  let lastStep = 0
+  let filesTouched: string[] = []
+  let actionLog: string[] = []
+  let partialAnswer = ''
   try {
-    yield* runAgentInternal(options)
+    for await (const event of runAgentInternal({ ...options, signal: deadline.signal })) {
+      if (event.type === 'progress' || event.type === 'session-step') {
+        lastStep = event.step
+        filesTouched = [...event.filesTouched]
+        actionLog = [...event.actionLog]
+      } else if (event.type === 'diff') {
+        if (!filesTouched.includes(event.diff.path)) filesTouched.push(event.diff.path)
+      } else if (event.type === 'answer') partialAnswer = event.replace ? event.text : partialAnswer + event.text
+      yield event
+    }
+    throwIfAborted(deadline.signal)
+  } catch (error) {
+    if (options.signal?.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
+    if (deadline.stopReason() !== 'timeout') throw error
+    const reason = 'Run time limit reached. This task is incomplete; inspect the preserved changes before starting another request.'
+    yield { type: 'progress', step: lastStep, filesTouched, actionLog: [...actionLog, reason], incomplete: true }
+    yield { type: 'status', text: 'Incomplete · run time limit reached' }
+    yield { type: 'answer', replace: true, text: `${partialAnswer}${partialAnswer ? '\n\n' : ''}${reason}\nApplied changes: ${filesTouched.join(', ') || 'none recorded'}. Verification may be incomplete.` }
   } finally {
+    deadline.dispose()
     unpin()
   }
 }

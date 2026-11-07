@@ -1338,6 +1338,10 @@ export function registerChatStreamIpc(): void {
           } catch (err) {
             flushStreamChunks()
             if ((err as Error).name === 'AbortError') {
+              if (memoryFiles.length) publish('chat:answer', {
+                requestId, replace: true,
+                chunk: `${visibleAnswer}${visibleAnswer ? '\n\n' : ''}Stopped. Applied changes: ${memoryFiles.join(', ')}. Remaining work and verification may be incomplete; inspect the files before retrying.`
+              })
               persistRun({ status: 'stopped' })
               recordTelemetry('aborted')
               logWarn('Chat stream aborted', {

@@ -11,6 +11,7 @@ import { join } from 'path'
  * make the requested edits, verify them, and return a useful final answer.
  */
 const harness = vi.hoisted(() => ({
+  stallAfterReplies: false,
   receiptFailure: '' as '' | 'missing' | 'throw',
   receiptAfterWrite: () => {},
   replies: [] as string[],
@@ -45,11 +46,19 @@ vi.mock('../electron/main/services/checkpoints', async original => {
 
 vi.mock('../electron/main/services/chat-runtime', () => ({
   streamModelChat: async function* (options: {
+    signal?: AbortSignal
     messages: Array<{ role: string; content: string }>
     builtinJsonSchema?: Record<string, unknown>
     sessionKey?: string
     onNativeToolCalls?: (calls: Array<{ id: string; name: string; arguments: string }>) => void
   }) {
+    if (harness.stallAfterReplies && !harness.replies.length) {
+      await new Promise<void>((_resolve, reject) => {
+        const stop = () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }))
+        if (options.signal?.aborted) stop()
+        else options.signal?.addEventListener('abort', stop, { once: true })
+      })
+    }
     harness.requestModes.push({
       constrained: Boolean(options.builtinJsonSchema),
       sessionKey: options.sessionKey
@@ -160,6 +169,7 @@ import type { TurnPlan } from '../src/shared/settings-schema'
 let workspacePath: string
 
 beforeEach(() => {
+  harness.stallAfterReplies = false
   harness.receiptFailure = ''
   harness.receiptAfterWrite = () => {}
   workspacePath = mkdtempSync(join(tmpdir(), 'eris-chat-smoke-'))
@@ -208,6 +218,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   rmSync(workspacePath, { recursive: true, force: true })
 })
 
@@ -269,6 +280,42 @@ function expectCompleted(events: AgentRunnerEvent[]): void {
 }
 
 describe('chat agent complex smoke test', () => {
+  it('keeps custom parent abort reasons as cancellation rather than a runtime failure', async () => {
+    const controller = new AbortController()
+    controller.abort('user requested stop')
+    const run = async () => {
+      for await (const _event of runAgentWithWorkspaceTools({
+        workspacePath, settings: getDefaults(), model: 'builtin:composer-lite',
+        messages: [{ role: 'user', content: 'Create src/stopped.ts' }], temperature: 0,
+        getSecret: () => null, turnPlan: fullEditPlan(), mcp: 'off', signal: controller.signal
+      })) { /* no effect may follow pre-cancellation */ }
+    }
+    await expect(run()).rejects.toMatchObject({ name: 'AbortError' })
+    expect(harness.prompts).toHaveLength(0)
+    expect(existsSync(join(workspacePath, 'src/stopped.ts'))).toBe(false)
+  })
+  it('stops at the shared elapsed budget and preserves an applied file before a stalled next step', async () => {
+    harness.replies.push(JSON.stringify({ name: 'write_file', arguments: { path: 'src/timed.ts', content: 'export const saved = true\n' } }))
+    harness.stallAfterReplies = true
+    const settings = getDefaults()
+    settings.agent.maxRunMinutes = 1
+    const events: AgentRunnerEvent[] = []
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const running = (async () => {
+      for await (const event of runAgentWithWorkspaceTools({
+        workspacePath, settings, model: 'builtin:composer-lite',
+        messages: [{ role: 'user', content: 'Create src/timed.ts' }], temperature: 0,
+        getSecret: () => null, turnPlan: fullEditPlan(), mcp: 'off'
+      })) events.push(event)
+    })()
+    await vi.waitFor(() => expect(existsSync(join(workspacePath, 'src/timed.ts'))).toBe(true))
+    await vi.advanceTimersByTimeAsync(60_000)
+    await running
+    expect(readFileSync(join(workspacePath, 'src/timed.ts'), 'utf8')).toContain('saved = true')
+    expect(events).toContainEqual(expect.objectContaining({ type: 'progress', incomplete: true, filesTouched: ['src/timed.ts'] }))
+    expect(lastAnswer(events)).toContain('Run time limit reached')
+    expect(lastAnswer(events)).toContain('src/timed.ts')
+  })
   it('preserves the applied path when cancellation coincides with missing receipt evidence', async () => {
     const controller = new AbortController()
     harness.receiptFailure = 'missing'

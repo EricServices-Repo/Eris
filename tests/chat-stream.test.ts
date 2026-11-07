@@ -127,6 +127,20 @@ beforeEach(() => {
 })
 
 describe('chat:stream command approval', () => {
+  it('shows applied files when cancellation interrupts a later approval', async () => {
+    reply = null
+    const requestId = randomUUID()
+    runner.script = async function* (options) {
+      yield { type: 'progress', step: 1, filesTouched: ['booking.php'], actionLog: ['Wrote booking.php'] }
+      const pending = options.approveCommand('run', 'npm install package')
+      queueMicrotask(() => void handlers['chat:stop']!({ sender }, requestId))
+      await pending
+      throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
+    }
+    expect(await stream(undefined, requestId)).toBe(false)
+    expect(sent.filter(event => event.channel === 'chat:answer').at(-1)?.payload.chunk).toContain('Applied changes: booking.php')
+    expect(sent.find(event => event.channel === 'chat:done')?.payload.aborted).toBe(true)
+  })
   it('runs safe commands without prompting', async () => {
     const results: boolean[] = []
     runner.script = async function* (opts) {

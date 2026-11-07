@@ -1,4 +1,5 @@
 import { recordNativeLatency } from './model-latency'
+import { modelStreamWithAbort } from './task-deadline'
 import { eligibleOutbound } from './eligible-outbound'
 import { createPromptTokenCounter } from './agent/prompt-token-counter'
 import { assertTaskReferences } from './reference-binding'
@@ -91,10 +92,10 @@ export async function* streamModelChat(
   const scope = activeDiagnosticsScope()
   if (scope) {
     reportContextDispatch({ compiled: options.messages, outbound: messages, ...request })
-    yield* scope.adapter.stream({ ...request, purpose: request.purpose ?? 'agent' })
+    yield* modelStreamWithAbort(scope.adapter.stream({ ...request, purpose: request.purpose ?? 'agent' }), options.signal)
     return
   }
-  yield* streamProviderChat(request)
+  yield* modelStreamWithAbort(streamProviderChat(request), options.signal)
 }
 
 function throwIfAborted(signal?: AbortSignal) {

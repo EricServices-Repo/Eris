@@ -277,6 +277,13 @@ export function settingFields(agentIds: string[]): SettingField[] {
     },
     {
       cat: 'agent',
+      label: 'Max run time (minutes)',
+      hint: '1–120 minutes across model calls, tools and retries. Stops incomplete and preserves applied changes.',
+      path: ['agent', 'maxRunMinutes'],
+      type: 'number'
+    },
+    {
+      cat: 'agent',
       label: 'Router model',
       hint: 'Empty = default model. Prefer a small/fast Ollama model.',
       path: ['agent', 'routing', 'routerModel'],
