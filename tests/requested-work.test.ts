@@ -86,7 +86,24 @@ describe('file-set completion evidence', () => {
     writeFileSync(join(root, 'booking.ts'), 'export const booking = true')
     const workflow = new AgentWorkflow({ ...plan(), task })
     workflow.noteTool({ name: 'read_file', path: 'booking.ts', ok: true, mutated: false })
+    expect(workflow.evaluateOutcome({ workspaceMutated: false, codeMutated: false, verifyPassed: false }).ok).toBe(false)
+    workflow.noteVerification('passed')
     expect(workflow.evaluateOutcome({ workspaceMutated: false, codeMutated: false, verifyPassed: false, filesTouched: [] }).ok).toBe(true)
+  })
+  it.each([
+    ['booking.ts', '// TODO: implement booking'],
+    ['booking.ts', 'export const booking = '],
+    ['booking.json', '{"bookings":'],
+    ['booking.php', '<?php\n// TODO: implementation\n?>']
+  ])('rejects an inspected placeholder or broken artifact: %s', (path, content) => {
+    const root = workspace()
+    const task = createTaskContract({ workspacePath: root, text: `Create ${path}`, plan: plan() })
+    writeFileSync(join(root, path), content)
+    expect(requestedFilesProblem(task, [path])).toContain('failed validation')
+    const workflow = new AgentWorkflow({ ...plan(), task })
+    workflow.noteTool({ name: 'read_file', path, ok: true, mutated: false })
+    workflow.noteVerification('passed')
+    expect(workflow.evaluateOutcome({ workspaceMutated: false, codeMutated: false, verifyPassed: true }).ok).toBe(false)
   })
   it('requires every output and rejects a same-basename file from another directory', () => {
     const root = workspace()

@@ -41,6 +41,7 @@ import {
   setContextSummary
 } from '../workspace-context'
 import { runVerify } from '../verify'
+import { requiresRequestedCodeVerification } from './requested-files'
 import type { OpenAIToolDef } from '../chat-runtime'
 import {
   COMPOSER_OPENAI_TOOLS,
@@ -2606,7 +2607,7 @@ async function* runAgentInternal(options: {
             text: '\n\n— Skipping project verify (only .eris skills/config changed).\n'
           }
         }
-        if (codeMutated) {
+        if (codeMutated || (requiresRequestedCodeVerification(task) && task.authority.execute !== 'none')) {
           workflow.transition('verifying')
           yield { type: 'status', text: 'Final verify…' }
           await assertTaskReferences(task, options.settings, workerModel)

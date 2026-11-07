@@ -3,7 +3,7 @@ import { asksToImplementChanges } from '../../../../src/shared/agent-contract'
 import { evidenceRequirementFor } from '../../../../src/shared/task-contract'
 import { pathsIn } from '../../../../src/shared/recommendations'
 import { requestTextForIntent } from '../../../../src/shared/task-interpretation'
-import { requestedFilesProblem } from './requested-files'
+import { requestedFilesProblem, requiresRequestedCodeVerification } from './requested-files'
 
 export type AgentWorkflowPhase =
   'planned' | 'answering' | 'preflight' | 'executing' | 'verifying' | 'completed' | 'blocked'
@@ -139,6 +139,8 @@ export class AgentWorkflow {
     if (task?.authority.edit && task.requested?.targetFiles.length) {
       const problem = requestedFilesProblem(task, [...this.observedFiles, ...(input.filesTouched ?? [])])
       if (problem) return { ok: false, reason: problem }
+      if (requiresRequestedCodeVerification(task) && !input.verifyPassed && this.verification !== 'passed')
+        return { ok: false, reason: 'Required code artifacts need a successful independent project check. Existing files and skipped verification do not establish implementation correctness.' }
     }
     if (
       this.contract.requiresWorkspaceEvidence &&
