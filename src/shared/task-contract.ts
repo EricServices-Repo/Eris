@@ -197,6 +197,8 @@ export interface TaskContract {
     artifact: RequestedArtifact
     destination: ArtifactDestination
     targetFiles: string[]
+    /** Compiled from the request, independently of worker/intent selection. */
+    evidence?: 'source-read'
     state: 'resolved' | 'needs-reference' | 'needs-clarification'
   }
   contextOrigin?: import('./context-origin').ContextOrigin
@@ -265,6 +267,7 @@ const ARTIFACT_FOR_DELIVERABLE: Record<TaskContract['deliverable'], RequestedArt
 export function taskIntakeBlocked(task: TaskContract | undefined, mode: 'ask' | 'agent'): boolean {
   if (!task) return false
   return (task.requested !== undefined && task.requested.state !== 'resolved') ||
+    (task.requested?.evidence === 'source-read' && !task.scope.projectRoot) ||
     task.interpretation?.resolution?.rule === 'missing-file-reference' ||
     (mode !== 'ask' && task.requested?.artifact === 'patch' && !task.authority.edit)
 }
@@ -301,6 +304,9 @@ export function intersectToolPolicy(
 export function taskContractConflicts(contract: TaskContract): string[] {
   const conflicts: string[] = []
   const { authority, deliverable } = contract
+  if (contract.requested?.evidence === 'source-read' && contract.scope.projectRoot &&
+      (authority.tools === 'none' || contract.scope.applicability === 'generic'))
+    conflicts.push('The request requires source inspection, but the contract removes project evidence or read tools.')
   if (contract.requested?.state !== undefined && contract.requested.state !== 'resolved' &&
       (authority.edit || authority.execute !== 'none' || authority.externalEffects))
     conflicts.push('Unresolved requested work cannot authorize effects.')

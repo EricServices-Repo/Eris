@@ -3,6 +3,9 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { captureQuestion } from '../electron/dev/capture'
+import { AgentWorkflow } from '../electron/main/services/agent/workflow'
+import { parsePersistedTask } from '../electron/main/services/evidence-schemas'
+import { recordRoutingCorrection } from '../electron/main/services/routing-feedback'
 import { runBadAnswerSmoke } from '../checks/bad-answer-smoke'
 import { classifyIntent } from '../electron/main/services/chat-router'
 import { conservativeFallback } from '../electron/main/services/task-resolver'
@@ -32,11 +35,60 @@ const Q43 =
   'Show me both a simple and a more robust version of error boundaries that support retry?'
 
 const roots: string[] = []
+describe('issue 431 explicit source inspection', () => {
+  it.each([
+    ['Review the files', 'review'],
+    ['Review these pages and recommend features', 'review'],
+    ['Check our components for missing features', 'review'],
+    ['Which features are missing?', 'review'],
+    ['Review the files and add article search', 'edit'],
+    ['What features should a news website have?', 'answer'],
+    ['Do not review the files; just answer from general knowledge', 'answer'],
+    ['Could you please review these files?', 'review'],
+    ['"Review the files"', 'answer']
+  ] as const)('classifies %s without expanding mutation authority', (text, intent) => {
+    expect(classifyIntent(text, 'agent')).toBe(intent)
+  })
+  const question = 'review the files, what else do we need to add for features?'
+  it.each(['agent', 'ask'] as const)('keeps %s review read-only despite a learned answer correction and long history', async mode => {
+    recordRoutingCorrection({ text: question, from: 'review', to: 'answer', agentId: 'explainer' })
+    const root = fixture({ 'index.html': '<main>Existing newsletter subscription form</main>' })
+    const result = await captureQuestion(0, question, root, 8192, mode, new AbortController().signal, {
+      question: { history: Array.from({length: 28}, (_, i) => ({ role: i % 2 ? 'assistant' as const : 'user' as const, content: 'Earlier general discussion about a news website.' })) }
+    })
+    const task = result.task as TaskContract
+    expect(result.intent).toBe('review')
+    expect(task.requested?.evidence).toBe('source-read')
+    expect(task.scope.applicability).toBe('selected-project')
+    expect(task.authority).toMatchObject({ tools: 'read', edit: false })
+    expect(parsePersistedTask(task).requested?.evidence).toBe('source-read')
+    const tools = JSON.stringify(result.requests.find(request => request.purpose === 'agent')?.tools)
+    expect(tools).toContain('read_file')
+    expect(tools).not.toContain('write_file')
+  })
+  it('cannot satisfy the original inspection requirement with a directory listing after an intent change', async () => {
+    const root = fixture({ 'index.html': '<main>News</main>' })
+    const result = await captureQuestion(0, question, root, 8192, 'agent', new AbortController().signal)
+    const task = result.task as TaskContract
+    const workflow = new AgentWorkflow({ intent: 'answer', agentId: 'explainer', agentName: 'Explainer', mode: 'agent',
+      models: {chat:'simulated:test',tools:'simulated:test'}, toolPolicy:'read', requiresTools:false, escalateToFull:false, reason:'injected downgrade', method:'heuristic', task })
+    workflow.noteTool({name:'tree',ok:true,mutated:false,path:'.'})
+    expect(workflow.evaluateOutcome({workspaceMutated:false,codeMutated:false,verifyPassed:false}).ok).toBe(false)
+    workflow.noteTool({name:'read_file',ok:true,mutated:false,path:'index.html'})
+    expect(workflow.evaluateOutcome({workspaceMutated:false,codeMutated:false,verifyPassed:false}).ok).toBe(true)
+    expect(() => parsePersistedTask({...task, authority:{...task.authority,tools:'none'}})).toThrow()
+  })
+  it('asks for a project without calling a model when files were requested but no workspace is open', async () => {
+    const result = await captureQuestion(0, question, null, 8192, 'agent', new AbortController().signal)
+    expect(result.requests.filter(request => request.purpose === 'agent')).toHaveLength(0)
+    expect(result.detail).toContain('Select the project')
+  })
+})
 it('executes the packaged bad-answer scenarios with independent fixture checks', async () => {
   const parent = mkdtempSync(join(tmpdir(), 'eris-bad-answer-acceptance-'))
   roots.push(parent)
   const report = await runBadAnswerSmoke(parent)
-  expect(report, JSON.stringify(report)).toMatchObject({ total: 3, passed: 3, liveModel: false, providerCalls: 0 })
+  expect(report, JSON.stringify(report)).toMatchObject({ version: 2, total: 4, passed: 4, liveModel: false, providerCalls: 0 })
   expect(report.cases.find(result => result.issue === 406)).toMatchObject({ stopped: true, changedFiles: ['index.json'] })
 })
 function fixture(files: Record<string, string>): string {

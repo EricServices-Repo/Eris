@@ -37,6 +37,9 @@ export interface ModelTermination {
   maxOutputTokens?: number
   promptTokens?: number
   outputTokens?: number
+  /** Native prompt-start timings: token emission is distinct from visible text. */
+  firstTokenMs?: number
+  firstTextMs?: number
   contextTokens?: number
 }
 

@@ -167,7 +167,7 @@ app.whenReady().then(async () => {
           result.chatAcceptance = await runBadAnswerSmoke(process.env.ERIS_SMOKE_ROOT!)
           const ok =
             result.workerReady &&
-            result.chatAcceptance.total === 3 && result.chatAcceptance.passed === 3 &&
+            result.chatAcceptance.total === 4 && result.chatAcceptance.passed === 4 &&
             result.catalogChecked &&
             result.rendererMounted &&
             result.nodeIsolated &&

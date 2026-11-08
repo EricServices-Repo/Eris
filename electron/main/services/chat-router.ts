@@ -23,6 +23,7 @@ import {
   asksForCodeExample,
   asksForCreativeWriting,
   asksForRecommendations,
+  asksForWorkspaceInspection,
   asksForPlan,
   asksForVerification,
   asksToCodeWorkspace,
@@ -230,6 +231,10 @@ function classifyIntentRule(
 
   // “What does this project do?” is a description, even when the message says “review”.
   if (asksWhatTheProjectDoes(t)) return { intent: 'explore', rule: 'project-description' }
+  if (asksForWorkspaceInspection(t)) {
+    const edits = /\b(?:and|then)\s+(?:also\s+)?(?:implement|apply|fix|edit|change|update|code|write|add|build)\b/i.test(t)
+    return { intent: edits ? 'edit' : 'review', rule: edits ? 'inspection-and-edit' : 'workspace-inspection' }
+  }
 
   // “What improvements should we make?” is a review list, not an edit.
   if (asksForRecommendations(t)) return { intent: 'review', rule: 'recommendations' }
@@ -752,6 +757,7 @@ export async function planChatTurn(options: {
     !options.context.resolvedIntent &&
     !asksToCodeWorkspace(text) &&
     !asksToImplementChanges(text) &&
+    !asksForWorkspaceInspection(requestTextForIntent(text)) &&
     !explicitSpecialistIntent
       ? learnedRouteFor(text, corrections)
       : null)

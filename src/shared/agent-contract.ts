@@ -332,7 +332,12 @@ export function asksForVerification(text: string): boolean {
   )
 }
 
-/** The user wants a list of improvements, not for the agent to apply them. */
+/** Existing project sources explicitly requested for inspection; callers strip quoted content. */
+export function asksForWorkspaceInspection(text: string): boolean {
+  return /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:review|inspect|audit|examine|check|look\s+at)\s+(?:(?:this|that|these|those|the|my|our|current|existing|source|project)\s+)*(?:files?|pages?|code|codebase|repo(?:sitory)?|workspace|project|folders?|components?)\b/i.test(text.trim())
+}
+
+/** The user wants recommendations, not permission to implement them. */
 export function asksForRecommendations(text: string): boolean {
   const t = text.trim()
   if (!t) return false
@@ -346,6 +351,10 @@ export function asksForRecommendations(text: string): boolean {
     ) &&
     !/\bmake\s+(?:those\s+|the\s+)?improvements?\b/i.test(t)
   if (reviewImprovementQuestion) return true
+  if (/\b(?:what|which)\b[\s\S]{0,80}\bfeatures?\b/i.test(t) &&
+      (/\b(?:missing|need|should|could|else)\b/i.test(t)) &&
+      (asksWorkspaceQuestion(t) || /\bfeatures?\s+(?:are|is)\s+(?:still\s+)?missing\b|\bwe\b/i.test(t)) &&
+      !/\b(?:and|then)\s+(?:implement|apply|fix|edit|change|update|code|write|add|build)\b/i.test(t)) return true
   if (
     /\b(make|apply|implement)\s+(the\s+|some\s+|these\s+)?improvements?\b/i.test(t) &&
     !/\bwhat\b/i.test(t)
@@ -428,7 +437,8 @@ export function asksWorkspaceQuestion(text: string, fileNames: string[] = []): b
   if (!t) return false
   if (
     mentionsSourcePath(t) ||
-    /\b(this|that|the|my|our)\s+(project|repo|repository|workspace|codebase|app|application|folder|file|code|component|function|service|api)\b/i.test(
+    asksForWorkspaceInspection(t) ||
+    /\b(this|that|these|those|the|my|our)\s+(projects?|repos?|repository|workspace|codebase|apps?|applications?|folders?|files?|code|components?|functions?|services?|apis?)\b/i.test(
       t
     ) ||
     /\b(where is|which file|what file|find (?:the )?(?:file|function|class|component)|in the (?:repo|project|workspace))\b/i.test(

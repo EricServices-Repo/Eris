@@ -63,6 +63,7 @@ const task = z
       artifact: interpretation.shape.artifact,
       destination: interpretation.shape.destination,
       targetFiles: z.array(path).max(100),
+      evidence: z.literal('source-read').optional(),
       state: z.enum(['resolved', 'needs-reference', 'needs-clarification'])
     }).strict().optional(),
     deliverable: z.enum(['answer', 'review', 'plan', 'patch', 'execution-report']),

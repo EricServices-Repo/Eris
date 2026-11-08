@@ -99,6 +99,9 @@ describe('llama worker context checks', () => {
     expect(h.prompts).toHaveLength(1)
     expect(h.posted.find(msg => msg.id === 'fits' && msg.type === 'done')?.termination)
       .toMatchObject({ outputTokens: 2, outputTokenSource: 'measured' })
+    const termination = h.posted.find(msg => msg.id === 'fits' && msg.type === 'done')?.termination as {firstTokenMs?: number; firstTextMs?: number}
+    expect(termination.firstTokenMs).toBeGreaterThanOrEqual(0)
+    expect(termination.firstTextMs).toBeUndefined() // The scripted runtime emitted tokens but no visible text.
   })
 
   it('rejects an oversized prompt before generating anything', async () => {

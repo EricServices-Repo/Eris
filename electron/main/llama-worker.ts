@@ -295,6 +295,8 @@ export interface WorkerTermination {
   contextTokens: number
   outputTokens?: number
   outputTokenSource: 'measured' | 'unavailable'
+  firstTokenMs?: number
+  firstTextMs?: number
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -335,14 +337,20 @@ async function runPromptOneshot(options: {
 
     const grammar = await buildGrammar(options.jsonSchema)
     let outputTokens: number | undefined
+    let firstTokenMs: number | undefined, firstTextMs: number | undefined
+    const promptStarted = performance.now()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const promptOpts: any = {
       temperature: options.temperature,
       signal: options.signal,
       maxTokens: budget.maxTokens,
-      onToken(tokens: unknown[]) { outputTokens = (outputTokens ?? 0) + tokens.length },
+      onToken(tokens: unknown[]) {
+        if (tokens.length) firstTokenMs ??= Math.round(performance.now() - promptStarted)
+        outputTokens = (outputTokens ?? 0) + tokens.length
+      },
       ...(grammar ? { grammar } : {}),
       onTextChunk(chunk: string) {
+        if (chunk) firstTextMs ??= Math.round(performance.now() - promptStarted)
         options.onChunk(chunk)
       }
     }
@@ -354,6 +362,7 @@ async function runPromptOneshot(options: {
       promptTokens: budget.promptTokens,
       contextTokens: loadedContextSize,
       outputTokens,
+      firstTokenMs, firstTextMs,
       outputTokenSource: outputTokens === undefined ? 'unavailable' : 'measured'
     }
   } finally {
@@ -401,15 +410,21 @@ async function runSessionTurn(options: {
   ])
   const grammar = await buildGrammar(options.jsonSchema)
   let outputTokens: number | undefined
+  let firstTokenMs: number | undefined, firstTextMs: number | undefined
+  const promptStarted = performance.now()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const promptOpts: any = {
     temperature: options.temperature,
     signal: options.signal,
     maxTokens: budget.maxTokens,
     stopOnAbortSignal: true,
-    onToken(tokens: unknown[]) { outputTokens = (outputTokens ?? 0) + tokens.length },
+    onToken(tokens: unknown[]) {
+      if (tokens.length) firstTokenMs ??= Math.round(performance.now() - promptStarted)
+      outputTokens = (outputTokens ?? 0) + tokens.length
+    },
     ...(grammar ? { grammar } : {}),
     onTextChunk(chunk: string) {
+      if (chunk) firstTextMs ??= Math.round(performance.now() - promptStarted)
       options.onChunk(chunk)
     }
   }
@@ -421,6 +436,7 @@ async function runSessionTurn(options: {
     promptTokens: budget.promptTokens,
     contextTokens: loadedContextSize,
     outputTokens,
+    firstTokenMs, firstTextMs,
     outputTokenSource: outputTokens === undefined ? 'unavailable' : 'measured'
   }
 }
