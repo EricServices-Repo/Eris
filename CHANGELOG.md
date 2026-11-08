@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.17 — 2026-11-08
+
+- Preserve coding intent and truthful completion, validate generated artifacts, bound agent run time, and add packaged bad-answer regression checks.
+
 ## 0.6.16 — 2026-11-05
 
 - Improve chat routing, preserve request details on agent retries, and show where chat and model processing spend time.
