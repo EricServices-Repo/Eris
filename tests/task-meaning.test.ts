@@ -45,6 +45,13 @@ describe('abort-ignoring model transport', () => {
   })
 })
 describe('task meaning resolution', () => {
+  it.each([undefined, 'cold-native-routing-skipped', 'remote-auto-routing-skipped'] as const)('preserves explicit file review without classifier inference (%s)', async skipInference => {
+    model.response = 'invalid classifier response'
+    const result = await resolveTaskDecision({...options(), fallback:'review', skipInference,
+      text:'review the files, what else do we need to add for features?'})
+    expect(result).toMatchObject({intent:'review',source:'bypass',rule:'workspace-inspection'})
+    expect(model.requests).toHaveLength(0)
+  })
   it.each([undefined, 'cold-native-routing-skipped', 'remote-auto-routing-skipped'] as const)(
     'preserves referenced file generation with unavailable classifier (%s)', async skipInference => {
       model.response = 'malformed classification'

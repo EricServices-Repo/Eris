@@ -539,6 +539,11 @@ async function* runAgentInternal(options: {
   }
 
   const contractConflicts = taskContractConflicts(task)
+  if (task.requested?.evidence === 'source-read' && !options.workspacePath) {
+    yield { type: 'progress', step: 0, actionLog: [], filesTouched: [], incomplete: true }
+    yield { type: 'answer', text: 'Select the project to review. No source files were inspected, so I cannot provide a grounded feature review yet.', replace: true }
+    return
+  }
   if (contractConflicts.length > 0) {
     logWarn('Agent blocked before inference', {
       taskId: task.taskId,
@@ -633,6 +638,7 @@ async function* runAgentInternal(options: {
   const webQuestion = needsWebLookup(originalUserGoal)
   const answerOnly =
     !workflow.contract.requiresMutation &&
+    !workflow.contract.requiresSourceRead &&
     (plan.intent === 'capability' ||
       (!webQuestion &&
         !forceWorkspaceTools &&

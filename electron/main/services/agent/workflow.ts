@@ -11,6 +11,7 @@ export type AgentWorkflowPhase =
 export type AgentOutcomeContract = {
   intent: ChatIntent
   requiresWorkspaceEvidence: boolean
+  requiresSourceRead: boolean
   requiresMutation: boolean
   requiresVerificationAfterMutation: boolean
   /**
@@ -60,7 +61,9 @@ export function outcomeContractFor(plan: TurnPlan, goal = ''): AgentOutcomeContr
     : []
   return {
     intent: plan.intent,
+    requiresSourceRead: plan.task?.requested?.evidence === 'source-read',
     requiresWorkspaceEvidence:
+      plan.task?.requested?.evidence === 'source-read' ||
       requiresMutation ||
       (plan.requiresTools &&
         !['answer', 'capability'].includes(plan.intent) &&
@@ -150,7 +153,7 @@ export class AgentWorkflow {
       return { ok: false, reason: 'The agent produced no successful workspace evidence.' }
     }
     if (
-      ['review', 'plan'].includes(this.contract.intent) &&
+      (this.contract.requiresSourceRead || ['review', 'plan'].includes(this.contract.intent)) &&
       this.contract.requiresWorkspaceEvidence &&
       !this.sourceReads
     ) {

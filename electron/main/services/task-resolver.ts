@@ -10,6 +10,7 @@ import {
   asksForCreativeWriting,
   asksForDesignAnswer,
   asksForRecommendations,
+  asksForWorkspaceInspection,
   asksForPlan,
   asksForVerification,
   asksToCodeWorkspace,
@@ -71,6 +72,7 @@ export function resolverBypassRule(text: string, fallback: ChatIntent): string |
   const t = withoutLeadingScope(requestTextForIntent(text))
   if (asksForCreativeWriting(t)) return fallback === 'answer' ? 'creative-writing' : null
   if (fallback === 'capability') return 'capability-question'
+  if (asksForWorkspaceInspection(t) && ['review', 'explore', 'edit'].includes(fallback)) return 'workspace-inspection'
   if (needsWebLookup(t)) return 'web-lookup'
   if (/^(?:please\s+)?review\b/i.test(t) && ['review', 'explore'].includes(fallback))
     return 'leading-review'

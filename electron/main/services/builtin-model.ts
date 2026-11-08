@@ -1571,6 +1571,8 @@ async function* streamBuiltinChatViaWorker(options: {
       loadMs: Math.round(loadedAt - loadStarted),
       prepareMs: Math.round(dispatchedAt - loadedAt),
       firstChunkMs: firstChunkAt === undefined ? null : Math.round(firstChunkAt - dispatchedAt),
+      nativeFirstTokenMs: termination?.firstTokenMs ?? null,
+      nativeFirstTextMs: termination?.firstTextMs ?? null,
       generationMs: firstChunkAt === undefined ? null : Math.round(endedAt - firstChunkAt),
       dispatchMs: Math.round(endedAt - dispatchedAt),
       outputTokens: termination?.outputTokens ?? null,

@@ -32,6 +32,7 @@ import {
   asksToLocateCode,
   asksForCodeDestination,
   asksWorkspaceQuestion,
+  asksForWorkspaceInspection,
   mentionsSourcePath
 } from '../../../src/shared/agent-contract'
 import type { TurnPlan } from '../../../src/shared/settings-schema'
@@ -216,7 +217,7 @@ export function scopeApplicability(
     return { applicability: 'selected-project', rule: 'workspace-destination' }
   if (!hasProject) return { applicability: 'generic', rule: 'no-project' }
   const t = requestTextForIntent(text)
-  if (referencesOpenProject(t))
+  if (referencesOpenProject(t) || asksForWorkspaceInspection(t))
     return { applicability: 'selected-project', rule: 'workspace-reference' }
   if (continuation) return { applicability: 'unverified', rule: 'continuation' }
   // “The code”, “a bug”, “fails” may or may not mean this project. A tool-free answer
@@ -403,6 +404,7 @@ export function createTaskContract(input: {
       })
     : null
   const requested: NonNullable<TaskContract['requested']> = {
+    ...(asksForWorkspaceInspection(requestTextForIntent(input.text)) ? { evidence: 'source-read' as const } : {}),
     intent: requestedIntent,
     artifact: requestedReading.artifact,
     destination: requestedReading.destination,
@@ -758,6 +760,7 @@ export function childTaskContract(
     ...parent,
     // A child owns its assignment; never inherit the parent's requested artifacts.
     requested: {
+      ...(asksForWorkspaceInspection(requestTextForIntent(goal)) ? { evidence: 'source-read' as const } : {}),
       intent: plan.intent,
       artifact: interpretRequest({ text: goal, intent: plan.intent, canEdit: true,
         revision: parent.revision, route: plan.routeTrace }).artifact,
