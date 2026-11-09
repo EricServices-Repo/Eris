@@ -44,15 +44,21 @@ export function replayChatJob(job: ChatJobSnapshot, target: ChatEventTarget): vo
       target.send(item.channel, item.payload)
   if (job.timeline) target.send('chat:phase', { requestId: job.id, ...job.timeline.current })
   target.send('chat:job-snapshot', { requestId: job.id, job })
+  // Reattach to the host-owned result; never reconstruct or append a reply in UI.
+  const terminal = [...job.events].reverse().find(item =>
+    ['chat:done','chat:error'].includes(item.channel) && item.payload.reply)
+  const reply = terminal?.payload.reply
   if (job.status === 'failed')
     target.send('chat:error', {
       requestId: job.id,
-      error: job.persistenceError ?? 'Previous task failed'
+      error: job.persistenceError ?? 'Previous task failed',
+      reply
     })
   else if (!['queued', 'running'].includes(job.status))
     target.send('chat:done', {
       requestId: job.id,
       aborted: job.status === 'stopped',
-      incomplete: job.status === 'incomplete'
+      incomplete: job.status === 'incomplete',
+      reply
     })
 }

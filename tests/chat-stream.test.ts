@@ -202,6 +202,30 @@ describe('chat:stream command approval', () => {
 describe('main-process task authority', () => {
   const databases: ChatDatabase[]=[]
   afterEach(()=>databases.splice(0).forEach(db=>db.close()))
+  it('publishes and replays the one canonical completed reply without another append (#451)', async () => {
+    const chats=await import('../electron/main/services/chats')
+    const dir=mkdtempSync(join(tmpdir(),'eris-terminal-owner-'))
+    let db=new ChatDatabase(dir)
+    databases.push(db)
+    const thread=db.save({id:randomUUID(),title:'Terminal',model:'builtin:composer-lite',messages:[],createdAt:1,updatedAt:1})
+    vi.spyOn(chats,'getChat').mockImplementation(async (_root,id,page)=>db.get(id,page))
+    const append=vi.spyOn(chats,'appendChatMessage').mockImplementation(async (_root,id,message,model)=>db.append(id,message,model))
+    const memory=await import('../electron/main/services/context-memory')
+    vi.spyOn(memory,'conversationContext').mockRejectedValue(Error('cache unavailable'))
+    let executions=0
+    runner.script=async function* () { executions++; yield {type:'answer',text:'Completed the requested inspection.'} }
+    const requestId=randomUUID(), prompt={text:'Review the booking flow',threadId:thread.id}
+    expect(await stream(prompt,requestId)).toBe(true)
+    const canonical=sent.find(event=>event.channel==='chat:done')?.payload.reply
+    expect(canonical).toMatchObject({id:`${requestId}:assistant`,contextResult:{terminal:'done',completion:{execution:'completed',persistence:'saved'}}})
+    db.close(); databases.splice(databases.indexOf(db),1)
+    db=new ChatDatabase(dir); databases.push(db)
+    expect(db.get(thread.id)?.messages.find(message=>message.id===`${requestId}:assistant`)).toEqual(canonical)
+    await stream(prompt,requestId)
+    expect(executions).toBe(1)
+    expect(append.mock.calls.filter(call=>call[2].role==='assistant')).toHaveLength(1)
+    expect(sent.filter(event=>event.channel==='chat:done').at(-1)?.payload.reply).toEqual(canonical)
+  })
   it('persists partial text and applied files before an error and reloads one reply (#449)', async () => {
     const chats=await import('../electron/main/services/chats')
     const dir=mkdtempSync(join(tmpdir(),'eris-partial-reload-'))
