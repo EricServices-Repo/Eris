@@ -1,0 +1,819 @@
+{
+  "classificationObservations": [
+    {
+      "text": "Add pagination",
+      "intent": "answer",
+      "rule": "default-answer",
+      "sourceRead": false
+    },
+    {
+      "text": "Add search",
+      "intent": "answer",
+      "rule": "default-answer",
+      "sourceRead": false
+    },
+    {
+      "text": "Add login and logout",
+      "intent": "answer",
+      "rule": "default-answer",
+      "sourceRead": false
+    },
+    {
+      "text": "Add tests for this",
+      "intent": "answer",
+      "rule": "default-answer",
+      "sourceRead": false
+    },
+    {
+      "text": "Remove the debug banner",
+      "intent": "answer",
+      "rule": "default-answer",
+      "sourceRead": false
+    },
+    {
+      "text": "Change the button to blue",
+      "intent": "answer",
+      "rule": "default-answer",
+      "sourceRead": false
+    },
+    {
+      "text": "Save this as README.md",
+      "intent": "answer",
+      "rule": "default-answer",
+      "sourceRead": false
+    },
+    {
+      "text": "Review the files and improve the layout",
+      "intent": "review",
+      "rule": "workspace-inspection",
+      "sourceRead": true
+    },
+    {
+      "text": "Review the files and refactor booking.php",
+      "intent": "review",
+      "rule": "workspace-inspection",
+      "sourceRead": true
+    },
+    {
+      "text": "Review the files and remove the debug banner",
+      "intent": "review",
+      "rule": "workspace-inspection",
+      "sourceRead": true
+    },
+    {
+      "text": "Review the files and fix the layout",
+      "intent": "edit",
+      "rule": "inspection-and-edit",
+      "sourceRead": true
+    },
+    {
+      "text": "What features should we add to a news site?",
+      "intent": "review",
+      "rule": "recommendations",
+      "sourceRead": false
+    },
+    {
+      "text": "Review this code sample:\n```js\nfunction sum(a,b){return a-b}\n```",
+      "intent": "review",
+      "rule": "workspace-inspection",
+      "sourceRead": true
+    },
+    {
+      "text": "Explain how to implement authentication",
+      "intent": "edit",
+      "rule": "edit-wording",
+      "sourceRead": false
+    },
+    {
+      "text": "Show me how to add authentication",
+      "intent": "edit",
+      "rule": "natural-implementation",
+      "sourceRead": false
+    },
+    {
+      "text": "Write a story about a robot",
+      "intent": "answer",
+      "rule": "creative-writing",
+      "sourceRead": false
+    },
+    {
+      "text": "Improve the search form",
+      "intent": "edit",
+      "rule": "improvement-wording",
+      "sourceRead": false
+    },
+    {
+      "text": "Add pagination to index.php",
+      "intent": "edit",
+      "rule": "named-destination",
+      "sourceRead": false
+    }
+  ],
+  "captureAndWorkflowObservations": [
+    {
+      "capture": "Add pagination",
+      "intent": "answer",
+      "agent": "Explainer",
+      "scope": {
+        "state": "resolved",
+        "candidates": [],
+        "applicability": "generic"
+      },
+      "deliverable": "answer",
+      "requested": {
+        "intent": "answer",
+        "artifact": "explanation",
+        "destination": "chat",
+        "targetFiles": [],
+        "state": "resolved"
+      },
+      "authority": {
+        "tools": "none",
+        "edit": false,
+        "execute": "none",
+        "externalEffects": false
+      },
+      "detail": "Stopped at the model transport boundary. No agent response was generated.",
+      "tools": []
+    },
+    {
+      "capture": "Review the files and improve the layout",
+      "intent": "review",
+      "agent": "Reviewer",
+      "scope": {
+        "state": "resolved",
+        "candidates": [],
+        "applicability": "selected-project"
+      },
+      "deliverable": "review",
+      "requested": {
+        "evidence": "source-read",
+        "intent": "review",
+        "artifact": "review",
+        "destination": "chat",
+        "targetFiles": [],
+        "state": "resolved"
+      },
+      "authority": {
+        "tools": "read",
+        "edit": false,
+        "execute": "verification",
+        "externalEffects": false
+      },
+      "detail": "Stopped at the model transport boundary. No agent response was generated.",
+      "tools": [
+        "tree",
+        "list_dir",
+        "read_file",
+        "run",
+        "grep",
+        "glob",
+        "retrieve",
+        "context_search",
+        "context_read",
+        "search_tools",
+        "read_context",
+        "git_status",
+        "git_diff",
+        "ask_user"
+      ]
+    },
+    {
+      "capture": "Review this code sample:\n```js\nfunction sum(a,b){return a-b}\n```",
+      "intent": "review",
+      "agent": "Reviewer",
+      "scope": {
+        "state": "resolved",
+        "candidates": [],
+        "applicability": "selected-project"
+      },
+      "deliverable": "review",
+      "requested": {
+        "evidence": "source-read",
+        "intent": "review",
+        "artifact": "review",
+        "destination": "chat",
+        "targetFiles": [],
+        "state": "resolved"
+      },
+      "authority": {
+        "tools": "read",
+        "edit": false,
+        "execute": "verification",
+        "externalEffects": false
+      },
+      "detail": "Stopped at the model transport boundary. No agent response was generated.",
+      "tools": [
+        "tree",
+        "list_dir",
+        "read_file",
+        "run",
+        "grep",
+        "glob",
+        "retrieve",
+        "context_search",
+        "context_read",
+        "search_tools",
+        "read_context",
+        "git_status",
+        "git_diff",
+        "ask_user"
+      ]
+    },
+    {
+      "capture": "Explain how to implement authentication",
+      "intent": "answer",
+      "agent": "Explainer",
+      "scope": {
+        "state": "resolved",
+        "candidates": [],
+        "applicability": "generic"
+      },
+      "deliverable": "answer",
+      "requested": {
+        "intent": "answer",
+        "artifact": "explanation",
+        "destination": "chat",
+        "targetFiles": [],
+        "state": "resolved"
+      },
+      "authority": {
+        "tools": "none",
+        "edit": false,
+        "execute": "none",
+        "externalEffects": false
+      },
+      "detail": "Stopped at the model transport boundary. No agent response was generated.",
+      "tools": []
+    },
+    {
+      "noMutationOutcome": {
+        "ok": true
+      },
+      "contract": {
+        "intent": "edit",
+        "requiresSourceRead": false,
+        "requiresWorkspaceEvidence": true,
+        "requiresMutation": true,
+        "requiresVerificationAfterMutation": true,
+        "targetFiles": [
+          "index.ts"
+        ]
+      },
+      "requested": {
+        "intent": "edit",
+        "artifact": "patch",
+        "destination": "workspace",
+        "targetFiles": [
+          "index.ts"
+        ],
+        "state": "resolved"
+      }
+    }
+  ],
+  "reproductionTestSource": "import { it, expect } from 'vitest'\nimport { classifyIntentTraced } from '../electron/main/services/chat-router'\nimport { asksForWorkspaceInspection } from '../src/shared/agent-contract'\nit('records current production classifier behavior',()=>{const questions=[\"Add pagination\", \"Add search\", \"Add login and logout\", \"Add tests for this\", \"Remove the debug banner\", \"Change the button to blue\", \"Save this as README.md\", \"Review the files and improve the layout\", \"Review the files and refactor booking.php\", \"Review the files and remove the debug banner\", \"Review the files and fix the layout\", \"What features should we add to a news site?\", \"Review this code sample:\\n```js\\nfunction sum(a,b){return a-b}\\n```\", \"Explain how to implement authentication\", \"Show me how to add authentication\", \"Write a story about a robot\", \"Improve the search form\", \"Add pagination to index.php\"];const results=questions.map(text=>({text,...classifyIntentTraced(text,'agent'),sourceRead:asksForWorkspaceInspection(text)}));process.stdout.write(JSON.stringify(results,null,2)+'\\n');expect(results).toHaveLength(questions.length)})\n\nimport { captureQuestion } from '../electron/dev/capture'\nimport { mkdtempSync, writeFileSync, rmSync } from 'node:fs'\nimport { join } from 'node:path'\nimport { tmpdir } from 'node:os'\nit('records capture-path contracts without live providers',async()=>{const root=mkdtempSync(join(tmpdir(),'eris-review-'));writeFileSync(join(root,'index.html'),'<main>Rentals</main>');try{for(const text of ['Add pagination','Review the files and improve the layout','Review this code sample:\\n```js\\nfunction sum(a,b){return a-b}\\n```','Explain how to implement authentication']){const r=await captureQuestion(0,text,root,8192,'agent',new AbortController().signal,{});const task=r.task as any;process.stdout.write(JSON.stringify({capture:text,intent:r.intent,agent:r.agent,scope:task?.scope,deliverable:task?.deliverable,requested:task?.requested,authority:task?.authority,detail:r.detail,tools:r.requests.find(x=>x.purpose==='agent')?.tools?.map((t:any)=>t.function?.name??t.name)})+'\\n')}}finally{rmSync(root,{recursive:true,force:true})}})\n\nimport { AgentWorkflow } from '../electron/main/services/agent/workflow'\nit('reproduces named-target completion without a mutation',async()=>{const root=mkdtempSync(join(tmpdir(),'eris-review-no-edit-'));writeFileSync(join(root,'index.ts'),'export const title = \\\"Old title\\\";');try{const r=await captureQuestion(0,'Update index.ts to show the new title',root,8192,'agent',new AbortController().signal,{});const task={...r.task,deliverable:'patch',interpretation:{...(r.task as any).interpretation,artifact:'patch',destination:'workspace'},requested:{intent:'edit',artifact:'patch',destination:'workspace',targetFiles:['index.ts'],state:'resolved'},authority:{tools:'edit',edit:true,execute:'verification',externalEffects:false}} as any;const w=new AgentWorkflow({mode:'agent',intent:'edit',requiresTools:true,task} as any);w.noteTool({ok:true,mutated:false,name:'read_file',path:'index.ts'});w.noteVerification('passed');const result=w.evaluateOutcome({workspaceMutated:false,codeMutated:false,verifyPassed:true,filesTouched:[]});process.stdout.write(JSON.stringify({noMutationOutcome:result,contract:w.contract,requested:task?.requested})+'\\n');expect(w.contract.requiresMutation).toBe(true);expect(result.ok).toBe(true)}finally{rmSync(root,{recursive:true,force:true})}})\n",
+  "reviewedCommit": "73fe58a32bf010a1fda72fd42560395cc4bef02e",
+  "date": "2026-11-08",
+  "scope": "source review; no live inference",
+  "classificationCount": 18,
+  "captureCount": 4,
+  "workflowCounterexamples": 1,
+  "temporaryVitestTests": 3,
+  "findings": [
+    {
+      "id": "ER-01",
+      "priority": "P1",
+      "status": "Reproduced",
+      "area": "Intake",
+      "title": "Recognize ordinary short implementation requests",
+      "evidence": "Production classifyIntentTraced returns answer/default-answer for Add pagination, Add search, Add login and logout, Add tests for this, Remove the debug banner, Change the button to blue, and Save this as README.md. Capture confirms Add pagination becomes an Explainer task with tools:none and edit:false. [S01] [S02] [S27]",
+      "impact": "The worker cannot implement the request because the host has already removed its tools. A stronger model cannot repair the task authority.",
+      "implementation": "Resolve leading imperative operation independently of feature-name vocabulary. Bind destination from an explicit path or the active, applicable project. If either target or meaning is genuinely ambiguous, ask one bounded clarification; never silently substitute an explanation. Keep creative writing and quoted instructions as non-workspace cases.",
+      "acceptance": "Add permanent tests for all seven examples, both with and without an open project, plus advice, creative-writing and do-not-edit counterexamples. Capture must retain a requested patch or a truthful unresolved state, never an unexplained tool-free answer."
+    },
+    {
+      "id": "ER-02",
+      "priority": "P1",
+      "status": "Reproduced",
+      "area": "Intake",
+      "title": "Preserve the edit clause in combined review-and-change requests",
+      "evidence": "Review the files and improve the layout, Review the files and refactor booking.php, and Review the files and remove the debug banner all classify as workspace-inspection/review. The earlier inspection branch recognizes fix but omits improve, refactor and remove; it returns before later edit rules. Capture confirms the first becomes a read-only Reviewer. [S01:234] [S02:336]",
+      "impact": "Normal requests that explicitly ask for changes turn into recommendations. This closely matches the reported product failure.",
+      "implementation": "Parse the request into operations before selecting the execution strategy. Preserve inspection plus authorized mutation as ordered obligations. As an immediate repair, share the action vocabulary and compound-clause parser rather than maintaining a second smaller verb list.",
+      "acceptance": "Parameterize and/then/also, modal and polite forms, punctuation, improve/refactor/remove/delete/rename, and a negative pair such as review and recommend improvements. Assert actual permitted tool execution and resulting fixture diffs, not only route labels."
+    },
+    {
+      "id": "ER-03",
+      "priority": "P1",
+      "status": "Reproduced",
+      "area": "Intake",
+      "title": "Treat supplied code as its own evidence destination",
+      "evidence": "Review this code sample followed by a JavaScript code block triggers asksForWorkspaceInspection. Capture binds it to selected-project, requests source-read and exposes workspace read/verification tools. [S02:336] [S04:220] [S27]",
+      "impact": "A question about pasted code can inspect an unrelated open project and spend time collecting evidence that the user already supplied.",
+      "implementation": "Introduce explicit evidence operands for inline source, attachments, selected editor ranges and workspace files. A code-sample reference should bind to the provided content before generic workspace inference. Preserve separate authority for any requested application of the example.",
+      "acceptance": "With an unrelated project open, review a pasted buggy sum function and answer from its content without workspace reads or commands. A contrasting request to apply the fix to src/math.ts must bind that file and preserve edit intent."
+    },
+    {
+      "id": "ER-04",
+      "priority": "P2",
+      "status": "Source-confirmed",
+      "area": "Intake",
+      "title": "Eliminate disagreement between initial intent and resolved intent",
+      "evidence": "Explain how to implement authentication initially classifies as edit, but the capture path resolves it to an answer. The later correction is useful; it also demonstrates that different stages assign different meanings to one request. [S01] [S03] [S27]",
+      "impact": "Intermediate edit intent can influence candidate selection and preparation even when the eventual answer is conversational. Debugging a single route label conceals this disagreement.",
+      "implementation": "Separate lexical candidates from an authoritative resolved operation. No candidate may grant effects or drive expensive model preparation. Store why the final operation differs from the candidate, and use one compiled task everywhere after resolution.",
+      "acceptance": "Advice, examples and implementation requests produce one final contract. Tests prove candidate labels do not load a different model or grant mutation before the contract is resolved."
+    },
+    {
+      "id": "ER-05",
+      "priority": "P1",
+      "status": "Design proposal",
+      "area": "Intake",
+      "title": "Make one request compiler own meaning",
+      "evidence": "Routing helpers, bounded semantic resolution, reference binding, task interpretation, learned corrections and runtime workflow checks all participate in the path. Existing requested/effective separation is a good foundation, but authority and meaning are still assembled across services. [S01] [S03] [S04] [S05] [S09]",
+      "impact": "Local fixes can disagree about whether a task is advice, review, file creation or an edit. More routing branches increase the number of interactions to test.",
+      "implementation": "Create one pure compiler over canonical message, explicit UI mode, applicable project and bound references. Output operation, evidence operands, output destination, obligations, requested effects, allowed effects and unresolved questions. Reuse TaskContract and authority enforcement; do not add another competing planner.",
+      "acceptance": "Desktop, inline handoff and Eris-Dev consume the same resolved contract. Compiler fixtures prove paraphrase consistency, conservative authority and explicit unresolved cases. No downstream role selection may rewrite the requested operation."
+    },
+    {
+      "id": "ER-06",
+      "priority": "P2",
+      "status": "Design proposal",
+      "area": "Intake",
+      "title": "Bind follow-ups to stable proposal and requirement identities",
+      "evidence": "The execution guide documents a bounded six-message/100-path fallback for proposed files, while durable task and recommendation binding already exist. Generic recent prose remains a limited fallback. [S31:75] [S15] [S36]",
+      "impact": "Add those improvements and do the second one depend on the accepted proposal, not whichever list happens to survive a shortened prompt.",
+      "implementation": "Extend existing proposal/task records with stable requirement IDs, originating message IDs, project identity and selection state. Resolve ordinals and those against that record. Keep privacy controls and exclusions authoritative; do not infer deleted proposals from stale RAM.",
+      "acceptance": "Run review\u2192edit, two competing lists, reordered lists, excluded proposal, reopened chat and cross-project tests. Ambiguity asks a specific question without invoking an edit worker."
+    },
+    {
+      "id": "ER-07",
+      "priority": "P2",
+      "status": "Source-confirmed",
+      "area": "Intake",
+      "title": "Resolve generic reviews before assuming existing-project evidence",
+      "evidence": "scopeApplicability treats review artifacts as unverified existing-code work before its later hypothetical-project check. What features should we add to a news site? classifies as review even though it names no current workspace. This ordering is a source risk; a full wrong-project execution was not reproduced. [S04:229] [S02:341]",
+      "impact": "General product-design questions may incur unnecessary workspace inspection or inherit unrelated project context.",
+      "implementation": "Classify evidence source and referent before deciding whether the artifact requires existing code. A review of an idea is different from a review of this repository. Keep unverified only for genuine unresolved references.",
+      "acceptance": "Contrast hypothetical product advice, this website, an attached specification and an explicit sibling project. Assert context-origin and tool admission, not just the final prose."
+    },
+    {
+      "id": "ER-08",
+      "priority": "P2",
+      "status": "Design proposal",
+      "area": "Intake",
+      "title": "Make unsupported language and ambiguous phrasing visible",
+      "evidence": "The deterministic helpers are predominantly anchored English regular expressions; the semantic resolver has a 1,500 ms default and a self-reported confidence threshold of 0.8. [S01] [S02] [S03:48]",
+      "impact": "Minor wording changes, multilingual requests and cold local startup can determine whether a request receives tools.",
+      "implementation": "Keep deterministic safety constraints, but use structured ambiguity rather than silent default-answer for an unresolved imperative. Measure semantic resolver accuracy and coverage on representative language sets; self-reported confidence alone is not calibrated reliability.",
+      "acceptance": "Create paraphrase and multilingual datasets with human-defined operation/effect labels. Report abstention, false-edit and missed-edit rates separately for cold, warm and unavailable resolvers."
+    },
+    {
+      "id": "ER-09",
+      "priority": "P1",
+      "status": "Reproduced",
+      "area": "Execution",
+      "title": "Require a real mutation or verified no-op for explicit patch tasks",
+      "evidence": "A direct AgentWorkflow counterexample used an existing valid index.ts, requested patch authority and targetFiles:[index.ts]. noteTool recorded read_file, verification passed, workspaceMutated:false and filesTouched:[]; evaluateOutcome returned {ok:true}. The mutation gate is skipped when requested target files are present. [S06:139] [S07]",
+      "impact": "The deterministic gate can accept inspected pre-existing files as an implementation. A later semantic reviewer might catch it, but the primary gate must not depend on that possibility.",
+      "implementation": "Track whether the operation is create, modify, delete or verify-no-op. For modify, require an applied mutation receipt for a relevant target, or an explicit no-op proof that the requested behavior already exists. File existence and successful reads are evidence, not changes.",
+      "acceptance": "Make this counterexample fail. Add separate acceptance for legitimate already-correct code, requested file generation, deletion, rename and partial multi-file edits. Test the complete completion pipeline as well as the pure gate."
+    },
+    {
+      "id": "ER-10",
+      "priority": "P2",
+      "status": "Source-confirmed",
+      "area": "Execution",
+      "title": "Require relevant source evidence rather than any successful read",
+      "evidence": "AgentWorkflow increments sourceReads for any successful non-.eris read_file/notebook_read. Outcome checks require a count, without establishing that the read supports the requested feature or files. [S06:105]",
+      "impact": "Reading an unrelated source file can satisfy grounding while the actual target remains uninspected.",
+      "implementation": "Associate reads with requirement IDs, canonical paths, content hashes and source ranges. Keep a bounded coverage rule: direct target read or documented discovery evidence identifying why another file implements the behavior. Avoid demanding a full-repository scan.",
+      "acceptance": "A booking review that reads only an unrelated calculator fails coverage. A relevant router\u2192handler discovery succeeds. Failed, excluded, stale and wrong-project reads cannot count."
+    },
+    {
+      "id": "ER-11",
+      "priority": "P1",
+      "status": "Source-confirmed",
+      "area": "Execution",
+      "title": "Separate verification success from verification relevance",
+      "evidence": "detectVerifyCommand chooses the first available typecheck/type-check/tsc/test/lint script. CRA verification allows passWithNoTests. A zero exit code therefore establishes only that this chosen check passed. [S08:113] [S06:139]",
+      "impact": "A UI change can pass typecheck without rendering correctly; an empty suite can pass without testing any requested behavior.",
+      "implementation": "Represent checks by kind, command, scope, revision, test count and supported requirements. Keep cheap checks useful, but never label them behavioral verification. Select additional checks from the affected project and task, with clear unavailable/skipped semantics.",
+      "acceptance": "Fixtures cover zero tests, unrelated tests, typecheck-only projects, failed behavioral checks and a successful requirement-specific oracle. Completion wording must distinguish syntax, type, test and UI evidence."
+    },
+    {
+      "id": "ER-12",
+      "priority": "P2",
+      "status": "Source-confirmed",
+      "area": "Execution",
+      "title": "Replace byte-size stub detection with structural evidence",
+      "evidence": "productFilesAreTinyStubs uses a 250-byte threshold and a recent subset of product files. [S09:1166]",
+      "impact": "A correct small utility can look like a stub while a long placeholder passes the size heuristic.",
+      "implementation": "Use task obligations, parsed structure and executable checks to identify missing implementation. Retain file size only as a diagnostic hint. Prefer explicit placeholder patterns with corroboration rather than a blanket tiny-file condition.",
+      "acceptance": "A complete 80-byte helper is accepted after its behavior test; a multi-kilobyte TODO implementation fails. Include legitimate short CSS, JSON and configuration files."
+    },
+    {
+      "id": "ER-13",
+      "priority": "P1",
+      "status": "Design proposal",
+      "area": "Execution",
+      "title": "Consolidate progress and recovery budgets",
+      "evidence": "The loop has separate no-progress, no-new-evidence, goal-rejection, duplicate-call, verification and maximum-step limits. MAX_NO_PROGRESS=8 and MAX_STEPS_WITHOUT_EVIDENCE=6 are distinct triggers. [S09:177] [S09:2105]",
+      "impact": "The user sees stopped-after-six-steps failures even when the task budget appears larger. Recovery paths are difficult to reason about as one system.",
+      "implementation": "Introduce one task-owned budget ledger with wall time, inference calls, tool calls and requirement progress. Let each recovery consume a named bounded allowance. Count a failed retry separately from new evidence and from a verified mutation.",
+      "acceptance": "A scripted no-progress run terminates with one precise reason and counters. A legitimate long read\u2192edit sequence remains within budget. Nested work cannot reset or multiply the parent allowance."
+    },
+    {
+      "id": "ER-14",
+      "priority": "P2",
+      "status": "Source-confirmed",
+      "area": "Execution",
+      "title": "Use typed tool failures as recovery inputs",
+      "evidence": "Recovery classifies permission, missing-file, malformed-input, timeout and network failures from regular-expression matches over error text. These messages are useful guidance but are not a stable machine protocol. [S10]",
+      "impact": "Different providers, operating systems and translated messages can select the wrong recovery, causing repeated failed calls or premature termination.",
+      "implementation": "Extend existing tool receipts with a bounded error enum, retriable flag, effect-applied flag, path and operation identity. Use text only for presentation and unknown-failure fallback. Preserve refusal/permission boundaries across model changes.",
+      "acceptance": "Windows and macOS representations of the same failure choose identical safe actions. An applied-but-unacknowledged write is never blindly retried. Permission denial cannot turn into model-shopping."
+    },
+    {
+      "id": "ER-15",
+      "priority": "P1",
+      "status": "Source-confirmed",
+      "area": "Execution",
+      "title": "Preserve partial text when a stream errors",
+      "evidence": "The renderer onChatError clears thinking and answer buffers and persists an assistant record only in the image-assets branch. Main-process failure handling may preserve other state, but this renderer path does not itself retain streamed text. End-to-end loss depends on the preceding terminal/persistence path and needs a fault test. [S11:1065] [S13]",
+      "impact": "A user can watch useful output disappear into a generic error, reinforcing the impression that the message was never answered.",
+      "implementation": "Snapshot partial visible text and typed failure outcome before clearing UI buffers. Make main the canonical writer and let the renderer reconcile by request ID. Render partial answers with changed-file receipts and failure reason.",
+      "acceptance": "Inject disconnects after several text chunks, after an edit and during final persistence. Reload the chat and recover the partial answer and accurate status without duplicate assistant records."
+    },
+    {
+      "id": "ER-16",
+      "priority": "P2",
+      "status": "Source-confirmed",
+      "area": "Execution",
+      "title": "Give queued user messages a durable thread-bound identity",
+      "evidence": "The renderer owns a max-three FIFO in useState/useRef and drains it with sendMessage(next.text,next.attachments,next.skillIds), without an explicit thread argument. newChat clears it. Main also has its own durable admission/job layer. [S12:702] [S14] [S38]",
+      "impact": "Pre-admission messages have weaker durability and explicit affinity than admitted jobs. Reload, chat switching and stop behavior need separate qualification.",
+      "implementation": "Queue a request envelope containing request/thread/project IDs, revision, attachments and selected policy. Transfer it to main admission promptly and show queued/stopped state from that owner. Define explicit cancel-versus-defer semantics.",
+      "acceptance": "Queue messages, switch chats, stop the active task, reload the renderer and remove an attachment. Each message runs in its original destination or is explicitly cancelled; no silent disappearance or cross-thread dispatch."
+    },
+    {
+      "id": "ER-17",
+      "priority": "P1",
+      "status": "Design proposal",
+      "area": "Completion",
+      "title": "Make one owner persist the terminal assistant result",
+      "evidence": "Main persistReply appends the canonical assistant message, while onChatDone in the renderer constructs and appends another message with the same request-derived identity. Idempotency is intended, but two owners serialize different metadata. [S13:203] [S11:997]",
+      "impact": "Even when deduplication works, ordering and metadata preservation become extra correctness obligations, especially around storage errors and reloads.",
+      "implementation": "Make main own a canonical TaskOutcome and assistant append. The terminal event carries its durable revision or a retrievable result handle. Renderer only acknowledges and reconciles optimistic state. Preserve the existing idempotent identity as defense in depth.",
+      "acceptance": "Deliver duplicate/out-of-order terminal events and crash/reload at every boundary. Exactly one canonical assistant result retains completion, contextResult, delegations and assets."
+    },
+    {
+      "id": "ER-18",
+      "priority": "P1",
+      "status": "Design proposal",
+      "area": "Completion",
+      "title": "Reconcile task, transcript and job persistence as one outcome",
+      "evidence": "Task state, chat-job state, run records, transcript reply and ledger flushes are separate services/steps. Recent code correctly marks a failed task save as incomplete, but projection coordination remains distributed. [S13:1235] [S14] [S15]",
+      "impact": "A storage failure can leave different screens or the next turn with different views of whether work completed.",
+      "implementation": "Use an authoritative task outcome revision with an idempotent outbox/projection reconciler, or a transaction where stores share a database. Keep applied filesystem effects separate from durable acknowledgements. Do not introduce a second transcript database.",
+      "acceptance": "Fault-inject each save/flush boundary and restart. Projections converge to the same outcome; applied changes remain visible; no recovery claims that an unpersisted completion was durable."
+    },
+    {
+      "id": "ER-19",
+      "priority": "P1",
+      "status": "Design proposal",
+      "area": "Completion",
+      "title": "Track completion per requested requirement",
+      "evidence": "The task carries obligations and the semantic outcome review sees them, but deterministic workflow completion still uses aggregate mutation/read/verification signals. [S05] [S06] [S17]",
+      "impact": "One successful file edit can obscure that authentication, search and confirmation were requested together and only one was delivered.",
+      "implementation": "Extend existing obligation records with satisfied/partial/blocked/not-attempted states and evidence handles. A deterministic result assembles these states; semantic review can challenge coverage but cannot invent effects.",
+      "acceptance": "A three-feature fixture with one missing feature reports partial with the exact remaining obligation. The next turn resumes that obligation without repeating completed mutations."
+    },
+    {
+      "id": "ER-20",
+      "priority": "P2",
+      "status": "Source-confirmed",
+      "area": "Completion",
+      "title": "Bound answer repair and preserve evidence-specific truth",
+      "evidence": "finalizeAnswer may re-answer protocol-leaking output, continue truncated code and repair unsupported IDE-only creative refusals. Its generic repair instruction permits assumptions/general guidance when source evidence is unavailable. [S16:86]",
+      "impact": "Repairs add latency and may turn an evidence-dependent task into plausible generic prose unless the original task requirements remain authoritative.",
+      "implementation": "Make repairs consume the shared budget and reuse the exact artifact/evidence contract. A source-required repair must remain grounded or explicitly partial. Record repaired text separately from raw model output, as the existing audit already begins to do.",
+      "acceptance": "Protocol corruption after an edit yields a grounded summary or partial outcome. Repair cannot claim new edits, remove unresolved obligations, or exceed the parent deadline."
+    },
+    {
+      "id": "ER-21",
+      "priority": "P2",
+      "status": "Design proposal",
+      "area": "Completion",
+      "title": "Resume from receipts and unresolved work at safe boundaries",
+      "evidence": "The current loop reports preserved changes and has journals/checkpoints, but a stop note can still tell the user to start a new request. Re-running an original instruction is different from continuing a known task state. [S09:2110] [S14] [S36]",
+      "impact": "Users repeatedly retry and risk duplicate work, while models spend tokens rediscovering what already happened.",
+      "implementation": "Offer continuation of a durable task at a tool/model boundary. Revalidate permissions, project identity, changed-file hashes and model policy before resuming. Keep cancellation terminal until an explicit continuation is requested.",
+      "acceptance": "Cancel after the first of three writes, restart and continue. Exactly the remaining two outputs are applied. External modifications trigger reinspection, not an overwrite from a stale checkpoint."
+    },
+    {
+      "id": "ER-22",
+      "priority": "P2",
+      "status": "Design proposal",
+      "area": "Completion",
+      "title": "Protect against external edits between read and write",
+      "evidence": "Read-before-edit and canonical project write scheduling protect important boundaries. The scheduler serializes Eris writers; it does not itself establish that an editor, Git operation or another process has not changed a previously read file. [S18] [S09:1150]",
+      "impact": "A valid agent read can become stale before a later overwrite, even without two Eris tasks running concurrently.",
+      "implementation": "Carry expected content revision/hash in edit receipts and use compare-and-apply semantics. On mismatch, re-read and regenerate a patch. Keep whole-file writes explicit for newly created files and approved replacements.",
+      "acceptance": "Modify a target externally after read_file and before search_replace/write_file. The stale operation conflicts visibly and preserves the external change."
+    },
+    {
+      "id": "ER-23",
+      "priority": "P2",
+      "status": "Design proposal",
+      "area": "Completion",
+      "title": "Explain already-correct and intentionally unchanged outcomes",
+      "evidence": "The current edit gate requires mutation in many paths, while named-target paths can bypass it. Neither a blanket mutation requirement nor blanket existence acceptance captures a legitimate no-op. [S06:166] [S07]",
+      "impact": "An agent may make cosmetic changes just to pass a mutation gate, or claim success without demonstrating that the requested behavior exists.",
+      "implementation": "Add an explicit verified-no-op disposition supported by relevant source and a requirement-specific check. Show already satisfied rather than changed. This complements ER-09; it is a separate result type, not an exception that silently weakens edit evidence.",
+      "acceptance": "Request an already-present validation rule. The model inspects and verifies it, reports no changes needed, and does not touch file timestamps or claim a patch."
+    },
+    {
+      "id": "ER-24",
+      "priority": "P2",
+      "status": "Qualification gap",
+      "area": "Completion",
+      "title": "Qualify commands that outlive the chat stream",
+      "evidence": "Run execution, task-owned cleanup, cancellation and project scheduling already exist. Correctness still needs acceptance for child processes and external effects crossing terminal boundaries. This is a test obligation, not proof that all commands currently leak. [S09] [S18] [S38]",
+      "impact": "A cancelled chat can otherwise appear stopped while a process still changes files or holds resources.",
+      "implementation": "Track process-tree identity and command effect receipts; define which long-running tasks may be detached and who owns them. Reconcile process termination before final status, or show an explicit still-running external task.",
+      "acceptance": "Exercise a long-running writer, spawned child process, server command, timeout and app quit on both platforms. Assert resource release and truthful final task ownership."
+    },
+    {
+      "id": "ER-25",
+      "priority": "P1",
+      "status": "Design proposal",
+      "area": "Models and context",
+      "title": "Choose the execution model after the task is resolved",
+      "evidence": "The current request execution guide explicitly places initial route/model candidate selection before complete intake. Resource-admitted transitions are already implemented and must be retained. [S31:59] [S19] [S20]",
+      "impact": "An early answer/review candidate can be inappropriate after reference resolution reveals a multi-file implementation task. Repeated selection/preparation can waste cold-load time.",
+      "implementation": "Allow only cheap catalog eligibility before resolution. Select and prepare the actual worker from the final operation, evidence volume, tool protocol and local/remote policy. On later changes, use the existing guarded model-transition service.",
+      "acceptance": "A review\u2192implement follow-up selects an edit-capable eligible model once. No remote model is selected under Local policy. Instrument load counts and compare cold/warm end-to-end latency."
+    },
+    {
+      "id": "ER-26",
+      "priority": "P2",
+      "status": "Design proposal",
+      "area": "Models and context",
+      "title": "Expose capability and policy; keep agent roles secondary",
+      "evidence": "The system has intent, role, tool ceiling, fixed/auto-local/auto-any policy and model capability selection. These are distinct concerns already represented in source. [S01] [S05] [S19]",
+      "impact": "Users interpret Auto or Composer as a promise to implement, while a hidden read-only contract may prevent it.",
+      "implementation": "Make primary controls describe output behavior and execution policy: Answer, Inspect, Edit, Run; Fixed, Auto-local, Auto-any. Treat Reviewer/Coder as optional specialist profiles. An edit request with incompatible profile should show a capability conflict or select a compatible profile within existing authority.",
+      "acceptance": "A user can predict whether files may change and where inference runs before sending. Explicit Ask/Local limits remain intact. Model switching never expands authority."
+    },
+    {
+      "id": "ER-27",
+      "priority": "P2",
+      "status": "Source-confirmed",
+      "area": "Models and context",
+      "title": "Use one context selection plan with different projections",
+      "evidence": "Semantic intake reads six messages with each content capped at 1,200 characters; chat prompt history has separate compaction; agent context has its own compiler and budgets. Different stages see different conversation projections. [S03:262] [S22] [S21]",
+      "impact": "A referent can be visible during execution but absent during intent resolution, or vice versa. This is a selection-coherence problem, not simply insufficient RAM.",
+      "implementation": "Create one versioned context selection plan listing canonical current request, bound references, active obligations and optional evidence. Derive bounded intake and execution projections with explicit omission reasons. Keep the current task and permissions required in every projection.",
+      "acceptance": "Long-history follow-ups bind the same proposal before and after compaction. Tests inspect source IDs and omission manifests across stages, including a small measured context allocation."
+    },
+    {
+      "id": "ER-28",
+      "priority": "P2",
+      "status": "Design proposal",
+      "area": "Models and context",
+      "title": "Reserve context for active requirements before historical detail",
+      "evidence": "Context budgeting and required task blocks already exist; memory retention is intentionally larger than model input. The memory guide documents separate recall/history shares. [S21] [S33]",
+      "impact": "Increasing retained history alone can increase retrieval noise and delay while the decisive active requirement is still missing from a projection.",
+      "implementation": "Prioritize current message, accepted constraints, active requirement state, relevant source excerpts and unresolved decisions. Retrieve older detail on demand from existing stores. Measure requirement coverage per admitted token instead of treating maximum context use as success.",
+      "acceptance": "On long chats, the next prompt retains all active constraints and the exact requested file list while excluding irrelevant older exchanges. Compare correctness and latency against the current selector using a fixed corpus."
+    },
+    {
+      "id": "ER-29",
+      "priority": "P2",
+      "status": "Qualification gap",
+      "area": "Models and context",
+      "title": "Prove memory revocation and summary lineage across active runs",
+      "evidence": "Dispatch revalidation, source-backed summaries, facts and evidence-origin controls are implemented. Historical documents still discuss additional qualification and original target limitations. [S23] [S24] [S33] [S34]",
+      "impact": "Memory improvements need to preserve deletion/exclusion semantics during queued dispatch, model transition and child handoff; an existing service is not end-to-end proof.",
+      "implementation": "Extend fault/state-transition tests around revoked facts, deleted messages, excluded attachments and summaries derived from those sources. Reuse the existing fresh-dispatch validation rather than adding another memory cache.",
+      "acceptance": "Revoke between snapshot and dispatch, between parent and child, and during a model switch. Actual serialized prompts and regenerated summaries contain no ineligible source content."
+    },
+    {
+      "id": "ER-30",
+      "priority": "P3",
+      "status": "Source-confirmed",
+      "area": "Models and context",
+      "title": "Evaluate safe cross-turn KV reuse only after correctness fixes",
+      "evidence": "The native GGUF session is keyed by job ID and released at the end of the run; current code supports within-run reuse, not a durable conversation KV identity. [S25:784] [S09:4693]",
+      "impact": "Repeated turns may reprocess common prefixes. This is a performance opportunity, not evidence that RAM history is absent.",
+      "implementation": "Benchmark exact-prefix reuse against fresh reseeding. If beneficial, add a bounded session cache keyed by model identity, tokenizer/template, canonical prompt prefix and privacy/control revisions. Evict on pressure, model switch and source revocation.",
+      "acceptance": "Measure warm-turn latency and memory on real target hardware. Any changed policy, excluded source or incompatible prefix forces reseeding. No correctness or privacy regression is acceptable for a speedup."
+    },
+    {
+      "id": "ER-31",
+      "priority": "P2",
+      "status": "Design proposal",
+      "area": "Models and context",
+      "title": "Make the actual dispatched prompt inspectable",
+      "evidence": "Context manifests and diagnostic seams already distinguish common-seam capture from actual post-allocation serialization. The distinction is documented but easy to miss. [S21] [S27] [S30:38]",
+      "impact": "A good-looking captured request may not be the final payload a model receives after adapter conversion and native allocation.",
+      "implementation": "Link each visible task to final-dispatch operation, model, tokenizer, admitted input/output budget, source IDs, dropped blocks and tool-schema version. Expose redacted actual-dispatch data through the existing diagnostics export.",
+      "acceptance": "For a forced smaller allocation, compare capture, final serialized payload and displayed manifest. Required instructions survive or the run blocks explicitly; the inspector must not present estimates as actual token counts."
+    },
+    {
+      "id": "ER-32",
+      "priority": "P1",
+      "status": "Design proposal",
+      "area": "Models and context",
+      "title": "Measure user-visible latency across the whole request",
+      "evidence": "Native firstTokenMs and firstTextMs are now separate. Chat-stream also measures prompt build and first output. These improvements should be extended, not reimplemented. [S26] [S13:315]",
+      "impact": "A slow chat can spend time queued, loading a model, retrieving evidence, reasoning privately, repairing output or reviewing completion. One tokens-per-second figure cannot identify the cause.",
+      "implementation": "Use one trace ID across admission, intake, retrieval, model load, prefill, first visible text, tools, verification, semantic review and persistence. Report p50/p95 by cold/warm state, model and task type. Display the current phase and elapsed time.",
+      "acceptance": "Synthetic injected delays are attributed to the correct phase. Real hardware runs report both first token and first visible answer, plus total time. Establish thresholds from measured baselines rather than inventing universal limits."
+    },
+    {
+      "id": "ER-33",
+      "priority": "P1",
+      "status": "Design proposal",
+      "area": "Evaluation",
+      "title": "Turn the reproduced failures into permanent regression cases",
+      "evidence": "This review ran 18 classifier examples, four capture-path examples and one deterministic workflow counterexample. Existing suites passed previously but did not prevent these cases. [S01] [S06] [S27]",
+      "impact": "High assertion counts do not guarantee that the short messages users actually type receive correct behavior.",
+      "implementation": "Add these exact cases to permanent production-seam tests. Assert intended artifact, scope, authority, tools and fixture effects. Preserve negative pairs and explicit ambiguity cases to avoid fixing missed edits by enabling unintended edits.",
+      "acceptance": "Each reproduced defect has a failing regression before its fix and passing evidence after. Run the cases through desktop admission, shared intake, agent execution and terminal persistence where applicable."
+    },
+    {
+      "id": "ER-34",
+      "priority": "P2",
+      "status": "Design proposal",
+      "area": "Evaluation",
+      "title": "Generate compositional tests instead of isolated keyword fixtures",
+      "evidence": "ER-02 is a rule-order/vocabulary interaction; ER-01 is a short-feature vocabulary gap. Individual happy-path examples under-sample these dimensions. [S01] [S02]",
+      "impact": "New keyword patches can make one sentence work while closely related phrasing still fails.",
+      "implementation": "Generate bounded combinations of operation verb, project reference, conjunction, negation, quoted content, follow-up and UI mode. Use metamorphic properties: adding please does not change authority; adding do not edit removes edit effects; changing a feature noun does not change operation.",
+      "acceptance": "Report coverage by dimension and preserve minimized counterexamples. Tests must include both edit\u2192read-only regressions and accidental read-only\u2192edit escalation."
+    },
+    {
+      "id": "ER-35",
+      "priority": "P1",
+      "status": "Design proposal",
+      "area": "Evaluation",
+      "title": "Report what the 10,000-question corpus actually exercised",
+      "evidence": "Eris-Dev distinguishes capture-only, live inference and independently evaluated answer quality. Capture stops before generation; a live answer is not automatically a correct artifact. [S27] [S30:19]",
+      "impact": "A run can process every imported question while testing no real model output or no actual file behavior.",
+      "implementation": "Export separate counts for imported, admitted, contract-captured, actual-dispatched, answered, mutated, verified, independently graded and failed/aborted. Keep resumable batches of ten and stable IDs. Never collapse these states into one passed counter.",
+      "acceptance": "A capture-only 10,000-question run reports zero live answers. A resumed live run has no duplicate coverage. Missing responses and ungraded artifacts remain visible in denominators."
+    },
+    {
+      "id": "ER-36",
+      "priority": "P1",
+      "status": "Qualification gap",
+      "area": "Evaluation",
+      "title": "Add a small repeatable live-model release benchmark",
+      "evidence": "Packaged scripted smoke deliberately avoids provider calls and uses fixture oracles. Eris-Dev can execute real selected models. Neither mode alone certifies arbitrary model quality. [S28] [S27] [S30]",
+      "impact": "Protocol tests can pass while an installed local model emits unusable tool calls or takes unacceptable time on real requests.",
+      "implementation": "Define a compact representative live suite for supported small local models and one configured API path, on actual supported hardware. Include review\u2192edit, short edits, multi-file creation, no-op, tool error and long-history cases. Keep it separate from deterministic PR checks.",
+      "acceptance": "A report records model artifact/hash, template, quantization, allocated context, hardware, actual call count, elapsed stages and independent artifact grade. Unrun hardware remains explicitly unqualified."
+    },
+    {
+      "id": "ER-37",
+      "priority": "P1",
+      "status": "Design proposal",
+      "area": "Evaluation",
+      "title": "Grade generated artifacts independently of the generating model",
+      "evidence": "The packaged regression already uses independent expected JSON fields. Live corpus records appropriately leave answerQuality not-evaluated until an oracle exists. [S28] [S30:30]",
+      "impact": "DONE prose and plausible code can hide missing routes, broken imports, empty handlers or a feature implemented in the wrong project.",
+      "implementation": "Expand fixture oracles to compile/typecheck, route reachability, schema constraints, state transitions and browser interaction where relevant. Optional model-based grading supplements deterministic evidence and must use a separate rubric and recorded judge identity.",
+      "acceptance": "Deliberately plausible but broken artifacts fail. A correct alternate implementation passes. Wrong-directory edits and partial feature delivery are detected without relying on the assistant summary."
+    },
+    {
+      "id": "ER-38",
+      "priority": "P2",
+      "status": "Qualification gap",
+      "area": "Evaluation",
+      "title": "Qualify each tool protocol and final serializer",
+      "evidence": "Native grammar, text-tool envelopes and provider-specific representations are adapted after common prompt capture. The model-facing schema is now model-task/6. [S21] [S27] [S30:38]",
+      "impact": "Correct task routing does not establish that a particular model/template understands the emitted tool protocol.",
+      "implementation": "Maintain golden serialized fixtures and bounded live contract probes for native structured calls, text tools and supported API protocols. Include call IDs, multi-call results, malformed arguments, reasoning-only output and empty visible response.",
+      "acceptance": "Each supported protocol completes a read\u2192edit\u2192verify fixture and recovers safely from one malformed call. Final dispatched constraints and tool visibility match the canonical contract."
+    },
+    {
+      "id": "ER-39",
+      "priority": "P1",
+      "status": "Qualification gap",
+      "area": "Evaluation",
+      "title": "Exercise failures between effects and acknowledgements",
+      "evidence": "Durable mutation receipts, incomplete outcomes and recovery runbooks have been added. They need systematic acceptance across the same production path used by chat. [S13] [S14] [S35]",
+      "impact": "The most damaging failures occur after a file changed but before the user or the next turn receives a durable result.",
+      "implementation": "Build a fault matrix covering tool applied\u2192receipt, receipt\u2192task save, task save\u2192transcript, transcript\u2192terminal event, model crash, disk-full, cancellation, renderer reload and app restart. Treat receipts as the basis for safe reconciliation.",
+      "acceptance": "Every injected failure preserves applied effects, prevents duplicate writes and exposes a durable partial/failed outcome. The next turn neither denies a real change nor assumes an unverified one succeeded."
+    },
+    {
+      "id": "ER-40",
+      "priority": "P2",
+      "status": "Design proposal",
+      "area": "Evaluation",
+      "title": "Bind qualification to immutable source and build identities",
+      "evidence": "Qualification evidence tooling already exists. Source, packaged scripted smoke, live hardware and installed-app checks remain distinct evidence classes. [S29] [S35] [S37]",
+      "impact": "A passing source test from one checkout can be incorrectly treated as proof of an installed app from another build.",
+      "implementation": "Include commit, source-tree digest/dirty state, lockfile digest, generated-bundle digest, platform, model configuration, fixture version and command identity in every qualification record. Release aggregation should reject incompatible evidence rather than silently combine it.",
+      "acceptance": "Reports from an older bundle or changed lockfile cannot qualify the new release. Rebuild-generated temporary files are handled explicitly in provenance rather than obscuring whether actual source was dirty."
+    },
+    {
+      "id": "ER-41",
+      "priority": "P2",
+      "status": "Design proposal",
+      "area": "Maintainability",
+      "title": "Split the execution loop by responsibility, not by more agents",
+      "evidence": "loop.ts is 4,695 lines; chat-stream.ts 1,462; useChatSession.ts 1,192; chat-router.ts 979; task-intake.ts 806 at this baseline. Size alone is not a defect, but these files contain interacting policy and lifecycle decisions. [S09] [S13] [S11] [S01] [S04]",
+      "impact": "Small behavior changes require understanding many unrelated recovery and persistence paths, making regressions harder to isolate.",
+      "implementation": "Extract pure task compilation, run-state transitions, progress accounting, effect application and completion reduction behind existing contracts. Keep one runner and one gateway. Use characterization tests before moving code; avoid a simultaneous rewrite of routing, persistence and model transport.",
+      "acceptance": "The same trace fixtures produce identical observable behavior after extraction. Policy decisions have one owner and pure unit tests; orchestration code primarily coordinates typed transitions."
+    },
+    {
+      "id": "ER-42",
+      "priority": "P2",
+      "status": "Design proposal",
+      "area": "Maintainability",
+      "title": "Replace renderer stream refs with a request reducer",
+      "evidence": "useChatSession coordinates mutable request IDs, active/last IDs, text accumulators, assets, delegations, queues and multiple terminal callbacks. [S11] [S12]",
+      "impact": "Out-of-order events and thread switches become difficult to reason about, especially while persistence is asynchronous.",
+      "implementation": "Use a keyed request-state reducer with explicit queued/running/awaiting-user/partial/terminal states and event sequence/revision checks. Render the selected thread from those projections. Keep frame batching as a presentation optimization.",
+      "acceptance": "Replay duplicate chunks, late errors, stale terminal events, reload and chat switches deterministically. A terminal request cannot resume accidentally and another chat never receives its answer."
+    },
+    {
+      "id": "ER-43",
+      "priority": "P1",
+      "status": "Design proposal",
+      "area": "Product UX",
+      "title": "Show the resolved action and destination before expensive work",
+      "evidence": "The user sees agent/model route metadata, but those names do not explain requested artifact, allowed effects or project applicability. The captured failures demonstrate why that distinction matters. [S01] [S05] [S27]",
+      "impact": "Users discover a task was read-only only after waiting for a recommendation instead of a patch.",
+      "implementation": "Display a concise summary such as Edit selected project \u00b7 3 requirements \u00b7 Auto-local, or Review pasted code \u00b7 no file changes. For ambiguity, show a specific target/mode question immediately. Keep details expandable and avoid adding routine approval clicks.",
+      "acceptance": "Usability tests show users can distinguish review, edit and missing-target states before first inference. The display is derived from the same contract the gateway enforces."
+    },
+    {
+      "id": "ER-44",
+      "priority": "P2",
+      "status": "Design proposal",
+      "area": "Product UX",
+      "title": "Replace repetitive status prose with evidence-based progress",
+      "evidence": "The loop emits continuing, recovery, reroute and stop messages from several branches. These are useful internal events but do not directly communicate completed requirements. [S09] [S13]",
+      "impact": "Repeated Not done yet or Running 1 tool messages make activity look like progress even when the task is stalled.",
+      "implementation": "Show one current phase, elapsed time, last successful evidence, completed requirements, actual changed files and a precise blocker. Keep verbose trace in an expandable log. A final partial result should offer safe continuation or a concrete corrective action.",
+      "acceptance": "A stalled scripted run shows no fake progress percentage and identifies the repeated failure. Successful edits show files and checks; a source-only answer never displays invented changes."
+    },
+    {
+      "id": "ER-45",
+      "priority": "P2",
+      "status": "Source-confirmed",
+      "area": "Documentation",
+      "title": "Publish one current architecture instead of stacked historical snapshots",
+      "evidence": "CONTEXT-MEMORY begins with a current reconciliation, then older 0.6.10 and 0.6.11 snapshots. The handoff guide preserves original findings and partially implemented targets with caveats. Those caveats are good, but readers must reconcile multiple layers. [S33] [S34]",
+      "impact": "Future models can implement duplicate services or report already-fixed limitations by reading an older section in isolation.",
+      "implementation": "Move historical reviews into dated archive documents. Keep the canonical guide limited to current behavior, explicit remaining gaps and links to history. Put reviewed commit and evidence scope at the top of each current guide.",
+      "acceptance": "A documentation audit finds no historical limitation presented as current. Every major subsystem has one canonical owner document, with archived target designs linked as proposals."
+    },
+    {
+      "id": "ER-46",
+      "priority": "P2",
+      "status": "Reproduced",
+      "area": "Documentation",
+      "title": "Update and automatically check model-facing schema documentation",
+      "evidence": "Current context-compiler exports MODEL_FACING_TASK_SCHEMA=model-task/6. ARCHITECTURE and REQUEST-EXECUTION still describe model-task/5, and the documented requested block omits evidence:source-read. [S21:60] [S31:25] [S32:52]",
+      "impact": "Implementation work based on the guide can drop the source-read contract or serialize the wrong schema.",
+      "implementation": "Generate contract examples from shared types or tested fixtures, and add documentation consistency checks for current schema identifiers and required fields. Clearly distinguish additive saved-task compatibility from current model-facing wire format.",
+      "acceptance": "Docs show model-task/6 and the optional evidence requirement. A deliberate schema-version change without documentation/example update fails the documentation check."
+    },
+    {
+      "id": "ER-47",
+      "priority": "P2",
+      "status": "Design proposal",
+      "area": "Documentation",
+      "title": "Turn broad recommendations into an evidence-linked acceptance backlog",
+      "evidence": "RECOMMENDATIONS, the v1.0.1 checklist, architecture targets and GitHub issues overlap. Many foundations are already implemented while hardware or installed acceptance remains open. [S35] [S33] [S34]",
+      "impact": "A large open issue can be mistaken for missing code, while a merged PR can be mistaken for complete release qualification.",
+      "implementation": "For each requirement record implementation status, current owner/source, remaining acceptance, test/report link, relevant issue and superseding PR. Keep this review as a dated assessment, not another permanent source of truth. Reconcile existing issues before creating duplicates.",
+      "acceptance": "An implementer can identify exactly what code or acceptance remains without reading historical chat. Source-complete, tested, packaged, installed and released statuses are separate."
+    },
+    {
+      "id": "ER-48",
+      "priority": "P2",
+      "status": "Design proposal",
+      "area": "Documentation",
+      "title": "Make installed build identity visible in every feedback export",
+      "evidence": "This review examines main 73fe58a with package 0.6.17; a separate rebuild branch/app can have a different version. Runtime behavior cannot be inferred from the latest repository merge alone. [S37] [S29]",
+      "impact": "Reports of a regression may actually come from an older app, the wrong Eris/Eris-Dev bundle or a build missing the relevant merged fix.",
+      "implementation": "Expose app role, version, commit, bundle/build ID, architecture, active project, effective model/policy and diagnostic trace ID in About and feedback. Include a privacy-safe machine-readable export with actual runtime identity.",
+      "acceptance": "A feedback report can be traced to the exact bundle and matching source evidence. Rebuilding without installing cannot make the app claim the newer runtime identity."
+    }
+  ],
+  "publicationNote": "Historical review of 73fe58a; current disposition is tracked in https://github.com/EricServices-Repo/Eris/issues/435. Findings and observations are unchanged; reproduction imports were normalized for portability, without rerunning the historical probe.",
+  "reproductionInstructions": {
+    "checkout": "73fe58a32bf010a1fda72fd42560395cc4bef02e",
+    "temporaryLocation": "tests/eris-reliability-review.test.ts",
+    "command": "node_modules/.bin/vitest run tests/eris-reliability-review.test.ts",
+    "warning": "Use a disposable checkout at the reviewed commit. This observational probe asserts historical bad behavior and is not a current regression gate. Remove the temporary probe after use."
+  }
+}
