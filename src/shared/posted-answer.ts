@@ -1,3 +1,14 @@
+import type { ChatMessage, ChatThread } from './settings-schema'
+
+/** Terminal snapshots reconcile by request-derived identity, never by appending twice. */
+export function upsertTerminalReply(thread: ChatThread, reply: ChatMessage): ChatThread {
+  const exists = thread.messages.some(message => message.id === reply.id)
+  const messages = exists ? thread.messages.map(message => message.id === reply.id ? reply : message)
+    : [...thread.messages, reply]
+  return {...thread,messages,updatedAt:Math.max(thread.updatedAt,reply.createdAt),
+    messageCount:Math.max(thread.messageCount ?? 0,(thread.messageOffset ?? 0)+messages.length)}
+}
+
 /** Lift a real reply out of the thinking trace when the saved body is only a tool log. */
 export function isToolLogReply(text: string): boolean {
   const body = text.trim()

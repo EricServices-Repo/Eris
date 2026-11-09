@@ -19,7 +19,7 @@ import type {
   ModelInfo,
   SkillRecord
 } from '@/shared/settings-schema'
-import { finalizePostedAnswer } from '@/shared/posted-answer'
+import { finalizePostedAnswer, upsertTerminalReply } from '@/shared/posted-answer'
 import type { OpenTab } from '@/features/editor/EditorArea'
 import type {
   ActiveSkillRef,
@@ -1062,8 +1062,33 @@ export function useChatSession({
         setStreaming(false)
       }
     })
-    const offError = window.ide.onChatError(({ requestId, error }) => {
+    const offError = window.ide.onChatError(({ requestId, error, reply }) => {
       if (requestId !== requestIdRef.current && requestId !== lastRequestIdRef.current) return
+      if (completedRequestsRef.current.has(requestId)) return
+      completedRequestsRef.current.add(requestId)
+      if (completedRequestsRef.current.size > 200)
+        completedRequestsRef.current.delete(completedRequestsRef.current.values().next().value!)
+      if (paintRaf.current) { cancelAnimationFrame(paintRaf.current); paintRaf.current = 0 }
+      const threadId = requestThreadIdRef.current
+      const meta = routeMetaRef.current
+      const partial = reply ?? (answerAcc.current.trim() || imageAssetsRef.current.length ? {
+        id: `${requestId}:assistant`, role: 'assistant' as const,
+        content: `${answerAcc.current}${answerAcc.current ? '\n\n' : ''}Partial response: the request failed before completion.`,
+        createdAt: Date.now(), model: meta.model, agentId: meta.agentId, agentName: meta.agentName,
+        assets: imageAssetsRef.current.length ? [...imageAssetsRef.current] : undefined
+      } : undefined)
+      // Main persists the terminal snapshot. On storage failure the same snapshot
+      // remains visible locally; the error explicitly reports failed durability.
+      if (partial && threadId) {
+        if (activeThreadRef.current?.id === threadId) {
+          const merged = upsertTerminalReply(activeThreadRef.current, partial)
+          activeThreadRef.current = merged
+          setActiveThread(merged)
+        }
+        setThreads(previous => previous.map(thread => thread.id === threadId ? upsertTerminalReply(thread, partial) : thread))
+      }
+      thinkingAcc.current = ''
+      answerAcc.current = ''
       setStreaming(false)
       setThinkingBuffer('')
       setAnswerBuffer('')
@@ -1071,42 +1096,6 @@ export function useChatSession({
       setPendingQuestion(null)
       setChatError(error)
       requestIdRef.current = null
-      // A later model failure must not lose an image already generated for this turn.
-      const assets = [...imageAssetsRef.current]
-      const threadId = requestThreadIdRef.current
-      if (assets.length && threadId) {
-        const meta = routeMetaRef.current
-        void window.ide
-          .appendChatMessage(
-            threadId,
-            {
-              id: `${requestId}:assistant`,
-              role: 'assistant',
-              content: 'Image assets were generated before the agent stopped with an error.',
-              assets,
-              createdAt: Date.now(),
-              agentId: meta.agentId,
-              agentName: meta.agentName,
-              model: meta.model
-            },
-            meta.model,
-            requestWorkspacePathRef.current
-          )
-          .then((saved) => {
-            if (activeThreadRef.current?.id === saved.id) {
-              const merged = mergeChatTail(activeThreadRef.current, saved)
-              activeThreadRef.current = merged
-              setActiveThread(merged)
-            }
-            setThreads((previous) => [
-              saved,
-              ...previous.filter((thread) => thread.id !== saved.id)
-            ])
-          })
-          .catch((saveError) =>
-            setChatError(`Image reply could not be saved: ${String(saveError)}`)
-          )
-      }
     })
     return () => {
       if (workspaceRefreshTimer) clearTimeout(workspaceRefreshTimer)

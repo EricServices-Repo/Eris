@@ -3,7 +3,8 @@ import { randomUUID } from 'crypto'
 import { mkdtempSync, realpathSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ChatDatabase } from '../electron/main/services/chat-database'
 import { ipcMain } from 'electron'
 import type { TurnPlan } from '../src/shared/settings-schema'
 
@@ -199,6 +200,65 @@ describe('chat:stream command approval', () => {
 })
 
 describe('main-process task authority', () => {
+  const databases: ChatDatabase[]=[]
+  afterEach(()=>databases.splice(0).forEach(db=>db.close()))
+  it('persists partial text and applied files before an error and reloads one reply (#449)', async () => {
+    const chats=await import('../electron/main/services/chats')
+    const dir=mkdtempSync(join(tmpdir(),'eris-partial-reload-'))
+    let db=new ChatDatabase(dir)
+    databases.push(db)
+    const thread=db.save({id:randomUUID(),title:'Partial',model:'builtin:composer-lite',messages:[],createdAt:1,updatedAt:1})
+    vi.spyOn(chats,'getChat').mockImplementation(async (_root,id,page)=>db.get(id,page))
+    vi.spyOn(chats,'appendChatMessage').mockImplementation(async (_root,id,message,model)=>db.append(id,message,model))
+    const memory=await import('../electron/main/services/context-memory')
+    vi.spyOn(memory,'conversationContext').mockRejectedValue(Error('cache unavailable'))
+    const requestId=randomUUID()
+    runner.script=async function* () {
+      yield {type:'answer',text:'Implemented the '}
+      yield {type:'answer',text:'booking validation.'}
+      yield {type:'progress',step:1,filesTouched:['booking.ts'],actionLog:['Edited booking.ts']}
+      throw Error('Synthetic provider disconnect')
+    }
+    expect(await stream({text:'Fix booking validation',threadId:thread.id},requestId)).toBe(false)
+    const failure=sent.find(event=>event.channel==='chat:error')?.payload
+    expect(failure?.error).toBe('Synthetic provider disconnect')
+    const snapshot=failure?.reply as import('../src/shared/settings-schema').ChatMessage
+    expect(snapshot.content).toContain('Implemented the booking validation.')
+    expect(snapshot.content).toContain('Partial response')
+    expect(snapshot.contextResult).toMatchObject({terminal:'failed',changedFiles:['booking.ts'],
+      completion:{execution:'incomplete',persistence:'saved'}})
+    db.close()
+    databases.splice(databases.indexOf(db),1)
+    db=new ChatDatabase(dir)
+    databases.push(db)
+    const reloaded=db.get(thread.id)
+    const replies=reloaded?.messages.filter(message=>message.id===`${requestId}:assistant`)
+    expect(replies).toHaveLength(1)
+    expect(replies?.[0]).toEqual(snapshot)
+    expect(channels()).not.toContain('chat:done')
+  })
+  it('exports a visible non-durable snapshot when partial-reply persistence fails (#449)', async () => {
+    const chats=await import('../electron/main/services/chats')
+    const db=new ChatDatabase(mkdtempSync(join(tmpdir(),'eris-partial-storage-')))
+    databases.push(db)
+    const thread=db.save({id:randomUUID(),title:'Partial',model:'builtin:composer-lite',messages:[],createdAt:1,updatedAt:1})
+    vi.spyOn(chats,'getChat').mockImplementation(async (_root,id,page)=>db.get(id,page))
+    vi.spyOn(chats,'appendChatMessage').mockImplementation(async (_root,id,message,model) => {
+      if(message.role==='assistant') throw Error('disk full')
+      return db.append(id,message,model)
+    })
+    const memory=await import('../electron/main/services/context-memory')
+    vi.spyOn(memory,'conversationContext').mockRejectedValue(Error('cache unavailable'))
+    runner.script=async function* () { yield {type:'answer',text:'Useful partial code'}; throw Error('disconnect') }
+    expect(await stream({text:'Fix booking',threadId:thread.id})).toBe(false)
+    const failure=sent.find(event=>event.channel==='chat:error')?.payload
+    expect(failure?.error).toContain('could not be saved')
+    const snapshot=failure?.reply as import('../src/shared/settings-schema').ChatMessage
+    expect(snapshot.content).toContain('Useful partial code')
+    expect(snapshot.contextResult?.completion?.persistence).toBe('failed')
+    const reloaded=db.get(thread.id)
+    expect(reloaded?.messages.filter(message=>message.role==='assistant')).toHaveLength(0)
+  })
   it('reports applied changes as incomplete when final task persistence fails', async () => {
     const store = await import('../electron/main/services/task-store')
     const actual = store.saveTask
