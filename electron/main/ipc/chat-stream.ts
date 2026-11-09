@@ -808,7 +808,7 @@ export function registerChatStreamIpc(): void {
                   /* memory is best-effort */
                 }
                 if (!(await persistReply('done'))) return false
-                publish('chat:done', { requestId })
+                publish('chat:done', { requestId, reply: replySnapshot })
                 logInfo('Chat stream done (cloud inline)', {
                   requestId,
                   totalMs: externalPlanningDurationMs + Date.now() - requestReceivedAt,
@@ -821,7 +821,7 @@ export function registerChatStreamIpc(): void {
                   flushStreamChunks()
                   persistRun({ status: 'stopped' })
                   if (!(await persistReply('stopped'))) return false
-                  publish('chat:done', { requestId, aborted: true })
+                  publish('chat:done', { requestId, aborted: true, reply: replySnapshot })
                   return false
                 }
                 if (!turnPlan.modelExecution || turnPlan.modelExecution.policy === 'fixed')
@@ -1323,7 +1323,7 @@ export function registerChatStreamIpc(): void {
               })
             }
             if (!(await persistReply(runIncomplete ? 'incomplete' : 'done'))) return false
-            publish('chat:done', { requestId, incomplete: runIncomplete })
+            publish('chat:done', { requestId, incomplete: runIncomplete, reply: replySnapshot })
             logInfo('Chat stream done', {
               requestId,
               model: resolvedModel,
@@ -1348,7 +1348,7 @@ export function registerChatStreamIpc(): void {
                 promptBuildMs
               })
               if (!(await persistReply('stopped'))) return false
-              publish('chat:done', { requestId, aborted: true })
+              publish('chat:done', { requestId, aborted: true, reply: replySnapshot })
               return false
             }
             const message = err instanceof Error ? err.message : 'Chat failed'

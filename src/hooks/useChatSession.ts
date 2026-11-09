@@ -994,7 +994,7 @@ export function useChatSession({
             : model
       setRouteLabel(`${name} · ${modelLabel}`)
     })
-    const offDone = window.ide.onChatDone(async ({ requestId, aborted }) => {
+    const offDone = window.ide.onChatDone(({ requestId, aborted, reply }) => {
       const matches = requestId === requestIdRef.current || requestId === lastRequestIdRef.current
       if (!matches || completedRequestsRef.current.has(requestId)) return
       completedRequestsRef.current.add(requestId)
@@ -1023,44 +1023,27 @@ export function useChatSession({
       const savedDelegations = delegationsRef.current
       delegationsRef.current = []
       setDelegations([])
-      const message: ChatMessage = {
+      const message: ChatMessage = reply ?? {
         id: `${requestId}:assistant`,
-        role: 'assistant',
-        content,
-        thinking: thinking || undefined,
-        createdAt: Date.now(),
-        agentId: meta.agentId,
-        agentName: meta.agentName,
-        model: meta.model,
+        role: 'assistant', content, thinking: thinking || undefined, createdAt: Date.now(),
+        agentId: meta.agentId, agentName: meta.agentName, model: meta.model,
         assets: imageAssetsRef.current.length ? [...imageAssetsRef.current] : undefined,
         delegations: savedDelegations.length ? savedDelegations : undefined
       }
-      try {
-        if ((!content && !message.assets?.length) || !threadId) return
-        const saved = await window.ide.appendChatMessage(
-          threadId,
-          message,
-          meta.model,
-          requestWorkspacePathRef.current
-        )
-        if (activeThreadRef.current?.id === saved.id) {
-          const merged = mergeChatTail(activeThreadRef.current, saved)
+      // Only main writes terminal assistant results. The event contains its
+      // canonical revision and evidence; legacy/no-thread events are local views.
+      if ((message.content || message.assets?.length) && threadId) {
+        if (activeThreadRef.current?.id === threadId) {
+          const merged = upsertTerminalReply(activeThreadRef.current, message)
           activeThreadRef.current = merged
           setActiveThread(merged)
         }
-        setThreads((previous) => [saved, ...previous.filter((thread) => thread.id !== saved.id)])
-      } catch (error) {
-        setChatError(`Reply could not be saved: ${String(error)}`)
-        setActiveThread((current) =>
-          current?.id === threadId
-            ? { ...current, messages: [...current.messages, message] }
-            : current
-        )
-      } finally {
-        setThinkingBuffer('')
-        setAnswerBuffer('')
-        setStreaming(false)
+        setThreads(previous => previous.map(thread =>
+          thread.id === threadId ? upsertTerminalReply(thread, message) : thread))
       }
+      setThinkingBuffer('')
+      setAnswerBuffer('')
+      setStreaming(false)
     })
     const offError = window.ide.onChatError(({ requestId, error, reply }) => {
       if (requestId !== requestIdRef.current && requestId !== lastRequestIdRef.current) return
