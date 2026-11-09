@@ -220,7 +220,7 @@ describe('LR-006 the edit fallback keeps the requested deliverable', () => {
     async (mode) => {
       const result = await captureQuestion(
         0,
-        'Add retry logic to the payment client',
+        'We should add a retry feature to the payment client',
         fixture(JS),
         8192,
         'agent',

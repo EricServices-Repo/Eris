@@ -287,6 +287,17 @@ export function asksForCodeDestination(text: string): boolean {
   )
 }
 
+/** Direct workspace operations do not depend on knowing every possible feature noun. */
+export function asksForDirectEdit(text: string): boolean {
+  const match = /^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:add|change|modify|insert|remove|delete|rename|move|replace|put|append|save)\s+(.+)/i.exec(text.trim())
+  if (!match) return false
+  // A self-contained chat artifact and arithmetic are not workspace operations.
+  if (asksForCodeExample(text) && !asksForCodeDestination(text)) return false
+  if (/^(?:\d|two\s+numbers\b)/i.test(match[1]!)) return false
+  if (!asksForCodeDestination(text) && /\b(?:story|poem|paragraph|sentence|conversation|subject)\b/i.test(match[1]!)) return false
+  return true
+}
+
 /** The user wants the implementation tested or validated, not merely reviewed. */
 export function asksForVerification(text: string): boolean {
   const raw = text.trim()

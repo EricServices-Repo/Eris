@@ -23,6 +23,7 @@ import {
   asksForCodeExample,
   asksForCreativeWriting,
   asksForRecommendations,
+  asksForDirectEdit,
   asksForWorkspaceInspection,
   asksForPlan,
   asksForVerification,
@@ -180,6 +181,7 @@ function classifyIntentRule(
   const t = withoutLeadingScope(text)
   if (!t) return { intent: 'answer', rule: 'empty' }
   if (asksToCodeWorkspace(t)) return { intent: 'edit', rule: 'code-workspace' }
+  if (asksForDirectEdit(t)) return { intent: 'edit', rule: 'direct-edit' }
   // An explicit implementation request can contain command-like nouns ('make all').
   if (
     asksToImplementChanges(t) ||
@@ -642,6 +644,7 @@ export async function planChatTurn(options: {
     asksForPlan(text) ||
     asksForVerification(text) ||
     asksForRecommendations(text) ||
+    asksForDirectEdit(requestTextForIntent(text)) ||
     needsWebLookup(text) ||
     isErisCapabilityQuestion(text)
   const deterministicRouteIsClear = explicitIntent || routeScore >= 3
@@ -755,6 +758,7 @@ export async function planChatTurn(options: {
     forceRoute ??
     (mode === 'agent' &&
     !options.context.resolvedIntent &&
+    !asksForDirectEdit(requestTextForIntent(text)) &&
     !asksToCodeWorkspace(text) &&
     !asksToImplementChanges(text) &&
     !asksForWorkspaceInspection(requestTextForIntent(text)) &&
