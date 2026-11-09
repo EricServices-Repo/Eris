@@ -838,7 +838,15 @@ describe('chat agent complex smoke test', () => {
         JSON.stringify({
           name: 'write_file',
           path,
-          content: '<!-- realistic source fixture -->\n'.repeat(15)
+          // Language-valid, deliberately small transport fixtures. Empty-reply
+          // recovery must not rely on padding comments past a size threshold.
+          content: path.endsWith('.js')
+            ? 'document.addEventListener("DOMContentLoaded", () => { const main = document.querySelector("main"); if (main) main.dataset.ready = "true"; });'
+            : path.endsWith('.css')
+              ? '.news { display: grid; gap: 1rem; }'
+              : path.endsWith('.py')
+                ? 'def register_user(email):\n    return {"email": email, "registered": True}\n'
+                : '<main class="news"><h1>News</h1><form><label>Email<input name="email" type="email"></label></form></main>'
         })
       ),
       'I will inspect the implementation and make any remaining changes.',

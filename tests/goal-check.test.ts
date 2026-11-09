@@ -60,7 +60,7 @@ describe('assessGoalCompletion', () => {
       filesTouched: ['calculator-react/src/Calculator.js'],
       codeMutated: true,
       reviewOnly: false,
-      onlyTinyStubs: true
+      artifactProblems: ['App.js: explicit placeholder implementation']
     })
     expect(r.unmet).toBe(true)
     expect(r.reason).toMatch(/\.app|stub|packaged/i)
@@ -75,7 +75,7 @@ describe('assessGoalCompletion', () => {
       filesTouched: ['src/main.ts', 'dist/mac-arm64/Calculator.app'],
       codeMutated: true,
       reviewOnly: false,
-      onlyTinyStubs: false,
+      artifactProblems: [],
       verifyPassed: true
     })
     expect(r.unmet).toBe(false)

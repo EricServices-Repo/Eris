@@ -14,7 +14,7 @@ import { appendToolObservation } from '../model-protocol'
 import { acquireProjectWrite } from './task-scheduler'
 import { generateImage, saveImageToWorkspace } from '../image-generation'
 import { ImageSizeSchema } from '../../../../src/shared/image-generation-schema'
-import { existsSync, realpathSync, statSync } from 'fs'
+import { existsSync, readFileSync, realpathSync, statSync } from 'fs'
 import {
   asksForRecommendations,
   asksWhatTheProjectDoes,
@@ -42,7 +42,7 @@ import {
   setContextSummary
 } from '../workspace-context'
 import { runVerify } from '../verify'
-import { requiresRequestedCodeVerification } from './requested-files'
+import { artifactProblem, requiresRequestedCodeVerification } from './requested-files'
 import type { OpenAIToolDef } from '../chat-runtime'
 import {
   COMPOSER_OPENAI_TOOLS,
@@ -189,8 +189,6 @@ const VERIFY_EVERY_N_MUTATIONS = 8
 const MAX_GOAL_REJECTS = 3
 /** Stop a broken worker before it can spend dozens of rounds on one action. */
 const MAX_DUPLICATE_TOOL_BLOCKS = 4
-/** Product files at or below this size count as stubs for goal checks. */
-const STUB_FILE_MAX_BYTES = 250
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
@@ -1163,21 +1161,26 @@ async function* runAgentInternal(options: {
     }
   }
 
-  const productFilesAreTinyStubs = (): boolean => {
+  const changedArtifactProblems = (): string[] => {
     const product = [...new Set(filesTouched)].filter((p) => pathNeedsProjectVerify(p))
-    if (product.length === 0) return false
-    let seen = 0
-    for (const rel of product.slice(-12)) {
+    const problems: string[] = []
+    let bytes = 0
+    if (product.length > 100) return ['Artifact validation exceeds the 100-file bound; verify a smaller task.']
+    for (const rel of product) {
       try {
         const abs = resolveInWorkspace(workspacePath, rel)
         if (!existsSync(abs) || statSync(abs).isDirectory()) continue
-        seen++
-        if (statSync(abs).size >= STUB_FILE_MAX_BYTES) return false
+        const size = statSync(abs).size
+        bytes += size
+        if (size > 1_000_000 || bytes > 2_000_000)
+          return [...problems, `${rel}: artifact validation size bound exceeded`]
+        const problem = artifactProblem(rel,readFileSync(abs,'utf8'))
+        if (problem) problems.push(`${rel}: ${problem}`)
       } catch {
-        /* ignore */
+        problems.push(`${rel}: artifact could not be validated`)
       }
     }
-    return seen > 0
+    return problems
   }
   // #4 grammar-constrained local tool calls: when a retry needs a tool and the
   // worker is the built-in GGUF model, force valid tool-call JSON via a grammar.
@@ -2722,7 +2725,7 @@ async function* runAgentInternal(options: {
           filesTouched,
           codeMutated,
           reviewOnly,
-          onlyTinyStubs: productFilesAreTinyStubs(),
+          artifactProblems: changedArtifactProblems(),
           verifyPassed: verifyPassedOnce
         })
         const outcomeCheck = workflow.evaluateOutcome({

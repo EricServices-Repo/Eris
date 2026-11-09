@@ -9,7 +9,7 @@ export function requiresRequestedCodeVerification(task: TaskContract): boolean {
 }
 
 /** Bounded parsing only: never evaluate generated code or invoke a host command. */
-function artifactProblem(path: string, text: string): string | null {
+export function artifactProblem(path: string, text: string): string | null {
   const extension = extname(path).toLowerCase()
   if (extension === '.json') {
     try { JSON.parse(text) } catch { return 'invalid JSON' }
@@ -21,6 +21,20 @@ function artifactProblem(path: string, text: string): string | null {
     if ((source as typeof source & { parseDiagnostics: ts.Diagnostic[] }).parseDiagnostics.length)
       return 'syntax errors'
     if (!source.statements.some(statement => !ts.isEmptyStatement(statement))) return 'no implementation statements'
+    const implementations: ts.ConciseBody[] = []
+    const visit = (node: ts.Node) => {
+      if ((ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) ||
+          ts.isArrowFunction(node) || ts.isMethodDeclaration(node)) && node.body)
+        implementations.push(node.body)
+      ts.forEachChild(node,visit)
+    }
+    visit(source)
+    const marker = /\bTODO\b|not[ -]?implemented|implement\s+me|placeholder/i
+    const stub = (body: ts.ConciseBody) => ts.isBlock(body) && (
+      (body.statements.length === 0 && marker.test(text)) ||
+      (body.statements.length === 1 && ts.isThrowStatement(body.statements[0]!) &&
+        marker.test(body.statements[0]!.getText(source))))
+    if (implementations.length && implementations.every(stub)) return 'explicit placeholder implementation'
   }
   if (extension === '.php' && !text.replace(/<\?(?:php)?|\?>|^\s*(?:\/\/|#)[^\n]*|\/\*[\s\S]*?\*\//gm, '').trim())
     return 'empty PHP implementation'

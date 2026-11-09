@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
+import { runInNewContext } from 'node:vm'
 import { classifyIntent } from '../electron/main/services/chat-router'
 import { join } from 'path'
 
@@ -133,6 +134,22 @@ describe('agent loop (scripted model)', () => {
     expect(answer).toBeTruthy()
   })
 
+  it('completes a small working helper after a behavioral check (#446)', async () => {
+    const code='module.exports = (a,b) => a+b;'
+    const verify=await import('../electron/main/services/verify')
+    vi.spyOn(verify,'runVerify').mockImplementation(async()=>{
+      const module={exports:(_a:number,_b:number)=>0}
+      runInNewContext(readFileSync(join(ws,'sum.js'),'utf8'),{module},{timeout:50})
+      const ok=module.exports(2,3)===5 && module.exports(-3,3)===0
+      return {ok,skipped:false,command:'fixture-sum-behavior',detail:ok?'sum cases passed':'wrong sum'}
+    })
+    script.push(JSON.stringify({name:'write_file',path:'sum.js',content:code}),'DONE: Implemented sum.js and checked addition.')
+    const events=await drain(runAgentWithWorkspaceTools({workspacePath:ws,settings:getDefaults(),
+      model:'builtin:composer-lite',messages:[{role:'user',content:'Implement sum.js'}],temperature:0,
+      getSecret:()=>null,mode:'agent',turnPlan:editPlan(),mcp:'off'}))
+    expect(readFileSync(join(ws,'sum.js'),'utf8')).toBe(code)
+    expect(events.some(event=>event.incomplete===true)).toBe(false)
+  })
   it('journals the full tool result before the prompt truncates it, then releases it', async () => {
     writeFileSync(join(ws, 'big.txt'), 'line of output\n'.repeat(2000))
     script.push('{"name":"read_file","path":"big.txt"}')
