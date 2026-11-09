@@ -48,6 +48,8 @@ import { truncateForModel } from '../electron/main/services/agent/prompts'
 import { RunJournal } from '../electron/main/services/agent/run-journal'
 import { contextMemoryStore } from '../electron/main/services/context-memory-store'
 import { getDefaults } from '../electron/main/services/settings'
+import { classifyIntent } from '../electron/main/services/chat-router'
+import { createTaskContract } from '../electron/main/services/task-intake'
 import type { AgentChatMessage } from '../electron/main/services/agent/types'
 import type { TurnPlan } from '../src/shared/settings-schema'
 
@@ -86,6 +88,22 @@ async function drain(gen: AsyncGenerator<unknown>): Promise<Array<Record<string,
 }
 
 describe('agent loop (scripted model)', () => {
+  it('implements a combined review-and-improve request using permitted tools (#436)', async () => {
+    const text = 'Review the files and improve the layout'
+    const plan: TurnPlan = { ...editPlan(), intent: classifyIntent(text, 'agent') }
+    plan.task = createTaskContract({workspacePath:ws,text,plan})
+    writeFileSync(join(ws, 'index.html'), '<main>Old layout</main>')
+    script.push(JSON.stringify({name:'read_file',path:'index.html'}),
+      JSON.stringify({name:'write_file',path:'index.html',content:'<main class="layout">Updated layout</main>'}),
+      'DONE: Updated the layout in index.html.')
+    const events = await drain(runAgentWithWorkspaceTools({workspacePath:ws,settings:getDefaults(),
+      model:'builtin:composer-lite',messages:[{role:'user',content:text}],temperature:0,getSecret:()=>null,
+      mode:'agent',turnPlan:plan,mcp:'off'}))
+    expect(plan.task.authority.edit).toBe(true)
+    expect(readFileSync(join(ws,'index.html'),'utf8')).toContain('class="layout"')
+    expect(events.some(event=>event.type==='diff')).toBe(true)
+    expect(events.filter(event=>event.incomplete===true)).toHaveLength(0)
+  })
   it('writes a file from a tool call, then finishes on a DONE reply', async () => {
     script.push('{"name":"write_file","path":"hello.txt","content":"hi there\\n"}')
     script.push('DONE: created hello.txt')

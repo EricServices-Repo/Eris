@@ -333,6 +333,10 @@ export function asksForVerification(text: string): boolean {
 }
 
 /** Existing project sources explicitly requested for inspection; callers strip quoted content. */
+export function asksForEditClause(text: string): boolean {
+  return /(?:\b(?:and|then|also)\s+|[.;]\s*)(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:also\s+)?(?:implement|apply|fix|edit|change|update|code|write|add|build|improve|refactor|remove|delete|rename|replace|move|optimize|polish|enhance)\b/i.test(text)
+}
+
 export function asksForWorkspaceInspection(text: string): boolean {
   return /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:review|inspect|audit|examine|check|look\s+at)\s+(?:(?:this|that|these|those|the|my|our|current|existing|source|project)\s+)*(?:files?|pages?|code|codebase|repo(?:sitory)?|workspace|project|folders?|components?)\b/i.test(text.trim())
 }
@@ -346,9 +350,7 @@ export function asksForRecommendations(text: string): boolean {
   // improvement advice. A separate “and improve/make changes” asks for edits.
   const reviewImprovementQuestion =
     /^(?:please\s+)?review\b[\s\S]{0,160}\bimprov(?:e|ements?)\b/i.test(t) &&
-    !/\b(?:and|then)\s+(?:improve|make|apply|implement|fix|edit|change|update|code|write)\b/i.test(
-      t
-    ) &&
+    !asksForEditClause(t) &&
     !/\bmake\s+(?:those\s+|the\s+)?improvements?\b/i.test(t)
   if (reviewImprovementQuestion) return true
   if (/\b(?:what|which)\b[\s\S]{0,80}\bfeatures?\b/i.test(t) &&
