@@ -25,6 +25,7 @@ import {
   asksForRecommendations,
   asksForDirectEdit,
   asksForWorkspaceInspection,
+  asksForEditClause,
   asksForPlan,
   asksForVerification,
   asksToCodeWorkspace,
@@ -234,7 +235,7 @@ function classifyIntentRule(
   // “What does this project do?” is a description, even when the message says “review”.
   if (asksWhatTheProjectDoes(t)) return { intent: 'explore', rule: 'project-description' }
   if (asksForWorkspaceInspection(t)) {
-    const edits = /\b(?:and|then)\s+(?:also\s+)?(?:implement|apply|fix|edit|change|update|code|write|add|build)\b/i.test(t)
+    const edits = asksForEditClause(t)
     return { intent: edits ? 'edit' : 'review', rule: edits ? 'inspection-and-edit' : 'workspace-inspection' }
   }
 

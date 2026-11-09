@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
+import { classifyIntent } from '../electron/main/services/chat-router'
 import { join } from 'path'
 
 /**
@@ -147,6 +148,23 @@ describe('agent loop (scripted model)', () => {
     expect(contextMemoryStore.ledger.reservedBytes).toBe(before)
   })
 
+  it('implements a combined review-and-improve request using permitted tools (#436)', async () => {
+    const text = 'Review the files and improve the layout'
+    const plan: TurnPlan = { ...editPlan(), intent: classifyIntent(text, 'agent') }
+    const { createTaskContract } = await import('../electron/main/services/task-intake')
+    plan.task = createTaskContract({workspacePath:ws,text,plan})
+    writeFileSync(join(ws, 'index.html'), '<main>Old layout</main>')
+    script.push(JSON.stringify({name:'read_file',path:'index.html'}),
+      JSON.stringify({name:'write_file',path:'index.html',content:'<main class="layout">Updated layout</main>'}),
+      'DONE: Updated the layout in index.html.')
+    const events = await drain(runAgentWithWorkspaceTools({workspacePath:ws,settings:getDefaults(),
+      model:'builtin:composer-lite',messages:[{role:'user',content:text}],temperature:0,getSecret:()=>null,
+      mode:'agent',turnPlan:plan,mcp:'off'}))
+    expect(plan.task.authority.edit).toBe(true)
+    expect(readFileSync(join(ws,'index.html'),'utf8')).toContain('class="layout"')
+    expect(events.some(event=>event.type==='diff')).toBe(true)
+    expect(events.filter(event=>event.incomplete===true)).toHaveLength(0)
+  })
   it('answers directly in ask mode without touching the workspace', async () => {
     script.push('Here is an explanation, no tools needed.')
     const plan = editPlan()
