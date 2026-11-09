@@ -200,6 +200,7 @@ export function registerChatStreamIpc(): void {
           let conversationMemory: MemoryPrompt | undefined
           let workingState: ThreadWorkingStateBuilder | undefined
           let completionEvidence: import('../../../src/shared/task-contract').TaskCompletionEvidence | undefined
+          let replySnapshot: ChatMessage | undefined
           const persistReply = async (terminal: string) => {
             if (!contextThreadId) return true
             const { content, thinking } = finalizePostedAnswer(
@@ -209,6 +210,15 @@ export function registerChatStreamIpc(): void {
               replyAssets.length > 0
             )
             if (!content && !replyAssets.length) return true
+            replySnapshot = {
+              id: `${requestId}:assistant`,role:'assistant',content,thinking:thinking || undefined,
+              assets:replyAssets.length ? [...replyAssets] : undefined,
+              delegations:replyDelegations.size ? [...replyDelegations.values()] : undefined,
+              createdAt:Date.now(),model:replyModel,agentId:replyAgentId ?? turnPlan?.agentId,agentName:replyAgentName,
+              contextResult:{completion:completionEvidence,workingState:workingState?.snapshot(terminal),
+                taskId:requestId,terminal,projectRoot:turnPlan?.task?.scope.projectRoot ?? null,
+                changedFiles:memoryFiles.slice(0,200)}
+            }
             try {
               const selectedPaths = [...new Set([...evidencePaths, ...memoryFiles])]
               let dependencies =
@@ -217,31 +227,18 @@ export function registerChatStreamIpc(): void {
                   : undefined
               if (dependencies && !selectedPaths.length)
                 dependencies = { ...dependencies, complete: false }
-              await appendChatMessage(workspacePath, contextThreadId, {
-                id: `${requestId}:assistant`,
-                role: 'assistant',
-                content,
-                thinking: thinking || undefined,
-                assets: replyAssets.length ? [...replyAssets] : undefined,
-                delegations: replyDelegations.size ? [...replyDelegations.values()] : undefined,
-                createdAt: Date.now(),
-                model: replyModel,
-                agentId: replyAgentId ?? turnPlan?.agentId,
-                agentName: replyAgentName,
-                contextResult: {
-                  completion: completionEvidence,
-                  workingState: workingState?.snapshot(terminal),
-                  taskId: requestId,
-                  terminal,
-                  dependencies,
-                  projectRoot: turnPlan?.task?.scope.projectRoot ?? null,
-                  changedFiles: memoryFiles.slice(0, 200)
-                }
-              })
+              replySnapshot.contextResult = {...replySnapshot.contextResult!,dependencies}
+              const saved = await appendChatMessage(workspacePath, contextThreadId, replySnapshot)
+              replySnapshot = saved.messages.find(message => message.id === replySnapshot!.id) ?? replySnapshot
               return true
             } catch (error) {
+              replySnapshot.contextResult!.completion = {
+                ...(completionEvidence ?? {execution:'incomplete',verification:'not-run',assessment:{status:'not-run'}}),
+                persistence:'failed'
+              }
               publish('chat:error', {
                 requestId,
+                reply: replySnapshot,
                 error: `The reply was generated but could not be saved: ${error instanceof Error ? error.message : String(error)}`
               })
               return false
@@ -1355,6 +1352,10 @@ export function registerChatStreamIpc(): void {
               return false
             }
             const message = err instanceof Error ? err.message : 'Chat failed'
+            completionEvidence = {execution:'incomplete',verification:verificationState,
+              assessment:{status:'not-run'},persistence:contextThreadId ? 'saved' : 'not-required'}
+            publish('chat:answer', {requestId,replace:true,
+              chunk:`${visibleAnswer}${visibleAnswer ? '\n\n' : ''}Partial response: the request failed before completion.${memoryFiles.length ? ` Applied changes: ${memoryFiles.join(', ')}. Verification and remaining work may be incomplete.` : ''}`})
             persistRun({ status: 'failed', error: message })
             logError('Chat stream failed', {
               requestId,
@@ -1364,9 +1365,11 @@ export function registerChatStreamIpc(): void {
               firstOutputMs: firstModelOutputMs,
               promptBuildMs
             })
+            if (!(await persistReply('failed'))) return false
             publish('chat:error', {
               requestId,
-              error: message
+              error: message,
+              reply: replySnapshot
             })
             // Don't rethrow — returning keeps the renderer invoke from rejecting as an unhandled crash
             return false
