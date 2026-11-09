@@ -80,7 +80,7 @@ describe('requested outcomes and execution authority', () => {
 })
 
 describe('file-set completion evidence', () => {
-  it('does not force gratuitous writes to requested files already inspected and present', () => {
+  it('does not claim an inspected existing artifact was implemented in this run (#443)', () => {
     const root = workspace()
     const task = createTaskContract({ workspacePath: root, text: 'Create booking.ts', plan: plan() })
     writeFileSync(join(root, 'booking.ts'), 'export const booking = true')
@@ -88,8 +88,36 @@ describe('file-set completion evidence', () => {
     workflow.noteTool({ name: 'read_file', path: 'booking.ts', ok: true, mutated: false })
     expect(workflow.evaluateOutcome({ workspaceMutated: false, codeMutated: false, verifyPassed: false }).ok).toBe(false)
     workflow.noteVerification('passed')
-    expect(workflow.evaluateOutcome({ workspaceMutated: false, codeMutated: false, verifyPassed: false, filesTouched: [] }).ok).toBe(true)
+    expect(workflow.evaluateOutcome({ workspaceMutated: false, codeMutated: false, verifyPassed: false, filesTouched: [] }).ok).toBe(false)
+    // Existing code need not be rewritten, but existence plus a generic check is
+    // not proof that this requested implementation was delivered.
+    workflow.noteTool({ name:'write_file',path:'unrelated.ts',ok:true,mutated:true })
+    expect(workflow.evaluateOutcome({workspaceMutated:true,codeMutated:true,verifyPassed:true,filesTouched:['unrelated.ts']}).ok).toBe(false)
+    writeFileSync(join(root,'booking.ts'),'export const booking = { confirmed: true }')
+    workflow.noteTool({name:'write_file',path:'booking.ts',ok:true,mutated:true})
+    expect(workflow.evaluateOutcome({workspaceMutated:true,codeMutated:true,verifyPassed:true,filesTouched:['booking.ts']}).ok).toBe(true)
   })
+  it('requires every generated output to have actual change evidence, not just a read (#443)', () => {
+    const root=workspace()
+    const task=createTaskContract({workspacePath:root,text:'Create booking.ts and calendar.ts',plan:plan()})
+    writeFileSync(join(root,'booking.ts'),'export const booking = true')
+    writeFileSync(join(root,'calendar.ts'),'export const calendar = true')
+    const workflow=new AgentWorkflow({...plan(),task})
+    workflow.noteTool({name:'write_file',path:'booking.ts',ok:true,mutated:true})
+    workflow.noteTool({name:'read_file',path:'calendar.ts',ok:true,mutated:false})
+    workflow.noteVerification('passed')
+    expect(workflow.evaluateOutcome({workspaceMutated:true,codeMutated:true,verifyPassed:true,filesTouched:['booking.ts']}).ok).toBe(false)
+    workflow.noteTool({name:'write_file',path:'calendar.ts',ok:true,mutated:true})
+    expect(workflow.evaluateOutcome({workspaceMutated:true,codeMutated:true,verifyPassed:true,filesTouched:['booking.ts','calendar.ts']}).ok).toBe(true)
+  })
+  it.each(['Delete obsolete.ts','Rename obsolete.ts to renamed.ts'])(
+    'retains change evidence for non-creation operations: %s', text => {
+      const root=workspace()
+      const task=createTaskContract({workspacePath:root,text,plan:plan()})
+      const workflow=new AgentWorkflow({...plan(),task})
+      workflow.noteTool({name:'delete_file',path:'obsolete.ts',ok:true,mutated:true})
+      expect(workflow.evaluateOutcome({workspaceMutated:true,codeMutated:true,verifyPassed:true,filesTouched:['obsolete.ts']}).ok).toBe(true)
+    })
   it.each([
     ['booking.ts', '// TODO: implement booking'],
     ['booking.ts', 'export const booking = '],

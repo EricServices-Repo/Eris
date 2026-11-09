@@ -48,6 +48,7 @@ import { truncateForModel } from '../electron/main/services/agent/prompts'
 import { RunJournal } from '../electron/main/services/agent/run-journal'
 import { contextMemoryStore } from '../electron/main/services/context-memory-store'
 import { getDefaults } from '../electron/main/services/settings'
+import { createTaskContract } from '../electron/main/services/task-intake'
 import type { AgentChatMessage } from '../electron/main/services/agent/types'
 import type { TurnPlan } from '../src/shared/settings-schema'
 
@@ -86,6 +87,19 @@ async function drain(gen: AsyncGenerator<unknown>): Promise<Array<Record<string,
 }
 
 describe('agent loop (scripted model)', () => {
+  it('keeps an unchanged named-output patch incomplete through the real loop (#443)', async () => {
+    const text='Create report.txt containing the new result'
+    const plan=editPlan()
+    plan.task=createTaskContract({workspacePath:ws,text,plan})
+    writeFileSync(join(ws,'report.txt'),'Old result')
+    script.push(JSON.stringify({name:'read_file',path:'report.txt'}),'DONE: report.txt is ready.')
+    const events=await drain(runAgentWithWorkspaceTools({workspacePath:ws,settings:getDefaults(),
+      model:'builtin:composer-lite',messages:[{role:'user',content:text}],temperature:0,getSecret:()=>null,
+      mode:'agent',turnPlan:plan,mcp:'off'}))
+    expect(readFileSync(join(ws,'report.txt'),'utf8')).toBe('Old result')
+    expect(events.some(event=>event.incomplete===true)).toBe(true)
+    expect(events.some(event=>event.type==='diff')).toBe(false)
+  })
   it('writes a file from a tool call, then finishes on a DONE reply', async () => {
     script.push('{"name":"write_file","path":"hello.txt","content":"hi there\\n"}')
     script.push('DONE: created hello.txt')

@@ -87,7 +87,7 @@ export class AgentWorkflow {
   private mutations = 0
   private sourceReads = 0
   private commandObservations = 0
-  private observedFiles = new Set<string>()
+  private mutatedFiles = new Set<string>()
   private verification: AgentWorkflowSnapshot['verification'] = 'not-run'
   private blockedReason: string | undefined
 
@@ -109,8 +109,7 @@ export class AgentWorkflow {
     this.toolCalls += 1
     if (result.name === 'run') this.commandObservations += 1
     if (result.ok) this.successfulToolCalls += 1
-    if (result.ok && result.path && (result.mutated || ['read_file', 'notebook_read'].includes(result.name ?? '')))
-      this.observedFiles.add(result.path)
+    if (result.ok && result.path && result.mutated) this.mutatedFiles.add(result.path)
     if (
       result.ok &&
       ['read_file', 'notebook_read'].includes(result.name ?? '') &&
@@ -140,7 +139,7 @@ export class AgentWorkflow {
     if (this.plan.mode !== 'ask' && task?.requested?.artifact === 'patch' && !task.authority.edit)
       return { ok: false, reason: 'The requested workspace changes are blocked by this task’s mode, reference resolution or tool permissions.' }
     if (task?.authority.edit && task.requested?.targetFiles.length) {
-      const problem = requestedFilesProblem(task, [...this.observedFiles, ...(input.filesTouched ?? [])])
+      const problem = requestedFilesProblem(task, [...this.mutatedFiles, ...(input.filesTouched ?? [])])
       if (problem) return { ok: false, reason: problem }
       if (requiresRequestedCodeVerification(task) && !input.verifyPassed && this.verification !== 'passed')
         return { ok: false, reason: 'Required code artifacts need a successful independent project check. Existing files and skipped verification do not establish implementation correctness.' }
@@ -162,7 +161,7 @@ export class AgentWorkflow {
         reason: 'No project source was inspected. A directory listing does not ground this task.'
       }
     }
-    if (this.contract.requiresMutation && !input.workspaceMutated && !task?.requested?.targetFiles.length) {
+    if (this.contract.requiresMutation && !input.workspaceMutated) {
       return { ok: false, reason: 'This edit request did not change the workspace.' }
     }
     if (
