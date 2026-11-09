@@ -44,6 +44,7 @@
         "tests/handoff-replay.test.ts",
         "tests/native-token-count.test.ts",
         "tests/stable-prefix.test.ts",
+        "tests/model-task-documentation.test.ts",
         "tests/turn-prefix-stability.test.ts",
         "tests/context-evidence.test.ts",
         "tests/context-pull.test.ts",

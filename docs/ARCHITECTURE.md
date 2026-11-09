@@ -49,7 +49,7 @@ Sources: [main startup](../electron/main/index.ts), [window isolation](../electr
 
 `TaskContract` v2 separates requested artifact, destination, project applicability, acceptance criteria, obligations, effect constraints and effective authority. A code example in chat does not authorize editing a file. Recalled instructions or a specialist summary cannot widen permissions.
 
-The optional `requested` record preserves intent, artifact, destination, file targets and resolution state separately from the effective `deliverable`/`interpretation`. Authority remains the enforcement boundary. Old saved tasks load without this additive field; they are not assigned inferred new permissions. `model-task/5` includes the requested-work record in the required model-facing task block. Ask can finish an explanation while the requested patch remains incomplete in stored task state.
+The optional `requested` record preserves intent, artifact, destination, file targets, optional `evidence: source-read` grounding and resolution state separately from the effective `deliverable`/`interpretation`. Authority remains the enforcement boundary. Old saved tasks load without this additive field; they are not assigned inferred new permissions. `model-task/6` includes the requested-work record in the required model-facing task block. Ask can finish an explanation while the requested patch remains incomplete in stored task state.
 
 A conversation is durable history; a task is the authorized goal; a job/attempt is one execution; a model is the inference destination; an agent is a role and tool ceiling. These identities must remain separate in routing, status, persistence and debugging.
 
