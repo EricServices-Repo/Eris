@@ -4,6 +4,7 @@ import { evidenceRequirementFor } from '../../../../src/shared/task-contract'
 import { pathsIn } from '../../../../src/shared/recommendations'
 import { requestTextForIntent } from '../../../../src/shared/task-interpretation'
 import { requestedFilesProblem, requiresRequestedCodeVerification } from './requested-files'
+import { SourceReadEvidence, type SourceReadReceipt } from './source-read-evidence'
 
 export type AgentWorkflowPhase =
   'planned' | 'answering' | 'preflight' | 'executing' | 'verifying' | 'completed' | 'blocked'
@@ -35,6 +36,7 @@ export type AgentWorkflowSnapshot = {
   mutations: number
   verification: 'not-run' | 'passed' | 'failed' | 'skipped'
   blockedReason?: string
+  sourceEvidence?: SourceReadReceipt[]
 }
 
 const TRANSITIONS: Record<AgentWorkflowPhase, ReadonlySet<AgentWorkflowPhase>> = {
@@ -90,11 +92,14 @@ export class AgentWorkflow {
   private mutatedFiles = new Set<string>()
   private verification: AgentWorkflowSnapshot['verification'] = 'not-run'
   private blockedReason: string | undefined
+  private sourceEvidence?: SourceReadEvidence
 
   readonly contract: AgentOutcomeContract
 
   constructor(private readonly plan: TurnPlan, goal = '') {
     this.contract = outcomeContractFor(plan, goal)
+    if (plan.task?.scope.workspaceRoot && plan.task.scope.projectRoot)
+      this.sourceEvidence=new SourceReadEvidence(plan.task)
   }
 
   transition(next: AgentWorkflowPhase): void {
@@ -105,7 +110,7 @@ export class AgentWorkflow {
     this.phase = next
   }
 
-  noteTool(result: { ok: boolean; mutated: boolean; name?: string; path?: string }): void {
+  noteTool(result: { ok: boolean; mutated: boolean; name?: string; path?: string; previousPath?: string; detail?: string; range?: SourceReadReceipt['range'] }): void {
     this.toolCalls += 1
     if (result.name === 'run') this.commandObservations += 1
     if (result.ok) this.successfulToolCalls += 1
@@ -114,10 +119,15 @@ export class AgentWorkflow {
       result.ok &&
       ['read_file', 'notebook_read'].includes(result.name ?? '') &&
       result.path &&
-      !result.path.startsWith('.eris/')
+      !result.path.startsWith('.eris/') &&
+      (this.sourceEvidence?.noteRead(result.path,result.detail,result.range) ?? true)
     )
       this.sourceReads += 1
-    if (result.ok && result.mutated) this.mutations += 1
+    if (result.ok && result.mutated) {
+      this.mutations += 1
+      if (result.path) this.sourceEvidence?.noteMutation(result.path)
+      if (result.previousPath) this.sourceEvidence?.noteMutation(result.previousPath,result.path)
+    }
   }
 
   invalidateVerification(): void {
@@ -164,6 +174,11 @@ export class AgentWorkflow {
     if (this.contract.requiresMutation && !input.workspaceMutated) {
       return { ok: false, reason: 'This edit request did not change the workspace.' }
     }
+    if ((this.contract.requiresSourceRead || ['review','plan'].includes(this.contract.intent)) &&
+        (this.contract.requiresWorkspaceEvidence || (this.toolCalls>0 && task?.scope.applicability==='unverified')) && this.sourceEvidence) {
+      const coverage=this.sourceEvidence.assess()
+      if (!coverage.ok) return coverage
+    }
     if (
       this.contract.requiresMutation &&
       !task?.requested?.targetFiles.length &&
@@ -206,7 +221,8 @@ export class AgentWorkflow {
       successfulToolCalls: this.successfulToolCalls,
       mutations: this.mutations,
       verification: this.verification,
-      blockedReason: this.blockedReason
+      blockedReason: this.blockedReason,
+      sourceEvidence: this.sourceEvidence?.snapshot()
     }
   }
 }
