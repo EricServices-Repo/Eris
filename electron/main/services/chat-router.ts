@@ -639,6 +639,7 @@ export async function planChatTurn(options: {
 
   const routeScore = Number(route.reason.match(/Matched keywords \(score (\d+)\)/)?.[1] || 0)
   const explicitIntent =
+    asksForDirectEdit(requestTextForIntent(text)) ||
     asksToCodeWorkspace(text) ||
     asksToImplementChanges(text) ||
     asksForPlan(text) ||
@@ -760,6 +761,7 @@ export async function planChatTurn(options: {
     !asksToCodeWorkspace(text) &&
     !asksToImplementChanges(text) &&
     !asksForWorkspaceInspection(requestTextForIntent(text)) &&
+    !asksForDirectEdit(requestTextForIntent(text)) &&
     !explicitSpecialistIntent
       ? learnedRouteFor(text, corrections)
       : null)

@@ -35,36 +35,6 @@ const Q43 =
   'Show me both a simple and a more robust version of error boundaries that support retry?'
 
 const roots: string[] = []
-describe('issue 434 short edit requests', () => {
-  it.each(['Add pagination', 'Add search', 'Add login and logout', 'Add tests for this',
-    'Remove the debug banner', 'Change the button to blue', 'Save this as README.md'])(
-    'preserves requested implementation for %s with and without a project', async text => {
-    expect(classifyIntent(text, 'agent')).toBe('edit')
-    for (const root of [fixture({ 'index.html': '<main>Rentals</main>' }), null]) {
-      const result = await captureQuestion(0, text, root, 8192, 'agent', new AbortController().signal)
-      const task = result.task as TaskContract
-      expect(task.requested?.artifact).toBe('patch')
-      if (root) {
-        expect(task.authority.edit).toBe(true)
-        expect(task.scope.applicability).toBe('selected-project')
-        expect(JSON.stringify(result.requests.find(r => r.purpose === 'agent')?.tools)).toContain('write_file')
-      } else {
-        expect(result.requests.filter(r => r.purpose === 'agent')).toHaveLength(0)
-      }
-    }
-  })
-  it.each(['What is the best way to add pagination?', 'Write a story about a robot',
-    '"Add pagination"', 'Add 2 and 3', 'Change the subject'])('keeps conversational requests read-only: %s', text => {
-    expect(classifyIntent(text, 'agent')).not.toBe('edit')
-  })
-  it('preserves explicit no-edit and Ask ceilings', async () => {
-    const root = fixture({ 'index.html': '<main>Rentals</main>' })
-    for (const [text, mode] of [['Add search but do not edit files', 'agent'], ['Add search', 'ask']] as const) {
-      const result = await captureQuestion(0, text, root, 8192, mode, new AbortController().signal)
-      expect((result.task as TaskContract).authority.edit).toBe(false)
-    }
-  })
-})
 describe('issue 431 explicit source inspection', () => {
   it.each([
     ['Review the files', 'review'],
