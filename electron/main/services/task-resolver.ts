@@ -5,6 +5,7 @@ import { streamModelChat } from './chat-runtime'
 import { createTaskDeadline, drainUntilStopped } from './task-deadline'
 import { resolveFileRequest } from '../../../src/shared/file-request'
 import {
+  asksForDirectEdit,
   asksForCodeDestination,
   asksForCodeExample,
   asksForCreativeWriting,
@@ -82,6 +83,7 @@ export function resolverBypassRule(text: string, fallback: ChatIntent): string |
   if (asksToCodeWorkspace(t)) return 'code-workspace'
   if (asksToImplementChanges(t)) return 'implement-changes'
   if (asksForRecommendations(t)) return 'recommendations'
+  if (asksForDirectEdit(t)) return 'direct-edit'
   if (asksForPlan(t)) return 'explicit-plan'
   if (asksForVerification(t)) return 'explicit-verification'
   // Explicit imperative commands need no additional inference.

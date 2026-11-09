@@ -23,6 +23,7 @@ import {
   asksForCodeExample,
   asksForCreativeWriting,
   asksForRecommendations,
+  asksForDirectEdit,
   asksForWorkspaceInspection,
   asksForPlan,
   asksForVerification,
@@ -180,6 +181,7 @@ function classifyIntentRule(
   const t = withoutLeadingScope(text)
   if (!t) return { intent: 'answer', rule: 'empty' }
   if (asksToCodeWorkspace(t)) return { intent: 'edit', rule: 'code-workspace' }
+  if (asksForDirectEdit(t)) return { intent: 'edit', rule: 'direct-edit' }
   // An explicit implementation request can contain command-like nouns ('make all').
   if (
     asksToImplementChanges(t) ||
