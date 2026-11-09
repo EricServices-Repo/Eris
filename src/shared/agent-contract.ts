@@ -349,7 +349,7 @@ export function asksForEditClause(text: string): boolean {
 }
 
 export function asksForWorkspaceInspection(text: string): boolean {
-  return /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:review|inspect|audit|examine|check|look\s+at)\s+(?:(?:this|that|these|those|the|my|our|current|existing|source|project)\s+)*(?:files?|pages?|code|codebase|repo(?:sitory)?|workspace|project|folders?|components?)\b/i.test(text.trim())
+  return /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:review|inspect|audit|examine|check|look\s+at)\s+(?:(?:this|that|these|those|the|my|our|current|existing|source|project)\s+)*(?:files?|pages?|code|codebase|repo(?:sitory)?|workspace|project|folders?|components?|website|site|dashboard|app|application)\b/i.test(text.trim())
 }
 
 /** The user wants recommendations, not permission to implement them. */

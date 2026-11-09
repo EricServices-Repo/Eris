@@ -109,6 +109,7 @@
         "tests/posted-answer.test.ts",
         "tests/qualification-profile.test.ts",
         "tests/task-meaning.test.ts",
+        "tests/hypothetical-review-scope.test.ts",
         "tests/task-timeline.test.ts",
         "tests/thinking-summary.test.ts",
         "tests/tool-call-schema.test.ts",
