@@ -193,7 +193,7 @@ export function detectProjectStack(root: string | null): ProjectStack | null {
 function referencesOpenProject(text: string): boolean {
   return (
     mentionsSourcePath(text) ||
-    /\b(?:our|my)\s+(?:current|existing)\b|\b(?:this|my|our|the)\s+(?:project|repo|repository|workspace|codebase)\b|\b(?:this|my|our)\s+(?:app|application|code|component|function|service|api|file|folder|module|tests?)\b|\b(?:where is|which file|what file|in the (?:repo|project|workspace))\b/i.test(
+    /\b(?:our|my)\s+(?:current|existing)\b|\b(?:this|my|our|the)\s+(?:project|repo|repository|workspace|codebase)\b|\b(?:this|my|our)\s+(?:app|application|website|site|dashboard|code|component|function|service|api|file|folder|module|tests?)\b|\b(?:where is|which file|what file|in the (?:repo|project|workspace))\b/i.test(
       text
     )
   )
@@ -222,6 +222,9 @@ export function scopeApplicability(
   if (referencesOpenProject(t) || asksForWorkspaceInspection(t))
     return { applicability: 'selected-project', rule: 'workspace-reference' }
   if (continuation) return { applicability: 'unverified', rule: 'continuation' }
+  // Determine the referent before inferring that a review needs existing code.
+  if (/\b(?:an?|some|any)\s+(?:existing\s+|typical\s+|large\s+|small\s+)?(?:[\w.-]+\s+){0,2}(?:project|app|application|codebase|repo|service|website|site|product|dashboard)\b|\bin\s+general\b|\bgenerally\b/i.test(t))
+    return { applicability: 'generic', rule: 'hypothetical-project' }
   // “The code”, “a bug”, “fails” may or may not mean this project. A tool-free answer
   // cannot inspect it either way, so only a worker that can read keeps the ambiguity.
   if (asksWorkspaceQuestion(t) && intent !== 'answer' && !structuresNewCode(t))
@@ -232,13 +235,6 @@ export function scopeApplicability(
   // Reviews, checks and commands act on existing code by definition.
   if (['review', 'execution-report'].includes(interpretation.artifact))
     return { applicability: 'unverified', rule: 'operates-on-existing-code' }
-  // “In an existing Next.js project” describes a hypothetical, not the open folder.
-  if (
-    /\b(?:an?|some|any)\s+(?:existing\s+|typical\s+|large\s+|small\s+)?(?:[\w.-]+\s+){0,2}(?:project|app|application|codebase|repo|service)\b|\bin\s+general\b|\bgenerally\b/i.test(
-      t
-    )
-  )
-    return { applicability: 'generic', rule: 'hypothetical-project' }
   // A lookup (“where is the limiter”), a check or a command may concern the open
   // project; keep that ambiguity instead of binding or discarding it. “Explain how JWT
   // works” is explore wording too, but names nothing to look up.
@@ -416,7 +412,11 @@ export function createTaskContract(input: {
       : requestedIntent !== input.plan.intent ? 'needs-clarification' : 'resolved'
   }
   const noCommands = forbidden.execution || forbidden.verification
+  const requestedScope = scopeApplicability(input.text, requestedReading,
+    Boolean(target && selected && !inheritedRoot), Boolean(selected), input.plan.intent,
+    Boolean(inheritedRoot || recommendations.length))
   const policy =
+    (requestedReading.artifact === 'review' && requestedScope.applicability === 'generic') ||
     providedReviewOperands(input.text).length || input.plan.toolPolicy === 'none' || referenceBlocked || requested.state !== 'resolved'
       ? 'none'
       : input.plan.mode === 'ask' || (forbidden.edit && (noCommands || input.plan.intent !== 'run'))
