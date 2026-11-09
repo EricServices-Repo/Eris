@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.19 — 2026-11-08
+
+- Improve chat routing, source-grounded reviews, structural artifact checks, and durable terminal replies.
+
 ## 0.6.18 — 2026-11-08
 
 - Keep file reviews grounded in inspected sources, preserve read-only routing, and distinguish native token generation from visible-output latency.
