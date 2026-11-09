@@ -364,7 +364,7 @@ export function assessGoalCompletion(opts: {
   codeMutated: boolean
   reviewOnly: boolean
   /** True when every touched product file is tiny (caller measures on disk). */
-  onlyTinyStubs?: boolean
+  artifactProblems?: string[]
   verifyPassed?: boolean
 }): GoalAssessment {
   const {
@@ -374,7 +374,7 @@ export function assessGoalCompletion(opts: {
     filesTouched,
     codeMutated,
     reviewOnly,
-    onlyTinyStubs = false,
+    artifactProblems = [],
     verifyPassed = false
   } = opts
 
@@ -402,16 +402,8 @@ export function assessGoalCompletion(opts: {
     }
   }
 
-  if (codeMutated && onlyTinyStubs && filesTouched.length > 0) {
-    const ambitious =
-      /\b(build|create|implement|scaffold|app|application|calculator|project)\b/i.test(goal)
-    if (ambitious) {
-      return {
-        unmet: true,
-        reason:
-          'Only tiny stub files were written. Implement a real working solution for the user request before DONE.'
-      }
-    }
+  if (codeMutated && artifactProblems.length) {
+    return {unmet:true,reason:`Changed artifacts are incomplete or invalid: ${artifactProblems.slice(0,10).join('; ')}. Resolve these findings before DONE.`}
   }
 
   // Claimed finished but never mutated on an edit-shaped goal
