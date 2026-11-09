@@ -22,6 +22,7 @@ import {
 } from '../../../src/shared/task-contract'
 import {
   effectConstraints,
+  providedReviewOperands,
   interpretRequest,
   namedLanguages,
   requestConstraints,
@@ -215,6 +216,7 @@ export function scopeApplicability(
   if (namedTarget) return { applicability: 'named-target', rule: 'named-target' }
   if (interpretation.destination !== 'chat')
     return { applicability: 'selected-project', rule: 'workspace-destination' }
+  if (providedReviewOperands(text).length) return { applicability: 'generic', rule: 'provided-source' }
   if (!hasProject) return { applicability: 'generic', rule: 'no-project' }
   const t = requestTextForIntent(text)
   if (referencesOpenProject(t) || asksForWorkspaceInspection(t))
@@ -404,7 +406,7 @@ export function createTaskContract(input: {
       })
     : null
   const requested: NonNullable<TaskContract['requested']> = {
-    ...(asksForWorkspaceInspection(requestTextForIntent(input.text)) ? { evidence: 'source-read' as const } : {}),
+    ...(!providedReviewOperands(input.text).length && asksForWorkspaceInspection(requestTextForIntent(input.text)) ? { evidence: 'source-read' as const } : {}),
     intent: requestedIntent,
     artifact: requestedReading.artifact,
     destination: requestedReading.destination,
@@ -415,7 +417,7 @@ export function createTaskContract(input: {
   }
   const noCommands = forbidden.execution || forbidden.verification
   const policy =
-    input.plan.toolPolicy === 'none' || referenceBlocked || requested.state !== 'resolved'
+    providedReviewOperands(input.text).length || input.plan.toolPolicy === 'none' || referenceBlocked || requested.state !== 'resolved'
       ? 'none'
       : input.plan.mode === 'ask' || (forbidden.edit && (noCommands || input.plan.intent !== 'run'))
         ? 'read'
@@ -721,8 +723,9 @@ export function childTaskContract(
   constraints: readonly string[] = []
 ): TaskContract {
   const levels = ['none', 'read', 'edit', 'full'] as const
+  const suppliedSource = providedReviewOperands(goal).length > 0
   const tools =
-    levels[Math.min(levels.indexOf(parent.authority.tools), levels.indexOf(plan.toolPolicy))]!
+    suppliedSource ? 'none' : levels[Math.min(levels.indexOf(parent.authority.tools), levels.indexOf(plan.toolPolicy))]!
   const edit = parent.authority.edit && ['edit', 'full'].includes(tools)
   const deliverable = feasibleDeliverable(
     plan.intent === 'edit'
@@ -760,7 +763,7 @@ export function childTaskContract(
     ...parent,
     // A child owns its assignment; never inherit the parent's requested artifacts.
     requested: {
-      ...(asksForWorkspaceInspection(requestTextForIntent(goal)) ? { evidence: 'source-read' as const } : {}),
+      ...(!providedReviewOperands(goal).length && asksForWorkspaceInspection(requestTextForIntent(goal)) ? { evidence: 'source-read' as const } : {}),
       intent: plan.intent,
       artifact: interpretRequest({ text: goal, intent: plan.intent, canEdit: true,
         revision: parent.revision, route: plan.routeTrace }).artifact,
@@ -783,7 +786,8 @@ export function childTaskContract(
     recommendations: [],
     recommendationSelection: undefined,
     inherited,
-    scope: { ...parent.scope, workspaceRoot: root, projectRoot },
+    scope: { ...parent.scope, workspaceRoot: root, projectRoot,
+      ...(suppliedSource ? {applicability:'generic' as const} : {}) },
     authority: {
       tools,
       edit,
@@ -798,7 +802,7 @@ export function childTaskContract(
       externalEffects: parent.authority.externalEffects && tools === 'full'
     },
     acceptanceCriteria: [
-      ...acceptanceCriteriaFor(plan, deliverable, goal, interpretation, parent.scope.applicability),
+      ...acceptanceCriteriaFor(plan, deliverable, goal, interpretation, suppliedSource ? 'generic' : parent.scope.applicability),
       ...inheritedCriteria(inherited, deliverable)
     ],
     interpretation

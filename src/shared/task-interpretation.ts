@@ -11,7 +11,8 @@ import {
   asksForCodeExample,
   asksForDesignAnswer,
   asksForPlan,
-  asksForRecommendations
+  asksForRecommendations,
+  mentionsSourcePath
 } from './agent-contract'
 
 /** Placeholder for a quoted shell command the surrounding instruction refers to. */
@@ -75,6 +76,17 @@ export function requestSpans(text: string): RequestSpans {
  */
 export function requestTextForIntent(text: string): string {
   return requestSpans(text).instruction
+}
+
+/** Supplied source operands outrank an unrelated open folder, unless workspace work is explicit. */
+export function providedReviewOperands(text: string): QuotedOperand[] {
+  const { instruction, operands } = requestSpans(text)
+  if (!/^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:review|inspect|audit|examine|check|debug|explain)\b/i.test(instruction)) return []
+  if (asksForCodeDestination(instruction) || mentionsSourcePath(instruction) ||
+      /\b(?:project|workspace|repo|repository|codebase)\b/i.test(instruction)) return []
+  if (!/\b(?:this|the|following|pasted|supplied)\s+(?:(?:code|source)\s+)?(?:sample|snippet|example|code|source)\b/i.test(instruction)) return []
+  return operands.filter(operand => ['fence', 'inline'].includes(operand.kind) &&
+    operand.role === 'data' && operand.text.trim().length > 0)
 }
 
 /** The message is only quoted or fenced content, with no instruction around it. */

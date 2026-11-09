@@ -54,6 +54,16 @@ describe('reference-first file requests', () => {
 })
 
 describe('requested outcomes and execution authority', () => {
+  it('keeps a delegated supplied-code review independent of parent workspace tools (#437)', () => {
+    const root = workspace()
+    const parent = createTaskContract({workspacePath:root,text:'Fix booking.ts',plan:plan()})
+    const child = childTaskContract(parent,{...plan('review'),toolPolicy:'read'},
+      'Review this code sample:\n```js\nconst sum = (a,b) => a-b\n```',root,'child-review')
+    expect(child.scope.applicability).toBe('generic')
+    expect(child.requested?.evidence).toBeUndefined()
+    expect(child.authority).toMatchObject({tools:'none',edit:false,execute:'none'})
+    expect(parsePersistedTask(child).scope.applicability).toBe('generic')
+  })
   it('persists requested edits in Ask mode without granting edit authority', () => {
     const task = createTaskContract({ workspacePath: workspace(), text: 'Create booking.ts', plan: { ...plan(), mode: 'ask', toolPolicy: 'read' } })
     expect(task.requested).toMatchObject({ artifact: 'patch', destination: 'workspace', targetFiles: ['booking.ts'] })
