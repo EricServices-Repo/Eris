@@ -272,8 +272,16 @@ function naturalPlanFor(testCase: NaturalQuestionCase): TurnPlan {
 }
 
 async function runCase(testCase: AgentQuestionCase): Promise<AgentRunnerEvent[]> {
+  const originalReadme=readFileSync(join(workspacePath,'README.md'),'utf8')
+  if (testCase.intent==='review' || testCase.intent==='plan') {
+    // This is a scripted loop/transport test, not an oracle for 90 implemented
+    // products. Supply relevant scenario requirements rather than pretending an
+    // unrelated generic README grounds every topic. Artifact grading is separate.
+    writeFileSync(join(workspacePath,'README.md'),`# Synthetic scenario specification\n\n${testCase.question}\n\nThis fixture documents requirements only; production feature implementation is intentionally absent. Review gaps and plan the work without claiming implementation.\n`)
+  }
   model.replies.splice(0, model.replies.length, ...testCase.simulatedResponses)
   const events: AgentRunnerEvent[] = []
+  try {
   for await (const event of runAgentWithWorkspaceTools({
     workspacePath,
     settings: getDefaults(),
@@ -287,6 +295,9 @@ async function runCase(testCase: AgentQuestionCase): Promise<AgentRunnerEvent[]>
     approveCommand: async () => true
   })) {
     events.push(event)
+  }
+  } finally {
+    writeFileSync(join(workspacePath,'README.md'),originalReadme)
   }
   return events
 }

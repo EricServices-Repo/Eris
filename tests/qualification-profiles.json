@@ -59,6 +59,7 @@
         "tests/protected-mutation-paths.test.ts",
         "tests/agent-discussions.test.ts",
         "tests/agent-evidence.test.ts",
+        "tests/relevant-source-evidence.test.ts",
         "tests/agent-followup-review.test.ts",
         "tests/reference-binding.test.ts",
         "tests/context-spec-amendment.test.ts",

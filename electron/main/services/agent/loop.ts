@@ -4410,7 +4410,12 @@ async function* runAgentInternal(options: {
             }
           }
           noteObservation(call, result)
-          workflow.noteTool({ ...result, name: call.name })
+          workflow.noteTool({ ...result, name: call.name,
+            previousPath: call.name==='rename_path' ? argString(call.args,'path') : undefined,
+            range: call.name==='read_file' ? {
+              startLine:typeof call.args.start_line==='number' ? call.args.start_line : undefined,
+              endLine:typeof call.args.end_line==='number' ? call.args.end_line : undefined
+            } : undefined })
           yield { type: 'evidence', evidence: gateway.record(`${task.taskId}:${id}`, call, result) }
           if (call.name === 'run' || call.name === 'git_sync' || mcpTool) {
             // Commands and external tools may alter files without reporting their paths.
