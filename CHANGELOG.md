@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.18 — 2026-11-08
+
+- Keep file reviews grounded in inspected sources, preserve read-only routing, and distinguish native token generation from visible-output latency.
+
 ## 0.6.17 — 2026-11-08
 
 - Preserve coding intent and truthful completion, validate generated artifacts, bound agent run time, and add packaged bad-answer regression checks.
