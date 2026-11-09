@@ -41,6 +41,7 @@ import {
   COMMAND_OPERAND,
   effectConstraints,
   isQuotedContentOnly,
+  providedReviewOperands,
   requestTextForIntent
 } from '../../../src/shared/task-interpretation'
 
@@ -163,6 +164,7 @@ function classifyIntentRule(
   // Quoted strings and code blocks are content; their verbs are not the request.
   // A message that is only quoted content has no instruction to act on.
   if (isQuotedContentOnly(rawText)) return { intent: 'answer', rule: 'quoted-content-only' }
+  if (providedReviewOperands(rawText).length) return { intent: 'review', rule: 'provided-source-review' }
   const text = requestTextForIntent(rawText)
   if (isErisCapabilityQuestion(text)) return { intent: 'capability', rule: 'capability-question' }
   if (asksForCreativeWriting(text)) return { intent: 'answer', rule: 'creative-writing' }
@@ -637,6 +639,7 @@ export async function planChatTurn(options: {
 
   const routeScore = Number(route.reason.match(/Matched keywords \(score (\d+)\)/)?.[1] || 0)
   const explicitIntent =
+    providedReviewOperands(text).length > 0 ||
     asksToCodeWorkspace(text) ||
     asksToImplementChanges(text) ||
     asksForPlan(text) ||
@@ -758,6 +761,7 @@ export async function planChatTurn(options: {
     !asksToCodeWorkspace(text) &&
     !asksToImplementChanges(text) &&
     !asksForWorkspaceInspection(requestTextForIntent(text)) &&
+    !providedReviewOperands(text).length &&
     !explicitSpecialistIntent
       ? learnedRouteFor(text, corrections)
       : null)

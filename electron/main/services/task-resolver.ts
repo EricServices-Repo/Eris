@@ -21,6 +21,7 @@ import {
 } from '../../../src/shared/agent-contract'
 import {
   effectConstraints,
+  providedReviewOperands,
   isQuotedContentOnly,
   requestTextForIntent
 } from '../../../src/shared/task-interpretation'
@@ -69,6 +70,7 @@ export interface ResolveTaskInput {
 export function resolverBypassRule(text: string, fallback: ChatIntent): string | null {
   // Quoted content alone never becomes an instruction, so nothing is left to resolve.
   if (isQuotedContentOnly(text)) return 'quoted-content-only'
+  if (providedReviewOperands(text).length) return 'provided-source-review'
   const t = withoutLeadingScope(requestTextForIntent(text))
   if (asksForCreativeWriting(t)) return fallback === 'answer' ? 'creative-writing' : null
   if (fallback === 'capability') return 'capability-question'
