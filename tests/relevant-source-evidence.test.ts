@@ -45,6 +45,13 @@ function fixture(text = 'Review the booking flow') {
   return { root, write, read, assess, workflow, task }
 }
 describe('relevant fresh source evidence (#444)', () => {
+  it('accepts an inspected empty target as evidence of missing implementation', () => {
+    const f = fixture('Review booking.ts')
+    f.write('booking.ts', '')
+    f.read('booking.ts')
+    expect(f.assess().ok).toBe(true)
+    expect(f.workflow.snapshot().sourceEvidence?.[0]?.digest).toMatch(/^[a-f0-9]{64}$/)
+  })
   it('rejects an unrelated calculator read for a booking review', () => {
     const f = fixture()
     f.read('calculator.ts')

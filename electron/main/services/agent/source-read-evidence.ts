@@ -120,7 +120,6 @@ export class SourceReadEvidence {
       if (!fileVersion || epoch.dirty) return false
       if (detail === undefined && statSync(absolute).size > 80_000) return false
       const content = (detail ?? readFileSync(absolute, 'utf8')).slice(0, 80_000)
-      if (!content.trim()) return false
       const links: string[] = []
       for (const match of content.matchAll(
         /(?:from\s*|(?:import|require)\s*\()\s*['"](\.[^'"]+)['"]/g
