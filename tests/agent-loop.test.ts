@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'fs'
+import { mkdtempSync, readFileSync, rmSync, existsSync, statSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { runInNewContext } from 'node:vm'
 import { classifyIntent } from '../electron/main/services/chat-router'
@@ -101,6 +101,53 @@ describe('agent loop (scripted model)', () => {
     expect(readFileSync(join(ws,'report.txt'),'utf8')).toBe('Old result')
     expect(events.some(event=>event.incomplete===true)).toBe(true)
     expect(events.some(event=>event.type==='diff')).toBe(false)
+  })
+  it('reports an already-present rule as satisfied without touching the file (#457)', async () => {
+    const source = 'export function validate(age) {\n  if (age < 0) throw new Error("age must be non-negative")\n  return age\n}\n'
+    writeFileSync(join(ws, 'validate.js'), source)
+    const before = statSync(join(ws, 'validate.js')).mtimeMs
+    const text = 'Add validation to validate.js that rejects negative ages'
+    const plan = editPlan()
+    plan.task = createTaskContract({ workspacePath: ws, text, plan })
+    script.push(
+      JSON.stringify({ name: 'read_file', path: 'validate.js' }),
+      JSON.stringify({
+        name: 'confirm_unchanged',
+        requirement: 'reject negative ages',
+        path: 'validate.js',
+        evidence: 'if (age < 0) throw new Error("age must be non-negative")'
+      }),
+      'DONE: validate.js already rejects negative ages; no changes were needed.'
+    )
+    const events = await drain(runAgentWithWorkspaceTools({ workspacePath: ws, settings: getDefaults(),
+      model: 'builtin:composer-lite', messages: [{ role: 'user', content: text }], temperature: 0,
+      getSecret: () => null, mode: 'agent', turnPlan: plan, mcp: 'off' }))
+    expect(readFileSync(join(ws, 'validate.js'), 'utf8')).toBe(source)
+    expect(statSync(join(ws, 'validate.js')).mtimeMs).toBe(before)
+    expect(events.some((event) => event.type === 'diff')).toBe(false)
+    expect(events.some((event) => event.incomplete === true)).toBe(false)
+    expect(events.some((event) => event.type === 'status' && String(event.text).includes('already satisfied'))).toBe(true)
+  })
+  it('does not accept a no-op whose quoted evidence is not in the file (#457)', async () => {
+    writeFileSync(join(ws, 'validate.js'), 'export function validate(age) {\n  return age\n}\n')
+    const text = 'Add validation to validate.js that rejects negative ages'
+    const plan = editPlan()
+    plan.task = createTaskContract({ workspacePath: ws, text, plan })
+    script.push(
+      JSON.stringify({ name: 'read_file', path: 'validate.js' }),
+      JSON.stringify({
+        name: 'confirm_unchanged',
+        requirement: 'reject negative ages',
+        path: 'validate.js',
+        evidence: 'if (age < 0) throw new Error("negative")'
+      }),
+      'DONE: already handled.'
+    )
+    const events = await drain(runAgentWithWorkspaceTools({ workspacePath: ws, settings: getDefaults(),
+      model: 'builtin:composer-lite', messages: [{ role: 'user', content: text }], temperature: 0,
+      getSecret: () => null, mode: 'agent', turnPlan: plan, mcp: 'off' }))
+    expect(events.some((event) => event.incomplete === true)).toBe(true)
+    expect(events.some((event) => event.type === 'status' && String(event.text).includes('already satisfied'))).toBe(false)
   })
   it('writes a file from a tool call, then finishes on a DONE reply', async () => {
     script.push('{"name":"write_file","path":"hello.txt","content":"hi there\\n"}')

@@ -310,6 +310,19 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   ),
   tool('read_context', 'Read workspace .eris/context.md notes', {}),
   tool(
+    'confirm_unchanged',
+    'Report that a requested change is already present, so no edit is needed. Read the whole file first and quote the exact existing lines that satisfy the requirement. Never edit a file just to show progress.',
+    {
+      requirement: { type: 'string', description: 'The requested behavior that is already met' },
+      path: pathProp,
+      evidence: {
+        type: 'string',
+        description: 'Exact existing source lines from path that satisfy the requirement'
+      }
+    },
+    ['requirement', 'path', 'evidence']
+  ),
+  tool(
     'update_context',
     'Append or set workspace context notes',
     {

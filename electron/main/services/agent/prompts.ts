@@ -64,6 +64,7 @@ WHEN TO USE WHICH TOOL
    Small edits → search_replace (preferred) or apply_patch.
    New files / full rewrites → write_file (complete file body).
    Before changing any existing file, read it with read_file; notebooks require notebook_read. The edit tools enforce this.
+   If the requested behavior already exists, do not make a cosmetic edit: call confirm_unchanged with the file and the exact existing lines that satisfy it, then report that no change was needed.
    Folders → mkdir. Moves → rename_path. Deletes → delete_path.
 4) Image assets
    Use generate_image for raster artwork. Supply a detailed prompt and a new .png path. Use the returned path in the application. Never fabricate a generated image or write binary data with write_file. If generation is disabled or fails, explain that clearly.
@@ -109,6 +110,7 @@ TOOL SCHEMAS (emit real calls; some specialized tools may require search_tools f
 - web_search — { "name":"web_search", "query":"electron updater github releases" }
 - web_open — { "name":"web_open", "url":"https://example.com/docs" }
 - read_context — { "name":"read_context" }
+- confirm_unchanged — { "name":"confirm_unchanged", "requirement":"…", "path":"src/a.ts", "evidence":"exact existing lines" }
 - search_tools — { "name":"search_tools", "query":"notebook cell editing" }
 - update_context — { "name":"update_context", "mode":"append"|"summary", "text":"…" }
 - list_skills / read_skill / write_skill — skills (default scope "user")

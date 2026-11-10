@@ -5,6 +5,7 @@ import { pathsIn } from '../../../../src/shared/recommendations'
 import { requestTextForIntent } from '../../../../src/shared/task-interpretation'
 import { requestedFilesProblem, requiresRequestedCodeVerification } from './requested-files'
 import { SourceReadEvidence, type SourceReadReceipt } from './source-read-evidence'
+import type { VerifiedNoop } from './verified-noop'
 
 export type AgentWorkflowPhase =
   'planned' | 'answering' | 'preflight' | 'executing' | 'verifying' | 'completed' | 'blocked'
@@ -37,7 +38,12 @@ export type AgentWorkflowSnapshot = {
   verification: 'not-run' | 'passed' | 'failed' | 'skipped'
   blockedReason?: string
   sourceEvidence?: SourceReadReceipt[]
+  /** Requirements shown to be already met; distinct from changes. */
+  verifiedNoops?: VerifiedNoop[]
 }
+
+/** changed: the workspace was edited. already-satisfied: verified no-op, nothing touched. */
+export type OutcomeDisposition = 'changed' | 'already-satisfied' | 'none'
 
 const TRANSITIONS: Record<AgentWorkflowPhase, ReadonlySet<AgentWorkflowPhase>> = {
   planned: new Set(['answering', 'preflight', 'blocked']),
@@ -93,6 +99,7 @@ export class AgentWorkflow {
   private verification: AgentWorkflowSnapshot['verification'] = 'not-run'
   private blockedReason: string | undefined
   private sourceEvidence?: SourceReadEvidence
+  private verifiedNoops: VerifiedNoop[] = []
 
   readonly contract: AgentOutcomeContract
 
@@ -124,10 +131,23 @@ export class AgentWorkflow {
     )
       this.sourceReads += 1
     if (result.ok && result.mutated) {
+      // An edit after confirmation means the confirmed source is no longer what was verified.
+      if (result.path)
+        this.verifiedNoops = this.verifiedNoops.filter((noop) => !sameFile(noop.path, result.path!))
       this.mutations += 1
       if (result.path) this.sourceEvidence?.noteMutation(result.path)
       if (result.previousPath) this.sourceEvidence?.noteMutation(result.previousPath,result.path)
     }
+  }
+
+  /** Record a requirement verified as already satisfied (see confirm_unchanged). */
+  noteVerifiedNoop(noop: VerifiedNoop): void {
+    this.verifiedNoops = [...this.verifiedNoops.filter((n) => n.requirement !== noop.requirement || n.path !== noop.path), noop]
+  }
+
+  /** A pure verified no-op: no mutation happened and at least one requirement was confirmed. */
+  private alreadySatisfied(workspaceMutated: boolean): boolean {
+    return !workspaceMutated && this.mutations === 0 && this.verifiedNoops.length > 0
   }
 
   invalidateVerification(): void {
@@ -144,12 +164,33 @@ export class AgentWorkflow {
     verifyPassed: boolean
     /** Files written this turn; checked against the request's named targets. */
     filesTouched?: string[]
+  }): { ok: boolean; reason?: string; disposition?: OutcomeDisposition } {
+    const result = this.evaluateOutcomeChecks(input)
+    if (!result.ok) return result
+    return {
+      ok: true,
+      disposition: input.workspaceMutated
+        ? 'changed'
+        : this.alreadySatisfied(input.workspaceMutated)
+          ? 'already-satisfied'
+          : 'none'
+    }
+  }
+
+  private evaluateOutcomeChecks(input: {
+    workspaceMutated: boolean
+    codeMutated: boolean
+    verifyPassed: boolean
+    filesTouched?: string[]
   }): { ok: boolean; reason?: string } {
     const task = this.plan.task
+    const noopPaths = this.alreadySatisfied(input.workspaceMutated)
+      ? this.verifiedNoops.map((noop) => noop.path)
+      : []
     if (this.plan.mode !== 'ask' && task?.requested?.artifact === 'patch' && !task.authority.edit)
       return { ok: false, reason: 'The requested workspace changes are blocked by this task’s mode, reference resolution or tool permissions.' }
     if (task?.authority.edit && task.requested?.targetFiles.length) {
-      const problem = requestedFilesProblem(task, [...this.mutatedFiles, ...(input.filesTouched ?? [])])
+      const problem = requestedFilesProblem(task, [...this.mutatedFiles, ...(input.filesTouched ?? []), ...noopPaths])
       if (problem) return { ok: false, reason: problem }
       if (requiresRequestedCodeVerification(task) && !input.verifyPassed && this.verification !== 'passed')
         return { ok: false, reason: 'Required code artifacts need a successful independent project check. Existing files and skipped verification do not establish implementation correctness.' }
@@ -172,7 +213,16 @@ export class AgentWorkflow {
       }
     }
     if (this.contract.requiresMutation && !input.workspaceMutated) {
-      return { ok: false, reason: 'This edit request did not change the workspace.' }
+      const uncovered = this.contract.targetFiles.filter(
+        (target) => !noopPaths.some((path) => sameFile(path, target))
+      )
+      if (!noopPaths.length)
+        return { ok: false, reason: 'This edit request did not change the workspace.' }
+      if (uncovered.length)
+        return {
+          ok: false,
+          reason: `No change was made and ${uncovered.join(', ')} was not confirmed as already satisfying the request.`
+        }
     }
     if ((this.contract.requiresSourceRead || ['review','plan'].includes(this.contract.intent)) &&
         (this.contract.requiresWorkspaceEvidence || (this.toolCalls>0 && task?.scope.applicability==='unverified')) && this.sourceEvidence) {
@@ -184,7 +234,7 @@ export class AgentWorkflow {
       !task?.requested?.targetFiles.length &&
       this.contract.targetFiles.length &&
       input.filesTouched &&
-      !input.filesTouched.some((changed) =>
+      ![...input.filesTouched, ...noopPaths].some((changed) =>
         this.contract.targetFiles.some((target) => sameFile(changed, target))
       )
     ) {
@@ -222,7 +272,8 @@ export class AgentWorkflow {
       mutations: this.mutations,
       verification: this.verification,
       blockedReason: this.blockedReason,
-      sourceEvidence: this.sourceEvidence?.snapshot()
+      sourceEvidence: this.sourceEvidence?.snapshot(),
+      ...(this.verifiedNoops.length ? { verifiedNoops: [...this.verifiedNoops] } : {})
     }
   }
 }

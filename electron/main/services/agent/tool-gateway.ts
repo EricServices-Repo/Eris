@@ -33,6 +33,7 @@ export interface EvidenceRecord {
 const fileTools = new Set([
   'read_file',
   'notebook_read',
+  'confirm_unchanged',
   'write_file',
   'search_replace',
   'apply_patch',
@@ -63,6 +64,15 @@ export class TaskToolGateway {
       else this.partialReads.add(abs)
     } catch {
       /* unavailable source */
+    }
+  }
+  /** Revision recorded by a complete (unranged, untruncated) read of this path, if any. */
+  fullReadRevision(path: string): string | undefined {
+    try {
+      const abs = realpathAllowMissing(resolveInWorkspace(this.task.scope.workspaceRoot!, path))
+      return this.partialReads.has(abs) ? undefined : this.readHashes.get(abs)
+    } catch {
+      return undefined
     }
   }
   authorize(workspace: string, call: ToolCall, mcpReadOnly = false): string | null {
