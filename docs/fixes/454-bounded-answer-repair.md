@@ -14,7 +14,8 @@ model again. Three problems:
 - Source-required tasks (`evidenceRequirementFor(...) === 'required'`, or sources were read) use a
   grounded re-answer instruction: only provided sources and established facts; otherwise say
   *not yet verified*. Generic chat keeps the previous instruction.
-- The loop passes `changedFiles` (the run's touched files). The repair prompt lists them, and
+- The loop passes `changedFiles` (the run's touched files); files changed by the turn this task
+  continues (`task.continuation.changedFiles`) also count, so "what did you change?" can report them. The repair prompt lists them, and
   `unbackedEditClaims` rejects a repair that names a changed file outside that list, or for
   project work with no changes, makes any first-person change claim. A rejected repair leaves the
   answer partial (`incomplete: true`), never presented as done.

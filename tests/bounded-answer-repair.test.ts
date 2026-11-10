@@ -67,7 +67,9 @@ describe('bounded, grounded answer repair (#454)', () => {
     const system = model.calls[0]!.messages.map((m) => m.content).join('\n')
     expect(system).toContain('not yet verified')
     expect(system).not.toContain('give general guidance')
-    expect(system).toContain('Changes actually applied in this task: src/math.ts')
+    expect(system).toContain(
+      'Changes actually applied (in this task or the turn it continues): src/math.ts'
+    )
   })
 
   it('rejects a repair that claims edits the task never made', async () => {
@@ -110,6 +112,24 @@ describe('bounded, grounded answer repair (#454)', () => {
     const result = await finalize(leaked, { changedFiles: ['src/math.ts'] })
     expect(model.calls).toHaveLength(MAX_REPAIR_CALLS)
     expect(result.incomplete).toBe(true)
+  })
+})
+
+describe('follow-up about a prior turn', () => {
+  it('accepts a repair that reports files the continued turn changed', async () => {
+    const task = createTaskContract({
+      workspacePath: workspace,
+      text: 'What did you change?',
+      plan
+    })
+    task.continuation = {
+      priorTaskId: 'prior',
+      changedFiles: ['src/retry.ts'],
+      recommendationSource: 'none'
+    }
+    model.replies.push('I changed src/retry.ts so retryDelay rejects out-of-range attempts.')
+    const result = await finalize(leaked, { task, changedFiles: [] })
+    expect(result).toMatchObject({ incomplete: false, repaired: ['re-answered-from-goal'] })
   })
 })
 

@@ -167,7 +167,13 @@ export async function finalizeAnswer(
     Boolean(options.evidence) ||
     (options.task !== undefined &&
       evidenceRequirementFor(options.task.scope.applicability) === 'required')
-  const changes = options.changedFiles ?? []
+  // A follow-up such as "what did you change?" may truthfully report the prior turn's edits.
+  const changes = [
+    ...new Set([
+      ...(options.changedFiles ?? []),
+      ...(options.task?.continuation?.changedFiles ?? [])
+    ])
+  ]
   /** Accept a repair only if it adds no change the task did not make. Records every attempt. */
   const vet = (kind: RepairAttempt['kind'], output: string, ok: boolean): boolean => {
     if (!output.trim()) {
@@ -196,7 +202,7 @@ export async function finalizeAnswer(
         (grounded ? GROUNDED_REANSWER_SYSTEM : REANSWER_SYSTEM) +
         extra +
         (changes.length
-          ? ` Changes actually applied in this task: ${changes.join(', ')}. Do not claim any other change.`
+          ? ` Changes actually applied (in this task or the turn it continues): ${changes.join(', ')}. Do not claim any other change.`
           : grounded
             ? ' No files were changed in this task; do not claim any change.'
             : '')
