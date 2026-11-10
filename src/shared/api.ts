@@ -452,8 +452,17 @@ export interface IdeApi {
   onChatAnswer: (
     cb: (data: { requestId: string; chunk: string; replace?: boolean }) => void
   ) => () => void
-  onChatDone: (cb: (data: { requestId: string; aborted?: boolean; incomplete?: boolean; reply?: ChatMessage }) => void) => () => void
-  onChatError: (cb: (data: { requestId: string; error: string; reply?: ChatMessage }) => void) => () => void
+  onChatDone: (
+    cb: (data: {
+      requestId: string
+      aborted?: boolean
+      incomplete?: boolean
+      reply?: ChatMessage
+    }) => void
+  ) => () => void
+  onChatError: (
+    cb: (data: { requestId: string; error: string; reply?: ChatMessage }) => void
+  ) => () => void
   onChatDelegation: (
     cb: (data: { requestId: string; delegation: ChatDelegation }) => void
   ) => () => void
@@ -1237,6 +1246,20 @@ export interface BugReportDiagnostics {
   logDirectory: string
   currentLogFile: string
   logFileCount: number
+  build: {
+    role: 'eris' | 'eris-dev'
+    version: string
+    packaged: boolean
+    gitSha: string
+    dirty: boolean | null
+    buildId: string
+    lockSha256: string
+    platform: string
+    arch: string
+    provenance: 'injected' | 'unknown'
+  }
+  commandApproval: string | null
+  traceId: string
 }
 
 export interface BugReportPreview {

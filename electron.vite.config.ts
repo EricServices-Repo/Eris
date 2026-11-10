@@ -1,19 +1,23 @@
 import { execFileSync } from 'child_process'
-import { createHash } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 
+// buildId is unique per build so an installed bundle stays distinguishable from a
+// later rebuild of the same commit; it is baked in and never read from disk at runtime.
+const buildId = () => `${new Date().toISOString()}-${randomUUID().slice(0, 8)}`
 const sourceIdentity = () => {
   try {
     return {
       gitSha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
       dirty: Boolean(execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim()),
-      lockSha256: createHash('sha256').update(readFileSync('package-lock.json')).digest('hex')
+      lockSha256: createHash('sha256').update(readFileSync('package-lock.json')).digest('hex'),
+      buildId: buildId()
     }
   } catch {
-    return { gitSha: 'unknown', dirty: true, lockSha256: 'unknown' }
+    return { gitSha: 'unknown', dirty: true, lockSha256: 'unknown', buildId: buildId() }
   }
 }
 export default defineConfig({
