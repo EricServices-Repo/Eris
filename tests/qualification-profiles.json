@@ -69,6 +69,7 @@
         "tests/agent-interpretation.test.ts",
         "tests/agent-creative-chat.test.ts",
         "tests/agent-loop.test.ts",
+        "tests/bounded-answer-repair.test.ts",
         "tests/compound-review-edits.test.ts",
         "tests/agent-orchestration.test.ts",
         "tests/compaction-summary-coverage.test.ts",
