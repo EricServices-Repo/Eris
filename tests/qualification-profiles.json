@@ -182,6 +182,7 @@
     "description": "General app behavior outside the qualification gates; runs in npm test and CI.",
     "files": [
       "tests/host-memory-real.test.ts",
+      "tests/build-identity.test.ts",
       "tests/language-negotiation.test.ts",
       "tests/ide-capabilities.test.ts",
       "tests/auto-update-version.test.ts",
