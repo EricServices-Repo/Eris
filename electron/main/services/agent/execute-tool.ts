@@ -13,12 +13,19 @@ import {
 } from '../workspace-fs'
 import { argString } from './tool-parsing'
 import type { ToolCall } from './types'
+import { classifyToolError, type TypedToolFailure } from './tool-failure'
 
 export function executeTool(
   workspacePath: string,
   call: ToolCall,
   plan?: MutationPlan
-): { ok: boolean; detail: string; mutated: boolean; path?: string } {
+): {
+  ok: boolean
+  detail: string
+  mutated: boolean
+  path?: string
+  failure?: TypedToolFailure
+} {
   const name = call.name
   try {
     switch (name) {
@@ -42,7 +49,7 @@ export function executeTool(
       }
       case 'read_file': {
         const path = argString(call.args, 'path')
-        if (!path) throw new WorkspaceFsError('path is required')
+        if (!path) throw new WorkspaceFsError('path is required', 'invalid_arguments')
         const ranged =
           typeof call.args.start_line === 'number' || typeof call.args.end_line === 'number'
         const file = readWorkspaceFile(
@@ -69,9 +76,9 @@ export function executeTool(
       }
       case 'write_file': {
         const path = argString(call.args, 'path')
-        if (!path) throw new WorkspaceFsError('path is required')
+        if (!path) throw new WorkspaceFsError('path is required', 'invalid_arguments')
         if (typeof call.args.content !== 'string') {
-          throw new WorkspaceFsError('content is required (string)')
+          throw new WorkspaceFsError('content is required (string)', 'invalid_arguments')
         }
         const result = writeWorkspaceFile(workspacePath, path, call.args.content, plan)
         return {
@@ -90,9 +97,10 @@ export function executeTool(
             : typeof call.args.newString === 'string'
               ? call.args.newString
               : null
-        if (!path) throw new WorkspaceFsError('path is required')
-        if (!oldString) throw new WorkspaceFsError('old_string is required')
-        if (newString == null) throw new WorkspaceFsError('new_string is required')
+        if (!path) throw new WorkspaceFsError('path is required', 'invalid_arguments')
+        if (!oldString) throw new WorkspaceFsError('old_string is required', 'invalid_arguments')
+        if (newString == null)
+          throw new WorkspaceFsError('new_string is required', 'invalid_arguments')
         const replaceAll = Boolean(call.args.replace_all ?? call.args.replaceAll)
         const result = searchReplaceInFile(
           workspacePath,
@@ -111,7 +119,7 @@ export function executeTool(
       }
       case 'apply_patch': {
         const patch = argString(call.args, 'patch') || argString(call.args, 'diff')
-        if (!patch) throw new WorkspaceFsError('patch is required')
+        if (!patch) throw new WorkspaceFsError('patch is required', 'invalid_arguments')
         const result = applyUnifiedPatch(workspacePath, patch, plan)
         return {
           ok: true,
@@ -122,7 +130,7 @@ export function executeTool(
       }
       case 'mkdir': {
         const path = argString(call.args, 'path')
-        if (!path) throw new WorkspaceFsError('path is required')
+        if (!path) throw new WorkspaceFsError('path is required', 'invalid_arguments')
         const result = mkdirWorkspace(workspacePath, path)
         return {
           ok: true,
@@ -135,7 +143,7 @@ export function executeTool(
       }
       case 'delete_path': {
         const path = argString(call.args, 'path')
-        if (!path) throw new WorkspaceFsError('path is required')
+        if (!path) throw new WorkspaceFsError('path is required', 'invalid_arguments')
         const result = deleteWorkspacePath(workspacePath, path, plan)
         return {
           ok: true,
@@ -147,7 +155,8 @@ export function executeTool(
       case 'rename_path': {
         const path = argString(call.args, 'path')
         const to = argString(call.args, 'to')
-        if (!path || !to) throw new WorkspaceFsError('path and to are required')
+        if (!path || !to)
+          throw new WorkspaceFsError('path and to are required', 'invalid_arguments')
         const result = renameWorkspacePath(workspacePath, path, to, plan)
         return {
           ok: true,
@@ -161,13 +170,16 @@ export function executeTool(
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
+    const path = argString(call.args, 'path') || undefined
+    const failure = classifyToolError(err, name, path)
     return {
       ok: false,
       detail: message,
       mutated: Boolean(
         err && typeof err === 'object' && 'mutationApplied' in err && err.mutationApplied
       ),
-      path: argString(call.args, 'path') || undefined
+      path,
+      ...(failure ? { failure } : {})
     }
   }
 }

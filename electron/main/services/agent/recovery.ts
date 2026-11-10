@@ -1,5 +1,16 @@
-/** Actionable next steps for common tool failures; never execute a retry automatically. */
-export function toolFailureRecovery(toolName: string, detail: string): string {
+import { typedFailureRecovery, type TypedToolFailure } from './tool-failure'
+
+/**
+ * Actionable next steps for tool failures; never execute a retry automatically. A typed
+ * failure decides the action; message text is only the fallback for untyped errors.
+ */
+export function toolFailureRecovery(
+  toolName: string,
+  detail: string,
+  failure?: TypedToolFailure
+): string {
+  const typed = failure && typedFailureRecovery(failure)
+  if (typed) return typed
   const error = detail.toLowerCase()
 
   if (/user denied|blocked by tool policy|reviewer can only|global installs are not allowed/.test(error)) {

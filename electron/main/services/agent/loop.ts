@@ -116,6 +116,7 @@ import {
 } from './install-guards'
 import { decideMidRunAdapt, MID_RUN_ADAPT_BUDGET, shouldConsiderMidRunAdapt } from './mid-run-adapt'
 import { toolFailureRecovery } from './recovery'
+import type { TypedToolFailure } from './tool-failure'
 import { findAgent } from '../agents'
 import {
   AGENT_HANDOFF_CHARS,
@@ -211,8 +212,16 @@ type ToolExecutionResult = { ok: boolean; detail: string; mutated: boolean; path
 
 export function toolFailureMetadata(
   detail: string,
-  effect: 'read' | 'workspace' | 'external' | 'command' | 'orchestration'
+  effect: 'read' | 'workspace' | 'external' | 'command' | 'orchestration',
+  typed?: TypedToolFailure
 ): { code: string; retryable: boolean; cause?: string } {
+  // Structured identity wins over message text; an applied effect is never retryable.
+  if (typed && (typed.code !== 'execution_failed' || typed.effectApplied))
+    return {
+      code: typed.code,
+      retryable: typed.retryable,
+      ...(typed.effectApplied ? { cause: 'effect-applied' } : {})
+    }
   const code = /\bdenied\b|\bblocked\b|no approval handler|reviewer can only/i.test(detail)
     ? 'permission_denied'
     : /read required before editing/i.test(detail)
@@ -2997,7 +3006,13 @@ async function* runAgentInternal(options: {
         const call = toolCalls[i]
         const id = `${task.taskId}:t${toolExecRounds}_${i}`
         const resultStart = resultParts.length
-        let result: { ok: boolean; detail: string; mutated: boolean; path?: string } = {
+        let result: {
+          ok: boolean
+          detail: string
+          mutated: boolean
+          path?: string
+          failure?: TypedToolFailure
+        } = {
           ok: false, detail: 'Tool did not complete.', mutated: false
         }
         let releaseWrite: (() => void) | undefined
@@ -4491,7 +4506,9 @@ async function* runAgentInternal(options: {
               effect: toolEffect,
               changedResources: toolEffect === 'read' || !result.path ? [] : [result.path],
               durationMs: Date.now() - toolStartedAt,
-              failure: result.ok ? undefined : toolFailureMetadata(result.detail, toolEffect),
+              failure: result.ok
+                ? undefined
+                : toolFailureMetadata(result.detail, toolEffect, result.failure),
               detail: result.detail.slice(0, AGENT_HANDOFF_CHARS)
             }
           }
@@ -4515,7 +4532,9 @@ async function* runAgentInternal(options: {
           if (journaled) appendTaskEvent(task.taskId, 'run-journal-entry', journaled)
           resultParts.push(
             `TOOL_RESULT ${call.name}${result.path ? ` path=${result.path}` : ''}${journaled ? trustLabel(journaled.trust) : ''}:\n${truncateForModel(result.detail)}` +
-              (result.ok ? '' : `\nRECOVERY: ${toolFailureRecovery(call.name, result.detail)}`)
+              (result.ok
+                ? ''
+                : `\nRECOVERY: ${toolFailureRecovery(call.name, result.detail, result.failure)}`)
           )
         } catch (error) {
           if (!result.mutated) throw error
