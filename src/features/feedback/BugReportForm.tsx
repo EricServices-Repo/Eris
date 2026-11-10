@@ -91,6 +91,7 @@ export function BugReportForm({
     if (!d) return [] as string[]
     return [
       `Eris ${d.appVersion}`,
+      d.build ? `build ${d.build.gitSha.slice(0, 7)}${d.build.dirty ? '+dirty' : ''}` : '',
       d.platform,
       d.arch,
       d.workspaceLinked ? d.workspaceName || 'workspace' : 'no workspace'
