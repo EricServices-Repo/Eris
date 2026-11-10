@@ -2,6 +2,7 @@ import {
   fileIdentity,
   assertIdentity,
   protectedMutationReason,
+  MutationConflict,
   type MutationPlan
 } from '../file-mutations'
 import { randomUUID } from 'crypto'
@@ -43,6 +44,8 @@ const fileTools = new Set([
   'image_save',
   'generate_image'
 ])
+/** Baseline for a path a read found empty: a later external create is a conflict. */
+const MISSING = 'missing'
 export class TaskToolGateway {
   readonly evidence: EvidenceRecord[] = []
   private mutations = new WeakMap<ToolCall, MutationPlan>()
@@ -63,6 +66,15 @@ export class TaskToolGateway {
       else this.partialReads.add(abs)
     } catch {
       /* unavailable source */
+    }
+  }
+  /** The model observed that nothing exists at this path; a later external create conflicts. */
+  rememberMissing(path: string): void {
+    try {
+      const abs = realpathAllowMissing(resolveInWorkspace(this.task.scope.workspaceRoot!, path))
+      if (!existsSync(abs)) this.readHashes.set(abs, MISSING)
+    } catch {
+      /* invalid path is reported by the read itself */
     }
   }
   authorize(workspace: string, call: ToolCall, mcpReadOnly = false): string | null {
@@ -157,14 +169,19 @@ export class TaskToolGateway {
           if (call.name === 'write_file' && this.partialReads.has(abs))
             return 'The file was only partially inspected. Use search_replace or read the full file before rewriting it.'
           const before = this.readHashes.get(abs)
-          if (
-            contract?.effect === 'workspace' &&
-            before &&
-            (!existsSync(abs) || this.hash(abs) !== before)
-          )
-            return `File ${path} changed after inspection. Read it again before editing.`
+          if (contract?.effect === 'workspace' && before) {
+            if (before === MISSING) {
+              if (existsSync(abs))
+                return `File ${path} was created by another process after inspection. Read it again before editing; the external file was not overwritten.`
+            } else if (!existsSync(abs) || this.hash(abs) !== before)
+              return `File ${path} changed after inspection. Read it again before editing; the external change was preserved.`
+          }
         }
-      } catch {
+      } catch (error) {
+        // A planned identity that no longer matches (e.g. a change while waiting for the
+        // project write lock) is a stale-edit conflict, not a malformed path.
+        if (error instanceof MutationConflict && /changed before publication/i.test(error.message))
+          return `${error.message.replace(/; read it again: .*/, '')} (${String(call.args.path ?? '')}). Read it again before editing; the external change was preserved.`
         return 'Invalid scoped tool path.'
       }
     }
@@ -189,8 +206,9 @@ export class TaskToolGateway {
         const path = realpathAllowMissing(
           resolveInWorkspace(this.task.scope.workspaceRoot!, result.path)
         )
+        const before = this.readHashes.get(path)
         Object.assign(item, {
-          beforeDigest: this.readHashes.get(path),
+          beforeDigest: before === MISSING ? undefined : before,
           afterDigest: existsSync(path) ? this.hash(path) : undefined
         })
       } catch {
@@ -207,6 +225,13 @@ export class TaskToolGateway {
           !result.detail.includes('[truncated at'),
         result.sourceDigest
       )
+    else if (
+      !result.ok &&
+      call.name === 'read_file' &&
+      /^Not found:/.test(result.detail) &&
+      typeof call.args.path === 'string'
+    )
+      this.rememberMissing(call.args.path)
     if (result.mutated && result.path) {
       try {
         const path = realpathAllowMissing(
