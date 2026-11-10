@@ -24,6 +24,7 @@ export function executeTool(
   detail: string
   mutated: boolean
   path?: string
+  sourceDigest?: string
   failure?: TypedToolFailure
 } {
   const name = call.name
@@ -71,7 +72,8 @@ export function executeTool(
           ok: true,
           detail: file.lineRange ? `[${file.lineRange}]\n${detail}` : detail,
           mutated: false,
-          path: file.path
+          path: file.path,
+          sourceDigest: file.sourceDigest
         }
       }
       case 'write_file': {

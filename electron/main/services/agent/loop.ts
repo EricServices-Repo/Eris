@@ -208,7 +208,14 @@ function answerFromProjectFiles(reads: Array<{ path: string; text: string }>): s
   return `From the project files:\n\n${body}`
 }
 
-type ToolExecutionResult = { ok: boolean; detail: string; mutated: boolean; path?: string }
+type ToolExecutionResult = {
+  ok: boolean
+  detail: string
+  mutated: boolean
+  path?: string
+  sourceDigest?: string
+  failure?: TypedToolFailure
+}
 
 export function toolFailureMetadata(
   detail: string,
@@ -3006,13 +3013,7 @@ async function* runAgentInternal(options: {
         const call = toolCalls[i]
         const id = `${task.taskId}:t${toolExecRounds}_${i}`
         const resultStart = resultParts.length
-        let result: {
-          ok: boolean
-          detail: string
-          mutated: boolean
-          path?: string
-          failure?: TypedToolFailure
-        } = {
+        let result: ToolExecutionResult = {
           ok: false, detail: 'Tool did not complete.', mutated: false
         }
         let releaseWrite: (() => void) | undefined

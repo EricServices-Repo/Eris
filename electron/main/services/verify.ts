@@ -277,8 +277,8 @@ export async function runVerify(
   let out = [ran.stdout, ran.stderr].filter(Boolean).join('\n').trim()
   let usedCommand = command
 
-  // Empty CRA suite — treat as pass (product code may ship before tests exist).
-  if (!ran.ok && looksLikeNoTestsFound(out)) {
+  // CRA's --passWithNoTests can exit successfully without running a test.
+  if (!ran.timedOut && looksLikeNoTestsFound(out)) {
     return {
       ok: true,
       command: usedCommand,
@@ -302,7 +302,7 @@ export async function runVerify(
         ran = retry
         out = retryOut
         usedCommand = fallback
-        if (!ran.ok && looksLikeNoTestsFound(out)) {
+        if (!ran.timedOut && looksLikeNoTestsFound(out)) {
           return {
             ok: true,
             command: usedCommand,
@@ -343,7 +343,7 @@ export async function runVerify(
         timeoutMs: 120_000
       })
       out = [ran.stdout, ran.stderr].filter(Boolean).join('\n').trim()
-      if (!ran.ok && looksLikeNoTestsFound(out)) {
+      if (!ran.timedOut && looksLikeNoTestsFound(out)) {
         return {
           ok: true,
           command: usedCommand,
@@ -379,7 +379,7 @@ export async function runVerify(
         timeoutMs: 120_000
       })
       out = [ran.stdout, ran.stderr].filter(Boolean).join('\n').trim()
-      if (!ran.ok && looksLikeNoTestsFound(out)) {
+      if (!ran.timedOut && looksLikeNoTestsFound(out)) {
         return {
           ok: true,
           command: usedCommand,

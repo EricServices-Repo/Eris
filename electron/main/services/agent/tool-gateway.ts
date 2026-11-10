@@ -55,10 +55,10 @@ export class TaskToolGateway {
   private hash(path: string): string {
     return createHash('sha256').update(readFileSync(path)).digest('hex')
   }
-  rememberRead(path: string, complete = true): void {
+  rememberRead(path: string, complete = true, sourceDigest?: string): void {
     try {
       const abs = realpathAllowMissing(resolveInWorkspace(this.task.scope.workspaceRoot!, path))
-      this.readHashes.set(abs, this.hash(abs))
+      this.readHashes.set(abs, sourceDigest ?? this.hash(abs))
       if (complete) this.partialReads.delete(abs)
       else this.partialReads.add(abs)
     } catch {
@@ -173,7 +173,7 @@ export class TaskToolGateway {
   record(
     id: string,
     call: ToolCall,
-    result: { ok: boolean; mutated: boolean; path?: string; detail: string }
+    result: { ok: boolean; mutated: boolean; path?: string; detail: string; sourceDigest?: string }
   ): EvidenceRecord {
     const item: EvidenceRecord = {
       id,
@@ -204,7 +204,8 @@ export class TaskToolGateway {
         result.path,
         call.args.start_line === undefined &&
           call.args.end_line === undefined &&
-          !result.detail.includes('[truncated at')
+          !result.detail.includes('[truncated at'),
+        result.sourceDigest
       )
     if (result.mutated && result.path) {
       try {

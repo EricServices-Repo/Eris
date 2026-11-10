@@ -90,6 +90,18 @@ describe('requested outcomes and execution authority', () => {
 })
 
 describe('file-set completion evidence', () => {
+  it('rejects the reviewed patch counterexample after a read and passing generic check (#464)', () => {
+    const root = workspace()
+    writeFileSync(join(root, 'index.ts'), 'export const value = 1\n')
+    const compiled = createTaskContract({ workspacePath: root, text: 'Fix index.ts', plan: plan() })
+    const task = { ...compiled, requested: { ...compiled.requested!, targetFiles: ['index.ts'] } }
+    expect(task.requested).toMatchObject({ artifact: 'patch', destination: 'workspace', targetFiles: ['index.ts'] })
+    const workflow = new AgentWorkflow({ ...plan(), task })
+    workflow.noteTool({ name: 'read_file', path: 'index.ts', ok: true, mutated: false })
+    workflow.noteVerification('passed')
+    expect(workflow.evaluateOutcome({ workspaceMutated: false, codeMutated: false, verifyPassed: true, filesTouched: [] }).ok).toBe(false)
+    expect(completeChatTurnTask(task, { answer: 'Done', changedFiles: [], terminal: 'complete' }).result?.terminal).toBe('incomplete')
+  })
   it('does not claim an inspected existing artifact was implemented in this run (#443)', () => {
     const root = workspace()
     const task = createTaskContract({ workspacePath: root, text: 'Create booking.ts', plan: plan() })
