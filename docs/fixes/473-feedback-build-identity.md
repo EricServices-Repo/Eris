@@ -4,6 +4,9 @@
 installed app older than the latest merge) were indistinguishable, so a regression report could
 not be traced to the exact bundle.
 
+**Builds on #489**, which added the bundled source commit and dirty state to the footer and
+diagnostics. This change adds the remaining items that #489 listed as open.
+
 **Change.**
 
 - `electron.vite.config.ts` stamps a per-build `buildId` (ISO time + random suffix) next to the

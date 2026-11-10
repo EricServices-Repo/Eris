@@ -1222,6 +1222,8 @@ export interface BugReportInput {
 export interface BugReportDiagnostics {
   appName: string
   appVersion: string
+  sourceCommit: string
+  sourceDirty: boolean | null
   packaged: boolean
   electron: string
   chrome: string

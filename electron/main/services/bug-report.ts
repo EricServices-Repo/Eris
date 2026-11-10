@@ -16,6 +16,11 @@ import {
   type RuntimeBuildIdentity
 } from './build-identity'
 
+function bundledSourceIdentity(): { gitSha: string; dirty: boolean | null } {
+  const { gitSha, dirty } = runtimeBuildIdentity()
+  return { gitSha, dirty }
+}
+
 /** Public issues inbox (created via API — never opens a browser). */
 export const ERIS_FEEDBACK_OWNER = 'EricServices-Repo'
 export const ERIS_FEEDBACK_REPO = 'Eris'
@@ -33,6 +38,8 @@ export interface BugReportInput {
 export interface BugReportDiagnostics {
   appName: string
   appVersion: string
+  sourceCommit: string
+  sourceDirty: boolean | null
   packaged: boolean
   electron: string
   chrome: string
@@ -138,9 +145,12 @@ function workspaceDisplayName(): string | null {
 export function collectBugDiagnostics(): BugReportDiagnostics {
   const settings = getResolvedSettings(appState.currentWorkspace)
   const logs = getLogsInfo()
+  const source = bundledSourceIdentity()
   return {
     appName: app.getName(),
     appVersion: app.getVersion(),
+    sourceCommit: source.gitSha,
+    sourceDirty: source.dirty,
     packaged: app.isPackaged,
     electron: process.versions.electron || '',
     chrome: process.versions.chrome || '',
@@ -192,6 +202,7 @@ function formatDiagnosticsMarkdown(d: BugReportDiagnostics): string {
     `| | |`,
     `|---|---|`,
     `| App | ${d.appName} ${d.appVersion}${d.packaged ? '' : ' (unpackaged)'} |`,
+    `| Build source | ${d.sourceCommit}${d.sourceDirty === true ? ' (dirty)' : d.sourceDirty === null ? ' (dirty state unknown)' : ''} |`,
     `| Build | \`${formatBuildIdentity(d.build)}\` |`,
     `| Trace ID | \`${d.traceId}\` |`,
     `| Electron / Chrome / Node | ${d.electron} / ${d.chrome} / ${d.node} |`,
@@ -290,7 +301,7 @@ export function buildBugReportPreview(input: BugReportInput): BugReportPreview {
 
   parts.push(
     '---',
-    `_Submitted from ${formatBuildIdentity(diagnostics.build)} via **Report a Bug**._`
+    `_Submitted from ${diagnostics.appName} ${diagnostics.appVersion} (${diagnostics.packaged ? 'packaged' : 'unpackaged'}; source ${diagnostics.sourceCommit}${diagnostics.sourceDirty === true ? ', dirty' : diagnostics.sourceDirty === null ? ', dirty state unknown' : ''}; build ${diagnostics.build.buildId}) via **Report a Bug**._`
   )
 
   return {
