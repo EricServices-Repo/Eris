@@ -22,6 +22,7 @@ import {
   linkSync
 } from 'fs'
 import { basename, dirname, join, relative, resolve, sep } from 'path'
+import { createHash } from 'crypto'
 
 const SKIP_DIR_NAMES = new Set([
   'node_modules',
@@ -135,7 +136,7 @@ export function readWorkspaceFile(
   userPath: string,
   maxChars = 80_000,
   range?: { startLine?: number; endLine?: number }
-): { path: string; content: string; truncated: boolean; bytes: number; lineRange?: string } {
+): { path: string; content: string; truncated: boolean; bytes: number; lineRange?: string; sourceDigest: string } {
   const abs = resolveInWorkspace(workspacePath, userPath)
   if (!existsSync(abs)) throw new WorkspaceFsError(`Not found: ${userPath}`)
   if (statSync(abs).isDirectory()) throw new WorkspaceFsError(`Is a directory: ${userPath}`)
@@ -163,7 +164,8 @@ export function readWorkspaceFile(
     content: truncated ? text.slice(0, maxChars) : text,
     ...(lineRange ? { lineRange } : {}),
     truncated,
-    bytes: buf.length
+    bytes: buf.length,
+    sourceDigest: createHash('sha256').update(buf).digest('hex')
   }
 }
 
