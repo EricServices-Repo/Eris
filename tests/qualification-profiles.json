@@ -70,6 +70,7 @@
         "tests/agent-creative-chat.test.ts",
         "tests/agent-loop.test.ts",
         "tests/compound-review-edits.test.ts",
+        "tests/compositional-intake.test.ts",
         "tests/agent-orchestration.test.ts",
         "tests/compaction-summary-coverage.test.ts",
         "tests/compaction-eviction.test.ts",
