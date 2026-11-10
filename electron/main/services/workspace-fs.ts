@@ -22,6 +22,7 @@ import {
   linkSync
 } from 'fs'
 import { basename, dirname, join, relative, resolve, sep } from 'path'
+import { createHash } from 'crypto'
 
 const SKIP_DIR_NAMES = new Set([
   'node_modules',
@@ -43,16 +44,23 @@ export function invalidateWorkspaceTreeCache(workspacePath: string): void {
   }
 }
 
+import type { ToolFailureCode } from './agent/tool-failure'
+
+/** A workspace operation failure with a stable code; the message is for presentation only. */
 export class WorkspaceFsError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly code: ToolFailureCode = 'execution_failed'
+  ) {
     super(message)
     this.name = 'WorkspaceFsError'
   }
 }
 
 export function assertWorkspaceRoot(workspacePath: string | null): string {
-  if (!workspacePath) throw new WorkspaceFsError('No workspace is open')
-  if (!existsSync(workspacePath)) throw new WorkspaceFsError('Workspace folder does not exist')
+  if (!workspacePath) throw new WorkspaceFsError('No workspace is open', 'unavailable')
+  if (!existsSync(workspacePath))
+    throw new WorkspaceFsError('Workspace folder does not exist', 'unavailable')
   return resolve(workspacePath)
 }
 
@@ -82,7 +90,7 @@ export function resolveInWorkspace(workspacePath: string, userPath: string): str
   const abs = resolve(root, raw)
   const rel = relative(root, abs)
   if (rel.startsWith('..') || resolve(root, rel) !== abs || !isPathInside(root, abs)) {
-    throw new WorkspaceFsError(`Path escapes workspace: ${userPath}`)
+    throw new WorkspaceFsError(`Path escapes workspace: ${userPath}`, 'permission_denied')
   }
   return abs
 }
@@ -103,9 +111,10 @@ export function listDir(
   size?: number
 }> {
   const abs = resolveInWorkspace(workspacePath, userPath)
-  if (!existsSync(abs)) throw new WorkspaceFsError(`Not found: ${userPath}`)
+  if (!existsSync(abs)) throw new WorkspaceFsError(`Not found: ${userPath}`, 'not_found')
   const st = statSync(abs)
-  if (!st.isDirectory()) throw new WorkspaceFsError(`Not a directory: ${userPath}`)
+  if (!st.isDirectory())
+    throw new WorkspaceFsError(`Not a directory: ${userPath}`, 'precondition_failed')
   return readdirSync(abs)
     .filter((name) => name !== '.DS_Store')
     .sort((a, b) => a.localeCompare(b))
@@ -135,10 +144,11 @@ export function readWorkspaceFile(
   userPath: string,
   maxChars = 80_000,
   range?: { startLine?: number; endLine?: number }
-): { path: string; content: string; truncated: boolean; bytes: number; lineRange?: string } {
+): { path: string; content: string; truncated: boolean; bytes: number; lineRange?: string; sourceDigest: string } {
   const abs = resolveInWorkspace(workspacePath, userPath)
-  if (!existsSync(abs)) throw new WorkspaceFsError(`Not found: ${userPath}`)
-  if (statSync(abs).isDirectory()) throw new WorkspaceFsError(`Is a directory: ${userPath}`)
+  if (!existsSync(abs)) throw new WorkspaceFsError(`Not found: ${userPath}`, 'not_found')
+  if (statSync(abs).isDirectory())
+    throw new WorkspaceFsError(`Is a directory: ${userPath}`, 'precondition_failed')
   const buf = readFileSync(abs)
   let text = buf.toString('utf8')
   let lineRange: string | undefined
@@ -153,7 +163,7 @@ export function readWorkspaceFile(
       end < start ||
       start > lines.length
     )
-      throw new WorkspaceFsError('Invalid one-based line range')
+      throw new WorkspaceFsError('Invalid one-based line range', 'invalid_arguments')
     text = lines.slice(start - 1, end).join('\n')
     lineRange = `Lines ${start}-${Math.min(end, lines.length)} of ${lines.length}`
   }
@@ -163,7 +173,8 @@ export function readWorkspaceFile(
     content: truncated ? text.slice(0, maxChars) : text,
     ...(lineRange ? { lineRange } : {}),
     truncated,
-    bytes: buf.length
+    bytes: buf.length,
+    sourceDigest: createHash('sha256').update(buf).digest('hex')
   }
 }
 
@@ -198,7 +209,8 @@ function readTextForEdit(abs: string, userPath: string): string {
     return strictUtf8.decode(raw)
   } catch {
     throw new WorkspaceFsError(
-      `${userPath} is not valid UTF-8 text. A text edit would rewrite bytes outside the change; leave it unchanged or replace the whole file with write_file.`
+      `${userPath} is not valid UTF-8 text. A text edit would rewrite bytes outside the change; leave it unchanged or replace the whole file with write_file.`,
+      'precondition_failed'
     )
   }
 }
@@ -212,19 +224,21 @@ export function searchReplaceInFile(
   replaceAll = false,
   plan?: MutationPlan
 ): { path: string; replacements: number; before: string; after: string } {
-  if (!oldString) throw new WorkspaceFsError('old_string is required')
+  if (!oldString) throw new WorkspaceFsError('old_string is required', 'invalid_arguments')
   plan = prepareMutationPlan(workspacePath, [userPath], plan)
   const abs = resolveInWorkspace(workspacePath, userPath)
-  if (!existsSync(abs)) throw new WorkspaceFsError(`Not found: ${userPath}`)
-  if (statSync(abs).isDirectory()) throw new WorkspaceFsError(`Is a directory: ${userPath}`)
+  if (!existsSync(abs)) throw new WorkspaceFsError(`Not found: ${userPath}`, 'not_found')
+  if (statSync(abs).isDirectory())
+    throw new WorkspaceFsError(`Is a directory: ${userPath}`, 'precondition_failed')
   const before = readTextForEdit(abs, userPath)
   const count = before.split(oldString).length - 1
   if (count === 0) {
-    throw new WorkspaceFsError(`old_string not found in ${userPath}`)
+    throw new WorkspaceFsError(`old_string not found in ${userPath}`, 'precondition_failed')
   }
   if (count > 1 && !replaceAll) {
     throw new WorkspaceFsError(
-      `old_string found ${count} times in ${userPath}; set replace_all:true or include more context`
+      `old_string found ${count} times in ${userPath}; set replace_all:true or include more context`,
+      'invalid_arguments'
     )
   }
   const after = replaceAll
@@ -271,7 +285,7 @@ export function unifiedPatchTargetPath(patchText: string): string {
 
 function parseUnifiedPatch(patchText: string): { relPath: string; hunkBody: string } {
   const text = patchText.trim()
-  if (!text) throw new WorkspaceFsError('patch is required')
+  if (!text) throw new WorkspaceFsError('patch is required', 'invalid_arguments')
 
   let relPath = ''
   let hunkBody = text
@@ -291,7 +305,7 @@ function parseUnifiedPatch(patchText: string): { relPath: string; hunkBody: stri
   }
 
   if (!relPath || relPath === '/dev/null') {
-    throw new WorkspaceFsError('Could not determine target path from patch')
+    throw new WorkspaceFsError('Could not determine target path from patch', 'invalid_arguments')
   }
   relPath = relPath.replace(/^b\//, '').replace(/^a\//, '')
   return { relPath, hunkBody }
@@ -364,7 +378,7 @@ function applyHunkLines(original: string, hunkBody: string): string {
     return `${base}${replace}${replace.endsWith('\n') ? '' : '\n'}`
   }
   if (!original.includes(search)) {
-    throw new WorkspaceFsError('Patch context did not match file contents')
+    throw new WorkspaceFsError('Patch context did not match file contents', 'precondition_failed')
   }
   return original.replace(search, replace)
 }
@@ -380,7 +394,7 @@ export function mkdirWorkspace(
   const reason =
     protectedMutationReason(relative(root, abs)) ??
     protectedMutationReason(relative(realpathAllowMissing(root), realpathAllowMissing(abs)))
-  if (reason) throw new WorkspaceFsError(`${reason}: ${userPath}`)
+  if (reason) throw new WorkspaceFsError(`${reason}: ${userPath}`, 'permission_denied')
   const created = !existsSync(abs)
   mkdirSync(abs, { recursive: true })
   if (created) invalidateWorkspaceTreeCache(workspacePath)
@@ -395,8 +409,9 @@ export function deleteWorkspacePath(
   plan = prepareMutationPlan(workspacePath, [userPath], plan)
   const root = assertWorkspaceRoot(workspacePath)
   const abs = resolveInWorkspace(workspacePath, userPath)
-  if (abs === root) throw new WorkspaceFsError('Refusing to delete the workspace root')
-  if (!existsSync(abs)) throw new WorkspaceFsError(`Not found: ${userPath}`)
+  if (abs === root)
+    throw new WorkspaceFsError('Refusing to delete the workspace root', 'permission_denied')
+  if (!existsSync(abs)) throw new WorkspaceFsError(`Not found: ${userPath}`, 'not_found')
   const wasDirectory = statSync(abs).isDirectory()
   journalMutation(workspacePath, [userPath], 'delete', plan, undefined, (check, mark) => {
     check()
@@ -417,8 +432,9 @@ export function renameWorkspacePath(
   plan = prepareMutationPlan(workspacePath, [fromPath, toPath], plan)
   const fromAbs = resolveInWorkspace(workspacePath, fromPath)
   const toAbs = resolveInWorkspace(workspacePath, toPath)
-  if (!existsSync(fromAbs)) throw new WorkspaceFsError(`Not found: ${fromPath}`)
-  if (existsSync(toAbs)) throw new WorkspaceFsError(`Destination already exists: ${toPath}`)
+  if (!existsSync(fromAbs)) throw new WorkspaceFsError(`Not found: ${fromPath}`, 'not_found')
+  if (existsSync(toAbs))
+    throw new WorkspaceFsError(`Destination already exists: ${toPath}`, 'precondition_failed')
   const carried = movedTreeReason(workspacePath, fromPath)
   if (carried) throw new MutationConflict(`Refusing to rename ${fromPath}: ${carried}`)
   journalMutation(workspacePath, [fromPath, toPath], 'rename', plan, undefined, (check, mark) => {
@@ -442,7 +458,7 @@ export function renameWorkspacePath(
 
 export function workspaceTree(workspacePath: string, userPath = '.', maxDepth = 3): string {
   const root = resolveInWorkspace(workspacePath, userPath)
-  if (!existsSync(root)) throw new WorkspaceFsError(`Not found: ${userPath}`)
+  if (!existsSync(root)) throw new WorkspaceFsError(`Not found: ${userPath}`, 'not_found')
   const cacheKey = `${resolve(workspacePath)}\0${root}\0${maxDepth}`
   const cached = workspaceTreeCache.get(cacheKey)
   if (cached && Date.now() - cached.at < WORKSPACE_TREE_CACHE_MS) return cached.tree

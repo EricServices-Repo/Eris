@@ -9,6 +9,17 @@ import { getSecret } from '../ipc/shared'
 import { appState } from '../app-state'
 import { normalizeApiBase } from './ericservices'
 import { userDataRoot } from './paths'
+import { randomUUID } from 'crypto'
+import {
+  formatBuildIdentity,
+  runtimeBuildIdentity,
+  type RuntimeBuildIdentity
+} from './build-identity'
+
+function bundledSourceIdentity(): { gitSha: string; dirty: boolean | null } {
+  const { gitSha, dirty } = runtimeBuildIdentity()
+  return { gitSha, dirty }
+}
 
 /** Public issues inbox (created via API — never opens a browser). */
 export const ERIS_FEEDBACK_OWNER = 'EricServices-Repo'
@@ -27,6 +38,8 @@ export interface BugReportInput {
 export interface BugReportDiagnostics {
   appName: string
   appVersion: string
+  sourceCommit: string
+  sourceDirty: boolean | null
   packaged: boolean
   electron: string
   chrome: string
@@ -49,6 +62,12 @@ export interface BugReportDiagnostics {
   logDirectory: string
   currentLogFile: string
   logFileCount: number
+  /** Identity of the running bundle (role, version, commit, build ID), baked in at build time. */
+  build: RuntimeBuildIdentity
+  /** Command approval policy in effect when the report was prepared. */
+  commandApproval: string | null
+  /** Random per-report ID that correlates this report with local logs; carries no user data. */
+  traceId: string
 }
 
 export interface BugReportPreview {
@@ -126,9 +145,12 @@ function workspaceDisplayName(): string | null {
 export function collectBugDiagnostics(): BugReportDiagnostics {
   const settings = getResolvedSettings(appState.currentWorkspace)
   const logs = getLogsInfo()
+  const source = bundledSourceIdentity()
   return {
     appName: app.getName(),
     appVersion: app.getVersion(),
+    sourceCommit: source.gitSha,
+    sourceDirty: source.dirty,
     packaged: app.isPackaged,
     electron: process.versions.electron || '',
     chrome: process.versions.chrome || '',
@@ -150,7 +172,26 @@ export function collectBugDiagnostics(): BugReportDiagnostics {
     loggingLevel: logs.level,
     logDirectory: logs.directory,
     currentLogFile: logs.currentFile.split(/[/\\]/).pop() || logs.currentFile,
-    logFileCount: logs.files.length
+    logFileCount: logs.files.length,
+    build: runtimeBuildIdentity(),
+    commandApproval: settings.agent?.commandApproval || null,
+    traceId: randomUUID()
+  }
+}
+
+/**
+ * Privacy-safe machine-readable identity block. It names the exact bundle and policy,
+ * never paths, credentials, account plans or log content.
+ */
+export function machineReadableIdentity(d: BugReportDiagnostics): Record<string, unknown> {
+  return {
+    schema: 'eris-feedback-identity/1',
+    traceId: d.traceId,
+    build: d.build,
+    runtime: { electron: d.electron, chrome: d.chrome, node: d.node, os: d.platform },
+    activeProject: d.workspaceLinked ? d.workspaceName || '(linked)' : null,
+    defaultModel: d.defaultModel,
+    commandApproval: d.commandApproval
   }
 }
 
@@ -161,12 +202,16 @@ function formatDiagnosticsMarkdown(d: BugReportDiagnostics): string {
     `| | |`,
     `|---|---|`,
     `| App | ${d.appName} ${d.appVersion}${d.packaged ? '' : ' (unpackaged)'} |`,
+    `| Build source | ${d.sourceCommit}${d.sourceDirty === true ? ' (dirty)' : d.sourceDirty === null ? ' (dirty state unknown)' : ''} |`,
+    `| Build | \`${formatBuildIdentity(d.build)}\` |`,
+    `| Trace ID | \`${d.traceId}\` |`,
     `| Electron / Chrome / Node | ${d.electron} / ${d.chrome} / ${d.node} |`,
     `| OS | ${d.platform} (${d.arch}) |`,
     `| Locale | ${d.locale} |`,
     `| CPU / RAM | ${d.cpuCount} cores / ${d.totalMemGb} GB |`,
     `| Workspace | ${d.workspaceLinked ? d.workspaceName || '(linked)' : '(none)'} |`,
     `| Default model | ${d.defaultModel || '—'} |`,
+    `| Command approval | ${d.commandApproval || '—'} |`,
     `| EricServic.es | ${d.ericServicesLinked ? d.ericServicesPlan || 'linked' : 'not linked'} |`,
     `| GitHub settings | host=${d.githubHost || '—'}; linked=${d.githubLinked} |`,
     `| Logging | ${d.loggingEnabled ? d.loggingLevel : 'off'}; files=${d.logFileCount}; current=\`${d.currentLogFile}\` |`,
@@ -216,6 +261,28 @@ export function buildBugReportPreview(input: BugReportInput): BugReportPreview {
   if (includeDiagnostics) {
     parts.push(formatDiagnosticsMarkdown(diagnostics))
   }
+  // Build identity is always attached, even without full diagnostics, so every report
+  // can be traced to the exact running bundle rather than the latest repository merge.
+  parts.push(
+    '<details><summary>Runtime identity (machine-readable)</summary>',
+    '',
+    '```json',
+    JSON.stringify(
+      includeDiagnostics
+        ? machineReadableIdentity(diagnostics)
+        : {
+            schema: 'eris-feedback-identity/1',
+            traceId: diagnostics.traceId,
+            build: diagnostics.build
+          },
+      null,
+      2
+    ),
+    '```',
+    '',
+    '</details>',
+    ''
+  )
 
   if (includeLogs) {
     parts.push(
@@ -232,7 +299,10 @@ export function buildBugReportPreview(input: BugReportInput): BugReportPreview {
     )
   }
 
-  parts.push('---', `_Submitted from Eris ${diagnostics.appVersion} via **Report a Bug**._`)
+  parts.push(
+    '---',
+    `_Submitted from ${diagnostics.appName} ${diagnostics.appVersion} (${diagnostics.packaged ? 'packaged' : 'unpackaged'}; source ${diagnostics.sourceCommit}${diagnostics.sourceDirty === true ? ', dirty' : diagnostics.sourceDirty === null ? ', dirty state unknown' : ''}; build ${diagnostics.build.buildId}) via **Report a Bug**._`
+  )
 
   return {
     title: title.slice(0, 200),

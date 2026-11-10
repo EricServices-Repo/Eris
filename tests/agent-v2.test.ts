@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
@@ -153,6 +153,25 @@ describe('agent v2 task boundary', () => {
     expect(
       gateway.authorize(root, { name: 'write_file', args: { path: 'airbnb/index.php' }, raw: '' })
     ).toContain('changed after inspection')
+  })
+  it.each(['write_file', 'search_replace'])('keeps the bytes observed by read_file as the %s baseline', name => {
+    const root = fixture()
+    const path = join(root, 'index.ts')
+    writeFileSync(path, 'original')
+    const task = createTaskContract({ workspacePath: root, text: 'Fix index.ts', plan })
+    const gateway = new TaskToolGateway(task)
+    const read = { name: 'read_file', args: { path: 'index.ts' }, raw: '' }
+    const result = executeTool(root, read)
+    expect(result.detail).toBe('original')
+    // An external writer wins between the read and recording its receipt.
+    writeFileSync(path, 'external change')
+    gateway.record('read', read, result)
+    const edit = { name, args: { path: 'index.ts', content: 'replacement', old_string: 'original', new_string: 'replacement' }, raw: '' }
+    expect(gateway.authorize(root, edit)).toContain('changed after inspection')
+    expect(readFileSync(path, 'utf8')).toBe('external change')
+    const reread = executeTool(root, read)
+    gateway.record('reread', read, reread)
+    expect(gateway.authorize(root, { ...edit })).toBeNull()
   })
   it('reads a bounded source range and prevents a whole-file rewrite based on that excerpt', () => {
     const root = fixture()

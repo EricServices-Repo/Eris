@@ -6,7 +6,12 @@ import { mkdirSync, writeFileSync, mkdtempSync, rmSync, readFileSync } from 'fs'
 import { tmpdir, cpus, totalmem } from 'os'
 import { join, dirname } from 'path'
 import { createHash } from 'crypto'
-declare const __ERIS_SOURCE_IDENTITY__: { gitSha: string; dirty: boolean; lockSha256: string }
+declare const __ERIS_SOURCE_IDENTITY__: {
+  gitSha: string
+  dirty: boolean
+  lockSha256: string
+  buildId: string
+}
 import { stopLocalImageProcesses } from './services/local-image-model'
 import { setDefaultResultOrder } from 'dns'
 import { app, BrowserWindow, protocol } from 'electron'
@@ -167,7 +172,8 @@ app.whenReady().then(async () => {
           result.chatAcceptance = await runBadAnswerSmoke(process.env.ERIS_SMOKE_ROOT!)
           const ok =
             result.workerReady &&
-            result.chatAcceptance.total === 4 && result.chatAcceptance.passed === 4 &&
+            result.chatAcceptance.total === 4 &&
+            result.chatAcceptance.passed === 4 &&
             result.catalogChecked &&
             result.rendererMounted &&
             result.nodeIsolated &&
