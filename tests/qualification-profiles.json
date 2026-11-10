@@ -70,6 +70,7 @@
         "tests/agent-interpretation.test.ts",
         "tests/agent-creative-chat.test.ts",
         "tests/agent-loop.test.ts",
+        "tests/verified-noop.test.ts",
         "tests/compound-review-edits.test.ts",
         "tests/compositional-intake.test.ts",
         "tests/agent-orchestration.test.ts",

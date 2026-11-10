@@ -2591,7 +2591,8 @@ async function* runAgentInternal(options: {
             inspectRounds,
             actions: actionLog,
             describeProject,
-            chatReply
+            chatReply,
+            verifiedNoop: Boolean(workflow.snapshot().verifiedNoops?.length)
           }) ||
           abortedLoop ||
           looksLikeDegenerateLoop(assistantText)
@@ -2743,7 +2744,8 @@ async function* runAgentInternal(options: {
           codeMutated,
           reviewOnly,
           artifactProblems: changedArtifactProblems(),
-          verifyPassed: verifyPassedOnce
+          verifyPassed: verifyPassedOnce,
+          verifiedNoop: !workspaceMutated && Boolean(workflow.snapshot().verifiedNoops?.length)
         })
         const outcomeCheck = workflow.evaluateOutcome({
           workspaceMutated,
@@ -2795,6 +2797,9 @@ async function* runAgentInternal(options: {
           continue
         }
 
+        // A verified no-op is its own result: report it as already satisfied, not as changed.
+        if (outcomeCheck.disposition === 'already-satisfied')
+          yield { type: 'status', text: 'Done · already satisfied — no files changed' }
         // Deterministic summary — never unload Full to reload Lite just for a recap.
         const prose = proseOutsideTools(assistantText)
         if (webLookup) {
@@ -3614,6 +3619,21 @@ async function* runAgentInternal(options: {
             result = await contextPull.search(call.args, options.signal)
           } else if (call.name === 'context_read') {
             result = await contextPull.read(call.args, options.signal)
+          } else if (call.name === 'confirm_unchanged') {
+            const confirmed = confirmUnchanged(workspacePath, call.args, (path) =>
+              gateway.fullReadRevision(path)
+            )
+            if (confirmed.noop) {
+              workflow.noteVerifiedNoop(confirmed.noop)
+              appendTaskEvent(task.taskId, 'verified-noop', confirmed.noop)
+              actionLog.push(`Already satisfied: ${confirmed.noop.path}`)
+            }
+            result = {
+              ok: confirmed.ok,
+              detail: confirmed.detail,
+              mutated: false,
+              ...(confirmed.path ? { path: confirmed.path } : {})
+            }
           } else if (call.name === 'read_context') {
             const prompt = formatWorkspaceContextPrompt(workspacePath, { full: true })
             const doc = getWorkspaceContext(workspacePath)

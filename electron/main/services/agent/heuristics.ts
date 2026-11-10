@@ -225,6 +225,8 @@ export function shouldKeepWorking(opts: {
   describeProject?: boolean
   /** Read-only chat turn. Stop once the reply explains what was read. */
   chatReply?: boolean
+  /** The request was confirmed already satisfied from read source (confirm_unchanged). */
+  verifiedNoop?: boolean
 }): boolean {
   const {
     needsTools,
@@ -234,7 +236,8 @@ export function shouldKeepWorking(opts: {
     inspectRounds = 0,
     actions = [],
     describeProject = false,
-    chatReply = false
+    chatReply = false,
+    verifiedNoop = false
   } = opts
   if (!needsTools) return false
   if (describeProject) return !projectDescriptionReady(assistantText, actions)
@@ -259,6 +262,8 @@ export function shouldKeepWorking(opts: {
     }
   }
 
+  // A verified no-op may finish without a mutation; a cosmetic edit is not required.
+  if (!mutated && verifiedNoop) return !looksLikeTaskComplete(assistantText)
   if (!mutated) {
     // Edit goals must mutate; review goals can stop once they sound complete after inspect
     if (reviewOnly && inspectRounds >= 3 && looksLikeTaskComplete(assistantText)) return false
@@ -366,6 +371,8 @@ export function assessGoalCompletion(opts: {
   /** True when every touched product file is tiny (caller measures on disk). */
   artifactProblems?: string[]
   verifyPassed?: boolean
+  /** The agent confirmed with read source that the request is already satisfied. */
+  verifiedNoop?: boolean
 }): GoalAssessment {
   const {
     goal,
@@ -375,7 +382,8 @@ export function assessGoalCompletion(opts: {
     codeMutated,
     reviewOnly,
     artifactProblems = [],
-    verifyPassed = false
+    verifyPassed = false,
+    verifiedNoop = false
   } = opts
 
   if (reviewOnly) return { unmet: false, reason: '' }
@@ -409,6 +417,7 @@ export function assessGoalCompletion(opts: {
   // Claimed finished but never mutated on an edit-shaped goal
   if (
     !codeMutated &&
+    !verifiedNoop &&
     /\b(build|create|implement|fix|add|scaffold|make)\b/i.test(goal) &&
     looksLikeTaskComplete(assistantText)
   ) {

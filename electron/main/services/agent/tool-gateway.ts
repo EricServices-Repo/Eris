@@ -34,6 +34,7 @@ export interface EvidenceRecord {
 const fileTools = new Set([
   'read_file',
   'notebook_read',
+  'confirm_unchanged',
   'write_file',
   'search_replace',
   'apply_patch',
