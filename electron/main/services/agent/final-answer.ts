@@ -12,6 +12,7 @@ import {
 } from '../../../../src/shared/deliverable-checks'
 import { collectModelText } from './stream'
 import type { AgentChatMessage } from './types'
+import { evidenceRequirementFor } from '../../../../src/shared/task-contract'
 
 /** Checks that mean the text is about the runtime rather than the user's task. */
 const PROTOCOL_CHECKS = new Set(['protocol-leak', 'tool-call-as-answer', 'tool-schema-discussion'])
@@ -20,6 +21,19 @@ const REANSWER_SYSTEM =
   'Answer the user’s request directly in markdown. You have no tools in this reply. ' +
   'Do not mention tools, tool calls, arguments, retrieval or file listings, and do not ask the user to repair them. ' +
   'If a fact depends on project files you have not seen, state your assumption and give general guidance.'
+
+/**
+ * Re-answer for work that depends on the project. General guidance would turn an
+ * evidence-dependent task into plausible prose, so the repair stays grounded or partial.
+ */
+const GROUNDED_REANSWER_SYSTEM =
+  'Answer the user’s request directly in markdown. You have no tools in this reply. ' +
+  'Do not mention tools, tool calls, arguments, retrieval or file listings, and do not ask the user to repair them. ' +
+  'Use only the project sources below and facts already established in this conversation. ' +
+  'Where they do not establish something, say it is not yet verified instead of giving general guidance as if it applied to this project.'
+
+/** At most this many extra model calls may be spent repairing one answer. */
+export const MAX_REPAIR_CALLS = 2
 
 const CONTINUE_CODE =
   'Your previous reply stopped before its code was complete. Continue exactly where it stopped, ' +
@@ -53,8 +67,54 @@ export interface FinalAnswerOptions {
     rawDigest: string
     presentationDigest: string
     repairs: string[]
+    /** Every repair output, accepted or not, kept apart from the raw model draft. */
+    attempts: RepairAttempt[]
   }) => void
   evidence?: string
+  /**
+   * Workspace paths this task actually changed. A repair is rewritten presentation, not
+   * new work: it may not claim a change outside this list.
+   */
+  changedFiles?: string[]
+}
+
+export interface RepairAttempt {
+  kind: 're-answer' | 'creative' | 'evasion' | 'continuation'
+  accepted: boolean
+  digest: string
+  reason?: string
+}
+
+const MUTATION_CLAIM =
+  /\b(?:i(?:['’]ve| have)?|we(?:['’]ve| have)?)\s+(?:now\s+|also\s+|just\s+)?(?:updated|modified|changed|edited|created|added|fixed|wrote|rewrote|patched|deleted|removed|renamed|refactored|implemented|applied)\b[^\n]*?(?=[.!?](?:\s|$)|\n|$)/gi
+const PATH_TOKEN =
+  /(?:[\w.-]+\/)*[\w-]+\.(?:tsx?|jsx?|mjs|cjs|json|md|css|scss|html?|py|go|rs|java|kt|rb|php|c|h|cpp|hpp|cs|swift|ya?ml|toml|sh|sql|vue|svelte|txt|xml)\b/gi
+
+/**
+ * Edits a repair claims that the task did not make. Text-level and conservative: a
+ * first-person past-tense change naming no file counts only for project work
+ * (`projectWork`) in which nothing changed, so "I wrote a poem" stays a valid answer.
+ */
+export function unbackedEditClaims(
+  text: string,
+  changedFiles: string[] = [],
+  projectWork = true
+): string[] {
+  const changed = new Set(changedFiles.map((path) => path.replace(/\\/g, '/').toLowerCase()))
+  const base = new Set([...changed].map((path) => path.split('/').pop()!))
+  const claims: string[] = []
+  for (const sentence of text.match(MUTATION_CLAIM) ?? []) {
+    const paths = sentence.match(PATH_TOKEN) ?? []
+    if (!paths.length) {
+      if (projectWork && !changed.size) claims.push(sentence.trim())
+      continue
+    }
+    for (const raw of paths) {
+      const path = raw.replace(/^\.\//, '').toLowerCase()
+      if (!changed.has(path) && !base.has(path.split('/').pop()!)) claims.push(raw)
+    }
+  }
+  return claims
 }
 
 function protocolProblems(text: string, goal: string, task?: FinalAnswerOptions['task']): boolean {
@@ -89,19 +149,58 @@ export async function finalizeAnswer(
   options: FinalAnswerOptions
 ): Promise<{ text: string; incomplete: boolean; repaired: string[]; rawOutput: string }> {
   const repaired: string[] = []
+  const attempts: RepairAttempt[] = []
+  let calls = 0
   let text = answer
+  const digest = (value: string) => createHash('sha256').update(value).digest('hex')
   const finish = (text: string, incomplete: boolean, repaired: string[]) => {
     options.onPresentation?.({
       raw: answer,
-      rawDigest: createHash('sha256').update(answer).digest('hex'),
-      presentationDigest: createHash('sha256').update(text).digest('hex'),
-      repairs: [...repaired]
+      rawDigest: digest(answer),
+      presentationDigest: digest(text),
+      repairs: [...repaired],
+      attempts: [...attempts]
     })
     return { text, incomplete, repaired, rawOutput: answer }
   }
+  const grounded =
+    Boolean(options.evidence) ||
+    (options.task !== undefined &&
+      evidenceRequirementFor(options.task.scope.applicability) === 'required')
+  const changes = options.changedFiles ?? []
+  /** Accept a repair only if it adds no change the task did not make. Records every attempt. */
+  const vet = (kind: RepairAttempt['kind'], output: string, ok: boolean): boolean => {
+    if (!output.trim()) {
+      attempts.push({ kind, accepted: false, digest: digest(output), reason: 'empty' })
+      return false
+    }
+    const claims = unbackedEditClaims(output, changes, grounded)
+    const reason = claims.length
+      ? `claims unapplied changes: ${claims.slice(0, 3).join(', ')}`.slice(0, 200)
+      : ok
+        ? undefined
+        : 'failed checks'
+    attempts.push({
+      kind,
+      accepted: !reason,
+      digest: digest(output),
+      ...(reason ? { reason } : {})
+    })
+    return !reason
+  }
   const repairMessages = (extra = ''): AgentChatMessage[] => [
     ...options.messages.filter((message) => message.role === 'system'),
-    { role: 'system', content: REANSWER_SYSTEM + extra },
+    {
+      role: 'system',
+      content:
+        (grounded ? GROUNDED_REANSWER_SYSTEM : REANSWER_SYSTEM) +
+        extra +
+        (changes.length
+          ? ` Changes actually applied in this task: ${changes.join(', ')}. Do not claim any other change.`
+          : grounded
+            ? ' No files were changed in this task; do not claim any change.'
+            : '')
+    },
     ...workerConversation(options.messages, options.goal),
     {
       role: 'user',
@@ -112,8 +211,10 @@ export async function finalizeAnswer(
           : '')
     }
   ]
-  const answerAgain = (extra = '') =>
-    collectModelText({
+  const answerAgain = async (extra = '') => {
+    if (calls >= MAX_REPAIR_CALLS) return ''
+    calls++
+    return collectModelText({
       settings: options.settings,
       model: options.model,
       temperature: options.temperature,
@@ -124,6 +225,7 @@ export async function finalizeAnswer(
       if (options.signal?.aborted) throw error
       return ''
     })
+  }
   if (protocolProblems(text, options.goal, options.task)) {
     const stripped = stripProtocolTail(text)
     if (stripped && !protocolProblems(stripped, options.goal, options.task)) {
@@ -131,7 +233,7 @@ export async function finalizeAnswer(
       repaired.push('protocol-tail-removed')
     } else {
       const again = await answerAgain()
-      if (again.trim() && !protocolProblems(again, options.goal, options.task)) {
+      if (vet('re-answer', again, !protocolProblems(again, options.goal, options.task))) {
         text = again.trim()
         repaired.push('re-answered-from-goal')
       } else {
@@ -150,9 +252,11 @@ export async function finalizeAnswer(
       ' Eris supports creative writing. Fulfill the requested literary format when allowed; retain all applicable safety restrictions. Do not decline merely because you are an IDE assistant.'
     )
     if (
-      !again.trim() ||
-      unexplainedCreativeRefusal(again) ||
-      protocolProblems(again, options.goal, options.task)
+      !vet(
+        'creative',
+        again,
+        !unexplainedCreativeRefusal(again) && !protocolProblems(again, options.goal, options.task)
+      )
     )
       return finish(text, true, repaired)
     text = again.trim()
@@ -162,7 +266,9 @@ export async function finalizeAnswer(
   // With sources in hand, asking the user what they meant is not an answer.
   if (options.evidence && evades(text)) {
     const again = await answerAgain()
-    if (!again.trim() || evades(again) || protocolProblems(again, options.goal, options.task))
+    if (
+      !vet('evasion', again, !evades(again) && !protocolProblems(again, options.goal, options.task))
+    )
       return finish(text, true, repaired)
     text = again.trim()
     repaired.push('re-answered-evasion')
@@ -176,6 +282,8 @@ export async function finalizeAnswer(
   )
     return finish(text, false, repaired)
 
+  if (calls >= MAX_REPAIR_CALLS) return finish(text + INCOMPLETE_CODE_NOTE, true, repaired)
+  calls++
   const continuation = await collectModelText({
     settings: options.settings,
     model: options.model,
@@ -191,7 +299,9 @@ export async function finalizeAnswer(
     if (options.signal?.aborted) throw error
     return ''
   })
-  if (continuation.trim() && !protocolProblems(continuation, options.goal, options.task)) {
+  if (
+    vet('continuation', continuation, !protocolProblems(continuation, options.goal, options.task))
+  ) {
     const joined = `${text}${/\s$/.test(text) ? '' : '\n'}${continuation.replace(/^\n+/, '')}`
     repaired.push('code-continued')
     if (!assessDeliverable(joined).checks.some((check) => check.id === 'unfinished-code'))
