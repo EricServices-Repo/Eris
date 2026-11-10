@@ -44,6 +44,7 @@ const fileTools = new Set([
   'image_save',
   'generate_image'
 ])
+/** Baseline for a path a read found empty: a later external create is a conflict. */
 const MISSING = 'missing'
 export class TaskToolGateway {
   readonly evidence: EvidenceRecord[] = []
@@ -52,23 +53,15 @@ export class TaskToolGateway {
     return this.mutations.get(call)
   }
   private partialReads = new Set<string>()
-  /**
-   * Revision each path had when the model last observed it: the sha256 of the exact
-   * bytes returned to it, or MISSING when a read found nothing there. Workspace edits
-   * are compare-and-apply against this, so an editor, Git or another process changing
-   * the file between read and write produces a visible conflict instead of an overwrite.
-   */
   private readHashes = new Map<string, string>()
   constructor(readonly task: TaskContract) {}
   private hash(path: string): string {
     return createHash('sha256').update(readFileSync(path)).digest('hex')
   }
-  rememberRead(path: string, complete = true, revision?: string): void {
+  rememberRead(path: string, complete = true, sourceDigest?: string): void {
     try {
       const abs = realpathAllowMissing(resolveInWorkspace(this.task.scope.workspaceRoot!, path))
-      // Prefer the revision of the bytes actually observed; re-hashing now would adopt
-      // any external change that landed after the read as the trusted baseline.
-      this.readHashes.set(abs, revision ?? this.hash(abs))
+      this.readHashes.set(abs, sourceDigest ?? this.hash(abs))
       if (complete) this.partialReads.delete(abs)
       else this.partialReads.add(abs)
     } catch {
@@ -197,7 +190,7 @@ export class TaskToolGateway {
   record(
     id: string,
     call: ToolCall,
-    result: { ok: boolean; mutated: boolean; path?: string; detail: string; revision?: string }
+    result: { ok: boolean; mutated: boolean; path?: string; detail: string; sourceDigest?: string }
   ): EvidenceRecord {
     const item: EvidenceRecord = {
       id,
@@ -230,7 +223,7 @@ export class TaskToolGateway {
         call.args.start_line === undefined &&
           call.args.end_line === undefined &&
           !result.detail.includes('[truncated at'),
-        result.revision
+        result.sourceDigest
       )
     else if (
       !result.ok &&

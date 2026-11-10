@@ -256,7 +256,8 @@ export function completeChatTurnTask(
     ...task,
     result: {
       terminal: outcome.terminal === 'complete' && task.requested &&
-        (task.requested.state !== 'resolved' || (task.requested.artifact === 'patch' && !task.authority.edit))
+        (task.requested.state !== 'resolved' ||
+          (task.requested.artifact === 'patch' && (!task.authority.edit || outcome.changedFiles.length === 0)))
         ? 'incomplete' : outcome.terminal,
       offeredRecommendations: offersAdvice ? extractRecommendations(outcome.answer) : [],
       changedFiles: [...new Set(outcome.changedFiles)].sort(),

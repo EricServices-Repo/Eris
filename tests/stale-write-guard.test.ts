@@ -37,7 +37,7 @@ describe('compare-and-apply against the observed revision (#456)', () => {
     const { root, gateway } = setup({ 'app/index.js': 'const a = 1\n' })
     const read = call('read_file', { path: 'app/index.js' })
     const result = executeTool(root, read)
-    expect(result.revision).toMatch(/^[0-9a-f]{64}$/)
+    expect(result.sourceDigest).toMatch(/^[0-9a-f]{64}$/)
     // External edit lands between the read returning and its receipt being recorded.
     writeFileSync(join(root, 'app/index.js'), 'const a = 2 // external\n')
     gateway.record('r1', read, result)

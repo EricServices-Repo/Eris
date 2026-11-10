@@ -18,7 +18,7 @@ export function executeTool(
   workspacePath: string,
   call: ToolCall,
   plan?: MutationPlan
-): { ok: boolean; detail: string; mutated: boolean; path?: string; revision?: string } {
+): { ok: boolean; detail: string; mutated: boolean; path?: string; sourceDigest?: string } {
   const name = call.name
   try {
     switch (name) {
@@ -65,7 +65,7 @@ export function executeTool(
           detail: file.lineRange ? `[${file.lineRange}]\n${detail}` : detail,
           mutated: false,
           path: file.path,
-          revision: file.revision
+          sourceDigest: file.sourceDigest
         }
       }
       case 'write_file': {

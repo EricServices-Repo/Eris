@@ -3,10 +3,8 @@
 `TaskToolGateway` already compared a workspace edit against a stored read hash, and
 `MutationPlan` identities already guard publication. Three gaps remained:
 
-1. **Baseline adopted external changes.** `record()` re-hashed the file from disk after the read
-   returned, so an edit landing between the read and its receipt became the trusted baseline.
-   `readWorkspaceFile` now returns `revision` (sha256 of the exact bytes the model saw) and the
-   gateway stores that.
+1. **Baseline adopted external changes.** Fixed separately by #487 (`sourceDigest` of the bytes
+   the model saw). This change keeps that implementation; the regression test here covers it.
 2. **Absent-at-read files.** A `read_file` that reported *Not found* recorded nothing, so a file
    created externally afterwards could be overwritten by `write_file`. The gateway now records a
    `missing` baseline and conflicts if the path exists at authorization. Creating a file that is

@@ -10,6 +10,18 @@ import { appState } from '../app-state'
 import { normalizeApiBase } from './ericservices'
 import { userDataRoot } from './paths'
 
+// Replaced at build time; never consult the current checkout for a running bundle.
+declare const __ERIS_SOURCE_IDENTITY__: { gitSha: string; dirty: boolean; lockSha256: string } | undefined
+
+function bundledSourceIdentity(): { gitSha: string; dirty: boolean | null } {
+  if (typeof __ERIS_SOURCE_IDENTITY__ === 'undefined') return { gitSha: 'unknown', dirty: null }
+  const identity = __ERIS_SOURCE_IDENTITY__
+  return {
+    gitSha: /^[0-9a-f]{40}$/i.test(identity.gitSha) ? identity.gitSha : 'unknown',
+    dirty: typeof identity.dirty === 'boolean' ? identity.dirty : null
+  }
+}
+
 /** Public issues inbox (created via API — never opens a browser). */
 export const ERIS_FEEDBACK_OWNER = 'EricServices-Repo'
 export const ERIS_FEEDBACK_REPO = 'Eris'
@@ -27,6 +39,8 @@ export interface BugReportInput {
 export interface BugReportDiagnostics {
   appName: string
   appVersion: string
+  sourceCommit: string
+  sourceDirty: boolean | null
   packaged: boolean
   electron: string
   chrome: string
@@ -126,9 +140,12 @@ function workspaceDisplayName(): string | null {
 export function collectBugDiagnostics(): BugReportDiagnostics {
   const settings = getResolvedSettings(appState.currentWorkspace)
   const logs = getLogsInfo()
+  const source = bundledSourceIdentity()
   return {
     appName: app.getName(),
     appVersion: app.getVersion(),
+    sourceCommit: source.gitSha,
+    sourceDirty: source.dirty,
     packaged: app.isPackaged,
     electron: process.versions.electron || '',
     chrome: process.versions.chrome || '',
@@ -161,6 +178,7 @@ function formatDiagnosticsMarkdown(d: BugReportDiagnostics): string {
     `| | |`,
     `|---|---|`,
     `| App | ${d.appName} ${d.appVersion}${d.packaged ? '' : ' (unpackaged)'} |`,
+    `| Build source | ${d.sourceCommit}${d.sourceDirty === true ? ' (dirty)' : d.sourceDirty === null ? ' (dirty state unknown)' : ''} |`,
     `| Electron / Chrome / Node | ${d.electron} / ${d.chrome} / ${d.node} |`,
     `| OS | ${d.platform} (${d.arch}) |`,
     `| Locale | ${d.locale} |`,
@@ -232,7 +250,7 @@ export function buildBugReportPreview(input: BugReportInput): BugReportPreview {
     )
   }
 
-  parts.push('---', `_Submitted from Eris ${diagnostics.appVersion} via **Report a Bug**._`)
+  parts.push('---', `_Submitted from ${diagnostics.appName} ${diagnostics.appVersion} (${diagnostics.packaged ? 'packaged' : 'unpackaged'}; source ${diagnostics.sourceCommit}${diagnostics.sourceDirty === true ? ', dirty' : diagnostics.sourceDirty === null ? ', dirty state unknown' : ''}) via **Report a Bug**._`)
 
   return {
     title: title.slice(0, 200),

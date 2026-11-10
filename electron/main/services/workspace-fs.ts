@@ -1,4 +1,3 @@
-import { createHash } from 'crypto'
 import { isPathInside, realpathAllowMissing } from './workspace-boundary'
 export { isPathInside, realpathAllowMissing } from './workspace-boundary'
 import {
@@ -23,6 +22,7 @@ import {
   linkSync
 } from 'fs'
 import { basename, dirname, join, relative, resolve, sep } from 'path'
+import { createHash } from 'crypto'
 
 const SKIP_DIR_NAMES = new Set([
   'node_modules',
@@ -136,15 +136,7 @@ export function readWorkspaceFile(
   userPath: string,
   maxChars = 80_000,
   range?: { startLine?: number; endLine?: number }
-): {
-  path: string
-  content: string
-  truncated: boolean
-  bytes: number
-  lineRange?: string
-  /** sha256 of the exact bytes this read observed: the revision later edits must match. */
-  revision: string
-} {
+): { path: string; content: string; truncated: boolean; bytes: number; lineRange?: string; sourceDigest: string } {
   const abs = resolveInWorkspace(workspacePath, userPath)
   if (!existsSync(abs)) throw new WorkspaceFsError(`Not found: ${userPath}`)
   if (statSync(abs).isDirectory()) throw new WorkspaceFsError(`Is a directory: ${userPath}`)
@@ -173,7 +165,7 @@ export function readWorkspaceFile(
     ...(lineRange ? { lineRange } : {}),
     truncated,
     bytes: buf.length,
-    revision: createHash('sha256').update(buf).digest('hex')
+    sourceDigest: createHash('sha256').update(buf).digest('hex')
   }
 }
 
