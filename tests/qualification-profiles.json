@@ -105,6 +105,7 @@
         "tests/eval-sandbox.test.ts",
         "tests/goal-check.test.ts",
         "tests/artifact-implementation.test.ts",
+        "tests/bounded-answer-repair.test.ts",
         "tests/image-agent-smoke.test.ts",
         "tests/image-generation.test.ts",
         "tests/images-ipc.test.ts",
