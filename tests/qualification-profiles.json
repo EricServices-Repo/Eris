@@ -19,6 +19,7 @@
       ],
       "files": [
         "tests/agent-capabilities.test.ts",
+        "tests/typed-tool-failure.test.ts",
         "tests/model-context-allocation.test.ts",
         "tests/native-context-discovery.test.ts",
         "tests/prompt-token-counter.test.ts",
@@ -69,7 +70,6 @@
         "tests/agent-interpretation.test.ts",
         "tests/agent-creative-chat.test.ts",
         "tests/agent-loop.test.ts",
-        "tests/typed-tool-failure.test.ts",
         "tests/compound-review-edits.test.ts",
         "tests/agent-orchestration.test.ts",
         "tests/compaction-summary-coverage.test.ts",
