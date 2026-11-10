@@ -29,6 +29,18 @@ const input = {
   includeDiagnostics: false
 }
 describe('feedback stays on the relay boundary', () => {
+  it('uses the bundled source identity even when optional diagnostics are disabled', () => {
+    vi.stubGlobal('__ERIS_SOURCE_IDENTITY__', { gitSha: 'a'.repeat(40), dirty: true, lockSha256: 'x' })
+    const preview = buildBugReportPreview(input)
+    expect(preview.diagnostics).toMatchObject({ sourceCommit: 'a'.repeat(40), sourceDirty: true })
+    expect(preview.body).toContain(`source ${'a'.repeat(40)}, dirty`)
+    expect(preview.body).not.toContain('## Environment')
+  })
+  it('reports unknown source rather than consulting the working checkout', () => {
+    vi.stubGlobal('__ERIS_SOURCE_IDENTITY__', { gitSha: 'invalid', dirty: null })
+    const preview = buildBugReportPreview(input)
+    expect(preview.body).toContain('source unknown, dirty state unknown')
+  })
   it('requires resource exclusion and scanning in both distributable builders', () => {
     const production = JSON.parse(readFileSync('package.json', 'utf8')).build
     const debug = JSON.parse(readFileSync('eris-dev-builder.json', 'utf8'))
