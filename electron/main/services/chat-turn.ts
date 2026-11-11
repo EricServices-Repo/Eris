@@ -320,8 +320,25 @@ export function localChatTurnModel(
 const OUTCOME_EVIDENCE_TOOLS = ['read_file', 'notebook_read', 'run', 'search_replace', 'write_file']
 
 /** Observed tool results and diffs that the semantic outcome review may rely on. */
+/** A file this run changed, for the outcome review (#501). */
+export type OutcomeChange = {
+  path: string
+  op: 'create' | 'modify' | 'delete' | 'rename' | 'mkdir' | 'binary'
+  /** Bounded excerpt of the new content. */
+  excerpt: string
+}
+
+const CHANGE_EXCERPT_CHARS = 1_500
+const MAX_CHANGES = 6
+
 export class OutcomeEvidence {
   readonly items: string[] = []
+  private changed = new Map<string, OutcomeChange>()
+
+  /** Files changed in this run, latest state per path, from the diff events (#501). */
+  get changes(): OutcomeChange[] {
+    return [...this.changed.values()].slice(-MAX_CHANGES)
+  }
 
   observe(evt: AgentRunnerEvent): void {
     if (
@@ -333,6 +350,15 @@ export class OutcomeEvidence {
         `${evt.tool.name} ${evt.tool.path ?? ''}: ${evt.tool.status}\n${evt.tool.detail}`
       )
     } else if (evt.type === 'diff') {
+      const op: OutcomeChange['op'] =
+        evt.diff.op === 'write' ? (evt.diff.before === null ? 'create' : 'modify') : evt.diff.op
+      const created = this.changed.get(evt.diff.path)?.op === 'create'
+      this.changed.delete(evt.diff.path)
+      this.changed.set(evt.diff.path, {
+        path: evt.diff.path,
+        op: created && op === 'modify' ? 'create' : op,
+        excerpt: op === 'delete' ? '' : (evt.diff.after ?? '').slice(0, CHANGE_EXCERPT_CHARS)
+      })
       this.items.push(
         `Observed diff ${evt.diff.path}:\nBefore: ${(evt.diff.before ?? '').slice(0, 600)}\nAfter: ${(evt.diff.after ?? '').slice(0, 900)}`
       )

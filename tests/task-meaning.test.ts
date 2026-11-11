@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, realpathSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 const model = vi.hoisted(() => ({ response: '', stall: false, requests: [] as Array<Record<string, unknown>> }))
 vi.mock('../electron/main/services/chat-runtime', () => ({
   streamModelChat: async function* (options: Record<string, unknown>) {
@@ -156,5 +159,94 @@ describe('semantic outcome check', () => {
       (await reviewTaskOutcome({ ...options(), task: task(), answer: 'Done', evidence: [] }))
         .verdict
     ).toBe('unresolved')
+  })
+})
+
+describe('outcome review judges the workspace changes (#501)', () => {
+  const editPlan: TurnPlan = {
+    intent: 'edit', agentId: 'composer', agentName: 'Composer', mode: 'agent',
+    models: { chat: 'local:test', tools: 'local:test' }, toolPolicy: 'edit',
+    requiresTools: true, escalateToFull: false, reason: 'test', method: 'heuristic'
+  }
+  const HELLO = '<!DOCTYPE html>\n<html>\n<body>\n<h1>Hello</h1>\n<button>Click me</button>\n</body>\n</html>\n'
+  let ws = ''
+  beforeEach(() => {
+    ws = realpathSync(mkdtempSync(join(tmpdir(), 'eris-outcome-')))
+  })
+  const editTask = (text: string) => createTaskContract({ workspacePath: ws, text, plan: editPlan })
+  const change = (path: string, excerpt = HELLO) => ({ path, op: 'create', excerpt })
+
+  it('accepts three requested files written in this run without a model call', async () => {
+    for (const name of ['index.html', 'about.html', 'contact.html']) writeFileSync(join(ws, name), HELLO)
+    const task = editTask('Create index.html, about.html and contact.html')
+    expect(task.requested?.targetFiles).toHaveLength(3)
+    const verdict = await reviewTaskOutcome({
+      ...options(), task, answer: 'Next, I will run a cat command to verify.', evidence: [],
+      changes: ['index.html', 'about.html', 'contact.html'].map((path) => change(path))
+    })
+    expect(verdict).toEqual({ verdict: 'supported', reason: 'All requested files were written in this run.' })
+    expect(model.requests).toHaveLength(0)
+  })
+
+  it('calls the model when a requested file was not written', async () => {
+    writeFileSync(join(ws, 'index.html'), HELLO)
+    model.response = '{"verdict":"partial","reason":"about.html was not created."}'
+    const verdict = await reviewTaskOutcome({
+      ...options(), task: editTask('Create index.html and about.html'), answer: 'Created index.html.', evidence: [],
+      changes: [change('index.html')]
+    })
+    expect(verdict.verdict).toBe('partial')
+    expect(model.requests).toHaveLength(1)
+  })
+
+  it('does not shortcut a requested file that fails the artifact parser', async () => {
+    writeFileSync(join(ws, 'hello.html'), '<div><footer></div>')
+    model.response = '{"verdict":"partial","reason":"broken"}'
+    await reviewTaskOutcome({
+      ...options(), task: editTask('Create hello.html'), answer: 'Created hello.html.', evidence: [],
+      changes: [change('hello.html', '<div><footer></div>')]
+    })
+    expect(model.requests).toHaveLength(1)
+  })
+
+  it('puts the changes, not just the answer, in the review prompt', async () => {
+    model.response = '{"verdict":"supported","reason":"hello.html has the heading and button."}'
+    await reviewTaskOutcome({
+      ...options(), task: editTask('Add a heading and a button to the page'), answer: 'I will run a cat command to verify.',
+      evidence: [], changes: [change('hello.html')]
+    })
+    const messages = model.requests[0]!.messages as Array<{ role: string; content: string }>
+    const report = JSON.parse(messages[1]!.content) as { changes: Array<{ path: string; op: string; excerpt: string }> }
+    expect(report.changes).toEqual([{ path: 'hello.html', op: 'create', excerpt: HELLO }])
+    expect(messages[0]!.content).toMatch(/workspace changes listed in `changes`/)
+    expect(messages[0]!.content).toMatch(/the verdict is supported/)
+  })
+})
+
+describe('OutcomeEvidence.changes (#501)', () => {
+  const diff = (path: string, before: string | null, after: string, op: 'write' | 'delete' = 'write') =>
+    ({ type: 'diff', diff: { checkpointId: 'c', opIndex: 0, path, before, after, op } }) as const
+
+  it('keeps the latest state per file, and a created file stays created', async () => {
+    const { OutcomeEvidence } = await import('../electron/main/services/chat-turn')
+    const evidence = new OutcomeEvidence()
+    evidence.observe(diff('hello.html', null, '<h1>v1</h1>'))
+    evidence.observe(diff('hello.html', '<h1>v1</h1>', '<h1>v2</h1>'))
+    evidence.observe(diff('style.css', 'a{}', 'b{}'))
+    evidence.observe(diff('old.txt', 'x', '', 'delete'))
+    expect(evidence.changes).toEqual([
+      { path: 'hello.html', op: 'create', excerpt: '<h1>v2</h1>' },
+      { path: 'style.css', op: 'modify', excerpt: 'b{}' },
+      { path: 'old.txt', op: 'delete', excerpt: '' }
+    ])
+  })
+
+  it('bounds the excerpt and the number of files', async () => {
+    const { OutcomeEvidence } = await import('../electron/main/services/chat-turn')
+    const evidence = new OutcomeEvidence()
+    for (let i = 0; i < 9; i++) evidence.observe(diff(`f${i}.txt`, null, 'x'.repeat(5000)))
+    expect(evidence.changes).toHaveLength(6)
+    expect(evidence.changes[0]!.path).toBe('f3.txt')
+    expect(evidence.changes[0]!.excerpt).toHaveLength(1500)
   })
 })
