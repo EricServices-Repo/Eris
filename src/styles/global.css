@@ -7583,6 +7583,7 @@ button:disabled {
 .message-details > summary,
 .task-history-details > summary { cursor: pointer; padding: 4px 0; }
 .message-model { overflow-wrap: anywhere; }
+.message-outcome { margin: 8px 0 0; font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; }
 .message-details .thinking-block { margin-top: 8px; }
 .task-history-details { padding: 0 4px; margin-bottom: 12px; }
 .msg-reroute .btn { margin: 6px 6px 0 0; }

@@ -4,8 +4,20 @@ import ts from 'typescript'
 import type { TaskContract } from '../../../../src/shared/task-contract'
 import { isPathInside } from '../workspace-fs'
 
+const CODE_TARGET = /\.(?:[cm]?[jt]sx?|json|php|py|rs|go|java|cs|cpp|c|h)$/i
+
 export function requiresRequestedCodeVerification(task: TaskContract): boolean {
-  return (task.requested?.targetFiles ?? []).some(path => /\.(?:[cm]?[jt]sx?|json|php|py|rs|go|java|cs|cpp|c|h)$/i.test(path))
+  return requestedCodeTargets(task).length > 0
+}
+
+/** Requested output files that are source code and so would need a project check. */
+export function requestedCodeTargets(task: TaskContract): string[] {
+  return (task.requested?.targetFiles ?? []).filter(path => CODE_TARGET.test(path))
+}
+
+/** Files `artifactProblem` can actually parse. Other code files get no structural check. */
+export function syntaxCheckable(path: string): boolean {
+  return /\.(?:json|[cm]?[jt]sx?)$/i.test(path)
 }
 
 /** Bounded parsing only: never evaluate generated code or invoke a host command. */

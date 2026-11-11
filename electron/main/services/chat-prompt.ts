@@ -1,6 +1,7 @@
 import { modelInputBudget } from '../../../src/shared/model-context'
 import type { AppSettings, ChatPromptInput } from '../../../src/shared/settings-schema'
 import { contractForAgent } from '../../../src/shared/agent-contract'
+import { modelHistoryContent } from '../../../src/shared/posted-answer'
 import {
   allocateContext,
   historyChars,
@@ -54,9 +55,14 @@ export function compactHistory(
   history: ChatPromptInput['history'],
   maxChars: number
 ): { recent: ChatPromptInput['history']; summary: string; coveredSourceIds: string[] } {
-  const messages = history.filter(
-    (message) => message.role === 'user' || message.role === 'assistant'
-  )
+  // Host status notes in stored replies are for the user, not the model (#502). Both
+  // callers go through here, so recall coverage and the prompt see the same text.
+  const messages = history
+    .filter((message) => message.role === 'user' || message.role === 'assistant')
+    .map((message) =>
+      message.role === 'assistant' ? { ...message, content: modelHistoryContent(message.content || '') } : message
+    )
+    .filter((message) => message.role === 'user' || message.content)
   // Reserve space for both sides of the conversation: a long model answer
   // must not evict the user's request that defines what "those changes" means.
   const perMessage = Math.floor(
@@ -150,7 +156,12 @@ export function buildChatMessages(
   workspacePath: string | null,
   settings: AppSettings,
   input: ChatPromptInput,
-  options: { genericScope?: boolean; allocation?: ContextAllocation } = {}
+  options: {
+    genericScope?: boolean
+    allocation?: ContextAllocation
+    /** Files the previous task changed, as recorded by the host (task continuation). */
+    priorChangedFiles?: string[]
+  } = {}
 ): BuiltChatMessage[] {
   // Agent turns are leaner so builtin 4k/8k windows keep room for tool output.
   const lean = input.mode === 'agent'
@@ -241,6 +252,16 @@ export function buildChatMessages(
   )
   if (historySummary) {
     parts.push(`Earlier conversation summary (older turns condensed):\n${historySummary}`)
+  }
+  if (options.priorChangedFiles) {
+    // Host record of the previous task's writes, so "which files did you
+    // change?" is answered without a new tool loop (#504).
+    const files = [...new Set(options.priorChangedFiles)].slice(0, 50)
+    parts.push(
+      files.length
+        ? `Files changed by the previous task in this conversation (host record):\n${files.map((file) => `- ${file}`).join('\n')}`
+        : 'The previous task in this conversation changed no files (host record).'
+    )
   }
   const userContent = input.text
   const discussions = workspaceDiscussions(workspacePath, input.text, input.threadId)

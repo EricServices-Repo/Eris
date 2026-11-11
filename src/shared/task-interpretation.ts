@@ -18,8 +18,45 @@ import {
 /** Placeholder for a quoted shell command the surrounding instruction refers to. */
 export const COMMAND_OPERAND = '⟦cmd⟧'
 
-const COMMAND_START =
-  /^(?:npm|npx|pnpm|yarn|bun|node|deno|pytest|python3?|pip3?|cargo|go|make|docker|git|gradle|mvn|dotnet|bundle|rake|rspec|jest|vitest|tsc|eslint|composer|php|ruby|swift|xcodebuild|uv|poetry)\b/i
+/**
+ * Program names that start a command line. Build and package tools, plus ordinary
+ * shell commands (#503: "Run ls -la…" and "Run the command: wc -l …" were answered
+ * as general questions because only build tools were listed). `rm` is deliberately
+ * absent: a delete is not inferred from a word list.
+ */
+const COMMAND_PROGRAMS =
+  'npm|npx|pnpm|yarn|bun|node|deno|pytest|python3?|pip3?|cargo|go|make|docker|git|gradle|mvn|dotnet|bundle|rake|rspec|jest|vitest|tsc|eslint|composer|php|ruby|swift|xcodebuild|uv|poetry|' +
+  'ls|pwd|cat|head|tail|wc|grep|rg|find|du|df|echo|touch|mkdir|cp|mv|chmod|curl|wget|tar|zip|unzip|sed|awk|sort|uniq|diff|which|env|ps|tree|stat|file|date|whoami|uname|open|brew|sh|bash|zsh'
+const COMMAND_START = new RegExp(`^(?:${COMMAND_PROGRAMS})(?![\\w.-])`, 'i')
+
+/**
+ * The command an instruction explicitly asks to run, or null. Matches a request
+ * that starts with "run"/"execute" (optionally "can you…", "please", "the command:")
+ * followed by a known program, or by any command after an explicit "command:" label.
+ * Questions about how to run something ("How do I run ls?") do not match, and a
+ * program name must be followed by an argument, an operator or the end, so "Run
+ * through the code" is not a command.
+ */
+export function explicitRunCommand(text: string): string | null {
+  const instruction = text.trim().replace(/\s+/g, ' ')
+  const lead =
+    /^(?:(?:can|could|would|will) you\s+)?(?:please\s+)?(?:run|execute)\s+(?:(?:the\s+)?(?:shell\s+|terminal\s+)?command\s*(?::|\s)\s*)?/i
+  const match = instruction.match(lead)
+  if (!match) return null
+  const opened = instruction.slice(match[0].length).match(/^[`"'“]+/)?.[0] ?? ''
+  const rest = instruction.slice(match[0].length + opened.length)
+  const labelled = /command\s*:?\s*$/i.test(match[0])
+  const program = rest.match(new RegExp(`^(?:${COMMAND_PROGRAMS})(?=$|\\s|[|;&>])`, 'i'))
+  if (!program && !(labelled && /^[\w./-]+/.test(rest))) return null
+  // The command ends where the user's own prose resumes ("…and tell me…", "in the folder").
+  const command = rest
+    .split(/\s+(?:and\s+(?:then\s+)?(?:tell|show|report|give|let|explain|summari[sz]e)|then\s+(?:tell|show|report)|in\s+the\s+(?:project|workspace|repo|current)\b|for\s+me\b)/i)[0]!
+    .replace(/[.?!]+$/, '')
+    // Only a quote that wrapped the whole command is removed; `-name "*.js"` keeps its own.
+    .replace(opened ? /[`"'”]+$/ : /$^/, '')
+    .trim()
+  return command || null
+}
 
 /** One quoted or fenced span: data the instruction may refer to, never an instruction itself. */
 export interface QuotedOperand {

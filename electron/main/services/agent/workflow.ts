@@ -2,8 +2,9 @@ import type { ChatIntent, TurnPlan } from '../../../../src/shared/settings-schem
 import { asksToImplementChanges } from '../../../../src/shared/agent-contract'
 import { evidenceRequirementFor } from '../../../../src/shared/task-contract'
 import { pathsIn } from '../../../../src/shared/recommendations'
-import { requestTextForIntent } from '../../../../src/shared/task-interpretation'
-import { requestedFilesProblem, requiresRequestedCodeVerification } from './requested-files'
+import { explicitRunCommand, requestTextForIntent } from '../../../../src/shared/task-interpretation'
+import { requestedCodeTargets, requestedFilesProblem, syntaxCheckable } from './requested-files'
+import type { VerifySkipReason } from '../verify'
 import { SourceReadEvidence, type SourceReadReceipt } from './source-read-evidence'
 import type { VerifiedNoop } from './verified-noop'
 
@@ -21,6 +22,12 @@ export type AgentOutcomeContract = {
    * mutation counts as progress only if it changes at least one of them.
    */
   targetFiles: string[]
+  /**
+   * The literal shell command the user asked to run ("Run ls -la …"), when the
+   * turn is a run request. The turn cannot finish until a `run` call was made
+   * (a denied call counts: the denial is the observable outcome) (#503).
+   */
+  requiredCommand?: string
 }
 
 function sameFile(changed: string, target: string): boolean {
@@ -80,8 +87,15 @@ export function outcomeContractFor(plan: TurnPlan, goal = ''): AgentOutcomeContr
           ['run', 'verify'].includes(plan.intent))),
     requiresMutation,
     requiresVerificationAfterMutation: requiresMutation,
-    targetFiles
+    targetFiles,
+    ...requiredCommandFor(plan, goal)
   }
+}
+
+function requiredCommandFor(plan: TurnPlan, goal: string): { requiredCommand?: string } {
+  if (plan.intent !== 'run' || plan.mode === 'ask') return {}
+  const command = explicitRunCommand(plan.task?.originalText ?? goal)
+  return command ? { requiredCommand: command } : {}
 }
 
 /**
@@ -97,6 +111,10 @@ export class AgentWorkflow {
   private commandObservations = 0
   private mutatedFiles = new Set<string>()
   private verification: AgentWorkflowSnapshot['verification'] = 'not-run'
+  /** Why the last verification was skipped, when it was. */
+  private verificationSkip: VerifySkipReason | undefined
+  /** Requested code targets accepted without a project check, for the answer note. */
+  private uncheckedTargets: string[] = []
   private blockedReason: string | undefined
   private sourceEvidence?: SourceReadEvidence
   private verifiedNoops: VerifiedNoop[] = []
@@ -115,6 +133,19 @@ export class AgentWorkflow {
       throw new Error(`Invalid agent workflow transition: ${this.phase} → ${next}`)
     }
     this.phase = next
+  }
+
+  /**
+   * A run turn that requests no file changes and has made at least one `run`
+   * call: its observed output is what the user asked for.
+   */
+  commandReported(): boolean {
+    return this.contract.intent === 'run' && !this.contract.requiresMutation && this.commandObservations > 0
+  }
+
+  /** The command the user asked to run, while no run call has been made yet. */
+  missingCommand(): string | undefined {
+    return this.commandObservations === 0 ? this.contract.requiredCommand : undefined
   }
 
   noteTool(result: { ok: boolean; mutated: boolean; name?: string; path?: string; previousPath?: string; detail?: string; range?: SourceReadReceipt['range'] }): void {
@@ -152,10 +183,39 @@ export class AgentWorkflow {
 
   invalidateVerification(): void {
     this.verification = 'not-run'
+    this.verificationSkip = undefined
   }
 
-  noteVerification(result: 'passed' | 'failed' | 'skipped'): void {
+  /**
+   * Record a verification result. For `skipped`, pass why: a project with no test,
+   * typecheck or lint script (`no-project-check`) or no test files (`no-tests`) cannot
+   * verify anything, which differs from checks that were disabled (`diagnostics`).
+   */
+  noteVerification(result: 'passed' | 'failed' | 'skipped', skipReason?: VerifySkipReason): void {
     this.verification = result
+    this.verificationSkip = result === 'skipped' ? skipReason : undefined
+  }
+
+  /** True when verification ran out of options: the project has nothing that checks code. */
+  private projectHasNoCheck(): boolean {
+    return (
+      this.verification === 'skipped' &&
+      (this.verificationSkip === 'no-project-check' || this.verificationSkip === 'no-tests')
+    )
+  }
+
+  /**
+   * A plain-language note for the final answer when requested code files were accepted
+   * without a project check. Null when a check passed or nothing needed one.
+   */
+  verificationNote(): string | null {
+    if (!this.uncheckedTargets.length) return null
+    const parsed = this.uncheckedTargets.filter(syntaxCheckable)
+    const unparsed = this.uncheckedTargets.filter((path) => !syntaxCheckable(path))
+    const parts: string[] = []
+    if (parsed.length) parts.push(`only the syntax of ${parsed.join(', ')} was checked`)
+    if (unparsed.length) parts.push(`${unparsed.join(', ')} ${unparsed.length === 1 ? 'was' : 'were'} not checked`)
+    return `This project has no test or typecheck script, so ${parts.join(' and ')}.`
   }
 
   evaluateOutcome(input: {
@@ -189,11 +249,36 @@ export class AgentWorkflow {
       : []
     if (this.plan.mode !== 'ask' && task?.requested?.artifact === 'patch' && !task.authority.edit)
       return { ok: false, reason: 'The requested workspace changes are blocked by this task’s mode, reference resolution or tool permissions.' }
+    this.uncheckedTargets = []
     if (task?.authority.edit && task.requested?.targetFiles.length) {
+      // requestedFilesProblem also runs the bounded parser (artifactProblem) on every target.
       const problem = requestedFilesProblem(task, [...this.mutatedFiles, ...(input.filesTouched ?? []), ...noopPaths])
       if (problem) return { ok: false, reason: problem }
-      if (requiresRequestedCodeVerification(task) && !input.verifyPassed && this.verification !== 'passed')
-        return { ok: false, reason: 'Required code artifacts need a successful independent project check. Existing files and skipped verification do not establish implementation correctness.' }
+      const codeTargets = requestedCodeTargets(task)
+      if (codeTargets.length && !input.verifyPassed && this.verification !== 'passed') {
+        // A project with no test/typecheck/lint script can never pass verification.
+        // Rejecting here sent every such run (plain HTML/JS, PHP) into a loop until the
+        // run-time limit (#499). The parser above is the strongest check available.
+        if (this.projectHasNoCheck()) this.uncheckedTargets = codeTargets
+        else
+          return {
+            ok: false,
+            reason:
+              this.verification === 'failed'
+                ? `The project check failed after changes to ${codeTargets.join(', ')}. Read the failure output, fix the code, and run the check again.`
+                : this.verification === 'skipped'
+                  ? `${codeTargets.join(', ')} could not be verified because project checks are disabled in this run.`
+                  : `Run the project's test or typecheck to verify ${codeTargets.join(', ')} before finishing.`
+          }
+      }
+    }
+    if (this.missingCommand()) {
+      // A reply that only describes the command ("I'll run ls -la…") or answers
+      // from file reads is not the requested outcome (#503).
+      return {
+        ok: false,
+        reason: `The requested command was not run. Call the run tool with \`${this.contract.requiredCommand}\` and report its output.`
+      }
     }
     if (
       this.contract.requiresWorkspaceEvidence &&

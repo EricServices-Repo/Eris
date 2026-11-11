@@ -115,7 +115,9 @@ This file-set gate supplements the general workflow. It does not claim that none
 
 The semantic reviewer uses the same hard-deadline iterator primitive as intake. A transport that ignores abort cannot hold terminal delivery indefinitely. Output-limit failures also close the iterator. The result distinguishes timeout, transport error, malformed JSON, invalid schema, unavailable reference and response-limit failures.
 
-An unavailable evaluator still produces an unresolved assessment. Existing overall incomplete behavior is conservative and remains unchanged. A complete redesign of execution/verification/semantic status in the renderer is not part of this change.
+An unavailable evaluator still produces an unresolved assessment, and that assessment is stored with the reply. Since #500 it no longer changes the run's status: timeout, transport error, malformed JSON, invalid schema and response-limit failures mean the reviewer produced no judgement, so the run keeps the status its own execution and verification earned. In live testing the 15-second deadline expired on every local-model review, which marked correct work incomplete. An unavailable reference stays conservative and still marks the run incomplete, as does a real `partial` or `unsupported` verdict.
+
+The verdict is not written into the answer text (#502). The chat panel shows it under the reply from `contextResult.completion.assessment`, and model history drops host status paragraphs, including the "Outcome check: …" lines that older builds stored in the body, so a later turn does not repeat them as its own findings.
 
 ## Regression coverage
 

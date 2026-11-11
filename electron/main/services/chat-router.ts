@@ -19,6 +19,8 @@ import { routeHeuristic, routeMessage } from './router'
 import { learnedRouteFor, readRoutingCorrections, routingExamples } from './routing-feedback'
 import {
   agentForFollowUp,
+  ASKS_WHAT_CHANGED,
+  IMPLEMENT_VERB,
   asksForCodeDestination,
   asksForCodeExample,
   asksForCreativeWriting,
@@ -41,6 +43,7 @@ import {
 import { executionPlanFor } from './execution-plan'
 import {
   COMMAND_OPERAND,
+  explicitRunCommand,
   effectConstraints,
   isQuotedContentOnly,
   providedReviewOperands,
@@ -194,9 +197,12 @@ function classifyIntentRule(
 
   // “Run `npm test`”: the unquoted verb binds the quoted command as its operand.
   if (
-    new RegExp(`\\b(?:run|execute)\\s+(?:the\\s+)?(?:command\\s+)?${COMMAND_OPERAND}`, 'i').test(t)
+    new RegExp(`\\b(?:run|execute)\\s+(?:the\\s+)?(?:command\\s*:?\\s*)?${COMMAND_OPERAND}`, 'i').test(t)
   )
     return { intent: 'run', rule: 'quoted-command' }
+  // “Run ls -la…”, “Run the command: wc -l a.html | tee n.txt”: an unquoted command
+  // line after an explicit run verb (#503). Approval still applies to execution.
+  if (explicitRunCommand(t)) return { intent: 'run', rule: 'explicit-command' }
   if (
     /\b(npm (test|run|start|install)|yarn |pnpm |bun |pytest|cargo test|docker )\b/i.test(t) ||
     // Makefile targets only — not "make a new app/project"
@@ -780,7 +786,9 @@ export async function planChatTurn(options: {
     method = forceRoute ? 'override' : 'learned'
   }
 
-  const followId = agentForFollowUp(text, options.context.previousAgentId)
+  // The message's own intent decides whether the previous agent can carry it:
+  // a read-only Reviewer must not keep "Add a … button" (#504).
+  const followId = agentForFollowUp(text, options.context.previousAgentId, classifiedIntent)
   if (
     mode === 'agent' &&
     !forceRoute &&
@@ -798,8 +806,16 @@ export async function planChatTurn(options: {
       !intentNeedsTools(intent) &&
       !needsWebLookup(text) &&
       !asksToImplementChanges(text) &&
-      !/\b(fix|change|edit|implement|update|apply)\b/i.test(text)
-    if (
+      !IMPLEMENT_VERB.test(text) &&
+      !ASKS_WHAT_CHANGED.test(text)
+    const previousAnswer = (options.context.previousMessages ?? []).some(
+      (message) => message.role === 'assistant' && message.content.trim()
+    )
+    if (ASKS_WHAT_CHANGED.test(text) && previousAnswer) {
+      // "Which files did you change?" is answered from the previous turn's
+      // recorded outcome and answer; it does not need a new tool loop (#504 R6).
+      intent = 'answer'
+    } else if (
       isContinuation &&
       previousIntent &&
       previousIntent !== 'answer' &&

@@ -457,3 +457,22 @@ describe('agent loop capability behavior', () => {
     ).toContain('without citing the open project')
   })
 })
+
+describe('previous task record in no-tool answers (#504)', () => {
+  const input = {
+    text: 'Which files did you change?', mode: 'agent' as const, agentId: 'fast',
+    history: [], attachments: [], skillIds: []
+  }
+  it('lists the files the previous task changed', () => {
+    const [system] = buildChatMessages(null, getDefaults(), input, { priorChangedFiles: ['todo.js', 'todo.html', 'todo.js'] })
+    expect(system!.content).toMatch(/Files changed by the previous task[^\n]*\n- todo\.js\n- todo\.html/)
+  })
+  it('says so when the previous task changed nothing', () => {
+    const [system] = buildChatMessages(null, getDefaults(), input, { priorChangedFiles: [] })
+    expect(system!.content).toContain('The previous task in this conversation changed no files')
+  })
+  it('adds nothing without a record', () => {
+    const [system] = buildChatMessages(null, getDefaults(), input)
+    expect(system!.content).not.toContain('previous task in this conversation')
+  })
+})

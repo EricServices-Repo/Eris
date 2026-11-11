@@ -376,6 +376,30 @@ describe('main-process task authority', () => {
   })
 })
 
+
+/** A thread-backed edit turn whose outcome is reviewed with the given verdict. */
+async function reviewedTurn(verdict: Record<string, unknown>) {
+  const chats = await import('../electron/main/services/chats')
+  const { reviewTaskOutcome } = await import('../electron/main/services/task-outcome')
+  vi.mocked(reviewTaskOutcome).mockClear()
+  vi.mocked(reviewTaskOutcome).mockResolvedValueOnce(verdict as never)
+  const requestId = randomUUID(), threadId = randomUUID()
+  const thread = { id: threadId, title: 'Booking', model: 'builtin:composer-lite', messages: [], createdAt: 1, updatedAt: 1 }
+  vi.spyOn(chats, 'getChat').mockResolvedValue(thread)
+  vi.spyOn(chats, 'appendChatMessage').mockImplementation(async (_root, _id, message) => ({ ...thread, messages: [message] }))
+  const memory = await import('../electron/main/services/context-memory')
+  vi.spyOn(memory, 'conversationContext').mockRejectedValue(Error('cache unavailable'))
+  runner.script = async function* () {
+    yield { type: 'progress', step: 1, actionLog: ['Changed booking.ts'], filesTouched: ['booking.ts'] }
+    yield { type: 'answer', text: 'Implemented booking validation.' }
+  }
+  await stream({ text: 'Implement booking validation', threadId }, requestId)
+  expect(reviewTaskOutcome).toHaveBeenCalledTimes(1)
+  const saved = vi.mocked(chats.appendChatMessage).mock.calls.find(call => call[2].role === 'assistant')![2]
+  const done = sent.find((item) => item.channel === 'chat:done' && item.payload.requestId === requestId)
+  return { saved, incomplete: done?.payload.incomplete }
+}
+
 describe('canonical RAM history at the production chat IPC boundary', () => {
   it('persists execution and verification evidence separately from evaluator timeout', async () => {
     const chats = await import('../electron/main/services/chats')
@@ -396,14 +420,57 @@ describe('canonical RAM history at the production chat IPC boundary', () => {
     }
     expect(await stream({ text: 'Implement booking validation', threadId }, requestId)).toBe(true)
     const saved = vi.mocked(chats.appendChatMessage).mock.calls.find(call => call[2].role === 'assistant')![2]
+    // A reviewer that timed out is recorded but does not make finished work incomplete (#500).
     expect(saved.contextResult).toMatchObject({
-      terminal: 'incomplete', changedFiles: ['booking.ts'], completion: {
+      terminal: 'done', changedFiles: ['booking.ts'], completion: {
         execution: 'completed', verification: 'passed', persistence: 'saved',
         assessment: { status: 'unresolved', failure: 'timeout' }
       }
     })
-    expect(saved.content).toContain('Implemented and tested booking validation.')
-    expect(saved.content).toContain('Semantic assessment timed out')
+    expect(saved.content).toBe('Implemented and tested booking validation.')
+    const done = sent.find((item) => item.channel === 'chat:done' && item.payload.requestId === requestId)
+    expect(done?.payload.incomplete).toBe(false)
+  })
+  it('marks a disagreeing review incomplete without writing the verdict into the answer (#500, #502)', async () => {
+    const chats = await import('../electron/main/services/chats')
+    const { reviewTaskOutcome } = await import('../electron/main/services/task-outcome')
+    vi.mocked(reviewTaskOutcome).mockResolvedValueOnce({
+      verdict: 'partial', reason: 'The answer does not mention the date range check.'
+    })
+    const requestId = randomUUID(), threadId = randomUUID()
+    const thread = { id: threadId, title: 'Booking', model: 'builtin:composer-lite', messages: [], createdAt: 1, updatedAt: 1 }
+    vi.spyOn(chats, 'getChat').mockResolvedValue(thread)
+    vi.spyOn(chats, 'appendChatMessage').mockImplementation(async (_root, _id, message) => ({ ...thread, messages: [message] }))
+    const memory = await import('../electron/main/services/context-memory')
+    vi.spyOn(memory, 'conversationContext').mockRejectedValue(Error('cache unavailable'))
+    runner.script = async function* () {
+      yield { type: 'progress', step: 1, actionLog: ['Changed booking.ts'], filesTouched: ['booking.ts'] }
+      yield { type: 'answer', text: 'Implemented booking validation.' }
+    }
+    expect(await stream({ text: 'Implement booking validation', threadId }, requestId)).toBe(true)
+    const saved = vi.mocked(chats.appendChatMessage).mock.calls.find(call => call[2].role === 'assistant')![2]
+    expect(saved.contextResult).toMatchObject({
+      terminal: 'incomplete',
+      completion: { assessment: { status: 'partial', reason: 'The answer does not mention the date range check.' } }
+    })
+    expect(saved.content).toBe('Implemented booking validation.')
+    expect(sent.some((item) => item.channel === 'chat:answer' && String(item.payload.chunk).includes('Outcome check'))).toBe(false)
+    const done = sent.find((item) => item.channel === 'chat:done' && item.payload.requestId === requestId)
+    expect(done?.payload.incomplete).toBe(true)
+  })
+  it.each(['transport-error', 'malformed-json', 'schema-invalid', 'response-limit'] as const)(
+    'treats an unavailable reviewer (%s) as no verdict (#500)', async (failure) => {
+      const { saved, incomplete } = await reviewedTurn({ verdict: 'unresolved', failure, reason: 'unavailable' })
+      expect(incomplete).toBe(false)
+      expect(saved.content).toBe('Implemented booking validation.')
+      expect(saved.contextResult?.completion?.assessment).toMatchObject({ status: 'unresolved', failure })
+    })
+  it('keeps a missing-reference review conservative (#500)', async () => {
+    const { saved, incomplete } = await reviewedTurn({
+      verdict: 'unresolved', failure: 'reference-unavailable', reason: 'The referenced proposal is unavailable.'
+    })
+    expect(incomplete).toBe(true)
+    expect(saved.content).toBe('Implemented booking validation.')
   })
   it('ignores renderer paging, recalls buried facts and persists the answer before terminal delivery', async () => {
     const chats = await import('../electron/main/services/chats')

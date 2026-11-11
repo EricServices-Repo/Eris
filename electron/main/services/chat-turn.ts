@@ -288,7 +288,14 @@ export function buildChatTurnMessages(
       agentName: plan.agentName,
       threadId: threadId ?? prompt.threadId
     },
-    { genericScope: plan.task?.scope.applicability === 'generic', allocation }
+    {
+      genericScope: plan.task?.scope.applicability === 'generic',
+      allocation,
+      // A no-tool answer cannot look the changes up, so give it the record (#504).
+      ...(plan.toolPolicy === 'none' && plan.task?.continuation
+        ? { priorChangedFiles: plan.task.continuation.changedFiles }
+        : {})
+    }
   )
 }
 

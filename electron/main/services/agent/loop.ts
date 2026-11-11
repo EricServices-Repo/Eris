@@ -95,6 +95,7 @@ import { toolArgumentRepair, validateToolArguments } from './tool-validation'
 import { finalizeAnswer } from './final-answer'
 import {
   assessGoalCompletion,
+  failedRefinementPaths,
   isReviewOnlyGoal,
   looksLikeAsksForWorkspaceInfo,
   looksLikeClarifyingQuestion,
@@ -2600,7 +2601,8 @@ async function* runAgentInternal(options: {
             actions: actionLog,
             describeProject,
             chatReply,
-            verifiedNoop: Boolean(workflow.snapshot().verifiedNoops?.length)
+            verifiedNoop: Boolean(workflow.snapshot().verifiedNoops?.length),
+            commandReported: workflow.commandReported()
           }) ||
           abortedLoop ||
           looksLikeDegenerateLoop(assistantText)
@@ -2644,14 +2646,18 @@ async function* runAgentInternal(options: {
           workerMessages.push(
             lastTreeResult
               ? nudgeContinueWork(
-                  abortedLoop || looksLikeDegenerateLoop(assistantText)
+                  workflow.missingCommand()
+                    ? `The user asked you to run \`${workflow.missingCommand()}\`. Call the run tool with that command now and answer from its output; do not answer from listings or file reads.`
+                    : abortedLoop || looksLikeDegenerateLoop(assistantText)
                     ? 'You got stuck or answered before finishing.'
                     : looksLikeAsksForWorkspaceInfo(assistantText)
                       ? 'Do not ask the user for project structure or files — you already have a listing; read_file/run next.'
                       : 'That reply did not finish the user request.'
                 )
               : nudgeToTools(
-                  looksLikeAsksForWorkspaceInfo(assistantText)
+                  workflow.missingCommand()
+                    ? `The user asked you to run \`${workflow.missingCommand()}\`. Call the run tool with that command now.`
+                    : looksLikeAsksForWorkspaceInfo(assistantText)
                     ? 'Do not ask the user for project structure or files. Inspect the workspace with tools.'
                     : 'You must use tools to finish this request.'
                 )
@@ -2738,7 +2744,7 @@ async function* runAgentInternal(options: {
             actionLog.push(`Verify passed: ${finalVerify.command}`)
           }
           if (finalVerify.skipped) {
-            workflow.noteVerification('skipped')
+            workflow.noteVerification('skipped', finalVerify.skipReason)
             actionLog.push(`Verification skipped: ${finalVerify.detail}`)
           }
         }
@@ -2815,16 +2821,27 @@ async function* runAgentInternal(options: {
           return
         }
         const partial = unresolvedDelegationNote()
+        // Host-written facts the model may not mention: what was not verified, and
+        // follow-up edits that failed after the file had already been changed (#499).
+        const unapplied = failedRefinementPaths(actionLog)
+        const completionNotes = [
+          workflow.verificationNote(),
+          unapplied.length
+            ? `A later edit to ${unapplied.join(', ')} failed and was not applied; the earlier change to ${unapplied.length === 1 ? 'that file is' : 'those files are'} in place.`
+            : null
+        ].filter((note): note is string => Boolean(note))
         if (prose.length >= 40 && !isToolLogReply(prose)) {
           yield* postFinalAnswer(prose)
           if (partial) {
             yield { type: 'status', text: 'Done · partial specialist results' }
             yield { type: 'answer', text: `\n\n${partial}` }
           }
+          if (completionNotes.length) yield { type: 'answer', text: `\n\n${completionNotes.join(' ')}` }
           return
         }
         yield* finishChatAnswer(assistantText)
         if (partial) yield { type: 'answer', text: `\n\n${partial}` }
+        if (completionNotes.length) yield { type: 'answer', text: `\n\n${completionNotes.join(' ')}` }
         return
       }
 
@@ -4715,7 +4732,7 @@ async function* runAgentInternal(options: {
             }
           }
           if (verified.skipped) {
-            workflow.noteVerification('skipped')
+            workflow.noteVerification('skipped', verified.skipReason)
             actionLog.push(`Verification skipped: ${verified.detail}`)
           }
           workflow.transition('executing')

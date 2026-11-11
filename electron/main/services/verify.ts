@@ -3,11 +3,19 @@ import { join } from 'path'
 import { runWorkspaceCommand } from './shell-run'
 import { activeDiagnosticsScope } from './model-transport'
 
+/**
+ * Why a verification was skipped. `no-project-check` and `no-tests` mean the project
+ * has nothing that could exercise the change; `diagnostics` means checks are disabled.
+ */
+export type VerifySkipReason = 'no-project-check' | 'no-tests' | 'diagnostics'
+
 export type VerifyResult = {
   ok: boolean
   command: string
   detail: string
   skipped?: boolean
+  /** Set whenever `skipped` is true. */
+  skipReason?: VerifySkipReason
 }
 
 type PkgJson = {
@@ -237,7 +245,8 @@ export async function runVerify(
       ok: true,
       command: '',
       detail: 'Diagnostics run: verification commands are disabled; verify was skipped.',
-      skipped: true
+      skipped: true,
+      skipReason: 'diagnostics'
     }
   }
   const allowInstall = opts?.allowInstall !== false
@@ -250,7 +259,8 @@ export async function runVerify(
       ok: true,
       command: '',
       detail: 'No typecheck/test/lint script found — skipped verify.',
-      skipped: true
+      skipped: true,
+      skipReason: 'no-project-check'
     }
   }
 
@@ -283,7 +293,8 @@ export async function runVerify(
       ok: true,
       command: usedCommand,
       detail: `${installNote}Verify skipped tests: no test files found yet.\n${out}`,
-      skipped: true
+      skipped: true,
+      skipReason: 'no-tests'
     }
   }
 
@@ -307,7 +318,8 @@ export async function runVerify(
             ok: true,
             command: usedCommand,
             detail: `${installNote}Verify skipped tests: no test files found yet.\n${out}`,
-            skipped: true
+            skipped: true,
+            skipReason: 'no-tests'
           }
         }
       }
@@ -348,7 +360,8 @@ export async function runVerify(
           ok: true,
           command: usedCommand,
           detail: `${installNote}Verify skipped tests: no test files found yet.\n${out}`,
-          skipped: true
+          skipped: true,
+          skipReason: 'no-tests'
         }
       }
     }
@@ -384,7 +397,8 @@ export async function runVerify(
           ok: true,
           command: usedCommand,
           detail: `${installNote}Verify skipped tests: no test files found yet.\n${out}`,
-          skipped: true
+          skipped: true,
+          skipReason: 'no-tests'
         }
       }
     } else {

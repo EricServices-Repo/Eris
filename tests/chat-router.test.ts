@@ -492,3 +492,43 @@ describe('planChatTurn', () => {
     expect(plan.requiresTools).toBe(true)
   })
 })
+
+describe('follow-up routing in planChatTurn (#504)', () => {
+  const afterReview = [
+    { role: 'user' as const, content: 'Review todo.js and todo.html' },
+    { role: 'assistant' as const, content: 'Review: the list renders correctly. Suggestion: add a clear button.' }
+  ]
+  const afterEdit = [
+    { role: 'user' as const, content: 'Add a "Clear all" button to the to-do page.' },
+    { role: 'assistant' as const, content: 'Added the button to todo.html and its handler to todo.js.' }
+  ]
+  const plan = (text: string, previousAgentId: string, previousMessages = afterReview) =>
+    planChatTurn({
+      workspacePath: null,
+      getSecret: () => null,
+      settings: getDefaults(),
+      context: { text, selectedModel: 'builtin:composer-lite', mode: 'agent', previousAgentId, previousMessages }
+    })
+
+  it('moves an edit request after a review from Reviewer to Composer (R4)', async () => {
+    const result = await plan(
+      'Add a "Clear all" button to the to-do page that removes every item from the list.',
+      'reviewer'
+    )
+    expect(result.agentId).toBe('composer')
+    expect(result.intent).toBe('edit')
+    expect(result.toolPolicy).toBe('edit')
+  })
+
+  it('answers "which files did you change" without tools (R6)', async () => {
+    const result = await plan('After that, tell me in one sentence which files you changed.', 'composer', afterEdit)
+    expect(result.intent).toBe('answer')
+    expect(result.toolPolicy).toBe('none')
+    expect(result.requiresTools).toBe(false)
+  })
+
+  it('keeps a plain follow-up with the reviewer', async () => {
+    const result = await plan('and the tests?', 'reviewer')
+    expect(result.agentId).toBe('reviewer')
+  })
+})
