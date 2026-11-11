@@ -132,6 +132,40 @@ describe('file-set completion evidence', () => {
     workflow.noteTool({name:'write_file',path:'calendar.ts',ok:true,mutated:true})
     expect(workflow.evaluateOutcome({workspaceMutated:true,codeMutated:true,verifyPassed:true,filesTouched:['booking.ts','calendar.ts']}).ok).toBe(true)
   })
+  it('accepts requested code by its parser when the project has no check, and says what was checked (#499)', () => {
+    const root = workspace()
+    const task = createTaskContract({ workspacePath: root, text: 'Create booking.ts and index.php', plan: plan() })
+    writeFileSync(join(root, 'booking.ts'), 'export const booking = { confirmed: true }\n')
+    writeFileSync(join(root, 'index.php'), '<?php echo "booking"; ?>\n')
+    const workflow = new AgentWorkflow({ ...plan(), task })
+    workflow.noteTool({ name: 'write_file', path: 'booking.ts', ok: true, mutated: true })
+    workflow.noteTool({ name: 'write_file', path: 'index.php', ok: true, mutated: true })
+    const outcome = () => workflow.evaluateOutcome({ workspaceMutated: true, codeMutated: true, verifyPassed: false, filesTouched: ['booking.ts', 'index.php'] })
+    // Not run yet: the reason names the files and the next step.
+    expect(outcome()).toMatchObject({ ok: false, reason: expect.stringContaining('Run the project') })
+    workflow.noteVerification('skipped', 'diagnostics')
+    expect(outcome()).toMatchObject({ ok: false, reason: expect.stringContaining('checks are disabled') })
+    workflow.noteVerification('failed')
+    expect(outcome()).toMatchObject({ ok: false, reason: expect.stringContaining('project check failed') })
+    for (const reason of ['no-project-check', 'no-tests'] as const) {
+      workflow.noteVerification('skipped', reason)
+      expect(outcome().ok).toBe(true)
+      expect(workflow.verificationNote()).toBe('This project has no test or typecheck script, so only the syntax of booking.ts was checked and index.php was not checked.')
+    }
+    workflow.noteVerification('passed')
+    expect(workflow.evaluateOutcome({ workspaceMutated: true, codeMutated: true, verifyPassed: true, filesTouched: ['booking.ts', 'index.php'] }).ok).toBe(true)
+    expect(workflow.verificationNote()).toBeNull()
+  })
+  it('keeps a syntax error blocking when the project has no check (#499)', () => {
+    const root = workspace()
+    const task = createTaskContract({ workspacePath: root, text: 'Create booking.ts', plan: plan() })
+    writeFileSync(join(root, 'booking.ts'), 'export const booking = {\n')
+    const workflow = new AgentWorkflow({ ...plan(), task })
+    workflow.noteTool({ name: 'write_file', path: 'booking.ts', ok: true, mutated: true })
+    workflow.noteVerification('skipped', 'no-project-check')
+    expect(workflow.evaluateOutcome({ workspaceMutated: true, codeMutated: true, verifyPassed: false, filesTouched: ['booking.ts'] }))
+      .toMatchObject({ ok: false, reason: expect.stringContaining('booking.ts: syntax errors') })
+  })
   it.each(['Delete obsolete.ts','Rename obsolete.ts to renamed.ts'])(
     'retains change evidence for non-creation operations: %s', text => {
       const root=workspace()

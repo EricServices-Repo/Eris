@@ -100,6 +100,43 @@ export function talksAboutToolsWithoutCalling(text: string): boolean {
 }
 
 /**
+ * A reply that still promises tool work: "I will use read_file…", or a numbered list
+ * of steps written as instructions. A past-tense summary that names a tool
+ * ("I used search_replace to add the button") or lists completed steps is not one.
+ * Used after a mutation, when naming tools in a recap is normal (#499).
+ */
+function promisesToolWork(text: string): boolean {
+  if (parseToolCalls(text).length > 0) return false
+  if (/\bi(?: will|'ll|’ll| am going to| need to) (?:now )?(?:use|call|run)\b/i.test(text)) return true
+  if (/<<<tool>>>|"name"\s*:\s*"(?:tree|list_dir|read_file|write_file)"/i.test(text)) return true
+  const numbered = text.match(/^\s*\d+\.\s+.*$/gm) || []
+  return numbered.length >= 5 && !numbered.some((line) => PAST_TENSE_RESULT.test(line))
+}
+
+/** Words that report a finished change. Imperatives ("Create…") are a plan, not a result. */
+const PAST_TENSE_RESULT =
+  /\b(?:done|complete|completed|finished|created|updated|added|wrote|written|fixed|changed|modified|removed|replaced|inserted|applied|implemented|moved|renamed|deleted|refactored|wired|hooked up)\b/i
+
+/**
+ * Closing courtesies that end many completed replies. They are not open questions
+ * about the task and must not keep a finished edit in the loop (#499).
+ */
+const CLOSING_OFFER =
+  /(?:^|(?<=[.!\n]))\s*(?:let me know\b[^.!?\n]*|(?:is there )?anything else[^.!?\n]*|(?:would|do) you (?:like|want) (?:me )?to [^.!?\n]*|(?:feel free|happy) to [^.!?\n]*|if you (?:need|want|have)[^.!?\n]*|(?:can|may|shall) i help[^.!?\n]*)[.!?]*\s*$/i
+
+/** The reply without a trailing courtesy offer, so the offer cannot decide completion. */
+export function withoutClosingOffer(text: string): string {
+  let t = text.trim()
+  // Strip at most two stacked offers ("Let me know… Anything else?").
+  for (let i = 0; i < 2; i++) {
+    const next = t.replace(CLOSING_OFFER, '').trim()
+    if (next === t || !next) break
+    t = next
+  }
+  return t
+}
+
+/**
  * Model is asking the user for workspace facts it should discover with tools
  * (tree / list_dir / retrieve / read_file) — never pause or finish on these.
  */
@@ -121,19 +158,26 @@ export function looksLikeAsksForWorkspaceInfo(text: string): boolean {
 
 /** Model claims the job is finished (no more tools needed). */
 export function looksLikeTaskComplete(text: string): boolean {
-  const t = text.trim()
-  if (!t || parseToolCalls(t).length > 0) return false
-  if (looksLikeRefusal(t) || looksLikeDegenerateLoop(t) || talksAboutToolsWithoutCalling(t)) {
+  const raw = text.trim()
+  if (!raw || parseToolCalls(raw).length > 0) return false
+  // "Let me know if…" and "Anything else?" close finished work; they are not open questions.
+  const t = withoutClosingOffer(raw)
+  // A recap may name the tools it used; only a promise of more tool work is unfinished.
+  if (looksLikeRefusal(t) || looksLikeDegenerateLoop(t) || promisesToolWork(t)) {
     return false
   }
   if (looksLikeAsksForWorkspaceInfo(t)) return false
   // Questions are not a finished review/edit.
   if (/\?\s*$/.test(t) || (t.match(/\?/g) || []).length >= 2) return false
   const lower = t.toLowerCase()
+  // Unfinished-work signals. "todo" only counts as the uppercase marker: a project's
+  // todo.html, "the to-do list" or "todo app" is a subject, not a sign of unfinished
+  // work (#499: every to-do page edit was rejected as incomplete).
   if (
-    /\b(next i (will|shall)|still need|not (yet )?done|todo\b|remaining|i('ll| will) (now|next)|let me (now )?)\b/i.test(
+    /\b(next,? i (will|shall)|i still need|still needs? to be|not (yet )?(done|finished|complete)|remaining (work|steps|tasks|items to)|i('ll| will) (now|next)\b|let me (now )?(?!know\b)\w+)/i.test(
       lower
-    )
+    ) ||
+    /\bTODO\b(?![.\-/\w])/.test(t)
   ) {
     return false
   }
@@ -146,8 +190,9 @@ export function looksLikeTaskComplete(text: string): boolean {
     return false
   // Require an actual completion signal — short prose alone used to match and
   // let review runs stop on "please provide the project structure?"
-  return /\b(done|complete|completed|finished|created|updated|ready|all set|implemented|here'?s what|working|findings|reviewed|looks good|issues?:)\b/i.test(
-    lower
+  return (
+    PAST_TENSE_RESULT.test(lower) ||
+    /\b(ready|all set|here'?s what|working|findings|reviewed|looks good|issues?:)/i.test(lower)
   )
 }
 
@@ -252,7 +297,10 @@ export function shouldKeepWorking(opts: {
   if (!assistantText.trim()) return true
   if (looksLikeRefusal(assistantText)) return true
   if (looksLikeAsksForWorkspaceInfo(assistantText)) return true
-  if (talksAboutToolsWithoutCalling(assistantText)) return true
+  // After a change, a recap naming the tools it used is normal; only a promise of
+  // further tool work keeps the loop going.
+  if (mutated ? promisesToolWork(assistantText) : talksAboutToolsWithoutCalling(assistantText))
+    return true
   if (looksLikeDegenerateLoop(assistantText)) return true
 
   // Review-only: allow DONE after some inspection / verify without file mutations
@@ -336,6 +384,58 @@ export function actionLogHasBuildSuccess(actions: string[]): boolean {
  * True when the latest mutating tool attempt failed (no successful write after it).
  * Example: Failed search_replace as the last edit → do not accept DONE.
  */
+/** The path a mutation action names: `Failed search_replace a/b.ts: …`, `Created a/b.ts (12 bytes)`. */
+function mutationPath(action: string): string | null {
+  const failed = action.match(/^Failed (?:write_file|search_replace|apply_patch|mkdir|delete_path|rename_path) (\S+?):?(?:\s|$)/i)
+  if (failed) return failed[1]!.replace(/^\.\//, '')
+  const done =
+    action.match(/^Renamed \S+ → (\S+)/) ??
+    action.match(/^(?:Created directory|Applied patch to|Wrote|Created|Updated|Patched|Deleted)\s+(\S+)/i) ??
+    action.match(/^Replaced \d+ occurrence\(s\) in (\S+)/i)
+  return done ? done[1]!.replace(/^\.\//, '').replace(/[.,:;]$/, '') : null
+}
+
+/**
+ * Files whose most recent mutation attempt in this run failed. `refinement` is true when
+ * the same file was changed successfully earlier: the failed attempt left it as the
+ * earlier change wrote it, so it is an unapplied refinement, not a missing change (#499).
+ * A failure whose path cannot be read is reported with `path: null`.
+ */
+export function unresolvedMutationFailures(
+  actions: string[]
+): Array<{ path: string | null; refinement: boolean }> {
+  const changed = new Set<string>()
+  const lastFailed = new Map<string, boolean>()
+  let unnamedFailure = false
+  for (const action of actions) {
+    const failed = /^Failed (?:write_file|search_replace|apply_patch|mkdir|delete_path|rename_path)\b/i.test(action)
+    const path = mutationPath(action)
+    if (failed && !path) {
+      unnamedFailure = true
+      continue
+    }
+    if (!path) continue
+    if (failed) lastFailed.set(path, true)
+    else {
+      changed.add(path)
+      lastFailed.set(path, false)
+      unnamedFailure = false
+    }
+  }
+  const result: Array<{ path: string | null; refinement: boolean }> = [...lastFailed]
+    .filter(([, failed]) => failed)
+    .map(([path]) => ({ path, refinement: changed.has(path) }))
+  if (unnamedFailure) result.push({ path: null, refinement: false })
+  return result
+}
+
+/** Paths of unapplied refinements, for the answer note. */
+export function failedRefinementPaths(actions: string[]): string[] {
+  return unresolvedMutationFailures(actions)
+    .filter((failure) => failure.refinement)
+    .map((failure) => failure.path!)
+}
+
 export function trailingMutationFailed(actions: string[]): boolean {
   const mut = actions.filter(
     (a) =>
@@ -392,11 +492,17 @@ export function assessGoalCompletion(opts: {
   }
 
   if (trailingMutationFailed(actionLog)) {
-    return {
-      unmet: true,
-      reason:
-        'Recent write/search_replace tools failed. Fix those edits (or use write_file) before finishing.'
-    }
+    // A failed follow-up edit on a file this run already changed does not undo that
+    // change. Accepting it ends the "retry the same failing search_replace" loop;
+    // the caller reports the unapplied edit in the answer (#499).
+    const failures = unresolvedMutationFailures(actionLog)
+    const allRefinements = failures.length > 0 && failures.every((failure) => failure.refinement)
+    if (!allRefinements || !looksLikeTaskComplete(assistantText))
+      return {
+        unmet: true,
+        reason:
+          'Recent write/search_replace tools failed. Read the file again and fix those edits (or use write_file) before finishing.'
+      }
   }
 
   if (goalWantsPackagedApp(goal)) {

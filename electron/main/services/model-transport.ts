@@ -56,6 +56,8 @@ export interface VerifyStubResult {
   command: string
   detail: string
   skipped?: boolean
+  /** Scripted scenarios may model a project with no checks. */
+  skipReason?: import('./verify').VerifySkipReason
 }
 
 export interface DiagnosticsScope {

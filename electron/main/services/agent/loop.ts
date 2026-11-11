@@ -95,6 +95,7 @@ import { toolArgumentRepair, validateToolArguments } from './tool-validation'
 import { finalizeAnswer } from './final-answer'
 import {
   assessGoalCompletion,
+  failedRefinementPaths,
   isReviewOnlyGoal,
   looksLikeAsksForWorkspaceInfo,
   looksLikeClarifyingQuestion,
@@ -2738,7 +2739,7 @@ async function* runAgentInternal(options: {
             actionLog.push(`Verify passed: ${finalVerify.command}`)
           }
           if (finalVerify.skipped) {
-            workflow.noteVerification('skipped')
+            workflow.noteVerification('skipped', finalVerify.skipReason)
             actionLog.push(`Verification skipped: ${finalVerify.detail}`)
           }
         }
@@ -2815,16 +2816,27 @@ async function* runAgentInternal(options: {
           return
         }
         const partial = unresolvedDelegationNote()
+        // Host-written facts the model may not mention: what was not verified, and
+        // follow-up edits that failed after the file had already been changed (#499).
+        const unapplied = failedRefinementPaths(actionLog)
+        const completionNotes = [
+          workflow.verificationNote(),
+          unapplied.length
+            ? `A later edit to ${unapplied.join(', ')} failed and was not applied; the earlier change to ${unapplied.length === 1 ? 'that file is' : 'those files are'} in place.`
+            : null
+        ].filter((note): note is string => Boolean(note))
         if (prose.length >= 40 && !isToolLogReply(prose)) {
           yield* postFinalAnswer(prose)
           if (partial) {
             yield { type: 'status', text: 'Done · partial specialist results' }
             yield { type: 'answer', text: `\n\n${partial}` }
           }
+          if (completionNotes.length) yield { type: 'answer', text: `\n\n${completionNotes.join(' ')}` }
           return
         }
         yield* finishChatAnswer(assistantText)
         if (partial) yield { type: 'answer', text: `\n\n${partial}` }
+        if (completionNotes.length) yield { type: 'answer', text: `\n\n${completionNotes.join(' ')}` }
         return
       }
 
@@ -4715,7 +4727,7 @@ async function* runAgentInternal(options: {
             }
           }
           if (verified.skipped) {
-            workflow.noteVerification('skipped')
+            workflow.noteVerification('skipped', verified.skipReason)
             actionLog.push(`Verification skipped: ${verified.detail}`)
           }
           workflow.transition('executing')
