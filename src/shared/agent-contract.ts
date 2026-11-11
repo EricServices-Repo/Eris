@@ -468,37 +468,72 @@ export function asksWorkspaceQuestion(text: string, fileNames: string[] = []): b
 
 const BY_ID = new Map(CHAT_AGENT_CONTRACTS.map((c) => [c.id, c]))
 
+/**
+ * "Which files did you change?", "what did you do?" — a question about the
+ * previous turn's own work. It is answered from the recorded outcome, not by
+ * starting a new tool loop (#504 R6).
+ */
+export const ASKS_WHAT_CHANGED =
+  /\b(?:what|which)\b[^?]{0,40}?\b(?:did you|have you|you)\s+(?:change|changed|do|did|done|edit|edited|touch|touched|modify|modified|update|updated)\b/i
+
+/** Verbs whose object is the work itself: "add a footer", "remove those". */
+export const IMPLEMENT_VERB =
+  /\b(?:add|create|make|build|write|remove|delete|rename|move|replace|insert|fix|change|edit|implement|update|apply|refactor)\b/i
+
+/**
+ * "that/those/them/it" used as the object of a verb ("fix that", "apply them"),
+ * or opening the message ("that one too"). A relative pronoun after a noun ("a
+ * button that removes…") is not a reference to the previous turn (#504 R4).
+ */
+const PRONOUN_OBJECT =
+  /\b(?:do|fix|change|update|apply|use|try|run|revert|undo|keep|explain|show|add|remove|delete|make|implement|finish|continue|check|test|review|expand|clarify|repeat)\s+(?:all\s+(?:of\s+)?)?(?:that|those|them|it|these|this)\b/i
+
+/** "to that page", "in those files": a demonstrative after a preposition. */
+const PREPOSITION_REFERENCE =
+  /\b(?:to|in|on|from|into|for|with|of|about)\s+(?:that|those|these|them|it)\b/i
+
 /** A short reply that depends on the previous turn, not a new task. */
 export function isConversationFollowUp(text: string): boolean {
   const t = text.trim()
   if (!t || t.length > 240 || asksWhatTheProjectDoes(t)) return false
   if (asksToImplementChanges(t)) return true
   if (
-    /^(and|also|then|continue|go on|keep going|do that|fix that|change that|update that|what about|how about)\b/i.test(
+    /^(and|also|then|continue|go on|keep going|do that|fix that|change that|update that|what about|how about|after that|that|those|them)\b/i.test(
       t
     )
   ) {
     return true
   }
-  if (/\bwhat did you (change|do|edit)\b/i.test(t)) return true
-  return t.length < 100 && /\b(that|those|them)\b/i.test(t)
+  if (ASKS_WHAT_CHANGED.test(t)) return true
+  return t.length < 100 && (PRONOUN_OBJECT.test(t) || PREPOSITION_REFERENCE.test(t))
 }
+
+const MUTATING_INTENTS: ReadonlySet<ChatIntent> = new Set(['edit', 'run'])
+const READ_INTENTS: ReadonlySet<ChatIntent> = new Set(['explore', 'review', 'plan', 'verify'])
 
 /**
  * Who should take a follow-up. "Fix that" moves to Composer.
- * "What did you change?" moves to Explainer. Otherwise stay with the previous agent.
+ * "What did you change?" moves to Explainer. Otherwise stay with the previous
+ * agent, unless its tool ceiling cannot do what the message itself asks for.
+ *
+ * `intent` is the message's own classification (classifyIntent(text, 'agent')),
+ * passed in by the caller to avoid a circular import.
  */
 export function agentForFollowUp(
   text: string,
-  previousAgentId: string | null | undefined
+  previousAgentId: string | null | undefined,
+  intent?: ChatIntent
 ): ChatAgentContract['id'] | null {
   if (!isConversationFollowUp(text)) return null
-  if (/\bwhat did you (change|do|edit)\b/i.test(text)) return 'explainer'
-  if (asksToImplementChanges(text) || /\b(fix|change|edit|implement|update|apply)\b/i.test(text)) {
-    return 'composer'
-  }
+  if (ASKS_WHAT_CHANGED.test(text)) return 'explainer'
+  if (asksToImplementChanges(text) || IMPLEMENT_VERB.test(text)) return 'composer'
   if (previousAgentId && BY_ID.has(previousAgentId as ChatAgentContract['id'])) {
     const id = previousAgentId as ChatAgentContract['id']
+    const previous = BY_ID.get(id)!
+    // A read-only agent cannot carry an edit or run request (#504 R4).
+    if (intent && MUTATING_INTENTS.has(intent) && previous.tools === 'read') return 'composer'
+    // A read question after an edit turn is routed afresh, not upgraded to an edit.
+    if (intent && READ_INTENTS.has(intent) && previous.tools !== 'read') return null
     return id === 'coder' ? 'composer' : id
   }
   return null

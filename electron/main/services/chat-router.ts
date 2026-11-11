@@ -19,6 +19,8 @@ import { routeHeuristic, routeMessage } from './router'
 import { learnedRouteFor, readRoutingCorrections, routingExamples } from './routing-feedback'
 import {
   agentForFollowUp,
+  ASKS_WHAT_CHANGED,
+  IMPLEMENT_VERB,
   asksForCodeDestination,
   asksForCodeExample,
   asksForCreativeWriting,
@@ -784,7 +786,9 @@ export async function planChatTurn(options: {
     method = forceRoute ? 'override' : 'learned'
   }
 
-  const followId = agentForFollowUp(text, options.context.previousAgentId)
+  // The message's own intent decides whether the previous agent can carry it:
+  // a read-only Reviewer must not keep "Add a … button" (#504).
+  const followId = agentForFollowUp(text, options.context.previousAgentId, classifiedIntent)
   if (
     mode === 'agent' &&
     !forceRoute &&
@@ -802,8 +806,16 @@ export async function planChatTurn(options: {
       !intentNeedsTools(intent) &&
       !needsWebLookup(text) &&
       !asksToImplementChanges(text) &&
-      !/\b(fix|change|edit|implement|update|apply)\b/i.test(text)
-    if (
+      !IMPLEMENT_VERB.test(text) &&
+      !ASKS_WHAT_CHANGED.test(text)
+    const previousAnswer = (options.context.previousMessages ?? []).some(
+      (message) => message.role === 'assistant' && message.content.trim()
+    )
+    if (ASKS_WHAT_CHANGED.test(text) && previousAnswer) {
+      // "Which files did you change?" is answered from the previous turn's
+      // recorded outcome and answer; it does not need a new tool loop (#504 R6).
+      intent = 'answer'
+    } else if (
       isContinuation &&
       previousIntent &&
       previousIntent !== 'answer' &&
