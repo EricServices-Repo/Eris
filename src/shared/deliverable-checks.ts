@@ -155,7 +155,10 @@ export function assessDeliverable(
     if (!options.allowToolJson && TOOL_ENVELOPE.test(text))
       checks.push({
         id: 'tool-call-as-answer',
-        severity: TOOL_ENVELOPE.test(exposed) ? 'fail' : 'review',
+        // A registered tool's envelope in the answer is an unexecuted action, fenced or
+        // not ("Next, I will run…" + ```json {"name":"run"…}```, #506). Only a request
+        // about the tool protocol itself keeps a fenced one as an example.
+        severity: TOOL_ENVELOPE.test(exposed) || !options.protocolExamples ? 'fail' : 'review',
         detail: 'A runtime tool call was returned as answer text.'
       })
     if (TOOL_SCHEMA_TALK.test(text))
@@ -217,6 +220,32 @@ export function assessDeliverable(
  * everything from the first protocol marker onward, when real content precedes it.
  * Returns null when nothing usable precedes the leak.
  */
+/**
+ * Remove fenced runtime tool calls and the sentence that announces each one
+ * ("Next, I will run a cat command to verify:") from answer text (#506). Returns
+ * null when nothing was removed or nothing is left.
+ */
+export function stripToolCallFences(text: string): string | null {
+  let removed = false
+  const out = text.replace(
+    /(^|\n)([^\n]*?)\s*`{2,3}(?:json|tool)?\s*([\s\S]*?)`{2,3}/g,
+    (block, lead: string, before: string, body: string) => {
+      if (!TOOL_ENVELOPE.test(body)) return block
+      removed = true
+      // Drop the announcing sentence on the same line; keep earlier sentences.
+      const sentences = before.split(/(?<=[.!?])\s+/)
+      const last = sentences[sentences.length - 1] ?? ''
+      const announces =
+        /\b(?:I(?:'ll|’ll| will| am going to)|let me|next,? I|now I|going to)\b|:\s*$/i.test(last)
+      const kept = (announces ? sentences.slice(0, -1) : sentences).join(' ').trim()
+      return kept ? `${lead}${kept}` : lead
+    }
+  )
+  if (!removed) return null
+  const cleaned = out.replace(/\n{3,}/g, '\n\n').trim()
+  return cleaned || null
+}
+
 export function stripProtocolTail(text: string): string | null {
   const marker = unquoted(text).search(
     /<<<(?:END|TOOL|TOOL_RESULT)\b[^>]*>>>|^\s*(?:USER|ASSISTANT|SYSTEM):\s*$|^\s*TOOL_RESULT\s+\w+:/m

@@ -37,7 +37,9 @@ describe('task-aware deliverable boundaries', () => {
         'Example:\n```json\n{"name":"read_file","path":"example.ts"}\n```\n\n```text\nUSER:\n<<<TOOL_RESULT example>>>\nNOT_EXECUTED\n```'
     expect(assessDeliverable(text, deliverableContext(goal)).status).toBe('pass')
     expect(stripProtocolTail(text)).toBe(text)
-    expect(assessDeliverable(text).status).toBe('needs-review')
+    // Without a request about the protocol, a registered tool's envelope in the
+    // answer is an unexecuted action, fenced or not (#506).
+    expect(assessDeliverable(text).status).toBe('fail')
   })
   it('still fails exposed internal results even when protocol was the topic', () => {
     expect(

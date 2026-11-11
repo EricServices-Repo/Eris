@@ -8,6 +8,7 @@ import { AGENT_HANDOFF_CHARS } from '../../../../src/shared/agent-orchestration'
 import {
   assessDeliverable,
   stripProtocolTail,
+  stripToolCallFences,
   deliverableContext
 } from '../../../../src/shared/deliverable-checks'
 import { collectModelText } from './stream'
@@ -243,6 +244,11 @@ export async function finalizeAnswer(
         text = again.trim()
         repaired.push('re-answered-from-goal')
       } else {
+        // Never show a raw tool envelope. Keep the rest of the draft, marked
+        // incomplete, when removing the unexecuted call leaves a clean answer (#506).
+        const withoutCalls = stripToolCallFences(text)
+        if (withoutCalls && !protocolProblems(withoutCalls, options.goal, options.task))
+          return finish(withoutCalls, true, [...repaired, 'tool-call-removed'])
         return finish(PROTOCOL_BLOCKER, true, repaired)
       }
     }

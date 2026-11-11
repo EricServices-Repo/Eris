@@ -106,6 +106,32 @@ function pushToolEnvelope(
   pushToolCall(calls, seen, envelope.name, args, raw)
 }
 
+/** "I'll run…", "Next, I will…", "Let me…": the model announcing its next action. */
+const NEXT_ACTION_INTENT = /\b(?:I(?:'ll|’ll| will| am going to|'m going to|’m going to)|let me|next,? I|now I|going to)\b/i
+const NARRATION_MAX_CHARS = 400
+
+/**
+ * Prose that announces an action, followed by exactly one fenced tool envelope for
+ * a known tool and nothing after it: "Next, I will run a cat command to verify:
+ * ```json {"name":"run",…}```" (#506). That fence is a tool call, not an example.
+ * A fence without an intent phrase, a second fence, or prose after the fence is
+ * still treated as an example, as before.
+ */
+function narratedToolFence(text: string): { block: string; body: string } | null {
+  FENCE_JSON_RE.lastIndex = 0
+  const fences = [...text.matchAll(FENCE_JSON_RE)]
+  FENCE_JSON_RE.lastIndex = 0
+  if (fences.length !== 1) return null
+  const fence = fences[0]!
+  const start = fence.index ?? 0
+  const before = text.slice(0, start).trim()
+  const after = text.slice(start + fence[0].length).trim()
+  if (!before || after || before.length > NARRATION_MAX_CHARS) return null
+  if (!NEXT_ACTION_INTENT.test(before)) return null
+  const body = fence[1] ?? ''
+  return isToolEnvelopeBody(body) ? { block: fence[0], body } : null
+}
+
 export function parseToolCalls(text: string): ToolCall[] {
   const calls: ToolCall[] = []
   const seen = new Set<string>()
@@ -121,6 +147,10 @@ export function parseToolCalls(text: string): ToolCall[] {
   FENCE_JSON_RE.lastIndex = 0
   while (fencedOnly && (m = FENCE_JSON_RE.exec(text)) !== null) {
     pushToolEnvelope(calls, seen, parseJsonObject(m[1]), m[0])
+  }
+  if (!fencedOnly) {
+    const narrated = narratedToolFence(text)
+    if (narrated) pushToolEnvelope(calls, seen, parseJsonObject(narrated.body), narrated.block)
   }
 
   TOOL_XML_RE.lastIndex = 0
@@ -203,7 +233,9 @@ export function stripToolBlocks(text: string): string {
   FENCE_JSON_RE.lastIndex = 0
   const fencedOnly = text.replace(FENCE_JSON_RE, '').trim().length === 0
   FENCE_JSON_RE.lastIndex = 0
-  return text
+  // A narrated tool fence is executed by parseToolCalls, so it is protocol too (#506).
+  const narrated = fencedOnly ? null : narratedToolFence(text)
+  return (narrated ? text.replace(narrated.block, '') : text)
     .replace(TOOL_BLOCK_RE, '')
     .replace(FENCE_JSON_RE, (block, body: string) =>
       fencedOnly && isToolEnvelopeBody(body) ? '' : block

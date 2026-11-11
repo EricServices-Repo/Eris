@@ -95,3 +95,28 @@ describe('JSON helpers', () => {
     expect(parseJsonObject('prefix {"ok":true}')).toEqual({ ok: true })
   })
 })
+
+describe('narrated fenced tool calls (#506)', () => {
+  const T2 =
+    'I created hello.html with the heading and the button. Next, I will run a cat command to verify.\n\n```json\n{"name":"run","arguments":{"command":"cat hello.html"}}\n```'
+
+  it('executes one fenced envelope announced by the prose before it', () => {
+    const calls = parseToolCalls(T2)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.name).toBe('run')
+    expect(argString(calls[0]!.args, 'command')).toBe('cat hello.html')
+    expect(stripToolBlocks(T2)).not.toMatch(/"name"/)
+    expect(proseOutsideTools(T2)).toMatch(/^I created hello\.html/)
+  })
+
+  it.each([
+    ['documentation without an intent phrase', 'To list files, the agent sends:\n```json\n{"name":"tree","path":"."}\n```'],
+    ['prose after the fence', "I'll run this:\n```json\n{\"name\":\"run\",\"command\":\"ls\"}\n```\nThis is how it works."],
+    ['two fences', "I'll run these:\n```json\n{\"name\":\"run\",\"command\":\"ls\"}\n```\n```json\n{\"name\":\"tree\",\"path\":\".\"}\n```"],
+    ['an unknown tool name', 'Let me save the user:\n```json\n{"name":"Alice","age":3}\n```'],
+    ['long prose', `${'This page explains the protocol. '.repeat(15)}I'll show one:\n\`\`\`json\n{"name":"tree","path":"."}\n\`\`\``]
+  ])('keeps %s as an example', (_label, text) => {
+    expect(parseToolCalls(text)).toHaveLength(0)
+    expect(stripToolBlocks(text)).toContain('```')
+  })
+})

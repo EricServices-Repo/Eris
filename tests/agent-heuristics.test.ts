@@ -146,3 +146,20 @@ describe('run turns that report a command (#503)', () => {
     expect(shouldKeepWorking({ ...base, commandReported: false, assistantText: 'The folder has 3 files.' })).toBe(true)
   })
 })
+
+describe('replies that end by announcing the next action (#506)', () => {
+  it.each([
+    'I created hello.html. Next, I will run a cat command to verify.',
+    'The page is written. Let me verify by running cat hello.html.',
+    "Done with the edit. I'll run the tests now."
+  ])('treats %j as unfinished', (text) => {
+    expect(isUnfinishedWorkNarration(text)).toBe(true)
+  })
+  it.each([
+    'I ran `cat hello.html` and the heading is present.',
+    'Let me know if you want a different color.',
+    'I will run through the remaining steps with you whenever you are ready.'
+  ])('does not flag %j', (text) => {
+    expect(isUnfinishedWorkNarration(text)).toBe(false)
+  })
+})

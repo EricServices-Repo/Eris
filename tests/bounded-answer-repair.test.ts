@@ -144,3 +144,25 @@ describe('unbackedEditClaims', () => {
     expect(unbackedEditClaims('I changed src/other.ts.', ['src/math.ts'])).toEqual(['src/other.ts'])
   })
 })
+
+describe('narrated tool calls never reach the user (#506)', () => {
+  const draft =
+    'Fixed the divide-by-zero check in src/math.ts. Next, I will run a cat command to verify.\n\n```json\n{"name":"run","arguments":{"command":"cat src/math.ts"}}\n```'
+
+  it('re-answers once, then strips the call and its announcing sentence', async () => {
+    model.replies.push(draft)
+    const result = await finalize(draft, { changedFiles: ['src/math.ts'] })
+    expect(result.text).not.toMatch(/"name"\s*:\s*"run"|```/)
+    expect(result.text).not.toMatch(/Next, I will run/)
+    expect(result.text).toMatch(/^Fixed the divide-by-zero check/)
+    expect(result.incomplete).toBe(true)
+    expect(result.repaired).toContain('tool-call-removed')
+  })
+
+  it('uses a clean re-answer when the model gives one', async () => {
+    model.replies.push('Fixed the divide-by-zero check in src/math.ts: divide now throws when b is 0.')
+    const result = await finalize(draft, { changedFiles: ['src/math.ts'] })
+    expect(result.text).toMatch(/throws when b is 0/)
+    expect(result.incomplete).toBe(false)
+  })
+})
