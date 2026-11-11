@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.20 — 2026-11-11
+
+- Fix agent stalls after Stop and on follow-up chats, run requested shell commands, answer file listings, check HTML/CSS edits, and stop unverified or false capability claims in answers.
+
 ## 0.6.19 — 2026-11-08
 
 - Improve chat routing, source-grounded reviews, structural artifact checks, and durable terminal replies.
