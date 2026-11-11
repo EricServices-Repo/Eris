@@ -14,6 +14,7 @@ export type DeliverableCheckId =
   | 'unfinished-code'
   | 'refusal'
   | 'clarification-request'
+  | 'capability-denial'
 
 export interface DeliverableCheck {
   id: DeliverableCheckId
@@ -29,6 +30,8 @@ export interface DeliverableAssessment {
 }
 
 export interface DeliverableContext {
+  /** Agent mode has edit and run tools; a reply denying them is wrong (#505). */
+  mode?: 'ask' | 'agent'
   allowToolJson?: boolean
   /** Derived only from the trusted request, never from model prose. */
   protocolExamples?: boolean
@@ -39,9 +42,11 @@ export interface DeliverableContext {
 export function deliverableContext(
   goal: string,
   artifact?: string,
-  language?: string | null
+  language?: string | null,
+  mode?: 'ask' | 'agent'
 ): DeliverableContext {
   return {
+    ...(mode ? { mode } : {}),
     artifact,
     language,
     allowToolJson: /\b(?:json|tool call)\b/i.test(goal),
@@ -50,6 +55,35 @@ export function deliverableContext(
       /\b(?:protocol|tool|USER:|ASSISTANT:|TOOL_RESULT)\b/i.test(goal)
   }
 }
+/**
+ * "I cannot run `ls -la` or execute shell commands", "My capabilities are limited
+ * to reading workspace files": a claim that Eris cannot act. In Agent mode Eris
+ * has edit and run tools; only the role may be limited (#505). A sentence that
+ * names the role's limit ("this role is read-only… switch to Composer") is fine.
+ */
+const CAPABILITY_DENIAL =
+  /\bI\s+(?:cannot|can(?:'|’)?t|am\s+(?:unable|not\s+able)\s+to|do\s+not\s+have\s+(?:the\s+)?(?:ability|access)\s+to|don(?:'|’)t\s+have\s+(?:the\s+)?(?:ability|access)\s+to)\s+(?:directly\s+)?(?:run|execute|edit|modify|change|write\s+to|create|access)\b[^.\n]*\b(?:commands?|shell|terminal|tools?|files?)\b|\bmy\s+capabilities\s+are\s+limited\s+to\s+reading\b/i
+const ROLE_LIMIT = /\b(?:role|read-only|read only|switch|Composer|Auto mode)\b/i
+
+/** Sentences that deny Eris's ability to act, rather than naming a role's limit. */
+export function capabilityDenials(text: string): string[] {
+  // unquoted() keeps offsets, so sentences are found in the masked text (quotes and
+  // examples are not claims) and returned from the original.
+  const masked = unquoted(text)
+  const out: string[] = []
+  const sentence = /[^.!?\n]+(?:[.!?]+|$)/g
+  let match: RegExpExecArray | null
+  while ((match = sentence.exec(masked))) {
+    if (!match[0].trim()) {
+      sentence.lastIndex++
+      continue
+    }
+    if (CAPABILITY_DENIAL.test(match[0]) && !ROLE_LIMIT.test(match[0]))
+      out.push(text.slice(match.index, match.index + match[0].length).trim())
+  }
+  return out
+}
+
 /** Preserve offsets while masking Markdown quotation/example regions. */
 function unquoted(text: string): string {
   let fence = '',
@@ -204,6 +238,12 @@ export function assessDeliverable(
           : { id: 'refusal', severity: 'review', detail: 'The answer declines the request.' }
       )
   }
+  if (text.trim() && options.mode === 'agent' && capabilityDenials(text).length)
+    checks.push({
+      id: 'capability-denial',
+      severity: 'fail',
+      detail: 'The answer says Eris cannot edit files or run commands; in Agent mode only the role can be limited.'
+    })
   return {
     status: checks.some((check) => check.severity === 'fail')
       ? 'fail'

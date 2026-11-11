@@ -9,6 +9,7 @@ import {
   assessDeliverable,
   stripProtocolTail,
   stripToolCallFences,
+  capabilityDenials,
   deliverableContext
 } from '../../../../src/shared/deliverable-checks'
 import { collectModelText } from './stream'
@@ -85,6 +86,23 @@ export interface FinalAnswerOptions {
   verification?: 'passed' | 'failed' | 'skipped' | 'no-check' | 'not-run'
   /** The host appends its own verification note after the answer; do not add a second one. */
   verificationNoted?: boolean
+  /** Chat mode. In Agent mode an answer may not claim Eris cannot edit or run (#505). */
+  mode?: 'ask' | 'agent'
+}
+
+/** What a read-only role says instead of "I cannot run commands" (#505). */
+export const ROLE_LIMIT_SENTENCE =
+  'This agent role is read-only, so it did not edit files or run commands. Switch the agent to Composer (or Auto) and send the request again to do that.'
+
+/** Replace capability-denial sentences with the role's limit, once. */
+export function correctCapabilityDenial(text: string): string | null {
+  const denials = capabilityDenials(text)
+  if (!denials.length) return null
+  let out = text
+  denials.forEach((sentence, index) => {
+    out = out.replace(sentence, index === 0 ? ROLE_LIMIT_SENTENCE : '')
+  })
+  return out.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
 }
 
 const UNVERIFIED_NOTE: Record<Exclude<NonNullable<FinalAnswerOptions['verification']>, 'passed'>, string> = {
@@ -313,6 +331,21 @@ export async function finalizeAnswer(
           return finish(withoutCalls, true, [...repaired, 'tool-call-removed'])
         return finish(PROTOCOL_BLOCKER, true, repaired)
       }
+    }
+  }
+
+  // "I cannot run commands" in Agent mode is false: only the role is limited (#505).
+  if (options.mode === 'agent' && capabilityDenials(text).length) {
+    const again = await answerAgain(
+      ' Eris can edit files and run commands in Agent mode. Never say that Eris cannot edit files or run commands. ' +
+        'If this role could not do what was asked, say that this role is read-only and that the user can switch to Composer.'
+    )
+    if (vet('re-answer', again, !capabilityDenials(again).length && !protocolProblems(again, options.goal, options.task))) {
+      text = again.trim()
+      repaired.push('re-answered-capability-denial')
+    } else {
+      text = correctCapabilityDenial(text) ?? text
+      repaired.push('capability-denial-corrected')
     }
   }
 

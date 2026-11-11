@@ -532,3 +532,36 @@ describe('follow-up routing in planChatTurn (#504)', () => {
     expect(result.agentId).toBe('reviewer')
   })
 })
+
+describe('read-only safety net (#505)', () => {
+  const plan = (text: string, extra: Record<string, unknown> = {}) =>
+    planChatTurn({
+      workspacePath: null, getSecret: () => null, settings: getDefaults(),
+      context: { text, selectedModel: 'builtin:composer-lite', mode: 'agent', ...extra }
+    })
+
+  it('moves an automatically routed edit away from a read-only agent', async () => {
+    const result = await plan('Add a footer to hello.html', { previousAgentId: 'reviewer',
+      previousMessages: [{ role: 'user', content: 'Review hello.html' }, { role: 'assistant', content: 'Reviewed.' }] })
+    expect(result.agentId).toBe('composer')
+    expect(result.toolPolicy).not.toMatch(/^(?:read|none)$/)
+  })
+
+  it('moves a pinned read-only agent to an editor rather than refusing (existing behaviour kept)', async () => {
+    const result = await plan('Run ls -la in the project folder', { manualAgentId: 'explainer' })
+    expect(result.agentId).toBe('composer')
+    expect(result.toolPolicy).toBe('full')
+  })
+
+  it('tells read-only roles to name their limit, not Eris\'s', async () => {
+    const { buildChatMessages } = await import('../electron/main/services/chat-prompt')
+    const [system] = buildChatMessages(null, getDefaults(), {
+      text: 'x', mode: 'agent', agentId: 'explainer', history: [], attachments: [], skillIds: []
+    })
+    expect(system!.content).toContain('Never say that Eris cannot edit files or run commands.')
+    const [composer] = buildChatMessages(null, getDefaults(), {
+      text: 'x', mode: 'agent', agentId: 'composer', history: [], attachments: [], skillIds: []
+    })
+    expect(composer!.content).not.toContain('this role is read-only')
+  })
+})

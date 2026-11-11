@@ -885,6 +885,20 @@ export async function planChatTurn(options: {
   // router may choose Reviewer for a coding follow-up even after intent has
   // been corrected to edit; never let that become an edit plan with read-only
   // tools and a prompt that tells the worker not to edit.
+  // #505 safety net: a follow-up override must not turn the message's own edit or
+  // run request into a read intent for a read-only agent. The message keeps its intent
+  // and moves to an editor below. (A user's learned or forced correction is kept.)
+  if (
+    mode === 'agent' &&
+    !forceRoute &&
+    intentNeedsMutation(classifiedIntent) &&
+    !intentNeedsMutation(intent) &&
+    overrides.some((override) => override.startsWith('follow-up:')) &&
+    CEILING_RANK[agent.tools ?? 'edit'] < CEILING_RANK.edit
+  ) {
+    intent = classifiedIntent
+    overrides.push('read-only-follow-up-kept-own-intent')
+  }
   const requiredMutationCeiling = intent === 'run' ? 'full' : 'edit'
   if (
     mode === 'agent' &&

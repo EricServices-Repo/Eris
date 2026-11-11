@@ -17,6 +17,7 @@ import {
   finalizeAnswer,
   MAX_REPAIR_CALLS,
   PROTOCOL_BLOCKER,
+  ROLE_LIMIT_SENTENCE,
   softenUnverifiedClaims,
   unbackedEditClaims
 } from '../electron/main/services/agent/final-answer'
@@ -201,4 +202,27 @@ describe('unverified claims (#509)', () => {
 
 it('removes a trailing "and verified" (#509)', () => {
   expect(softenUnverifiedClaims('Updated hello.html with the correct footer and verified.')).toBe('Updated hello.html with the footer.')
+})
+
+describe('capability denial repair (#505)', () => {
+  const R10 = 'I cannot run `ls -la` or execute shell commands. The project has an index.html file.'
+  it('uses a re-answer that names the role limit', async () => {
+    model.replies.push('This role is read-only, so it did not run the command; switch to Composer to run it. The project has an index.html file.')
+    const result = await finalize(R10, { mode: 'agent' })
+    expect(result.text).toMatch(/^This role is read-only/)
+    expect(result.repaired).toContain('re-answered-capability-denial')
+    const system = model.calls[0]!.messages.map((m) => m.content).join('\n')
+    expect(system).toContain('Never say that Eris cannot edit files or run commands')
+  })
+  it('replaces the denial when the re-answer repeats it', async () => {
+    model.replies.push(R10)
+    const result = await finalize(R10, { mode: 'agent' })
+    expect(result.text).toBe(`${ROLE_LIMIT_SENTENCE} The project has an index.html file.`)
+    expect(result.repaired).toContain('capability-denial-corrected')
+  })
+  it('leaves Ask mode alone', async () => {
+    const result = await finalize(R10, { mode: 'ask' })
+    expect(result.text).toBe(R10)
+    expect(model.calls).toHaveLength(0)
+  })
 })

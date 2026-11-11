@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   assessDeliverable,
+  capabilityDenials,
   deliverableContext,
   stripProtocolTail
 } from '../src/shared/deliverable-checks'
@@ -107,5 +108,28 @@ describe('task-aware deliverable boundaries', () => {
     expect(selectOutcomeEvidence(task(), answer, [], 0).obligations.every((o) => o.omitted)).toBe(
       true
     )
+  })
+})
+
+describe('capability denial in Agent mode (#505)', () => {
+  const R10 =
+    'I cannot run `ls -la` or execute shell commands. My capabilities are limited to reading workspace files and answering questions.'
+
+  it('flags the R10 answer in Agent mode only', () => {
+    const agent = assessDeliverable(R10, deliverableContext('Run ls -la', undefined, undefined, 'agent'))
+    expect(agent.checks.map((check) => check.id)).toContain('capability-denial')
+    expect(agent.status).toBe('fail')
+    const ask = assessDeliverable(R10, deliverableContext('Run ls -la', undefined, undefined, 'ask'))
+    expect(ask.checks.map((check) => check.id)).not.toContain('capability-denial')
+  })
+
+  it('accepts a sentence that names the role limit', () => {
+    const text = 'I cannot edit files in this role: it is read-only. Switch to Composer to make the change.'
+    expect(capabilityDenials(text)).toEqual([])
+  })
+
+  it('ignores quoted examples and unrelated "cannot"', () => {
+    expect(capabilityDenials('> I cannot run commands\nThat quote is from the old docs.')).toEqual([])
+    expect(capabilityDenials('I cannot find a footer in hello.html.')).toEqual([])
   })
 })

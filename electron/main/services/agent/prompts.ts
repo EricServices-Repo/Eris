@@ -13,7 +13,7 @@ import { formatLiveMcpToolsPrompt } from '../mcp-runtime'
 import { formatIndexSummary } from '../code-index'
 import { formatWorkspaceContextPrompt } from '../workspace-context'
 import { workspaceTree } from '../workspace-fs'
-import { contractForAgent } from '../../../../src/shared/agent-contract'
+import { contractForAgent, READ_ONLY_ROLE_NOTE } from '../../../../src/shared/agent-contract'
 import { workerConversation } from './conversation'
 import { sharedPromptBlocks } from '../chat-prompt'
 import { toolProtocolFor } from '../tool-protocol'
@@ -375,9 +375,13 @@ export async function buildPreservedWorkerMessages(options: {
           // Role identity once. Its job text describes workspace reading, which a generic
           // request must not reintroduce; the playbook and response contract cover the rest.
           content: contract
-            ? evidenceRequirementFor(task.scope.applicability) === 'none'
-              ? `Role: ${contract.name}.`
-              : `Role: ${contract.name}. ${contract.job} ${contract.done}`
+            ? (evidenceRequirementFor(task.scope.applicability) === 'none'
+                ? `Role: ${contract.name}.`
+                : `Role: ${contract.name}. ${contract.job} ${contract.done}`) +
+              // #505: a read-only role names its own limit, not Eris's.
+              (contract.tools === 'read' || plan.toolPolicy === 'read' || plan.toolPolicy === 'none'
+                ? ` ${READ_ONLY_ROLE_NOTE}`
+                : '')
             : ''
         },
         { id: 'playbook', content: intentPlaybook(plan.intent, false, task.scope.applicability) },

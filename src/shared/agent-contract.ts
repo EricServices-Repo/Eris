@@ -489,6 +489,14 @@ export function asksWorkspaceQuestion(text: string, fileNames: string[] = []): b
   return fileNames.some((name) => name.trim() && t.toLowerCase().includes(name.toLowerCase()))
 }
 
+/**
+ * Shared instruction for every read-only role (#505). A mis-routed edit or run
+ * request must be answered with the role's limit and the way to switch, never
+ * with a claim that Eris itself cannot edit files or run commands.
+ */
+export const READ_ONLY_ROLE_NOTE =
+  'If the user asks you to change files or run a command, say that this role is read-only and that they can switch to Composer (or Auto) to do it. Never say that Eris cannot edit files or run commands.'
+
 const BY_ID = new Map(CHAT_AGENT_CONTRACTS.map((c) => [c.id, c]))
 
 /**

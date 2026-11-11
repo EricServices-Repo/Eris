@@ -774,7 +774,8 @@ async function* runAgentInternal(options: {
           goal: originalUserGoal,
           task,
           onPresentation: (audit) => appendTaskEvent(task.taskId, 'answer-presentation', audit),
-          messages: askMessages
+          messages: askMessages,
+          mode: plan.mode
         })
       : { text: '', incomplete: false, repaired: [] }
     if (final.repaired.length)
@@ -2114,6 +2115,7 @@ async function* runAgentInternal(options: {
       messages: workerMessages,
       evidence: sourceReads.map((read) => `${read.path}:\n${read.text}`).join('\n\n'),
       changedFiles: [...filesTouched],
+      mode: plan.mode,
       ...(filesTouched.length
         ? {
             verification: workflow.answerVerification(),
