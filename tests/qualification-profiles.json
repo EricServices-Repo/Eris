@@ -245,7 +245,8 @@
       "tests/inference-governor.test.ts",
       "tests/host-memory.test.ts",
       "tests/inference-lease-residency.test.ts",
-      "tests/retrieval-provenance.test.ts"
+      "tests/retrieval-provenance.test.ts",
+      "tests/chat-queue-pause.test.ts"
     ]
   }
 }

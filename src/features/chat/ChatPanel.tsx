@@ -23,6 +23,7 @@ import { useStore } from '@/state/store'
 import { VirtualList } from '@/components/VirtualList'
 import { searchLoadedHistory } from '@/shared/chat-history-search'
 import type { historyView } from '@/shared/chat-history-window'
+import { queuePauseLabel, type QueuePause } from '@/shared/chat-queue'
 
 export type { ToolActivityItem }
 export type ChatMode = 'ask' | 'agent'
@@ -319,6 +320,10 @@ interface Props {
   queuedMessages: QueuedChatMessage[]
   onQueueMessage: (text: string, attachments: ChatAttachment[], skillIds: string[]) => void
   onRemoveQueued: (id: string) => void
+  /** Why queued messages are waiting instead of being sent (#521). */
+  queuePaused?: QueuePause
+  /** Send the oldest queued message after a pause. */
+  onResumeQueue?: () => void
   onAttachmentsChange: (files: ChatAttachment[]) => void
   onActiveSkillsChange: (skills: ActiveSkillRef[]) => void
   onImportFiles: () => void
@@ -525,6 +530,8 @@ export function ChatPanel({
   queuedMessages,
   onQueueMessage,
   onRemoveQueued,
+  queuePaused = null,
+  onResumeQueue,
   onAttachmentsChange,
   onActiveSkillsChange,
   onImportFiles,
@@ -1216,8 +1223,22 @@ export function ChatPanel({
                   <strong>Queued</strong>
                   <span className="subtitle" style={{ margin: 0 }}>
                     {queuedMessages.length}/{MAX_QUEUED_MESSAGES}
-                    {streaming ? ' · sends when current reply finishes' : ''}
+                    {streaming
+                      ? ' · sends when current reply finishes'
+                      : queuePaused
+                        ? ` · ${queuePauseLabel[queuePaused]}`
+                        : ''}
                   </span>
+                  {queuePaused && !streaming && onResumeQueue && (
+                    <button
+                      type="button"
+                      className="btn"
+                      title="Send the first queued message now"
+                      onClick={onResumeQueue}
+                    >
+                      Send next
+                    </button>
+                  )}
                 </div>
                 {queuedMessages.map((q, i) => (
                   <div key={q.id} className="message-queue-item">
