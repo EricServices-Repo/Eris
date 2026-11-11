@@ -152,7 +152,8 @@
         "tests/context-allocation.test.ts",
         "tests/agent-completion-evidence.test.ts",
         "tests/agent-run-command.test.ts",
-        "tests/explicit-run-command.test.ts"
+        "tests/explicit-run-command.test.ts",
+        "tests/llama-abort-ledger.test.ts"
       ],
       "notRun": [
         "live model inference",
