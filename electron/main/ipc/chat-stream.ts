@@ -54,7 +54,7 @@ import {
   resolveUserQuestion,
   USER_QUESTION_TIMEOUT_MS
 } from '../services/user-question'
-import { finalizePostedAnswer } from '../../../src/shared/posted-answer'
+import { finalizePostedAnswer, REVIEWER_UNAVAILABLE } from '../../../src/shared/posted-answer'
 import { taskIntakeBlocked } from '../../../src/shared/task-contract'
 import type { ChatMessage, ChatDelegation, TurnPlan } from '../../../src/shared/settings-schema'
 import { AGENT_HANDOFF_CHARS, summarizeAgentResults } from '../../../src/shared/agent-orchestration'
@@ -1251,17 +1251,23 @@ export function registerChatStreamIpc(): void {
                 getSecret
               })
               publish('chat:outcome', { requestId, ...verdict })
+              // Recorded in every case, so the stored reply keeps what the reviewer said.
               completionEvidence.assessment = {
                 status: verdict.verdict, failure: verdict.failure, reason: verdict.reason
               }
-              if (verdict.verdict !== 'supported') {
+              const reviewerUnavailable =
+                verdict.verdict === 'unresolved' && REVIEWER_UNAVAILABLE.has(verdict.failure ?? '')
+              if (reviewerUnavailable) {
+                // The reviewer did not run to a verdict (most often its 15 s deadline on a
+                // local model). That is not evidence against the answer: the run keeps the
+                // status its own execution and verification earned (#500).
+                appendTaskEvent(requestId, 'outcome-review-unavailable', { failure: verdict.failure })
+              } else if (verdict.verdict !== 'supported') {
+                // A real disagreement marks the run incomplete. The verdict is shown under
+                // the reply from contextResult.completion.assessment, not appended to the
+                // answer text: text in the body is sent back to the model as its own words
+                // on the next turn and was being repeated as a finding (#502).
                 runIncomplete = true
-                flushStreamChunks()
-                publish('chat:answer', {
-                  requestId,
-                  chunk: `${finalAnswer}\n\nOutcome check: ${verdict.verdict}. ${verdict.reason}`,
-                  replace: true
-                })
               }
             }
             if (turnPlan.task) {

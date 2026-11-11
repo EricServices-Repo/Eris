@@ -158,6 +158,21 @@ describe('RAM-CTX-032 admitted recent units', () => {
     expect(compacted.recent.map((m) => m.id)).toEqual(history.map((m) => m.id))
     expect(compactHistory(history, 120).coveredSourceIds).not.toContain('0')
   })
+
+  it('sends stored replies to the model without the host outcome note (#502)', () => {
+    const history = [
+      { id: 'u', role: 'user' as const, content: 'Review todo.js' },
+      {
+        id: 'a',
+        role: 'assistant' as const,
+        content: 'todo.js has no bugs.\n\nOutcome check: unresolved. Semantic assessment timed out; this does not establish whether the implementation succeeded.'
+      },
+      { id: 's', role: 'assistant' as const, content: '_(stopped)_' }
+    ]
+    const compacted = compactHistory(history, 10_000)
+    expect(compacted.recent.map((m) => m.content)).toEqual(['Review todo.js', 'todo.js has no bugs.'])
+    expect(compacted.coveredSourceIds).toEqual(['u', 'a'])
+  })
 })
 
 describe('memory at model boundaries', () => {

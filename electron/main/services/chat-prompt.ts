@@ -1,6 +1,7 @@
 import { modelInputBudget } from '../../../src/shared/model-context'
 import type { AppSettings, ChatPromptInput } from '../../../src/shared/settings-schema'
 import { contractForAgent } from '../../../src/shared/agent-contract'
+import { modelHistoryContent } from '../../../src/shared/posted-answer'
 import {
   allocateContext,
   historyChars,
@@ -54,9 +55,14 @@ export function compactHistory(
   history: ChatPromptInput['history'],
   maxChars: number
 ): { recent: ChatPromptInput['history']; summary: string; coveredSourceIds: string[] } {
-  const messages = history.filter(
-    (message) => message.role === 'user' || message.role === 'assistant'
-  )
+  // Host status notes in stored replies are for the user, not the model (#502). Both
+  // callers go through here, so recall coverage and the prompt see the same text.
+  const messages = history
+    .filter((message) => message.role === 'user' || message.role === 'assistant')
+    .map((message) =>
+      message.role === 'assistant' ? { ...message, content: modelHistoryContent(message.content || '') } : message
+    )
+    .filter((message) => message.role === 'user' || message.content)
   // Reserve space for both sides of the conversation: a long model answer
   // must not evict the user's request that defines what "those changes" means.
   const perMessage = Math.floor(

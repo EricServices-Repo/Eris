@@ -81,3 +81,46 @@ export function finalizePostedAnswer(
   }
   return { content, thinking }
 }
+
+/**
+ * Paragraphs the host appends to an assistant reply for the user: run status, not
+ * something the model said. Stored replies from older builds also carry the outcome
+ * verdict ("Outcome check: …") in their body. Sending any of these back to the model
+ * as its own earlier words makes small models repeat them as if they were findings
+ * (#502), so model history drops them. The user still sees them.
+ */
+const HOST_NOTE_PARAGRAPH =
+  /^(?:Outcome check: (?:partial|unresolved|unsupported|supported)\b|Task result could not be saved\.|Partial response: the request failed before completion\.|Stopped\. Applied changes:|_\((?:stopped|incomplete)\)_\s*$)/
+
+/** Reply text as the model should see it in later turns: host status notes removed. */
+export function modelHistoryContent(content: string): string {
+  return content
+    .split(/\n{2,}/)
+    .filter((paragraph) => !HOST_NOTE_PARAGRAPH.test(paragraph.trim()))
+    .join('\n\n')
+    .trim()
+}
+
+/** Outcome review result worth showing under a reply, or null. */
+export function visibleOutcomeAssessment(
+  assessment: import('./task-contract').TaskCompletionEvidence['assessment'] | undefined
+): { label: string; reason?: string } | null {
+  if (!assessment || assessment.status === 'supported' || assessment.status === 'not-run') return null
+  // A reviewer that could not run says nothing about the answer (#500).
+  if (assessment.status === 'unresolved' && REVIEWER_UNAVAILABLE.has(assessment.failure ?? ''))
+    return null
+  return { label: `Outcome check: ${assessment.status}`, reason: assessment.reason }
+}
+
+/**
+ * Outcome-review failures that mean the reviewer did not produce a judgement. They
+ * are recorded, but neither change the run's status nor appear as a finding (#500).
+ * `reference-unavailable` is absent on purpose: missing evidence stays conservative.
+ */
+export const REVIEWER_UNAVAILABLE: ReadonlySet<string> = new Set([
+  'timeout',
+  'transport-error',
+  'malformed-json',
+  'schema-invalid',
+  'response-limit'
+])

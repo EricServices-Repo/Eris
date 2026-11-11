@@ -17,6 +17,7 @@ import { pathBasename } from '@/shared/paths'
 import { ThinkingBlock, type ToolActivityItem } from './ThinkingBlock'
 import { AnswerFeedback } from './AnswerFeedback'
 import { MarkdownMessage } from './MarkdownMessage'
+import { visibleOutcomeAssessment } from '@/shared/posted-answer'
 import { chatStream } from '@/state/chat-stream'
 import { useStore } from '@/state/store'
 import { VirtualList } from '@/components/VirtualList'
@@ -214,6 +215,7 @@ export const HistoricalMessages = memo(function HistoricalMessages({
               {message.assets?.map((asset) => (
                 <ImageMessage key={asset.id} asset={asset} />
               ))}
+              {message.role === 'assistant' && <OutcomeNote message={message} />}
               {message.role === 'assistant' &&
               (message.thinking ||
                 message.model ||
@@ -445,6 +447,21 @@ function InlineAgentQuestion({
       </form>
       <div className="question-hint">Continues automatically if you don’t reply</div>
     </div>
+  )
+}
+
+/**
+ * The outcome reviewer's finding for a reply, from its stored completion evidence.
+ * Kept out of the answer text so later turns do not feed it back to the model (#502).
+ */
+function OutcomeNote({ message }: { message: ChatMessage }) {
+  const outcome = visibleOutcomeAssessment(message.contextResult?.completion?.assessment)
+  if (!outcome) return null
+  return (
+    <p className="message-outcome" role="note">
+      <strong>{outcome.label}.</strong>
+      {outcome.reason ? ` ${outcome.reason}` : ''}
+    </p>
   )
 }
 

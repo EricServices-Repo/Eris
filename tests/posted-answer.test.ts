@@ -1,4 +1,4 @@
-import { finalizePostedAnswer, upsertTerminalReply } from '../src/shared/posted-answer'
+import { finalizePostedAnswer, modelHistoryContent, upsertTerminalReply, visibleOutcomeAssessment } from '../src/shared/posted-answer'
 import type { ChatMessage, ChatThread } from '../src/shared/settings-schema'
 import { describe, expect, it } from 'vitest'
 import { promoteThinkingToAnswer, stripAnswerFromThinking } from '../src/shared/posted-answer'
@@ -67,4 +67,34 @@ it('finalizes identical durable and visible replies for image-only, stopped and 
     thinking: '— Step'
   })
   expect(finalizePostedAnswer('', '', false, false).content).toContain('ended without a response')
+})
+
+describe('host notes in model history (#502)', () => {
+  it('drops outcome verdicts and status notes but keeps what the model said', () => {
+    const stored =
+      'Added the button to todo.html.\n\nOutcome check: unresolved. Semantic assessment timed out; this does not establish whether the implementation succeeded.'
+    expect(modelHistoryContent(stored)).toBe('Added the button to todo.html.')
+    expect(modelHistoryContent('Partial work.\n\nPartial response: the request failed before completion. Applied changes: a.ts.'))
+      .toBe('Partial work.')
+    expect(modelHistoryContent('Draft.\n\nStopped. Applied changes: a.ts. Remaining work may be incomplete.')).toBe('Draft.')
+    expect(modelHistoryContent('Some text\n\n_(stopped)_')).toBe('Some text')
+    expect(modelHistoryContent('Done.\n\nTask result could not be saved. Applied changes are preserved.')).toBe('Done.')
+  })
+  it('keeps prose that merely mentions an outcome check', () => {
+    const text = 'The outcome check in task-outcome.ts uses a 15 second deadline.'
+    expect(modelHistoryContent(text)).toBe(text)
+  })
+})
+
+describe('visible outcome assessment (#500, #502)', () => {
+  it('shows a real finding and hides a reviewer that did not run', () => {
+    expect(visibleOutcomeAssessment({ status: 'partial', reason: 'Missing date check.' }))
+      .toEqual({ label: 'Outcome check: partial', reason: 'Missing date check.' })
+    expect(visibleOutcomeAssessment({ status: 'unresolved', failure: 'timeout', reason: 'timed out' })).toBeNull()
+    expect(visibleOutcomeAssessment({ status: 'unresolved', failure: 'reference-unavailable', reason: 'gone' }))
+      .toEqual({ label: 'Outcome check: unresolved', reason: 'gone' })
+    expect(visibleOutcomeAssessment({ status: 'supported' })).toBeNull()
+    expect(visibleOutcomeAssessment({ status: 'not-run' })).toBeNull()
+    expect(visibleOutcomeAssessment(undefined)).toBeNull()
+  })
 })
