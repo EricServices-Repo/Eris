@@ -19,6 +19,7 @@ import { routeHeuristic, routeMessage } from './router'
 import { learnedRouteFor, readRoutingCorrections, routingExamples } from './routing-feedback'
 import {
   agentForFollowUp,
+  asksForFileListing,
   ASKS_WHAT_CHANGED,
   IMPLEMENT_VERB,
   asksForCodeDestination,
@@ -203,6 +204,9 @@ function classifyIntentRule(
   // “Run ls -la…”, “Run the command: wc -l a.html | tee n.txt”: an unquoted command
   // line after an explicit run verb (#503). Approval still applies to execution.
   if (explicitRunCommand(t)) return { intent: 'run', rule: 'explicit-command' }
+  // "List the files in this project": answered from a listing, so it needs read
+  // tools; a no-tool answer can only guess the files (#508).
+  if (asksForFileListing(t)) return { intent: 'explore', rule: 'file-listing' }
   if (
     /\b(npm (test|run|start|install)|yarn |pnpm |bun |pytest|cargo test|docker )\b/i.test(t) ||
     // Makefile targets only — not "make a new app/project"

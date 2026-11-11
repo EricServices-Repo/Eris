@@ -173,6 +173,7 @@ import {
 import { isNativeGgufRef, releaseLocalChatSession } from '../builtin-model'
 import { logInfo, logWarn } from '../logger'
 import type { AgentChatMessage, AgentMode, AgentRunnerEvent, ToolCall } from './types'
+import { listingAnswer } from './listing-answer'
 import type { AgentHandoffPacket } from '../../../../src/shared/agent-orchestration'
 import { AgentWorkflow } from './workflow'
 
@@ -2231,6 +2232,14 @@ async function* runAgentInternal(options: {
         yield { type: 'status', text: 'Blocked · recovery exhausted' }
         const changed = [...new Set(filesTouched)]
         const lastFailure = actionLog.filter((entry) => entry.startsWith('Failed')).at(-1)
+        // A listing question already has its answer in the observed listing (#508).
+        const listed = workflow.listingObserved()
+          ? listingAnswer(lastTreeResult, 'The run stopped early; this list is the directory listing it observed.')
+          : null
+        if (listed) {
+          yield { type: 'answer', text: listed, replace: true }
+          return
+        }
         yield {
           type: 'answer',
           text:
@@ -2515,7 +2524,11 @@ async function* runAgentInternal(options: {
             args: { path: '.', maxDepth: 3 },
             raw: ''
           })
-          noteObservation({ name: 'tree', args: { path: '.', maxDepth: 3 }, raw: '' }, treeResult)
+          const treeCall: ToolCall = { id, name: 'tree', args: { path: '.', maxDepth: 3 }, raw: '' }
+          noteObservation(treeCall, treeResult)
+          // This listing is workspace evidence like any model-issued tool call (#508).
+          workflow.noteTool({ ...treeResult, name: 'tree' })
+          yield { type: 'evidence', evidence: gateway.record(`${task.taskId}:${id}`, treeCall, treeResult) }
           lastTreeResult = treeResult.detail
           lastInspectResult = treeResult.detail
           inspectRounds++
@@ -2778,9 +2791,13 @@ async function* runAgentInternal(options: {
           if (goalRejectCount >= MAX_GOAL_REJECTS) {
             workflow.block(unmetReason || 'The requested outcome was not achieved.')
             const workerNote = stripToolBlocks(assistantText).trim()
+            const listed = workflow.listingObserved()
+              ? listingAnswer(lastTreeResult, `The run stopped early (${unmetReason}); this list is the directory listing it observed.`)
+              : null
             const answer =
+              listed ??
               buildWorkSummary(originalUserGoal, actionLog, workerNote) +
-              `\n\nIncomplete: ${unmetReason}`
+                `\n\nIncomplete: ${unmetReason}`
             yield {
               type: 'progress',
               step,
