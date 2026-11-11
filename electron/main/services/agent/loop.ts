@@ -2601,7 +2601,8 @@ async function* runAgentInternal(options: {
             actions: actionLog,
             describeProject,
             chatReply,
-            verifiedNoop: Boolean(workflow.snapshot().verifiedNoops?.length)
+            verifiedNoop: Boolean(workflow.snapshot().verifiedNoops?.length),
+            commandReported: workflow.commandReported()
           }) ||
           abortedLoop ||
           looksLikeDegenerateLoop(assistantText)
@@ -2645,14 +2646,18 @@ async function* runAgentInternal(options: {
           workerMessages.push(
             lastTreeResult
               ? nudgeContinueWork(
-                  abortedLoop || looksLikeDegenerateLoop(assistantText)
+                  workflow.missingCommand()
+                    ? `The user asked you to run \`${workflow.missingCommand()}\`. Call the run tool with that command now and answer from its output; do not answer from listings or file reads.`
+                    : abortedLoop || looksLikeDegenerateLoop(assistantText)
                     ? 'You got stuck or answered before finishing.'
                     : looksLikeAsksForWorkspaceInfo(assistantText)
                       ? 'Do not ask the user for project structure or files — you already have a listing; read_file/run next.'
                       : 'That reply did not finish the user request.'
                 )
               : nudgeToTools(
-                  looksLikeAsksForWorkspaceInfo(assistantText)
+                  workflow.missingCommand()
+                    ? `The user asked you to run \`${workflow.missingCommand()}\`. Call the run tool with that command now.`
+                    : looksLikeAsksForWorkspaceInfo(assistantText)
                     ? 'Do not ask the user for project structure or files. Inspect the workspace with tools.'
                     : 'You must use tools to finish this request.'
                 )

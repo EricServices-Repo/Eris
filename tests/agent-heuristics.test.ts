@@ -129,3 +129,20 @@ describe('failed follow-up edits (#499)', () => {
       .toEqual([{ path: null, refinement: false }])
   })
 })
+
+describe('run turns that report a command (#503)', () => {
+  const base = { needsTools: true, mutated: false, commandReported: true, actions: ['Ran ls -la'] }
+  it('finishes when the reply reports the output', () => {
+    expect(shouldKeepWorking({ ...base, assistantText: 'I ran `ls -la`: the folder has 3 files.' })).toBe(false)
+  })
+  it('keeps going when the reply promises more tool work', () => {
+    expect(shouldKeepWorking({ ...base, assistantText: "I'll run it again with -R to include subfolders." })).toBe(true)
+    expect(shouldKeepWorking({ ...base, assistantText: 'Let me check the output first, then summarize.' })).toBe(true)
+  })
+  it('keeps going on an empty or tiny reply', () => {
+    expect(shouldKeepWorking({ ...base, assistantText: 'Done.' })).toBe(true)
+  })
+  it('still requires a mutation when no command was run', () => {
+    expect(shouldKeepWorking({ ...base, commandReported: false, assistantText: 'The folder has 3 files.' })).toBe(true)
+  })
+})

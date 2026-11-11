@@ -2,7 +2,7 @@ import type { ChatIntent, TurnPlan } from '../../../../src/shared/settings-schem
 import { asksToImplementChanges } from '../../../../src/shared/agent-contract'
 import { evidenceRequirementFor } from '../../../../src/shared/task-contract'
 import { pathsIn } from '../../../../src/shared/recommendations'
-import { requestTextForIntent } from '../../../../src/shared/task-interpretation'
+import { explicitRunCommand, requestTextForIntent } from '../../../../src/shared/task-interpretation'
 import { requestedCodeTargets, requestedFilesProblem, syntaxCheckable } from './requested-files'
 import type { VerifySkipReason } from '../verify'
 import { SourceReadEvidence, type SourceReadReceipt } from './source-read-evidence'
@@ -22,6 +22,12 @@ export type AgentOutcomeContract = {
    * mutation counts as progress only if it changes at least one of them.
    */
   targetFiles: string[]
+  /**
+   * The literal shell command the user asked to run ("Run ls -la …"), when the
+   * turn is a run request. The turn cannot finish until a `run` call was made
+   * (a denied call counts: the denial is the observable outcome) (#503).
+   */
+  requiredCommand?: string
 }
 
 function sameFile(changed: string, target: string): boolean {
@@ -81,8 +87,15 @@ export function outcomeContractFor(plan: TurnPlan, goal = ''): AgentOutcomeContr
           ['run', 'verify'].includes(plan.intent))),
     requiresMutation,
     requiresVerificationAfterMutation: requiresMutation,
-    targetFiles
+    targetFiles,
+    ...requiredCommandFor(plan, goal)
   }
+}
+
+function requiredCommandFor(plan: TurnPlan, goal: string): { requiredCommand?: string } {
+  if (plan.intent !== 'run' || plan.mode === 'ask') return {}
+  const command = explicitRunCommand(plan.task?.originalText ?? goal)
+  return command ? { requiredCommand: command } : {}
 }
 
 /**
@@ -120,6 +133,19 @@ export class AgentWorkflow {
       throw new Error(`Invalid agent workflow transition: ${this.phase} → ${next}`)
     }
     this.phase = next
+  }
+
+  /**
+   * A run turn that requests no file changes and has made at least one `run`
+   * call: its observed output is what the user asked for.
+   */
+  commandReported(): boolean {
+    return this.contract.intent === 'run' && !this.contract.requiresMutation && this.commandObservations > 0
+  }
+
+  /** The command the user asked to run, while no run call has been made yet. */
+  missingCommand(): string | undefined {
+    return this.commandObservations === 0 ? this.contract.requiredCommand : undefined
   }
 
   noteTool(result: { ok: boolean; mutated: boolean; name?: string; path?: string; previousPath?: string; detail?: string; range?: SourceReadReceipt['range'] }): void {
@@ -244,6 +270,14 @@ export class AgentWorkflow {
                   ? `${codeTargets.join(', ')} could not be verified because project checks are disabled in this run.`
                   : `Run the project's test or typecheck to verify ${codeTargets.join(', ')} before finishing.`
           }
+      }
+    }
+    if (this.missingCommand()) {
+      // A reply that only describes the command ("I'll run ls -la…") or answers
+      // from file reads is not the requested outcome (#503).
+      return {
+        ok: false,
+        reason: `The requested command was not run. Call the run tool with \`${this.contract.requiredCommand}\` and report its output.`
       }
     }
     if (

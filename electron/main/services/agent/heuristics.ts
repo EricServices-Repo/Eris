@@ -272,6 +272,12 @@ export function shouldKeepWorking(opts: {
   chatReply?: boolean
   /** The request was confirmed already satisfied from read source (confirm_unchanged). */
   verifiedNoop?: boolean
+  /**
+   * A run turn that asks for no file changes, and a `run` call has been made.
+   * The command's output is the deliverable, so a reply reporting it finishes the
+   * turn. Without this every run turn needed a mutation to stop (#503).
+   */
+  commandReported?: boolean
 }): boolean {
   const {
     needsTools,
@@ -282,7 +288,8 @@ export function shouldKeepWorking(opts: {
     actions = [],
     describeProject = false,
     chatReply = false,
-    verifiedNoop = false
+    verifiedNoop = false,
+    commandReported = false
   } = opts
   if (!needsTools) return false
   if (describeProject) return !projectDescriptionReady(assistantText, actions)
@@ -308,6 +315,12 @@ export function shouldKeepWorking(opts: {
     if (inspectRounds >= 1 || actions.some((a) => /read|verify|run|inspect/i.test(a))) {
       return false
     }
+  }
+
+  if (!mutated && commandReported) {
+    if (parseToolCalls(assistantText).length > 0) return true
+    const note = stripToolBlocks(assistantText).trim()
+    return note.length < 20 || isUnfinishedWorkNarration(note) || promisesToolWork(note)
   }
 
   // A verified no-op may finish without a mutation; a cosmetic edit is not required.

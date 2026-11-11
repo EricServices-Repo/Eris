@@ -41,6 +41,7 @@ import {
 import { executionPlanFor } from './execution-plan'
 import {
   COMMAND_OPERAND,
+  explicitRunCommand,
   effectConstraints,
   isQuotedContentOnly,
   providedReviewOperands,
@@ -194,9 +195,12 @@ function classifyIntentRule(
 
   // “Run `npm test`”: the unquoted verb binds the quoted command as its operand.
   if (
-    new RegExp(`\\b(?:run|execute)\\s+(?:the\\s+)?(?:command\\s+)?${COMMAND_OPERAND}`, 'i').test(t)
+    new RegExp(`\\b(?:run|execute)\\s+(?:the\\s+)?(?:command\\s*:?\\s*)?${COMMAND_OPERAND}`, 'i').test(t)
   )
     return { intent: 'run', rule: 'quoted-command' }
+  // “Run ls -la…”, “Run the command: wc -l a.html | tee n.txt”: an unquoted command
+  // line after an explicit run verb (#503). Approval still applies to execution.
+  if (explicitRunCommand(t)) return { intent: 'run', rule: 'explicit-command' }
   if (
     /\b(npm (test|run|start|install)|yarn |pnpm |bun |pytest|cargo test|docker )\b/i.test(t) ||
     // Makefile targets only — not "make a new app/project"
