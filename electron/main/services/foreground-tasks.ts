@@ -2,6 +2,9 @@ import { runWithChatActivity } from './chat-activity'
 import { chatPublisher, type ChatEventTarget } from './chat-events'
 import type { TaskPhaseEvent } from '../../../src/shared/task-timeline'
 import { recordChatJobEvent } from './chat-job-controller'
+import { logWarn } from './logger'
+/** How long a stopped task may keep unwinding before the next task is admitted (#519). */
+export const STOP_GRACE_MS = 15_000
 type QueueState = {
   id: string
   phase: 'queued' | 'admitted'
@@ -16,9 +19,12 @@ export class ForegroundTasks {
   >()
   private tail: Promise<void> = Promise.resolve()
   private closing = false
+  /** Stopped tasks that overran the grace period and still run in the background. */
+  private detached = new Set<string>()
   constructor(
     private observe?: (state: QueueState) => void,
-    private phase?: (id: string, event: TaskPhaseEvent, owner: unknown) => void
+    private phase?: (id: string, event: TaskPhaseEvent, owner: unknown) => void,
+    private options: { stopGraceMs?: number; onDetached?: (id: string) => void } = {}
   ) {}
   private notify() {
     const running = [...this.tasks].find(([, t]) => t.running)?.[0] ?? null
@@ -71,16 +77,63 @@ export class ForegroundTasks {
         throw Object.assign(new Error('Queued task cancelled'), { name: 'AbortError' })
       this.tasks.get(id)!.running = true
       this.notify()
-      return await runWithChatActivity(
-        id,
-        (event) => this.phase?.(id, event, owner),
-        () => work(controller)
+      return await this.runUntilStoppedOrDone(id, controller, () =>
+        runWithChatActivity(
+          id,
+          (event) => this.phase?.(id, event, owner),
+          () => work(controller)
+        )
       )
     } finally {
       controller.signal.removeEventListener('abort', cancel)
       this.tasks.delete(id)
       release()
       this.notify()
+    }
+  }
+  /**
+   * Run admitted work. Once the task is stopped it gets `stopGraceMs` to return;
+   * after that it is detached: the queue is released so the next chat can start,
+   * and the work keeps unwinding in the background (#519).
+   *
+   * Only a stop (abort) starts the grace timer. A task that is never stopped is
+   * never detached, however long it runs.
+   */
+  private async runUntilStoppedOrDone<T>(
+    id: string,
+    controller: AbortController,
+    start: () => Promise<T>
+  ): Promise<T> {
+    const outcome = start()
+    let graceTimer: ReturnType<typeof setTimeout> | undefined
+    let arm: () => void = () => {}
+    const overrun = new Promise<'overrun'>((resolve) => {
+      arm = () => {
+        graceTimer = setTimeout(() => resolve('overrun'), this.options.stopGraceMs ?? STOP_GRACE_MS)
+      }
+      if (controller.signal.aborted) arm()
+      else controller.signal.addEventListener('abort', arm, { once: true })
+    })
+    const settled = outcome.then((value) => ({ value }))
+    try {
+      const first = await Promise.race([settled, overrun])
+      if (first !== 'overrun') return first.value
+      // Stopped but not returned. Let the next task start; keep watching this one.
+      this.detached.add(id)
+      // Both promises may still reject; they must not become unhandled rejections.
+      void settled.catch(() => undefined)
+      void outcome.catch(() => undefined).finally(() => this.detached.delete(id))
+      try {
+        this.options.onDetached?.(id)
+      } catch {
+        /* observers cannot own the queue */
+      }
+      throw Object.assign(new Error('Stopped. Cleanup is finishing in the background.'), {
+        name: 'AbortError'
+      })
+    } finally {
+      clearTimeout(graceTimer)
+      controller.signal.removeEventListener('abort', arm)
     }
   }
   stop(id: string, owner: unknown) {
@@ -96,6 +149,10 @@ export class ForegroundTasks {
   get size() {
     return this.tasks.size
   }
+  /** Stopped tasks still unwinding after their queue slot was released. */
+  get detachedCount() {
+    return this.detached.size
+  }
 }
 export const foregroundTasks = new ForegroundTasks(
   (state) =>
@@ -110,5 +167,9 @@ export const foregroundTasks = new ForegroundTasks(
           : 'Foreground execution admitted'
     }),
   (id, event, owner) =>
-    chatPublisher(id, () => owner as ChatEventTarget)('chat:phase', { requestId: id, ...event })
+    chatPublisher(id, () => owner as ChatEventTarget)('chat:phase', { requestId: id, ...event }),
+  {
+    onDetached: (id) =>
+      logWarn('Stopped chat task is still unwinding; queue released', { taskId: id })
+  }
 )

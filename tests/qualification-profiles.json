@@ -154,7 +154,8 @@
         "tests/agent-run-command.test.ts",
         "tests/explicit-run-command.test.ts",
         "tests/llama-abort-ledger.test.ts",
-        "tests/worker-abort-ack.test.ts"
+        "tests/worker-abort-ack.test.ts",
+        "tests/foreground-stop-grace.test.ts"
       ],
       "notRun": [
         "live model inference",
