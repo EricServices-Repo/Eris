@@ -76,3 +76,29 @@ export function waitForWorkerMessage<T>(
     if (signal?.aborted) onAbort()
   })
 }
+
+/**
+ * Wait until the worker reports that a job has ended (#518). `subscribe` receives
+ * the callback to call on the job's terminal message; it may call it at once.
+ * Resolves true when the job ended, false when `timeoutMs` passed first. A late
+ * end after the timeout does nothing.
+ */
+export function waitForJobEnd(
+  subscribe: (onEnd: () => void) => void,
+  timeoutMs: number
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      resolve(false)
+    }, timeoutMs)
+    subscribe(() => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(true)
+    })
+  })
+}

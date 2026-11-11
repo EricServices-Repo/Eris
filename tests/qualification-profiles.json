@@ -152,7 +152,10 @@
         "tests/context-allocation.test.ts",
         "tests/agent-completion-evidence.test.ts",
         "tests/agent-run-command.test.ts",
-        "tests/explicit-run-command.test.ts"
+        "tests/explicit-run-command.test.ts",
+        "tests/llama-abort-ledger.test.ts",
+        "tests/worker-abort-ack.test.ts",
+        "tests/foreground-stop-grace.test.ts"
       ],
       "notRun": [
         "live model inference",
@@ -242,7 +245,8 @@
       "tests/inference-governor.test.ts",
       "tests/host-memory.test.ts",
       "tests/inference-lease-residency.test.ts",
-      "tests/retrieval-provenance.test.ts"
+      "tests/retrieval-provenance.test.ts",
+      "tests/chat-queue-pause.test.ts"
     ]
   }
 }

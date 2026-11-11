@@ -3,6 +3,7 @@
  * All load/chat work is serialized. Job sessions keep KV warm across agent steps.
  */
 
+import { createAbortLedger } from './services/llama-abort-ledger'
 import { allocationFacts, createContextWithVramFallback, placeModel } from './services/vram-fit'
 import {
   messagesToLlamaHistory,
@@ -61,7 +62,8 @@ let requestedContextSize = 0
 let loadedContextSize = 4096
 let contextMin = 4096
 let contextMax = 16384
-const abortControllers = new Map<string, AbortController>()
+/** Chat job cancellation; remembers aborts that arrive before a job starts (#517). */
+const aborts = createAbortLedger()
 /** Per-chat-run sessions — keep KV cache warm across tool steps. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const jobSessions = new Map<string, { session: any; sequence: any }>()
@@ -112,8 +114,7 @@ async function disposeContextOnly(): Promise<void> {
 }
 
 async function disposeAll(): Promise<void> {
-  for (const ac of abortControllers.values()) ac.abort()
-  abortControllers.clear()
+  aborts.abortAll()
   await disposeContextOnly()
   try {
     await model?.dispose?.()
@@ -448,13 +449,17 @@ async function handleChat(msg: {
   maxTokens: number
   jsonSchema?: Record<string, unknown>
 }): Promise<void> {
+  // Claim the job first: an abort received while it waited in the queue wins (#517).
+  const ac = aborts.start(msg.id)
+  if (!ac) {
+    post({ type: 'error', id: msg.id, error: 'Aborted' })
+    return
+  }
   if (!model) {
+    aborts.finish(msg.id)
     post({ type: 'error', id: msg.id, error: 'Model not loaded' })
     return
   }
-
-  const ac = new AbortController()
-  abortControllers.set(msg.id, ac)
 
   try {
     const run = () =>
@@ -495,7 +500,7 @@ async function handleChat(msg: {
       post({ type: 'error', id: msg.id, error: message })
     }
   } finally {
-    abortControllers.delete(msg.id)
+    aborts.finish(msg.id)
   }
 }
 
@@ -509,13 +514,17 @@ async function handleChatTurn(msg: {
   maxTokens: number
   jsonSchema?: Record<string, unknown>
 }): Promise<void> {
+  // Claim the job first: an abort received while it waited in the queue wins (#517).
+  const ac = aborts.start(msg.id)
+  if (!ac) {
+    post({ type: 'error', id: msg.id, error: 'Aborted' })
+    return
+  }
   if (!model) {
+    aborts.finish(msg.id)
     post({ type: 'error', id: msg.id, error: 'Model not loaded' })
     return
   }
-
-  const ac = new AbortController()
-  abortControllers.set(msg.id, ac)
 
   try {
     const run = () =>
@@ -567,7 +576,7 @@ async function handleChatTurn(msg: {
       post({ type: 'error', id: msg.id, error: message })
     }
   } finally {
-    abortControllers.delete(msg.id)
+    aborts.finish(msg.id)
   }
 }
 
@@ -599,7 +608,7 @@ function onMessage(raw: Incoming): void {
       })
       break
     case 'abort': {
-      abortControllers.get(raw.id)?.abort()
+      aborts.abort(raw.id)
       break
     }
     // Not queued: tokenizing does not use the context, so it must not wait for a reply.

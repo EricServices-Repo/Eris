@@ -42,6 +42,7 @@ import {
 } from '@/state/chat-stream'
 import { snapshotTab } from '@/state/documents'
 import { mergeChatTail } from '@/shared/chat-pages'
+import { nextQueueAction, type QueuePause } from '@/shared/chat-queue'
 
 function latestUserMessageId(messages: readonly ChatMessage[]): string | undefined {
   for (let i = messages.length - 1; i >= 0; i--)
@@ -167,6 +168,10 @@ export function useChatSession({
   const paintRaf = useRef(0)
   /** Set when user clicks Stop — unlock UI immediately and skip queue drain. */
   const userStoppedRef = useRef(false)
+  /** The last reply ended with chat:error; the queue waits for "Send next" (#521). */
+  const lastTerminalWasErrorRef = useRef(false)
+  /** Why queued messages are not being sent automatically, if they are not (#521). */
+  const [queuePaused, setQueuePaused] = useState<QueuePause>(null)
   const changedFiles = useRef(new Set<string>())
 
   const selectedLocalModelReady =
@@ -364,6 +369,7 @@ export function useChatSession({
 
   const newChat = useCallback(async () => {
     setMessageQueue([])
+    setQueuePaused(null)
     const model = selectedModel || settings?.models.defaultModel || ''
     const thread = await window.ide.createChat(model)
     await refreshChats(thread.id)
@@ -407,6 +413,8 @@ export function useChatSession({
         return
       }
       setChatError(null)
+      setQueuePaused(null)
+      lastTerminalWasErrorRef.current = false
       changedFiles.current.clear()
       thinkingAcc.current = ''
       answerAcc.current = ''
@@ -705,17 +713,38 @@ export function useChatSession({
     const justFinished = wasStreamingRef.current && !streaming
     wasStreamingRef.current = streaming
     if (!justFinished) return
-    if (userStoppedRef.current) {
-      userStoppedRef.current = false
-      return
-    }
     const q = messageQueueRef.current
-    if (q.length === 0) return
+    const action = nextQueueAction({
+      stopped: userStoppedRef.current,
+      errored: lastTerminalWasErrorRef.current,
+      queued: q.length
+    })
+    userStoppedRef.current = false
+    lastTerminalWasErrorRef.current = false
+    // After Stop or an error the queue waits, and says why, until "Send next" (#521).
+    if (action === 'pause-stopped') setQueuePaused('stopped')
+    else if (action === 'pause-error') setQueuePaused('error')
+    if (action !== 'drain') return
     const [next, ...rest] = q
     messageQueueRef.current = rest
     setMessageQueue(rest)
     void sendMessage(next!.text, next!.attachments, next!.skillIds)
   }, [streaming, sendMessage])
+
+  /** Send the oldest queued message after the queue paused on Stop or an error. */
+  const resumeQueue = useCallback(() => {
+    setQueuePaused(null)
+    const [next, ...rest] = messageQueueRef.current
+    if (!next || streaming) return
+    messageQueueRef.current = rest
+    setMessageQueue(rest)
+    void sendMessage(next.text, next.attachments, next.skillIds)
+  }, [sendMessage, streaming])
+
+  // An emptied queue has nothing to resume.
+  useEffect(() => {
+    if (messageQueue.length === 0) setQueuePaused(null)
+  }, [messageQueue.length])
 
   useEffect(() => {
     const offAsset = window.ide.onChatAsset(({ requestId, asset }) => {
@@ -932,10 +961,18 @@ export function useChatSession({
         }
       }, 400)
     })
-    const offPhase = window.ide.onChatPhase(({ requestId, phase }) => {
+    const offPhase = window.ide.onChatPhase(({ requestId, phase, reason, queuePosition }) => {
       if (requestId !== requestIdRef.current) return
       typedPhaseRequestRef.current = requestId
-      setAgentStatus(taskPhaseLabels[phase])
+      // A chat waiting behind another task (or one still unwinding after Stop)
+      // says so, instead of "Working…" (#520).
+      setAgentStatus(
+        phase === 'queued'
+          ? `Queued${queuePosition ? ` (#${queuePosition})` : ''} · finishing the previous task…`
+          : reason && (phase === 'loading' || phase === 'prefill')
+            ? `${taskPhaseLabels[phase]} · ${reason}`
+            : taskPhaseLabels[phase]
+      )
     })
     const offStatus = window.ide.onChatStatus(({ requestId, text }) => {
       if (requestId !== requestIdRef.current) return
@@ -1000,6 +1037,7 @@ export function useChatSession({
       completedRequestsRef.current.add(requestId)
       if (completedRequestsRef.current.size > 200)
         completedRequestsRef.current.delete(completedRequestsRef.current.values().next().value!)
+      lastTerminalWasErrorRef.current = false
       if (paintRaf.current) {
         cancelAnimationFrame(paintRaf.current)
         paintRaf.current = 0
@@ -1049,6 +1087,7 @@ export function useChatSession({
       if (requestId !== requestIdRef.current && requestId !== lastRequestIdRef.current) return
       if (completedRequestsRef.current.has(requestId)) return
       completedRequestsRef.current.add(requestId)
+      lastTerminalWasErrorRef.current = true
       if (completedRequestsRef.current.size > 200)
         completedRequestsRef.current.delete(completedRequestsRef.current.values().next().value!)
       if (paintRaf.current) { cancelAnimationFrame(paintRaf.current); paintRaf.current = 0 }
@@ -1148,6 +1187,8 @@ export function useChatSession({
     setChatMode,
     messageQueue,
     setMessageQueue,
+    queuePaused,
+    resumeQueue,
     pendingDiffs,
     setPendingDiffs,
     activeCheckpointId,

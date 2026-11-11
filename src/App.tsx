@@ -348,6 +348,8 @@ export default function App() {
     setChatMode,
     messageQueue,
     setMessageQueue,
+    queuePaused,
+    resumeQueue,
     pendingDiffs,
     setPendingDiffs,
     sendMessage,
@@ -1056,6 +1058,8 @@ export default function App() {
                       return [...prev, { id: uid(), text, attachments: files, skillIds }]
                     })
                   }}
+                  queuePaused={queuePaused}
+                  onResumeQueue={resumeQueue}
                   onRemoveQueued={(id) =>
                     setMessageQueue((prev) => prev.filter((q) => q.id !== id))
                   }

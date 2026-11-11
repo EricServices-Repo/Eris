@@ -942,7 +942,7 @@ export function registerChatStreamIpc(): void {
                   reason: 'Waiting for delegated agents'
                 })
                 while (Date.now() < deadline) {
-                  if (appState.chatAbort?.signal.aborted) {
+                  if (controller.signal.aborted) {
                     publishDelegations()
                     return { ok: false, detail: 'Aborted while waiting for children' }
                   }
@@ -981,7 +981,7 @@ export function registerChatStreamIpc(): void {
                   requestId,
                   kind,
                   command,
-                  appState.chatAbort?.signal
+                  controller.signal
                 )
                 publish('chat:phase', {
                   requestId,
@@ -1016,7 +1016,7 @@ export function registerChatStreamIpc(): void {
                   requestId,
                   'mcp',
                   preview,
-                  appState.chatAbort?.signal,
+                  controller.signal,
                   { toolName, canAlwaysAllow: false }
                 )
                 publish('chat:phase', {
@@ -1033,7 +1033,7 @@ export function registerChatStreamIpc(): void {
                 const outcome = await requestUserQuestion(chatSender(), requestId, question, {
                   choices,
                   timeoutMs: USER_QUESTION_TIMEOUT_MS,
-                  signal: appState.chatAbort?.signal
+                  signal: controller.signal
                 })
                 workingState?.question(question, outcome.kind === 'reply')
                 logInfo('User question', {

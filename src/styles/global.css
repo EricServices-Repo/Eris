@@ -1319,6 +1319,11 @@ select:focus {
   border-bottom: 1px solid var(--border);
   font-size: 12px;
 }
+.message-queue-head .btn {
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 12px;
+}
 
 .message-queue-item {
   display: flex;

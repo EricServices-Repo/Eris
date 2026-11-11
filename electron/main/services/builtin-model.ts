@@ -2,6 +2,7 @@ import { discoverNativeContextWindow, nativeContextWindow } from './native-conte
 import { inferenceDevice } from './inference-device'
 import {
   LocalModelWorkerError,
+  waitForJobEnd,
   waitForWorkerMessage,
   watchWorkerSilence
 } from './llama-worker-channel'
@@ -68,6 +69,12 @@ import { acquireInferenceLease } from './inference-governor'
 type LlamaModule = typeof import('node-llama-cpp')
 
 const MAX_GGUF_STRING = 16 * 1024 * 1024
+/**
+ * How long a stopped local step waits for the worker to confirm that its job
+ * ended before the GPU lease is returned. A worker that does not confirm is
+ * retired (#518).
+ */
+const WORKER_ABORT_ACK_MS = 5_000
 const MAX_GGUF_ARRAY = 2_000_000
 
 function formatApproxSize(bytes: number): string {
@@ -1441,6 +1448,11 @@ async function* streamBuiltinChatViaWorker(options: {
   const id = `chat-${++chatSeq}`
   const queue: string[] = []
   let done = false
+  /** A chat job was sent to the worker. */
+  let posted = false
+  /** The worker reported done or error for this id, or exited (#518). */
+  let workerEnded = false
+  let ackWaiter: (() => void) | null = null
   let termination: ModelTermination | undefined
   let caughtError: string | null = null
   let notify: (() => void) | null = null
@@ -1469,7 +1481,13 @@ async function* streamBuiltinChatViaWorker(options: {
         ? (raw as { data: WorkerMsg }).data
         : raw
     ) as WorkerMsg
-    if (done || msg.id !== id) return
+    if (msg.id !== id) return
+    // Terminal messages are observed even after an abort, so the lease can wait for them.
+    if (msg.type === 'done' || msg.type === 'error') {
+      workerEnded = true
+      ackWaiter?.()
+    }
+    if (done) return
     if (msg.type === 'chunk' && msg.text) {
       firstChunkAt ??= performance.now()
       watchdog.chunk()
@@ -1488,6 +1506,9 @@ async function* streamBuiltinChatViaWorker(options: {
   }
 
   const onFailure = (detail: unknown) => {
+    // A worker that exits or fails has ended every job it held.
+    workerEnded = true
+    ackWaiter?.()
     if (done) return
     caughtError = `Local model worker exited or failed (${String(detail ?? 'unknown')})`
     done = true
@@ -1523,6 +1544,7 @@ async function* streamBuiltinChatViaWorker(options: {
         maxTokens: options.maxOutputTokens ?? REPLY_MAX_TOKENS,
         jsonSchema: options.jsonSchema
       })
+      posted = true
     } else {
       postToWorker({
         type: 'chat',
@@ -1532,6 +1554,7 @@ async function* streamBuiltinChatViaWorker(options: {
         maxTokens: options.maxOutputTokens ?? REPLY_MAX_TOKENS,
         jsonSchema: options.jsonSchema
       })
+      posted = true
     }
 
     while (!done || queue.length > 0) {
@@ -1583,6 +1606,29 @@ async function* streamBuiltinChatViaWorker(options: {
       ...(timedOut ? { timedOut } : {})
     })
     options.signal?.removeEventListener('abort', onAbort)
+    // The exclusive GPU lease is released when this generator returns. Before that,
+    // make sure the worker's job for this id has actually ended (#518): after an
+    // abort, or when the consumer stopped iterating early, the worker may still be
+    // generating. No wait when no job was posted (abort during load), or when the
+    // silence watchdog fired (that path retires the worker below).
+    if (posted && !workerEnded && !timedOut) {
+      try {
+        // Idempotent; covers a consumer that stopped iterating without aborting.
+        child.postMessage({ type: 'abort', id })
+      } catch {
+        /* the worker may already have exited */
+      }
+      const acked = await waitForJobEnd((onEnd) => {
+        ackWaiter = onEnd
+      }, WORKER_ABORT_ACK_MS)
+      ackWaiter = null
+      if (!acked && llamaChild === child) {
+        logWarn('Local model worker did not confirm an aborted job; retiring it', {
+          model: options.modelRef
+        })
+        await disposeRuntime()
+      }
+    }
     try {
       child.removeListener?.('message', onMsg)
       child.removeListener?.('exit', onFailure)
