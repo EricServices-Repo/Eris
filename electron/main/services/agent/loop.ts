@@ -2113,7 +2113,13 @@ async function* runAgentInternal(options: {
       onPresentation: (audit) => appendTaskEvent(task.taskId, 'answer-presentation', audit),
       messages: workerMessages,
       evidence: sourceReads.map((read) => `${read.path}:\n${read.text}`).join('\n\n'),
-      changedFiles: [...filesTouched]
+      changedFiles: [...filesTouched],
+      ...(filesTouched.length
+        ? {
+            verification: workflow.answerVerification(),
+            verificationNoted: Boolean(workflow.verificationNote())
+          }
+        : {})
     })
     if (final.repaired.length)
       appendTaskEvent(task.taskId, 'final-answer-repaired', { repairs: final.repaired })

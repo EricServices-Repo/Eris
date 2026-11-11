@@ -3,6 +3,7 @@ import { extname, relative, resolve } from 'path'
 import ts from 'typescript'
 import type { TaskContract } from '../../../../src/shared/task-contract'
 import { isPathInside } from '../workspace-fs'
+import { cssProblem, htmlProblem } from './markup-check'
 
 const CODE_TARGET = /\.(?:[cm]?[jt]sx?|json|php|py|rs|go|java|cs|cpp|c|h)$/i
 
@@ -17,7 +18,7 @@ export function requestedCodeTargets(task: TaskContract): string[] {
 
 /** Files `artifactProblem` can actually parse. Other code files get no structural check. */
 export function syntaxCheckable(path: string): boolean {
-  return /\.(?:json|[cm]?[jt]sx?)$/i.test(path)
+  return /\.(?:json|[cm]?[jt]sx?|html?|css)$/i.test(path)
 }
 
 /** Bounded parsing only: never evaluate generated code or invoke a host command. */
@@ -47,6 +48,16 @@ export function artifactProblem(path: string, text: string): string | null {
       (body.statements.length === 1 && ts.isThrowStatement(body.statements[0]!) &&
         marker.test(body.statements[0]!.getText(source))))
     if (implementations.length && implementations.every(stub)) return 'explicit placeholder implementation'
+  }
+  // HTML and CSS get a bounded structure check (#509): a duplicated or broken
+  // element must not be reported as a correct edit.
+  if (extension === '.html' || extension === '.htm') {
+    const problem = htmlProblem(text)
+    if (problem) return `broken HTML: ${problem}`
+  }
+  if (extension === '.css') {
+    const problem = cssProblem(text)
+    if (problem) return `broken CSS: ${problem}`
   }
   if (extension === '.php' && !text.replace(/<\?(?:php)?|\?>|^\s*(?:\/\/|#)[^\n]*|\/\*[\s\S]*?\*\//gm, '').trim())
     return 'empty PHP implementation'

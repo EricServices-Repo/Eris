@@ -214,6 +214,12 @@ export class AgentWorkflow {
     this.verificationSkip = result === 'skipped' ? skipReason : undefined
   }
 
+  /** Verification state for the final answer's claim guard (#509). */
+  answerVerification(): 'passed' | 'failed' | 'skipped' | 'no-check' | 'not-run' {
+    if (this.projectHasNoCheck()) return 'no-check'
+    return this.verification
+  }
+
   /** True when verification ran out of options: the project has nothing that checks code. */
   private projectHasNoCheck(): boolean {
     return (

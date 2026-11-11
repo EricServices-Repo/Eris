@@ -229,7 +229,10 @@ export function intentPlaybook(
       return (
         `EDIT PLAYBOOK — (1) retrieve/grep to find the right files, (2) read_file, ` +
         `(3) search_replace or write_file, (4) verify with run, limited to test, typecheck, or lint commands, (5) fix failures, ` +
-        `(6) DONE summary of what changed. Keep using tools until the request is fully done.`
+        `(6) DONE summary of what changed. Keep using tools until the request is fully done. ` +
+        // #509: a second footer was added inside an existing one.
+        `Before adding an element, read the file and check whether it already exists. If it does, update it instead of adding a second one. ` +
+        `Do not call a change correct, verified or tested unless a check you ran shows it.`
       )
     case 'run':
       return (

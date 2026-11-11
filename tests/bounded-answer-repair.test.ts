@@ -17,6 +17,7 @@ import {
   finalizeAnswer,
   MAX_REPAIR_CALLS,
   PROTOCOL_BLOCKER,
+  softenUnverifiedClaims,
   unbackedEditClaims
 } from '../electron/main/services/agent/final-answer'
 import { createTaskContract } from '../electron/main/services/task-intake'
@@ -165,4 +166,39 @@ describe('narrated tool calls never reach the user (#506)', () => {
     expect(result.text).toMatch(/throws when b is 0/)
     expect(result.incomplete).toBe(false)
   })
+})
+
+describe('unverified claims (#509)', () => {
+  it('removes quality and verification claims and adds the note', async () => {
+    const result = await finalize(
+      'The hello.html file has been updated with the correct footer. I have verified that it works correctly.',
+      { changedFiles: ['hello.html'], verification: 'no-check' }
+    )
+    expect(result.text).toBe(
+      'The hello.html file has been updated with the footer.\n\nNot verified: this project has no test or typecheck script.'
+    )
+    expect(result.repaired).toContain('unverified-claims-softened')
+  })
+
+  it('leaves the answer alone when verification passed or nothing changed', async () => {
+    const text = 'Updated src/math.ts and verified it with npm test.'
+    expect((await finalize(text, { changedFiles: ['src/math.ts'], verification: 'passed' })).text).toBe(text)
+    expect(softenUnverifiedClaims('Here is how to write a correct footer.')).not.toBeNull()
+    expect((await finalize('Explained the footer markup.', { changedFiles: ['a.html'], verification: 'no-check' })).text).toBe('Explained the footer markup.')
+  })
+
+  it('does not add a second note when the host appends one', async () => {
+    const result = await finalize('Updated hello.html with the correct footer.', {
+      changedFiles: ['hello.html'], verification: 'no-check', verificationNoted: true
+    })
+    expect(result.text).toBe('Updated hello.html with the footer.')
+  })
+
+  it('keeps code blocks unchanged', () => {
+    expect(softenUnverifiedClaims('Done.\n```js\n// verified correctly\n```')).toBeNull()
+  })
+})
+
+it('removes a trailing "and verified" (#509)', () => {
+  expect(softenUnverifiedClaims('Updated hello.html with the correct footer and verified.')).toBe('Updated hello.html with the footer.')
 })

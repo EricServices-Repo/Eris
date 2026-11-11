@@ -77,6 +77,58 @@ export interface FinalAnswerOptions {
    * new work: it may not claim a change outside this list.
    */
   changedFiles?: string[]
+  /**
+   * The project check's state for this task's changes. Anything but 'passed' means
+   * the answer may not call the change correct, verified, tested or working (#509).
+   * 'no-check' is a skip because the project has no test or typecheck script.
+   */
+  verification?: 'passed' | 'failed' | 'skipped' | 'no-check' | 'not-run'
+  /** The host appends its own verification note after the answer; do not add a second one. */
+  verificationNoted?: boolean
+}
+
+const UNVERIFIED_NOTE: Record<Exclude<NonNullable<FinalAnswerOptions['verification']>, 'passed'>, string> = {
+  'no-check': 'Not verified: this project has no test or typecheck script.',
+  skipped: 'Not verified: project checks were skipped in this run.',
+  failed: 'Not verified: the project check did not pass.',
+  'not-run': 'Not verified: no project check was run.'
+}
+
+/** "has been tested", "I verified…", "is working": a sentence that reports a check. */
+const VERIFICATION_CLAIM =
+  /\b(?:(?:has|have|was|were|been|is|are)\s+(?:now\s+)?(?:been\s+)?(?:verified|tested|confirmed|validated)|I\s+(?:have\s+)?(?:verified|tested|confirmed|validated)|(?:is|are)\s+(?:now\s+)?(?:working|functional)\b|works\s+(?:correctly|as\s+expected|properly|fine))\b/i
+/** "the correct footer", "correctly", "properly": a quality judgement nobody checked. */
+const QUALITY_CLAIM =
+  /,?\s+and\s+(?:(?:has|have)\s+been\s+)?(?:verified|tested|confirmed|validated)\b|\s+(?:correctly|properly|successfully)\b|\b(the|a|an)\s+correct\s+/gi
+
+/**
+ * Remove claims that an unverified change is correct, verified, tested or working
+ * (#509). Sentences that only report a check are dropped; quality adjectives are
+ * removed from the rest. Returns null when there was nothing to remove.
+ */
+export function softenUnverifiedClaims(text: string): string | null {
+  // Code blocks are content, not claims.
+  const parts = text.split(/(```[\s\S]*?```)/)
+  let changed = false
+  const out = parts.map((part, index) => {
+    if (index % 2 === 1) return part
+    return part
+      .split(/(?<=[.!?])(?=\s)|(?=\n)/)
+      .map((sentence) => {
+        if (VERIFICATION_CLAIM.test(sentence)) {
+          changed = true
+          return sentence.startsWith('\n') ? '\n' : ''
+        }
+        const softened = sentence.replace(QUALITY_CLAIM, (match, article?: string) =>
+          article ? `${article} ` : ''
+        )
+        if (softened !== sentence) changed = true
+        return softened
+      })
+      .join('')
+  })
+  if (!changed) return null
+  return out.join('').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
 export interface RepairAttempt {
@@ -155,6 +207,16 @@ export async function finalizeAnswer(
   let text = answer
   const digest = (value: string) => createHash('sha256').update(value).digest('hex')
   const finish = (text: string, incomplete: boolean, repaired: string[]) => {
+    // A change nobody checked is reported as made, not as correct or verified (#509).
+    if (options.verification && options.verification !== 'passed' && changes.length) {
+      const softened = softenUnverifiedClaims(text)
+      if (softened) {
+        text = options.verificationNoted
+          ? softened
+          : `${softened}\n\n${UNVERIFIED_NOTE[options.verification]}`
+        repaired = [...repaired, 'unverified-claims-softened']
+      }
+    }
     options.onPresentation?.({
       raw: answer,
       rawDigest: digest(answer),
