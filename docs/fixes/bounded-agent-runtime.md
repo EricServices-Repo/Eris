@@ -1,6 +1,6 @@
 # Elapsed agent execution budget
 
-Settings → Agent exposes `maxRunMinutes` (1–120 minutes, default 15). This elapsed execution budget starts at the production agent-runner boundary and covers all its steps, retries, tools and inline specialists. Nested workers inherit the parent's cancellation signal, so a new child budget cannot extend the parent. Existing step limits and native silence watchdogs remain in effect. Initial chat admission/intake and final semantic assessment have their existing separate limits.
+Settings → Agent exposes `maxRunMinutes` (1–120 minutes, default 15). This elapsed execution budget starts at the production agent-runner boundary and covers all its steps, retries, tools and inline specialists. Nested workers inherit the parent's cancellation signal, so a new child budget cannot extend the parent. Interactive runs continue across any number of productive rounds within the elapsed budget. Evaluations can set their own round limit. The no-progress recovery and native silence watchdogs still detect stalled work. Initial chat admission/intake and final semantic assessment have their existing separate limits.
 
 When the deadline expires, the runner cancels its owned work and returns an incomplete result preserving observed applied paths and any partial answer. User cancellation remains cancellation, not a deadline failure. The chat cancellation path also names recorded applied paths before persisting its stopped reply. No uncertain write is replayed automatically.
 

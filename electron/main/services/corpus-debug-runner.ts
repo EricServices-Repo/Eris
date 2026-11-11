@@ -270,10 +270,6 @@ export async function runCorpusDebug(
   runningAbort = ac
   writeSummary(summary)
   onProgress?.({ type: 'start', summary: { ...summary } })
-  const evalSettings: AppSettings = {
-    ...settings,
-    agent: { ...settings.agent, maxStepsPerRun: maxSteps }
-  }
   try {
     for (let offset = 0; offset < count; offset++) {
       if (ac.signal.aborted) break
@@ -289,7 +285,7 @@ export async function runCorpusDebug(
       const plan = await planChatTurn({
       allowCloudComposer: false,
         workspacePath,
-        settings: evalSettings,
+        settings,
         context: {
           text: question.text,
           fileNames: ['README.md', 'package.json', 'src/catalog.ts'],
@@ -314,7 +310,8 @@ export async function runCorpusDebug(
         task,
         source: 'builtin',
         model: request.model,
-        settings: evalSettings,
+        settings,
+        maxEvaluationSteps: maxSteps,
         getSecret,
         signal: ac.signal,
         turnPlan: plan,

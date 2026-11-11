@@ -55,6 +55,7 @@ export class TaskToolGateway {
   }
   private partialReads = new Set<string>()
   private readHashes = new Map<string, string>()
+  private fullReadHashes = new Map<string, string>()
   constructor(readonly task: TaskContract) {}
   private hash(path: string): string {
     return createHash('sha256').update(readFileSync(path)).digest('hex')
@@ -62,9 +63,15 @@ export class TaskToolGateway {
   rememberRead(path: string, complete = true, sourceDigest?: string): void {
     try {
       const abs = realpathAllowMissing(resolveInWorkspace(this.task.scope.workspaceRoot!, path))
-      this.readHashes.set(abs, sourceDigest ?? this.hash(abs))
-      if (complete) this.partialReads.delete(abs)
-      else this.partialReads.add(abs)
+      const revision = sourceDigest ?? this.hash(abs)
+      this.readHashes.set(abs, revision)
+      if (complete) {
+        this.partialReads.delete(abs)
+        this.fullReadHashes.set(abs, revision)
+      } else {
+        this.partialReads.add(abs)
+        this.fullReadHashes.delete(abs)
+      }
     } catch {
       /* unavailable source */
     }
@@ -76,6 +83,15 @@ export class TaskToolGateway {
       if (!existsSync(abs)) this.readHashes.set(abs, MISSING)
     } catch {
       /* invalid path is reported by the read itself */
+    }
+  }
+  /** Revision from a complete model read, excluding baselines recorded for stale-write checks. */
+  fullReadRevision(path: string): string | undefined {
+    try {
+      const abs = realpathAllowMissing(resolveInWorkspace(this.task.scope.workspaceRoot!, path))
+      return this.fullReadHashes.get(abs)
+    } catch {
+      return undefined
     }
   }
   authorize(workspace: string, call: ToolCall, mcpReadOnly = false): string | null {
@@ -239,6 +255,7 @@ export class TaskToolGateway {
           resolveInWorkspace(this.task.scope.workspaceRoot!, result.path)
         )
         // Preserve a baseline after our own edit so subsequent external changes are detected.
+        this.fullReadHashes.delete(path)
         if (existsSync(path)) this.readHashes.set(path, this.hash(path))
         else this.readHashes.delete(path)
       } catch {

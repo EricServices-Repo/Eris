@@ -998,6 +998,90 @@ describe('chat agent complex smoke test', () => {
     expect(harness.replies).toHaveLength(0)
   })
 
+  it.each([undefined, 10])(
+    'continues productive edits to verification unless an evaluation sets a step limit (%s)',
+    async (maxEvaluationSteps) => {
+      const edits = 65
+      harness.replies.push(
+        ...Array.from({ length: edits }, (_, index) =>
+          JSON.stringify({
+            name: 'write_file',
+            path: `src/module-${index + 1}.ts`,
+            content: `export const moduleNumber = ${index + 1}\n`
+          })
+        ),
+        'DONE: Created 65 numbered TypeScript modules in src and verification passed.'
+      )
+
+      const events = await drain(
+        runAgentWithWorkspaceTools({
+          workspacePath,
+          settings: getDefaults(),
+          maxEvaluationSteps,
+          model: 'builtin:composer-lite',
+          messages: [{ role: 'user', content: 'Create 65 numbered TypeScript modules in src.' }],
+          temperature: 0,
+          getSecret: () => null,
+          mode: 'agent',
+          turnPlan: fullEditPlan(),
+          mcp: 'off'
+        })
+      )
+
+      const writes = events.filter((event) => event.type === 'diff' && event.diff.path.startsWith('src/module-'))
+      expect(writes, lastAnswer(events)).toHaveLength(maxEvaluationSteps ?? edits)
+      if (maxEvaluationSteps !== undefined) {
+        expect(events).toContainEqual({ type: 'status', text: 'Paused · run step budget reached' })
+        expect(lastAnswer(events)).toContain('Evaluation reached its 10-step limit')
+        expect(events).toContainEqual(expect.objectContaining({ type: 'progress', incomplete: true }))
+      } else {
+        expect(readFileSync(join(workspacePath, 'src/module-65.ts'), 'utf8')).toBe(
+          'export const moduleNumber = 65\n'
+        )
+        expect(harness.verifyCalls).toBeGreaterThan(0)
+        expect(events).toContainEqual({ type: 'status', text: 'Done' })
+        expectCompleted(events)
+      }
+    }
+  )
+
+  it('recovers when successful edits and reads keep revisiting the same file states', async () => {
+    const path = 'src/retry.ts'
+    for (let round = 0; round < 20; round++) {
+      const [oldValue, newValue] = round % 2 === 0 ? [3, 4] : [4, 3]
+      harness.replies.push(
+        JSON.stringify({ name: 'read_file', path }),
+        JSON.stringify({
+          name: 'search_replace',
+          path,
+          old_string: `MAX_RETRIES = ${oldValue}`,
+          new_string: `MAX_RETRIES = ${newValue}`
+        })
+      )
+    }
+
+    const events = await drain(
+      runAgentWithWorkspaceTools({
+        workspacePath,
+        settings: getDefaults(),
+        model: 'builtin:composer-lite',
+        messages: [{ role: 'user', content: 'Set MAX_RETRIES to 68 in src/retry.ts.' }],
+        temperature: 0,
+        getSecret: () => null,
+        mode: 'agent',
+        turnPlan: fullEditPlan(),
+        mcp: 'off'
+      })
+    )
+
+    expect(harness.replies.length).toBeGreaterThan(0)
+    expect(events).toContainEqual({ type: 'status', text: 'Recovering the next task step…' })
+    expect(events).toContainEqual({ type: 'status', text: 'Blocked · recovery exhausted' })
+    expect(events).not.toContainEqual({ type: 'status', text: 'Done' })
+    expect(events).toContainEqual(expect.objectContaining({ type: 'progress', incomplete: true }))
+    expect(lastAnswer(events)).toMatch(/src\/retry.ts/)
+  })
+
   it('stops an identical mutating-tool loop and marks the run incomplete', async () => {
     const content = 'loop guard fixture\n'
     const repeatedWrite = JSON.stringify({ name: 'write_file', path: 'loop.txt', content })
@@ -1232,12 +1316,11 @@ it('blocks a model write to another project when the named site is present', asy
     JSON.stringify({ name: 'write_file', path: 'src/retry.ts', content: 'wrong project' }),
     'DONE: Updated the site.'
   )
-  const settings = structuredClone(getDefaults())
-  settings.agent.maxStepsPerRun = 2
   const events = await drain(
     runAgentWithWorkspaceTools({
       workspacePath,
-      settings,
+      settings: getDefaults(),
+      maxEvaluationSteps: 2,
       model: 'builtin:composer-lite',
       messages: [{ role: 'user', content: 'Improve it for the AirBNB website' }],
       temperature: 0,

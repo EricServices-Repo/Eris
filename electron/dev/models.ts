@@ -94,7 +94,6 @@ export async function prepareLiveModel(id: string, context: number) {
   selected.agent.routing.preferCloudComposer = false
   selected.agent.routing.profile = 'local'
   selected.agent.routing.useLlmRouter = false
-  selected.agent.maxStepsPerRun = 10
   selected.evals.useScoresForRouting = false
   const secrets = new CredentialStore(erisRoot, electronVault).readAll()
   // Snapshot credentials for this run; never persist them or return them to the renderer.
@@ -105,7 +104,10 @@ export async function prepareLiveModel(id: string, context: number) {
       : typeof secrets[key] === 'string'
         ? (secrets[key] as string)
         : null
-  const digest = createHash('sha256').update(JSON.stringify(selected)).digest('hex')
-  return { settings: selected, model, getSecret, digest }
+  const maxEvaluationSteps = 10
+  const digest = createHash('sha256')
+    .update(JSON.stringify({ settings: selected, maxEvaluationSteps }))
+    .digest('hex')
+  return { settings: selected, model, getSecret, digest, maxEvaluationSteps }
 }
 export type PreparedLiveModel = Awaited<ReturnType<typeof prepareLiveModel>>

@@ -33,6 +33,28 @@ function setup(files: Record<string, string> = {}) {
 const call = (name: string, args: Record<string, unknown>): ToolCall => ({ name, args, raw: '' })
 
 describe('compare-and-apply against the observed revision (#456)', () => {
+  it('keeps a post-edit write baseline separate from full-read evidence', () => {
+    const path = 'app/index.js'
+    const { root, gateway } = setup({ [path]: 'one\n' })
+    const read = call('read_file', { path })
+    const original = executeTool(root, read)
+    gateway.record('read', read, original)
+    expect(gateway.fullReadRevision(path)).toBe(original.sourceDigest)
+
+    const write = call('write_file', { path, content: 'two\n' })
+    expect(gateway.authorize(root, write)).toBeNull()
+    const applied = executeTool(root, write, gateway.mutationPlan(write))
+    expect(applied.mutated).toBe(true)
+    gateway.record('write', write, applied)
+    expect(gateway.fullReadRevision(path)).toBeUndefined()
+
+    const nextWrite = call('write_file', { path, content: 'three\n' })
+    expect(gateway.authorize(root, nextWrite)).toBeNull()
+    const refreshed = executeTool(root, read)
+    gateway.record('fresh-read', read, refreshed)
+    expect(gateway.fullReadRevision(path)).toBe(refreshed.sourceDigest)
+  })
+
   it('uses the revision the model saw, not the file as it is when the receipt is recorded', () => {
     const { root, gateway } = setup({ 'app/index.js': 'const a = 1\n' })
     const read = call('read_file', { path: 'app/index.js' })

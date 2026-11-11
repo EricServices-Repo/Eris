@@ -332,7 +332,8 @@ describe('Eris-Dev live model runs', () => {
       settings,
       model: 'test-selected-model',
       getSecret: () => 'private-fixture-key',
-      digest: 'fixture'
+      digest: 'fixture',
+      maxEvaluationSteps: 10
     }
   }
   const sse = (content: string) =>
@@ -486,7 +487,6 @@ describe('Eris-Dev live model runs', () => {
 
   it('marks a step-budget stop incomplete rather than treating the summary as a finished answer', async () => {
     const live = liveModel()
-    live.settings.agent.maxStepsPerRun = 10
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => sse('I will fix the code after inspecting it.'))

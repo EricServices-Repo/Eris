@@ -43,7 +43,8 @@ const live = (): PreparedLiveModel => {
     settings,
     model: 'test-selected-model',
     getSecret: () => 'secret-fixture-credential',
-    digest: 'settings-fixture'
+    digest: 'settings-fixture',
+    maxEvaluationSteps: 10
   }
 }
 const input = (index = 0) => ({

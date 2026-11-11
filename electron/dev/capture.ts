@@ -398,6 +398,7 @@ export async function captureQuestion(
           conversationMemory: options.conversationMemory,
           mcp: 'off',
           allowDelegate: false,
+          maxEvaluationSteps: live?.maxEvaluationSteps,
           approveCommand: async () => false,
           approveMcpTool: async () => false
         })) {
