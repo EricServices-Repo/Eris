@@ -105,4 +105,32 @@ describe('#503 run turns', () => {
     expect(result.incomplete).toBe(false)
     expect(result.answer).toMatch(/a\.txt/)
   }, 30_000)
+
+  it('#506: runs a narrated fenced tool call and never posts its JSON', async () => {
+    setWorkspaceTrusted(ws, true)
+    const goal = 'Create hello.html with a heading "Hello" and a button.'
+    state.script.push(
+      call('write_file', { path: 'hello.html', content: '<h1>Hello</h1>\n<button>Click</button>\n' }),
+      'I created hello.html with the heading and the button. Next, I will run a cat command to verify.\n\n```json\n{"name":"run","arguments":{"command":"cat hello.html"}}\n```',
+      'I created hello.html with an <h1>Hello</h1> heading and a button, and checked the file with cat.'
+    )
+    const turnPlan = { ...plan(), intent: 'edit' as const }
+    turnPlan.task = createTaskContract({ workspacePath: ws, text: goal, plan: turnPlan })
+    const events: Array<Record<string, unknown>> = []
+    for await (const event of runAgentWithWorkspaceTools({
+      workspacePath: ws, settings: getDefaults(), model: 'builtin:composer-lite',
+      messages: [{ role: 'user', content: goal }], temperature: 0, getSecret: () => null,
+      mode: 'agent', turnPlan, mcp: 'off'
+    }))
+      events.push(event as Record<string, unknown>)
+    const runs = events.filter(
+      (e) => e.type === 'tool' && (e.tool as { name?: string; status?: string }).name === 'run' &&
+        (e.tool as { status?: string }).status === 'ok'
+    )
+    expect(runs).toHaveLength(1)
+    const answer = events.filter((e) => e.type === 'answer')
+      .reduce((text, e) => (e.replace ? String(e.text) : text + String(e.text)), '')
+    expect(answer).not.toMatch(/"name"\s*:|```json/)
+  }, 30_000)
 })
+

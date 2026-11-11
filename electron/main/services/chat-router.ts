@@ -19,6 +19,7 @@ import { routeHeuristic, routeMessage } from './router'
 import { learnedRouteFor, readRoutingCorrections, routingExamples } from './routing-feedback'
 import {
   agentForFollowUp,
+  asksForFileListing,
   ASKS_WHAT_CHANGED,
   IMPLEMENT_VERB,
   asksForCodeDestination,
@@ -203,6 +204,9 @@ function classifyIntentRule(
   // “Run ls -la…”, “Run the command: wc -l a.html | tee n.txt”: an unquoted command
   // line after an explicit run verb (#503). Approval still applies to execution.
   if (explicitRunCommand(t)) return { intent: 'run', rule: 'explicit-command' }
+  // "List the files in this project": answered from a listing, so it needs read
+  // tools; a no-tool answer can only guess the files (#508).
+  if (asksForFileListing(t)) return { intent: 'explore', rule: 'file-listing' }
   if (
     /\b(npm (test|run|start|install)|yarn |pnpm |bun |pytest|cargo test|docker )\b/i.test(t) ||
     // Makefile targets only — not "make a new app/project"
@@ -881,6 +885,20 @@ export async function planChatTurn(options: {
   // router may choose Reviewer for a coding follow-up even after intent has
   // been corrected to edit; never let that become an edit plan with read-only
   // tools and a prompt that tells the worker not to edit.
+  // #505 safety net: a follow-up override must not turn the message's own edit or
+  // run request into a read intent for a read-only agent. The message keeps its intent
+  // and moves to an editor below. (A user's learned or forced correction is kept.)
+  if (
+    mode === 'agent' &&
+    !forceRoute &&
+    intentNeedsMutation(classifiedIntent) &&
+    !intentNeedsMutation(intent) &&
+    overrides.some((override) => override.startsWith('follow-up:')) &&
+    CEILING_RANK[agent.tools ?? 'edit'] < CEILING_RANK.edit
+  ) {
+    intent = classifiedIntent
+    overrides.push('read-only-follow-up-kept-own-intent')
+  }
   const requiredMutationCeiling = intent === 'run' ? 'full' : 'edit'
   if (
     mode === 'agent' &&

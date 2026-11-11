@@ -1,5 +1,5 @@
 import type { ChatIntent, TurnPlan } from '../../../../src/shared/settings-schema'
-import { asksToImplementChanges } from '../../../../src/shared/agent-contract'
+import { asksForFileListing, asksToImplementChanges } from '../../../../src/shared/agent-contract'
 import { evidenceRequirementFor } from '../../../../src/shared/task-contract'
 import { pathsIn } from '../../../../src/shared/recommendations'
 import { explicitRunCommand, requestTextForIntent } from '../../../../src/shared/task-interpretation'
@@ -28,6 +28,11 @@ export type AgentOutcomeContract = {
    * (a denied call counts: the denial is the observable outcome) (#503).
    */
   requiredCommand?: string
+  /**
+   * The answer is a directory listing ("What files are in this project?"). A
+   * successful tree/list_dir/glob is the evidence; no source read is needed (#508).
+   */
+  listingSatisfies?: boolean
 }
 
 function sameFile(changed: string, target: string): boolean {
@@ -88,7 +93,12 @@ export function outcomeContractFor(plan: TurnPlan, goal = ''): AgentOutcomeContr
     requiresMutation,
     requiresVerificationAfterMutation: requiresMutation,
     targetFiles,
-    ...requiredCommandFor(plan, goal)
+    ...requiredCommandFor(plan, goal),
+    ...(!requiresMutation &&
+    ['explore', 'answer'].includes(plan.intent) &&
+    asksForFileListing(requestTextForIntent(plan.task?.originalText ?? goal))
+      ? { listingSatisfies: true }
+      : {})
   }
 }
 
@@ -109,6 +119,8 @@ export class AgentWorkflow {
   private mutations = 0
   private sourceReads = 0
   private commandObservations = 0
+  /** Successful directory listings (tree, list_dir, glob). */
+  private listings = 0
   private mutatedFiles = new Set<string>()
   private verification: AgentWorkflowSnapshot['verification'] = 'not-run'
   /** Why the last verification was skipped, when it was. */
@@ -143,6 +155,11 @@ export class AgentWorkflow {
     return this.contract.intent === 'run' && !this.contract.requiresMutation && this.commandObservations > 0
   }
 
+  /** A listing task that already has its listing; the answer can be built from it. */
+  listingObserved(): boolean {
+    return Boolean(this.contract.listingSatisfies) && this.listings > 0
+  }
+
   /** The command the user asked to run, while no run call has been made yet. */
   missingCommand(): string | undefined {
     return this.commandObservations === 0 ? this.contract.requiredCommand : undefined
@@ -151,6 +168,7 @@ export class AgentWorkflow {
   noteTool(result: { ok: boolean; mutated: boolean; name?: string; path?: string; previousPath?: string; detail?: string; range?: SourceReadReceipt['range'] }): void {
     this.toolCalls += 1
     if (result.name === 'run') this.commandObservations += 1
+    if (result.ok && ['tree', 'list_dir', 'glob'].includes(result.name ?? '')) this.listings += 1
     if (result.ok) this.successfulToolCalls += 1
     if (result.ok && result.path && result.mutated) this.mutatedFiles.add(result.path)
     if (
@@ -194,6 +212,12 @@ export class AgentWorkflow {
   noteVerification(result: 'passed' | 'failed' | 'skipped', skipReason?: VerifySkipReason): void {
     this.verification = result
     this.verificationSkip = result === 'skipped' ? skipReason : undefined
+  }
+
+  /** Verification state for the final answer's claim guard (#509). */
+  answerVerification(): 'passed' | 'failed' | 'skipped' | 'no-check' | 'not-run' {
+    if (this.projectHasNoCheck()) return 'no-check'
+    return this.verification
   }
 
   /** True when verification ran out of options: the project has nothing that checks code. */
@@ -280,6 +304,8 @@ export class AgentWorkflow {
         reason: `The requested command was not run. Call the run tool with \`${this.contract.requiredCommand}\` and report its output.`
       }
     }
+    // A listing question is answered by the listing itself (#508).
+    if (this.contract.listingSatisfies && this.listings > 0) return { ok: true }
     if (
       this.contract.requiresWorkspaceEvidence &&
       this.successfulToolCalls === 0 &&

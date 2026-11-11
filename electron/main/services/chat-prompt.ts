@@ -1,6 +1,6 @@
 import { modelInputBudget } from '../../../src/shared/model-context'
 import type { AppSettings, ChatPromptInput } from '../../../src/shared/settings-schema'
-import { contractForAgent } from '../../../src/shared/agent-contract'
+import { contractForAgent, READ_ONLY_ROLE_NOTE } from '../../../src/shared/agent-contract'
 import { modelHistoryContent } from '../../../src/shared/posted-answer'
 import {
   allocateContext,
@@ -179,7 +179,8 @@ export function buildChatMessages(
   const roleSteps = !(options.genericScope && agent?.builtin !== false)
   const parts: string[] = [
     contract && roleSteps
-      ? `AGENT CONTRACT — ${contract.name}\nJob: ${contract.job}\nTools: ${contract.tools}. ${contract.doesNot}\nDone when: ${contract.done}`
+      ? `AGENT CONTRACT — ${contract.name}\nJob: ${contract.job}\nTools: ${contract.tools}. ${contract.doesNot}\nDone when: ${contract.done}` +
+        (contract.tools === 'read' && input.mode === 'agent' ? `\n${READ_ONLY_ROLE_NOTE}` : '')
       : '',
     shared.systemPrompt,
     // A chat turn's agent owns the user-facing reply. Delegated children get a

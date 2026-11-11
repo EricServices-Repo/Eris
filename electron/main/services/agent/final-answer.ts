@@ -8,6 +8,8 @@ import { AGENT_HANDOFF_CHARS } from '../../../../src/shared/agent-orchestration'
 import {
   assessDeliverable,
   stripProtocolTail,
+  stripToolCallFences,
+  capabilityDenials,
   deliverableContext
 } from '../../../../src/shared/deliverable-checks'
 import { collectModelText } from './stream'
@@ -76,6 +78,75 @@ export interface FinalAnswerOptions {
    * new work: it may not claim a change outside this list.
    */
   changedFiles?: string[]
+  /**
+   * The project check's state for this task's changes. Anything but 'passed' means
+   * the answer may not call the change correct, verified, tested or working (#509).
+   * 'no-check' is a skip because the project has no test or typecheck script.
+   */
+  verification?: 'passed' | 'failed' | 'skipped' | 'no-check' | 'not-run'
+  /** The host appends its own verification note after the answer; do not add a second one. */
+  verificationNoted?: boolean
+  /** Chat mode. In Agent mode an answer may not claim Eris cannot edit or run (#505). */
+  mode?: 'ask' | 'agent'
+}
+
+/** What a read-only role says instead of "I cannot run commands" (#505). */
+export const ROLE_LIMIT_SENTENCE =
+  'This agent role is read-only, so it did not edit files or run commands. Switch the agent to Composer (or Auto) and send the request again to do that.'
+
+/** Replace capability-denial sentences with the role's limit, once. */
+export function correctCapabilityDenial(text: string): string | null {
+  const denials = capabilityDenials(text)
+  if (!denials.length) return null
+  let out = text
+  denials.forEach((sentence, index) => {
+    out = out.replace(sentence, index === 0 ? ROLE_LIMIT_SENTENCE : '')
+  })
+  return out.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+const UNVERIFIED_NOTE: Record<Exclude<NonNullable<FinalAnswerOptions['verification']>, 'passed'>, string> = {
+  'no-check': 'Not verified: this project has no test or typecheck script.',
+  skipped: 'Not verified: project checks were skipped in this run.',
+  failed: 'Not verified: the project check did not pass.',
+  'not-run': 'Not verified: no project check was run.'
+}
+
+/** "has been tested", "I verified…", "is working": a sentence that reports a check. */
+const VERIFICATION_CLAIM =
+  /\b(?:(?:has|have|was|were|been|is|are)\s+(?:now\s+)?(?:been\s+)?(?:verified|tested|confirmed|validated)|I\s+(?:have\s+)?(?:verified|tested|confirmed|validated)|(?:is|are)\s+(?:now\s+)?(?:working|functional)\b|works\s+(?:correctly|as\s+expected|properly|fine))\b/i
+/** "the correct footer", "correctly", "properly": a quality judgement nobody checked. */
+const QUALITY_CLAIM =
+  /,?\s+and\s+(?:(?:has|have)\s+been\s+)?(?:verified|tested|confirmed|validated)\b|\s+(?:correctly|properly|successfully)\b|\b(the|a|an)\s+correct\s+/gi
+
+/**
+ * Remove claims that an unverified change is correct, verified, tested or working
+ * (#509). Sentences that only report a check are dropped; quality adjectives are
+ * removed from the rest. Returns null when there was nothing to remove.
+ */
+export function softenUnverifiedClaims(text: string): string | null {
+  // Code blocks are content, not claims.
+  const parts = text.split(/(```[\s\S]*?```)/)
+  let changed = false
+  const out = parts.map((part, index) => {
+    if (index % 2 === 1) return part
+    return part
+      .split(/(?<=[.!?])(?=\s)|(?=\n)/)
+      .map((sentence) => {
+        if (VERIFICATION_CLAIM.test(sentence)) {
+          changed = true
+          return sentence.startsWith('\n') ? '\n' : ''
+        }
+        const softened = sentence.replace(QUALITY_CLAIM, (match, article?: string) =>
+          article ? `${article} ` : ''
+        )
+        if (softened !== sentence) changed = true
+        return softened
+      })
+      .join('')
+  })
+  if (!changed) return null
+  return out.join('').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
 export interface RepairAttempt {
@@ -154,6 +225,16 @@ export async function finalizeAnswer(
   let text = answer
   const digest = (value: string) => createHash('sha256').update(value).digest('hex')
   const finish = (text: string, incomplete: boolean, repaired: string[]) => {
+    // A change nobody checked is reported as made, not as correct or verified (#509).
+    if (options.verification && options.verification !== 'passed' && changes.length) {
+      const softened = softenUnverifiedClaims(text)
+      if (softened) {
+        text = options.verificationNoted
+          ? softened
+          : `${softened}\n\n${UNVERIFIED_NOTE[options.verification]}`
+        repaired = [...repaired, 'unverified-claims-softened']
+      }
+    }
     options.onPresentation?.({
       raw: answer,
       rawDigest: digest(answer),
@@ -243,8 +324,28 @@ export async function finalizeAnswer(
         text = again.trim()
         repaired.push('re-answered-from-goal')
       } else {
+        // Never show a raw tool envelope. Keep the rest of the draft, marked
+        // incomplete, when removing the unexecuted call leaves a clean answer (#506).
+        const withoutCalls = stripToolCallFences(text)
+        if (withoutCalls && !protocolProblems(withoutCalls, options.goal, options.task))
+          return finish(withoutCalls, true, [...repaired, 'tool-call-removed'])
         return finish(PROTOCOL_BLOCKER, true, repaired)
       }
+    }
+  }
+
+  // "I cannot run commands" in Agent mode is false: only the role is limited (#505).
+  if (options.mode === 'agent' && capabilityDenials(text).length) {
+    const again = await answerAgain(
+      ' Eris can edit files and run commands in Agent mode. Never say that Eris cannot edit files or run commands. ' +
+        'If this role could not do what was asked, say that this role is read-only and that the user can switch to Composer.'
+    )
+    if (vet('re-answer', again, !capabilityDenials(again).length && !protocolProblems(again, options.goal, options.task))) {
+      text = again.trim()
+      repaired.push('re-answered-capability-denial')
+    } else {
+      text = correctCapabilityDenial(text) ?? text
+      repaired.push('capability-denial-corrected')
     }
   }
 

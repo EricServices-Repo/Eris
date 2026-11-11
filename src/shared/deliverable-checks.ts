@@ -14,6 +14,7 @@ export type DeliverableCheckId =
   | 'unfinished-code'
   | 'refusal'
   | 'clarification-request'
+  | 'capability-denial'
 
 export interface DeliverableCheck {
   id: DeliverableCheckId
@@ -29,6 +30,8 @@ export interface DeliverableAssessment {
 }
 
 export interface DeliverableContext {
+  /** Agent mode has edit and run tools; a reply denying them is wrong (#505). */
+  mode?: 'ask' | 'agent'
   allowToolJson?: boolean
   /** Derived only from the trusted request, never from model prose. */
   protocolExamples?: boolean
@@ -39,9 +42,11 @@ export interface DeliverableContext {
 export function deliverableContext(
   goal: string,
   artifact?: string,
-  language?: string | null
+  language?: string | null,
+  mode?: 'ask' | 'agent'
 ): DeliverableContext {
   return {
+    ...(mode ? { mode } : {}),
     artifact,
     language,
     allowToolJson: /\b(?:json|tool call)\b/i.test(goal),
@@ -50,6 +55,35 @@ export function deliverableContext(
       /\b(?:protocol|tool|USER:|ASSISTANT:|TOOL_RESULT)\b/i.test(goal)
   }
 }
+/**
+ * "I cannot run `ls -la` or execute shell commands", "My capabilities are limited
+ * to reading workspace files": a claim that Eris cannot act. In Agent mode Eris
+ * has edit and run tools; only the role may be limited (#505). A sentence that
+ * names the role's limit ("this role is read-only… switch to Composer") is fine.
+ */
+const CAPABILITY_DENIAL =
+  /\bI\s+(?:cannot|can(?:'|’)?t|am\s+(?:unable|not\s+able)\s+to|do\s+not\s+have\s+(?:the\s+)?(?:ability|access)\s+to|don(?:'|’)t\s+have\s+(?:the\s+)?(?:ability|access)\s+to)\s+(?:directly\s+)?(?:run|execute|edit|modify|change|write\s+to|create|access)\b[^.\n]*\b(?:commands?|shell|terminal|tools?|files?)\b|\bmy\s+capabilities\s+are\s+limited\s+to\s+reading\b/i
+const ROLE_LIMIT = /\b(?:role|read-only|read only|switch|Composer|Auto mode)\b/i
+
+/** Sentences that deny Eris's ability to act, rather than naming a role's limit. */
+export function capabilityDenials(text: string): string[] {
+  // unquoted() keeps offsets, so sentences are found in the masked text (quotes and
+  // examples are not claims) and returned from the original.
+  const masked = unquoted(text)
+  const out: string[] = []
+  const sentence = /[^.!?\n]+(?:[.!?]+|$)/g
+  let match: RegExpExecArray | null
+  while ((match = sentence.exec(masked))) {
+    if (!match[0].trim()) {
+      sentence.lastIndex++
+      continue
+    }
+    if (CAPABILITY_DENIAL.test(match[0]) && !ROLE_LIMIT.test(match[0]))
+      out.push(text.slice(match.index, match.index + match[0].length).trim())
+  }
+  return out
+}
+
 /** Preserve offsets while masking Markdown quotation/example regions. */
 function unquoted(text: string): string {
   let fence = '',
@@ -155,7 +189,10 @@ export function assessDeliverable(
     if (!options.allowToolJson && TOOL_ENVELOPE.test(text))
       checks.push({
         id: 'tool-call-as-answer',
-        severity: TOOL_ENVELOPE.test(exposed) ? 'fail' : 'review',
+        // A registered tool's envelope in the answer is an unexecuted action, fenced or
+        // not ("Next, I will run…" + ```json {"name":"run"…}```, #506). Only a request
+        // about the tool protocol itself keeps a fenced one as an example.
+        severity: TOOL_ENVELOPE.test(exposed) || !options.protocolExamples ? 'fail' : 'review',
         detail: 'A runtime tool call was returned as answer text.'
       })
     if (TOOL_SCHEMA_TALK.test(text))
@@ -201,6 +238,12 @@ export function assessDeliverable(
           : { id: 'refusal', severity: 'review', detail: 'The answer declines the request.' }
       )
   }
+  if (text.trim() && options.mode === 'agent' && capabilityDenials(text).length)
+    checks.push({
+      id: 'capability-denial',
+      severity: 'fail',
+      detail: 'The answer says Eris cannot edit files or run commands; in Agent mode only the role can be limited.'
+    })
   return {
     status: checks.some((check) => check.severity === 'fail')
       ? 'fail'
@@ -217,6 +260,32 @@ export function assessDeliverable(
  * everything from the first protocol marker onward, when real content precedes it.
  * Returns null when nothing usable precedes the leak.
  */
+/**
+ * Remove fenced runtime tool calls and the sentence that announces each one
+ * ("Next, I will run a cat command to verify:") from answer text (#506). Returns
+ * null when nothing was removed or nothing is left.
+ */
+export function stripToolCallFences(text: string): string | null {
+  let removed = false
+  const out = text.replace(
+    /(^|\n)([^\n]*?)\s*`{2,3}(?:json|tool)?\s*([\s\S]*?)`{2,3}/g,
+    (block, lead: string, before: string, body: string) => {
+      if (!TOOL_ENVELOPE.test(body)) return block
+      removed = true
+      // Drop the announcing sentence on the same line; keep earlier sentences.
+      const sentences = before.split(/(?<=[.!?])\s+/)
+      const last = sentences[sentences.length - 1] ?? ''
+      const announces =
+        /\b(?:I(?:'ll|’ll| will| am going to)|let me|next,? I|now I|going to)\b|:\s*$/i.test(last)
+      const kept = (announces ? sentences.slice(0, -1) : sentences).join(' ').trim()
+      return kept ? `${lead}${kept}` : lead
+    }
+  )
+  if (!removed) return null
+  const cleaned = out.replace(/\n{3,}/g, '\n\n').trim()
+  return cleaned || null
+}
+
 export function stripProtocolTail(text: string): string | null {
   const marker = unquoted(text).search(
     /<<<(?:END|TOOL|TOOL_RESULT)\b[^>]*>>>|^\s*(?:USER|ASSISTANT|SYSTEM):\s*$|^\s*TOOL_RESULT\s+\w+:/m

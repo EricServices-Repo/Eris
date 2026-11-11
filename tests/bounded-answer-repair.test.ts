@@ -17,6 +17,8 @@ import {
   finalizeAnswer,
   MAX_REPAIR_CALLS,
   PROTOCOL_BLOCKER,
+  ROLE_LIMIT_SENTENCE,
+  softenUnverifiedClaims,
   unbackedEditClaims
 } from '../electron/main/services/agent/final-answer'
 import { createTaskContract } from '../electron/main/services/task-intake'
@@ -142,5 +144,85 @@ describe('unbackedEditClaims', () => {
     expect(unbackedEditClaims('I modified ./src/math.ts.', ['src/math.ts'])).toEqual([])
     expect(unbackedEditClaims('I changed math.ts.', ['src/math.ts'])).toEqual([])
     expect(unbackedEditClaims('I changed src/other.ts.', ['src/math.ts'])).toEqual(['src/other.ts'])
+  })
+})
+
+describe('narrated tool calls never reach the user (#506)', () => {
+  const draft =
+    'Fixed the divide-by-zero check in src/math.ts. Next, I will run a cat command to verify.\n\n```json\n{"name":"run","arguments":{"command":"cat src/math.ts"}}\n```'
+
+  it('re-answers once, then strips the call and its announcing sentence', async () => {
+    model.replies.push(draft)
+    const result = await finalize(draft, { changedFiles: ['src/math.ts'] })
+    expect(result.text).not.toMatch(/"name"\s*:\s*"run"|```/)
+    expect(result.text).not.toMatch(/Next, I will run/)
+    expect(result.text).toMatch(/^Fixed the divide-by-zero check/)
+    expect(result.incomplete).toBe(true)
+    expect(result.repaired).toContain('tool-call-removed')
+  })
+
+  it('uses a clean re-answer when the model gives one', async () => {
+    model.replies.push('Fixed the divide-by-zero check in src/math.ts: divide now throws when b is 0.')
+    const result = await finalize(draft, { changedFiles: ['src/math.ts'] })
+    expect(result.text).toMatch(/throws when b is 0/)
+    expect(result.incomplete).toBe(false)
+  })
+})
+
+describe('unverified claims (#509)', () => {
+  it('removes quality and verification claims and adds the note', async () => {
+    const result = await finalize(
+      'The hello.html file has been updated with the correct footer. I have verified that it works correctly.',
+      { changedFiles: ['hello.html'], verification: 'no-check' }
+    )
+    expect(result.text).toBe(
+      'The hello.html file has been updated with the footer.\n\nNot verified: this project has no test or typecheck script.'
+    )
+    expect(result.repaired).toContain('unverified-claims-softened')
+  })
+
+  it('leaves the answer alone when verification passed or nothing changed', async () => {
+    const text = 'Updated src/math.ts and verified it with npm test.'
+    expect((await finalize(text, { changedFiles: ['src/math.ts'], verification: 'passed' })).text).toBe(text)
+    expect(softenUnverifiedClaims('Here is how to write a correct footer.')).not.toBeNull()
+    expect((await finalize('Explained the footer markup.', { changedFiles: ['a.html'], verification: 'no-check' })).text).toBe('Explained the footer markup.')
+  })
+
+  it('does not add a second note when the host appends one', async () => {
+    const result = await finalize('Updated hello.html with the correct footer.', {
+      changedFiles: ['hello.html'], verification: 'no-check', verificationNoted: true
+    })
+    expect(result.text).toBe('Updated hello.html with the footer.')
+  })
+
+  it('keeps code blocks unchanged', () => {
+    expect(softenUnverifiedClaims('Done.\n```js\n// verified correctly\n```')).toBeNull()
+  })
+})
+
+it('removes a trailing "and verified" (#509)', () => {
+  expect(softenUnverifiedClaims('Updated hello.html with the correct footer and verified.')).toBe('Updated hello.html with the footer.')
+})
+
+describe('capability denial repair (#505)', () => {
+  const R10 = 'I cannot run `ls -la` or execute shell commands. The project has an index.html file.'
+  it('uses a re-answer that names the role limit', async () => {
+    model.replies.push('This role is read-only, so it did not run the command; switch to Composer to run it. The project has an index.html file.')
+    const result = await finalize(R10, { mode: 'agent' })
+    expect(result.text).toMatch(/^This role is read-only/)
+    expect(result.repaired).toContain('re-answered-capability-denial')
+    const system = model.calls[0]!.messages.map((m) => m.content).join('\n')
+    expect(system).toContain('Never say that Eris cannot edit files or run commands')
+  })
+  it('replaces the denial when the re-answer repeats it', async () => {
+    model.replies.push(R10)
+    const result = await finalize(R10, { mode: 'agent' })
+    expect(result.text).toBe(`${ROLE_LIMIT_SENTENCE} The project has an index.html file.`)
+    expect(result.repaired).toContain('capability-denial-corrected')
+  })
+  it('leaves Ask mode alone', async () => {
+    const result = await finalize(R10, { mode: 'ask' })
+    expect(result.text).toBe(R10)
+    expect(model.calls).toHaveLength(0)
   })
 })

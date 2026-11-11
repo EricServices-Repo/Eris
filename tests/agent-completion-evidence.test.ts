@@ -156,3 +156,27 @@ describe('edits on a project with no test or typecheck script (#499)', () => {
     expect(result.incomplete).toBe(true)
   })
 })
+
+describe('a broken HTML edit is not reported as correct (#509)', () => {
+  const PAGE = '<!DOCTYPE html>\n<html>\n<body>\n<h1>Hello</h1>\n<footer>\n<p>© 2026 Eris</p>\n</footer>\n</body>\n</html>\n'
+
+  it('rejects the duplicated footer once, then finishes after the fix without claiming it is verified', async () => {
+    writeFileSync(join(ws, 'hello.html'), PAGE)
+    state.script.push(
+      call('read_file', { path: 'hello.html' }),
+      call('search_replace', { path: 'hello.html', old_string: '</footer>\n</body>', new_string: '</footer>\n<p>© 2026 Eris</p>\n</footer>\n</body>' }),
+      'The hello.html file has been updated with the correct footer.',
+      call('read_file', { path: 'hello.html' }),
+      call('search_replace', { path: 'hello.html', old_string: '</footer>\n<p>© 2026 Eris</p>\n</footer>', new_string: '</footer>' }),
+      'The hello.html file has been updated with the correct footer and verified.'
+    )
+    const result = await run('Add a footer to hello.html')
+    const thinking = result.events.filter((e) => e.type === 'thinking').map((e) => String(e.text)).join('')
+    expect(thinking).toMatch(/hello\.html: broken HTML: unbalanced <\/footer>/)
+    expect(readFileSync(join(ws, 'hello.html'), 'utf8').match(/<footer>/g)).toHaveLength(1)
+    expect(result.incomplete).toBe(false)
+    expect(result.answer).toMatch(/^The hello\.html file has been updated with the footer\./)
+    expect(result.answer).not.toMatch(/\bcorrect\b|and verified/i)
+    expect(result.answer).toContain('Not verified: this project has no test or typecheck script.')
+  })
+})

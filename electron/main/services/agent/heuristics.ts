@@ -253,8 +253,18 @@ export function pathNeedsProjectVerify(path: string | undefined | null): boolean
 
 /** A promise to inspect files is progress narration, not the requested answer. */
 export function isUnfinishedWorkNarration(text: string): boolean {
-  return /(?:^|\n)\s*(?:I (?:still )?need to (?:read|inspect|check|review|look|gather|examine)|I(?: will| shall|'ll|’ll) (?:now )?(?:read|inspect|check|review|look|gather|examine)|Let me (?:now )?(?:read|inspect|check|review|look|gather|examine))\b/i.test(
-    stripToolBlocks(text).trim()
+  const note = stripToolBlocks(text).trim()
+  if (
+    /(?:^|\n)\s*(?:I (?:still )?need to (?:read|inspect|check|review|look|gather|examine)|I(?: will| shall|'ll|’ll) (?:now )?(?:read|inspect|check|review|look|gather|examine)|Let me (?:now )?(?:read|inspect|check|review|look|gather|examine))\b/i.test(
+      note
+    )
+  )
+    return true
+  // A reply that ends by announcing its next action ("Next, I will run a cat command
+  // to verify", "Let me verify by running…") has not finished (#506).
+  const lastSentence = note.split(/(?<=[.!?])\s+|\n+/).filter((part) => part.trim()).at(-1) ?? ''
+  return /^(?:(?:next|now|then|finally),?\s+)?(?:I(?: will| shall|'ll|’ll| am going to|'m going to|’m going to)|let me)\s+(?:now\s+|also\s+|then\s+)?(?:run|execute|verify|test|check|open|list|call|use|confirm|try|re-?run)\b(?!\s+(?:through|over|past)\b)/i.test(
+    lastSentence.trim()
   )
 }
 

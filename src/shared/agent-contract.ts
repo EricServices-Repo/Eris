@@ -352,6 +352,29 @@ export function asksForWorkspaceInspection(text: string): boolean {
   return /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:review|inspect|audit|examine|check|look\s+at)\s+(?:(?:this|that|these|those|the|my|our|current|existing|source|project)\s+)*(?:files?|pages?|code|codebase|repo(?:sitory)?|workspace|project|folders?|components?|website|site|dashboard|app|application)\b/i.test(text.trim())
 }
 
+/**
+ * "What files are in this project? List them.", "Show me the folder structure":
+ * the directory listing is the answer, not a lead to read source from (#508).
+ * Questions about what files *do* ("which files handle login?") are not listings.
+ */
+export function asksForFileListing(text: string): boolean {
+  const t = text.trim()
+  if (!t) return false
+  if (
+    /\b(?:review|explain|audit|analy[sz]e|summari[sz]e|describe|improve|fix|change|edit|create|add|write|delete|remove|rename|move|handle|implement|define|contain|import|use|reference|call)s?\b/i.test(
+      t.replace(/^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:list|show)\b/i, '')
+    )
+  )
+    return false
+  return (
+    /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:list|show(?:\s+me)?)\s+(?:all\s+(?:of\s+)?)?(?:the\s+)?(?:(?:project|workspace|repo(?:sitory)?|source)\s+)?(?:files|folders|directories|(?:folder|directory|project|file)\s+(?:structure|tree|layout)|tree)\b/i.test(
+      t
+    ) ||
+    /\b(?:what|which)\s+(?:files|folders|directories)\s+(?:are|exist|do\s+(?:we|i)\s+have)\b/i.test(t) ||
+    /\bwhat(?:'s|’s|\s+is)\s+(?:in\s+)?(?:the\s+|this\s+)?(?:folder|directory|project|file)\s+(?:structure|layout|tree)\b/i.test(t)
+  )
+}
+
 /** The user wants recommendations, not permission to implement them. */
 export function asksForRecommendations(text: string): boolean {
   const t = text.trim()
@@ -465,6 +488,14 @@ export function asksWorkspaceQuestion(text: string, fileNames: string[] = []): b
   }
   return fileNames.some((name) => name.trim() && t.toLowerCase().includes(name.toLowerCase()))
 }
+
+/**
+ * Shared instruction for every read-only role (#505). A mis-routed edit or run
+ * request must be answered with the role's limit and the way to switch, never
+ * with a claim that Eris itself cannot edit files or run commands.
+ */
+export const READ_ONLY_ROLE_NOTE =
+  'If the user asks you to change files or run a command, say that this role is read-only and that they can switch to Composer (or Auto) to do it. Never say that Eris cannot edit files or run commands.'
 
 const BY_ID = new Map(CHAT_AGENT_CONTRACTS.map((c) => [c.id, c]))
 

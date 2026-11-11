@@ -1245,6 +1245,7 @@ export function registerChatStreamIpc(): void {
                 task: turnPlan.task,
                 answer: finalAnswer,
                 evidence: outcomeEvidence.items,
+                changes: outcomeEvidence.changes,
                 settings,
                 model: turnPlan.models.chat,
                 signal: controller.signal,

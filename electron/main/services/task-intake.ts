@@ -34,6 +34,7 @@ import {
   asksForCodeDestination,
   asksWorkspaceQuestion,
   asksForWorkspaceInspection,
+  asksForFileListing,
   mentionsSourcePath
 } from '../../../src/shared/agent-contract'
 import type { TurnPlan } from '../../../src/shared/settings-schema'
@@ -221,6 +222,9 @@ export function scopeApplicability(
   const t = requestTextForIntent(text)
   if (referencesOpenProject(t) || asksForWorkspaceInspection(t))
     return { applicability: 'selected-project', rule: 'workspace-reference' }
+  // “Which files are in src?”, “Show me the folder structure”: a listing can only
+  // be of the open folder (#508).
+  if (asksForFileListing(t)) return { applicability: 'selected-project', rule: 'file-listing' }
   if (continuation) return { applicability: 'unverified', rule: 'continuation' }
   // Determine the referent before inferring that a review needs existing code.
   if (/\b(?:an?|some|any)\s+(?:existing\s+|typical\s+|large\s+|small\s+)?(?:[\w.-]+\s+){0,2}(?:project|app|application|codebase|repo|service|website|site|product|dashboard)\b|\bin\s+general\b|\bgenerally\b/i.test(t))
