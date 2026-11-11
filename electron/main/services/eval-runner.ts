@@ -252,6 +252,7 @@ export async function runEvalTask(options: {
   signal?: AbortSignal
   onStatus?: (text: string) => void
   turnPlan?: TurnPlan
+  maxEvaluationSteps?: number
 }): Promise<EvalResult> {
   const started = Date.now()
   const dest = realpathSync(mkdtempSync(join(tmpdir(), `eris-eval-${options.task.id}-`)))
@@ -332,6 +333,7 @@ export async function runEvalTask(options: {
         mode: options.task.mode,
         turnPlan: options.turnPlan,
         mcp: 'off',
+        maxEvaluationSteps: options.maxEvaluationSteps ?? 60,
         approveCommand: async (kind, command) => {
           if (allowUnsafe) return true
           if (kind === 'run' && isSafeCommand(command)) return true

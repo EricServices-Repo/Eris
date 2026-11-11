@@ -116,6 +116,7 @@ import {
 } from './install-guards'
 import { decideMidRunAdapt, MID_RUN_ADAPT_BUDGET, shouldConsiderMidRunAdapt } from './mid-run-adapt'
 import { toolFailureRecovery } from './recovery'
+import { confirmUnchanged } from './verified-noop'
 import type { TypedToolFailure } from './tool-failure'
 import { findAgent } from '../agents'
 import {
@@ -427,6 +428,8 @@ async function* runAgentInternal(options: {
    * off = no MCP tools (evals, so runs stay reproducible).
    */
   mcp?: 'sync' | 'reuse' | 'off'
+  /** Explicit per-run cap for diagnostics and evaluations. Normal runs are progress-driven. */
+  maxEvaluationSteps?: number
   /** Background job id when running as a worktree agent (enables await_children). */
   jobId?: string | null
   /** Spawn a specialist child (orchestrator delegate_to_agent). */
@@ -1008,7 +1011,6 @@ async function* runAgentInternal(options: {
   let toolExecRounds = 0
   let inspectRounds = 0
   let step = 0
-  const maxStepsPerRun = options.settings.agent.maxStepsPerRun ?? 60
   let verifyFailures = 0
   const runJournal = new RunJournal(
     {
@@ -1075,9 +1077,14 @@ async function* runAgentInternal(options: {
         .digest('hex')
     )
   }
-  const progressFingerprint = () =>
-    `${successfulObservations.size}|${filesTouched.length}|${verifyPassedOnce}`
-  let lastProgressKey = ''
+  const observedFileStates = new Set<string>()
+  const recordFileState = (path: string, content: string | null): void => {
+    const digest = createHash('sha256').update(path).update('\0')
+    if (content !== null) digest.update('file\0').update(content)
+    observedFileStates.add(digest.digest('hex'))
+  }
+  let hasVerified = false
+  let lastProgressCount = -1
   let lastProgressStep = 0
   let stagnationRecoveries = 0
   /** Invalid calls already rejected in this run, by name and exact arguments. */
@@ -2129,8 +2136,8 @@ async function* runAgentInternal(options: {
     for (;;) {
       throwIfAborted(options.signal)
 
-      if (step >= maxStepsPerRun) {
-        const stopNote = `Stopped after ${maxStepsPerRun} steps. This run is incomplete; start a new request to continue with the saved workspace changes.`
+      if (options.maxEvaluationSteps !== undefined && step >= options.maxEvaluationSteps) {
+        const stopNote = `Evaluation reached its ${options.maxEvaluationSteps}-step limit. This run is incomplete.`
         workflow.block(stopNote)
         actionLog.push(stopNote)
         yield {
@@ -2150,9 +2157,10 @@ async function* runAgentInternal(options: {
         return
       }
 
-      const progressKey = progressFingerprint()
-      if (progressKey !== lastProgressKey) {
-        lastProgressKey = progressKey
+      hasVerified ||= verifyPassedOnce
+      const progressCount = successfulObservations.size + observedFileStates.size + Number(hasVerified)
+      if (progressCount > lastProgressCount) {
+        lastProgressCount = progressCount
         lastProgressStep = step
       } else if (step - lastProgressStep >= MAX_STEPS_WITHOUT_EVIDENCE) {
         const idleSteps = step - lastProgressStep
@@ -3019,6 +3027,7 @@ async function* runAgentInternal(options: {
         const call = toolCalls[i]
         const id = `${task.taskId}:t${toolExecRounds}_${i}`
         const resultStart = resultParts.length
+        let recordedFileState = false
         let result: ToolExecutionResult = {
           ok: false, detail: 'Tool did not complete.', mutated: false
         }
@@ -3979,6 +3988,8 @@ async function* runAgentInternal(options: {
                   if (specEvt.type === 'diff') {
                     specialistMutated = true
                     filesTouched.push(specEvt.diff.path)
+                    recordFileState(specEvt.diff.path, specEvt.diff.before)
+                    recordFileState(specEvt.diff.path, specEvt.diff.after)
                     forgetWorkspaceRead(specEvt.diff.path)
                     if (pathNeedsProjectVerify(specEvt.diff.path)) {
                       codeMutated = true
@@ -4247,6 +4258,10 @@ async function* runAgentInternal(options: {
                   'Mutation applied but checkpoint receipt is unavailable. Inspect mutation recovery before continuing.'
                 )
               const opIndex = rec.ops.length - 1
+              // A successful rewrite may simply return to a state already seen in this run.
+              recordFileState(result.path, before)
+              recordFileState(result.path, afterContent)
+              recordedFileState = true
               invalidateDiagnosticsCache()
               yield {
                 type: 'diff',
@@ -4449,7 +4464,7 @@ async function* runAgentInternal(options: {
               workflow.invalidateVerification()
             }
           }
-          noteObservation(call, result)
+          if (!recordedFileState) noteObservation(call, result)
           workflow.noteTool({ ...result, name: call.name,
             previousPath: call.name==='rename_path' ? argString(call.args,'path') : undefined,
             range: call.name==='read_file' ? {

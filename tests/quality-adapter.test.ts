@@ -36,7 +36,8 @@ describe('supported production quality adapter', () => {
         settings,
         model: 'test',
         getSecret: () => 'private-custom-credential',
-        digest: 'settings'
+        digest: 'settings',
+        maxEvaluationSteps: 10
       }),
       capture: async (index, prompt, workspace, context, mode, _signal, options) => {
         root = workspace

@@ -288,7 +288,8 @@ describe('MR-002/MR-007/MR-009/MR-012 live capture', () => {
       settings,
       model: 'test-selected-model',
       getSecret: () => 'private-fixture-key',
-      digest: 'fixture'
+      digest: 'fixture',
+      maxEvaluationSteps: 30
     }
   }
   const frame = (content: string, finish: string | null = null) =>
@@ -447,7 +448,6 @@ describe('MR-002/MR-007/MR-009/MR-012 live capture', () => {
       })
     )
     const live = liveModel()
-    live.settings.agent.maxStepsPerRun = 30
     const result = await captureQuestion(
       0,
       'Review the shutdown handling in this project and recommend improvements.',
