@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { ForegroundTasks } from '../electron/main/services/foreground-tasks'
+import { ForegroundTasks, publishQueueState } from '../electron/main/services/foreground-tasks'
 import { transitionTaskTimeline } from '../src/shared/task-timeline'
 import { runWithChatActivity, reportChatActivity } from '../electron/main/services/chat-activity'
 import {
@@ -124,5 +124,40 @@ describe('owned task phases and FIFO cancellation', () => {
     resolveUserQuestion(q.questionId, 'target')
     expect(await question).toEqual({ kind: 'reply', text: 'target' })
     expect(pendingUserQuestions('task', sender)).toHaveLength(0)
+  })
+})
+
+describe('queued phase reaches the waiting chat (#520)', () => {
+  it('sends the second task\'s window a queued phase and the running one nothing', async () => {
+    const firstOwner = { isDestroyed: () => false, send: vi.fn() }
+    const secondOwner = { isDestroyed: () => false, send: vi.fn() }
+    const queue = new ForegroundTasks(publishQueueState)
+    let release!: () => void
+    const first = queue.run('queue-first', firstOwner, () => new Promise<void>((r) => (release = r)))
+    await tick()
+    const second = queue.run('queue-second', secondOwner, async () => undefined)
+    await tick()
+
+    const queued = secondOwner.send.mock.calls.filter(([channel]) => channel === 'chat:phase')
+    expect(queued.length).toBeGreaterThan(0)
+    expect(queued.at(-1)![1]).toMatchObject({
+      requestId: 'queue-second',
+      phase: 'queued',
+      queuePosition: 1,
+      blockedBy: 'queue-first',
+      reason: 'Waiting for the previous task to finish'
+    })
+    // The running task is re-reported as admitted on every queue change; that stays record-only.
+    expect(firstOwner.send.mock.calls.filter(([channel]) => channel === 'chat:phase')).toHaveLength(0)
+
+    release()
+    await first
+    await second
+  })
+
+  it('records but does not send when the owner is not a window', () => {
+    expect(() =>
+      publishQueueState({ id: 'queue-plain', phase: 'queued', position: 1, blockedBy: 'x', owner: {} })
+    ).not.toThrow()
   })
 })

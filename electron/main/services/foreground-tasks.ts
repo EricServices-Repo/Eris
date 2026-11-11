@@ -10,6 +10,8 @@ type QueueState = {
   phase: 'queued' | 'admitted'
   position: number
   blockedBy: string | null
+  /** The window that submitted the task; receives its queued phase (#520). */
+  owner: unknown
 }
 /** FIFO admission with immediate queued cancellation and task-owned execution cleanup. */
 export class ForegroundTasks {
@@ -35,7 +37,8 @@ export class ForegroundTasks {
           id,
           phase: t.running ? 'admitted' : 'queued',
           position: t.running ? 0 : ++position,
-          blockedBy: t.running ? null : running
+          blockedBy: t.running ? null : running,
+          owner: t.owner
         })
       } catch {
         /* observers cannot own the queue */
@@ -154,18 +157,42 @@ export class ForegroundTasks {
     return this.detached.size
   }
 }
+const isEventTarget = (owner: unknown): owner is ChatEventTarget =>
+  Boolean(owner) &&
+  typeof (owner as ChatEventTarget).send === 'function' &&
+  typeof (owner as ChatEventTarget).isDestroyed === 'function'
+
+/**
+ * Queue observer for the app's foreground queue. A queued task's phase goes to its
+ * window so the chat shows "Queued (#n)" instead of "Working…" (#520). The admitted
+ * state stays record-only: notify() re-reports the running task whenever the queue
+ * changes, and sending it would flip the renderer's status back to "Starting" in
+ * the middle of a run.
+ */
+export function publishQueueState(state: QueueState): void {
+  const payload = {
+    phase: state.phase,
+    queuePosition: state.position,
+    blockedBy: state.blockedBy,
+    source: 'foreground',
+    reason:
+      state.phase === 'queued'
+        ? 'Waiting for the previous task to finish'
+        : 'Foreground execution admitted'
+  }
+  // Every task is reported as queued for a moment before admission, even with an
+  // idle queue; only a task actually waiting behind another one is shown as queued.
+  if (state.phase === 'queued' && state.blockedBy !== null && isEventTarget(state.owner))
+    // chatPublisher records the job event itself, so the record matches the other branch.
+    chatPublisher(state.id, () => state.owner as ChatEventTarget)('chat:phase', {
+      requestId: state.id,
+      ...payload
+    })
+  else recordChatJobEvent(state.id, 'chat:phase', payload)
+}
+
 export const foregroundTasks = new ForegroundTasks(
-  (state) =>
-    recordChatJobEvent(state.id, 'chat:phase', {
-      phase: state.phase,
-      queuePosition: state.position,
-      blockedBy: state.blockedBy,
-      source: 'foreground',
-      reason:
-        state.phase === 'queued'
-          ? 'Waiting for earlier foreground work'
-          : 'Foreground execution admitted'
-    }),
+  publishQueueState,
   (id, event, owner) =>
     chatPublisher(id, () => owner as ChatEventTarget)('chat:phase', { requestId: id, ...event }),
   {

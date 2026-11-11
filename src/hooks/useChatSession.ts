@@ -932,10 +932,18 @@ export function useChatSession({
         }
       }, 400)
     })
-    const offPhase = window.ide.onChatPhase(({ requestId, phase }) => {
+    const offPhase = window.ide.onChatPhase(({ requestId, phase, reason, queuePosition }) => {
       if (requestId !== requestIdRef.current) return
       typedPhaseRequestRef.current = requestId
-      setAgentStatus(taskPhaseLabels[phase])
+      // A chat waiting behind another task (or one still unwinding after Stop)
+      // says so, instead of "Working…" (#520).
+      setAgentStatus(
+        phase === 'queued'
+          ? `Queued${queuePosition ? ` (#${queuePosition})` : ''} · finishing the previous task…`
+          : reason && (phase === 'loading' || phase === 'prefill')
+            ? `${taskPhaseLabels[phase]} · ${reason}`
+            : taskPhaseLabels[phase]
+      )
     })
     const offStatus = window.ide.onChatStatus(({ requestId, text }) => {
       if (requestId !== requestIdRef.current) return
