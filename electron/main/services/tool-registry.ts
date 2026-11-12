@@ -136,6 +136,11 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
       new_string: { type: 'string' },
       newString: { type: 'string' },
       oldString: { type: 'string' },
+      start_line: {
+        type: 'integer',
+        minimum: 1,
+        description: 'Only match exact text starting on this one-based line; omit when using replace_all'
+      },
       replace_all: { type: 'boolean' },
       replaceAll: { type: 'boolean' }
     },

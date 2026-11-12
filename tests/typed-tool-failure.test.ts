@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { executeTool } from '../electron/main/services/agent/execute-tool'
@@ -89,6 +89,32 @@ describe('typed tool failures drive recovery (#448)', () => {
     expect(escape.failure?.code).toBe('permission_denied')
     const malformed = executeTool(root, { name: 'write_file', args: { path: 'src/b.ts' }, raw: '' })
     expect(malformed.failure?.code).toBe('invalid_arguments')
+  })
+
+  it('reports match locations and edits only the exact match on the chosen line', () => {
+    const root = workspace()
+    const path = 'src/a.ts'
+    const original = 'first marker\r\nsecond marker\r\nthird marker marker\r\n'
+    writeFileSync(join(root, path), original)
+    const edit = (extra = {}) => executeTool(root, {
+      name: 'search_replace',
+      args: { path, old_string: 'marker', new_string: 'updated', ...extra },
+      raw: ''
+    })
+
+    const ambiguous = edit()
+    expect(ambiguous.failure).toMatchObject({ code: 'ambiguous_match', retryable: true, effectApplied: false })
+    expect(ambiguous.detail).toContain('Match start lines include 1, 2, 3')
+    expect(toolFailureRecovery('search_replace', ambiguous.detail, ambiguous.failure)).toContain('start_line')
+    expect(edit({ start_line: 3 }).failure?.code).toBe('ambiguous_match')
+    expect(edit({ start_line: 4 }).failure?.code).toBe('precondition_failed')
+    expect(edit({ start_line: 2, replace_all: true }).failure?.code).toBe('invalid_arguments')
+    expect(readFileSync(join(root, path), 'utf8')).toBe(original)
+
+    expect(edit({ start_line: 2 }).ok).toBe(true)
+    expect(readFileSync(join(root, path), 'utf8')).toBe(original.replace('second marker', 'second updated'))
+    expect(edit({ replace_all: true }).ok).toBe(true)
+    expect(readFileSync(join(root, path), 'utf8')).not.toContain('marker')
   })
 
   it('falls back to text only for errors without a stable identity', () => {

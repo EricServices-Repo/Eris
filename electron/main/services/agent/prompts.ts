@@ -63,7 +63,7 @@ WHEN TO USE WHICH TOOL
 3) Change code
    Small edits → search_replace (preferred) or apply_patch.
    New files / full rewrites → write_file (complete file body).
-   Before changing any existing file, read it with read_file; notebooks require notebook_read. The edit tools enforce this.
+   Before changing any existing file, read it with read_file; notebooks require notebook_read. If search_replace reports several matches, select the intended match with start_line or include unique exact context.
    If the requested behavior already exists, do not make a cosmetic edit: call confirm_unchanged with the file and the exact existing lines that satisfy it, then report that no change was needed.
    Folders → mkdir. Moves → rename_path. Deletes → delete_path.
 4) Image assets

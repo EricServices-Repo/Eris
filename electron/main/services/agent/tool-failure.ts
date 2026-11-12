@@ -7,6 +7,7 @@ export type ToolFailureCode =
   | 'permission_denied'
   | 'precondition_failed'
   | 'invalid_arguments'
+  | 'ambiguous_match'
   | 'not_found'
   | 'conflict'
   | 'timeout'
@@ -45,6 +46,7 @@ const ERRNO: Record<string, ToolFailureCode> = {
 
 const RETRYABLE = new Set<ToolFailureCode>([
   'precondition_failed',
+  'ambiguous_match',
   'not_found',
   'conflict',
   'timeout',
@@ -55,6 +57,7 @@ const RETRYABLE = new Set<ToolFailureCode>([
 const CODES = new Set<string>([
   'permission_denied',
   'precondition_failed',
+  'ambiguous_match',
   'invalid_arguments',
   'not_found',
   'conflict',
@@ -116,6 +119,8 @@ export function typedFailureRecovery(failure: TypedToolFailure): string | undefi
       return 'Verify the path with tree, glob, or grep before retrying. Use a workspace-relative path. If the user asked to build or create something new, switch to write_file for the intended project file instead of retrying search_replace on the missing path.'
     case 'precondition_failed':
       return 'Read the target again and adjust the call to its current contents (for search_replace, copy old_string exactly from the file); do not resend the same call.'
+    case 'ambiguous_match':
+      return 'Choose the intended match using a listed one-based start_line, keeping old_string exact. If unsure, read a narrow range around the listed lines; if several matches share a line, include unique surrounding text. Set replace_all only when the requested edit applies to every occurrence.'
     case 'invalid_arguments':
       return 'Correct the argument shape from the tool description and make one call with valid fields; do not resend the same malformed arguments.'
     case 'timeout':

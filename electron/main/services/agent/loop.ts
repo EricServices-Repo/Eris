@@ -118,7 +118,7 @@ import {
 import { decideMidRunAdapt, MID_RUN_ADAPT_BUDGET, shouldConsiderMidRunAdapt } from './mid-run-adapt'
 import { toolFailureRecovery } from './recovery'
 import { confirmUnchanged } from './verified-noop'
-import type { TypedToolFailure } from './tool-failure'
+import { classifyToolError, type TypedToolFailure } from './tool-failure'
 import { findAgent } from '../agents'
 import {
   AGENT_HANDOFF_CHARS,
@@ -152,7 +152,7 @@ import {
   webSearchQuery
 } from './web-grounding'
 import { streamThinkingText } from './stream'
-import { openWebPage, searchWeb } from '../web-search'
+import { designReferenceUrl, openWebDesignReference, openWebPage, searchWeb } from '../web-search'
 import {
   lspCompletion,
   lspDefinition,
@@ -654,7 +654,11 @@ async function* runAgentInternal(options: {
   const forceWorkspaceTools =
     evidenceRequirementFor(task.scope.applicability) === 'required' &&
     task.authority.tools !== 'none' && Boolean(options.workspacePath)
-  const webQuestion = needsWebLookup(originalUserGoal)
+  const designReference =
+    task.authority.edit && toolAllowedByPolicy('web_open', plan.toolPolicy)
+      ? designReferenceUrl(originalUserGoal)
+      : undefined
+  const webQuestion = !designReference && needsWebLookup(originalUserGoal)
   const answerOnly =
     !workflow.contract.requiresMutation &&
     !workflow.contract.requiresSourceRead &&
@@ -925,7 +929,7 @@ async function* runAgentInternal(options: {
       mcpToolCount,
       verificationRun: verificationRunAllowed(),
       discovered: discoveredBuiltinToolNames,
-      deferWeb: !webQuestion,
+      deferWeb: !webQuestion && !designReference,
       deferProjectOrientation: task.scope.applicability === 'generic',
       contextPull: contextPullAllowed(workerModel, options.settings)
     })
@@ -1092,6 +1096,7 @@ async function* runAgentInternal(options: {
   let stagnationRecoveries = 0
   /** Invalid calls already rejected in this run, by name and exact arguments. */
   const rejectedCallSignatures = new Set<string>()
+  const ambiguousEdits = new Map<string, string>()
   let mutationsSinceVerify = 0
   let consecutiveToolErrors = 0
   let goalRejectCount = 0
@@ -2097,6 +2102,7 @@ async function* runAgentInternal(options: {
     }
   }
 
+  let designReferenceUnavailable = false
   /** Internal framing and truncated code never reach the user as a finished answer. */
   async function* postFinalAnswer(
     draft: string,
@@ -2139,10 +2145,56 @@ async function* runAgentInternal(options: {
       workflow.complete()
       yield { type: 'status', text: 'Done' }
     }
-    yield { type: 'answer', text: final.text, replace: true }
+    const referenceNote = designReferenceUnavailable
+      ? `\n\nEris could not verify the reference colors at ${designReference}.`
+      : ''
+    yield { type: 'answer', text: final.text + referenceNote, replace: true }
   }
 
   try {
+    if (designReference) {
+      const id = `${task.taskId}:design-reference`
+      const call: ToolCall = { id, name: 'web_open', args: { url: designReference }, raw: '' }
+      yield { type: 'status', text: 'Inspecting the design reference…' }
+      yield {
+        type: 'tool',
+        tool: { id, name: call.name, path: designReference, status: 'running', detail: designReference }
+      }
+      let result: ToolExecutionResult
+      try {
+        const detail = await openWebDesignReference(designReference, options.signal)
+        result = { ok: true, detail, mutated: false }
+        actionLog.push(`Sampled colors from ${designReference}`)
+      } catch (error) {
+        throwIfAborted(options.signal)
+        designReferenceUnavailable = true
+        result = {
+          ok: false,
+          detail: error instanceof Error ? error.message : 'Could not inspect the reference',
+          mutated: false
+        }
+        actionLog.push(`Could not inspect design reference ${designReference}`)
+      }
+      yield { type: 'evidence', evidence: gateway.record(id, call, result) }
+      yield {
+        type: 'tool',
+        tool: {
+          id,
+          name: call.name,
+          path: designReference,
+          status: result.ok ? 'ok' : 'error',
+          detail: result.detail
+        }
+      }
+      appendToolObservation(
+        workerMessages,
+        call.name,
+        result.ok
+          ? result.detail
+          : `Could not inspect the design reference ${designReference}. Continue with workspace styles and disclose that the palette was unavailable.`,
+        call.args
+      )
+    }
     for (;;) {
       throwIfAborted(options.signal)
 
@@ -2933,22 +2985,31 @@ async function* runAgentInternal(options: {
       if (repeatFingerprint >= 1 && !onlyInspect) {
         noProgressStreak++
         duplicateToolBlocks++
+        const editRecovery = toolCalls
+          .map((call) => ambiguousEdits.get(toolFingerprint([call])))
+          .filter(Boolean)
+          .join('\n')
         yield {
           type: 'thinking',
-          text: chatReply
-            ? '\n\n— Same tool call repeated; answer the user from the files already read…\n'
-            : '\n\n— Same tool call repeated; moving on to the next unfinished edit…\n'
+          text: editRecovery
+            ? '\n\n— Same edit repeated; showing the matching lines…\n'
+            : chatReply
+              ? '\n\n— Same tool call repeated; answer the user from the files already read…\n'
+              : '\n\n— Same tool call repeated; moving on to the next unfinished edit…\n'
         }
         yield* recordSkippedToolCalls(
           toolCalls,
           assistantText,
-          'This identical tool request was not executed again. Inspect its previous result above. ' +
-            'If it failed, correct the arguments or prerequisites. If it succeeded, continue with the next unfinished step.'
+          editRecovery ||
+            'This identical tool request was not executed again. Inspect its previous result above. ' +
+              'If it failed, correct the arguments or prerequisites. If it succeeded, continue with the next unfinished step.'
         )
         constrainNextToolCall = true
         workerMessages.push(
           nudgeContinueWork(
-            'You repeated the same tool call. Move on to the next unfinished part of the request.'
+            editRecovery
+              ? 'Repair the ambiguous edit using the match locations in the tool result.'
+              : 'You repeated the same tool call. Move on to the next unfinished part of the request.'
           )
         )
         repeatFingerprint = 0
@@ -4202,7 +4263,8 @@ async function* runAgentInternal(options: {
                   oldString,
                   newString,
                   replaceAll,
-                  mutationPlan
+                  mutationPlan,
+                  typeof call.args.start_line === 'number' ? call.args.start_line : undefined
                 )
                 before = edited.before
                 afterContent = edited.after
@@ -4222,7 +4284,8 @@ async function* runAgentInternal(options: {
                     'mutationApplied' in err &&
                     err.mutationApplied
                   ),
-                  path: writePath || undefined
+                  path: writePath || undefined,
+                  failure: classifyToolError(err, call.name, writePath)
                 }
               }
             } else if (call.name === 'notebook_edit') {
@@ -4609,12 +4672,17 @@ async function* runAgentInternal(options: {
                 content: result.detail
               })
           if (journaled) appendTaskEvent(task.taskId, 'run-journal-entry', journaled)
+          const recovery = result.ok
+            ? ''
+            : `\nRECOVERY: ${toolFailureRecovery(call.name, result.detail, result.failure)}`
           resultParts.push(
             `TOOL_RESULT ${call.name}${result.path ? ` path=${result.path}` : ''}${journaled ? trustLabel(journaled.trust) : ''}:\n${truncateForModel(result.detail)}` +
-              (result.ok
-                ? ''
-                : `\nRECOVERY: ${toolFailureRecovery(call.name, result.detail, result.failure)}`)
+              recovery
           )
+          if (result.failure?.code === 'ambiguous_match') {
+            ambiguousEdits.set(toolFingerprint([call]), result.detail + recovery)
+            constrainNextToolCall = true
+          }
         } catch (error) {
           if (!result.mutated) throw error
           // The effect happened before its receipt failed. Stop this attempt so
