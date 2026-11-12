@@ -246,3 +246,45 @@ export async function openWebPage(rawUrl: string, signal?: AbortSignal): Promise
   }
   return formatOpenedPage(url, String(page?.title || ''), String(page?.text || ''))
 }
+
+/** An explicitly named visual reference in a request to change the workspace. */
+export function designReferenceUrl(text: string): string | undefined {
+  if (!/\b(?:css|stylesheets?|design|layout|colou?rs?|palette|theme)\b/i.test(text)) return undefined
+  const match = text.match(/\b(?:look like|match|based on|inspired by|reference|from)\s+(?:the (?:design|layout|colou?rs?|palette) (?:of|from)\s+)?(?:\[[^\]\n]*\]\()?((?:https:\/\/|www\.)[^\s<>"'`()[\]]+)/i)
+  const address = match?.[1]?.replace(/[.,!?;:]+$/, '')
+  return address && /^www\./i.test(address) ? `https://${address}` : address
+}
+
+const PALETTE_SELECTORS = ['body', 'header', 'nav', 'main', 'h1', 'a', 'button', 'footer']
+const PALETTE_PROPERTIES = ['color', 'background-color', 'border-top-color']
+const PALETTE_EXTRACT = `(() => ${JSON.stringify(PALETTE_SELECTORS)}.map(selector => {
+  const element = document.querySelector(selector)
+  if (!element) return []
+  const styles = getComputedStyle(element)
+  return ${JSON.stringify(PALETTE_PROPERTIES)}.map(property => styles.getPropertyValue(property))
+}))()`
+
+export function formatDesignPalette(url: string, computed: unknown): string {
+  const rows = Array.isArray(computed) ? computed : []
+  const palette = PALETTE_SELECTORS.flatMap((selector, row) => {
+    const values: unknown[] = Array.isArray(rows[row]) ? rows[row] : []
+    const colors = PALETTE_PROPERTIES.flatMap((property, index) => {
+      const value = values[index]
+      return typeof value === 'string' && /^rgba?\([\d., %/]{3,45}\)$/.test(value)
+        ? [`${property}: ${value}`]
+        : []
+    })
+    return colors.length ? [`${selector} { ${colors.join('; ')} }`] : []
+  })
+  if (!palette.length) throw new Error('The page did not expose any supported computed colors.')
+  return [`Computed color samples from ${url}`, ...palette].join('\n')
+}
+
+export async function openWebDesignReference(rawUrl: string, signal?: AbortSignal): Promise<string> {
+  assertWebAllowed(`design reference: ${rawUrl.slice(0, 200)}`)
+  const url = publicHttpsUrl(rawUrl)
+  signal?.throwIfAborted()
+  const computed = await readBrowserPage(url, signal, PALETTE_EXTRACT)
+  signal?.throwIfAborted()
+  return formatDesignPalette(url, computed)
+}

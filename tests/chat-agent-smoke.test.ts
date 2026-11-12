@@ -12,6 +12,7 @@ import { join } from 'path'
  */
 const harness = vi.hoisted(() => ({
   stallAfterReplies: false,
+  openDesignReference: vi.fn(),
   receiptFailure: '' as '' | 'missing' | 'throw',
   receiptAfterWrite: () => {},
   replies: [] as string[],
@@ -32,6 +33,11 @@ const harness = vi.hoisted(() => ({
     command: string
     detail: string
   }>
+}))
+
+vi.mock('../electron/main/services/web-search', async (original) => ({
+  ...(await original<typeof import('../electron/main/services/web-search')>()),
+  openWebDesignReference: harness.openDesignReference
 }))
 
 vi.mock('../electron/main/services/checkpoints', async original => {
@@ -170,6 +176,7 @@ let workspacePath: string
 
 beforeEach(() => {
   harness.stallAfterReplies = false
+  harness.openDesignReference.mockReset()
   harness.receiptFailure = ''
   harness.receiptAfterWrite = () => {}
   workspacePath = mkdtempSync(join(tmpdir(), 'eris-chat-smoke-'))
@@ -1080,6 +1087,57 @@ describe('chat agent complex smoke test', () => {
     expect(events).not.toContainEqual({ type: 'status', text: 'Done' })
     expect(events).toContainEqual(expect.objectContaining({ type: 'progress', incomplete: true }))
     expect(lastAnswer(events)).toMatch(/src\/retry.ts/)
+  })
+
+  it.each([true, false])('completes the stylesheet edit after an ambiguous match (reference available: %s)', async (referenceAvailable) => {
+    const reference = 'https://www.ericservic.es'
+    const color = 'rgb(12, 34, 56)'
+    if (referenceAvailable) harness.openDesignReference.mockResolvedValue(`body { color: ${color} }`)
+    else harness.openDesignReference.mockRejectedValue(new Error('Reference unavailable'))
+    const path = 'index.php'
+    const original = [
+      '<html>',
+      '<head><!-- stylesheet --></head>',
+      '<body><!-- stylesheet --><main>Booking</main></body>',
+      '</html>',
+      ''
+    ].join('\n')
+    writeFileSync(join(workspacePath, path), original)
+    const edit = {
+      name: 'search_replace',
+      path,
+      old_string: '<!-- stylesheet -->',
+      new_string: '<link rel="stylesheet" href="styles.css">'
+    }
+    harness.replies.push(
+      JSON.stringify({ name: 'write_file', path: 'styles.css', content: `body { color: ${color}; }\n` }),
+      JSON.stringify({ name: 'read_file', path }),
+      JSON.stringify(edit),
+      JSON.stringify(edit),
+      JSON.stringify({ ...edit, start_line: 2 }),
+      'DONE: Created styles.css and linked it from index.php. Verification passed.'
+    )
+
+    const events = await drain(runAgentWithWorkspaceTools({
+      workspacePath,
+      settings: getDefaults(),
+      model: 'builtin:composer-lite',
+      messages: [{ role: 'user', content: 'Build the CSS and design layout, make it look like www.ericservic.es for colors' }],
+      temperature: 0,
+      getSecret: () => null,
+      mode: 'agent',
+      turnPlan: fullEditPlan(),
+      mcp: 'off'
+    }))
+
+    expect(harness.openDesignReference).toHaveBeenCalledExactlyOnceWith(reference, expect.any(AbortSignal))
+    expect(harness.prompts[0]).toContain(referenceAvailable ? color : 'palette was unavailable')
+    expect(harness.prompts.filter((prompt) => prompt.includes('Match start lines include 2, 3')).length)
+      .toBeGreaterThanOrEqual(2)
+    expect(readFileSync(join(workspacePath, path), 'utf8')).toBe(original.replace(edit.old_string, edit.new_string))
+    expect(events).toContainEqual({ type: 'status', text: 'Done' })
+    expectCompleted(events)
+    expect(lastAnswer(events).includes('could not verify the reference colors')).toBe(!referenceAvailable)
   })
 
   it('stops an identical mutating-tool loop and marks the run incomplete', async () => {

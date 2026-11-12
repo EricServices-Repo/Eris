@@ -110,7 +110,8 @@ export function executeTool(
           oldString,
           newString,
           replaceAll,
-          plan
+          plan,
+          typeof call.args.start_line === 'number' ? call.args.start_line : undefined
         )
         return {
           ok: true,

@@ -222,28 +222,55 @@ export function searchReplaceInFile(
   oldString: string,
   newString: string,
   replaceAll = false,
-  plan?: MutationPlan
+  plan?: MutationPlan,
+  startLine?: number
 ): { path: string; replacements: number; before: string; after: string } {
   if (!oldString) throw new WorkspaceFsError('old_string is required', 'invalid_arguments')
+  if (startLine !== undefined && (!Number.isSafeInteger(startLine) || startLine < 1 || replaceAll)) {
+    throw new WorkspaceFsError(
+      'start_line must be positive and cannot be combined with replace_all',
+      'invalid_arguments'
+    )
+  }
   plan = prepareMutationPlan(workspacePath, [userPath], plan)
   const abs = resolveInWorkspace(workspacePath, userPath)
   if (!existsSync(abs)) throw new WorkspaceFsError(`Not found: ${userPath}`, 'not_found')
   if (statSync(abs).isDirectory())
     throw new WorkspaceFsError(`Is a directory: ${userPath}`, 'precondition_failed')
   const before = readTextForEdit(abs, userPath)
-  const count = before.split(oldString).length - 1
+  let first = -1
+  let count = 0
+  let line = 1
+  let nextBreak = before.indexOf('\n')
+  const matchLines: number[] = []
+  for (
+    let offset = before.indexOf(oldString);
+    offset >= 0;
+    offset = before.indexOf(oldString, offset + oldString.length)
+  ) {
+    while (nextBreak !== -1 && nextBreak < offset) {
+      line++
+      nextBreak = before.indexOf('\n', nextBreak + 1)
+    }
+    if (startLine !== undefined && line > startLine) break
+    if (startLine !== undefined && line !== startLine) continue
+    if (count++ === 0) first = offset
+    if (matchLines.length < 8 && matchLines.at(-1) !== line) matchLines.push(line)
+  }
   if (count === 0) {
-    throw new WorkspaceFsError(`old_string not found in ${userPath}`, 'precondition_failed')
+    const location = startLine === undefined ? '' : ` starting on line ${startLine}`
+    throw new WorkspaceFsError(`old_string not found in ${userPath}${location}`, 'precondition_failed')
   }
   if (count > 1 && !replaceAll) {
     throw new WorkspaceFsError(
-      `old_string found ${count} times in ${userPath}; set replace_all:true or include more context`,
-      'invalid_arguments'
+      `old_string found ${count} times in ${userPath}. Match start lines include ${matchLines.join(', ')}. ` +
+        'Use start_line to select the intended match, or include more exact context if matches share a line.',
+      'ambiguous_match'
     )
   }
   const after = replaceAll
     ? before.split(oldString).join(newString)
-    : before.replace(oldString, newString)
+    : before.slice(0, first) + newString + before.slice(first + oldString.length)
   publishWorkspaceText(workspacePath, userPath, after, plan)
   invalidateWorkspaceTreeCache(workspacePath)
   return {
