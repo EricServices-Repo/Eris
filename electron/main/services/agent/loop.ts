@@ -1,4 +1,4 @@
-import { createTaskDeadline } from '../task-deadline'
+import { createTaskDeadline, modelStreamWithAbort } from '../task-deadline'
 import { eligibleOutbound } from '../eligible-outbound'
 import { createPromptTokenCounter } from './prompt-token-counter'
 import { resolveModelCapabilities } from '../model-capabilities'
@@ -1128,6 +1128,7 @@ async function* runAgentInternal(options: {
   let hasVerified = false
   let lastProgressCount = -1
   let lastProgressStep = 0
+  let lastProgressAt = Date.now()
   let stagnationRecoveries = 0
   /** Invalid calls already rejected in this run, by name and exact arguments. */
   const rejectedCallSignatures = new Set<string>()
@@ -1171,6 +1172,10 @@ async function* runAgentInternal(options: {
     workflow.contract.requiresWorkspaceEvidence &&
     !sourceReads.length
   let rejectedReplies = 0
+  let rejectedSinceProgress = 0
+  let modelCallTimedOut = false
+  let lastRejectedDigest = ''
+  let identicalRejects = 0
   const observedWorkspaceReads = new Map<string, Set<'file' | 'notebook'>>()
   const workspaceReadKey = (path: string): string | null => {
     try {
@@ -2072,21 +2077,36 @@ async function* runAgentInternal(options: {
     yield { type: 'answer', text: '', replace: true }
     let reply = ''
     let truncated = false
-    for await (const evt of streamThinkingText({
-      ...options,
-      model: workerModel,
-      messages: workerMessages,
-      stopOnToolCall: false,
-      tools: undefined,
-      builtinJsonSchema: undefined,
-      sessionKey: isNativeGgufRef(workerModel) ? ggufSessionKey : undefined
-    })) {
-      if (evt.kind === 'thinking') {
-        if (evt.text) yield { type: 'answer', text: evt.text }
-      } else {
-        reply = evt.full
-        truncated = evt.aborted === 'loop'
+    const deadline = createTaskDeadline(options.signal, (options.settings.agent.maxNoProgressSeconds ?? 180) * 1000)
+    try {
+      for await (const evt of modelStreamWithAbort(streamThinkingText({
+        ...options,
+        signal: deadline.signal,
+        model: workerModel,
+        messages: workerMessages,
+        stopOnToolCall: false,
+        tools: undefined,
+        builtinJsonSchema: undefined,
+        sessionKey: isNativeGgufRef(workerModel) ? ggufSessionKey : undefined
+      }), deadline.signal)) {
+        if (evt.kind === 'thinking') {
+          if (evt.text) yield { type: 'answer', text: evt.text }
+        } else {
+          reply = evt.full
+          truncated = evt.aborted === 'loop'
+        }
       }
+    } catch (error) {
+      throwIfAborted(options.signal)
+      if (deadline.stopReason() !== 'timeout') throw error
+      const reason = `The model (${workerModel}) did not finish the answer within the no-progress limit.`
+      workflow.block(reason)
+      yield { type: 'progress', step, actionLog: [...actionLog, reason], filesTouched: [...filesTouched], incomplete: true }
+      yield { type: 'status', text: 'Incomplete · answer timed out' }
+      yield { type: 'answer', replace: true, text: `${reason} ${changed.length ? `Changes are preserved: ${changed.join(', ')}.` : 'No file changes were made.'}` }
+      return
+    } finally {
+      deadline.dispose()
     }
     const clean = proseOutsideTools(reply)
     const searched = actionLog.find((entry) => entry.startsWith('Searched the web'))
@@ -2269,7 +2289,19 @@ async function* runAgentInternal(options: {
       if (progressCount > lastProgressCount) {
         lastProgressCount = progressCount
         lastProgressStep = step
-      } else if (step - lastProgressStep >= MAX_STEPS_WITHOUT_EVIDENCE) {
+        lastProgressAt = Date.now()
+        identicalRejects = 0
+        rejectedSinceProgress = 0
+        lastRejectedDigest = ''
+        modelCallTimedOut = false
+      }
+      const quietMs = Date.now() - lastProgressAt
+      const earlyStall = modelCallTimedOut ||
+        (quietMs >= (options.settings.agent.maxNoProgressSeconds ?? 180) * 1000 && rejectedSinceProgress >= 2) ||
+        identicalRejects >= 2
+      const recoveryExhausted = stagnationRecoveries > 0 &&
+        (step - lastProgressStep >= 3 || earlyStall)
+      if (earlyStall || recoveryExhausted || step - lastProgressStep >= MAX_STEPS_WITHOUT_EVIDENCE) {
         const idleSteps = step - lastProgressStep
         if (awaitingSourceEvidence()) yield* readRetrievedSources()
         appendTaskEvent(task.taskId, 'no-progress-detected', {
@@ -2294,6 +2326,13 @@ async function* runAgentInternal(options: {
         }
         if (stagnationRecoveries < 1) {
           stagnationRecoveries++
+          // Recovery gets its own bounded window; elapsed no-progress time is
+          // not evidence and must not immediately exhaust that window.
+          lastProgressAt = Date.now()
+          identicalRejects = 0
+          rejectedSinceProgress = 0
+          lastRejectedDigest = ''
+          modelCallTimedOut = false
           appendTaskEvent(task.taskId, 'no-progress-recovery', { step, idleSteps })
           yield { type: 'status', text: 'Recovering the next task step…' }
           for await (const evt of compactWorkerContext({
@@ -2316,6 +2355,8 @@ async function* runAgentInternal(options: {
                 .join(' · ')}\n` +
               `Task: ${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}`
           })
+          noProgressStreak = Math.max(noProgressStreak, 4)
+          yield* tryMidRunAdapt('no progress')
           noProgressStreak = 0
           consecutiveToolErrors = 0
           constrainNextToolCall = !answerTask || awaitingSourceEvidence()
@@ -2323,7 +2364,7 @@ async function* runAgentInternal(options: {
           lastProgressStep = step
           continue
         }
-        const stopNote = 'The agent could not find a valid next action after recovery.'
+        const stopNote = `The agent could not find a valid next action after recovery (model: ${workerModel}).`
         workflow.block(stopNote)
         appendTaskEvent(task.taskId, 'no-progress-stop', { step, idleSteps, stagnationRecoveries })
         yield {
@@ -2348,7 +2389,7 @@ async function* runAgentInternal(options: {
         yield {
           type: 'answer',
           text:
-            `I couldn’t complete this request after trying to recover the agent. ` +
+            `I couldn’t complete this request after trying to recover the agent (model: ${workerModel}). This task is incomplete. ` +
             (changed.length
               ? `Changes already made are preserved: ${changed.join(', ')}. `
               : 'No file changes were made. ') +
@@ -2357,7 +2398,8 @@ async function* runAgentInternal(options: {
               : rejectedReplies && !successfulObservations.size
                 ? `The model replied ${rejectedReplies} time${rejectedReplies === 1 ? '' : 's'} without using a tool, so no project files were inspected.`
                 : 'The model did not produce an actionable next step.') +
-            (recoveryExclusionReason ? `\nModel recovery: ${recoveryExclusionReason}` : ''),
+            (recoveryExclusionReason ? `\nModel recovery: ${recoveryExclusionReason}` : '') +
+            ' Try a larger model, or use Ask mode for an explanation.',
           replace: true
         }
         return
@@ -2418,9 +2460,12 @@ async function* runAgentInternal(options: {
           ? ['read_file']
           : names
       }
+      const modelDeadline = createTaskDeadline(options.signal, Math.max(1,
+        (options.settings.agent.maxNoProgressSeconds ?? 180) * 1000 - (Date.now() - lastProgressAt)))
       try {
-        for await (const evt of streamThinkingText({
+        for await (const evt of modelStreamWithAbort(streamThinkingText({
           ...options,
+          signal: modelDeadline.signal,
           model: workerModel,
           messages: workerMessages,
           stopOnToolCall: true,
@@ -2433,7 +2478,7 @@ async function* runAgentInternal(options: {
               )
             : undefined,
           sessionKey: isNativeGgufRef(workerModel) ? ggufSessionKey : undefined
-        })) {
+        }), modelDeadline.signal)) {
           if (evt.kind === 'thinking') {
             // Model tokens are the reply, not the thinking trace.
           } else {
@@ -2445,6 +2490,11 @@ async function* runAgentInternal(options: {
         }
       } catch (error) {
         throwIfAborted(options.signal)
+        if (modelDeadline.stopReason() === 'timeout') {
+          modelCallTimedOut = true
+          appendTaskEvent(task.taskId, 'model-no-progress-timeout', { step, model: workerModel })
+          continue
+        }
         const detail = error instanceof Error ? error.message : String(error)
         const nativeFailure = error instanceof Error && error.name === 'LocalModelWorkerError'
         const recoverable =
@@ -2480,6 +2530,8 @@ async function* runAgentInternal(options: {
           return
         }
         throw error
+      } finally {
+        modelDeadline.dispose()
       }
       throwIfAborted(options.signal)
 
@@ -2681,7 +2733,9 @@ async function* runAgentInternal(options: {
             type: 'thinking',
             text: `\n\n— Asking you: ${clarifyText.slice(0, 200)}${clarifyText.length > 200 ? '…' : ''}\n`
           }
+          const userWaitStarted = Date.now()
           const reply = await options.askUser(clarifyText)
+          lastProgressAt += Date.now() - userWaitStarted
           throwIfAborted(options.signal)
           workerMessages.push({
             role: 'assistant',
@@ -2730,6 +2784,10 @@ async function* runAgentInternal(options: {
 
         if (keepGoing) {
           rejectedReplies++
+          rejectedSinceProgress++
+          const digest = stripToolBlocks(assistantText).replace(/\s+/g, ' ').trim().slice(0, 400)
+          identicalRejects = digest && digest === lastRejectedDigest ? identicalRejects + 1 : 0
+          lastRejectedDigest = digest
           // Length and reason only: the reply may repeat private recall.
           appendTaskEvent(task.taskId, 'model-reply-rejected', {
             step,
@@ -3958,7 +4016,9 @@ async function* runAgentInternal(options: {
                 type: 'thinking',
                 text: `\n\n— Asking you: ${question.slice(0, 200)}${question.length > 200 ? '…' : ''}\n`
               }
+              const userWaitStarted = Date.now()
               const reply = await options.askUser(question.trim(), choices)
+              lastProgressAt += Date.now() - userWaitStarted
               throwIfAborted(options.signal)
               if (reply) {
                 result = {
