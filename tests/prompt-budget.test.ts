@@ -70,7 +70,12 @@ async function firstRequest(text: string, over: Partial<TurnPlan>) {
   // The temp folder's path and name differ per machine; measure with a fixed stand-in.
   const stable = (text: string) => text.split(ws).join('/ws/demo').split(basename(ws)).join('demo')
   const system = stable(wire.filter((m) => m.role === 'system').map((m) => m.content).join('\n'))
-  const user = stable(wire.filter((m) => m.role === 'user').map((m) => m.content).join('\n'))
+  // Retrieved leads are project evidence, present only once the index is warm, so they
+  // are not part of the instruction budget.
+  const user = stable(wire.filter((m) => m.role === 'user').map((m) => m.content).join('\n')).replace(
+    /Retrieved leads; verify before relying on them:[\s\S]*?(?=CURRENT USER REQUEST)/,
+    ''
+  )
   return { system, user, tools, toolChars: JSON.stringify(tools).length }
 }
 
