@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -123,6 +123,29 @@ describe('worker prompt states each thing once', () => {
     expect(system.split('Shared rules (every role inherits these)').length - 1).toBe(1)
     // R31: a read-only profile cannot contain an edit playbook.
     if (toolPolicy === 'read') expect(system).not.toMatch(/EDIT PLAYBOOK|search_replace|write_file/)
+  })
+
+  it('supplies the local calendar date once in turn instructions', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date(2026, 10, 12, 12))
+      const turn = plan()
+      const text = 'Add a copyright footer'
+      const settings = getDefaults()
+      const messages = buildChatMessages(ws, settings, {
+        text, mode: turn.mode, agentId: turn.agentId, history: [], attachments: [], skillIds: []
+      })
+      const built = await buildPreservedWorkerMessages({
+        messages, workspacePath: ws, settings,
+        plan: { ...turn, task: createTaskContract({ workspacePath: ws, text, plan: turn }) },
+        originalUserGoal: text, retrievalHint: '', mcpToolCount: 0
+      })
+      expect(built[0]!.content).not.toContain("Today's date:")
+      expect(built.map(message => message.content).join('\n').match(/Today's date:/g)).toHaveLength(1)
+      expect(built.at(-1)!.content).toContain("Today's date: 2026-11-12.")
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('is shorter than the v0.6.20 prompt for the same edit turn', async () => {
