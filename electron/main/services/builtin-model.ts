@@ -2,6 +2,8 @@ import { discoverNativeContextWindow, nativeContextWindow } from './native-conte
 import { inferenceDevice } from './inference-device'
 import {
   LocalModelWorkerError,
+  raceAbort,
+  shouldJoinLoad,
   waitForJobEnd,
   waitForWorkerMessage,
   watchWorkerSilence
@@ -1067,6 +1069,8 @@ async function textLease(entry: BuiltinModelManifestEntry, path: string) {
   }
 }
 
+let pendingLoad: { path: string; requestedContext: number; done: Promise<void> } | null = null
+
 async function ensureWorkerModel(
   modelPath: string,
   entry: BuiltinModelManifestEntry,
@@ -1080,6 +1084,14 @@ async function ensureWorkerModel(
   }
   await ensureLlamaChild()
   if (workerModelPath === modelPath && workerRequestedContext === requestedContext) return
+  // The worker serializes loads. A stopped caller must not cause another load to be
+  // queued behind its still-running one, including for a different requested model.
+  const pending = pendingLoad
+  if (pending) {
+    const same = shouldJoinLoad(pending, modelPath, requestedContext)
+    await raceAbort(pending.done, signal)
+    if (same && workerModelPath === modelPath && workerRequestedContext === requestedContext) return
+  }
   // Model swap drops all KV sessions in the worker.
   activeChatSessions.clear()
   releaseAllInProcessSessions()
@@ -1092,7 +1104,7 @@ async function ensureWorkerModel(
   // Never retain its measured capacity/path if replacement allocation fails.
   workerModelPath = null
   clearLoadedModel()
-  const requestId = `load-${Date.now()}`
+  const requestId = `load-${randomUUID()}`
   const preferEgpu = getResolvedSettings(appState.currentWorkspace).models.preferEgpu !== false
   const { status: gpuStatus } = await applyLlamaGpuPreference(preferEgpu)
   await discoverNativeContextWindow(entry.ref, modelPath, signal)
@@ -1106,40 +1118,48 @@ async function ensureWorkerModel(
     contextMin: plan.min,
     contextMax: plan.max
   })
+  const child = llamaChild
   const loaded = onceWorkerMessage(
-    (m) => (m.type === 'loaded' || m.type === 'load-error') && m.requestId === requestId,
-    signal
+    (m) => (m.type === 'loaded' || m.type === 'load-error') && m.requestId === requestId
   )
-  void loaded.catch(() => undefined) // The awaited branch below still reports failures.
+  const record = { path: modelPath, requestedContext, done: Promise.resolve() }
+  record.done = loaded.then((result) => {
+    if (llamaChild !== child) throw new LocalModelWorkerError('changed during model loading')
+    if (result.type === 'load-error') throw new Error(result.error || 'Failed to load model in worker')
+    workerModelPath = modelPath
+    workerRequestedContext = requestedContext
+    const { contextSize, trainContextSize, gpuLayers, totalLayers, kvBytes, placement } = result
+    if (placement) logPlacement(modelPath, placement)
+    recordLoadedModel({
+      ref: entry.ref, requestedContext, contextSize: contextSize ?? 0, trainContextSize,
+      gpuLayers, totalLayers, kvBytes,
+      device: gpuStatus.backendDeviceName ?? gpuStatus.backend?.toString(),
+      placementSteps: placement?.steps
+    })
+  }).catch((error) => {
+    // A timed-out load may still be running. Do not queue another load on that worker.
+    if (llamaChild === child && child) {
+      try { child.kill() } catch { /* already exited */ }
+      llamaChild = null
+      llamaChildReady = null
+      workerModelPath = null
+      clearLoadedModel()
+      activeChatSessions.clear()
+    }
+    throw error
+  }).finally(() => {
+    if (pendingLoad === record) pendingLoad = null
+  })
+  pendingLoad = record
+  // A stopped caller no longer awaits the shared load; handle failures independently.
+  void record.done.catch(() => undefined)
   postToWorker({
-    type: 'load',
-    modelPath,
-    contextSize: plan.target,
-    contextMin: plan.min,
-    requestId,
+    type: 'load', modelPath, contextSize: plan.target, contextMin: plan.min, requestId,
     preferEgpu,
     allowCpuSpill: getResolvedSettings(appState.currentWorkspace).models.allowCpuSpill !== false,
     gpu: 'auto'
   })
-  const result = await loaded
-  if (result.type === 'load-error') {
-    throw new Error(result.error || 'Failed to load model in worker')
-  }
-  workerModelPath = modelPath
-  workerRequestedContext = requestedContext
-  const { contextSize, trainContextSize, gpuLayers, totalLayers, kvBytes, placement } = result
-  if (placement) logPlacement(modelPath, placement)
-  recordLoadedModel({
-    ref: entry.ref,
-    requestedContext,
-    contextSize: contextSize ?? 0,
-    trainContextSize,
-    gpuLayers,
-    totalLayers,
-    kvBytes,
-    device: gpuStatus.backendDeviceName ?? gpuStatus.backend?.toString(),
-    placementSteps: placement?.steps
-  })
+  await raceAbort(record.done, signal)
 }
 
 type InProcessBudget = Required<
