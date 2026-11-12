@@ -152,8 +152,9 @@ describe('compiled memory items', () => {
   })
   it('logs no source text', async () => {
     const prompt = await recalled()
-    expect(JSON.stringify(compile(prompt, LOCAL, 800).bundle)).not.toContain(PRIVATE)
-    expect(JSON.stringify(compile(prompt, LOCAL, 800).bundle)).not.toContain('checkout')
+    // The smallest window that still holds the required task and protocol blocks.
+    expect(JSON.stringify(compile(prompt, LOCAL, 1000).bundle)).not.toContain(PRIVATE)
+    expect(JSON.stringify(compile(prompt, LOCAL, 1000).bundle)).not.toContain('checkout')
   })
 })
 

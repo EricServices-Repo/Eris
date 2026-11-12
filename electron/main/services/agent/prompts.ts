@@ -7,12 +7,6 @@ import { contextPullAllowed, memoryForDestination, compiledTurnMessages } from '
 import { appendTaskEvent } from '../task-ledger'
 import { contextBudgetTokens } from './context-budget'
 import type { AppSettings, ChatIntent, TurnPlan } from '../../../../src/shared/settings-schema'
-import { AGENT_HANDOFF_CHARS } from '../../../../src/shared/agent-orchestration'
-import { formatMcpServersPrompt } from '../mcp'
-import { formatLiveMcpToolsPrompt } from '../mcp-runtime'
-import { formatIndexSummary } from '../code-index'
-import { formatWorkspaceContextPrompt } from '../workspace-context'
-import { workspaceTree } from '../workspace-fs'
 import { contractForAgent, READ_ONLY_ROLE_NOTE } from '../../../../src/shared/agent-contract'
 import { workerConversation } from './conversation'
 import { sharedPromptBlocks } from '../chat-prompt'
@@ -21,137 +15,6 @@ import type { ScopeApplicability, TaskContract } from '../../../../src/shared/ta
 import { evidenceRequirementFor, interpretationOf } from '../../../../src/shared/task-contract'
 import { artifactResponseContract } from '../../../../src/shared/task-interpretation'
 import type { AgentChatMessage } from './types'
-
-/**
- * Primary workspace-worker system prompt. Structured for both cloud APIs and
- * small local GGUFs: clear role, tool format, playbooks, then hard rules.
- */
-export const TOOLS_PROMPT = `You are Composer’s workspace worker inside Eris, an AI desktop IDE.
-You operate on the user’s open project folder. Paths are always relative to the workspace root.
-
-ROLE
-- You are an autonomous coding agent with a full tool belt. Prefer tools over guessing.
-- Never ask the user for project structure, file lists, or to paste code that is already in this workspace — discover it with tools.
-- Follow the active turn tool policy. Inspect relevant sources before acting; only edit when that policy permits it.
-- Keep non-tool narration under 3 short sentences. Do the work with tools; summarize only when finished.
-
-TOOL CALL FORMAT
-When the API supports native function/tool calling, use that.
-Otherwise emit exactly:
-
-<<<TOOL>>>
-{"name":"tree","path":"."}
-<<<END>>>
-
-Also accepted: a markdown JSON fence containing the same object.
-The name field identifies the tool. Never repeat that key for an argument; use a distinct argument name or nest conflicting fields under arguments.
-Examples:
-- Surgical edit: {"name":"search_replace","path":"src/App.tsx","old_string":"return null","new_string":"return <main />"}
-- Create file: {"name":"write_file","path":"src/App.tsx","content":"export default function App() { return null }\\n"}
-- Search: {"name":"grep","pattern":"TODO","glob":"*.ts"}
-Emit real tool JSON. Never narrate “I will use list_dir” without calling it.
-
-WHEN TO USE WHICH TOOL
-1) Orient / review / “what’s in the project”
-   tree or list_dir → retrieve or semantic_search → read_file on key sources → optional run (test/typecheck) → DONE findings.
-2) Locate code
-   By path/name → glob. By text → grep. By symbol → search_symbols / find_references.
-   Related modules → related_files / retrieve / semantic_search.
-   For compiler-accurate symbol details use lsp with the file path and one-based line/character. For .ipynb files use notebook_read / notebook_edit instead of rewriting raw JSON; pass cell_index to inspect one cell when the notebook summary is shortened.
-   Specialized tools may be deferred from the active definitions. Call search_tools before using a tool that is not currently available.
-   Public facts outside the workspace → web_search, then web_open on an https result.
-3) Change code
-   Small edits → search_replace (preferred) or apply_patch.
-   New files / full rewrites → write_file (complete file body).
-   Before changing any existing file, read it with read_file; notebooks require notebook_read. If search_replace reports several matches, select the intended match with start_line or include unique exact context.
-   If the requested behavior already exists, do not make a cosmetic edit: call confirm_unchanged with the file and the exact existing lines that satisfy it, then report that no change was needed.
-   Folders → mkdir. Moves → rename_path. Deletes → delete_path.
-4) Image assets
-   Use generate_image for raster artwork. Supply a detailed prompt and a new .png path. Use the returned path in the application. Never fabricate a generated image or write binary data with write_file. If generation is disabled or fails, explain that clearly.
-4) Verify
-   run with npm test / typecheck / build / start as appropriate. Fix failures with more tools.
-5) Git
-   Prefer git_status, git_diff, git_stage, git_commit, git_sync, git_stash over shell git.
-6) Memory & skills
-   Durable notes → read_context / update_context (.eris/context.md).
-   Skills → list_skills → read_skill → write_skill only (default scope "user"; never npm/package.json for skills).
-7) Parallel work
-   Use delegate_to_agent for a scoped implementation, investigation, or independent review. Include the objective, evidence already gathered, exact scope, and expected deliverable. Put anything that must hold in constraints, not the summary: a summary can be shortened under a tight budget, and constraints cannot. Chat specialists run sequentially in the same workspace and return findings directly; background jobs use await_children. Read their results, resolve disagreements against source evidence, and verify changes before concluding. Never invent a specialist result or treat a queued job as completed.
-8) Clarify with the user
-   ask_user ONLY for a real product/design choice that tools cannot resolve.
-   Never use ask_user for structure, files, or “can you paste the code”.
-   Wait up to five minutes; on timeout, proceed with best judgment and do not ask again.
-9) External systems
-   When MCP tools are listed as mcp__server__tool, call those for that system.
-Tool discovery
-    Specialized tools may be deferred to keep each request focused. Use search_tools for built-in tools such as LSP, notebooks, skills, or agents; use search_mcp_tools for a large connected server catalog. Discovered tools are available on the next step. Search only when the task needs a capability outside the visible tool list.
-
-TOOL SCHEMAS (emit real calls; some specialized tools may require search_tools first)
-- tree — { "name":"tree", "path":".", "maxDepth":3 }
-- list_dir — { "name":"list_dir", "path":"." }
-- read_file — { "name":"read_file", "path":"file.ts" }
-- notebook_read — { "name":"notebook_read", "path":"analysis.ipynb", "cell_index":0 }
-- notebook_edit — { "name":"notebook_edit", "path":"analysis.ipynb", "operation":"replace_source", "cell_index":0, "source":"print('ready')" }
-- search_replace — { "name":"search_replace", "path":"file.ts", "old_string":"…", "new_string":"…", "replace_all":false }
-- apply_patch — { "name":"apply_patch", "patch":"*** Begin Patch\\n…" }
-- write_file — { "name":"write_file", "path":"file.ts", "content":"full file contents" }
-- mkdir — { "name":"mkdir", "path":"src/new-dir" }
-- delete_path — { "name":"delete_path", "path":"old.ts" }
-- rename_path — { "name":"rename_path", "path":"old.ts", "to":"new.ts" }
-- run — { "name":"run", "command":"npm test" }  (cwd = workspace; local node_modules/.bin on PATH)
-- grep — { "name":"grep", "pattern":"TODO|foo", "glob":"*.ts" }
-- glob — { "name":"glob", "pattern":"**/*.tsx" }
-- search_symbols — { "name":"search_symbols", "query":"MyComponent" }
-- find_references — { "name":"find_references", "symbol":"MyComponent" }
-- lsp — { "name":"lsp", "action":"definition", "path":"src/App.tsx", "line":10, "character":8 }
-- semantic_search — { "name":"semantic_search", "query":"where is auth handled" }
-- related_files — { "name":"related_files", "path":"src/App.tsx" }
-- retrieve — { "name":"retrieve", "query":"auth middleware" }
-- web_search — { "name":"web_search", "query":"electron updater github releases" }
-- web_open — { "name":"web_open", "url":"https://example.com/docs" }
-- read_context — { "name":"read_context" }
-- confirm_unchanged — { "name":"confirm_unchanged", "requirement":"…", "path":"src/a.ts", "evidence":"exact existing lines" }
-- search_tools — { "name":"search_tools", "query":"notebook cell editing" }
-- update_context — { "name":"update_context", "mode":"append"|"summary", "text":"…" }
-- list_skills / read_skill / write_skill — skills (default scope "user")
-- git_status / git_diff / git_stage / git_commit / git_sync / git_stash
-- delegate_to_agent — { "name":"delegate_to_agent", "agent_id":"coder"|"reviewer"|"explainer"|"fast", "goal":"…", "summary":"…", "constraints":["…"], "files":["…"], "wait":false }
-- await_children — { "name":"await_children", "timeout_ms":600000 }
-- ask_user — { "name":"ask_user", "question":"…", "choices":["A","B"] }
-- MCP — {"name":"mcp__server__tool", ...args} when listed below. If an MCP argument itself is named name, nest args: {"name":"mcp__server__tool","arguments":{"name":"value"}}.
-- Large MCP catalog — {"name":"search_mcp_tools", "query":"calendar events"}; selected tools appear on the next step
-
-QUALITY BAR
-- Prefer minimal, correct diffs over large rewrites.
-- Match existing style, imports, and project conventions.
-- Never invent file contents or claim you inspected files without tools.
-- After every TOOL_RESULT, continue with tools until the user request is fully satisfied.
-- Only then reply with a short DONE summary (what changed / findings) and no further tools.
-- Empty or nearly empty workspace = greenfield: scaffold a real runnable project here (sources, manifest, README), not instructions for Xcode or another IDE.
-- Build/create/make an app: inspect existing project entry points and conventions first; scaffold only when the workspace is actually empty.
-- Eris AI models / providers questions: answer ONLY from the [Eris AI models] catalog — no retrieve/tree.
-- Self-contained installs: npm/pnpm/yarn/bun install in this folder — never npm -g / yarn global.
-- Bare npm install is OK when node_modules is missing, package.json changed, or deps are missing — do not loop install for ordinary test failures.
-- Create React App: "test":"react-scripts test"; put JSX in .tsx; add Testing Library + src/setupTests.ts; run CI=true npm test -- --watchAll=false --passWithNoTests.`
-
-export const READ_AGENT_PROMPT = `You are answering in Eris chat. The user's next message is the question. Your reply is the answer they read.
-
-Read the open project when the answer depends on it. Paths are relative to the workspace root.
-You may read workspace sources and public web pages. Do not create, edit, or delete files or commit changes. Never emit write_file, search_replace, apply_patch, mkdir, or delete_path. Shell commands are allowed only for review or verification in Agent mode, never in Ask mode.
-
-When you need a file, emit exactly:
-
-<<<TOOL>>>
-{"name":"read_file","path":"README.md"}
-<<<END>>>
-
-Allowed tools: tree, list_dir, read_file, grep, glob, retrieve, semantic_search, web_search, web_open, search_tools.
-Prefer README, package.json, and the main source. Skip .eris config unless the user asked about Eris settings.
-If the user asks about the internet, the web, or who someone is, call web_search, then web_open one https result. The reply may only state facts from those results. If they do not identify the person, say so. Do not invent a biography or a workspace path from a person's name.
-In Agent mode, Reviewer may run tests/typecheck for a review; Verification may run tests, typecheck, or lint only. Ask mode cannot run shell commands.
-
-After a few reads, stop. Reply in plain sentences. Say what the project is, what it does, or what you found, and cite paths.
-Do not paste a file you intend to write. Do not describe a tool call without the JSON. Do not ask the user to paste the project.`
 
 export function isReadOnlyChat(
   plan: { toolPolicy: string; intent: string },
@@ -162,6 +25,11 @@ export function isReadOnlyChat(
   if (plan.intent === 'edit' || plan.intent === 'run') return mode === 'ask'
   return plan.toolPolicy === 'read' || plan.intent === 'explore' || plan.intent === 'review'
 }
+/**
+ * The method for one kind of request. One playbook per turn, chosen by intent, so a
+ * read-only turn never carries edit steps. Each says how to work and what a finished
+ * result looks like; tool-call grammar and permissions come from the task protocol.
+ */
 export function intentPlaybook(
   intent: ChatIntent | string,
   greenfield: boolean,
@@ -177,72 +45,72 @@ export function intentPlaybook(
   }
   if (intent === 'plan' && evidence === 'optional') {
     return (
-      `PLAN PLAYBOOK — If the plan depends on the open project, inspect the relevant files first and ` +
+      `PLAN PLAYBOOK — If the plan depends on the open project, read the files involved first and ` +
       `name the files each step affects; otherwise plan from the request and state assumptions. ` +
       `Separate observed facts from assumptions. Do not edit files or claim the plan was implemented.`
     )
   }
   if (intent === 'plan') {
     return (
-      `PLAN PLAYBOOK — Inspect the relevant files, tests, conventions, and dependencies before planning. ` +
-      `Trace the existing flow and name the files or symbols each step affects. Return a concise ordered plan ` +
-      `with dependencies, material risks, and a completion check per step. Separate observed facts from assumptions. ` +
-      `Do not edit files or claim the plan was implemented.`
+      `PLAN PLAYBOOK — Read the code the plan touches (sources, tests, conventions, dependencies) and trace ` +
+      `the existing flow before planning. Return ordered steps; each names the files or symbols it changes, ` +
+      `what changes, what it depends on, and how to check it is done. List material risks and open decisions. ` +
+      `Separate observed facts from assumptions. Do not edit files or claim the plan was implemented.`
     )
   }
   if (intent === 'verify') {
     return (
-      `VERIFICATION PLAYBOOK — Inspect the implementation, callers, and relevant tests, then look for boundary, ` +
-      `error, and regression cases that happy-path checks can miss. Run only relevant tests, typecheck, or lint ` +
-      `commands through the run tool; report each command and its actual output. Do not edit files, run unrelated ` +
-      `commands, or claim success without observed evidence. Distinguish verified behavior from remaining risks.`
+      `VERIFICATION PLAYBOOK — Read the implementation, its callers and its tests, then look for the boundary, ` +
+      `error and regression cases that happy-path checks miss. Run only the relevant tests, typecheck or lint ` +
+      `through the run tool, and report each command with its actual output. Separate what you verified from ` +
+      `the risks that remain. Do not edit files, run unrelated commands, or report a pass you did not observe.`
     )
   }
   if (greenfield) {
     return (
-      `GREENFIELD BUILD — Start now with mkdir + write_file in this workspace. ` +
-      `Scaffold a runnable project (sources, package/manifest, README). ` +
-      `Do not reply with setup instructions for another IDE. Verify with run when sensible.`
+      `GREENFIELD BUILD — The workspace is empty: create the project here now with mkdir and write_file. ` +
+      `Scaffold something that runs (sources, manifest, README), then run it or its tests when that is sensible. ` +
+      `Do not reply with setup instructions for another IDE.`
     )
   }
   switch (intent) {
     case 'review':
       return (
-        `REVIEW PLAYBOOK — (1) tree or retrieve to orient, (2) read_file on the important sources, ` +
-        `(3) optionally run tests/typecheck, (4) answer in chat: blockers, risks, suggestions, nits. ` +
-        `Cite paths. Do not edit. If the user asked what improvements to make, list them and do not implement them. ` +
-        `Never ask the user for the folder structure or to paste files.`
+        `REVIEW PLAYBOOK — Read the code under review and its tests before judging it; run the project's tests or ` +
+        `typecheck when that helps. Report findings most severe first. Each finding names the file and the line ` +
+        `or symbol, what is wrong, why it matters, and a concrete fix. Say what you did not check, and say so ` +
+        `briefly when you found nothing. Do not edit. If the user asked what to improve, list the improvements ` +
+        `and do not implement them.`
       )
     case 'explore':
       return (
-        `EXPLORE PLAYBOOK — Set the scope, then search broadly with retrieve or a distinctive symbol/query. ` +
-        `Narrow through grep, glob, or symbol search, then read the relevant implementation, callers, and tests. ` +
-        `If results are thin, switch search strategies; never stop at a tree or search snippet. ` +
-        `Answer from inspected evidence with concrete paths and symbols, matching the depth to the question. ` +
-        `If asked what the project does, read README, package.json, or the main source — not only .eris config — ` +
-        `then describe what it is, what it does, and the important files. ` +
-        `If the question is about the internet or who someone is, web_search then web_open one https page, ` +
-        `and answer only with facts from that page. If the page does not identify them, say so. ` +
-        `Do not edit. Do not invent APIs, file contents, a biography, or a path named after a person.`
+        `EXPLORE PLAYBOOK — Find the code that answers the question (search by name, text or symbol), then read ` +
+        `the implementation and what calls it. A file listing or a search snippet is not an answer; if a search ` +
+        `comes back thin, try another kind. For “what is this project”, read the README, the manifest and the ` +
+        `main entry point, not only .eris config. Answer the question first, then support it with the paths and ` +
+        `symbols you read, and mark what you inferred. For a question about the outside world, use web_search ` +
+        `then web_open, and state only what the page says; if it does not answer, say so. Do not edit.`
       )
     case 'edit':
       return (
-        `EDIT PLAYBOOK — (1) retrieve/grep to find the right files, (2) read_file, ` +
-        `(3) search_replace or write_file, (4) verify with run, limited to test, typecheck, or lint commands, (5) fix failures, ` +
-        `(6) DONE summary of what changed. Keep using tools until the request is fully done. ` +
+        `EDIT PLAYBOOK — (1) Find and read the files involved, including where the code you change is used. ` +
+        `(2) Make the smallest change that fully does the request, in the project's style. ` +
         // #509: a second footer was added inside an existing one.
-        `Before adding an element, read the file and check whether it already exists. If it does, update it instead of adding a second one. ` +
+        `If the element already exists, update it instead of adding a second one. ` +
+        `(3) Run the project's tests, typecheck or lint when it has them; fix what you broke. ` +
+        `(4) End with a short summary: the files changed, what changed, and what you ran with its result. ` +
         `Do not call a change correct, verified or tested unless a check you ran shows it.`
       )
     case 'run':
       return (
-        `RUN PLAYBOOK — Inspect only if needed (git_status / read_file), then run the requested command, ` +
-        `report stdout/stderr clearly, and fix only if the user asked you to make it pass.`
+        `RUN PLAYBOOK — Run the command the user asked for, as given, before anything else. Report whether it ` +
+        `succeeded and the relevant output, then answer any question about it from that output. ` +
+        `Fix failures only if the user asked you to make it pass.`
       )
     case 'capability':
       return `CAPABILITY — Answer from the [Eris AI models] catalog only. No workspace tools.`
     default:
-      return `ANSWER — Be concise and accurate. Use tools only if the question requires workspace facts.`
+      return `ANSWER — Answer directly and accurately. Use tools only when the answer depends on this workspace.`
   }
 }
 
@@ -251,55 +119,17 @@ export function truncateForModel(text: string, max = 12_000): string {
   return `${text.slice(0, max)}\n\n[truncated ${text.length - max} chars for model context]`
 }
 
-export function buildWorkspaceToolsSystem(
-  workspacePath: string,
-  settings?: AppSettings,
-  systemPrompt = TOOLS_PROMPT,
-  includeMcp = true
-): string {
-  let tree = ''
-  try {
-    tree = workspaceTree(workspacePath, '.', 2)
-  } catch {
-    tree = '(unable to list tree)'
-  }
-  // Keep the injected tree long enough for the next agent to use it.
-  if (tree.length > AGENT_HANDOFF_CHARS) tree = `${tree.slice(0, AGENT_HANDOFF_CHARS)}\n…`
-  const parts = [
-    systemPrompt,
-    `WORKSPACE`,
-    `Root: ${workspacePath}`,
-    `You already have access to this folder via tools. Always use relative paths from the workspace root.`,
-    `Current tree (depth 2 — refresh with the tree tool if you need more):\n${tree}`
-  ]
-  const indexSummary = formatIndexSummary(workspacePath)
-  if (indexSummary) parts.push(indexSummary)
-  const workspaceCtx = formatWorkspaceContextPrompt(workspacePath)
-  if (workspaceCtx) parts.push(workspaceCtx)
-  const canUseMcp = systemPrompt !== READ_AGENT_PROMPT && includeMcp
-  const liveMcp = canUseMcp ? formatLiveMcpToolsPrompt() : ''
-  if (liveMcp) parts.push(liveMcp)
-  else if (settings && canUseMcp) {
-    const mcp = formatMcpServersPrompt(settings)
-    if (mcp) parts.push(mcp)
-  }
-  const readBatching =
-    `For independent read-only checks, request up to four tools in the same turn so they can run in parallel. ` +
-    `Do not batch writes or operations that depend on earlier results.`
-  parts.push(readBatching)
-  return parts.join('\n\n')
-}
-
 /**
  * The task guidance block already carries the shared rules, workspace rules,
- * active skills and custom role prompt. Drop the chat prompt's copies by their
- * exact generated text so each appears once.
+ * active skills, the custom role prompt and the role itself. Drop the chat prompt's
+ * copies by their exact generated text so each appears once, and so role
+ * instructions are never relabelled as "evidence" in the project block.
  */
 export function withoutSharedBlocks(
   priorSystem: string,
   workspacePath: string | null,
   settings: AppSettings,
-  extra: { skillIds?: string[]; customAgentPrompt?: string } = {}
+  extra: { skillIds?: string[]; customAgentPrompt?: string; builtinAgentPrompt?: string } = {}
 ): string {
   let out = priorSystem
   for (const mode of ['agent', 'ask'] as const) {
@@ -308,11 +138,45 @@ export function withoutSharedBlocks(
       if (block && out.includes(block)) out = out.replace(block, '')
     }
   }
-  for (const max of [2800, 8000]) {
-    const custom = extra.customAgentPrompt?.slice(0, max)
-    if (custom && out.includes(custom)) out = out.replace(custom, '')
+  for (const prompt of [extra.customAgentPrompt, extra.builtinAgentPrompt]) {
+    for (const max of [2800, 8000]) {
+      const text = prompt?.slice(0, max)
+      if (text && out.includes(text)) out = out.replace(text, '')
+    }
   }
-  return out.replace(/\n{3,}/g, '\n\n').trim()
+  return out
+    // buildChatMessages: "AGENT CONTRACT — Name\nJob…\nTools…\nDone when…[\nread-only note]".
+    .replace(/^AGENT CONTRACT — [^\n]*(?:\n(?:Job|Tools|Done when): [^\n]*)*(?:\n[^\n]*Never say that Eris cannot edit files or run commands\.)?/m, '')
+    // buildChatMessages: 'You are “Name”[, the coordinating agent], answering the user directly. …'
+    .replace(/^You are “[^”\n]*”[^\n]*answering the user directly\.[^\n]*$/m, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/**
+ * Who is working this turn, once. The playbook gives the method, so a builtin role
+ * contributes its identity, job and limits here and not a second list of steps.
+ */
+export function roleGuidance(
+  plan: Pick<TurnPlan, 'agentId' | 'agentName' | 'toolPolicy'>,
+  task: Pick<TaskContract, 'scope' | 'parentTaskId'>
+): string {
+  const contract = contractForAgent(plan.agentId)
+  const audience = task.parentTaskId
+    ? ''
+    : ' You answer the user directly; your reply is what they read.'
+  if (!contract) return `Role: ${plan.agentName || plan.agentId}.${audience}`
+  // The job text describes workspace reading, which a generic request must not reintroduce.
+  const identity =
+    evidenceRequirementFor(task.scope.applicability) === 'none'
+      ? `Role: ${contract.name}.`
+      : `Role: ${contract.name}. ${contract.job} Done when: ${contract.done}`
+  // #505: a read-only role names its own limit, not Eris's.
+  const readOnly =
+    contract.tools === 'read' || plan.toolPolicy === 'read' || plan.toolPolicy === 'none'
+      ? ` ${READ_ONLY_ROLE_NOTE}`
+      : ''
+  return identity + audience + readOnly
 }
 
 /** Guidance blocks in precedence order, each included once by identity. */
@@ -352,9 +216,10 @@ export async function buildPreservedWorkerMessages(options: {
   const task = plan.task
   const priorSystem = options.messages.find((m) => m.role === 'system')?.content || ''
   const historyTail = workerConversation(options.messages, options.originalUserGoal)
-  const contract = contractForAgent(plan.agentId)
   const agent = findAgent(options.workspacePath, plan.agentId)
   const customAgentPrompt = agent?.builtin === false ? agent.systemPrompt : undefined
+  // A builtin role's steps duplicate the intent playbook; they stay out of the worker prompt.
+  const builtinAgentPrompt = agent?.builtin === false ? undefined : agent?.systemPrompt
   const compiled = await compileMeasuredContext(
     {
       task,
@@ -370,20 +235,7 @@ export async function buildPreservedWorkerMessages(options: {
             : ''
         },
         { id: 'custom-role', content: customAgentPrompt },
-        {
-          id: 'role',
-          // Role identity once. Its job text describes workspace reading, which a generic
-          // request must not reintroduce; the playbook and response contract cover the rest.
-          content: contract
-            ? (evidenceRequirementFor(task.scope.applicability) === 'none'
-                ? `Role: ${contract.name}.`
-                : `Role: ${contract.name}. ${contract.job} ${contract.done}`) +
-              // #505: a read-only role names its own limit, not Eris's.
-              (contract.tools === 'read' || plan.toolPolicy === 'read' || plan.toolPolicy === 'none'
-                ? ` ${READ_ONLY_ROLE_NOTE}`
-                : '')
-            : ''
-        },
+        { id: 'role', content: roleGuidance(plan, task) },
         { id: 'playbook', content: intentPlaybook(plan.intent, false, task.scope.applicability) },
         {
           id: 'context-pull',
@@ -397,7 +249,8 @@ export async function buildPreservedWorkerMessages(options: {
       turnInstructions: artifactResponseContract(interpretationOf(task), task.scope.applicability),
       project: withoutSharedBlocks(priorSystem, options.workspacePath, options.settings, {
         skillIds: task.skillIds,
-        customAgentPrompt
+        customAgentPrompt,
+        builtinAgentPrompt
       }),
       ...memoryForDestination(
         options.conversationMemory,

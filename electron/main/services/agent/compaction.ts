@@ -276,7 +276,7 @@ function buildResumeMessage(options: {
       `${files}${treeBit}\n` +
       `Continue until the request is fully satisfied. ` +
       `Do not redo completed actions unless fixing a failure. ` +
-      `Emit write_file/mkdir/read_file tool JSON now, OR if everything is done reply with a short DONE summary and no tools.`
+      `Call the tool for the next step now (write_file, mkdir or read_file). If everything is done, reply with a short summary and no tool calls.`
   }
 }
 

@@ -129,7 +129,7 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   ),
   tool(
     'search_replace',
-    'Surgical edit: read the existing file with read_file first, then replace exact text',
+    'Surgical edit: read the existing file with read_file first, then replace exact text. If old_string matches several places, set start_line or include more unique context',
     {
       path: pathProp,
       old_string: { type: 'string' },
