@@ -159,6 +159,7 @@ export function useChatSession({
   /** Survives Stop so late chat:done/error still match the turn we aborted. */
   const lastRequestIdRef = useRef<string | null>(null)
   const requestThreadIdRef = useRef<string | null>(null)
+  const recentRequestsRef = useRef(new Map<string, { threadId: string; workspacePath: string | null }>())
   const requestWorkspacePathRef = useRef<string | null>(null)
   const thinkingAcc = useRef('')
   const answerAcc = useRef('')
@@ -252,6 +253,7 @@ export function useChatSession({
         requestIdRef.current = job.id
         lastRequestIdRef.current = job.id
         requestThreadIdRef.current = job.threadId
+        if (job.threadId) recentRequestsRef.current.set(job.id, { threadId: job.threadId, workspacePath: job.workspacePath })
         requestWorkspacePathRef.current = job.workspacePath
         answerAcc.current = job.answer
         thinkingAcc.current = ''
@@ -534,6 +536,9 @@ export function useChatSession({
           setThreads((prev) => [thread!, ...prev.filter((t) => t.id !== thread!.id)])
         }
         requestThreadIdRef.current = thread.id
+        recentRequestsRef.current.set(requestId, { threadId: thread.id, workspacePath })
+        if (recentRequestsRef.current.size > 20)
+          recentRequestsRef.current.delete(recentRequestsRef.current.keys().next().value!)
 
         const selected = selectedModel || settings.models.defaultModel || 'builtin:composer-lite'
         const runModel = opts?.retry?.model ?? selected
@@ -1031,9 +1036,27 @@ export function useChatSession({
             : model
       setRouteLabel(`${name} · ${modelLabel}`)
     })
+    // Reconcile old snapshots without touching the active request's buffers or status.
+    const reconcileLateReply = (requestId: string, reply?: ChatMessage) => {
+      const recent = recentRequestsRef.current.get(requestId)
+      if (!recent || recent.workspacePath !== workspacePath || !reply || completedRequestsRef.current.has(requestId)) return
+      completedRequestsRef.current.add(requestId)
+      if (completedRequestsRef.current.size > 200)
+        completedRequestsRef.current.delete(completedRequestsRef.current.values().next().value!)
+      if (activeThreadRef.current?.id === recent.threadId) {
+        const merged = upsertTerminalReply(activeThreadRef.current, reply)
+        activeThreadRef.current = merged
+        setActiveThread(merged)
+      }
+      setThreads(previous => previous.map(thread => thread.id === recent.threadId ? upsertTerminalReply(thread, reply) : thread))
+    }
     const offDone = window.ide.onChatDone(({ requestId, aborted, reply }) => {
       const matches = requestId === requestIdRef.current || requestId === lastRequestIdRef.current
-      if (!matches || completedRequestsRef.current.has(requestId)) return
+      if (!matches) {
+        reconcileLateReply(requestId, reply)
+        return
+      }
+      if (completedRequestsRef.current.has(requestId)) return
       completedRequestsRef.current.add(requestId)
       if (completedRequestsRef.current.size > 200)
         completedRequestsRef.current.delete(completedRequestsRef.current.values().next().value!)
@@ -1084,7 +1107,10 @@ export function useChatSession({
       setStreaming(false)
     })
     const offError = window.ide.onChatError(({ requestId, error, reply }) => {
-      if (requestId !== requestIdRef.current && requestId !== lastRequestIdRef.current) return
+      if (requestId !== requestIdRef.current && requestId !== lastRequestIdRef.current) {
+        reconcileLateReply(requestId, reply)
+        return
+      }
       if (completedRequestsRef.current.has(requestId)) return
       completedRequestsRef.current.add(requestId)
       lastTerminalWasErrorRef.current = true

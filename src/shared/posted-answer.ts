@@ -3,8 +3,11 @@ import type { ChatMessage, ChatThread } from './settings-schema'
 /** Terminal snapshots reconcile by request-derived identity, never by appending twice. */
 export function upsertTerminalReply(thread: ChatThread, reply: ChatMessage): ChatThread {
   const exists = thread.messages.some(message => message.id === reply.id)
+  const userId = reply.id.endsWith(':assistant') ? `${reply.id.slice(0, -':assistant'.length)}:user` : null
+  const at = userId ? thread.messages.findIndex(message => message.id === userId) : -1
   const messages = exists ? thread.messages.map(message => message.id === reply.id ? reply : message)
-    : [...thread.messages, reply]
+    : at >= 0 ? [...thread.messages.slice(0, at + 1), reply, ...thread.messages.slice(at + 1)]
+      : [...thread.messages, reply]
   return {...thread,messages,updatedAt:Math.max(thread.updatedAt,reply.createdAt),
     messageCount:Math.max(thread.messageCount ?? 0,(thread.messageOffset ?? 0)+messages.length)}
 }

@@ -20,6 +20,24 @@ describe('failed terminal reply reconciliation (#449)', () => {
   })
 })
 
+describe('late reply ordering (#528)', () => {
+  const userA: ChatMessage = { id: 'a:user', role: 'user', content: 'A', createdAt: 1 }
+  const userB: ChatMessage = { id: 'b:user', role: 'user', content: 'B', createdAt: 2 }
+  const reply: ChatMessage = { id: 'a:assistant', role: 'assistant', content: 'Partial', createdAt: 3 }
+  const thread: ChatThread = { id: 'thread', title: 'Test', model: 'local:test', createdAt: 1, updatedAt: 2, messages: [userA, userB] }
+  it('inserts a late reply immediately after its user message', () => {
+    expect(upsertTerminalReply(thread, reply).messages.map(message => message.id)).toEqual(['a:user', 'a:assistant', 'b:user'])
+  })
+  it('appends if the user message is absent', () => {
+    expect(upsertTerminalReply({ ...thread, messages: [userB] }, reply).messages.map(message => message.id)).toEqual(['b:user', 'a:assistant'])
+  })
+  it('replaces an existing reply in place', () => {
+    const existing = { ...thread, messages: [userA, reply, userB] }
+    expect(upsertTerminalReply(existing, { ...reply, content: 'Final' }).messages.map(message => message.id)).toEqual(['a:user', 'a:assistant', 'b:user'])
+    expect(upsertTerminalReply(existing, { ...reply, content: 'Final' }).messages[1]?.content).toBe('Final')
+  })
+})
+
 describe('promoteThinkingToAnswer', () => {
   const routing =
     'Route: Auto → Composer · edit · local:qwen25-coder-7b\nPlan: Inspect affected code and project rules → Make the requested changes → Run relevant verification → Summarize the diff.'
