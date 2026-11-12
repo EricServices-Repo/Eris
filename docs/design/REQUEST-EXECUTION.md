@@ -39,7 +39,7 @@ requested?: {
 
 Ask mode may inspect and describe a change. It must not repeatedly retry a write it cannot perform. Its effective answer may finish while the requested patch remains incomplete in stored task state. In Agent mode, a requested patch assigned to a read-only worker returns a clear capability conflict before inference instead of spending recovery calls on an impossible assignment.
 
-The model-facing task schema is `model-task/6`. It includes the compact requested-work record. The full task remains in the ledger. Requested file paths are operands, not proof of filesystem state and not permission to escape the project.
+The model-facing task schema is `model-task/7`. It carries the trace identity (schema, task id, revision) that captures and request invariants use, and otherwise only fields that change the model's behaviour. The host's completion rule stays in the ledger. The requested-work record lists only what differs from the effective task (for example a requested patch that Ask mode answers in chat), plus file targets, a required evidence kind and an unresolved state. Obligations from the request are stated once, in the response contract. Requested file paths are operands, not proof of filesystem state and not permission to escape the project.
 
 The model-facing schema is independent of saved `TaskContract.version` (currently 2). The optional requested evidence requirement survives role selection and is enforced by the host. Supplied-code and generic reviews do not acquire a workspace source-read requirement merely because an editor is open.
 
@@ -48,14 +48,9 @@ The following projection is checked against a compiled source-review fixture by 
 <!-- model-task-example:start -->
 ```json
 {
-  "schema": "model-task/6",
+  "schema": "model-task/7",
   "requested": {
-    "evidence": "source-read",
-    "intent": "review",
-    "artifact": "review",
-    "destination": "chat",
-    "targetFiles": [],
-    "state": "resolved"
+    "evidence": "source-read"
   }
 }
 ```
@@ -137,6 +132,14 @@ Rules for editing these texts:
 - Do not use host markers such as "DONE" as something the model should write.
 - The task protocol is a required block and must fit small local windows. Check `tests/agent-v2.test.ts` (8k window) after lengthening it.
 - Bump `PROMPT_VERSION` in `src/shared/agent-versions.ts` when the meaning changes.
+- `tests/prompt-budget.test.ts` captures the whole first request for five standard turns and gives each a size budget. Raise a budget only with a reason in the PR.
+
+Other model-facing text follows the same rules:
+
+- **Tool definitions** (`tool-registry.ts`): each description says what the tool does, when to use it and what it returns. A parameter is advertised under one name; alias spellings stay accepted by the validator (`aliases`).
+- **Text-tools catalog** (`textToolCatalog` in `model-protocol.ts`): one signature line per tool instead of JSON schemas; a tool with nested arguments keeps its schema.
+- **Intent classification**: the turn router and the task resolver share `src/shared/intent-guide.ts`.
+- **Host notes**: nudges and recovery notes are `system` messages inside the loop. On OpenAI-compatible connections every system message after the leading ones is sent as a user message marked `[Eris host note: from the IDE, not the user]` (`hostNotesAsUser`).
 
 ## Regression coverage
 
@@ -180,7 +183,7 @@ The original R01–R12 identifiers refer to the [pre-change architecture review]
 - [chat-turn.ts](../../electron/main/services/chat-turn.ts): binding/classification ordering, task creation, model-window preparation and durable result status.
 - [task-resolver.ts](../../electron/main/services/task-resolver.ts): deterministic bypass, unavailable-reference guard and bounded semantic fallback.
 - [task-contract.ts](../../src/shared/task-contract.ts), [task-intake.ts](../../electron/main/services/task-intake.ts), [evidence-schemas.ts](../../electron/main/services/evidence-schemas.ts): requested/effective representation, child assignments, validation and backward compatibility.
-- [context-compiler.ts](../../electron/main/services/agent/context-compiler.ts): required `model-task/6` representation.
+- [context-compiler.ts](../../electron/main/services/agent/context-compiler.ts): required `model-task/7` representation.
 - [loop.ts](../../electron/main/services/agent/loop.ts): early clarification/capability conflict, scoped execution and child dispatch.
 - [workflow.ts](../../electron/main/services/agent/workflow.ts), [requested-files.ts](../../electron/main/services/agent/requested-files.ts): output presence/identity checks and integration with existing completion gates.
 - [task-outcome.ts](../../electron/main/services/task-outcome.ts), [task-deadline.ts](../../electron/main/services/task-deadline.ts): hard-deadline evaluation, typed failures and iterator cleanup.

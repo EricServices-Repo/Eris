@@ -372,8 +372,8 @@ async function summarizeMiddleWithLite(options: {
       role: 'system',
       content:
         'You compress agent working memory for an Eris coding worker that will continue the same task.\n' +
-        'Write a dense progress brief (max ~20 short bullets or 250 words) the next model turn can trust.\n' +
-        'Include: goal restated in one line; key findings; failures/blockers; exact next actions remaining.\n' +
+        'Write a dense progress brief (at most 250 words) the next model turn can trust, under these four headings in this order:\n' +
+        'Goal: one line.\nDone: what was established or changed.\nFailed: failures and blockers.\nNext: the exact actions that remain.\n' +
         'Executed actions and changed files come only from the Action log and Files touched lists. ' +
         'Never state that a command ran, a package was installed or a file changed unless it is listed there; ' +
         'anything the transcript only proposed or suggested is "proposed, not done".\n' +
@@ -381,7 +381,7 @@ async function summarizeMiddleWithLite(options: {
         (options.citeRefs
           ? 'Keep any [ref:...] handle you rely on, so the original output can be read back.\n'
           : '') +
-        'No tools. No CALL_FULL. No markdown fences. Plain text only.'
+        'Plain text only: no tool calls and no code fences.'
     },
     {
       role: 'user',

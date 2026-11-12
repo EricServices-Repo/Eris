@@ -91,12 +91,72 @@ export function modelPromptMessages(
     content: message.content ?? ''
   }))
   if (protocol === 'text-tools' && tools.length)
-    wire.splice(1, 0, {
-      role: 'system',
-      content:
-        'Available tools (JSON schemas):\n' + JSON.stringify(tools.map((tool) => tool.function))
-    })
+    wire.splice(1, 0, { role: 'system', content: textToolCatalog(tools) })
   return wire
+}
+
+type JsonSchema = {
+  type?: string | string[]
+  enum?: unknown[]
+  description?: string
+  properties?: Record<string, JsonSchema>
+  required?: string[]
+  items?: JsonSchema
+  anyOf?: unknown[]
+  oneOf?: unknown[]
+}
+
+/** A parameter a one-line signature can describe: a scalar, an enum, or a list of scalars. */
+const isFlat = (schema: JsonSchema): boolean =>
+  !schema.properties &&
+  !schema.anyOf &&
+  !schema.oneOf &&
+  (schema.type !== 'array' || (!!schema.items && isFlat(schema.items) && schema.items.type !== 'array'))
+
+function parameterType(schema: JsonSchema): string {
+  if (schema.enum?.length) return schema.enum.map((value) => JSON.stringify(value)).join('|')
+  if (schema.type === 'array') return `${parameterType(schema.items ?? {})}[]`
+  const type = Array.isArray(schema.type) ? schema.type.join('|') : schema.type
+  return type && type !== 'string' ? type : ''
+}
+
+/**
+ * The tool list for a text-tools model. JSON schemas for every tool cost about 7,000
+ * characters on an edit turn; a signature per tool says the same in under half (#540):
+ *
+ *   - read_file(path, start_line?: integer, end_line?: integer) — Read a text file…
+ *       start_line: …
+ *
+ * `?` marks an optional argument and an untyped argument is a string. A tool whose
+ * arguments are nested (some MCP tools) keeps its full JSON schema.
+ */
+export function textToolCatalog(tools: readonly OpenAIToolDef[]): string {
+  const lines = tools.map(({ function: fn }) => {
+    const schema = (fn.parameters ?? {}) as JsonSchema
+    const properties = Object.entries(schema.properties ?? {})
+    if (schema.anyOf || schema.oneOf || properties.some(([, param]) => !isFlat(param)))
+      return `- ${fn.name} — ${fn.description ?? ''}\n    JSON schema: ${JSON.stringify(schema)}`
+    const required = new Set(schema.required ?? [])
+    // Required arguments first, so the signature reads in the order a call needs.
+    const ordered = [...properties].sort(
+      ([a], [b]) => Number(required.has(b)) - Number(required.has(a))
+    )
+    const signature = ordered
+      .map(([name, param]) => {
+        const type = parameterType(param)
+        return `${name}${required.has(name) ? '' : '?'}${type ? `: ${type}` : ''}`
+      })
+      .join(', ')
+    const notes = ordered
+      .filter(([, param]) => param.description)
+      .map(([name, param]) => `\n    ${name}: ${param.description}`)
+      .join('')
+    return `- ${fn.name}(${signature}) — ${fn.description ?? ''}${notes}`
+  })
+  return (
+    'Available tools. Arguments go in the JSON "arguments" object by name; "?" marks an optional argument and an untyped argument is a string.\n' +
+    lines.join('\n')
+  )
 }
 
 export function serializeModelMessage(message: ChatRequestMessage): string {

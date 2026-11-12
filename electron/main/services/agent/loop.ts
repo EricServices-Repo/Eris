@@ -134,6 +134,7 @@ import {
   isReadOnlyChat,
   roleGuidance,
   truncateForModel,
+  webSearchNudgeText,
   withoutSharedBlocks
 } from './prompts'
 import { createTaskContract, childTaskContract } from '../task-intake'
@@ -145,7 +146,12 @@ import {
   type TaskContract
 } from '../../../../src/shared/task-contract'
 import { artifactResponseContract } from '../../../../src/shared/task-interpretation'
-import { contextPullAllowed, memoryForDestination, compiledTurnMessages } from './context-compiler'
+import {
+  contextPullAllowed,
+  memoryForDestination,
+  compiledTurnMessages,
+  REPLY_STYLE
+} from './context-compiler'
 import { RunJournal, trustLabel } from './run-journal'
 import { journalPersistence } from '../context-journal'
 import { ContextPull, taskThreadRecall } from './context-pull'
@@ -744,9 +750,8 @@ async function* runAgentInternal(options: {
           .filter((block) => block?.trim())
           .join('\n\n'),
         turnInstructions: turnTips.join('\n\n'),
-        turnGuidance: plan.executionPlan
-          ? `Task plan:\n${plan.executionPlan.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}\nDone when: ${plan.executionPlan.doneWhen}`
-          : undefined,
+        // The execution plan is a per-intent template that restates the response contract;
+        // it stays host-side for progress display and is not sent to the model (#540).
         ...memoryForDestination(options.conversationMemory, chatModel, options.settings, task),
         project: withoutSharedBlocks(priorSystem, options.workspacePath, options.settings, {
           skillIds: task.skillIds,
@@ -930,7 +935,11 @@ async function* runAgentInternal(options: {
 
   let retrievalHint = ''
   if (retrieved && retrieved.paths.length > 0) {
-    retrievalHint = `\n\n[Eris retrieval — ranked relevant files and snippets]\n${retrieved.detail.slice(0, AGENT_HANDOFF_CHARS)}`
+    // The compiler heads this block "Retrieved leads; verify before relying on them". The
+    // provenance line describes the index implementation and stays in the retrieve tool's
+    // own result and diagnostics; with no hits there is nothing to send (#540).
+    const leads = retrieved.detail.replace(/^\[Retrieval:[^\n]*\]\n?/, '').trim()
+    retrievalHint = retrieved.paths?.length ? leads.slice(0, AGENT_HANDOFF_CHARS) : ''
   }
   const mcpToolCount = mcpTools.length
   const mcpToolDefinitions = mcpToolsToOpenAI(mcpTools)
@@ -1887,10 +1896,10 @@ async function* runAgentInternal(options: {
   let latestAssistant = ''
   const webSearchNudge = (): AgentChatMessage => ({
     role: 'system',
-    content:
-      `This question is about the public web. Do not read workspace files and do not guess a biography.\n` +
-      `Call web_search now:\n{"name":"web_search","query":${JSON.stringify(webSearchQuery(originalUserGoal))}}\n` +
-      `Then stop.`
+    content: webSearchNudgeText(
+      webSearchQuery(originalUserGoal),
+      toolProtocolFor(options.settings, workerModel)
+    )
   })
   async function* answerFromWeb(): AsyncGenerator<AgentRunnerEvent, void, unknown> {
     const query = webSearchQuery(originalUserGoal) || originalUserGoal.slice(0, 200)
@@ -2049,13 +2058,15 @@ async function* runAgentInternal(options: {
     workerMessages.push({
       role: 'system',
       content:
-        `Thinking is finished. Write the reply the user will read. No tools and no JSON.\n` +
+        `Thinking is finished. Write the reply the user will read, with no tool calls.\n` +
         (changed.length && !listImprovements
-          ? `Review the changes. For each file, say what changed: ${changed.join(', ')}.\n`
+          ? `Summarise the changes: for each file, say what changed: ${changed.join(', ')}.\n`
           : listImprovements
             ? `List the improvements the user asked for. Number them. Cite file paths. Do not describe edits you made.\n`
-            : `Answer the user's question in plain sentences.\n`) +
-        `Do not write "Finished:" or "What I did:".\n\n` +
+            : // The turn's own contract, so a request for code or a list is not flattened
+              // into "plain sentences" (#540).
+              `${artifactResponseContract(interpretationOf(task), task.scope.applicability)}\n`) +
+        `${REPLY_STYLE}\n\n` +
         `User asked:\n${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}`
     })
     yield { type: 'answer', text: '', replace: true }
@@ -2294,7 +2305,7 @@ async function* runAgentInternal(options: {
           workerMessages.push({
             role: 'system',
             content:
-              `RECOVERY: The last attempts added no new evidence or changes. Do not repeat them. ` +
+              `The last attempts added no new evidence or changes, so do not repeat them. ` +
               `Continue the original request with one different, permitted, concrete action. ` +
               `Read the relevant source before editing; correct failed tool arguments rather than repeating them. ` +
               `Do not ask for files that are available in the workspace. ` +
@@ -2513,8 +2524,11 @@ async function* runAgentInternal(options: {
           workerMessages.push({
             role: 'system',
             content:
-              `EMPTY_RESPONSE_RECOVERY: Your last response contained no text or tool calls. ` +
-              `The local session has been reset. Answer without a forced JSON grammar. ` +
+              `Your last reply was empty: it had no text and no tool call. ` +
+              // Session and grammar resets only exist for the local runtime.
+              (workerModel.startsWith('builtin:')
+                ? `The local session was reset, and the next reply is not limited to a tool call. `
+                : '') +
               `Do not repeat completed file writes. Inspect existing files if more work is needed. ` +
               `If the requested implementation is complete, return a factual summary of what was implemented and any unverified parts; ` +
               `otherwise call one permitted tool for the next missing step. ` +
@@ -2645,7 +2659,7 @@ async function* runAgentInternal(options: {
           workerMessages.push({
             role: 'system',
             content:
-              `Do NOT ask the user for project structure or files — you have the listing above. ` +
+              `The project listing is above, so do not ask the user for project structure or files. ` +
               `Continue the original request with read_file / search_replace / write_file / run as needed.\n` +
               `User request:\n${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}`
           })
@@ -2839,7 +2853,7 @@ async function* runAgentInternal(options: {
               role: 'system',
               content:
                 `Verification failed; inspect the tool result above.\n` +
-                `You are NOT done. Fix these errors with write_file/read_file tools now.` +
+                `The work is not finished. Read the failing code and fix these errors now.` +
                 installHint
             })
             workflow.transition('executing')
@@ -2910,7 +2924,7 @@ async function* runAgentInternal(options: {
           workerMessages.push({
             role: 'system',
             content:
-              `OUTCOME_CHECK_FAILED:\n${unmetReason}\n\n` +
+              `The result does not satisfy the request yet:\n${unmetReason}\n\n` +
               (task.authority.edit
                 ? 'Continue with permitted edits and verification until the request is satisfied. '
                 : 'Use only permitted read tools to gather missing evidence, or explain what is blocked. Do not edit files. ') +

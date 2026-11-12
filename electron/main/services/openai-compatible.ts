@@ -1,6 +1,32 @@
 import { recordProviderContexts } from './provider-context'
 import { randomUUID } from 'crypto'
 import { modelSseEvents, ModelStreamError, MAX_MODEL_EVENT_BYTES } from './model-sse'
+/** Marks a host note sent in the user role; the wording tells the model who is speaking. */
+export const HOST_NOTE_PREFIX = '[Eris host note: from the IDE, not the user]'
+
+/**
+ * The agent loop adds its nudges, recovery notes and check results as `system`
+ * messages in the middle of the conversation. Providers behind an OpenAI-compatible
+ * endpoint differ on those: some accept a system message only at the start, and chat
+ * templates for local servers may drop or merge later ones (#540). On the wire, the
+ * leading system messages stay as they are and each later one becomes a marked user
+ * message. A note that sits between a tool call and its result is left alone, because
+ * a user message there would break the call/result pairing.
+ */
+export function hostNotesAsUser<T extends { role: string; content: string | null }>(
+  messages: readonly T[]
+): T[] {
+  let leading = true
+  return messages.map((message, index) => {
+    if (message.role !== 'system') {
+      leading = false
+      return message
+    }
+    if (leading || messages[index + 1]?.role === 'tool') return message
+    return { ...message, role: 'user', content: `${HOST_NOTE_PREFIX}\n${message.content ?? ''}` }
+  })
+}
+
 export interface ChatRequestMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string | null
@@ -96,7 +122,7 @@ export async function* streamOpenAICompatible(options: {
     /openai\.com|openrouter\.ai|together\.xyz|groq\.com|deepseek\.com/i.test(root)
   const body: Record<string, unknown> = {
     model: options.model,
-    messages: options.messages,
+    messages: hostNotesAsUser(options.messages),
     temperature: options.temperature,
     stream: true
   }

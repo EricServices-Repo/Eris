@@ -69,7 +69,7 @@ export const REPLY_STYLE =
   'REPLY — Lead with the result. Markdown; fenced code with a language tag; `path` for files. No preamble or tool narration.'
 
 /** Bumped whenever the model-facing task shape changes, so captures compare like with like. */
-export const MODEL_FACING_TASK_SCHEMA = 'model-task/6'
+export const MODEL_FACING_TASK_SCHEMA = 'model-task/7'
 
 /**
  * The model-facing task: what the worker needs to act, without ledger metadata
@@ -86,19 +86,33 @@ export function modelFacingTask(task: TaskContract): Record<string, unknown> {
         ? basename(scope.projectRoot)
         : null
   const evidence = evidenceRequirementFor(scope.applicability)
+  // Beyond the trace identity, only what changes the model's behaviour (design §7.1).
+  // The host's completion rule stays with the host: a criterion such as "no edits are
+  // claimed" makes a model append that disclaimer to a plain answer (#540). The request's
+  // own obligations are in the response contract, so they are not repeated here.
+  // What was asked for, where it differs from what this worker will deliver (Ask mode can
+  // answer about a requested patch), plus the parts with no effective counterpart.
+  const asked = task.requested
+  const requested = asked && {
+    ...(asked.evidence ? { evidence: asked.evidence } : {}),
+    ...(asked.intent !== task.intent ? { intent: asked.intent } : {}),
+    ...(asked.artifact !== reading.artifact ? { artifact: asked.artifact } : {}),
+    ...(asked.destination !== reading.destination ? { destination: asked.destination } : {}),
+    ...(asked.targetFiles.length ? { targetFiles: asked.targetFiles } : {}),
+    ...(asked.state !== 'resolved' ? { state: asked.state } : {})
+  }
   const out: Record<string, unknown> = {
+    // Trace identity: captures and request invariants find the task by these three.
     schema: MODEL_FACING_TASK_SCHEMA,
     taskId: task.taskId,
     revision: task.revision,
-    // The top-level worker answers the user; a child returns its result to its coordinator.
-    assignment: task.parentTaskId
-      ? { kind: 'child', parentTaskId: task.parentTaskId, reportTo: 'coordinator' }
-      : { kind: 'top-level', reportTo: 'user' },
+    // A child returns its result to its coordinator; the top-level worker answers the user.
+    ...(task.parentTaskId ? { assignment: { kind: 'child', reportTo: 'coordinator' } } : {}),
     intent: task.intent,
     deliverable: task.deliverable,
     artifact: reading.artifact,
     destination: reading.destination,
-    ...(task.requested ? { requested: task.requested } : {}),
+    ...(requested && Object.keys(requested).length ? { requested } : {}),
     ...(reading.language ? { language: reading.language } : {}),
     ...(reading.frameworks.length ? { frameworks: reading.frameworks } : {}),
     ...(reading.forbidsMutation ? { forbidsMutation: true } : {}),
@@ -107,13 +121,12 @@ export function modelFacingTask(task: TaskContract): Record<string, unknown> {
     scope: {
       project: evidence === 'none' ? null : project,
       ...(evidence === 'none' && project !== null ? { openProjectIsEvidence: false } : {}),
-      state: scope.state,
+      ...(scope.state !== 'resolved' ? { state: scope.state } : {}),
       applicability: scope.applicability ?? 'selected-project',
       evidence,
       ...(scope.candidates.length ? { candidates: scope.candidates } : {})
     },
-    authority: task.authority,
-    acceptanceCriteria: task.acceptanceCriteria
+    authority: task.authority
   }
   if (task.skillIds?.length) out.skillIds = task.skillIds
   const { inherited } = task

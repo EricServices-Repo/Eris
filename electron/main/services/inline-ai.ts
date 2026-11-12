@@ -39,7 +39,8 @@ export async function completeAtCursor(options: {
               'You are Eris’s inline code completion engine.\n' +
               'Continue the code at the cursor so it fits the surrounding file.\n' +
               'Match indentation, naming, and style from the prefix.\n' +
-              'Reply with ONLY the completion text to insert — no markdown fences, no explanations, no repeating the prefix.'
+              'Stop at the end of the current statement or block; do not write code that the text after the cursor already contains.\n' +
+              'Reply with only the text to insert: no markdown fences, no explanations, no repeating the prefix.'
           },
           {
             role: 'user',
@@ -99,8 +100,9 @@ export async function inlineEdit(options: {
             role: 'system',
             content:
               'You are Eris’s inline code editor.\n' +
-              'Apply the user instruction to the selection and return ONLY the replacement code ' +
+              'Apply the user instruction to the selection and return only the replacement code ' +
               '(or the full snippet if there is no selection).\n' +
+              'Your output replaces the selection exactly, so keep its indentation and do not repeat the code around it.\n' +
               'Preserve surrounding style and imports unless the instruction requires changes.\n' +
               'No markdown fences, no commentary, no explanations.'
           },

@@ -26,6 +26,12 @@ export type ToolContract = {
 }
 type ToolBuildOptions = Partial<Omit<ToolContract, 'schema'>> & {
   requiredAnyOf?: string[][]
+  /**
+   * Parameter names accepted for compatibility but not advertised. The contract schema
+   * used for validation keeps them; the definition a model reads shows one name per
+   * parameter, so it is half the size and never invites mixed spellings (#540).
+   */
+  aliases?: string[]
 }
 
 /** Keep the prompt focused when an MCP connection exposes a large catalog. */
@@ -64,8 +70,27 @@ function tool(
     function: {
       name,
       description,
-      parameters: schema
+      parameters: advertisedSchema(properties, required, contract)
     }
+  }
+}
+
+/** The schema shown to models: canonical parameter names only. */
+function advertisedSchema(
+  properties: Record<string, unknown>,
+  required: string[],
+  contract: ToolBuildOptions
+): Record<string, unknown> {
+  const hidden = new Set(contract.aliases ?? [])
+  const shown = Object.fromEntries(Object.entries(properties).filter(([key]) => !hidden.has(key)))
+  const groups = (contract.requiredAnyOf ?? []).filter((fields) => !fields.some((f) => hidden.has(f)))
+  return {
+    type: 'object',
+    properties: shown,
+    // One remaining alternative is simply required.
+    required: groups.length === 1 ? [...new Set([...required, ...groups[0]!])] : required,
+    ...(groups.length > 1 ? { anyOf: groups.map((fields) => ({ required: fields })) } : {}),
+    additionalProperties: false
   }
 }
 
@@ -89,11 +114,11 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
     ['prompt', 'path'],
     { access: 'edit', effect: 'workspace' }
   ),
-  tool('tree', 'List a directory tree', { path: pathProp, maxDepth: { type: 'number' } }, ['path']),
-  tool('list_dir', 'List directory entries', { path: pathProp }, ['path']),
+  tool('tree', 'Show the folder structure under a path as an indented tree (depth 3 by default, at most 6). Use it once to orient yourself; use glob to find files by name.', { path: pathProp, maxDepth: { type: 'number' } }, ['path']),
+  tool('list_dir', 'List the files and folders directly inside one directory, with file sizes.', { path: pathProp }, ['path']),
   tool(
     'read_file',
-    'Read a text file; use line ranges to inspect large files',
+    'Read a text file with line numbers. For a large file, pass start_line and end_line to read only the part you need.',
     {
       path: pathProp,
       start_line: { type: 'integer', minimum: 1 },
@@ -129,7 +154,7 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   ),
   tool(
     'search_replace',
-    'Surgical edit: read the existing file with read_file first, then replace exact text. If old_string matches several places, set start_line or include more unique context',
+    'Edit part of a file: replace old_string with new_string. Read the file with read_file first and copy old_string exactly, including indentation. If old_string matches several places, set start_line or include more surrounding lines. Prefer this over write_file for changes to an existing file.',
     {
       path: pathProp,
       old_string: { type: 'string' },
@@ -154,43 +179,45 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
         ['old_string', 'newString'],
         ['oldString', 'new_string'],
         ['oldString', 'newString']
-      ]
+      ],
+      aliases: ['oldString', 'newString', 'replaceAll']
     }
   ),
   tool(
     'apply_patch',
-    'Apply a unified/V4A patch. Read an existing target file with read_file first.',
+    'Apply a unified or V4A patch that changes one or more files. Read each existing target with read_file first. Use search_replace for a single small edit.',
     { patch: { type: 'string' }, diff: { type: 'string' } },
     [],
     {
       access: 'edit',
       effect: 'workspace',
       readBeforeWrite: 'file',
-      requiredAnyOf: [['patch'], ['diff']]
+      requiredAnyOf: [['patch'], ['diff']],
+      aliases: ['diff']
     }
   ),
   tool(
     'write_file',
-    'Create a file, or overwrite an existing file after reading it with read_file',
+    'Create a new file with the complete content, or replace an existing file entirely after reading it with read_file. Parent folders are created.',
     { path: pathProp, content: { type: 'string' } },
     ['path', 'content'],
     { access: 'edit', effect: 'workspace', readBeforeWrite: 'file' }
   ),
-  tool('mkdir', 'Create a directory', { path: pathProp }, ['path'], {
+  tool('mkdir', 'Create a directory, including missing parent directories.', { path: pathProp }, ['path'], {
     access: 'edit',
     effect: 'workspace'
   }),
-  tool('delete_path', 'Delete a file or directory', { path: pathProp }, ['path'], {
+  tool('delete_path', 'Delete a file or a directory and its contents from the workspace.', { path: pathProp }, ['path'], {
     access: 'edit',
     effect: 'workspace'
   }),
-  tool('rename_path', 'Rename or move a path', { path: pathProp, to: pathProp }, ['path', 'to'], {
+  tool('rename_path', 'Rename or move a file or directory to a new workspace path.', { path: pathProp, to: pathProp }, ['path', 'to'], {
     access: 'edit',
     effect: 'workspace'
   }),
   tool(
     'run',
-    'Run a shell command in the selected project',
+    'Run a shell command in the project and return its exit code and output. Use it for tests, builds, typechecks and commands the user asked for; some commands need the user\'s approval.',
     {
       command: { type: 'string' },
       cwd: {
@@ -203,29 +230,29 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   ),
   tool(
     'grep',
-    'Search file contents',
+    'Search file contents for a regular expression (case-insensitive) and return matching lines with paths and line numbers. Use it to find where a name or string is used; limit with glob, for example "src/**/*.ts".',
     {
       pattern: { type: 'string' },
       query: { type: 'string' },
       glob: { type: 'string' }
     },
     [],
-    { requiredAnyOf: [['pattern'], ['query']] }
+    { requiredAnyOf: [['pattern'], ['query']], aliases: ['query'] }
   ),
-  tool('glob', 'Find files by path pattern', { pattern: { type: 'string' } }, ['pattern']),
+  tool('glob', 'Find files whose path matches a glob pattern such as "**/*.test.ts". Returns paths only.', { pattern: { type: 'string' } }, ['pattern']),
   tool(
     'search_symbols',
-    'Search the code symbol index',
+    'Search the code symbol index for functions, classes and other definitions by name.',
     { query: { type: 'string' }, pattern: { type: 'string' } },
     [],
-    { requiredAnyOf: [['query'], ['pattern']], discovery: 'deferred' }
+    { requiredAnyOf: [['query'], ['pattern']], aliases: ['pattern'], discovery: 'deferred' }
   ),
   tool(
     'find_references',
     'Find definitions and references of a symbol',
     { symbol: { type: 'string' }, name: { type: 'string' }, query: { type: 'string' } },
     [],
-    { requiredAnyOf: [['symbol'], ['name'], ['query']], discovery: 'deferred' }
+    { requiredAnyOf: [['symbol'], ['name'], ['query']], aliases: ['name', 'query'], discovery: 'deferred' }
   ),
   tool(
     'lsp',
@@ -241,27 +268,27 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   ),
   tool(
     'semantic_search',
-    'Find files related to a natural-language query (embeddings + keywords)',
+    'Find files related to a natural-language description, using embeddings and keywords.',
     {
       query: { type: 'string' },
       pattern: { type: 'string' }
     },
     [],
-    { requiredAnyOf: [['query'], ['pattern']], discovery: 'deferred' }
+    { requiredAnyOf: [['query'], ['pattern']], aliases: ['pattern'], discovery: 'deferred' }
   ),
   tool(
     'related_files',
-    'Files that share symbols with a path',
+    'List files that share symbols with the given file, to find its callers and collaborators.',
     { path: pathProp, file: pathProp },
     [],
-    { requiredAnyOf: [['path'], ['file']], discovery: 'deferred' }
+    { requiredAnyOf: [['path'], ['file']], aliases: ['file'], discovery: 'deferred' }
   ),
   tool(
     'retrieve',
-    'Rank relevant files for a query',
+    'Rank the files most relevant to a question or feature described in words, with short snippets. Use it when you do not know the exact name to grep for; then read the files it returns.',
     { query: { type: 'string' }, pattern: { type: 'string' } },
     [],
-    { requiredAnyOf: [['query'], ['pattern']] }
+    { requiredAnyOf: [['query'], ['pattern']], aliases: ['pattern'] }
   ),
   tool(
     'context_search',
@@ -313,7 +340,7 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
     ['query'],
     { access: 'read', effect: 'read' }
   ),
-  tool('read_context', 'Read workspace .eris/context.md notes', {}),
+  tool('read_context', 'Read the project notes saved in .eris/context.md (conventions and earlier decisions).', {}),
   tool(
     'confirm_unchanged',
     'Report that a requested change is already present, so no edit is needed. Read the whole file first and quote the exact existing lines that satisfy the requirement. Never edit a file just to show progress.',
@@ -329,7 +356,7 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   ),
   tool(
     'update_context',
-    'Append or set workspace context notes',
+    'Append a note to the project notes in .eris/context.md, or replace their summary.',
     {
       mode: { type: 'string', enum: ['append', 'summary', 'set_summary'] },
       text: { type: 'string' },
@@ -341,38 +368,40 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
       access: 'edit',
       effect: 'workspace',
       discovery: 'deferred',
-      requiredAnyOf: [['text'], ['content'], ['note']]
+      requiredAnyOf: [['text'], ['content'], ['note']],
+      aliases: ['content', 'note']
     }
   ),
-  tool('git_status', 'Git status', {}),
-  tool('git_diff', 'Git diff', { path: pathProp }),
+  tool('git_status', 'Show the current branch and which files are modified, staged or untracked.', {}),
+  tool('git_diff', 'Show uncommitted changes as a diff, for the whole project or one path.', { path: pathProp }),
   tool(
     'git_stage',
-    'Stage paths',
+    'Stage the given paths for the next commit.',
     { paths: { type: 'array', items: { type: 'string' } }, path: { type: 'string' } },
     [],
     {
       access: 'edit',
       effect: 'workspace',
       discovery: 'deferred',
-      requiredAnyOf: [['paths'], ['path']]
+      requiredAnyOf: [['paths'], ['path']],
+      aliases: ['path']
     }
   ),
-  tool('git_commit', 'Create a commit', { message: { type: 'string' } }, ['message'], {
+  tool('git_commit', 'Create a commit from the staged changes with the given message.', { message: { type: 'string' } }, ['message'], {
     access: 'edit',
     effect: 'workspace',
     discovery: 'deferred'
   }),
   tool(
     'git_sync',
-    'Fetch, pull, or push',
+    'Fetch, pull or push the current branch. Push needs the user\'s approval.',
     { action: { type: 'string', enum: ['fetch', 'pull', 'push'] } },
     ['action'],
     { access: 'full', effect: 'external', approval: 'push', discovery: 'deferred' }
   ),
   tool(
     'git_stash',
-    'Stash push/pop/list',
+    'Save uncommitted changes to the stash, restore the latest stash, or list stashes.',
     {
       action: { type: 'string', enum: ['push', 'pop', 'list'] },
       message: { type: 'string' }
@@ -383,7 +412,7 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   tool('list_skills', 'List user and project skills with paths', {}, [], { discovery: 'deferred' }),
   tool(
     'read_skill',
-    'Read a skill by id',
+    'Read the full instructions of one skill by its id.',
     {
       id: { type: 'string' },
       skill_id: { type: 'string' },
@@ -391,7 +420,7 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
       scope: { type: 'string', enum: ['user', 'workspace'] }
     },
     [],
-    { requiredAnyOf: [['id'], ['skill_id'], ['name']], discovery: 'deferred' }
+    { requiredAnyOf: [['id'], ['skill_id'], ['name']], aliases: ['skill_id', 'name'], discovery: 'deferred' }
   ),
   tool(
     'write_skill',
@@ -429,7 +458,7 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   ),
   tool(
     'delegate_to_agent',
-    'Spawn a specialist background agent with a structured handoff (orchestrator).',
+    'Hand one self-contained part of the work to a specialist agent that runs separately and reports back. Use it only when the work splits; give a concrete goal and the context it needs.',
     {
       agent_id: {
         type: 'string',
@@ -466,7 +495,8 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
       access: 'full',
       effect: 'orchestration',
       discovery: 'deferred',
-      requiredAnyOf: [['agent_id'], ['agentId']]
+      requiredAnyOf: [['agent_id'], ['agentId']],
+      aliases: ['agentId', 'openQuestions']
     }
   ),
   tool(
@@ -495,7 +525,7 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
       }
     },
     [],
-    { requiredAnyOf: [['question'], ['prompt'], ['text']] }
+    { requiredAnyOf: [['question'], ['prompt'], ['text']], aliases: ['prompt', 'text'] }
   )
 ]
 
