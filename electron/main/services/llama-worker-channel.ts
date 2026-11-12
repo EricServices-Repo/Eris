@@ -102,3 +102,25 @@ export function waitForJobEnd(
     })
   })
 }
+
+/** Stop waiting for a shared operation without cancelling the operation itself. */
+export function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise
+  return new Promise((resolve, reject) => {
+    const aborted = () => {
+      signal.removeEventListener('abort', aborted)
+      const error = new Error('Aborted')
+      error.name = 'AbortError'
+      reject(error)
+    }
+    if (signal.aborted) { aborted(); return }
+    signal.addEventListener('abort', aborted, { once: true })
+    promise.then(value => { signal.removeEventListener('abort', aborted); resolve(value) },
+      error => { signal.removeEventListener('abort', aborted); reject(error) })
+  })
+}
+
+export function shouldJoinLoad(pending: { path: string; requestedContext: number } | null,
+  path: string, requestedContext: number): boolean {
+  return pending?.path === path && pending.requestedContext === requestedContext
+}
