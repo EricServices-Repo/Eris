@@ -694,9 +694,11 @@ export function artifactResponseContract(
       : ''
   const forbids = constraintLines(interpretation)
   const scope = scopeAndStackGuidance(interpretation, applicability)
+  // Only a conversational or creative request needs this; a code example, design, plan
+  // or review already has its own contract line (#540).
   const generic =
-    applicability === 'generic'
-      ? '\nEris supports general conversation and creative writing as well as coding. Follow the requested format and length; deliver a requested story or poem directly in chat. The IDE role alone is not a reason to decline a request. Apply relevant safety constraints and do not claim workspace changes.'
+    applicability === 'generic' && interpretation.artifact === 'explanation'
+      ? '\nEris also handles general conversation and creative writing: follow the requested format and length, deliver a requested story or poem directly in chat, and do not decline because this is an IDE.'
       : ''
   return (
     lines[interpretation.artifact] + obligations + forbids + (scope ? `\n${scope}` : '') + generic

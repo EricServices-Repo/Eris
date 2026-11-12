@@ -104,7 +104,7 @@ describe('stable prefix and volatile turn layout (#232)', () => {
       retrieval: '',
       maxInputTokens: 8192
     })
-    expect(MODEL_FACING_TASK_SCHEMA).toBe('model-task/6')
+    expect(MODEL_FACING_TASK_SCHEMA).toBe('model-task/7')
     expect(built.layers.prefix).not.toContain('Current-only plan details')
     expect(built.layers.turn).toContain('Current-only plan details')
   })

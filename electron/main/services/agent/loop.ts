@@ -744,9 +744,8 @@ async function* runAgentInternal(options: {
           .filter((block) => block?.trim())
           .join('\n\n'),
         turnInstructions: turnTips.join('\n\n'),
-        turnGuidance: plan.executionPlan
-          ? `Task plan:\n${plan.executionPlan.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}\nDone when: ${plan.executionPlan.doneWhen}`
-          : undefined,
+        // The execution plan is a per-intent template that restates the response contract;
+        // it stays host-side for progress display and is not sent to the model (#540).
         ...memoryForDestination(options.conversationMemory, chatModel, options.settings, task),
         project: withoutSharedBlocks(priorSystem, options.workspacePath, options.settings, {
           skillIds: task.skillIds,
@@ -1889,7 +1888,10 @@ async function* runAgentInternal(options: {
     role: 'system',
     content:
       `This question is about the public web. Do not read workspace files and do not guess a biography.\n` +
-      `Call web_search now:\n{"name":"web_search","query":${JSON.stringify(webSearchQuery(originalUserGoal))}}\n` +
+      // Same rule as the other nudges: only a text-tools backend is shown an envelope (#540).
+      (toolProtocolFor(options.settings, workerModel) === 'text-tools'
+        ? `Call web_search now:\n<<<TOOL>>>\n${JSON.stringify({ name: 'web_search', arguments: { query: webSearchQuery(originalUserGoal) } })}\n<<<END>>>\n`
+        : `Call the web_search tool now with the query ${JSON.stringify(webSearchQuery(originalUserGoal))}. `) +
       `Then stop.`
   })
   async function* answerFromWeb(): AsyncGenerator<AgentRunnerEvent, void, unknown> {

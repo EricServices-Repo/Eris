@@ -449,12 +449,13 @@ describe('agent loop capability behavior', () => {
       (model.requests.at(-1)?.messages as Array<{ content: string }>)[0]?.content
     )
     expect(system).not.toContain('Read the matching files')
-    // LR-001: the workflow is built for the generic scope, not linted after the fact.
+    // LR-001: the generic scope is stated once, in the response contract. The per-intent
+    // plan template is no longer sent to the model (#540).
     expect(
       (model.requests.at(-1)?.messages as Array<{ content: string }>)
         .map((message) => message.content)
         .join('\n')
-    ).toContain('without citing the open project')
+    ).toContain('Do not cite its files as evidence')
   })
 })
 
