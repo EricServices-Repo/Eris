@@ -297,6 +297,14 @@ function hasCustomMemoryBudget(userLayer: SettingsPatch) {
   )
 }
 
+/**
+ * Shared rules shipped before v0.6.21. A profile that saved this text unchanged never
+ * customised it, so it follows the current default; an edited prompt is left alone.
+ */
+const SUPERSEDED_SHARED_RULES = [
+  'You are an agent inside Eris, a desktop AI IDE. The open folder is a real workspace on disk; Agent mode may grant tools to read, search, edit, and run commands.\n\nShared rules (every role inherits these):\n- Be concise and accurate. Cite concrete file paths and symbols.\n- Discover and change the project with tools — do not ask the user for structure or to paste files already in the workspace.\n- Match existing style and conventions; prefer small, focused diffs.\n- Never invent APIs, file contents, or tool results. Only claim edits after tools succeed.\n- If blocked by a true product choice, ask once; otherwise decide and state the assumption.\n- Keep chat narration short; put effort into tools and code.'
+]
+
 function buildResolvedSettings(workspacePath: string | null): AppSettings {
   const userLayer = getUserSettings()
   const workspaceLayer = getWorkspaceSettings(workspacePath)
@@ -320,6 +328,8 @@ function buildResolvedSettings(workspacePath: string | null): AppSettings {
     )
   )
   const agent = { ...(merged.agent as Record<string, unknown>) }
+  if (typeof agent.systemPrompt === 'string' && SUPERSEDED_SHARED_RULES.includes(agent.systemPrompt.trim()))
+    agent.systemPrompt = getDefaults().agent.systemPrompt
   // Repository trust is not consent to disclose older chat history. Only the
   // profile may raise this ceiling; even an untrusted repository may restrict it.
   agent.contextMemory = {

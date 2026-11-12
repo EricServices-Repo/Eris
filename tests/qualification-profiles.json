@@ -156,7 +156,8 @@
         "tests/llama-abort-ledger.test.ts",
         "tests/worker-abort-ack.test.ts",
         "tests/foreground-stop-grace.test.ts",
-        "tests/agent-listing.test.ts"
+        "tests/agent-listing.test.ts",
+        "tests/agent-nudges.test.ts"
       ],
       "notRun": [
         "live model inference",

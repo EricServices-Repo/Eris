@@ -198,7 +198,7 @@ it('previews actual task authority, guidance, evidence and effective input reser
     project: 'Current project evidence. '.repeat(60),
     retrieval: 'Fresh retrieval. '.repeat(60),
     ...memoryForDestination(prompt, LOCAL),
-    maxInputTokens: 2500,
+    maxInputTokens: 2700,
     toolsAvailable: true,
     toolProtocol: 'text-tools'
   })

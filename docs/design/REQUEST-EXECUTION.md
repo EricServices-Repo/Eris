@@ -119,6 +119,25 @@ An unavailable evaluator still produces an unresolved assessment, and that asses
 
 The verdict is not written into the answer text (#502). The chat panel shows it under the reply from `contextResult.completion.assessment`, and model history drops host status paragraphs, including the "Outcome check: …" lines that older builds stored in the body, so a later turn does not repeat them as its own findings.
 
+## Model-facing instructions
+
+Every model call gets one compiled system message, built in this order so the stable part can be reused as a prefix (R26):
+
+1. **Task protocol** (`taskProtocol` in `agent/context-compiler.ts`). Who sets the task, that everything else is evidence, the one tool-call grammar the backend accepts (native calls, or the text envelope), the permissions, when to stop, and the reply style. A tool-free reply gets a `NO TOOLS` variant with no tool steps.
+2. **Shared rules** (`agent.systemPrompt`, user-editable), workspace rules, active skills and a custom agent's own prompt.
+3. **Role**, once (`roleGuidance` in `agent/prompts.ts`): name, job, done condition, who reads the reply, and the read-only note.
+4. **One playbook** for the turn's intent (`intentPlaybook`). A read-only turn never carries edit steps (R31).
+
+The chat prompt's own copies of the role (`AGENT CONTRACT`, "You are …", a builtin role's `STEPS`) are removed from the project block, so role text is never duplicated or relabelled as evidence. Builtin `STEPS` in `resources/agents.json` remain for the agent settings UI and the Cloud Agent path.
+
+Rules for editing these texts:
+
+- State each instruction once, in the layer that owns it. Permissions belong to the task protocol, method to the playbook, reply contents to the response contract.
+- Name tools; never show a tool call written as text except the text-tools envelope. Nudges in `agent/loop.ts` follow the same rule, because a native-tools model told to "emit tool JSON" prints the call into its reply.
+- Do not use host markers such as "DONE" as something the model should write.
+- The task protocol is a required block and must fit small local windows. Check `tests/agent-v2.test.ts` (8k window) after lengthening it.
+- Bump `PROMPT_VERSION` in `src/shared/agent-versions.ts` when the meaning changes.
+
 ## Regression coverage
 
 - Exact reported file-generation wording and destination-suffix variants.

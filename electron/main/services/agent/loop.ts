@@ -120,6 +120,8 @@ import { toolFailureRecovery } from './recovery'
 import { confirmUnchanged } from './verified-noop'
 import { classifyToolError, type TypedToolFailure } from './tool-failure'
 import { findAgent } from '../agents'
+import { sharedPromptBlocks } from '../chat-prompt'
+import { toolProtocolFor } from '../tool-protocol'
 import {
   AGENT_HANDOFF_CHARS,
   handoffConstraintProblem,
@@ -127,7 +129,13 @@ import {
   parseHandoff
 } from '../../../../src/shared/agent-orchestration'
 import { isVerifyCommand } from '../command-approval'
-import { buildPreservedWorkerMessages, isReadOnlyChat, truncateForModel } from './prompts'
+import {
+  buildPreservedWorkerMessages,
+  isReadOnlyChat,
+  roleGuidance,
+  truncateForModel,
+  withoutSharedBlocks
+} from './prompts'
 import { createTaskContract, childTaskContract } from '../task-intake'
 import {
   interpretationOf,
@@ -703,8 +711,7 @@ async function* runAgentInternal(options: {
       turnTips.push(artifactResponseContract(interpretationOf(task), task.scope.applicability))
     if (mode === 'ask') {
       tips.push(
-        'You are in Ask mode. Answer clearly in markdown with concrete paths/symbols when relevant. ' +
-          'Do not edit files or call workspace tools. If the user needs changes, say they should switch to Agent mode.'
+        'Ask mode: answer only. If the user wants files changed or a command run, say that Agent mode does that.'
       )
     }
     if (plan.intent === 'capability' || isErisCapabilityQuestion(originalUserGoal)) {
@@ -716,17 +723,36 @@ async function* runAgentInternal(options: {
     // Answer-only turns compile the same task contract as tool workers, with a
     // tool-free protocol, so task identity and permissions agree across branches.
     const priorSystem = messages.find((m) => m.role === 'system')?.content || ''
+    // Same guidance order as tool workers: shared rules, workspace rules, skills, custom
+    // role, then the role once. A builtin role's tool steps do not apply to a tool-free
+    // reply, so they are dropped with the chat prompt's other copies.
+    const answerAgent = findAgent(options.workspacePath, plan.agentId)
+    const answerCustomPrompt = answerAgent?.builtin === false ? answerAgent.systemPrompt : undefined
+    const answerShared = sharedPromptBlocks(options.workspacePath, options.settings, mode, task.skillIds)
     const compiled = await compileMeasuredContext(
       {
         task,
         toolsAvailable: false,
-        guidance: tips.join('\n\n'),
+        guidance: [
+          answerShared.systemPrompt,
+          answerShared.rules,
+          answerShared.skills,
+          answerCustomPrompt,
+          roleGuidance(plan, task),
+          ...tips
+        ]
+          .filter((block) => block?.trim())
+          .join('\n\n'),
         turnInstructions: turnTips.join('\n\n'),
         turnGuidance: plan.executionPlan
           ? `Task plan:\n${plan.executionPlan.steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}\nDone when: ${plan.executionPlan.doneWhen}`
           : undefined,
         ...memoryForDestination(options.conversationMemory, chatModel, options.settings, task),
-        project: priorSystem,
+        project: withoutSharedBlocks(priorSystem, options.workspacePath, options.settings, {
+          skillIds: task.skillIds,
+          customAgentPrompt: answerCustomPrompt,
+          builtinAgentPrompt: answerAgent?.builtin === false ? undefined : answerAgent?.systemPrompt
+        }),
         retrieval: '',
         maxInputTokens: await prepareContextBudget(options.settings, chatModel, options.signal)
       },
@@ -1792,40 +1818,49 @@ async function* runAgentInternal(options: {
     }
   }
 
+  /*
+   * Nudges name the tool to call and never show a call written as text, except the one
+   * envelope a text-tools backend needs. A native-tools model told to "emit tool JSON"
+   * writes that JSON into its reply instead of calling the tool (#506).
+   */
+  const firstListingCall = () =>
+    toolProtocolFor(options.settings, workerModel) === 'text-tools'
+      ? `Call the tree tool on the workspace root next:\n\n<<<TOOL>>>\n{"name":"tree","arguments":{"path":"."}}\n<<<END>>>\n\n`
+      : `Call the tree tool on the workspace root next. `
+  const FINISH = 'When the whole request is done, reply with a short summary and no tool calls.'
+
   const nudgeToTools = (reason: string): AgentChatMessage => ({
     role: 'system',
     content:
       `${reason}\n\n` +
       (lastTreeResult
-        ? `The workspace listing is already in context — do NOT call tree/list_dir again.\n` +
+        ? `The workspace listing is already in context; do not call tree or list_dir again.\n` +
           `Active user request:\n${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}\n\n` +
           (answerNext
             ? answerNext
             : reviewOnly
-              ? `Next step: emit read_file on key sources and/or {"name":"run","command":"npm test"} (or typecheck). ` +
-                `Then a DONE summary with blockers → risks → suggestions. Do not ask the user for files.`
-              : `Next step: emit search_replace / write_file / mkdir / read_file tool JSON now. ` +
-                `Keep tooling until the request is fully done, then a short DONE summary.`)
-        : `Emit ONLY this tool call next:\n\n{"name":"tree","path":"."}\n\n` +
-          `Then continue with retrieve/read_file` +
+              ? `Next: call read_file on the key sources, and run the project's tests or typecheck if that helps. ` +
+                `Then reply with the findings, most severe first. Do not ask the user for files.`
+              : `Next: call the tool for the next step now (read_file, search_replace, write_file or mkdir). ${FINISH}`)
+        : firstListingCall() +
+          `Then continue with retrieve and read_file` +
           (answerNext
             ? ` on the files that answer the user, then reply in plain sentences.`
-            : `${reviewOnly ? '/run' : '/search_replace/write_file/run'} until the request is done.`) +
+            : `${reviewOnly ? ' and run' : ', search_replace, write_file and run'} until the request is done.`) +
           ` Never ask the user for project structure.`)
   })
 
   const nudgeAfterInspect = (_snapshot: string): AgentChatMessage => ({
     role: 'system',
     content:
-      `Do NOT call tree or list_dir again — you already have the listing above.\n` +
+      `Do not call tree or list_dir again; you already have the listing above.\n` +
       `Active user request:\n${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}\n\n` +
       (answerNext
         ? answerNext
         : reviewOnly
-          ? `Next: emit read_file on the important source files, optionally run tests/typecheck, ` +
-            `then DONE summary (blockers → risks → suggestions → nits) with concrete paths.`
-          : `Next: emit search_replace or write_file (and mkdir if needed), or read_file if you still need detail. ` +
-            `Keep going until the full request is satisfied; only then a short DONE summary with no tools.`)
+          ? `Next: call read_file on the important source files, optionally run tests or typecheck, ` +
+            `then reply with the findings (blockers, risks, suggestions, nits) and their paths.`
+          : `Next: call search_replace or write_file (and mkdir if needed), or read_file if you still need detail. ${FINISH}`)
   })
 
   const nudgeContinueWork = (reason: string): AgentChatMessage => ({
@@ -1843,9 +1878,8 @@ async function* runAgentInternal(options: {
       (answerNext
         ? answerNext
         : reviewOnly
-          ? `Emit read_file or run tool JSON, OR if you already have enough evidence, reply with a DONE review summary and no tools.`
-          : `You are NOT finished. Emit the next search_replace / write_file / mkdir / read_file / run tool JSON now. ` +
-            `When — and only when — the full request is satisfied, reply with a short DONE summary and no tools.`)
+          ? `Call read_file or run for the evidence you still need. If you already have enough, reply with the review and no tool calls.`
+          : `The request is not finished. Call the tool for the next step now (search_replace, write_file, mkdir, read_file or run). ${FINISH}`)
   })
 
   // Loop until done, abort, or hard budgets.
@@ -2483,7 +2517,7 @@ async function* runAgentInternal(options: {
               `The local session has been reset. Answer without a forced JSON grammar. ` +
               `Do not repeat completed file writes. Inspect existing files if more work is needed. ` +
               `If the requested implementation is complete, return a factual summary of what was implemented and any unverified parts; ` +
-              `otherwise emit one permitted tool call for the next missing step. ` +
+              `otherwise call one permitted tool for the next missing step. ` +
               `A completion summary will still be checked against observed changes and verification.\n` +
               `Existing changes: ${[...new Set(filesTouched)].join(', ') || 'none'}\n` +
               `Original request: ${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}`
@@ -2880,7 +2914,7 @@ async function* runAgentInternal(options: {
               (task.authority.edit
                 ? 'Continue with permitted edits and verification until the request is satisfied. '
                 : 'Use only permitted read tools to gather missing evidence, or explain what is blocked. Do not edit files. ') +
-              `Do not claim DONE yet.\n` +
+              `Do not report completion yet.\n` +
               `User request:\n${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}`
           })
           yield { type: 'status', text: `${plan.agentName} · goal unmet — continuing…` }
@@ -2955,15 +2989,15 @@ async function* runAgentInternal(options: {
           workerMessages.push({
             role: 'system',
             content:
-              `Stop calling tree/list_dir. Either emit ONE read_file or run tool, ` +
-              `OR answer the actual request using inspected project sources. If evidence is missing, say the review is incomplete.`
+              `Stop calling tree/list_dir. Either call read_file or run once, ` +
+              `or answer the actual request using inspected project sources. If evidence is missing, say the review is incomplete.`
           })
         } else {
           workerMessages.push(
             noProgressStreak >= MAX_NO_PROGRESS
               ? nudgeContinueWork(
                   reviewOnly
-                    ? 'Stop listing directories. Read a source file, run tests, or DONE.'
+                    ? 'Stop listing directories. Read a source file, run tests, or give the review.'
                     : 'Stop inspecting. Finish the remaining file edits now.'
                 )
               : nudgeAfterInspect(snapshot)
@@ -4848,15 +4882,15 @@ async function* runAgentInternal(options: {
           content:
             `${verifyNote}\n\n${progress}` +
             (reviewOnly
-              ? `If you still need evidence, emit read_file or run. ` +
-                `If you can already confirm the review, reply with a DONE summary and no tools. ` +
+              ? `If you still need evidence, call read_file or run. ` +
+                `If you can already confirm the review, reply with it and make no tool calls. ` +
                 `Do not call tree/list_dir again.`
               : `If the user request is NOT fully done` +
                 (verifyNote.includes('failed') ? ' or verify failed' : '') +
-                `, emit the next write_file/mkdir/read_file tool JSON now. ` +
+                `, call the tool for the next step now (write_file, mkdir or read_file). ` +
                 `If it IS fully done` +
                 (verifyNote && !verifyNote.includes('failed') ? ' and verify passed' : '') +
-                `, reply with a short DONE summary and no tools. ` +
+                `, reply with a short summary and no tool calls. ` +
                 `Do not call tree again unless the user asks for another listing.`)
         })
       }

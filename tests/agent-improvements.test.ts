@@ -251,7 +251,7 @@ describe('AG-023/AG-027 prompt protocol matches tools and authority', () => {
       maxInputTokens: 8192
     })
     expect(message.content).toContain('TASK CONTRACT')
-    expect(message.content).toContain('No tools are available')
+    expect(message.content).toContain('This reply has no tools')
     expect(message.content).not.toMatch(/<<<TOOL>>>|write_file|read_file/)
   })
 
@@ -329,7 +329,7 @@ describe('agent loop request contents', () => {
       (model.requests.at(-1)?.messages as Array<{ role: string; content: string }>)[0]?.content
     )
     expect(system).toContain('TASK CONTRACT')
-    expect(system).toContain('No tools are available')
+    expect(system).toContain('This reply has no tools')
     expect(system).not.toMatch(/Make the requested changes|Routing:/)
   })
 
