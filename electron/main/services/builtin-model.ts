@@ -1,3 +1,4 @@
+import { idleWarmDecision } from './warm-policy'
 import { discoverNativeContextWindow, nativeContextWindow } from './native-context'
 import { inferenceDevice } from './inference-device'
 import {
@@ -1643,6 +1644,7 @@ async function* streamBuiltinChatViaWorker(options: {
 }
 
 type WarmResult = { ok: boolean; model?: string; error?: string }
+let lastChatInference: { path: string; at: number } | null = null
 let warmInFlight: { modelRef: string; contextWindow: number; promise: Promise<WarmResult> } | null =
   null
 
@@ -1708,6 +1710,9 @@ export function warmLocalInference(
         }
       }
 
+      const contextWindow = foreground?.contextWindow ??
+        (await import('./model-capabilities')).resolveModelCapabilities(s, entry.ref).requestedContext
+
       const lease = await acquireInferenceLease({
         workload: 'text',
         owner: entry.ref,
@@ -1717,7 +1722,15 @@ export function warmLocalInference(
         signal
       })
       try {
-        const contextWindow = foreground?.contextWindow ?? s.models.contextWindow
+        const resident = residentModelPath()
+        if (!foreground && idleWarmDecision({
+          residentPath: resident, targetPath: path,
+          residentRequestedContext: workerModelPath ? workerRequestedContext : runtimeRequestedContext,
+          targetRequestedContext: contextWindow,
+          residentUsedByChatMsAgo: resident && lastChatInference?.path === resident
+            ? Date.now() - lastChatInference.at : null
+        }) === 'skip-recently-used-model-resident')
+          return { ok: false, error: 'a recently used local model is resident; idle warm skipped' }
         if (!preferInProcess) {
           try {
             await ensureWorkerModel(path, entry, signal, contextWindow)
@@ -1815,6 +1828,7 @@ export async function* streamBuiltinChat(options: {
     priority: 20,
     signal: options.signal
   })
+  lastChatInference = { path, at: Date.now() }
   try {
     // Prefer utilityProcess so Metal/CPU inference does not freeze the Electron UI.
     // Fall back to in-process on worker failures (including sequence races).
@@ -1858,6 +1872,7 @@ export async function* streamBuiltinChat(options: {
       yield chunk
     }
   } finally {
+    lastChatInference = { path, at: Date.now() }
     lease.release()
   }
 }
