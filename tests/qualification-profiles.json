@@ -157,7 +157,9 @@
         "tests/worker-abort-ack.test.ts",
         "tests/foreground-stop-grace.test.ts",
         "tests/agent-listing.test.ts",
-        "tests/agent-nudges.test.ts"
+        "tests/agent-nudges.test.ts",
+        "tests/prompt-followups.test.ts",
+        "tests/prompt-budget.test.ts"
       ],
       "notRun": [
         "live model inference",

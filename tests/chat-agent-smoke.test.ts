@@ -791,7 +791,7 @@ describe('chat agent complex smoke test', () => {
         mcp: 'off'
       })
     )
-    expect(harness.prompts.some((prompt) => prompt.includes('RECOVERY: The last attempts'))).toBe(
+    expect(harness.prompts.some((prompt) => prompt.includes('The last attempts added no new evidence'))).toBe(
       true
     )
     expect(readFileSync(join(workspacePath, 'src/retry.ts'), 'utf8')).toContain('MAX_RETRIES = 4')
@@ -824,7 +824,7 @@ describe('chat agent complex smoke test', () => {
     expect(lastAnswer(events).match(/couldn’t complete/g)).toHaveLength(1)
     expect(harness.prompts.length).toBeLessThan(20)
     expect(
-      harness.prompts.filter((prompt) => prompt.includes('RECOVERY: The last attempts')).length
+      harness.prompts.filter((prompt) => prompt.includes('The last attempts added no new evidence')).length
     ).toBeGreaterThan(0)
     expect(readFileSync(join(workspacePath, 'src/retry.ts'), 'utf8')).toContain('MAX_RETRIES = 3')
   })
@@ -892,7 +892,7 @@ describe('chat agent complex smoke test', () => {
             message.role === 'assistant' && !message.content.trim() && !message.tool_calls?.length
         )
     ).toBe(false)
-    expect(harness.prompts.at(-1)).toContain('EMPTY_RESPONSE_RECOVERY')
+    expect(harness.prompts.at(-1)).toContain('Your last reply was empty')
     expect(harness.verifyCalls).toBeGreaterThan(0)
     for (const path of paths) expect(existsSync(join(workspacePath, path))).toBe(true)
     expect(

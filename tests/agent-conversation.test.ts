@@ -209,7 +209,13 @@ describe('AG-054 top-level and child roles', () => {
           .message.content.split('TASK CONTRACT\n')[1]!
           .split('\n')[0]!
       )
-    expect(facing(parent).assignment).toEqual({ kind: 'top-level', reportTo: 'user' })
+    // The role block tells a top-level worker it answers the user (roleGuidance), so only
+    // a child carries an assignment in the task block (#540).
+    expect(facing(parent).assignment).toBeUndefined()
+    expect(facing({ ...parent, parentTaskId: 'parent-task' }).assignment).toEqual({
+      kind: 'child',
+      reportTo: 'coordinator'
+    })
   })
 })
 

@@ -114,6 +114,21 @@ export function intentPlaybook(
   }
 }
 
+/**
+ * Sent when a public-web question was answered without searching. Like every nudge, it
+ * names the tool; only a text-tools backend is shown the envelope its parser accepts,
+ * because a native-tools model shown a call as text prints one (#506, #540).
+ */
+export function webSearchNudgeText(query: string, protocol: 'native-tools' | 'text-tools'): string {
+  return (
+    `This question is about the public web. Do not read workspace files and do not guess a biography.\n` +
+    (protocol === 'text-tools'
+      ? `Call web_search now:\n<<<TOOL>>>\n${JSON.stringify({ name: 'web_search', arguments: { query } })}\n<<<END>>>\n`
+      : `Call the web_search tool now with the query ${JSON.stringify(query)}. `) +
+    `Then stop.`
+  )
+}
+
 export function truncateForModel(text: string, max = 12_000): string {
   if (text.length <= max) return text
   return `${text.slice(0, max)}\n\n[truncated ${text.length - max} chars for model context]`

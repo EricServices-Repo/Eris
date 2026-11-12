@@ -1,3 +1,4 @@
+import { INTENT_GUIDE, INTENT_RULES } from '../../../src/shared/intent-guide'
 import { isAutomaticModelSelection } from '../../../src/shared/model-execution'
 import { chooseExecutionModel, executionPolicy, executionLocal, type AutoModelChoice } from './auto-model-policy'
 import { asksForImageGeneration } from '../../../src/shared/image-generation'
@@ -527,19 +528,8 @@ async function llmRouteHint(options: {
   const prompt =
     `Classify this Eris IDE chat message for routing. Reply with ONLY JSON:\n` +
     `{"intent":"answer|capability|explore|plan|edit|review|verify|run","agentId":"<id>","confidence":0-1}\n\n` +
-    `Intent definitions:\n` +
-    `- answer — pure Q&A from knowledge; no workspace tools needed\n` +
-    `- capability — questions about Eris itself, its models, providers, or limits\n` +
-    `- explore — find/read/explain code in the workspace (tools: read)\n` +
-    `- plan — inspect the workspace and return a sequenced implementation plan (tools: read; no edits)\n` +
-    `- edit — create, change, improve, fix, or scaffold files (tools: write)\n` +
-    `- review — critique / review project or PR code (tools: read); if they also ask to improve/fix, prefer edit\n` +
-    `- verify — adversarially validate an implementation with relevant tests/typecheck (read + verification commands only; no edits)\n` +
-    `- run — execute tests/builds/commands\n\n` +
-    `Rules:\n` +
-    `- "review the project… make improvements" → edit\n` +
-    `- "review the project folder" alone → review\n` +
-    `- Prefer edit over answer whenever the user wants changes in the repo\n` +
+    `Intents:\n${INTENT_GUIDE}\n\n` +
+    `Rules:\n${INTENT_RULES}\n` +
     `- Pick the best agentId from the list\n\n` +
     `Agents:\n${agentLines}\n` +
     (options.examples ? `Past corrections from this user:\n${options.examples}\n` : '') +

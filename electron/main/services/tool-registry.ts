@@ -458,7 +458,7 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   ),
   tool(
     'delegate_to_agent',
-    'Spawn a specialist background agent with a structured handoff (orchestrator).',
+    'Hand one self-contained part of the work to a specialist agent that runs separately and reports back. Use it only when the work splits; give a concrete goal and the context it needs.',
     {
       agent_id: {
         type: 'string',
@@ -495,7 +495,8 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
       access: 'full',
       effect: 'orchestration',
       discovery: 'deferred',
-      requiredAnyOf: [['agent_id'], ['agentId']]
+      requiredAnyOf: [['agent_id'], ['agentId']],
+      aliases: ['agentId', 'openQuestions']
     }
   ),
   tool(

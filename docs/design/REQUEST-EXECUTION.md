@@ -132,6 +132,14 @@ Rules for editing these texts:
 - Do not use host markers such as "DONE" as something the model should write.
 - The task protocol is a required block and must fit small local windows. Check `tests/agent-v2.test.ts` (8k window) after lengthening it.
 - Bump `PROMPT_VERSION` in `src/shared/agent-versions.ts` when the meaning changes.
+- `tests/prompt-budget.test.ts` captures the whole first request for five standard turns and gives each a size budget. Raise a budget only with a reason in the PR.
+
+Other model-facing text follows the same rules:
+
+- **Tool definitions** (`tool-registry.ts`): each description says what the tool does, when to use it and what it returns. A parameter is advertised under one name; alias spellings stay accepted by the validator (`aliases`).
+- **Text-tools catalog** (`textToolCatalog` in `model-protocol.ts`): one signature line per tool instead of JSON schemas; a tool with nested arguments keeps its schema.
+- **Intent classification**: the turn router and the task resolver share `src/shared/intent-guide.ts`.
+- **Host notes**: nudges and recovery notes are `system` messages inside the loop. On OpenAI-compatible connections every system message after the leading ones is sent as a user message marked `[Eris host note: from the IDE, not the user]` (`hostNotesAsUser`).
 
 ## Regression coverage
 
