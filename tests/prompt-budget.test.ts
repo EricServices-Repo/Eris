@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { basename, join } from 'path'
 
 /**
  * The whole first request for a set of standard turns, with a size budget for each
@@ -67,8 +67,10 @@ async function firstRequest(text: string, over: Partial<TurnPlan>) {
   }))
     void _
   const { messages: wire, tools } = state.first!
-  const system = wire.filter((m) => m.role === 'system').map((m) => m.content).join('\n')
-  const user = wire.filter((m) => m.role === 'user').map((m) => m.content).join('\n')
+  // The temp folder's path and name differ per machine; measure with a fixed stand-in.
+  const stable = (text: string) => text.split(ws).join('/ws/demo').split(basename(ws)).join('demo')
+  const system = stable(wire.filter((m) => m.role === 'system').map((m) => m.content).join('\n'))
+  const user = stable(wire.filter((m) => m.role === 'user').map((m) => m.content).join('\n'))
   return { system, user, tools, toolChars: JSON.stringify(tools).length }
 }
 
@@ -84,7 +86,8 @@ describe('compiled request budgets', () => {
   it.each(TURNS)('%s turn stays within its budget and states each thing once', async (_name, text, over, systemBudget, userBudget) => {
     const { system, user, tools } = await firstRequest(text, over as Partial<TurnPlan>)
     expect(system.length, `system is ${system.length}`).toBeLessThan(systemBudget)
-    expect(user.length, `user turn is ${user.length}`).toBeLessThan(userBudget)
+    // On failure the message shows the turn, so the reviewer sees what grew.
+    expect(user.length, `user turn is ${user.length}:\n${user}`).toBeLessThan(userBudget)
     expect(system.split('Role: ').length - 1).toBe(1)
     expect(system.split('Shared rules (every role inherits these)').length - 1).toBe(1)
     expect(system.split('PLAYBOOK').length - 1).toBeLessThanOrEqual(1)
