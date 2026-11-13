@@ -785,6 +785,7 @@ export function registerChatStreamIpc(): void {
                 recordTelemetry('done')
                 try {
                   const mem = rememberAgentRun(workspacePath, getResolvedSettings(workspacePath), {
+                    intent: turnPlan.intent,
                     goal: userText,
                     filesTouched: memoryFiles,
                     actionLog: memoryActions,
@@ -1303,6 +1304,7 @@ export function registerChatStreamIpc(): void {
             recordTelemetry(runIncomplete ? 'incomplete' : 'done')
             try {
               const mem = rememberAgentRun(workspacePath, getResolvedSettings(workspacePath), {
+                intent: turnPlan.intent,
                 goal: userText,
                 filesTouched: memoryFiles.length ? memoryFiles : (run?.filesTouched ?? []),
                 actionLog: memoryActions.length ? memoryActions : (run?.actionLog ?? []),

@@ -9,7 +9,7 @@ import {
   rememberAskUserReply,
   undoLastProjectMemory
 } from '../electron/main/services/project-memory'
-import { getWorkspaceContext } from '../electron/main/services/workspace-context'
+import { getWorkspaceContext, saveWorkspaceContext } from '../electron/main/services/workspace-context'
 import type { AppSettings } from '../src/shared/settings-schema'
 
 function settings(mode: 'auto' | 'ask' | 'off'): AppSettings {
@@ -55,7 +55,7 @@ describe('project memory', () => {
     expect(body).toMatch(/src\/App\.tsx/)
   })
 
-  it('bootstraps Summary when pin is empty', () => {
+  it('does not bootstrap a pinned summary from a run request', () => {
     const root = ws()
     rememberAgentRun(root, settings('auto'), {
       goal: 'Review the project folder',
@@ -63,8 +63,37 @@ describe('project memory', () => {
       actionLog: ['Listed tree .']
     })
     const pin = getWorkspaceContext(root).pin
-    expect(pin.length).toBeGreaterThan(10)
-    expect(pin).toMatch(/Focus:|Recent paths:/i)
+    expect(pin).toBe('')
+  })
+
+  it('skips read-only runs and changes confined to Eris state', () => {
+    const root = ws()
+    expect(rememberAgentRun(root, settings('auto'), { intent: 'review', goal: 'Review', filesTouched: [], actionLog: ['Read a.ts'] }).wrote).toBe(false)
+    expect(rememberAgentRun(root, settings('auto'), { intent: 'edit', goal: 'Change settings', filesTouched: ['.eris/settings.json'], actionLog: [] }).wrote).toBe(false)
+    expect(rememberAgentRun(root, settings('auto'), { intent: 'review', goal: 'Review', filesTouched: ['a.ts'], actionLog: [] }).wrote).toBe(false)
+  })
+
+  it('keeps only the latest 20 generated run notes while preserving handwritten text', () => {
+    const root = ws()
+    saveWorkspaceContext(root, '# Workspace context\n\n## Summary\nKeep this\n\n## Notes\n- Handwritten line\n- User choice: React\n')
+    for (let i = 0; i < 25; i++) {
+      const result = rememberAgentRun(root, settings('auto'), { intent: 'edit', goal: `Update feature ${i}`, filesTouched: [`file${i}.ts`, 'shared.ts'], actionLog: [] })
+      expect(result.preview).toContain('changed file')
+    }
+    const body = getWorkspaceContext(root).body
+    expect(body.match(/run: changed /g)).toHaveLength(20)
+    expect(body).toContain('- Handwritten line')
+    expect(body).toContain('- User choice: React')
+    expect(body).toContain('file24.ts, shared.ts')
+    expect(body).not.toContain('file0.ts')
+  })
+
+  it('records only paths for incomplete changes and never records aborted runs', () => {
+    const root = ws()
+    rememberAgentRun(root, settings('auto'), { intent: 'edit', goal: 'Private request', filesTouched: ['a.ts'], actionLog: [], incomplete: true })
+    expect(getWorkspaceContext(root).body).toContain('run: changed (incomplete run) a.ts')
+    expect(getWorkspaceContext(root).body).not.toContain('Private request')
+    expect(rememberAgentRun(root, settings('auto'), { goal: 'Stopped', filesTouched: ['b.ts'], actionLog: [], aborted: true }).wrote).toBe(false)
   })
 
   it('proposes instead of writing in ask mode', () => {

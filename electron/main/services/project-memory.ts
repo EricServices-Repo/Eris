@@ -2,10 +2,9 @@ import { homedir } from 'os'
 import { redactBugReportText } from '../../../src/shared/bug-report-sanitize'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import type { AppSettings } from '../../../src/shared/settings-schema'
+import type { AppSettings, ChatIntent } from '../../../src/shared/settings-schema'
 import {
   appendContextNote,
-  CONTEXT_PIN_MAX,
   getWorkspaceContext,
   saveWorkspaceContext,
   setContextSummary
@@ -27,6 +26,7 @@ export type MemoryWriteResult = {
 }
 
 export type AgentRunMemoryInput = {
+  intent?: ChatIntent
   goal: string
   filesTouched: string[]
   actionLog: string[]
@@ -36,7 +36,6 @@ export type AgentRunMemoryInput = {
 }
 
 const MAX_NOTE = 360
-const MAX_ACTIONS = 6
 const MAX_FILES = 8
 
 function undoPath(workspacePath: string): string {
@@ -96,26 +95,14 @@ function redactSecrets(text: string): string {
 }
 
 function buildRunNote(input: AgentRunMemoryInput): string | null {
-  if (input.aborted) return null
-  const goal = cleanGoal(input.goal)
-  const files = [...new Set(input.filesTouched)].filter(Boolean).slice(0, MAX_FILES)
-  const actions = [...new Set(input.actionLog)].filter(Boolean).slice(-MAX_ACTIONS)
-  const hasSignal = files.length > 0 || actions.length > 0
-  if (!hasSignal && !input.answerSnippet?.trim()) return null
-
-  const bits: string[] = []
-  if (goal) bits.push(goal)
-  if (files.length) bits.push(`files: ${files.join(', ')}`)
-  if (actions.length) {
-    bits.push(`did: ${actions.map((a) => a.replace(/\s+/g, ' ').trim().slice(0, 60)).join('; ')}`)
-  } else if (input.answerSnippet?.trim()) {
-    bits.push(input.answerSnippet.replace(/\s+/g, ' ').trim().slice(0, 120))
-  }
-  if (input.incomplete) bits.push('(incomplete)')
-
-  const note = redactSecrets(bits.join(' — ')).slice(0, MAX_NOTE)
-  if (note.length < 12) return null
-  return note
+  if (input.aborted || (input.intent && ['answer', 'capability', 'explore', 'review', 'plan'].includes(input.intent))) return null
+  const files = [...new Set(input.filesTouched)].filter(path => {
+    const normalized = path.replace(/\\/g, '/').replace(/^\.\//, '')
+    return normalized && !normalized.startsWith('.eris/') && !normalized.startsWith('.ericservices-ide/')
+  }).slice(0, MAX_FILES)
+  if (!files.length) return null
+  const goal = input.incomplete ? '' : cleanGoal(input.goal).slice(0, 80)
+  return redactSecrets(`run: changed${input.incomplete ? ' (incomplete run)' : ''} ${files.join(', ')}${goal ? ` — ${goal}` : ''}`).slice(0, MAX_NOTE)
 }
 
 function buildAskUserNote(question: string, reply: string): string {
@@ -124,20 +111,18 @@ function buildAskUserNote(question: string, reply: string): string {
   return redactSecrets(`User choice: ${a}${q ? ` (re: ${q})` : ''}`).slice(0, MAX_NOTE)
 }
 
-/** Bootstrap a short Summary when the pin is empty and we learned something. */
-function maybeBootstrapSummary(workspacePath: string, input: AgentRunMemoryInput): string | null {
-  const pin = getWorkspaceContext(workspacePath).pin.trim()
-  if (pin) return null
-  const files = [...new Set(input.filesTouched)].filter(Boolean).slice(0, 5)
-  if (!files.length && !input.actionLog.length) return null
-  const goal = cleanGoal(input.goal)
-  const lines = [
-    goal ? `Focus: ${redactSecrets(goal)}` : '',
-    files.length ? `Recent paths: ${files.join(', ')}` : '',
-    'Auto-filled by Eris project memory — edit freely.'
-  ].filter(Boolean)
-  const summary = lines.join('\n').slice(0, CONTEXT_PIN_MAX)
-  return summary.length >= 20 ? summary : null
+/** Prune only machine-generated run bullets inside Notes; preserve all other text. */
+function appendRunNote(workspacePath: string, note: string): void {
+  const body = appendContextNote(workspacePath, note).body
+  const next = body.replace(/(^##\s+Notes\s*\n)([\s\S]*?)(?=^##\s+|(?![\s\S]))/im, (_match, heading: string, section: string) => {
+    let seen = 0
+    const lines = section.split('\n').filter(line => {
+      if (!/^- \(\d{4}-\d{2}-\d{2}\) run: changed(?: \(incomplete run\))? /u.test(line)) return true
+      return ++seen <= 20
+    })
+    return heading + lines.join('\n')
+  })
+  if (next !== body) saveWorkspaceContext(workspacePath, next)
 }
 
 function applyNote(workspacePath: string, note: string): MemoryWriteResult {
@@ -167,33 +152,21 @@ export function rememberAgentRun(
   if (input.aborted) return { wrote: false, preview: '' }
 
   const note = buildRunNote(input)
-  const summary = maybeBootstrapSummary(workspacePath, input)
-  if (!note && !summary) return { wrote: false, preview: '' }
+  if (!note) return { wrote: false, preview: '' }
+  const preview = note.replace(/^run: /, '').split(' — ')[0] || ''
 
   if (mode === 'ask') {
     return {
       wrote: false,
       needsConfirm: true,
-      note: note || undefined,
-      summary: summary || undefined,
-      preview: (note || summary || '').slice(0, 160)
+      note,
+      preview: preview.slice(0, 160)
     }
   }
 
-  // Prefer keeping a useful Summary empty-fill, then always append the note.
-  let result: MemoryWriteResult = { wrote: false, preview: '' }
-  if (summary) result = applySummary(workspacePath, summary)
-  if (note) {
-    // If we already snapshotted for summary, appendNote still mutates — one undo restores pre-run.
-    if (!result.wrote) snapshotContextForUndo(workspacePath)
-    appendContextNote(workspacePath, note)
-    result = {
-      wrote: true,
-      kind: result.wrote ? 'summary' : 'note',
-      preview: note.slice(0, 160)
-    }
-  }
-  return result
+  snapshotContextForUndo(workspacePath)
+  appendRunNote(workspacePath, note)
+  return { wrote: true, kind: 'note', preview: preview.slice(0, 160) }
 }
 
 export function rememberAskUserReply(
@@ -224,11 +197,14 @@ export function confirmProjectMemory(
   }
   if (proposal.note?.trim()) {
     if (!result.wrote) snapshotContextForUndo(workspacePath)
-    appendContextNote(workspacePath, proposal.note.trim())
+    if (proposal.note.trim().startsWith('run: changed')) appendRunNote(workspacePath, proposal.note.trim())
+    else appendContextNote(workspacePath, proposal.note.trim())
     result = {
       wrote: true,
       kind: result.kind || 'note',
-      preview: proposal.note.trim().slice(0, 160)
+      preview: proposal.note.trim().startsWith('run: changed')
+        ? proposal.note.trim().replace(/^run: /, '').split(' — ')[0]!.slice(0, 160)
+        : proposal.note.trim().slice(0, 160)
     }
   }
   return result
