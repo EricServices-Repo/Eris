@@ -48,7 +48,7 @@ function pump(): void {
 }
 
 /** Serialize overlapping canonical project roots, including workspace/subproject writes. */
-export function acquireProjectWrite(project: string, signal?: AbortSignal): Promise<() => void> {
+export function acquireProjectWrite(project: string, signal?: AbortSignal, onWait?: () => void): Promise<() => void> {
   if (signal?.aborted) return Promise.reject(aborted())
   const canonical = realpathAllowMissing(project)
   return new Promise((grant, reject) => {
@@ -69,5 +69,8 @@ export function acquireProjectWrite(project: string, signal?: AbortSignal): Prom
     waiting.push(waiter)
     signal?.addEventListener('abort', waiter.cancel, { once: true })
     pump()
+    if (waiting.includes(waiter)) {
+      try { onWait?.() } catch { /* observation cannot change admission */ }
+    }
   })
 }

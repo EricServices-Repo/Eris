@@ -12,6 +12,7 @@ import { activeDiagnosticsScope } from '../model-transport'
 import { pinEvidence, saveEvidenceOwner } from '../evidence-records'
 import { appendToolObservation } from '../model-protocol'
 import { acquireProjectWrite } from './task-scheduler'
+import { reportChatActivity } from '../chat-activity'
 import { generateImage, saveImageToWorkspace } from '../image-generation'
 import { ImageSizeSchema } from '../../../../src/shared/image-generation-schema'
 import { existsSync, readFileSync, realpathSync, statSync } from 'fs'
@@ -3380,7 +3381,8 @@ async function* runAgentInternal(options: {
           if (['workspace', 'command', 'external'].includes(toolEffect)) {
             releaseWrite = await acquireProjectWrite(
               task.scope.projectRoot ?? workspacePath,
-              options.signal
+              options.signal,
+              () => reportChatActivity('tool', { source: 'coordinator', reason: 'Waiting for another change to this project to finish' })
             )
             const stale = gateway.authorize(workspacePath, call, mcpReadOnlyTools.has(call.name))
             if (stale) {

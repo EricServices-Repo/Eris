@@ -380,3 +380,14 @@ it('serializes project mutations and removes cancelled waiters', async () => {
   await next
   expect(entered).toBe(true)
 })
+
+it('reports a queued project writer once without changing admission', async () => {
+  const onWait = vi.fn()
+  const release = await acquireProjectWrite('project', undefined, onWait)
+  expect(onWait).not.toHaveBeenCalled()
+  const waiting = acquireProjectWrite('project', undefined, onWait)
+  expect(onWait).toHaveBeenCalledTimes(1)
+  release()
+  const unlock = await waiting
+  unlock()
+})
