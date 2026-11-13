@@ -6,6 +6,8 @@ export interface TaskDeadline {
   readonly signal: AbortSignal
   readonly timeoutMs: number
   stopReason(): TaskStopReason | null
+  pause(): void
+  resume(): void
   dispose(): void
 }
 
@@ -55,11 +57,25 @@ export function createTaskDeadline(
   const onParentAbort = () => stop('cancelled')
   if (parent?.aborted) stop('cancelled')
   else parent?.addEventListener('abort', onParentAbort, { once: true })
-  const timer = setTimeout(() => stop('timeout'), timeoutMs)
+  let remaining = timeoutMs
+  let startedAt = Date.now()
+  let pauses = 0
+  let timer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => stop('timeout'), remaining)
   return {
     signal: controller.signal,
     timeoutMs,
     stopReason: () => reason,
+    pause: () => {
+      if (reason || pauses++ > 0) return
+      clearTimeout(timer)
+      timer = undefined
+      remaining = Math.max(0, remaining - (Date.now() - startedAt))
+    },
+    resume: () => {
+      if (reason || pauses === 0 || --pauses > 0) return
+      startedAt = Date.now()
+      timer = setTimeout(() => stop('timeout'), remaining)
+    },
     dispose: () => {
       clearTimeout(timer)
       parent?.removeEventListener('abort', onParentAbort)

@@ -1,4 +1,5 @@
 import { createTaskDeadline, modelStreamWithAbort } from '../task-deadline'
+import { raceAbort } from '../llama-worker-channel'
 import { eligibleOutbound } from '../eligible-outbound'
 import { createPromptTokenCounter } from './prompt-token-counter'
 import { resolveModelCapabilities } from '../model-capabilities'
@@ -392,7 +393,10 @@ export async function* runAgentWithWorkspaceTools(
   let actionLog: string[] = []
   let partialAnswer = ''
   try {
-    for await (const event of runAgentInternal({ ...options, signal: deadline.signal })) {
+    for await (const event of runAgentInternal({ ...options, signal: deadline.signal, userWait: {
+      begin: () => { options.userWait?.begin(); deadline.pause() },
+      end: () => { deadline.resume(); options.userWait?.end() }
+    } })) {
       if (event.type === 'progress' || event.type === 'session-step') {
         lastStep = event.step
         filesTouched = [...event.filesTouched]
@@ -425,6 +429,7 @@ async function* runAgentInternal(options: {
   messages: AgentChatMessage[]
   temperature: number
   signal?: AbortSignal
+  userWait?: { begin(): void; end(): void }
   getSecret: (key: string) => string | null
   /** ask = answer only; agent = may call tools per TurnPlan */
   mode?: AgentMode
@@ -1129,6 +1134,16 @@ async function* runAgentInternal(options: {
   let lastProgressCount = -1
   let lastProgressStep = 0
   let lastProgressAt = Date.now()
+  async function whileUserDecides<T>(work: () => Promise<T>): Promise<T> {
+    const started = Date.now()
+    options.userWait?.begin()
+    try {
+      return await raceAbort(work(), options.signal)
+    } finally {
+      lastProgressAt += Date.now() - started
+      options.userWait?.end()
+    }
+  }
   let stagnationRecoveries = 0
   /** Invalid calls already rejected in this run, by name and exact arguments. */
   const rejectedCallSignatures = new Set<string>()
@@ -2733,9 +2748,7 @@ async function* runAgentInternal(options: {
             type: 'thinking',
             text: `\n\n— Asking you: ${clarifyText.slice(0, 200)}${clarifyText.length > 200 ? '…' : ''}\n`
           }
-          const userWaitStarted = Date.now()
-          const reply = await options.askUser(clarifyText)
-          lastProgressAt += Date.now() - userWaitStarted
+          const reply = await whileUserDecides(() => options.askUser!(clarifyText))
           throwIfAborted(options.signal)
           workerMessages.push({
             role: 'assistant',
@@ -2859,7 +2872,7 @@ async function* runAgentInternal(options: {
             preferTypecheck: false,
             allowInstall: true,
             approveInstall: options.approveCommand
-              ? (cmd) => options.approveCommand!('run', cmd)
+              ? (cmd) => whileUserDecides(() => options.approveCommand!('run', cmd))
               : undefined
           })
           appendToolObservation(
@@ -3457,10 +3470,17 @@ async function* runAgentInternal(options: {
                 : ''
           let mcpApprovalDenied = false
           let mcpApprovalDetail = ''
+          const needsMcpApproval = Boolean(mcpTool && options.approveMcpTool)
+          const needsCommandApproval = Boolean(approvalCommand && options.approveCommand && !isGlobalInstallCommand(approvalCommand))
+          const hadWriteLock = Boolean(releaseWrite)
+          if (hadWriteLock && (needsMcpApproval || needsCommandApproval)) {
+            releaseWrite?.()
+            releaseWrite = undefined
+          }
           if (mcpTool) {
             if (options.approveMcpTool) {
               yield { type: 'status', text: `Waiting for approval: ${call.name}` }
-              mcpApprovalDenied = !(await options.approveMcpTool(call.name, call.args))
+              mcpApprovalDenied = !(await whileUserDecides(() => options.approveMcpTool!(call.name, call.args)))
               if (mcpApprovalDenied) {
                 mcpApprovalDetail =
                   'The user denied this MCP tool call. Continue without retrying it.'
@@ -3480,10 +3500,20 @@ async function* runAgentInternal(options: {
               type: 'status',
               text: `Waiting for approval: ${approvalCommand.slice(0, 80)}`
             }
-            approvalDenied = !(await options.approveCommand(
+            approvalDenied = !(await whileUserDecides(() => options.approveCommand!(
               approvalKind === 'run' ? 'run' : 'push',
               approvalCommand
-            ))
+            )))
+          }
+
+          if (hadWriteLock && (needsMcpApproval || needsCommandApproval)) {
+            releaseWrite = await acquireProjectWrite(task.scope.projectRoot ?? workspacePath, options.signal)
+            const staleAfterWait = gateway.authorize(workspacePath, call, mcpReadOnlyTools.has(call.name))
+            if (staleAfterWait) {
+              resultParts.push(`TOOL_RESULT ${call.name}: ${staleAfterWait}`)
+              yield { type: 'tool', tool: { id, name: call.name, status: 'error', detail: staleAfterWait } }
+              continue
+            }
           }
 
           if (precomputedResult) {
@@ -4016,9 +4046,7 @@ async function* runAgentInternal(options: {
                 type: 'thinking',
                 text: `\n\n— Asking you: ${question.slice(0, 200)}${question.length > 200 ? '…' : ''}\n`
               }
-              const userWaitStarted = Date.now()
-              const reply = await options.askUser(question.trim(), choices)
-              lastProgressAt += Date.now() - userWaitStarted
+              const reply = await whileUserDecides(() => options.askUser!(question.trim(), choices))
               throwIfAborted(options.signal)
               if (reply) {
                 result = {
@@ -4180,6 +4208,7 @@ async function* runAgentInternal(options: {
                   approveCommand: options.approveCommand,
                   approveMcpTool: options.approveMcpTool,
                   askUser: options.askUser,
+                  userWait: options.userWait,
                   mcp: 'reuse',
                   jobId: `${options.jobId}:inline:${agentId}`,
                   allowDelegate: false

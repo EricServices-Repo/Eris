@@ -38,6 +38,7 @@
         "tests/background-evidence-revalidation.test.ts",
         "tests/background-cancellation.test.ts",
         "tests/task-tree-budget.test.ts",
+        "tests/task-deadline-pause.test.ts",
         "tests/child-task-requirements.test.ts",
         "tests/child-outcome.test.ts",
         "tests/handoff-constraints.test.ts",

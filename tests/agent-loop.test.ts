@@ -92,6 +92,25 @@ async function drain(gen: AsyncGenerator<unknown>): Promise<Array<Record<string,
 }
 
 describe('agent loop (scripted model)', () => {
+  it('does not spend the run deadline while waiting for a user reply (#525)', async () => {
+    vi.useFakeTimers()
+    try {
+      const text = 'Create notes.txt with the greeting I choose'
+      const plan = editPlan()
+      plan.task = createTaskContract({ workspacePath: ws, text, plan })
+      const settings = structuredClone(getDefaults())
+      settings.agent.maxRunMinutes = 1
+      script.push(JSON.stringify({ name: 'ask_user', question: 'Which greeting should I use?' }),
+        JSON.stringify({ name: 'write_file', path: 'notes.txt', content: 'Hello' }),
+        'Created notes.txt with the greeting Hello.')
+      const events = await drain(runAgentWithWorkspaceTools({ workspacePath: ws, settings,
+        model: 'builtin:composer-lite', messages: [{ role: 'user', content: text }], temperature: 0,
+        getSecret: () => null, mode: 'agent', turnPlan: plan, mcp: 'off',
+        askUser: async () => { await vi.advanceTimersByTimeAsync(120_000); return 'Hello' } }))
+      expect(readFileSync(join(ws, 'notes.txt'), 'utf8')).toBe('Hello')
+      expect(events.some(event => String(event.text).includes('Run time limit reached'))).toBe(false)
+    } finally { vi.useRealTimers() }
+  })
   it('stops repeated rejected prose instead of looping indefinitely (#526)', async () => {
     vi.useFakeTimers()
     try {
