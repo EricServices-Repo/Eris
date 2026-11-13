@@ -323,6 +323,29 @@ describe('chat agent complex smoke test', () => {
     expect(lastAnswer(events)).toContain('Run time limit reached')
     expect(lastAnswer(events)).toContain('src/timed.ts')
   })
+  it('bounds a stalled model call and its recovery without losing applied changes (#526)', async () => {
+    harness.replies.push(JSON.stringify({ name: 'write_file', arguments: { path: 'src/timed.ts', content: 'export const saved = true\n' } }))
+    harness.stallAfterReplies = true
+    const settings = getDefaults()
+    settings.agent.maxNoProgressSeconds = 30
+    const events: AgentRunnerEvent[] = []
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const running = (async () => {
+      for await (const event of runAgentWithWorkspaceTools({
+        workspacePath, settings, model: 'builtin:composer-lite',
+        messages: [{ role: 'user', content: 'Create src/timed.ts' }], temperature: 0,
+        getSecret: () => null, turnPlan: fullEditPlan(), mcp: 'off'
+      })) events.push(event)
+    })()
+    await vi.waitFor(() => expect(existsSync(join(workspacePath, 'src/timed.ts'))).toBe(true))
+    await vi.advanceTimersByTimeAsync(30_000)
+    await vi.waitFor(() => expect(events.some(event => event.type === 'status' && event.text.includes('Recovering'))).toBe(true))
+    await vi.advanceTimersByTimeAsync(30_000)
+    await running
+    expect(events).toContainEqual(expect.objectContaining({ type: 'progress', incomplete: true, filesTouched: ['src/timed.ts'] }))
+    expect(lastAnswer(events)).toContain('src/timed.ts')
+    expect(readFileSync(join(workspacePath, 'src/timed.ts'), 'utf8')).toContain('saved = true')
+  })
   it('preserves the applied path when cancellation coincides with missing receipt evidence', async () => {
     const controller = new AbortController()
     harness.receiptFailure = 'missing'
@@ -630,7 +653,7 @@ describe('chat agent complex smoke test', () => {
     harness.replies.push(
       JSON.stringify({ name: 'read_file', path: 'src/retry.ts' }),
       ...Array.from(
-        { length: 6 },
+        { length: 3 },
         () =>
           'I need to read more files to complete the review. Let me check the remaining source files.'
       ),
@@ -692,7 +715,7 @@ describe('chat agent complex smoke test', () => {
     })
     it('reads the retrieved files itself and finishes the review', async () => {
       harness.retrievedPaths = ['src/retry.ts']
-      harness.replies.push(...Array.from({ length: 6 }, () => PROSE), FINDINGS)
+      harness.replies.push(...Array.from({ length: 3 }, () => PROSE), FINDINGS)
       const events = await review()
       expectCompleted(events)
       expect(lastAnswer(events)).toContain('jitter')
@@ -736,7 +759,7 @@ describe('chat agent complex smoke test', () => {
         () => 'The same finding repeats here forever and ever.'
       )
       harness.retrievedPaths = ['src/retry.ts']
-      harness.replies.push(...Array.from({ length: 6 }, () => PROSE), loop.join('\n'))
+      harness.replies.push(...Array.from({ length: 3 }, () => PROSE), loop.join('\n'))
       const events = await review()
       expect(lastAnswer(events)).toContain('this reply is partial')
       expect(events.some((event) => event.type === 'progress' && event.incomplete === true)).toBe(
@@ -766,7 +789,7 @@ describe('chat agent complex smoke test', () => {
   it('gives a stalled edit a bounded recovery window that can reach a real change', async () => {
     harness.replies.push(
       ...Array.from(
-        { length: 7 },
+        { length: 3 },
         () => 'I will inspect the source and make the requested changes.'
       ),
       JSON.stringify({ name: 'read_file', path: 'src/retry.ts' }),

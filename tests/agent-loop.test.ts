@@ -14,9 +14,11 @@ import { join } from 'path'
 
 // Replay queue: each entry is the full assistant text for one model turn.
 const script: string[] = []
+let scriptAdvanceMs = 0
 vi.mock('../electron/main/services/chat-runtime', () => ({
   // eslint-disable-next-line require-yield
   streamModelChat: async function* () {
+    if (scriptAdvanceMs) vi.advanceTimersByTime(scriptAdvanceMs)
     const next = script.shift() ?? 'DONE: nothing left to do.'
     yield next
   }
@@ -58,6 +60,7 @@ let ws: string
 beforeEach(() => {
   ws = mkdtempSync(join(tmpdir(), 'eris-loop-'))
   script.length = 0
+  scriptAdvanceMs = 0
 })
 afterEach(() => {
   try {
@@ -89,6 +92,76 @@ async function drain(gen: AsyncGenerator<unknown>): Promise<Array<Record<string,
 }
 
 describe('agent loop (scripted model)', () => {
+  it('stops repeated rejected prose instead of looping indefinitely (#526)', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-11-12T12:00:00Z'))
+      const text = 'Create a new file called notes.txt with a greeting'
+      const plan = editPlan()
+      plan.task = createTaskContract({ workspacePath: ws, text, plan })
+      script.push(...Array(6).fill('I will create the requested file shortly.'))
+      const events = await drain(runAgentWithWorkspaceTools({ workspacePath: ws, settings: getDefaults(),
+        model: 'builtin:composer-lite', messages: [{ role: 'user', content: text }], temperature: 0,
+        getSecret: () => null, mode: 'agent', turnPlan: plan, mcp: 'off' }))
+      expect(events.some(event => event.incomplete === true)).toBe(true)
+      expect(events.some(event => event.type === 'status' && String(event.text).includes('recovery exhausted'))).toBe(true)
+      expect(events.some(event => event.type === 'status' && String(event.text).includes('Recovering'))).toBe(true)
+      expect(existsSync(join(ws, 'notes.txt'))).toBe(false)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('stops different rejected replies after the no-progress time limit (#526)', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-11-12T12:00:00Z'))
+      scriptAdvanceMs = 100_000
+      const text = 'Create notes.txt with a greeting'
+      const plan = editPlan()
+      plan.task = createTaskContract({ workspacePath: ws, text, plan })
+      script.push('I will create the requested file shortly.', 'I will start creating the file now.')
+      const events = await drain(runAgentWithWorkspaceTools({ workspacePath: ws, settings: getDefaults(),
+        model: 'builtin:composer-lite', messages: [{ role: 'user', content: text }], temperature: 0,
+        getSecret: () => null, mode: 'agent', turnPlan: plan, mcp: 'off' }))
+      expect(events.some(event => event.type === 'status' && String(event.text).includes('recovery exhausted'))).toBe(true)
+      expect(events.some(event => event.incomplete === true)).toBe(true)
+    } finally { vi.useRealTimers(); scriptAdvanceMs = 0 }
+  })
+  it('does not stop a run that keeps reading new evidence over ten minutes (#526)', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-11-12T12:00:00Z'))
+      scriptAdvanceMs = 140_000
+      const text = 'Review the files and describe their contents'
+      const plan = { ...editPlan(), intent: 'review' as const, toolPolicy: 'read' as const }
+      plan.task = createTaskContract({ workspacePath: ws, text, plan })
+      for (const name of ['a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt']) writeFileSync(join(ws, name), name)
+      script.push(...['a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt'].map(path => JSON.stringify({ name: 'read_file', path })),
+        'The files a.txt, b.txt, c.txt, and d.txt each contain their names.')
+      const events = await drain(runAgentWithWorkspaceTools({ workspacePath: ws, settings: getDefaults(),
+        model: 'builtin:composer-lite', messages: [{ role: 'user', content: text }], temperature: 0,
+        getSecret: () => null, mode: 'agent', turnPlan: plan, mcp: 'off' }))
+      expect(events.some(event => event.type === 'status' && String(event.text).includes('not using tools'))).toBe(false)
+      expect(script.length).toBe(0)
+    } finally { vi.useRealTimers(); scriptAdvanceMs = 0 }
+  })
+  it('excludes time waiting for the user from the no-progress clock (#526)', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-11-12T12:00:00Z'))
+      const text = 'Create notes.txt with the greeting I choose'
+      const plan = editPlan()
+      plan.task = createTaskContract({ workspacePath: ws, text, plan })
+      script.push(JSON.stringify({ name: 'ask_user', question: 'Which greeting should I use?' }),
+        JSON.stringify({ name: 'write_file', path: 'notes.txt', content: 'Hello' }),
+        'Created notes.txt with the greeting Hello.')
+      const events = await drain(runAgentWithWorkspaceTools({ workspacePath: ws, settings: getDefaults(),
+        model: 'builtin:composer-lite', messages: [{ role: 'user', content: text }], temperature: 0,
+        getSecret: () => null, mode: 'agent', turnPlan: plan, mcp: 'off',
+        askUser: async () => { vi.setSystemTime(Date.now() + 240_000); return 'Hello' } }))
+      expect(readFileSync(join(ws, 'notes.txt'), 'utf8')).toBe('Hello')
+      expect(events.some(event => event.type === 'status' && String(event.text).includes('recovery exhausted'))).toBe(false)
+    } finally { vi.useRealTimers() }
+  })
   it('keeps an unchanged named-output patch incomplete through the real loop (#443)', async () => {
     const text='Create report.txt containing the new result'
     const plan=editPlan()
