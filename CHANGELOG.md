@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.21 — 2026-11-12
+
+- Improve model warm-up and cancellation, preserve late chat replies, and provide the current date to the agent.
+
 ## 0.6.20 — 2026-11-11
 
 - Fix agent stalls after Stop and on follow-up chats, run requested shell commands, answer file listings, check HTML/CSS edits, and stop unverified or false capability claims in answers.
