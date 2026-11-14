@@ -782,7 +782,9 @@ export async function planChatTurn(options: {
 
   // The message's own intent decides whether the previous agent can carry it:
   // a read-only Reviewer must not keep "Add a … button" (#504).
-  const followId = agentForFollowUp(text, options.context.previousAgentId, classifiedIntent)
+  // Follow-up routing may inspect verbs only in the user's instruction, not quoted data.
+  const followUpInstruction = requestTextForIntent(text)
+  const followId = agentForFollowUp(followUpInstruction, options.context.previousAgentId, classifiedIntent)
   if (
     mode === 'agent' &&
     !forceRoute &&
@@ -796,16 +798,16 @@ export async function planChatTurn(options: {
         .find((message) => message.role === 'user')?.content || ''
     const previousIntent = previousUserText ? classifyIntent(previousUserText, 'agent') : null
     const isContinuation =
-      isConversationFollowUp(text) &&
+      isConversationFollowUp(followUpInstruction) &&
       !intentNeedsTools(intent) &&
       !needsWebLookup(text) &&
-      !asksToImplementChanges(text) &&
-      !IMPLEMENT_VERB.test(text) &&
-      !ASKS_WHAT_CHANGED.test(text)
+      !asksToImplementChanges(followUpInstruction) &&
+      !IMPLEMENT_VERB.test(followUpInstruction) &&
+      !ASKS_WHAT_CHANGED.test(followUpInstruction)
     const previousAnswer = (options.context.previousMessages ?? []).some(
       (message) => message.role === 'assistant' && message.content.trim()
     )
-    if (ASKS_WHAT_CHANGED.test(text) && previousAnswer) {
+    if (ASKS_WHAT_CHANGED.test(followUpInstruction) && previousAnswer) {
       // "Which files did you change?" is answered from the previous turn's
       // recorded outcome and answer; it does not need a new tool loop (#504 R6).
       intent = 'answer'
