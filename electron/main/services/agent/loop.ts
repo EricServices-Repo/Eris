@@ -1529,10 +1529,10 @@ async function* runAgentInternal(options: {
     const sameModelRetry =
       decision.kind === 'reroute' &&
       decision.nextPlan?.models.tools === workerModel &&
-      awaitingSourceEvidence()
+      (awaitingSourceEvidence() || (trigger === 'no progress' && rejectedReplies > 0 && !workspaceMutated))
     if (sameModelRetry)
       appendTaskEvent(task.taskId, 'reroute-skipped', {
-        reason: 'same-model-without-evidence',
+        reason: 'same-model-without-actionable-progress',
         trigger,
         agentId: plan.agentId
       })
