@@ -218,7 +218,7 @@ describe('simulated diagnostics runs', () => {
         // drain
       }
     }
-    await expect(drain('builtin:composer-lite')).rejects.toThrow(/refused/)
+    await expect(drain('local:test-model')).rejects.toThrow(/refused/)
     await expect(drain(transport.SIMULATED_MODEL_REF)).rejects.toThrow(/refused/)
     // Derived settings objects keep the marker.
     expect(transport.isSimulatedSettings({ ...settings, agent: { ...settings.agent } })).toBe(true)

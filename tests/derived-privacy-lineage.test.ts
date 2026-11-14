@@ -26,6 +26,10 @@ vi.mock('../electron/main/services/settings', async (original) => ({
   ...(await original<typeof import('../electron/main/services/settings')>()),
   getResolvedSettings: () => h.settings
 }))
+vi.mock('../electron/main/services/local-model', async (original) => ({
+  ...(await original<typeof import('../electron/main/services/local-model')>()),
+  resolveExactLocalRef: (model: string) => model
+}))
 vi.mock('../electron/main/services/builtin-model', async (original) => ({
   ...(await original<typeof import('../electron/main/services/builtin-model')>()),
   resolveExactBuiltinRef: (model: string) => model,
@@ -51,7 +55,7 @@ import { createTaskContract } from '../electron/main/services/task-intake'
 import { emptyMemoryControls } from '../src/shared/context-memory'
 import type { ChatMessage } from '../src/shared/settings-schema'
 
-const LOCAL = 'builtin:test.gguf'
+const LOCAL = 'local:test.gguf'
 const REMOTE = 'openai:gpt-test'
 const SENTINEL = 'PRIVATE-SENTINEL'
 const GOAL = 'Fix the checkout rounding'

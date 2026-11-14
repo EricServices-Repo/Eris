@@ -166,19 +166,16 @@ async function scripted(
   return { requests, events, plan: plan! }
 }
 describe('coordinator to worker at the actual transport boundary', () => {
-  it('uses Lite for a route hint and another local worker for a tool-free story', async () => {
+  it('uses an available local model for routing and a tool-free story', async () => {
     const result = await scripted('Write a story about a dog named Hans', (r) =>
       r.purpose === 'route'
         ? '{"intent":"answer","agentId":"fast","confidence":0.99}'
         : 'Hans was a small dog with an enormous map. Every morning he followed its winding paths until one led him home to a friend who had been waiting all along.'
     )
-    expect(result.requests.find((r) => r.purpose === 'route')?.model).toBe('builtin:composer-lite')
+    expect(result.requests.find((r) => r.purpose === 'route')?.model).toBe('local:worker')
     expect(result.requests.find((r) => r.purpose === 'agent')?.model).toBe('local:worker')
     expect(result.plan.toolPolicy).toBe('none')
-    expect(result.plan.models.coordinator).toBe('builtin:composer-lite')
-    expect(result.events).toContainEqual(
-      expect.objectContaining({ type: 'adapt', kind: 'delegate', model: 'local:worker' })
-    )
+    expect(result.plan.models.coordinator).toBe('local:worker')
     expect(h.warm).toEqual([]) // scripted diagnostics never allocate real models
   })
   it('does not prepare a model or grant edit authority for an explicit explanation', async () => {
