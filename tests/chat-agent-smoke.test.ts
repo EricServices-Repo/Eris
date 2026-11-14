@@ -853,6 +853,24 @@ describe('chat agent complex smoke test', () => {
     expectCompleted(events)
   })
 
+  it('reads retrieved leads before retrying an edit model that will not call tools', async () => {
+    harness.retrievedPaths = ['src/retry.ts']
+    harness.replies.push(
+      ...Array.from({ length: 3 }, () => 'I will inspect the source and make the requested changes.'),
+      JSON.stringify({ name: 'search_replace', path: 'src/retry.ts', old_string: 'MAX_RETRIES = 3', new_string: 'MAX_RETRIES = 4' }),
+      'DONE: Updated src/retry.ts to allow four retries.'
+    )
+    const events = await drain(runAgentWithWorkspaceTools({
+      workspacePath, settings: getDefaults(), model: 'builtin:composer-lite',
+      messages: [{ role: 'user', content: 'Update the retry limit to four.' }],
+      temperature: 0, getSecret: () => null, mode: 'agent', turnPlan: fullEditPlan(), mcp: 'off'
+    }))
+    expect(events.some((event) => event.type === 'tool' && event.tool.name === 'read_file' && event.tool.status === 'ok')).toBe(true)
+    expect(readFileSync(join(workspacePath, 'src/retry.ts'), 'utf8')).toContain('MAX_RETRIES = 4')
+    expectCompleted(events)
+    harness.retrievedPaths = []
+  })
+
   it('still bounds an irrecoverable model and reports the blocker once without fabricated edits', async () => {
     harness.replies.push(
       ...Array.from(
