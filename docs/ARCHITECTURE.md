@@ -112,6 +112,8 @@ Automatic recovery can change the actual model after no-progress, repeated empty
 
 Three identical rejected replies, or the configured `agent.maxNoProgressSeconds` without evidence, trigger one bounded recovery. The worker can inspect retrieved sources, switch to an eligible model, or retry with recovery guidance. After three further steps without progress or another timeout, the task stops incomplete and reports preserved changes. New evidence resets the progress clock, and time awaiting a user reply is excluded. Individual worker and final-answer model calls also have a no-progress deadline; cancellation never replays a tool effect.
 
+The task deadline pauses while a user considers a question or approval, including during inline specialist work. The project write lock is released for command and MCP approvals, then reacquired and the tool is reauthorized before execution. Cancellation still interrupts a pending approval.
+
 `prepareModelTransition` rechecks admission, releases old KV, prepares the target through exclusive inference scheduling and serialized load/dispose, checks cancellation and reads measured capacity before rebuilding worker instructions. Task identity, authority, tool transcript, journal, action log, checkpoints and completed edits survive; a failed preparation does not commit the proposed worker.
 
 Server preparation is followed by task-reference and recall validation before serialization. Native inference has an additional `prepareMessages` callback after allocation under the inference lease: revalidate, discard revoked session seeds, repack against measured capacity and report the actual payload. Required task/context that cannot fit fails explicitly.

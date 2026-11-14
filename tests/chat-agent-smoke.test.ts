@@ -1,4 +1,5 @@
 import { setWorkspaceTrusted } from '../electron/main/services/workspace-trust'
+import { acquireProjectWrite } from '../electron/main/services/agent/task-scheduler'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
@@ -598,6 +599,37 @@ describe('chat agent complex smoke test', () => {
     ).toBe(true)
     expectCompleted(events)
     expect(harness.replies).toHaveLength(0)
+  })
+
+  it('releases the project lock during command approval (#525)', async () => {
+    harness.replies.push(JSON.stringify({ name: 'run', command: 'node dangerous-check.js' }), 'The command was denied.')
+    let approvalReached = false
+    await drain(runAgentWithWorkspaceTools({ workspacePath, settings: getDefaults(),
+      model: 'builtin:composer-lite', messages: [{ role: 'user', content: 'Update the retry limit and run the check.' }],
+      temperature: 0, getSecret: () => null, mode: 'agent', turnPlan: fullEditPlan(), mcp: 'off',
+      approveCommand: async () => {
+        const abort = new AbortController()
+        let acquired = false
+        const pending = acquireProjectWrite(workspacePath, abort.signal).then(release => { acquired = true; release() })
+        await Promise.resolve()
+        if (!acquired) abort.abort()
+        await pending
+        approvalReached = true
+        return false
+      } }))
+    expect(approvalReached).toBe(true)
+  })
+
+  it('cancels an unresolved approval without retaining the project lock (#525)', async () => {
+    const controller = new AbortController()
+    harness.replies.push(JSON.stringify({ name: 'run', command: 'node dangerous-check.js' }))
+    const run = drain(runAgentWithWorkspaceTools({ workspacePath, settings: getDefaults(),
+      model: 'builtin:composer-lite', messages: [{ role: 'user', content: 'Update the retry limit and run the check.' }],
+      temperature: 0, getSecret: () => null, mode: 'agent', turnPlan: fullEditPlan(), mcp: 'off', signal: controller.signal,
+      approveCommand: async () => { controller.abort(); return new Promise<boolean>(() => {}) } }))
+    await expect(run).rejects.toMatchObject({ name: 'AbortError' })
+    const release = await acquireProjectWrite(workspacePath)
+    release()
   })
 
   it('counts different ranges of the same source as evidence beyond six rounds', async () => {
