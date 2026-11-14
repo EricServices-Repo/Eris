@@ -140,6 +140,16 @@ it('requires clarification for an ambiguous ordinal and removes mutation authori
   expect(task.authority).toMatchObject({ tools: 'none', edit: false, execute: 'none' })
   expect(task.acceptanceCriteria.join(' ')).toContain('clarify')
 })
+it('describes ambiguous recommendations with usable item IDs', async () => {
+  save([source('old', a), source('new', b)])
+  const resolved = (await bind('implement those improvements'))!
+  expect(resolved.binding.status).toBe('ambiguous')
+  expect(resolved.binding.reason).toContain('Add authentication')
+  expect(resolved.binding.reason).toContain('Cache listing queries')
+  expect(resolved.binding.reason).toContain(extractRecommendations(b)[0]!.id)
+  expect(resolved.binding.reason).not.toContain('new:assistant')
+  expect(taskFor(resolved).authority.edit).toBe(false)
+})
 it('keeps Ask mode read-only even for a bound implementation reference', async () => {
   save([source('old', a)])
   const resolved = (await bind(`Explain recommendation ${extractRecommendations(a)[0]!.id}`))!
