@@ -66,6 +66,10 @@ vi.mock('../electron/main/services/model-transport', async (original) => ({
     }
   })
 }))
+vi.mock('../electron/main/services/local-model', async (original) => ({
+  ...(await original<typeof import('../electron/main/services/local-model')>()),
+  resolveExactLocalRef: (model: string) => model
+}))
 vi.mock('../electron/main/services/builtin-model', async (original) => ({
   ...(await original<typeof import('../electron/main/services/builtin-model')>()),
   releaseLocalChatSession: (key: string) => h.released.push(key),
@@ -109,7 +113,7 @@ import type { AppSettings } from '../src/shared/settings-schema'
 
 const DISPATCH_SETTINGS = { models: { connections: [] } } as unknown as AppSettings
 
-const LOCAL = 'builtin:test.gguf'
+const LOCAL = 'local:test.gguf'
 const REMOTE = 'openai:gpt-test'
 let db: ChatDatabase, folder: string, release: () => void
 const settings = (patch: Partial<AppSettings['agent']['contextMemory']> = {}) => {
