@@ -1,3 +1,4 @@
+import { taskActionSummary } from '@/shared/task-contract'
 import { taskPhaseLabels } from '@/shared/task-timeline'
 import { imagePromptFromCommand, type GeneratedImageAsset } from '@/shared/image-generation'
 import {
@@ -170,6 +171,7 @@ export function useChatSession({
   const imageAssetsRef = useRef<GeneratedImageAsset[]>([])
   const directImageRequestRef = useRef<string | null>(null)
   const routeMetaRef = useRef<{ agentId?: string; agentName?: string; model?: string }>({})
+  const taskSummaryRef = useRef<string | null>(null)
   const paintRaf = useRef(0)
   /** Set when user clicks Stop — unlock UI immediately and skip queue drain. */
   const userStoppedRef = useRef(false)
@@ -414,6 +416,7 @@ export function useChatSession({
         return
       }
       setChatError(null)
+      taskSummaryRef.current = null
       setBlockedRetry(null)
       setQueuePaused(null)
       lastTerminalWasErrorRef.current = false
@@ -802,10 +805,10 @@ export function useChatSession({
             model: modelSelection || lastTurnRef.current.model,
             agentId: agentId ?? ''
           }
-        if (task)
-          setRouteLabel(
-            `${agentName || 'Auto'} · ${task.deliverable} · ${task.scope.projectRoot?.split(/[\\/]/).pop() || 'Project unresolved'} · ${task.authority.edit ? 'Changes allowed' : 'Read only'}`
-          )
+        if (task) {
+          taskSummaryRef.current = taskActionSummary(task)
+          setRouteLabel(`${taskSummaryRef.current} · ${modelSelection || model}`)
+        }
         else if (reason) setRouteLabel(reason)
         else if (agentName) {
           const tools =
@@ -1050,7 +1053,7 @@ export function useChatSession({
           : model === 'builtin:composer' || model === 'composer'
             ? 'Composer Full'
             : model
-      setRouteLabel(`${name} · ${modelLabel}`)
+      setRouteLabel(taskSummaryRef.current ? `${taskSummaryRef.current} · ${modelLabel}` : `${name} · ${modelLabel}`)
     })
     // Reconcile old snapshots without touching the active request's buffers or status.
     const reconcileLateReply = (requestId: string, reply?: ChatMessage) => {

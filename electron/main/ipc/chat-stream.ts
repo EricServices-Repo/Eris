@@ -400,6 +400,24 @@ export function registerChatStreamIpc(): void {
             }
             return false
           }
+          const route = turnPlanToRouteResult(turnPlan)
+          publish('chat:routed', {
+            requestId,
+            agentId: route.agentId,
+            agentName: route.agentName,
+            model: turnPlan.models.chat || model || settings.models.defaultModel,
+            reason: turnPlan.reason,
+            intent: turnPlan.intent,
+            toolPolicy: turnPlan.toolPolicy,
+            executionPlan: turnPlan.executionPlan,
+            task: turnPlan.task,
+            toolsModel: turnPlan.models.tools,
+            modelSelection:
+              turnPlan.modelExecution?.policy === 'fixed'
+                ? turnPlan.modelExecution.selection
+                : turnPlan.modelExecution?.policy
+          })
+
           publish('chat:phase', {
             requestId,
             phase: 'history',
@@ -621,23 +639,6 @@ export function registerChatStreamIpc(): void {
               promptBuildMs,
               promptChars: messages.reduce((sum, message) => sum + message.content.length, 0),
               setupMs: Date.now() - requestReceivedAt
-            })
-            const route = turnPlanToRouteResult(turnPlan)
-            publish('chat:routed', {
-              requestId,
-              agentId: route.agentId,
-              agentName: route.agentName,
-              model: resolvedModel,
-              reason: turnPlan.reason,
-              intent: turnPlan.intent,
-              toolPolicy: turnPlan.toolPolicy,
-              executionPlan: turnPlan.executionPlan,
-              task: turnPlan.task,
-              toolsModel: turnPlan.models.tools,
-              modelSelection:
-                turnPlan.modelExecution?.policy === 'fixed'
-                  ? turnPlan.modelExecution.selection
-                  : turnPlan.modelExecution?.policy
             })
             const residentModel = currentLoadedModel()?.ref
             const workerModel = turnPlan.mode === 'agent' ? turnPlan.models.tools : turnPlan.models.chat

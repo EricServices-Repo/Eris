@@ -272,6 +272,29 @@ export function taskIntakeBlocked(task: TaskContract | undefined, mode: 'ask' | 
     (mode !== 'ask' && task.requested?.artifact === 'patch' && !task.authority.edit)
 }
 
+/** User-facing summary of the resolved gateway contract, not a promise of completion. */
+export function taskActionSummary(task: TaskContract): string {
+  const blocked = task.requested && task.requested.state !== 'resolved'
+  const parts = task.scope.projectRoot?.split(/[\\/]/).filter(Boolean) ?? []
+  const root = parts[parts.length - 1]
+  if (blocked) return 'Needs clarification · no changes allowed'
+  const action = task.deliverable === 'patch' ? (task.authority.edit ? 'Edit' : 'Cannot edit')
+    : task.deliverable === 'review' ? 'Review'
+    : task.deliverable === 'plan' ? 'Plan'
+    : task.deliverable === 'execution-report' ? 'Run commands or checks'
+    : 'Answer in chat'
+  const destination = task.deliverable === 'answer' ? 'chat'
+    : task.scope.applicability === 'generic' ? 'provided material'
+    : root || 'project unresolved'
+  const count = task.interpretation?.obligations.length ?? 0
+  const requirements = count > 0 ? ` · ${count} requirement${count === 1 ? '' : 's'}` : ''
+  const effects = task.authority.edit ? 'file edits allowed'
+    : task.authority.execute === 'approved' ? 'approved commands allowed'
+    : task.authority.execute === 'verification' ? 'verification commands allowed'
+    : 'no file edits or commands'
+  return `${action} · ${destination}${requirements} · ${effects}`
+}
+
 /** Compatibility default for contracts persisted before interpretations were recorded. */
 export function interpretationOf(contract: TaskContract): TaskInterpretation {
   if (contract.interpretation) return contract.interpretation
