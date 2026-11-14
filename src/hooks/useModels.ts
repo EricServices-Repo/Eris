@@ -57,7 +57,8 @@ export function useModels(settings: AppSettings | null) {
       const s = resolved ?? settings
       setSelectedModel((prev) => {
         const desired = prev || s?.models.defaultModel || 'auto'
-        if (isAutomaticModelSelection(desired) || desired.startsWith('builtin:')) return 'auto'
+        if (desired.startsWith('builtin:')) return 'auto-local'
+        if (isAutomaticModelSelection(desired)) return desired
         return desired
       })
     },

@@ -779,7 +779,9 @@ export function ChatPanel({
   const modelOptions = useMemo(() => {
     const ready = models.filter((m) => m.ready === true && m.source !== 'builtin')
     const byName = new Map<string, ModelInfo>()
-    byName.set('auto', { name: 'auto', ready: true })
+    byName.set('auto-local', { name: 'auto-local', ready: true })
+    byName.set('auto-any', { name: 'auto-any', ready: true })
+    if (selectedModel === 'auto') byName.set('auto', { name: 'auto', ready: true })
     for (const model of ready) byName.set(model.name, model)
     if (selectedModel && !isAutomaticModelSelection(selectedModel) && !selectedModel.startsWith('builtin:') && !byName.has(selectedModel)) {
       byName.set(selectedModel, {
@@ -796,7 +798,9 @@ export function ChatPanel({
   }, [models, selectedModel])
 
   const modelLabel = (m: ModelInfo): string => {
-    if (m.name === 'auto') return 'Auto'
+    if (m.name === 'auto-local') return 'Auto (this computer only)'
+    if (m.name === 'auto-any') return 'Auto (any connected model)'
+    if (m.name === 'auto') return 'Auto (settings policy)'
     if (m.source === 'local') return m.name
     return m.provider ? `${m.provider}:${m.name}` : m.name
   }
@@ -1470,7 +1474,14 @@ export function ChatPanel({
                     className="composer-model-select"
                     value={selectValue}
                     disabled={streaming}
-                    onChange={(e) => onModelChange(e.target.value)}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      if (value === 'auto-any' && selectedModel !== 'auto-any') {
+                        const providers = [...new Set(models.filter(m => m.source === 'connection' && m.ready).map(m => m.connectionId || m.provider || m.name))]
+                        if (!window.confirm(`Allow Auto to send prompts and project context to connected providers? Available connections: ${providers.join(', ') || 'none currently available'}.`)) return
+                      }
+                      onModelChange(value)
+                    }}
                     title={`${modelDataHint(modelOptions.find((m) => m.name === selectValue) || modelOptions[0]!)} Automatic policies can select a different worker; Fixed keeps the selected model.`}
                     aria-label="Execution model policy and fixed model"
                   >

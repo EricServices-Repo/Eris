@@ -27,10 +27,10 @@ export type AutoModelChoice = {
   candidates: ModelCandidate[]
 }
 export function executionPolicy(settings: AppSettings, selected: string): ExecutionPolicy {
-  if (selected === 'auto-local') return 'auto-local'
+  if (selected.trim() && !['auto', 'auto-local', 'auto-any'].includes(selected)) return 'fixed'
+  if (selected === 'auto-local' || settings.agent.routing.profile === 'local') return 'auto-local'
   if (selected === 'auto-any') return 'auto-any'
-  if (selected.trim() && selected !== 'auto') return 'fixed'
-  return 'auto-any'
+  return settings.models.defaultModel === 'auto-local' ? 'auto-local' : 'auto-any'
 }
 
 /** Execution locality is stricter than permission to disclose recall to an approved LAN host. */

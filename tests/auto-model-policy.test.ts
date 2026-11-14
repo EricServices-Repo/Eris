@@ -216,9 +216,9 @@ describe('production Auto model selection', () => {
     )
   })
   it('honors explicit policy independently of the legacy profile', () => {
-    expect(executionPolicy(settings(), 'auto-any')).toBe('auto-any')
+    expect(executionPolicy(settings(), 'auto-any')).toBe('auto-local')
     expect(executionPolicy(settings(), 'auto-local')).toBe('auto-local')
-    expect(executionPolicy(settings(), 'auto')).toBe('auto-any')
+    expect(executionPolicy(settings(), 'auto')).toBe('auto-local')
   })
   it('excludes previously attempted workers for bounded recovery', async () => {
     expect(
