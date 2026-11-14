@@ -1,4 +1,6 @@
 import { idleWarmDecision } from './warm-policy'
+import { reportChatActivity } from './chat-activity'
+import { AsyncResource } from 'async_hooks'
 import { discoverNativeContextWindow, nativeContextWindow } from './native-context'
 import { inferenceDevice } from './inference-device'
 import {
@@ -1846,6 +1848,8 @@ export async function* streamBuiltinChat(options: {
     ...(await textLease(entry, path)),
     exclusiveGpu: true,
     priority: 20,
+    onWait: AsyncResource.bind(state => reportChatActivity('loading', { source: 'transport', model: entry.ref,
+      reason: `${state.reason} (${Math.round(state.waitMs / 1000)}s)` })),
     signal: options.signal
   })
   lastChatInference = { path, at: Date.now() }

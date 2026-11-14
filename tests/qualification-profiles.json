@@ -94,6 +94,7 @@
         "tests/short-edit-intake.test.ts",
         "tests/chat-stream-diagnostics.test.ts",
         "tests/chat-stream.test.ts",
+        "tests/chat-stall-watch.test.ts",
         "tests/context-inspector-ipc.test.ts",
         "tests/context-memory-identity.test.ts",
         "tests/context-origin.test.ts",

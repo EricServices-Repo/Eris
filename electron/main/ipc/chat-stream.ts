@@ -83,11 +83,14 @@ import { logError, logInfo, logWarn } from '../services/logger'
 import { recordAgentRun } from '../services/agent-telemetry'
 import { cloudInlineAvailable, runCloudAgentInline } from '../services/cloud-agent-inline'
 import { rememberAgentRun, rememberAskUserReply } from '../services/project-memory'
+import { watchForStall } from '../services/chat-stall-watch'
+import { inferenceGovernorStatus } from '../services/inference-governor'
 import {
   finishChatJob,
   getLatestChatJob,
   admitChatJob,
   markChatJobRunning,
+  getChatJob,
   isChatJobTerminal
 } from '../services/chat-job-controller'
 
@@ -156,6 +159,12 @@ export function registerChatStreamIpc(): void {
         if (workspacePath !== appState.currentWorkspace)
           throw new Error('The workspace changed while this task was queued.')
         markChatJobRunning(payload.requestId)
+        const stall = watchForStall(45_000, quietForMs => {
+          const job = getChatJob(payload.requestId)
+          logWarn('Chat stall detected', { requestId: payload.requestId, quietForMs,
+            phase: job?.timeline?.current.phase, reason: job?.timeline?.current.reason,
+            inference: inferenceGovernorStatus() })
+        })
         let releaseMemoryEvidence = (): void => undefined
         try {
           const requestReceivedAt = Date.now()
@@ -177,6 +186,7 @@ export function registerChatStreamIpc(): void {
           let replyAgentId = payload.agentId
           let replyAgentName: string | undefined
           const publish = (channel: string, data: Record<string, unknown>) => {
+            stall.touch()
             if (channel === 'chat:thinking' && typeof data.chunk === 'string')
               visibleThinking += data.chunk
             if (channel === 'chat:asset' && data.asset) {
@@ -1391,6 +1401,7 @@ export function registerChatStreamIpc(): void {
             }
           }
         } finally {
+          stall.stop()
           releaseMemoryEvidence()
           if (appState.chatAbort === controller) {
             appState.chatStreamActive = false
