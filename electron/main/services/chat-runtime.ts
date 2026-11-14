@@ -383,6 +383,15 @@ export async function* streamProviderChat(
         onTermination: (termination) => {
           reportedPrompt = termination.promptTokens ?? null
           reportedCompletion = termination.outputTokens ?? null
+          if (purpose === 'agent' && (termination.firstTokenMs !== undefined || termination.firstTextMs !== undefined)) {
+            reportChatActivity('generating', {
+              source: 'native-metrics', purpose, model,
+              reason: 'Native generation timing',
+              ...(termination.promptTokens !== undefined ? { promptTokens: termination.promptTokens } : {}),
+              ...(termination.firstTokenMs !== undefined ? { nativeFirstTokenMs: termination.firstTokenMs } : {}),
+              ...(termination.firstTextMs !== undefined ? { nativeFirstTextMs: termination.firstTextMs } : {})
+            })
+          }
           options.onTermination?.({
             ...termination,
             capabilities,
