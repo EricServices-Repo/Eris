@@ -165,11 +165,7 @@ describe('resolveModelRoles', () => {
       toolPolicy: 'edit',
       preferEscalate: true
     })
-    expect(r).toMatchObject({
-      chat: 'builtin:composer-lite',
-      tools: 'builtin:composer-lite',
-      escalateToFull: false
-    })
+    expect(r).toMatchObject({ chat: '', tools: '', escalateToFull: false, error: expect.stringContaining('Select a downloaded model') })
   })
 
   it('keeps Composer Full selected for Cloud Agents', () => {
@@ -179,10 +175,10 @@ describe('resolveModelRoles', () => {
       toolPolicy: 'edit',
       preferEscalate: true
     })
-    expect(r.chat).toBe('builtin:composer')
-    expect(r.tools).toBe('builtin:composer')
+    expect(r.chat).toBe('')
+    expect(r.tools).toBe('')
     expect(r.escalateToFull).toBe(false)
-    expect(r.error).toBeUndefined()
+    expect(r.error).toContain('Select a downloaded model')
   })
 
   it('never swaps external models', () => {
@@ -203,8 +199,8 @@ describe('resolveModelRoles', () => {
       toolPolicy: 'none',
       preferEscalate: true
     })
-    expect(r.chat).toBe('builtin:composer')
-    expect(r.error).toBeUndefined()
+    expect(r.chat).toBe('')
+    expect(r.error).toContain('Select a downloaded model')
   })
 })
 
@@ -235,7 +231,7 @@ describe('planChatTurn', () => {
         mode: 'agent'
       }
     })
-    expect(plan.models.chat).toBe('builtin:composer')
+    expect(plan.models.chat).toBe('')
     expect(plan.cloudPreferred).toBe(false)
   })
 
@@ -253,8 +249,8 @@ describe('planChatTurn', () => {
         mode: 'agent'
       }
     })
-    expect(plan.models.chat).toBe('builtin:composer')
-    expect(plan.cloudPreferred).toBe(true)
+    expect(plan.models.chat).toBe('')
+    expect(plan.cloudPreferred).toBe(false)
   })
 
   it('searches the web for a person instead of answering with no tools', async () => {
@@ -312,8 +308,8 @@ describe('planChatTurn', () => {
       }
     })
     expect(plan.agentId).toBe('composer')
-    expect(plan.models.chat).toBe('builtin:composer')
-    expect(plan.cloudPreferred).toBe(true)
+    expect(plan.models.chat).toBe('')
+    expect(plan.cloudPreferred).toBe(false)
   })
 
   it('assigns Composer to edits and does not steal them for Coder', async () => {

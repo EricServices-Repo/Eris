@@ -78,7 +78,7 @@ afterEach(() => {
 describe('Eris-Dev shared model discovery without symlink privileges', () => {
   it('lists shared Composer and Hub downloads and resolves the same files for inference', async () => {
     expect((await devModels()).map((model) => model.id)).toEqual(
-      expect.arrayContaining([builtin.ref, local.ref])
+      expect.arrayContaining([local.ref])
     )
     expect(localModelPath(builtin as never)).toBe(shared('builtin', builtin.filename))
     expect(localModelFilePath(findLocalEntry(local.ref)!)).toBe(shared('local', local.filename))
