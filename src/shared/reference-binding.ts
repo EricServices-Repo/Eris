@@ -18,6 +18,7 @@ export type ReferenceSourceResult = {
   sourceVersion: ContextHeader | null
   sources: Array<{
     messageId: string
+    ordinal: number
     projectRoot: string | null
     recommendations: TaskRecommendation[]
   }>

@@ -425,7 +425,7 @@ export class ChatDatabase {
                       .digest('hex')
               )
           )
-        const result = { messageId: source.messageId, projectRoot, recommendations }
+        const result = { messageId: source.messageId, ordinal: Number(row.ordinal), projectRoot, recommendations }
         bytes += Buffer.byteLength(JSON.stringify(result))
         if (bytes > 1024 ** 2) break
         found.push(result)

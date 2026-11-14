@@ -126,7 +126,8 @@ export async function resolveChatTurnContract(
         text: input.text,
         settings: input.settings,
         models: [plan.models.chat, plan.models.tools],
-        recentSourceIds: input.history?.flatMap((message) => (message.id ? [message.id] : []))
+        recentSourceIds: input.history?.flatMap((message) => (message.id ? [message.id] : [])),
+        latestAssistantId: [...(input.history ?? [])].reverse().find((message) => message.role === 'assistant')?.id
       })
     } catch {
       input.signal?.throwIfAborted()

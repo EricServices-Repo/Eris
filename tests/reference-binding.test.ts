@@ -140,6 +140,26 @@ it('requires clarification for an ambiguous ordinal and removes mutation authori
   expect(task.authority).toMatchObject({ tools: 'none', edit: false, execute: 'none' })
   expect(task.acceptanceCriteria.join(' ')).toContain('clarify')
 })
+it('binds those improvements to the immediately preceding recommendation answer', async () => {
+  save([source('old', a), source('new', b)])
+  const resolved = (await bind('implement those improvements', { latestAssistantId: 'new:assistant', recentSourceIds: ['new:assistant'] }))!
+  expect(resolved.binding.status).toBe('bound')
+  expect(resolved.binding.sources.map((item) => item.messageId)).toEqual(['new:assistant'])
+  expect(resolved.recommendations.map((item) => item.text).join(' ')).toContain('Cache listing queries')
+})
+it('uses conversation order, not catalog write order, for latest improvements', async () => {
+  const newest = source('new', b)
+  const older = source('old', a)
+  save([older, newest])
+  const resolved = (await bind('Make the changes to the code for the latest improvements'))!
+  expect(resolved.binding.status).toBe('bound')
+  expect(resolved.binding.sources.map((item) => item.messageId)).toEqual(['new:assistant'])
+})
+it('still asks when the latest assistant answer was not a recommendation batch', async () => {
+  save([source('old', a), source('new', b)])
+  const resolved = (await bind('implement those improvements', { latestAssistantId: 'other:assistant' }))!
+  expect(resolved.binding.status).toBe('ambiguous')
+})
 it('describes ambiguous recommendations with usable item IDs', async () => {
   save([source('old', a), source('new', b)])
   const resolved = (await bind('implement those improvements'))!
