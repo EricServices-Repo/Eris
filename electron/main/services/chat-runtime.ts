@@ -215,7 +215,9 @@ export async function* streamProviderChat(
   const purpose = options.purpose ?? 'agent'
   const phase = (value: 'loading' | 'prefill' | 'generating' | 'integrating', reason: string) =>
     reportChatActivity(
-      purpose === 'intent' || purpose === 'route'
+      purpose === 'outcome'
+        ? 'review'
+        : purpose === 'intent' || purpose === 'route'
         ? 'routing'
         : purpose === 'agent' || value === 'loading'
           ? value

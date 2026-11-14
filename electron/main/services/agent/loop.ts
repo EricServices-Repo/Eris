@@ -902,6 +902,7 @@ async function* runAgentInternal(options: {
         : task.scope.applicability === 'generic'
           ? 'generic-request'
           : null
+  if (!retrievalSkipped) reportChatActivity('retrieval', { source: 'workspace', reason: 'Finding relevant project sources' })
   const retrieveP = retrievalSkipped
     ? Promise.resolve(null)
     : inspectWorkspace(workspacePath, originalUserGoal, 6)
@@ -2899,6 +2900,7 @@ async function* runAgentInternal(options: {
           workflow.transition('verifying')
           yield { type: 'status', text: 'Final verify…' }
           await assertTaskReferences(task, options.settings, workerModel)
+          reportChatActivity('verification', { source: 'verification', reason: 'Running final project checks' })
           const finalVerify = await runVerify(executionRoot!, options.signal, {
             preferTypecheck: false,
             allowInstall: true,
@@ -4917,6 +4919,7 @@ async function* runAgentInternal(options: {
           yield { type: 'thinking', text: '\n\n— Running verify (typecheck/tests)…\n' }
           // Mid-loop: typecheck-first, never npm install (keeps agent moving).
           await assertTaskReferences(task, options.settings, workerModel)
+          reportChatActivity('verification', { source: 'verification', reason: 'Running project checks' })
           const verified = await runVerify(executionRoot!, options.signal, {
             preferTypecheck: true,
             allowInstall: false

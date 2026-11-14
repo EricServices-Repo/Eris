@@ -214,6 +214,7 @@ export function registerChatStreamIpc(): void {
           let replySnapshot: ChatMessage | undefined
           const persistReply = async (terminal: string) => {
             if (!contextThreadId) return true
+            publish('chat:phase', { requestId, phase: 'persistence', source: 'storage', reason: 'Saving the response' })
             const { content, thinking } = finalizePostedAnswer(
               visibleAnswer,
               visibleThinking,
@@ -1261,6 +1262,7 @@ export function registerChatStreamIpc(): void {
               persistence: contextThreadId ? 'saved' : 'not-required'
             }
             if (turnPlan.task && needsOutcomeReview(turnPlan, runIncomplete)) {
+              publish('chat:phase', { requestId, phase: 'review', source: 'outcome', reason: 'Checking the response against task evidence' })
               publish('chat:status', {
                 requestId,
                 text: 'Checking the response against task evidence…'
