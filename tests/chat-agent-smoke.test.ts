@@ -818,6 +818,24 @@ describe('chat agent complex smoke test', () => {
     })
   })
 
+  it.each([
+    ['builtin:composer-lite', true, true],
+    ['builtin:composer', true, false],
+    ['builtin:composer-lite', false, false]
+  ])('applies first-step edit constraints for %s with setting %s', async (model, enabled, constrained) => {
+    const settings = structuredClone(getDefaults())
+    settings.agent.constrainLocalToolCalls = enabled
+    harness.replies.push(JSON.stringify({ name: 'read_file', path: 'src/retry.ts' }))
+    const controller = new AbortController()
+    const stream = runAgentWithWorkspaceTools({ workspacePath, settings, model,
+      messages: [{ role: 'user', content: 'Update the retry limit to four.' }], temperature: 0,
+      getSecret: () => null, mode: 'agent', turnPlan: { ...fullEditPlan(), models: { chat: model, tools: model } }, mcp: 'off', signal: controller.signal })
+    for await (const event of stream) {
+      if (event.type === 'tool' && event.tool.status === 'ok') { controller.abort(); break }
+    }
+    expect(harness.requestModes[0]?.constrained).toBe(constrained)
+  })
+
   it('gives a stalled edit a bounded recovery window that can reach a real change', async () => {
     harness.replies.push(
       ...Array.from(
