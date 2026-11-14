@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.23 — 2026-11-14
+
+- Desktop rebuild.
+
 ## 0.6.22 — 2026-11-13
 
 - Desktop rebuild.
