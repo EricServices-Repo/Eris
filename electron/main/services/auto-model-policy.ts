@@ -8,6 +8,9 @@ import { modelDestination } from './model-destination'
 import { currentLoadedModel } from './model-runtime'
 import { CONTEXT_HEADROOM_BYTES, inferenceBudgetBytes } from './vram-fit'
 
+// Avoid a model reload for small heuristic differences; measured quality still wins.
+export const SWITCH_MARGIN = 10
+
 export type ExecutionPolicy = 'fixed' | 'auto-local' | 'auto-any'
 export type ModelCandidate = {
   model: string
@@ -92,7 +95,7 @@ export async function chooseExecutionModel(
       eligible: ready && !reason,
       reason: reason || 'eligible; heuristic fallback',
       locality: local ? 'local' : 'remote',
-      rank: rank + (resident?.ref === model ? 3 : 0)
+      rank
     })
   }
   add('builtin:composer-lite', isExactBuiltinReady('builtin:composer-lite'), '', 10)
@@ -179,6 +182,17 @@ export async function chooseExecutionModel(
       }
     }
   }
+  // Stickiness applies only to eligible residents and heuristic choices. Measured
+  // outcomes or eval evidence take precedence over load avoidance.
+  let keptResident = false
+  const residentCandidate = resident && resident.contextSize >= 1024
+    ? eligible.find((candidate) => candidate.model === resident.ref)
+    : undefined
+  if (basis === 'profile' && residentCandidate && eligible[0] &&
+      eligible[0].rank - residentCandidate.rank < SWITCH_MARGIN) {
+    keptResident = model !== residentCandidate.model
+    model = residentCandidate.model
+  }
   let usedLatency = false
   if (
     basis === 'profile' &&
@@ -193,7 +207,7 @@ export async function chooseExecutionModel(
         resident?.ref === candidate.model
       )
     }
-    const baseline = eligible[0]
+    const baseline = eligible.find((candidate) => candidate.model === model)!
     // Keep quality scores, fixed selections and workspace tasks outside this
     // tiebreak. Change the decision only when measurements show a material gain.
     let bestMs = baseline.estimatedAnswerMs
@@ -224,7 +238,9 @@ export async function chooseExecutionModel(
         ? 'measured first-output latency for short answers'
         : basis === 'eval'
           ? `evaluation scores for ${intent}`
-          : 'heuristic task rank'
+          : keptResident && model === residentCandidate?.model
+            ? 'eligible resident within switch margin'
+            : 'heuristic task rank'
   for (const c of eligible) {
     const cost =
       resident?.ref === c.model

@@ -1,5 +1,6 @@
 import { createContextOrigin } from '../services/context-origin'
 import { chooseExecutionModel } from '../services/auto-model-policy'
+import { currentLoadedModel } from '../services/model-runtime'
 import { ThreadWorkingStateBuilder } from '../services/thread-working-state'
 import { pendingCommandApprovals } from '../services/command-approval'
 import { captureReceiptEvidence } from '../services/context-evidence'
@@ -637,6 +638,15 @@ export function registerChatStreamIpc(): void {
                   ? turnPlan.modelExecution.selection
                   : turnPlan.modelExecution?.policy
             })
+            const residentModel = currentLoadedModel()?.ref
+            const workerModel = turnPlan.mode === 'agent' ? turnPlan.models.tools : turnPlan.models.chat
+            if (residentModel && workerModel && residentModel !== workerModel) {
+              const candidate = turnPlan.modelExecution?.candidates?.find((item) => item.model === workerModel)
+              const reason = candidate?.reason ?? 'selected for this request'
+              const notice = `Switching to ${workerModel} — ${reason}`
+              publish('chat:status', { requestId, text: notice })
+              pendingThinking += `${notice}\n`
+            }
             pendingThinking += `Route: ${turnPlan.reason}${turnPlan.classifiedIntent && turnPlan.classifiedIntent !== turnPlan.intent ? ` (classified ${turnPlan.classifiedIntent})` : ''} · tools ${turnPlan.toolPolicy}\n`
             if (turnPlan.executionPlan) {
               pendingThinking += `Plan: ${turnPlan.executionPlan.steps.join(' → ')}. Done when: ${turnPlan.executionPlan.doneWhen}\n`
