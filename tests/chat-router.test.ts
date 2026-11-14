@@ -91,6 +91,8 @@ describe('classifyIntent', () => {
     ['Review the code and suggest improvements', 'agent', 'review'],
     ['Review the project and implement the improvements', 'agent', 'edit'],
     ['Make all of those 5 improvements', 'agent', 'edit'],
+    ['implement the latest improvements', 'agent', 'edit'],
+    ['What are the latest improvements?', 'agent', 'review'],
     ['Edit src/retry.ts to set MAX_RETRIES to 4. Verify the change.', 'agent', 'edit'],
     ['run npm test', 'agent', 'run'],
     ['how does the app work?', 'agent', 'explore'],
@@ -509,6 +511,13 @@ describe('follow-up routing in planChatTurn (#504)', () => {
       settings: getDefaults(),
       context: { text, selectedModel: 'builtin:composer-lite', mode: 'agent', previousAgentId, previousMessages }
     })
+
+  it('routes a request to implement the latest improvements to an editor after an explanation', async () => {
+    const result = await plan('implement the latest improvements', 'explainer')
+    expect(result.intent).toBe('edit')
+    expect(result.agentId).toBe('composer')
+    expect(result.toolPolicy).toBe('edit')
+  })
 
   it('moves an edit request after a review from Reviewer to Composer (R4)', async () => {
     const result = await plan(
