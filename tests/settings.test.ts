@@ -68,6 +68,11 @@ describe('settings defaults', () => {
 })
 
 describe('settings migrations', () => {
+  it.each(['auto-local', 'auto-any', 'builtin:composer-lite'])('preserves the privacy policy for %s', (model) => {
+    writeUserSettings({ models: { defaultModel: model } })
+    expect(getResolvedSettings(null).models.defaultModel).toBe(model === 'builtin:composer-lite' ? 'auto-local' : model)
+  })
+
   it('upgrades legacy user settings', () => {
     writeUserSettings({
       models: { provider: 'ollama', ollama: { host: 'http://x' }, defaultModel: '' },

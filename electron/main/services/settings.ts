@@ -150,7 +150,8 @@ function sanitizeLegacyModels(raw: Record<string, unknown>): Record<string, unkn
   if (!(models.connections as Array<Record<string, unknown>>).some(c => c.id === 'eris-cloud')) {
     (models.connections as Array<Record<string, unknown>>).push({ id: 'eris-cloud', name: 'Eris Cloud Ollama', type: 'openai-compatible', provider: 'ollama', enabled: false, baseUrl: 'https://agents.ericservic.es/v1', apiKeyRef: 'eris-cloud', models: [] })
   }
-  if (!models.defaultModel || String(models.defaultModel).startsWith('builtin:') || ['auto-local', 'auto-any'].includes(String(models.defaultModel))) models.defaultModel = 'auto'
+  if (models.defaultModel === 'builtin:composer-lite') models.defaultModel = 'auto-local'
+  else if (!models.defaultModel || String(models.defaultModel).startsWith('builtin:')) models.defaultModel = 'auto'
 
   if (typeof models.preferEgpu !== 'boolean') {
     models.preferEgpu = true
