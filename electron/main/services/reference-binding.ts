@@ -82,17 +82,19 @@ export async function bindTaskReferences(input: {
         'Older recommendation sources are local-only. Choose a local model or explicitly enable remote recall.'
       )
     const choices = eligible
-      .slice(0, 4)
-      .map(
-        (source) =>
-          `${source.messageId}: ${source.recommendations
-            .slice(0, 4)
-            .map((item) => item.id)
-            .join(', ')}`
-      )
-      .join('; ')
+      .slice(-4)
+      .reverse()
+      .map((source, index) => {
+        const items = source.recommendations
+          .slice(0, 4)
+          .map((item) => `  - ${item.text.replace(/\s+/g, ' ').slice(0, 180)} (ID: ${item.id})`)
+          .join('\n')
+        const remaining = source.recommendations.length - 4
+        return `Batch ${index + 1}:\n${items}${remaining > 0 ? `\n  - ${remaining} more item(s)` : ''}`
+      })
+      .join('\n\n')
     return fail(
-      `More than one earlier recommendation batch is eligible. Specify stable item IDs before editing. Source choices (up to four): ${choices}`,
+      `I found more than one earlier set of recommendations. Which items should I implement? Reply with the IDs of the items you want to implement.\n\n${choices}`,
       'ambiguous'
     )
   }
