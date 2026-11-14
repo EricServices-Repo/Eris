@@ -1045,7 +1045,7 @@ export function ChatPanel({
           <span title={memoryNotice.preview}>
             {memoryNotice.kind === 'proposal'
               ? 'Remember this in project memory?'
-              : 'Project memory updated'}
+              : 'Saved to project memory'}
             {memoryNotice.preview ? `: ${memoryNotice.preview.slice(0, 100)}` : ''}
           </span>
           {memoryNotice.kind === 'proposal' ? (
