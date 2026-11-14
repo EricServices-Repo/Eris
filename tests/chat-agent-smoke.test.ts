@@ -893,6 +893,7 @@ describe('chat agent complex smoke test', () => {
     )
     expect(events.some((event) => event.type === 'progress' && event.incomplete)).toBe(true)
     expect(lastAnswer(events)).toContain('No file changes were made.')
+    expect(events.some((event) => event.type === 'adapt' && event.kind === 'reroute')).toBe(false)
     expect(lastAnswer(events)).not.toMatch(/Stopped after|What I did:/)
     expect(lastAnswer(events).match(/couldn’t complete/g)).toHaveLength(1)
     expect(harness.prompts.length).toBeLessThan(20)
