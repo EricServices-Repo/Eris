@@ -75,3 +75,13 @@ export function thinkingPreviewLine(
   if (lastStep) return lastStep
   return ''
 }
+
+/** Collapsed-header preview of the model's reasoning: its latest line (#573). */
+export function reasoningPreviewLine(reasoning: string): string {
+  const lines = reasoning
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+  const last = lines[lines.length - 1]
+  return last ? `Reasoning: ${last}`.slice(0, MAX_STEP_CHARS) : ''
+}

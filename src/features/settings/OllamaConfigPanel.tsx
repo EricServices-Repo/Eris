@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { ReasoningFields } from './ReasoningFields'
 import type {
   AppSettings,
   ConnectionModelPlacement,
@@ -296,6 +297,14 @@ export function OllamaConfigPanel({
           />
           <span>Keep model loaded (otherwise it unloads after 30 minutes idle)</span>
         </label>
+      )}
+      {ollama && (
+        <ReasoningFields
+          value={ollama.reasoning}
+          onChange={(reasoning) =>
+            void onSaveConnections(mergeConnections({ ...ollama, reasoning }))
+          }
+        />
       )}
 
       <label className="field ollama-url-field">

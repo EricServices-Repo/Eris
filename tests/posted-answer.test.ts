@@ -1,7 +1,14 @@
 import { cleanAnswerMarkers, displayedTerminalReply, finalizePostedAnswer, modelHistoryContent, upsertTerminalReply, visibleOutcomeAssessment } from '../src/shared/posted-answer'
 import type { ChatMessage, ChatThread } from '../src/shared/settings-schema'
 import { describe, expect, it } from 'vitest'
-import { promoteThinkingToAnswer, stripAnswerFromThinking } from '../src/shared/posted-answer'
+import {
+  capReasoning,
+  MAX_REASONING_CHARS,
+  promoteThinkingToAnswer,
+  REASONED_WITHOUT_ANSWER,
+  REASONING_TRIMMED,
+  stripAnswerFromThinking
+} from '../src/shared/posted-answer'
 
 describe('failed terminal reply reconciliation (#449)', () => {
   it('preserves paged history and replaces duplicate request snapshots with their evidence', () => {
@@ -79,10 +86,11 @@ describe('promoteThinkingToAnswer', () => {
 })
 
 it('finalizes identical durable and visible replies for image-only, stopped and empty turns', () => {
-  expect(finalizePostedAnswer('', '', false, true)).toEqual({ content: '', thinking: '' })
+  expect(finalizePostedAnswer('', '', false, true)).toEqual({ content: '', thinking: '', reasoning: '' })
   expect(finalizePostedAnswer('Partial answer', '— Step', true, false)).toEqual({
     content: 'Partial answer',
-    thinking: '— Step'
+    thinking: '— Step',
+    reasoning: ''
   })
   expect(finalizePostedAnswer('', '', false, false).content).toContain('ended without a response')
 })
@@ -123,5 +131,29 @@ describe('visible outcome assessment (#500, #502)', () => {
     expect(visibleOutcomeAssessment({ status: 'supported' })).toBeNull()
     expect(visibleOutcomeAssessment({ status: 'not-run' })).toBeNull()
     expect(visibleOutcomeAssessment(undefined)).toBeNull()
+  })
+})
+
+describe('model reasoning in posted replies (#573)', () => {
+  it('passes reasoning through and never promotes it into the answer', () => {
+    const reasoning = 'I should read the config first and then explain the timeout setting in detail.'
+    const result = finalizePostedAnswer('The timeout is 30s.', '— read_file config.ts', false, false, reasoning)
+    expect(result.content).toBe('The timeout is 30s.')
+    expect(result.reasoning).toBe(reasoning)
+    expect(result.thinking).toBe('— read_file config.ts')
+  })
+
+  it('explains an empty reply from a model that only reasoned', () => {
+    const result = finalizePostedAnswer('', '', false, false, 'long deliberation')
+    expect(result.content).toBe(REASONED_WITHOUT_ANSWER)
+    expect(result.reasoning).toBe('long deliberation')
+  })
+
+  it('caps saved reasoning and keeps its end', () => {
+    const capped = capReasoning('a'.repeat(MAX_REASONING_CHARS) + 'END')
+    expect(capped.length).toBe(MAX_REASONING_CHARS)
+    expect(capped.startsWith(REASONING_TRIMMED)).toBe(true)
+    expect(capped.endsWith('END')).toBe(true)
+    expect(capReasoning('short')).toBe('short')
   })
 })

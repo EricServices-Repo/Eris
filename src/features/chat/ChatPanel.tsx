@@ -224,6 +224,7 @@ export const HistoricalMessages = memo(function HistoricalMessages({
               {message.role === 'assistant' && <OutcomeNote message={message} />}
               {message.role === 'assistant' &&
               (message.thinking ||
+                message.reasoning ||
                 message.model ||
                 message.agentName ||
                 message.delegations?.length) ? (
@@ -232,7 +233,13 @@ export const HistoricalMessages = memo(function HistoricalMessages({
                   <p className="message-model">
                     {[message.agentName, message.model].filter(Boolean).join(' · ')}
                   </p>
-                  {message.thinking && <ThinkingBlock thinking={message.thinking} defaultOpen />}
+                  {(message.thinking || message.reasoning) && (
+                    <ThinkingBlock
+                      thinking={message.thinking ?? ''}
+                      reasoning={message.reasoning}
+                      defaultOpen
+                    />
+                  )}
                   {!!message.delegations?.length && <DelegationCards items={message.delegations} />}
                 </details>
               ) : null}
@@ -561,7 +568,8 @@ export function ChatPanel({
   blockedReason,
   liveSessionSteps = []
 }: Props) {
-  const { thinkingBuffer, answerBuffer, agentStatus, toolActivity } = useStore(chatStream)
+  const { thinkingBuffer, reasoningBuffer, answerBuffer, agentStatus, toolActivity } =
+    useStore(chatStream)
   const [searchOpen, setSearchOpen] = useState(false)
   const [revealMessage, setRevealMessage] = useState<{ key: string; request: number } | null>(null)
   const searchButton = useRef<HTMLButtonElement>(null)
@@ -629,6 +637,7 @@ export function ChatPanel({
   }, [
     activeThread?.messages,
     thinkingBuffer,
+    reasoningBuffer,
     answerBuffer,
     routeLabel,
     chatError,
@@ -1168,6 +1177,7 @@ export function ChatPanel({
                   </span>
                   <ThinkingBlock
                     thinking={thinkingBuffer}
+                    reasoning={reasoningBuffer}
                     status={answerBuffer ? null : agentStatus}
                     tools={toolActivity}
                     defaultOpen
@@ -1186,7 +1196,8 @@ export function ChatPanel({
                       <MarkdownMessage content={answerBuffer} onOpenPath={onOpenPath} plain />
                     </div>
                   ) : (
-                    !thinkingBuffer && (
+                    !thinkingBuffer &&
+                    !reasoningBuffer && (
                       <div className="answer-placeholder">
                         {chatMode === 'ask' ? 'Thinking…' : 'Working in the workspace…'}
                       </div>

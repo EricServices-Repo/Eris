@@ -173,6 +173,7 @@ const api: IdeApi = {
   onChatQuestionRequest: (cb) => subscribe('chat:question-request', cb),
   onChatQuestionResolved: (cb) => subscribe('chat:question-resolved', cb),
   onChatThinking: (cb) => subscribe('chat:thinking', cb),
+  onChatReasoning: (cb) => subscribe('chat:reasoning', cb),
   onChatProgress: (cb) => subscribe('chat:progress', cb),
   onChatAnswer: (cb) => subscribe('chat:answer', cb),
   onChatDone: (cb) => subscribe('chat:done', cb),

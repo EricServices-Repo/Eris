@@ -7,6 +7,7 @@ export const TASK_PHASES = [
   'prompt',
   'loading',
   'prefill',
+  'reasoning',
   'generating',
   'tool',
   'verification',
@@ -30,6 +31,7 @@ export const taskPhaseLabels: Record<TaskPhase, string> = {
   prompt: 'Preparing the model prompt',
   loading: 'Preparing local model',
   prefill: 'Waiting for first model chunk',
+  reasoning: 'Model is reasoning',
   generating: 'Generating',
   tool: 'Using workspace tools',
   verification: 'Running verification',
@@ -109,7 +111,7 @@ export function transitionTaskTimeline(
     admitted = entries.find((r) => r.phase === 'admitted')
   const firstChunkAt =
     current?.firstChunkAt ??
-    (input.phase === 'generating' && input.source === 'transport' ? at : undefined)
+    (firstOutput(input) ? at : undefined)
   const dispatch = previous?.phase === 'prefill' ? previous.at : undefined
   return {
     version: 1,
@@ -121,7 +123,7 @@ export function transitionTaskTimeline(
     phaseMs,
     dispatchToFirstChunkMs:
       current?.dispatchToFirstChunkMs ??
-      (input.phase === 'generating' && input.source === 'transport' && dispatch !== undefined
+      (firstOutput(input) && dispatch !== undefined
         ? Math.max(0, at - dispatch)
         : null),
     firstChunkAt,
@@ -129,6 +131,10 @@ export function transitionTaskTimeline(
       ? { origin: input.origin, errorCode: input.errorCode, at }
       : current?.lastFailure
   }
+}
+/** The model's first output: its answer or, for reasoning models, its reasoning (#573). */
+function firstOutput(input: TaskPhaseEvent): boolean {
+  return (input.phase === 'generating' || input.phase === 'reasoning') && input.source === 'transport'
 }
 export function isTaskPhaseEvent(value: unknown): value is TaskPhaseEvent {
   return (

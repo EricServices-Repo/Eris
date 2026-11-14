@@ -36,6 +36,7 @@ type NativeChunk = {
   error?: unknown
   message?: {
     content?: unknown
+    thinking?: unknown
     tool_calls?: Array<{ function?: { name?: unknown; arguments?: unknown } }>
   }
   done?: unknown
@@ -99,6 +100,20 @@ const failureOf = (error: unknown, signal?: AbortSignal): ApiStreamFailure => ({
 })
 
 /**
+ * Ollama's `think` value for a requested level (#573). Nothing is sent by default: a
+ * model without thinking support rejects the field, and thinking models already think.
+ * gpt-oss takes a level; other thinking models take a boolean.
+ */
+export function ollamaThink(
+  model: string,
+  level: 'default' | 'off' | 'low' | 'medium' | 'high' | undefined
+): boolean | 'low' | 'medium' | 'high' | undefined {
+  if (!level || level === 'default') return undefined
+  if (level === 'off') return false
+  return /gpt-oss/i.test(model) ? level : true
+}
+
+/**
  * Ollama's native chat route. `/v1/chat/completions` cannot set a context size, so
  * this is the route that makes the window Eris budgets for the one the server uses.
  */
@@ -118,7 +133,11 @@ export async function* streamOllamaChat(options: {
   tools?: OpenAIToolDef[]
   toolChoice?: 'auto' | 'none' | 'required'
   onNativeToolCalls?: (calls: NativeToolCall[]) => void
+  /** `message.thinking`, which Ollama separates for thinking models (#573). */
+  onReasoning?: (text: string) => void
+  reasoning?: 'default' | 'off' | 'low' | 'medium' | 'high'
 }): AsyncGenerator<string, void, unknown> {
+  const think = ollamaThink(options.model, options.reasoning)
   const response = await fetch(`${ollamaNativeHost(options.baseUrl)}/api/chat`, {
     method: 'POST',
     headers: {
@@ -137,7 +156,8 @@ export async function* streamOllamaChat(options: {
           ? { num_predict: Math.max(1, Math.floor(options.maxOutputTokens)) }
           : {})
       },
-      ...(options.tools?.length && options.toolChoice !== 'none' ? { tools: options.tools } : {})
+      ...(options.tools?.length && options.toolChoice !== 'none' ? { tools: options.tools } : {}),
+      ...(think === undefined ? {} : { think })
     }),
     signal: options.signal,
     ...(options.refuseRedirects ? { redirect: 'error' as const } : {})
@@ -163,6 +183,11 @@ export async function* streamOllamaChat(options: {
       const text = chunk.message?.content
       if (text !== undefined && typeof text !== 'string')
         throw protocolError('Model content delta must be text.')
+      const thinking = chunk.message?.thinking
+      if (thinking !== undefined && thinking !== null) {
+        if (typeof thinking !== 'string') throw protocolError('Model thinking delta must be text.')
+        options.onReasoning?.(thinking)
+      }
       if (text) yield text
       for (const call of chunk.message?.tool_calls ?? []) {
         const { name, arguments: args } = call.function ?? {}

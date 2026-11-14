@@ -29,6 +29,8 @@ export type AgentRunnerEvent =
   | { type: 'evidence'; evidence: import('./tool-gateway').EvidenceRecord }
   | { type: 'asset'; asset: GeneratedImageAsset }
   | { type: 'thinking'; text: string }
+  /** The model's own reasoning (#573). Display only: never parsed or sent back. */
+  | { type: 'reasoning'; text: string }
   | { type: 'answer'; text: string; replace?: boolean }
   | { type: 'tool'; tool: AgentToolEvent }
   | { type: 'diff'; diff: AgentDiffEvent }

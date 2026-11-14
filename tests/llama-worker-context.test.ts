@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({
   requested: [] as number[],
   posted: [] as Array<Record<string, unknown>>,
   prompts: [] as string[],
+  budgets: [] as unknown[],
   sequencesLeft: 1,
   send: null as null | ((msg: unknown) => void)
 }))
@@ -14,8 +15,17 @@ vi.mock('node-llama-cpp', () => {
   class LlamaChatSession {
     disposed = false
     setChatHistory() {}
-    async prompt(text: string, options: { onToken?: (tokens: number[]) => void }) {
+    async prompt(
+      text: string,
+      options: {
+        onToken?: (tokens: number[]) => void
+        onResponseChunk?: (chunk: { type: string; segmentType: string; text: string }) => void
+        budgets?: unknown
+      }
+    ) {
       h.prompts.push(text)
+      h.budgets.push(options.budgets)
+      options.onResponseChunk?.({ type: 'segment', segmentType: 'thought', text: 'pondering' })
       options.onToken?.([100, 101])
       return 'ok'
     }
@@ -121,6 +131,23 @@ describe('llama worker context checks', () => {
     expect(posted('context-allocated').at(-1)).toMatchObject({ contextSize: 1024 })
     expect(h.prompts).toHaveLength(0)
   })
+})
+
+it('posts thought segments as reasoning with the requested budget (#573)', async () => {
+  h.send!({
+    type: 'chat',
+    id: 'thinks',
+    messages: [{ role: 'user', content: 'hi' }],
+    temperature: 0,
+    maxTokens: 512,
+    reasoning: 'medium'
+  })
+  await until(() => h.posted.some((msg) => msg.id === 'thinks' && msg.type === 'done'))
+  expect(h.posted.filter((msg) => msg.id === 'thinks' && msg.type === 'reasoning')).toEqual([
+    { type: 'reasoning', id: 'thinks', text: 'pondering' }
+  ])
+  expect(h.posted.some((msg) => msg.id === 'thinks' && msg.type === 'chunk')).toBe(false)
+  expect(h.budgets.at(-1)).toEqual({ thoughtTokens: 512 })
 })
 
 it('reallocates a same-path model when the requested window changes', async () => {
