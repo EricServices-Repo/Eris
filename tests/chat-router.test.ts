@@ -68,6 +68,8 @@ describe('classifyIntent', () => {
     ['What models do you have access to?', 'ask', 'capability'],
     ['explain this function', 'ask', 'explore'],
     ['implement a login form', 'agent', 'edit'],
+    ['Explain how to implement authentication', 'agent', 'answer'],
+    ['Explain how to implement authentication and then implement it', 'agent', 'edit'],
     [
       'Can you show me how to add optimistic updates for a list of items with Redis for caching?',
       'agent',

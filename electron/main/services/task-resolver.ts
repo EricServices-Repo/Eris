@@ -7,6 +7,7 @@ import { createTaskDeadline, drainUntilStopped } from './task-deadline'
 import { resolveFileRequest } from '../../../src/shared/file-request'
 import {
   asksForDirectEdit,
+  asksForEditClause,
   asksForCodeDestination,
   asksForCodeExample,
   asksForCreativeWriting,
@@ -74,6 +75,8 @@ export function resolverBypassRule(text: string, fallback: ChatIntent): string |
   if (isQuotedContentOnly(text)) return 'quoted-content-only'
   if (providedReviewOperands(text).length) return 'provided-source-review'
   const t = withoutLeadingScope(requestTextForIntent(text))
+  if (/^(?:please\s+)?explain\s+how\s+to\s+(?:implement|build|create|add|write)\b/i.test(t) &&
+      !asksForEditClause(t) && ['answer', 'explore'].includes(fallback)) return 'explain-approach'
   if (asksForCreativeWriting(t)) return fallback === 'answer' ? 'creative-writing' : null
   if (fallback === 'capability') return 'capability-question'
   if (asksForWorkspaceInspection(t) && ['review', 'explore', 'edit'].includes(fallback)) return 'workspace-inspection'

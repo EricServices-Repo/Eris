@@ -48,6 +48,12 @@ describe('abort-ignoring model transport', () => {
   })
 })
 describe('task meaning resolution', () => {
+  it('keeps an explicit implementation explanation read-only without classifier inference', async () => {
+    const result = await resolveTaskDecision({ ...options(), fallback: 'answer', text: 'Explain how to implement authentication' })
+    expect(result).toMatchObject({ intent: 'answer', initialIntent: 'answer', source: 'bypass', rule: 'explain-approach' })
+    expect(model.requests).toHaveLength(0)
+  })
+
   it.each([undefined, 'cold-native-routing-skipped', 'remote-auto-routing-skipped'] as const)('preserves explicit file review without classifier inference (%s)', async skipInference => {
     model.response = 'invalid classifier response'
     const result = await resolveTaskDecision({...options(), fallback:'review', skipInference,
