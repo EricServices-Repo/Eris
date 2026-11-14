@@ -160,3 +160,27 @@ describe('terminal chat jobs stay terminal (#303)', () => {
     await flushChatJobs()
   })
 })
+
+
+describe('observed chat progress (#470)', () => {
+  it('reports only successful reads, actual diff events, verification and repeated failures', async () => {
+    const { observedChatProgress } = await import('../src/shared/chat-progress')
+    const id = await admitted()
+    recordChatJobEvent(id, 'chat:tool', { tool: { name: 'read_file', status: 'ok', path: 'src/a.ts' } })
+    expect(observedChatProgress(getChatJob(id)!.events)).toMatchObject({ lastSuccess: { name: 'read_file', path: 'src/a.ts' }, changedFiles: [] })
+    recordChatJobEvent(id, 'chat:tool', { tool: { name: 'write_file', status: 'error', path: 'src/b.ts', failure: { code: 'DENIED' } } })
+    recordChatJobEvent(id, 'chat:tool', { tool: { name: 'write_file', status: 'error', path: 'src/b.ts', failure: { code: 'DENIED' } } })
+    let progress = observedChatProgress(getChatJob(id)!.events)
+    expect(progress.changedFiles).toEqual([])
+    expect(progress.lastFailure).toEqual({ name: 'write_file', code: 'DENIED', repeats: 2 })
+    recordChatJobEvent(id, 'chat:diff', { diff: { path: 'src/b.ts', op: 'write' } })
+    recordChatJobEvent(id, 'chat:tool', { tool: { name: 'verify', status: 'ok', path: 'npm test' } })
+    progress = observedChatProgress(getChatJob(id)!.events)
+    expect(progress.changedFiles).toEqual(['src/b.ts'])
+    expect(progress.verification).toEqual({ command: 'npm test', result: 'passed' })
+    recordChatJobEvent(id, 'chat:diff', { diff: { path: 'src/a.ts', op: 'write' } })
+    expect(observedChatProgress(getChatJob(id)!.events).verification).toBeUndefined()
+    finishChatJob(id, 'done')
+    await flushChatJobs()
+  })
+})
