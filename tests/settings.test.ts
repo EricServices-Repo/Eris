@@ -364,3 +364,14 @@ describe('unreadable settings files', () => {
     writeUserSettings({})
   })
 })
+
+ it('keeps a workspace local-only ceiling over an any-model user default', () => {
+    writeUserSettings({ models: { defaultModel: 'auto-any' } })
+    const root = mkdtempSync(join(tmpdir(), 'eris-local-ceiling-'))
+    try {
+      mkdirSync(dirname(workspaceSettingsPath(root)), { recursive: true })
+      writeFileSync(workspaceSettingsPath(root), JSON.stringify({ models: { defaultModel: 'auto-local' } }))
+      invalidateResolvedSettingsCache()
+      expect(getResolvedSettings(root).agent.routing.profile).toBe('local')
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })

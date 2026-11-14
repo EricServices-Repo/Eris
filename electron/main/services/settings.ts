@@ -346,6 +346,7 @@ function buildResolvedSettings(workspacePath: string | null): AppSettings {
   const routing = { ...((agent.routing as Record<string, unknown>) || {}) }
   if (routing.fallbackAgentId === 'orchestrator') routing.fallbackAgentId = 'composer'
   if (!routing.routerModel || String(routing.routerModel).startsWith('builtin:')) routing.routerModel = 'auto'
+  if (workspaceLayer.models?.defaultModel === 'auto-local' || workspaceLayer.agent?.routing?.profile === 'local') routing.profile = 'local'
   agent.routing = routing
   delete agent.subagents
   merged.agent = agent
