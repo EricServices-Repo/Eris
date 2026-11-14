@@ -4,12 +4,15 @@ import type { SetStateAction } from 'react'
 
 type StreamState = {
   thinkingBuffer: string
+  /** The model's own reasoning, live (#573). */
+  reasoningBuffer: string
   answerBuffer: string
   agentStatus: string | null
   toolActivity: ToolActivityItem[]
 }
 export const chatStream = createStore<StreamState>({
   thinkingBuffer: '',
+  reasoningBuffer: '',
   answerBuffer: '',
   agentStatus: null,
   toolActivity: []
@@ -25,6 +28,7 @@ function setter<K extends keyof StreamState>(key: K) {
     })
 }
 export const setThinkingBuffer = setter('thinkingBuffer')
+export const setReasoningBuffer = setter('reasoningBuffer')
 export const setAnswerBuffer = setter('answerBuffer')
 export const setAgentStatus = setter('agentStatus')
 export const setToolActivity = setter('toolActivity')

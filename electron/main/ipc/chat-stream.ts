@@ -55,7 +55,7 @@ import {
   resolveUserQuestion,
   USER_QUESTION_TIMEOUT_MS
 } from '../services/user-question'
-import { finalizePostedAnswer, REVIEWER_UNAVAILABLE } from '../../../src/shared/posted-answer'
+import { capReasoning, finalizePostedAnswer, REVIEWER_UNAVAILABLE } from '../../../src/shared/posted-answer'
 import { taskIntakeBlocked } from '../../../src/shared/task-contract'
 import type { ChatMessage, ChatDelegation, TurnPlan } from '../../../src/shared/settings-schema'
 import { AGENT_HANDOFF_CHARS, summarizeAgentResults } from '../../../src/shared/agent-orchestration'
@@ -181,6 +181,7 @@ export function registerChatStreamIpc(): void {
           const publishEvent = chatPublisher(requestId, chatSender)
           let visibleAnswer = ''
           let visibleThinking = ''
+          let visibleReasoning = ''
           const replyAssets: NonNullable<ChatMessage['assets']> = []
           const replyDelegations = new Map<string, ChatDelegation>()
           let replyModel = payload.model
@@ -190,6 +191,8 @@ export function registerChatStreamIpc(): void {
             stall.touch()
             if (channel === 'chat:thinking' && typeof data.chunk === 'string')
               visibleThinking += data.chunk
+            if (channel === 'chat:reasoning' && typeof data.chunk === 'string')
+              visibleReasoning = capReasoning(visibleReasoning + data.chunk)
             if (channel === 'chat:asset' && data.asset) {
               const asset = data.asset as NonNullable<ChatMessage['assets']>[number]
               if (!replyAssets.some((item) => item.id === asset.id)) replyAssets.push(asset)
@@ -215,15 +218,16 @@ export function registerChatStreamIpc(): void {
           const persistReply = async (terminal: string) => {
             if (!contextThreadId) return true
             publish('chat:phase', { requestId, phase: 'persistence', source: 'storage', reason: 'Saving the response' })
-            const { content, thinking } = finalizePostedAnswer(
+            const { content, thinking, reasoning } = finalizePostedAnswer(
               visibleAnswer,
               visibleThinking,
               terminal === 'stopped',
-              replyAssets.length > 0
+              replyAssets.length > 0,
+              visibleReasoning
             )
             if (!content && !replyAssets.length && terminal !== 'stopped' && terminal !== 'incomplete') return true
             replySnapshot = {
-              id: `${requestId}:assistant`,role:'assistant',content,thinking:thinking || undefined,
+              id: `${requestId}:assistant`,role:'assistant',content,thinking:thinking || undefined,reasoning:reasoning || undefined,
               assets:replyAssets.length ? [...replyAssets] : undefined,
               delegations:replyDelegations.size ? [...replyDelegations.values()] : undefined,
               createdAt:Date.now(),model:replyModel,agentId:replyAgentId ?? turnPlan?.agentId,agentName:replyAgentName,
@@ -543,12 +547,17 @@ export function registerChatStreamIpc(): void {
           setDiagnosticsPaused(true)
           // Coalesce high-frequency thinking/answer IPC (~40ms) to cut renderer thrash.
           let pendingThinking = ''
+          let pendingReasoning = ''
           let pendingAnswer = ''
           let coalesceTimer: ReturnType<typeof setTimeout> | null = null
           const flushStreamChunks = () => {
             if (coalesceTimer) {
               clearTimeout(coalesceTimer)
               coalesceTimer = null
+            }
+            if (pendingReasoning) {
+              publish('chat:reasoning', { requestId, chunk: pendingReasoning })
+              pendingReasoning = ''
             }
             if (pendingThinking) {
               publish('chat:thinking', { requestId, chunk: pendingThinking })
@@ -585,7 +594,8 @@ export function registerChatStreamIpc(): void {
           let firstModelOutputMs: number | null = null
           const noteFirstAgentOutput = (evt: { type: string; text?: string }) => {
             const hasOutput =
-              (evt.type === 'thinking' || evt.type === 'answer') && Boolean(evt.text)
+              (evt.type === 'thinking' || evt.type === 'reasoning' || evt.type === 'answer') &&
+              Boolean(evt.text)
             if (firstModelOutputMs !== null || (!hasOutput && evt.type !== 'tool')) {
               return
             }
@@ -1109,7 +1119,10 @@ export function registerChatStreamIpc(): void {
                   verificationState = verifiedAfterLastEdit ? 'passed' : 'failed'
                 }
               }
-              if (evt.type === 'thinking') {
+              if (evt.type === 'reasoning') {
+                pendingReasoning += evt.text
+                scheduleStreamFlush()
+              } else if (evt.type === 'thinking') {
                 pendingThinking += evt.text
                 scheduleStreamFlush()
               } else if (evt.type === 'answer') {

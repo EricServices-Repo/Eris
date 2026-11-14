@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { summarizeThinkingSteps, thinkingPreviewLine } from './thinking-summary'
+import { reasoningPreviewLine, summarizeThinkingSteps, thinkingPreviewLine } from './thinking-summary'
 
 export interface ToolActivityItem {
   id: string
@@ -15,6 +15,8 @@ export interface ToolActivityItem {
 
 interface Props {
   thinking: string
+  /** The model's own reasoning (#573), shown apart from Eris's tool progress. */
+  reasoning?: string
   status?: string | null
   tools?: ToolActivityItem[]
   /** When true, default expanded; when false (saved messages), default collapsed */
@@ -26,6 +28,7 @@ const MAX_VISIBLE_TOOLS = 5
 
 export function ThinkingBlock({
   thinking,
+  reasoning = '',
   status,
   tools = [],
   defaultOpen = false,
@@ -35,14 +38,22 @@ export function ThinkingBlock({
   const [open, setOpen] = useState(defaultOpen)
   const [showLog, setShowLog] = useState(false)
   const logRef = useRef<HTMLPreElement>(null)
+  const reasoningRef = useRef<HTMLPreElement>(null)
+  // Live reasoning is shown as it arrives; saved reasoning waits to be opened.
+  const [showReasoning, setShowReasoning] = useState(live)
+  const [copied, setCopied] = useState(false)
   const hasTools = tools.length > 0
   const hasThinking = Boolean(thinking.trim())
+  const hasReasoning = Boolean(reasoning.trim())
 
   const steps = useMemo(() => summarizeThinkingSteps(thinking), [thinking])
-  const preview = useMemo(
-    () => thinkingPreviewLine(thinking, status, tools),
-    [thinking, status, tools]
-  )
+  const preview = useMemo(() => {
+    const progress = thinkingPreviewLine(thinking, status, tools)
+    // While the model reasons and Eris has nothing newer to report, show the reasoning.
+    if (live && hasReasoning && !tools.some((t) => t.status === 'running') && !summarizeThinkingSteps(thinking).length)
+      return reasoningPreviewLine(reasoning) || progress
+    return progress
+  }, [thinking, status, tools, live, hasReasoning, reasoning])
   const recentTools = useMemo(() => tools.slice(-MAX_VISIBLE_TOOLS), [tools])
   const hiddenToolCount = Math.max(0, tools.length - recentTools.length)
 
@@ -55,7 +66,22 @@ export function ThinkingBlock({
     logRef.current.scrollTop = logRef.current.scrollHeight
   }, [thinking, showLog, live])
 
-  if (!hasThinking && !hasTools && !status?.trim()) return null
+  useEffect(() => {
+    if (!showReasoning || !live || !reasoningRef.current) return
+    reasoningRef.current.scrollTop = reasoningRef.current.scrollHeight
+  }, [reasoning, showReasoning, live])
+
+  const copyReasoning = () => {
+    void navigator.clipboard?.writeText(reasoning).then(
+      () => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1500)
+      },
+      () => undefined
+    )
+  }
+
+  if (!hasThinking && !hasTools && !hasReasoning && !status?.trim()) return null
 
   return (
     <div className={`thinking-block ${open ? 'open' : ''} ${live ? 'live' : ''}`}>
@@ -128,7 +154,32 @@ export function ThinkingBlock({
             </ul>
           )}
 
-          {!live && !steps.length && !hasTools && (
+          {hasReasoning && (
+            <div className="thinking-reasoning">
+              <div className="thinking-reasoning-head">
+                <button
+                  type="button"
+                  className="thinking-log-toggle"
+                  onClick={() => setShowReasoning((v) => !v)}
+                  aria-expanded={showReasoning}
+                >
+                  {showReasoning ? '▾' : '▸'} Model reasoning
+                </button>
+                {showReasoning && (
+                  <button type="button" className="thinking-log-toggle" onClick={copyReasoning}>
+                    {copied ? 'Copied' : 'Copy'}
+                  </button>
+                )}
+              </div>
+              {showReasoning && (
+                <pre ref={reasoningRef} className="thinking-reasoning-text">
+                  {reasoning}
+                </pre>
+              )}
+            </div>
+          )}
+
+          {!live && !steps.length && !hasTools && !hasReasoning && (
             <div className="thinking-idle">No activity recorded.</div>
           )}
 

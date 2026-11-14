@@ -4,6 +4,8 @@
  */
 
 import { createAbortLedger } from './services/llama-abort-ledger'
+import { thoughtSegmentOptions } from './services/reasoning-split'
+import type { ReasoningLevel } from '../../src/shared/settings-schema'
 import { allocationFacts, createContextWithVramFallback, placeModel } from './services/vram-fit'
 import {
   messagesToLlamaHistory,
@@ -34,6 +36,7 @@ type Incoming =
       temperature: number
       maxTokens: number
       jsonSchema?: Record<string, unknown>
+      reasoning?: ReasoningLevel
     }
   | {
       type: 'chat-turn'
@@ -46,6 +49,7 @@ type Incoming =
       temperature: number
       maxTokens: number
       jsonSchema?: Record<string, unknown>
+      reasoning?: ReasoningLevel
     }
   | { type: 'chat-release'; sessionKey: string }
   | { type: 'abort'; id: string }
@@ -317,7 +321,9 @@ async function runPromptOneshot(options: {
   maxTokens: number
   signal: AbortSignal
   jsonSchema?: Record<string, unknown>
+  reasoning?: ReasoningLevel
   onChunk: (text: string) => void
+  onReasoning: (text: string) => void
 }): Promise<WorkerTermination> {
   const llamaCpp = await import('node-llama-cpp')
   const { LlamaChatSession } = llamaCpp
@@ -350,6 +356,7 @@ async function runPromptOneshot(options: {
         outputTokens = (outputTokens ?? 0) + tokens.length
       },
       ...(grammar ? { grammar } : {}),
+      ...thoughtSegmentOptions(options.reasoning, budget.maxTokens, options.onReasoning),
       onTextChunk(chunk: string) {
         if (chunk) firstTextMs ??= Math.round(performance.now() - promptStarted)
         options.onChunk(chunk)
@@ -384,7 +391,9 @@ async function runSessionTurn(options: {
   maxTokens: number
   signal: AbortSignal
   jsonSchema?: Record<string, unknown>
+  reasoning?: ReasoningLevel
   onChunk: (text: string) => void
+  onReasoning: (text: string) => void
 }): Promise<WorkerTermination> {
   const existing = jobSessions.get(options.sessionKey)
   const isNew = !existing || existing.session.disposed
@@ -424,6 +433,7 @@ async function runSessionTurn(options: {
       outputTokens = (outputTokens ?? 0) + tokens.length
     },
     ...(grammar ? { grammar } : {}),
+    ...thoughtSegmentOptions(options.reasoning, budget.maxTokens, options.onReasoning),
     onTextChunk(chunk: string) {
       if (chunk) firstTextMs ??= Math.round(performance.now() - promptStarted)
       options.onChunk(chunk)
@@ -448,6 +458,7 @@ async function handleChat(msg: {
   temperature: number
   maxTokens: number
   jsonSchema?: Record<string, unknown>
+  reasoning?: ReasoningLevel
 }): Promise<void> {
   // Claim the job first: an abort received while it waited in the queue wins (#517).
   const ac = aborts.start(msg.id)
@@ -469,7 +480,9 @@ async function handleChat(msg: {
         maxTokens: msg.maxTokens,
         signal: ac.signal,
         jsonSchema: msg.jsonSchema,
-        onChunk: (text) => post({ type: 'chunk', id: msg.id, text })
+        reasoning: msg.reasoning,
+        onChunk: (text) => post({ type: 'chunk', id: msg.id, text }),
+        onReasoning: (text) => post({ type: 'reasoning', id: msg.id, text })
       })
 
     let termination: WorkerTermination | undefined
@@ -513,6 +526,7 @@ async function handleChatTurn(msg: {
   temperature: number
   maxTokens: number
   jsonSchema?: Record<string, unknown>
+  reasoning?: ReasoningLevel
 }): Promise<void> {
   // Claim the job first: an abort received while it waited in the queue wins (#517).
   const ac = aborts.start(msg.id)
@@ -537,7 +551,9 @@ async function handleChatTurn(msg: {
         maxTokens: msg.maxTokens,
         signal: ac.signal,
         jsonSchema: msg.jsonSchema,
-        onChunk: (text) => post({ type: 'chunk', id: msg.id, text })
+        reasoning: msg.reasoning,
+        onChunk: (text) => post({ type: 'chunk', id: msg.id, text }),
+        onReasoning: (text) => post({ type: 'reasoning', id: msg.id, text })
       })
 
     let termination: WorkerTermination | undefined

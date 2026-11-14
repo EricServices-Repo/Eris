@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  reasoningPreviewLine,
   summarizeThinkingSteps,
   thinkingPreviewLine
 } from '../src/features/chat/thinking-summary'
@@ -50,5 +51,13 @@ describe('thinkingPreviewLine', () => {
         []
       )
     ).toBe('')
+  })
+})
+
+describe('reasoningPreviewLine (#573)', () => {
+  it('previews the latest reasoning line', () => {
+    expect(reasoningPreviewLine('First idea\n\n  Then   check tests  \n')).toBe('Reasoning: Then check tests')
+    expect(reasoningPreviewLine('   ')).toBe('')
+    expect(reasoningPreviewLine('x'.repeat(500)).length).toBeLessThanOrEqual(96)
   })
 })

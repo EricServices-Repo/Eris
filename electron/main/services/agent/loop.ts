@@ -803,7 +803,9 @@ async function* runAgentInternal(options: {
         messages: askMessages,
         sessionKey: askSessionKey
       })) {
-        if (evt.kind === 'thinking') {
+        if (evt.kind === 'reasoning') {
+          yield { type: 'reasoning', text: evt.text }
+        } else if (evt.kind === 'thinking') {
           if (evt.text) yield { type: 'answer', text: evt.text }
         } else full = evt.full
       }
@@ -2036,7 +2038,9 @@ async function* runAgentInternal(options: {
           builtinJsonSchema: undefined,
           sessionKey: undefined
         })) {
-          if (evt.kind === 'thinking') {
+          if (evt.kind === 'reasoning') {
+            yield { type: 'reasoning', text: evt.text }
+          } else if (evt.kind === 'thinking') {
             if (evt.text) yield { type: 'answer', text: evt.text }
           } else modelText = evt.full
         }
@@ -2117,7 +2121,9 @@ async function* runAgentInternal(options: {
         builtinJsonSchema: undefined,
         sessionKey: isNativeGgufRef(workerModel) ? ggufSessionKey : undefined
       }), deadline.signal)) {
-        if (evt.kind === 'thinking') {
+        if (evt.kind === 'reasoning') {
+          yield { type: 'reasoning', text: evt.text }
+        } else if (evt.kind === 'thinking') {
           if (evt.text) yield { type: 'answer', text: evt.text }
         } else {
           reply = evt.full
@@ -2519,7 +2525,11 @@ async function* runAgentInternal(options: {
             : undefined,
           sessionKey: isNativeGgufRef(workerModel) ? ggufSessionKey : undefined
         }), modelDeadline.signal)) {
-          if (evt.kind === 'thinking') {
+          if (evt.kind === 'reasoning') {
+            // The model's reasoning is shown under Thinking and counts as activity.
+            yield { type: 'reasoning', text: evt.text }
+            generatedChars += evt.text.length
+          } else if (evt.kind === 'thinking') {
             // Model tokens are the reply, not the thinking trace.
             generatedChars += evt.text.length
             const now = Date.now()
@@ -4247,6 +4257,7 @@ async function* runAgentInternal(options: {
                 })) {
                   if (
                     specEvt.type === 'thinking' ||
+                    specEvt.type === 'reasoning' ||
                     specEvt.type === 'tool' ||
                     specEvt.type === 'evidence' ||
                     specEvt.type === 'diff' ||

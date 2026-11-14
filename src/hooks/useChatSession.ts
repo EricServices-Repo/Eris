@@ -20,7 +20,7 @@ import type {
   ModelInfo,
   SkillRecord
 } from '@/shared/settings-schema'
-import { finalizePostedAnswer, upsertTerminalReply } from '@/shared/posted-answer'
+import { capReasoning, finalizePostedAnswer, upsertTerminalReply } from '@/shared/posted-answer'
 import type { OpenTab } from '@/features/editor/EditorArea'
 import type {
   ActiveSkillRef,
@@ -36,6 +36,7 @@ import type { RightPanel } from './useLayout'
 import { uid } from './uid'
 import {
   chatStream,
+  setReasoningBuffer,
   setThinkingBuffer,
   setAnswerBuffer,
   setToolActivity,
@@ -167,6 +168,8 @@ export function useChatSession({
   const recentRequestsRef = useRef(new Map<string, { threadId: string; workspacePath: string | null }>())
   const requestWorkspacePathRef = useRef<string | null>(null)
   const thinkingAcc = useRef('')
+  /** The model's reasoning (#573); display-only, never part of the answer. */
+  const reasoningAcc = useRef('')
   const answerAcc = useRef('')
   const imageAssetsRef = useRef<GeneratedImageAsset[]>([])
   const directImageRequestRef = useRef<string | null>(null)
@@ -195,8 +198,10 @@ export function useChatSession({
       lastRequestIdRef.current = null
       answerAcc.current = ''
       thinkingAcc.current = ''
+      reasoningAcc.current = ''
       setAnswerBuffer('')
       setThinkingBuffer('')
+      setReasoningBuffer('')
       setStreaming(false)
     }
     void window.ide
@@ -258,6 +263,7 @@ export function useChatSession({
         requestWorkspacePathRef.current = job.workspacePath
         answerAcc.current = job.answer
         thinkingAcc.current = ''
+        reasoningAcc.current = ''
         const restoredTools = new Map<string, ToolActivityItem>()
         const restoredDiffs = new Map<string, PendingDiff>()
         let restoredCheckpoint: string | null = null
@@ -326,6 +332,7 @@ export function useChatSession({
         setActiveCheckpointId(restoredCheckpoint)
         setAnswerBuffer(job.answer)
         setThinkingBuffer('')
+        setReasoningBuffer('')
         setAgentStatus(
           job.timeline ? taskPhaseLabels[job.timeline.current.phase] : job.statusText || 'Working…'
         )
@@ -365,6 +372,7 @@ export function useChatSession({
       chatStream.set((previous) => ({
         ...previous,
         thinkingBuffer: thinkingAcc.current,
+        reasoningBuffer: reasoningAcc.current,
         answerBuffer: answerAcc.current
       }))
     })
@@ -422,9 +430,11 @@ export function useChatSession({
       lastTerminalWasErrorRef.current = false
       changedFiles.current.clear()
       thinkingAcc.current = ''
+      reasoningAcc.current = ''
       answerAcc.current = ''
       imageAssetsRef.current = []
       setThinkingBuffer('')
+      setReasoningBuffer('')
       setAnswerBuffer('')
       setToolActivity([])
       delegationsRef.current = []
@@ -604,8 +614,10 @@ export function useChatSession({
           .catch((error) => setChatError(`Could not save your message: ${String(error)}`))
 
         thinkingAcc.current = ''
+        reasoningAcc.current = ''
         answerAcc.current = ''
         setThinkingBuffer('')
+        setReasoningBuffer('')
         setAnswerBuffer('')
 
         const prompt: ChatPromptInput = {
@@ -777,6 +789,11 @@ export function useChatSession({
     const offThinking = window.ide.onChatThinking(({ requestId, chunk }) => {
       if (requestId !== requestIdRef.current) return
       thinkingAcc.current += chunk
+      schedulePaint()
+    })
+    const offReasoning = window.ide.onChatReasoning(({ requestId, chunk }) => {
+      if (requestId !== requestIdRef.current) return
+      reasoningAcc.current = capReasoning(reasoningAcc.current + chunk)
       schedulePaint()
     })
     const offAnswer = window.ide.onChatAnswer(({ requestId, chunk, replace }) => {
@@ -986,7 +1003,7 @@ export function useChatSession({
           ? `Queued${queuePosition ? ` (#${queuePosition})` : ''} · finishing the previous task…`
           : reason && (phase === 'loading' || phase === 'prefill')
             ? `${taskPhaseLabels[phase]} · ${reason}`
-            : ['generating', 'tool', 'prefill', 'integrating'].includes(phase) && currentStatusRef.current
+            : ['generating', 'reasoning', 'tool', 'prefill', 'integrating'].includes(phase) && currentStatusRef.current
               ? currentStatusRef.current
               : taskPhaseLabels[phase]
       )
@@ -994,10 +1011,10 @@ export function useChatSession({
     const offStatus = window.ide.onChatStatus(({ requestId, text }) => {
       if (requestId !== requestIdRef.current) return
       currentStatusRef.current = text
-      if (typedPhaseRequestRef.current !== requestId || ['generating', 'tool', 'prefill', 'integrating'].includes(currentPhaseRef.current)) setAgentStatus(text)
+      if (typedPhaseRequestRef.current !== requestId || ['generating', 'reasoning', 'tool', 'prefill', 'integrating'].includes(currentPhaseRef.current)) setAgentStatus(text)
     })
     const offProgress = window.ide.onChatProgress(({ requestId, step, chars, elapsedMs }) => {
-      if (requestId !== requestIdRef.current || !['generating', 'tool', 'prefill', 'integrating'].includes(currentPhaseRef.current)) return
+      if (requestId !== requestIdRef.current || !['generating', 'reasoning', 'tool', 'prefill', 'integrating'].includes(currentPhaseRef.current)) return
       const status = currentStatusRef.current || `Step ${step}`
       const last = lastToolRef.current ? ` · last: ${lastToolRef.current}` : ''
       setAgentStatus(`${status} · ${Math.round(elapsedMs / 1000)}s · ~${Math.floor(chars / 4)} tokens${last}`)
@@ -1086,11 +1103,12 @@ export function useChatSession({
         paintRaf.current = 0
       }
       const thinkingRaw = thinkingAcc.current
-      const { content, thinking } = finalizePostedAnswer(
+      const { content, thinking, reasoning } = finalizePostedAnswer(
         answerAcc.current,
         thinkingRaw,
         Boolean(aborted),
-        imageAssetsRef.current.length > 0
+        imageAssetsRef.current.length > 0,
+        reasoningAcc.current
       )
       const threadId = requestThreadIdRef.current
       const meta = routeMetaRef.current
@@ -1100,13 +1118,15 @@ export function useChatSession({
       requestIdRef.current = null
       if (aborted) userStoppedRef.current = true
       thinkingAcc.current = ''
+      reasoningAcc.current = ''
       answerAcc.current = ''
       const savedDelegations = delegationsRef.current
       delegationsRef.current = []
       setDelegations([])
       const message: ChatMessage = reply ?? {
         id: `${requestId}:assistant`,
-        role: 'assistant', content, thinking: thinking || undefined, createdAt: Date.now(),
+        role: 'assistant', content, thinking: thinking || undefined,
+        reasoning: reasoning || undefined, createdAt: Date.now(),
         agentId: meta.agentId, agentName: meta.agentName, model: meta.model,
         ...(aborted ? { contextResult: { taskId: requestId, terminal: 'stopped', projectRoot: null, changedFiles: [] } } : {}),
         assets: imageAssetsRef.current.length ? [...imageAssetsRef.current] : undefined,
@@ -1124,6 +1144,7 @@ export function useChatSession({
           thread.id === threadId ? upsertTerminalReply(thread, message) : thread))
       }
       setThinkingBuffer('')
+      setReasoningBuffer('')
       setAnswerBuffer('')
       setStreaming(false)
     })
@@ -1157,9 +1178,11 @@ export function useChatSession({
         setThreads(previous => previous.map(thread => thread.id === threadId ? upsertTerminalReply(thread, partial) : thread))
       }
       thinkingAcc.current = ''
+      reasoningAcc.current = ''
       answerAcc.current = ''
       setStreaming(false)
       setThinkingBuffer('')
+      setReasoningBuffer('')
       setAnswerBuffer('')
       setAgentStatus(null)
       setPendingQuestion(null)
@@ -1171,6 +1194,7 @@ export function useChatSession({
       offAsset()
       offImageProgress()
       offThinking()
+      offReasoning()
       offAnswer()
       offRouted()
       offDelegation()

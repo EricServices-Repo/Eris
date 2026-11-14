@@ -31,8 +31,10 @@ import { Transform } from 'stream'
 import type {
   AppSettings,
   BuiltinModelManifestEntry,
-  BuiltinModelStatus
+  BuiltinModelStatus,
+  ReasoningLevel
 } from '../../../src/shared/settings-schema'
+import { thoughtSegmentOptions } from './reasoning-split'
 import { builtinModelsDir, isSharedModelPath, modelReadPath, modelsManifestPath } from './paths'
 import { logError, logInfo, logWarn } from './logger'
 import {
@@ -1231,6 +1233,9 @@ async function* streamBuiltinChatInProcess(options: {
   /** Revalidated and repacked after actual allocation, while the inference lease is held. */
   prepareMessages?: () => Promise<Array<{ role: 'system' | 'user' | 'assistant'; content: string }>>
   onTermination?: (termination: ModelTermination) => void
+  /** Thought segments, separate from the answer (#573). */
+  onReasoning?: (text: string) => void
+  reasoning?: ReasoningLevel
 }): AsyncGenerator<string, void, unknown> {
   const llamaCpp = await loadLlamaModule()
   const { LlamaChatSession } = llamaCpp
@@ -1305,6 +1310,7 @@ async function* streamBuiltinChatInProcess(options: {
       maxTokens,
       stopOnAbortSignal: true,
       ...(grammar ? { grammar } : {}),
+      ...thoughtSegmentOptions(options.reasoning, maxTokens, options.onReasoning),
       onTextChunk(chunk: string) {
         queue.push(chunk)
         wake()
@@ -1387,6 +1393,7 @@ async function* streamBuiltinChatInProcess(options: {
       signal: options.signal,
       maxTokens,
       ...(grammar ? { grammar } : {}),
+      ...thoughtSegmentOptions(options.reasoning, maxTokens, options.onReasoning),
       onTextChunk(chunk: string) {
         queue.push(chunk)
         wake()
@@ -1459,6 +1466,9 @@ async function* streamBuiltinChatViaWorker(options: {
   /** Revalidated and repacked after actual allocation, while the inference lease is held. */
   prepareMessages?: () => Promise<Array<{ role: 'system' | 'user' | 'assistant'; content: string }>>
   onTermination?: (termination: ModelTermination) => void
+  /** Thought segments, separate from the answer (#573). */
+  onReasoning?: (text: string) => void
+  reasoning?: ReasoningLevel
 }): AsyncGenerator<string, void, unknown> {
   const loadStarted = performance.now()
   await ensureWorkerModel(options.path, options.entry, options.signal, options.contextWindow)
@@ -1516,6 +1526,11 @@ async function* streamBuiltinChatViaWorker(options: {
       watchdog.chunk()
       queue.push(msg.text)
       wake()
+    } else if (msg.type === 'reasoning' && msg.text) {
+      // Reasoning is progress: it keeps the silence watchdog quiet, but it is not
+      // the first answer chunk (#573).
+      watchdog.chunk()
+      options.onReasoning?.(msg.text)
     } else if (msg.type === 'done') {
       if (options.sessionKey) activeChatSessions.add(options.sessionKey)
       termination = msg.termination
@@ -1565,7 +1580,8 @@ async function* streamBuiltinChatViaWorker(options: {
         seedMessages: split.seed,
         temperature: options.temperature,
         maxTokens: options.maxOutputTokens ?? REPLY_MAX_TOKENS,
-        jsonSchema: options.jsonSchema
+        jsonSchema: options.jsonSchema,
+        reasoning: options.reasoning
       })
       posted = true
     } else {
@@ -1575,7 +1591,8 @@ async function* streamBuiltinChatViaWorker(options: {
         messages: options.messages,
         temperature: options.temperature,
         maxTokens: options.maxOutputTokens ?? REPLY_MAX_TOKENS,
-        jsonSchema: options.jsonSchema
+        jsonSchema: options.jsonSchema,
+        reasoning: options.reasoning
       })
       posted = true
     }
@@ -1809,6 +1826,9 @@ export async function* streamBuiltinChat(options: {
   /** Revalidated and repacked after actual allocation, while the inference lease is held. */
   prepareMessages?: () => Promise<Array<{ role: 'system' | 'user' | 'assistant'; content: string }>>
   onTermination?: (termination: ModelTermination) => void
+  /** Thought segments, separate from the answer (#573). */
+  onReasoning?: (text: string) => void
+  reasoning?: ReasoningLevel
 }): AsyncGenerator<string, void, unknown> {
   let entry: BuiltinModelManifestEntry
   let path: string

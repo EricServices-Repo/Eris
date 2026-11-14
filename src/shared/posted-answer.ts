@@ -84,20 +84,41 @@ export function displayedTerminalReply(content: string, terminal?: string): { co
     badge: state === 'stopped' ? 'Stopped' : state === 'incomplete' ? 'Incomplete' : null }
 }
 
-/** The renderer and durable main-process history must finalize the same reply. */
+/** Saved reasoning is capped; the end is kept because it leads to the answer (#573). */
+export const MAX_REASONING_CHARS = 200_000
+export const REASONING_TRIMMED = '[Earlier reasoning omitted]\n'
+
+export function capReasoning(text: string): string {
+  if (text.length <= MAX_REASONING_CHARS) return text
+  return REASONING_TRIMMED + text.slice(-(MAX_REASONING_CHARS - REASONING_TRIMMED.length))
+}
+
+/** Shown when a reasoning model stopped before writing any answer (#573). */
+export const REASONED_WITHOUT_ANSWER =
+  'The model reasoned but did not produce an answer before it stopped.'
+
+/**
+ * The renderer and durable main-process history must finalize the same reply.
+ * Model reasoning passes through untouched: it is display-only and never promoted
+ * into the answer, which would make the model's private planning look like a reply.
+ */
 export function finalizePostedAnswer(
   answer: string,
   thinkingRaw: string,
   aborted: boolean,
-  hasAssets: boolean
-): { content: string; thinking: string } {
+  hasAssets: boolean,
+  reasoningRaw = ''
+): { content: string; thinking: string; reasoning: string } {
   let content = promoteThinkingToAnswer(answer, thinkingRaw)
   if (!content.trim() && thinkingRaw && !aborted) content = promoteThinkingToAnswer('', thinkingRaw)
   content = cleanAnswerMarkers(content)
+  const reasoning = capReasoning(reasoningRaw.trim())
   if (!content.trim() && !aborted && !hasAssets)
-    content = 'The agent ended without a response. Please retry the message or report this run.'
+    content = reasoning
+      ? REASONED_WITHOUT_ANSWER
+      : 'The agent ended without a response. Please retry the message or report this run.'
   const thinking = stripAnswerFromThinking(thinkingRaw, content)
-  return { content, thinking }
+  return { content, thinking, reasoning }
 }
 
 /**

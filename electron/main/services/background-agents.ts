@@ -1074,6 +1074,8 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
       } else if (evt.type === 'thinking') {
         thinkingBuf += evt.text
         flushThinking()
+      } else if (evt.type === 'reasoning') {
+        // Model reasoning is shown in chat only; a background job's tail is its tool progress (#573).
       } else if (evt.type === 'evidence') {
         appendTaskEvent(job.id, 'evidence', evt.evidence)
       } else if (evt.type === 'progress') {

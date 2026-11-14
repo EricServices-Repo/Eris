@@ -1,4 +1,5 @@
 import { MAX_CONTEXT_TOKENS } from '@/shared/model-context'
+import { ReasoningFields } from './ReasoningFields'
 import { useMemo, useState } from 'react'
 import { isLoopbackUrl } from '@/shared/model-destination'
 import type { AppSettings, ModelConnection, ModelsStatus } from '@/shared/settings-schema'
@@ -74,6 +75,7 @@ const PRESETS: ConnectionPreset[] = [
 type Draft = {
   modelLimits: NonNullable<ModelConnection['modelLimits']>
   toolProtocol?: ModelConnection['toolProtocol']
+  reasoning?: ModelConnection['reasoning']
   recallApproved: boolean
   id: string
   name: string
@@ -93,6 +95,7 @@ function toDraft(conn: ModelConnection, hasStoredKey: boolean): Draft {
     id: conn.id,
     name: conn.name,
     toolProtocol: conn.toolProtocol,
+    reasoning: conn.reasoning,
     recallApproved: Boolean(conn.baseUrl) && conn.recallApprovedUrl === conn.baseUrl,
     provider: conn.provider || 'custom',
     baseUrl: conn.baseUrl,
@@ -213,6 +216,7 @@ export function ModelConnectionsPanel({
         apiKeyRef,
         models: parseModels(draft.modelsText),
         modelLimits: draft.modelLimits,
+        ...(draft.reasoning ? { reasoning: draft.reasoning } : {}),
         ...(draft.recallApproved && !isLoopbackUrl(baseUrl) ? { recallApprovedUrl: baseUrl } : {})
       }
       const others = resolved.models.connections.filter((c) => c.id !== draft.id)
@@ -509,6 +513,10 @@ export function ModelConnectionsPanel({
               <option value="text-tools">Text tool format (compatibility)</option>
             </select>
           </label>
+          <ReasoningFields
+            value={draft.reasoning}
+            onChange={(reasoning) => setDraft({ ...draft, reasoning })}
+          />
           <label className="providers-enable-row">
             <input
               type="checkbox"

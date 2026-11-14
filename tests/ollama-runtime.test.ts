@@ -33,6 +33,7 @@ type ChatBody = {
   keep_alive: string | number
   options: { num_ctx: number; num_predict?: number; temperature: number }
   tools?: unknown[]
+  think?: boolean | string
 }
 
 /** The documented native protocol, including Ollama's front-of-prompt truncation. */
@@ -458,6 +459,31 @@ describe('streamOllamaChat', () => {
     server?.close()
     const malformed = await run(['not json'])
     expect(malformed.finish).toMatchObject([[null, false, { reason: 'protocol-error' }]])
+  })
+
+  it('reports message.thinking as reasoning and never as answer text (#573)', async () => {
+    const reasoning: string[] = []
+    const result = await run(
+      [
+        '{"message":{"content":"","thinking":"weigh it"},"done":false}',
+        '{"message":{"content":"Answer."},"done":true}'
+      ],
+      { onReasoning: (text: string) => reasoning.push(text) }
+    )
+    expect(result.text).toBe('Answer.')
+    expect(reasoning.join('')).toBe('weigh it')
+    expect(result.seen.chat[0]?.think).toBeUndefined()
+  })
+
+  it('sends think only for a chosen level (#573)', async () => {
+    const off = await run(['{"done":true}'], { reasoning: 'off' })
+    expect(off.seen.chat[0]?.think).toBe(false)
+    server?.close()
+    const high = await run(['{"done":true}'], { reasoning: 'high' })
+    expect(high.seen.chat[0]?.think).toBe(true)
+    server?.close()
+    const oss = await run(['{"done":true}'], { reasoning: 'low', model: 'gpt-oss:20b' })
+    expect(oss.seen.chat[0]?.think).toBe('low')
   })
 
   it('reports an output limit from done_reason', async () => {
