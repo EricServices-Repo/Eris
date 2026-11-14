@@ -20,6 +20,8 @@ The broader [architecture review](../reviews/2026-11-06-router-architecture-revi
 8. Check the required file set against actual filesystem state and observed reads/mutations, then run the existing verification and outcome gates.
 9. Persist the requested work and actual result. A read-only response does not mark requested edits as completed in durable task state.
 
+Explicit “explain how to implement” questions without a separate edit clause start as read-only, so the resolver does not need a model call to correct them. This is a narrow routing rule; general candidate-versus-resolved-operation consolidation remains future work.
+
 ## Requested work and effective work
 
 The additive field on the existing version-2 contract is:

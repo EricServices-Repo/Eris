@@ -181,6 +181,18 @@ describe('coordinator to worker at the actual transport boundary', () => {
     )
     expect(h.warm).toEqual([]) // scripted diagnostics never allocate real models
   })
+  it('does not prepare a model or grant edit authority for an explicit explanation', async () => {
+    const input = { requestId: 'explanation', workspacePath: root, settings: settings(),
+      text: 'Explain how to implement authentication', model: 'auto-local', mode: 'agent' as const,
+      getSecret: () => null, history: [] }
+    const initial = await planInitialChatTurn(input)
+    expect(initial.intent).toBe('answer')
+    expect(h.warm).toEqual([])
+    const result = await resolveChatTurnContract(input, initial)
+    expect(result.task.authority.edit).toBe(false)
+    expect(result.task.deliverable).toBe('answer')
+    expect(h.warm).toEqual([])
+  })
   it.each([
     ['What is a reasonable way to organize a small application?', false],
     ['Give me an idea for organizing a small application.', true]
