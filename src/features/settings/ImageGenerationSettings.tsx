@@ -49,7 +49,7 @@ export function ImageGenerationSettings({
           <div>
             <h3>Image generation</h3>
             <p>
-              Create images from chat with <code>/image your prompt</code>, or ask Composer to
+              Create images from chat with <code>/image your prompt</code>, or ask the agent to
               create an asset for your application.
             </p>
           </div>
@@ -66,7 +66,7 @@ export function ImageGenerationSettings({
           />
           <span>
             <strong>Enable image tools</strong>
-            <small>Let chat and Composer create PNG images when you ask.</small>
+            <small>Let chat and the agent create PNG images when you ask.</small>
           </span>
         </label>
 

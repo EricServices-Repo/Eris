@@ -170,3 +170,8 @@ describe('agent handoff size', () => {
     expect(resume).toContain(memory.slice(0, 5000))
   })
 })
+
+it('keeps the orchestrator ID while naming its role Agent', async () => {
+  const { loadBuiltinAgents } = await import('../electron/main/services/agents')
+  expect(loadBuiltinAgents().orchestrator).toMatchObject({ id: 'composer', name: 'Agent' })
+})
