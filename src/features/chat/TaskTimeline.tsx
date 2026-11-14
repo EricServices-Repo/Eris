@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import type { ChatJobSnapshot } from '@/shared/chat-jobs'
 import { taskPhaseLabels } from '@/shared/task-timeline'
+import { observedChatProgress } from '@/shared/chat-progress'
 const duration = (ms: number | null) => (ms === null ? 'Unavailable' : `${(ms / 1000).toFixed(1)}s`)
 export function TaskTimelineView({ job }: { job: ChatJobSnapshot }) {
   const [error, setError] = useState(''),
     timeline = job.timeline,
-    active = ['running', 'queued'].includes(job.status)
+    active = ['running', 'queued'].includes(job.status),
+    evidence = observedChatProgress(job.events)
   if (!timeline)
     return (
       <p>
@@ -21,6 +23,11 @@ export function TaskTimelineView({ job }: { job: ChatJobSnapshot }) {
         {timeline.current.queuePosition ? ` · Queue #${timeline.current.queuePosition}` : ''}
       </p>
       {timeline.current.reason && <p>{timeline.current.reason}</p>}
+      {evidence.lastSuccess && <p>Last successful action: {evidence.lastSuccess.name}{evidence.lastSuccess.path ? ` · ${evidence.lastSuccess.path}` : ''}</p>}
+      {evidence.changedFiles.length > 0 && <p>Recorded file edits: {evidence.changedFiles.join(', ')}</p>}
+      {evidence.verification && <p>Verification: {evidence.verification.result}{evidence.verification.command ? ` · ${evidence.verification.command}` : ''}</p>}
+      {evidence.lastFailure && <p>Last tool failure: {evidence.lastFailure.name}{evidence.lastFailure.code ? ` · ${evidence.lastFailure.code}` : ''}{evidence.lastFailure.repeats > 1 ? ` · repeated ${evidence.lastFailure.repeats} times` : ''}</p>}
+
       {active && Date.now() - Date.parse(job.updatedAt) > 30000 && (
         <p>
           No new task output for 30 seconds. Current wait:{' '}
