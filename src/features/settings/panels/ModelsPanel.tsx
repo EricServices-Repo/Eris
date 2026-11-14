@@ -236,7 +236,7 @@ function sizeLabel(bytes: number): string {
   return bytes >= 1e9 ? `~${(bytes / 1e9).toFixed(1)} GB` : `~${Math.round(bytes / 1e6)} MB`
 }
 
-function BuiltinRow({
+export function BuiltinRow({
   b,
   isDefault,
   downloadingId,
@@ -423,15 +423,9 @@ function DefaultModelCard({
   status: ModelsStatus | null
   apply: ApplySetting
 }) {
-  const builtins = status?.builtin ?? []
   const locals = status?.local ?? []
   const readyOptions = useMemo(() => {
-    const opts: Array<{ value: string; label: string }> = []
-    for (const b of builtins) {
-      if (b.ready && b.tier !== 'full') {
-        opts.push({ value: b.ref, label: b.displayName })
-      }
-    }
+    const opts: Array<{ value: string; label: string }> = [{ value: 'auto', label: 'Auto' }]
     for (const m of locals) {
       if (m.ready) opts.push({ value: m.ref, label: m.displayName })
     }
@@ -447,7 +441,7 @@ function DefaultModelCard({
       opts.unshift({ value: def, label: `${def} (offline)` })
     }
     return opts
-  }, [builtins, locals, status?.connections, resolved.models.defaultModel])
+  }, [locals, status?.connections, resolved.models.defaultModel])
 
   return (
     <section className="models-card">
@@ -471,96 +465,8 @@ function DefaultModelCard({
 }
 
 /** Settings → Composer — built-in Lite/Full downloads + default model. */
-function LocalComposerToggle({
-  resolved,
-  builtins,
-  apply
-}: {
-  resolved: AppSettings
-  builtins: BuiltinModelStatus[]
-  apply: ApplySetting
-}) {
-  const full = builtins.find((model) => model.tier === 'full' || model.id === 'composer')
-  const fullReady = Boolean(full?.ready)
-  const saved = resolved.agent.routing.useLocalComposerFull === true
-  const checked = fullReady && saved
-
-  return (
-    <label className="gpu-accel-toggle">
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={!fullReady}
-        onChange={(event) => {
-          if (!fullReady) return
-          void apply(['agent', 'routing', 'useLocalComposerFull'], event.target.checked)
-        }}
-      />
-      <span>
-        <strong>Don’t use Cloud Composer</strong>
-        <span className="model-conn-meta">
-          {fullReady
-            ? 'Composer Full runs on this Mac.'
-            : 'Download Composer Full before you can turn Cloud Composer off.'}
-        </span>
-      </span>
-    </label>
-  )
-}
-
-/** Settings → Composer — built-in Lite/Full downloads + default model. */
-export function ComposerModelsPanel({ state, resolved, status, apply, load }: SharedProps) {
-  const { downloadingId, setDownloadingId, verifyingId, setVerifyingId } = state
-  const builtins = status?.builtin ?? []
-
-  useEffect(() => {
-    const active = builtins.find((b) => b.downloading)
-    if (active) setDownloadingId(active.id)
-  }, [builtins, setDownloadingId])
-
-  return (
-    <div className="models-page">
-      <DefaultModelCard resolved={resolved} status={status} apply={apply} />
-
-      <section className="models-card">
-        <header className="models-card-head">
-          <div>
-            <h3>Composer</h3>
-            <p>
-              Built-in GGUFs. Lite runs on this Mac. Full runs on Cloud Agents unless you download
-              it and turn off Cloud Composer.
-            </p>
-          </div>
-          <button type="button" className="btn" onClick={() => void load()}>
-            Refresh
-          </button>
-        </header>
-        <LocalComposerToggle resolved={resolved} builtins={builtins} apply={apply} />
-        <p className="models-hint" style={{ marginTop: 0 }}>
-          Downloads continue if you close Settings. On flaky networks, use Retry or Open URL in a
-          browser to confirm Hugging Face is reachable. For a stronger local model without Cloud,
-          use Settings → Text Models (e.g. Qwen2.5-Coder 3B).
-        </p>
-        <div className="models-row-list">
-          {builtins.map((b) => (
-            <BuiltinRow
-              key={b.id}
-              b={b}
-              isDefault={resolved.models.defaultModel === b.ref}
-              downloadingId={downloadingId}
-              verifyingId={verifyingId}
-              setDownloadingId={setDownloadingId}
-              setVerifyingId={setVerifyingId}
-              apply={apply}
-              load={load}
-              currentDefault={resolved.models.defaultModel}
-            />
-          ))}
-          {builtins.length === 0 && <div className="models-empty">Loading built-in models…</div>}
-        </div>
-      </section>
-    </div>
-  )
+export function ComposerModelsPanel({ resolved, status, apply }: SharedProps) {
+  return <div className="models-page"><DefaultModelCard resolved={resolved} status={status} apply={apply} /><p>Download a text model or configure a provider. Eris Cloud uses Ollama at agents.ericservic.es and must be enabled after the server is configured.</p></div>
 }
 
 /** Settings → GPUs — detected accelerators and eGPU preference. */
@@ -652,7 +558,7 @@ export function ProvidersModelsPanel({
           <div>
             <h3>API providers</h3>
             <p>
-              Optional. Most chats use <strong>Composer</strong> or <strong>Text Models</strong>.
+              Optional. Chat models are configured under <strong>Text Models</strong>.
               Add a cloud API or local server when you need one.
             </p>
           </div>

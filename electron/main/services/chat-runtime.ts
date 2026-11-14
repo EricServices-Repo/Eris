@@ -218,7 +218,12 @@ function packForAllocation(
 export async function* streamProviderChat(
   options: StreamModelChatOptions
 ): AsyncGenerator<string, void, unknown> {
-  let model = options.model || options.settings.models.defaultModel || 'builtin:composer-lite'
+  let model = options.model || options.settings.models.defaultModel || 'auto'
+  if (['auto', 'auto-local', 'auto-any'].includes(model)) {
+    const { chooseExecutionModel } = await import('./auto-model-policy')
+    model = (await chooseExecutionModel(options.settings, 'answer', model)).model
+  }
+  if (!model || model.startsWith('builtin:')) throw new Error('Select a downloaded model or connect a provider in Settings → Models.')
   for (const message of options.messages) {
     const task = (message as ModelMessage).contextBundle?.referenceTask
     if (task) await assertTaskReferences(task, options.settings, model)

@@ -394,6 +394,7 @@ export interface FileEntry {
 }
 
 export interface ModelInfo {
+  provider?: string
   name: string
   size?: number
   modifiedAt?: string

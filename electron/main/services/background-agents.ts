@@ -310,7 +310,7 @@ export function enqueueBackgroundJob(
     worktreePath,
     branch,
     goal,
-    model: String(request.model || '').trim() || 'builtin:composer-lite',
+    model: String(request.model || '').trim() || 'auto',
     agentId,
     source: request.source || 'panel',
     sourceThreadId: request.sourceThreadId ?? parent?.sourceThreadId ?? null,
@@ -377,7 +377,7 @@ export function delegateFromAgent(options: {
     options.workspacePath,
     {
       goal: options.goal,
-      model: options.model || parent?.model || 'builtin:composer-lite',
+      model: options.model || parent?.model || 'auto',
       agentId: options.agentId,
       mode: 'agent',
       source: 'delegate',
@@ -661,7 +661,7 @@ export async function bringJobIntoChat(
     const targetThread = threadId ?? previousImport?.threadId
     let thread = targetThread ? await getChat(workspacePath, targetThread) : null
     if (!thread) {
-      thread = await createChat(workspacePath, job.model || 'builtin:composer-lite')
+      thread = await createChat(workspacePath, job.model || 'auto')
     }
     const savedOutcome = job.outcome
     const receipt = savedOutcome?.receipt ?? childOutcome(job)

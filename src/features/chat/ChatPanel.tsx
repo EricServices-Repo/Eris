@@ -778,25 +778,11 @@ export function ChatPanel({
   const queueFull = queuedMessages.length >= MAX_QUEUED_MESSAGES
 
   const modelOptions = useMemo(() => {
-    const ready = models.filter((m) => m.ready === true)
+    const ready = models.filter((m) => m.ready === true && m.source !== 'builtin')
     const byName = new Map<string, ModelInfo>()
-    byName.set('auto-local', { name: 'auto-local', ready: true, source: 'builtin' })
-    byName.set('auto-any', { name: 'auto-any', ready: true, source: 'builtin' })
-    // Persisted legacy Auto follows the policy in Settings until the user chooses explicitly.
-    if (selectedModel === 'auto')
-      byName.set('auto', { name: 'auto', ready: true, source: 'builtin' })
-    byName.set('builtin:composer-lite', {
-      name: 'builtin:composer-lite',
-      ready: composerReady,
-      source: 'builtin'
-    })
-    byName.set('builtin:composer', {
-      name: 'builtin:composer',
-      ready: true,
-      source: 'builtin'
-    })
+    byName.set('auto', { name: 'auto', ready: true })
     for (const model of ready) byName.set(model.name, model)
-    if (selectedModel && selectedModel !== 'auto' && !byName.has(selectedModel)) {
+    if (selectedModel && !isAutomaticModelSelection(selectedModel) && !selectedModel.startsWith('builtin:') && !byName.has(selectedModel)) {
       byName.set(selectedModel, {
         name: selectedModel,
         ready: false,
@@ -808,17 +794,12 @@ export function ChatPanel({
       })
     }
     return [...byName.values()]
-  }, [models, selectedModel, composerReady])
+  }, [models, selectedModel])
 
   const modelLabel = (m: ModelInfo): string => {
-    if (m.name === 'auto-local') return 'Auto-local'
-    if (m.name === 'auto-any') return 'Auto-any'
-    if (m.name === 'auto') return 'Auto · Settings policy'
-    if (m.name === 'builtin:composer-lite') return 'Fixed · Composer Lite'
-    if (m.name === 'builtin:composer') return 'Fixed · Composer Full'
-    if (m.source === 'builtin') return m.name.replace(/^builtin:/, '')
-    if (m.source === 'local') return `Fixed · ${m.name.replace(/^local:/, '')}`
-    return `Fixed · ${m.name}`
+    if (m.name === 'auto') return 'Auto'
+    if (m.source === 'local') return m.name
+    return m.provider ? `${m.provider}:${m.name}` : m.name
   }
 
   const modelDataHint = (m: ModelInfo): string => {
@@ -842,7 +823,7 @@ export function ChatPanel({
 
   const selectValue = modelOptions.some((m) => m.name === selectedModel)
     ? selectedModel
-    : modelOptions[0]?.name || 'builtin:composer-lite'
+    : modelOptions[0]?.name || 'auto'
 
   useEffect(() => {
     if (isAutomaticModelSelection(selectedModel)) return
@@ -1024,7 +1005,7 @@ export function ChatPanel({
       {modelsKnown && !modelsError && !composerReady && !modelsOk && (
         <div className="composer-banner">
           <span>
-            Download a <strong>Local model</strong> or <strong>Composer Lite</strong> in Settings →
+            Download a <strong>Local model</strong> or connect a provider in Settings →
             Models to start chatting (Ollama is optional).
           </span>
           <button className="btn btn-primary" onClick={onOpenModelsSettings}>
@@ -1035,8 +1016,7 @@ export function ChatPanel({
       {!composerReady && modelsOk && (
         <div className="composer-banner composer-banner-soft">
           <span>
-            Using your connected API / Ollama models. Optional: download a Local model or Composer
-            Lite for offline chat inside Eris.
+            Using your connected API / Ollama models. Optional: download a Local model for offline chat inside Eris.
           </span>
           <button className="btn" onClick={onOpenModelsSettings}>
             Models

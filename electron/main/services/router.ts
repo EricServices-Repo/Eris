@@ -76,7 +76,7 @@ export function routeHeuristic(
     return {
       agentId: 'composer',
       agentName: 'Composer',
-      model: settings.models.defaultModel || 'builtin:composer-lite',
+      model: settings.models.defaultModel || 'auto',
       reason: 'No agents configured',
       method: 'default'
     }

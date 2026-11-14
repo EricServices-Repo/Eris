@@ -53,51 +53,12 @@ export function useModels(settings: AppSettings | null) {
           localReady ||
           Boolean(status.models.some((m) => m.source === 'connection' && m.ready))
       )
-      setModels(
-        status.models.length > 0
-          ? status.models
-          : [
-              {
-                name: 'builtin:composer-lite',
-                source: 'builtin' as const,
-                ready: status.builtin?.some((b) => b.id === 'composer-lite' && b.ready) ?? false
-              }
-            ]
-      )
+      setModels(status.models.filter((m) => m.source !== 'builtin'))
       const s = resolved ?? settings
-      const liteReady = status.models.find(
-        (m) => m.name === 'builtin:composer-lite' && m.ready
-      )?.name
-      const preferred =
-        (s?.models.defaultModel === 'builtin:composer-lite' && liteReady) ||
-        liteReady ||
-        (s?.models.defaultModel &&
-        s.models.defaultModel !== 'builtin:composer' &&
-        status.models.some((m) => m.name === s.models.defaultModel && m.ready)
-          ? s.models.defaultModel
-          : null) ||
-        status.models.find((m) => m.ready && m.source === 'connection')?.name ||
-        status.models.find((m) => m.name.startsWith('builtin:') && m.ready)?.name ||
-        status.models.find((m) => m.ready)?.name ||
-        'builtin:composer-lite'
       setSelectedModel((prev) => {
-        if (isAutomaticModelSelection(prev)) return prev
-        if (!prev && isAutomaticModelSelection(s?.models.defaultModel)) return s!.models.defaultModel
-        if (prev === 'builtin:composer') {
-          return 'builtin:composer'
-        }
-        if (prev && status.models.some((m) => m.name === prev && m.ready === true)) {
-          return prev
-        }
-        if (s?.models.defaultModel === 'builtin:composer') return 'builtin:composer'
-        if (isAutomaticModelSelection(s?.models.defaultModel)) return s!.models.defaultModel
-        if (
-          s?.models.defaultModel &&
-          status.models.some((m) => m.name === s.models.defaultModel && m.ready === true)
-        ) {
-          return s.models.defaultModel
-        }
-        return preferred
+        const desired = prev || s?.models.defaultModel || 'auto'
+        if (isAutomaticModelSelection(desired) || desired.startsWith('builtin:')) return 'auto'
+        return desired
       })
     },
     [settings]
