@@ -219,7 +219,7 @@ export function registerChatStreamIpc(): void {
               terminal === 'stopped',
               replyAssets.length > 0
             )
-            if (!content && !replyAssets.length) return true
+            if (!content && !replyAssets.length && terminal !== 'stopped' && terminal !== 'incomplete') return true
             replySnapshot = {
               id: `${requestId}:assistant`,role:'assistant',content,thinking:thinking || undefined,
               assets:replyAssets.length ? [...replyAssets] : undefined,

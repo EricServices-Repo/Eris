@@ -107,6 +107,15 @@ describe('worker prompt states each thing once', () => {
     return built[0]!.content
   }
 
+  it('does not prefix previous assistant replies with agent role tags (#507)', () => {
+    const settings = getDefaults()
+    const messages = buildChatMessages(ws, settings, {
+      text: 'Continue', mode: 'agent', agentId: 'composer', attachments: [], skillIds: [],
+      history: [{ id: 'prior', role: 'assistant', content: 'Earlier answer', agentName: 'Composer' }]
+    })
+    expect(messages.find(message => message.content.includes('Earlier answer'))?.content).toBe('Earlier answer')
+  })
+
   it.each([
     ['composer', 'edit', 'edit'],
     ['explainer', 'explore', 'read'],

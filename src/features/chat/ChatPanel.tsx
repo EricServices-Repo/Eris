@@ -17,7 +17,7 @@ import { pathBasename } from '@/shared/paths'
 import { ThinkingBlock, type ToolActivityItem } from './ThinkingBlock'
 import { AnswerFeedback } from './AnswerFeedback'
 import { MarkdownMessage } from './MarkdownMessage'
-import { visibleOutcomeAssessment } from '@/shared/posted-answer'
+import { displayedTerminalReply, visibleOutcomeAssessment } from '@/shared/posted-answer'
 import { chatStream } from '@/state/chat-stream'
 import { useStore } from '@/state/store'
 import { VirtualList } from '@/components/VirtualList'
@@ -200,19 +200,24 @@ export const HistoricalMessages = memo(function HistoricalMessages({
         reveal={reveal}
         items={visible}
         itemKey={messageKey}
-        renderItem={(message, index) => (
+        renderItem={(message, index) => {
+          const presentation = message.role === 'assistant'
+            ? displayedTerminalReply(message.content, message.contextResult?.terminal)
+            : { content: message.content, badge: null }
+          return (
           <div className={`chat-message-row ${message.role}`} style={{ paddingBottom: 12 }}>
             <div className={`msg ${message.role}`}>
               <span className="role">{message.role}</span>
               {message.role === 'assistant' ? (
-                message.content && (
+                presentation.content && (
                   <div className="msg-summary">
-                    <MarkdownMessage content={message.content} onOpenPath={onOpenPath} />
+                    <MarkdownMessage content={presentation.content} onOpenPath={onOpenPath} />
                   </div>
                 )
               ) : (
                 <div className="user-text">{message.content}</div>
               )}
+              {presentation.badge && <span className="message-terminal-badge" role="status">{presentation.badge}</span>}
               {message.assets?.map((asset) => (
                 <ImageMessage key={asset.id} asset={asset} />
               ))}
@@ -271,7 +276,8 @@ export const HistoricalMessages = memo(function HistoricalMessages({
               )}
             </div>
           </div>
-        )}
+          )
+        }}
       />
     </>
   )

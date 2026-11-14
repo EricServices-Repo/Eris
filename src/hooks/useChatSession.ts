@@ -210,7 +210,7 @@ export function useChatSession({
         if (job.status !== 'running' && job.status !== 'queued') {
           if (
             job.threadId &&
-            job.answer &&
+            (job.answer || job.status === 'stopped' || job.status === 'incomplete') &&
             !activeThreadRef.current?.messages.some(
               (message) => message.id === `${job.id}:assistant`
             )
@@ -220,13 +220,8 @@ export function useChatSession({
               {
                 id: `${job.id}:assistant`,
                 role: 'assistant',
-                content:
-                  job.answer +
-                  (job.status === 'stopped'
-                    ? '\n\n_(stopped)_'
-                    : job.status === 'incomplete'
-                      ? '\n\n_(incomplete)_'
-                      : ''),
+                content: job.answer,
+                contextResult: { taskId: job.id, terminal: job.status, projectRoot: null, changedFiles: [] },
                 createdAt: Date.parse(job.updatedAt),
                 model: job.model ?? undefined
               },
@@ -1107,12 +1102,13 @@ export function useChatSession({
         id: `${requestId}:assistant`,
         role: 'assistant', content, thinking: thinking || undefined, createdAt: Date.now(),
         agentId: meta.agentId, agentName: meta.agentName, model: meta.model,
+        ...(aborted ? { contextResult: { taskId: requestId, terminal: 'stopped', projectRoot: null, changedFiles: [] } } : {}),
         assets: imageAssetsRef.current.length ? [...imageAssetsRef.current] : undefined,
         delegations: savedDelegations.length ? savedDelegations : undefined
       }
       // Only main writes terminal assistant results. The event contains its
       // canonical revision and evidence; legacy/no-thread events are local views.
-      if ((message.content || message.assets?.length) && threadId) {
+      if ((message.content || message.assets?.length || ['stopped', 'incomplete'].includes(message.contextResult?.terminal ?? '')) && threadId) {
         if (activeThreadRef.current?.id === threadId) {
           const merged = upsertTerminalReply(activeThreadRef.current, message)
           activeThreadRef.current = merged
