@@ -100,6 +100,7 @@ import {
   failedRefinementPaths,
   isReviewOnlyGoal,
   looksLikeAsksForWorkspaceInfo,
+  nativeParameterBillions,
   looksLikeClarifyingQuestion,
   looksLikeDegenerateLoop,
   isUnfinishedWorkNarration,
@@ -1277,7 +1278,9 @@ async function* runAgentInternal(options: {
   // #4 grammar-constrained local tool calls: when a retry needs a tool and the
   // worker is the built-in GGUF model, force valid tool-call JSON via a grammar.
   const localConstrainEnabled = options.settings.agent.constrainLocalToolCalls !== false
-  let constrainNextToolCall = awaitingSourceEvidence()
+  let constrainNextToolCall = awaitingSourceEvidence() ||
+    (isNativeGgufRef(workerModel) && nativeParameterBillions(workerModel) <= 3 &&
+      !chatReply && (workflow.contract.requiresWorkspaceEvidence || workflow.contract.requiresMutation))
   // A grammar that yields no visible output must not poison every subsequent retry.
   let disableRetryGrammar = false
   let consecutiveEmptyReplies = 0

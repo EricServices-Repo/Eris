@@ -1,3 +1,5 @@
+import { findBuiltinEntry } from '../builtin-model'
+import { findLocalEntry } from '../local-model'
 import { createHash } from 'crypto'
 import {
   asksForRecommendations,
@@ -558,4 +560,12 @@ export function assessGoalCompletion(opts: {
   }
 
   return { unmet: false, reason: '' }
+}
+
+/** Unknown sizes are deliberately not assumed to be small. */
+export function nativeParameterBillions(ref: string): number {
+  const entry = ref.startsWith('builtin:') ? findBuiltinEntry(ref) : ref.startsWith('local:') ? findLocalEntry(ref) : null
+  const match = entry?.parameters?.trim().match(/^(\d+(?:\.\d+)?)\s*B$/i)
+  const value = match ? Number(match[1]) : Infinity
+  return value > 0 && Number.isFinite(value) ? value : Infinity
 }

@@ -163,3 +163,10 @@ describe('replies that end by announcing the next action (#506)', () => {
     expect(isUnfinishedWorkNarration(text)).toBe(false)
   })
 })
+
+import { nativeParameterBillions } from '../electron/main/services/agent/heuristics'
+it('uses only known native model parameter counts for first-step constraints', () => {
+  expect(nativeParameterBillions('builtin:composer-lite')).toBe(1.5)
+  expect(nativeParameterBillions('builtin:composer')).toBe(7)
+  expect(nativeParameterBillions('builtin:missing')).toBe(Infinity)
+})
