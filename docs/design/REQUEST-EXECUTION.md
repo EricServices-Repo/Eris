@@ -227,3 +227,5 @@ The original R01–R12 identifiers refer to the [pre-change architecture review]
 - The 10,000-question boundary test is simulated intake/capture coverage, not 10,000 live-model answers. The new three-file smoke test executes real filesystem tools against a temporary workspace using scripted model output and a simulated verification result.
 
 No version bump, installer packaging, installed-app replacement, Git commit or PR is included in this source change.
+
+The orchestrator is displayed as **Agent**. Its persisted agent ID remains `composer` for overrides and telemetry compatibility; it is not a selectable model ID.

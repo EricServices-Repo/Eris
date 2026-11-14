@@ -572,3 +572,7 @@ describe('read-only safety net (#505)', () => {
     expect(composer!.content).not.toContain('this role is read-only')
   })
 })
+
+it('rejects the orchestrator ID as a model reference', () => {
+  expect(resolveModelRoles({ selectedModel: 'composer', intent: 'edit', toolPolicy: 'edit', preferEscalate: false }).error).toBeTruthy()
+})

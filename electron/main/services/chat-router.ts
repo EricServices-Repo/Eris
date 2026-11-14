@@ -417,7 +417,7 @@ export function resolveModelRoles(options: {
   preferEscalate: boolean
 }): { chat: string; tools: string; escalateToFull: boolean; error?: string } {
   const selected = options.selectedModel.trim()
-  if (!selected || selected.startsWith('builtin:')) return { chat: '', tools: '', escalateToFull: false, error: 'Select a downloaded model or connect a provider in Settings → Models.' }
+  if (!selected || selected === 'composer' || selected.startsWith('builtin:')) return { chat: '', tools: '', escalateToFull: false, error: 'Select a downloaded model or connect a provider in Settings → Models.' }
   void options.toolPolicy
   void options.preferEscalate
   void options.intent
@@ -864,7 +864,7 @@ export async function planChatTurn(options: {
     return {
       intent,
       agentId: 'composer',
-      agentName: 'Composer',
+      agentName: 'Agent',
       mode,
       models: { chat: selectedModel, tools: selectedModel },
       toolPolicy: 'none',

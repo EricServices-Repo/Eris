@@ -2,7 +2,7 @@
   "version": 2,
   "orchestrator": {
     "id": "composer",
-    "name": "Composer",
+    "name": "Agent",
     "description": "Changes, builds, and multi-step work. May delegate when the task splits.",
     "model": "",
     "temperature": 0.3,
@@ -34,7 +34,7 @@
     {
       "id": "coder",
       "name": "Coder",
-      "description": "One assigned change, small diff. Pin this, or let Composer delegate it.",
+      "description": "One assigned change, small diff. Pin this, or let the Agent delegate it.",
       "model": "",
       "temperature": 0.2,
       "enabled": true,
@@ -152,7 +152,7 @@
       "builtin": true,
       "tools": "read",
       "preferEscalate": false,
-      "systemPrompt": "STEPS\n1. read_file or retrieve when the answer depends on this workspace.\n2. Reply in one to three sentences with the path or symbol.\n3. If the user wants an edit, say so in one line and name Composer.",
+      "systemPrompt": "STEPS\n1. read_file or retrieve when the answer depends on this workspace.\n2. Reply in one to three sentences with the path or symbol.\n3. If the user wants an edit, say so in one line and name the Agent role.",
       "keywords": [
         "quick",
         "short",
