@@ -13,6 +13,7 @@ type RunnerOptions = {
   messages: Array<{ role: string; content: string }>
   workspacePath: string
   turnPlan: TurnPlan
+  signal: AbortSignal
   approveCommand: (kind: 'run' | 'push', command: string) => Promise<boolean>
 }
 type RunnerEvent = Record<string, unknown> & { type: string }
@@ -621,5 +622,93 @@ describe('canonical RAM history at the production chat IPC boundary', () => {
     expect(sent.find((e) => e.channel === 'chat:error')?.payload.error).toContain(
       'could not be saved'
     )
+  })
+})
+
+
+describe('second chat admission and terminal events (#529)', () => {
+  afterEach(() => vi.useRealTimers())
+  const deferred = () => {
+    let resolve!: () => void
+    const promise = new Promise<void>((done) => { resolve = done })
+    return { promise, resolve }
+  }
+  const eventsFor = (id: string) => sent.filter((event) => event.payload.requestId === id)
+
+  it('admits and completes the next chat after normal completion', async () => {
+    runner.script = async function* () { yield { type: 'answer', text: 'complete' } }
+    const first = randomUUID(), second = randomUUID()
+    expect(await stream(undefined, first)).toBe(true)
+    expect(await stream(undefined, second)).toBe(true)
+    expect(eventsFor(second).some((event) => event.channel === 'chat:phase' && event.payload.phase === 'routing')).toBe(true)
+    expect(eventsFor(second).some((event) => event.channel === 'chat:done')).toBe(true)
+  })
+
+  it('admits the next chat promptly when the first honors stop', async () => {
+    const entered = deferred()
+    let calls = 0
+    runner.script = async function* (options) {
+      if (++calls === 1) {
+        entered.resolve()
+        await new Promise<void>((_, reject) => options.signal.addEventListener('abort', () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })), { once: true }))
+      }
+      yield { type: 'answer', text: 'complete' }
+    }
+    const first = randomUUID(), second = randomUUID()
+    const firstRun = stream(undefined, first)
+    await entered.promise
+    const secondRun = stream(undefined, second)
+    await handlers['chat:stop']!({ sender }, first)
+    expect(await firstRun).toBe(false)
+    expect(await secondRun).toBe(true)
+    expect(eventsFor(first).find((event) => event.channel === 'chat:done')?.payload.aborted).toBe(true)
+    expect(eventsFor(second).some((event) => event.channel === 'chat:phase' && event.payload.phase === 'routing')).toBe(true)
+  })
+
+  it('queues the second chat and ignores late output after stop grace', async () => {
+    vi.useFakeTimers()
+    const entered = deferred(), unblock = deferred()
+    let calls = 0
+    runner.script = async function* () {
+      if (++calls === 1) { entered.resolve(); await unblock.promise; yield { type: 'answer', text: 'late answer' } }
+      else yield { type: 'answer', text: 'second answer' }
+    }
+    const first = randomUUID(), second = randomUUID()
+    const firstRun = stream(undefined, first)
+    await entered.promise
+    const secondRun = stream(undefined, second)
+    await vi.waitFor(() => expect(eventsFor(second).some((event) => event.channel === 'chat:phase' && event.payload.phase === 'queued' && event.payload.queuePosition === 1 && event.payload.blockedBy === first)).toBe(true))
+    await handlers['chat:stop']!({ sender }, first)
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(await firstRun).toBe(false)
+    expect(await secondRun).toBe(true)
+    expect(eventsFor(second).some((event) => event.channel === 'chat:phase' && event.payload.phase === 'routing')).toBe(true)
+    const count = eventsFor(first).length
+    unblock.resolve()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(eventsFor(first)).toHaveLength(count)
+    expect(eventsFor(first).some((event) => event.payload.chunk === 'late answer')).toBe(false)
+  })
+
+  it('admits a second chat after the first model fails', async () => {
+    let calls = 0
+    runner.script = async function* () {
+      if (++calls === 1) throw new Error('model unavailable')
+      yield { type: 'answer', text: 'recovered' }
+    }
+    const first = randomUUID(), second = randomUUID()
+    expect(await stream(undefined, first)).toBe(false)
+    expect(await stream(undefined, second)).toBe(true)
+    expect(eventsFor(first).some((event) => event.channel === 'chat:error')).toBe(true)
+    expect(eventsFor(second).some((event) => event.channel === 'chat:done')).toBe(true)
+  })
+
+  it('replays a duplicate request ID without invoking the model again', async () => {
+    let calls = 0
+    runner.script = async function* () { calls++; yield { type: 'answer', text: 'complete' } }
+    const id = randomUUID()
+    await stream(undefined, id)
+    await stream(undefined, id)
+    expect(calls).toBe(1)
   })
 })
