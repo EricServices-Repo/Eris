@@ -55,7 +55,7 @@ export const MAX_QUEUED_MESSAGES = 3
 const messageKey = (message: ChatMessage) => message.id
 const EMPTY_MESSAGES: ChatMessage[] = []
 
-type RetryRoute = { route?: 'tools' | 'answer'; agentId?: string }
+type RetryRoute = { route?: 'tools' | 'answer'; agentId?: string; model?: string }
 type RetryAgent = { id: string; name: string }
 
 export const HistoricalMessages = memo(function HistoricalMessages({
@@ -355,6 +355,7 @@ interface Props {
   /** Re-run the last user message with a forced route */
   onRerouteLast?: (choice: RetryRoute) => void
   retryAgents?: RetryAgent[]
+  blockedReason?: 'model-not-using-tools' | 'empty-responses'
   /** Live session checkpoints while the current agent run is streaming. */
   liveSessionSteps?: Array<{ step: number; summary: string; opThrough: number }>
 }
@@ -557,6 +558,7 @@ export function ChatPanel({
   onMemoryUndo,
   onRerouteLast,
   retryAgents,
+  blockedReason,
   liveSessionSteps = []
 }: Props) {
   const { thinkingBuffer, answerBuffer, agentStatus, toolActivity } = useStore(chatStream)
@@ -1130,6 +1132,19 @@ export function ChatPanel({
                 retryAgents={retryAgents}
                 streaming={streaming}
               />
+              {blockedReason && onRerouteLast && !streaming && (
+                <label className="message-details">
+                  Retry with another model{' '}
+                  <select value="" aria-label="Retry with another model" onChange={(event) => {
+                    if (event.target.value) onRerouteLast({ model: event.target.value })
+                  }}>
+                    <option value="">Choose a model</option>
+                    {modelOptions.filter((model) => model.ready !== false && !isAutomaticModelSelection(model.name) && model.name !== selectedModel).map((model) => (
+                      <option key={model.name} value={model.name}>{modelLabel(model)}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
               {history?.gap && onLoadNewer && (
                 <div className="chat-history-gap">
                   <button

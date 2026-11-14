@@ -354,6 +354,7 @@ export default function App() {
     setPendingDiffs,
     sendMessage,
     rerouteLast,
+    blockedReason,
     canRerouteLast,
     stopChat,
     newChat
@@ -1049,6 +1050,7 @@ export default function App() {
                     void window.ide.undoProjectMemory()
                   }}
                   onRerouteLast={canRerouteLast ? (choice) => void rerouteLast(choice) : undefined}
+                  blockedReason={blockedReason}
                   retryAgents={agents.filter((agent) => agent.enabled)}
                   liveSessionSteps={liveSessionSteps}
                   queuedMessages={messageQueue}

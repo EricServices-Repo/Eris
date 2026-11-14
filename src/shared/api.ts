@@ -458,6 +458,7 @@ export interface IdeApi {
       requestId: string
       aborted?: boolean
       incomplete?: boolean
+      blockedReason?: 'model-not-using-tools' | 'empty-responses'
       reply?: ChatMessage
     }) => void
   ) => () => void

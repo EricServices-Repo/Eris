@@ -2402,7 +2402,8 @@ async function* runAgentInternal(options: {
           step,
           actionLog: [...actionLog],
           filesTouched: [...filesTouched],
-          incomplete: true
+          incomplete: true,
+          ...(rejectedReplies && toolExecRounds === 0 && !filesTouched.length ? { blockedReason: 'model-not-using-tools' as const } : {})
         }
         yield emitSessionStep(stopNote)
         yield { type: 'status', text: 'Blocked · recovery exhausted' }
@@ -2641,7 +2642,8 @@ async function* runAgentInternal(options: {
           step,
           actionLog: [...actionLog],
           filesTouched: [...filesTouched],
-          incomplete: true
+          incomplete: true,
+          ...(toolExecRounds === 0 && !filesTouched.length ? { blockedReason: 'empty-responses' as const } : {})
         }
         yield emitSessionStep(reason)
         yield { type: 'status', text: 'Blocked · empty model responses' }

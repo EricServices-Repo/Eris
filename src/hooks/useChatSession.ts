@@ -118,6 +118,7 @@ export function useChatSession({
 }: UseChatSessionDeps) {
   const [streaming, setStreaming] = useState(false)
   const [chatError, setChatError] = useState<string | null>(null)
+  const [blockedRetry, setBlockedRetry] = useState<{ threadId: string; reason: 'model-not-using-tools' | 'empty-responses' } | null>(null)
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [routeLabel, setRouteLabel] = useState<string | null>(null)
   const [delegations, setDelegations] = useState<ChatDelegation[]>([])
@@ -413,6 +414,7 @@ export function useChatSession({
         return
       }
       setChatError(null)
+      setBlockedRetry(null)
       setQueuePaused(null)
       lastTerminalWasErrorRef.current = false
       changedFiles.current.clear()
@@ -682,7 +684,7 @@ export function useChatSession({
   )
 
   const rerouteLast = useCallback(
-    async (choice: { route?: 'tools' | 'answer'; agentId?: string }) => {
+    async (choice: { route?: 'tools' | 'answer'; agentId?: string; model?: string }) => {
       const thread = activeThreadRef.current
       const original = lastTurnRef.current
       if (
@@ -706,7 +708,7 @@ export function useChatSession({
       await sendMessage(original.prompt.text, [], [], {
         forceRoute: choice.route,
         agentId: choice.agentId,
-        retry: { prompt: original.prompt, model: original.model },
+        retry: { prompt: original.prompt, model: choice.model || original.model },
         thread
       })
     },
@@ -1064,7 +1066,7 @@ export function useChatSession({
       }
       setThreads(previous => previous.map(thread => thread.id === recent.threadId ? upsertTerminalReply(thread, reply) : thread))
     }
-    const offDone = window.ide.onChatDone(({ requestId, aborted, reply }) => {
+    const offDone = window.ide.onChatDone(({ requestId, aborted, reply, blockedReason }) => {
       const matches = requestId === requestIdRef.current || requestId === lastRequestIdRef.current
       if (!matches) {
         reconcileLateReply(requestId, reply)
@@ -1075,6 +1077,7 @@ export function useChatSession({
       if (completedRequestsRef.current.size > 200)
         completedRequestsRef.current.delete(completedRequestsRef.current.values().next().value!)
       lastTerminalWasErrorRef.current = false
+      if (blockedReason && requestId === requestIdRef.current && lastTurnRef.current) setBlockedRetry({ threadId: lastTurnRef.current.threadId, reason: blockedReason })
       if (paintRaf.current) {
         cancelAnimationFrame(paintRaf.current)
         paintRaf.current = 0
@@ -1236,6 +1239,7 @@ export function useChatSession({
     activeCheckpointId,
     sendMessage,
     rerouteLast,
+    blockedReason: blockedRetry && blockedRetry.threadId === activeThread?.id ? blockedRetry.reason : undefined,
     canRerouteLast:
       Boolean(lastTurnRef.current) &&
       lastTurnRef.current?.threadId === activeThread?.id &&
