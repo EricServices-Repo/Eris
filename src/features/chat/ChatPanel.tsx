@@ -2,7 +2,6 @@ import { isAutomaticModelSelection } from '@/shared/model-execution'
 import { PanelActions } from '@/components/PanelActions'
 import { ContextMemoryInspector } from './ContextMemoryInspector'
 import { useRequestFocus } from '@/hooks/useDialogFocus'
-import { ChatTaskTimeline } from './TaskTimeline'
 import { ImageMessage } from './ImageMessage'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type {
@@ -1109,7 +1108,6 @@ export function ChatPanel({
                 </button>
               )}
               {historyError && <div role="alert">{historyError}</div>}
-              <ChatTaskTimeline threadId={activeThread?.id ?? null} />
               <HistoricalMessages
                 key={activeThread?.id ?? 'empty'}
                 searchOpen={searchOpen}
