@@ -1,3 +1,4 @@
+import { isRetiredComposerModel } from '../../../src/shared/legacy-model-ref'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'fs'
 import { dirname } from 'path'
 import {
@@ -27,7 +28,8 @@ function writeJson(path: string, data: unknown): void {
 function normalizeAgent(raw: unknown, fallbackBuiltin = false): AgentDefinition {
   const input = (raw ?? {}) as Record<string, unknown>
   const builtin = typeof input.builtin === 'boolean' ? input.builtin : fallbackBuiltin
-  const model = String(input.model ?? '')
+  const rawModel = String(input.model ?? '')
+  const model = isRetiredComposerModel(rawModel) ? '' : rawModel
   const toolsRaw = String(input.tools ?? '')
   const tools =
     toolsRaw === 'none' || toolsRaw === 'read' || toolsRaw === 'edit' || toolsRaw === 'full'
