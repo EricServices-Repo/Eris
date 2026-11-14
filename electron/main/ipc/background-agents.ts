@@ -52,7 +52,7 @@ export function registerBackgroundAgentsIpc(): void {
         try {
           let thread = threadId ? await getChat(appState.currentWorkspace, threadId) : null
           if (!thread) {
-            thread = await createChat(appState.currentWorkspace, job.model || 'builtin:composer-lite')
+            thread = await createChat(appState.currentWorkspace, job.model || 'auto')
           }
           const saved = await appendMessage(
             appState.currentWorkspace,

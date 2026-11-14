@@ -1,3 +1,4 @@
+import { migrateRetiredModel } from '../../../src/shared/legacy-model-ref'
 import { appendTaskEvent, flushTaskLedger } from './task-ledger'
 import { createTaskContract, childTaskContract } from './task-intake'
 import { createHash, randomUUID } from 'crypto'
@@ -89,6 +90,7 @@ function loadPersisted(): void {
     if (!existsSync(storePath())) return
     const raw = JSON.parse(readFileSync(storePath(), 'utf8')) as { jobs?: BackgroundJob[] }
     for (const job of raw.jobs ?? []) {
+      job.model = migrateRetiredModel(job.model || 'auto')
       if (job.status === 'running' || job.status === 'queued') {
         job.status = 'stopped'
         job.error = job.error || 'Interrupted when Eris quit'
@@ -310,7 +312,7 @@ export function enqueueBackgroundJob(
     worktreePath,
     branch,
     goal,
-    model: String(request.model || '').trim() || 'auto',
+    model: migrateRetiredModel(String(request.model || '').trim() || 'auto'),
     agentId,
     source: request.source || 'panel',
     sourceThreadId: request.sourceThreadId ?? parent?.sourceThreadId ?? null,

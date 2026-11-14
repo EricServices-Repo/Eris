@@ -170,3 +170,16 @@ describe('agent handoff size', () => {
     expect(resume).toContain(memory.slice(0, 5000))
   })
 })
+
+it('clears retired model pins from project agents while preserving provider pins', async () => {
+  const { loadBuiltinAgents, mergeAgentConfigs } = await import('../electron/main/services/agents')
+  const builtin = loadBuiltinAgents()
+  const project = structuredClone(builtin)
+  project.orchestrator.model = 'builtin:composer-lite'
+  project.subagents[0]!.model = 'qwen3:14b'
+  project.subagents[1]!.model = 'builtin:composer'
+  const merged = mergeAgentConfigs(builtin, project)
+  expect(merged.orchestrator.model).toBe('')
+  expect(merged.subagents.find(a => a.id === project.subagents[0]!.id)?.model).toBe('qwen3:14b')
+  expect(merged.subagents.find(a => a.id === project.subagents[1]!.id)?.model).toBe('')
+})

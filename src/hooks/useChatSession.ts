@@ -546,7 +546,7 @@ export function useChatSession({
         let thread = opts?.thread ?? activeThread
         if (!thread) {
           thread = await window.ide.createChat(
-            selectedModel || settings.models.defaultModel || 'builtin:composer-lite'
+            selectedModel || settings.models.defaultModel || 'auto'
           )
           setActiveThread(thread)
           setThreads((prev) => [thread!, ...prev.filter((t) => t.id !== thread!.id)])
@@ -556,7 +556,7 @@ export function useChatSession({
         if (recentRequestsRef.current.size > 20)
           recentRequestsRef.current.delete(recentRequestsRef.current.keys().next().value!)
 
-        const selected = selectedModel || settings.models.defaultModel || 'builtin:composer-lite'
+        const selected = selectedModel || settings.models.defaultModel || 'auto'
         const runModel = opts?.retry?.model ?? selected
         const runMode =
           opts?.forceRoute === 'tools' ? 'agent' : (opts?.retry?.prompt.mode ?? chatMode)
