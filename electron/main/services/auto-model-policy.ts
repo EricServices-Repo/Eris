@@ -58,7 +58,7 @@ export async function chooseExecutionModel(
   intent: ChatIntent,
   selected = 'auto',
   excluded: readonly string[] = [],
-  _options: { cloudComposer?: boolean } = {}
+  _options: { cloudComposer?: boolean; requiredContext?: number } = {}
 ): Promise<AutoModelChoice> {
   const policy = executionPolicy(settings, selected)
   if (policy === 'fixed') return { model: selected, policy, basis: 'profile', candidates: [] }
@@ -88,6 +88,18 @@ export async function chooseExecutionModel(
     if (!ready) reason = reason || 'not ready'
     else if (excluded.includes(model)) reason = 'already attempted in this run'
     else if (policy === 'auto-local' && !local) reason = 'excluded by Auto-local execution policy'
+    const profile = settings.models.capabilityProfiles?.[model]
+    if (profile) {
+      if (!reason && !['answer', 'capability'].includes(intent) && profile.toolCalling === 'none') reason = 'profile declares no tool calling'
+      if (!reason && profile.contextWindow < (_options.requiredContext ?? 1024)) reason = 'profile context below required prompt capacity'
+      rank = { small: 10, standard: 30, strong: 60, frontier: 90 }[profile.tier]
+      if (!['answer', 'capability'].includes(intent) && profile.toolCalling === 'native') rank += 5
+    }
+    if (settings.models.selectionPreference === 'local' && local) rank += 1000
+    if (settings.models.selectionPreference === 'cheapest') {
+      const cost = profile?.costClass ?? (local ? 'free-local' : 'high')
+      rank += { 'free-local': 1000, low: 500, high: 0 }[cost]
+    }
     candidates.push({
       model,
       eligible: ready && !reason,
@@ -145,7 +157,13 @@ export async function chooseExecutionModel(
   }
   const eligible = candidates
     .filter((c) => c.eligible)
-    .sort((a, b) => b.rank - a.rank || a.model.localeCompare(b.model))
+     .sort((a, b) => {
+      const priority = (ref: string) => {
+        const i = settings.models.priority?.indexOf(ref) ?? -1
+        return i < 0 ? Number.MAX_SAFE_INTEGER : i
+      }
+      return b.rank - a.rank || priority(a.model) - priority(b.model)
+    })
   const refs = eligible.map((c) => c.model)
   let model = eligible[0]?.model || ''
   let basis: AutoModelChoice['basis'] = 'profile'
@@ -241,9 +259,13 @@ export async function chooseExecutionModel(
             basis !== 'profile' || usedLatency
               ? ''
               : winner!.rank === c.rank
-                ? ` (tied at ${c.rank}; broken by name)`
+                ? ` (tied at ${c.rank}; broken by configured priority or catalog order)`
                 : ` (${winner!.rank} vs ${c.rank})`
           }; ${cost}`
+  }
+  for (const c of eligible) {
+    const p = settings.models.capabilityProfiles?.[c.model]
+    if (p) c.reason += `; ${p.tier} · ${p.toolCalling} tools · ${p.contextWindow} context · ${p.costClass}`
   }
   return { model, basis, policy, candidates }
 }

@@ -118,6 +118,16 @@ export const SettingsSchema = z.object({
   images: ImageGenerationSettingsSchema.prefault({}),
   models: z.object({
     defaultModel: z.string(),
+    selectionPreference: z.enum(['best', 'local', 'cheapest']).default('best'),
+    priority: z.array(z.string()).default([]),
+    capabilityProfiles: z.record(z.string(), z.object({
+      tier: z.enum(['small', 'standard', 'strong', 'frontier']),
+      toolCalling: z.enum(['native', 'text', 'none']),
+      contextWindow: z.number().int().min(512).max(MAX_CONTEXT_TOKENS),
+      reasoning: z.boolean().default(false),
+      vision: z.boolean().default(false),
+      costClass: z.enum(['free-local', 'low', 'high'])
+    })).default({}),
     temperature: z.number().min(0).max(2),
     contextWindow: z.number().int().min(512).max(MAX_CONTEXT_TOKENS),
     connections: z.array(ModelConnectionSchema),
