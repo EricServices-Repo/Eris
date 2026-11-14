@@ -1495,6 +1495,8 @@ async function* runAgentInternal(options: {
         verifyFailures,
         consecutiveToolErrors,
         noProgressStreak,
+        goalRejectCount,
+        workspaceMutated,
         escalateCount,
         rerouteCount
       })
@@ -1645,8 +1647,9 @@ async function* runAgentInternal(options: {
         agentName: plan.agentName,
         model: workerModel
       }
-      yield { type: 'status', text: `${reason} · continuing` }
-      yield { type: 'thinking', text: `\n\n— ${reason}; continuing with the saved progress…\n` }
+      const transition = fromModel === workerModel ? reason : `Switching to ${workerModel} — ${reason}`
+      yield { type: 'status', text: `${transition} · continuing` }
+      yield { type: 'thinking', text: `\n\n— ${transition}; continuing with the saved progress…\n` }
       return true
     }
 
@@ -2444,6 +2447,8 @@ async function* runAgentInternal(options: {
           verifyFailures,
           consecutiveToolErrors,
           noProgressStreak,
+          goalRejectCount,
+          workspaceMutated,
           escalateCount,
           rerouteCount
         })

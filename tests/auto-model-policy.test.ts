@@ -130,6 +130,39 @@ describe('production Auto model selection', () => {
     expect((await chooseExecutionModel(settings(), 'edit')).model).toBe('local:qwen-coder')
     expect((await chooseExecutionModel(settings(), 'answer')).model).toBe('local:general-instruct')
   })
+  it('limits reloads across a nine-turn mix with stable eligible models', async () => {
+    state.locals = [local('local:general-instruct'), local('local:qwen-coder'), local('local:other-instruct')]
+    state.resident = { ref: 'local:general-instruct', contextSize: 4096 }
+    const selected: string[] = []
+    for (const intent of ['answer', 'answer', 'explore', 'edit', 'edit', 'review', 'answer', 'verify', 'edit'] as const) {
+      const choice = await chooseExecutionModel(settings(), intent)
+      selected.push(choice.model)
+      expect(choice.candidates.find((candidate) => candidate.model === choice.model)?.reason).toMatch(/selected by/)
+      state.resident = { ref: choice.model, contextSize: 4096 }
+    }
+    expect(new Set(selected).size).toBeLessThanOrEqual(2)
+  })
+  it('keeps an eligible resident when a heuristic competitor is only slightly higher', async () => {
+    state.locals = [local('local:general-instruct'), local('local:qwen-coder')]
+    state.resident = { ref: 'local:qwen-coder', contextSize: 4096 }
+    const choice = await chooseExecutionModel(settings(), 'answer')
+    expect(choice.model).toBe('local:qwen-coder')
+    expect(choice.candidates.find((candidate) => candidate.model === choice.model)?.reason).toContain('resident within switch margin')
+  })
+  it('never retains a resident that declares tools unsupported for an edit', async () => {
+    state.locals = [{ ...local('local:general-instruct'), routingCapabilities: { tools: false } }, local('local:qwen-coder')]
+    state.resident = { ref: 'local:general-instruct', contextSize: 4096 }
+    const choice = await chooseExecutionModel(settings(), 'edit')
+    expect(choice.model).toBe('local:qwen-coder')
+    expect(choice.candidates.find((candidate) => candidate.model === 'local:general-instruct')?.eligible).toBe(false)
+  })
+  it('lets measured outcomes beat resident stickiness', async () => {
+    const s = settings(); s.evals.useScoresForRouting = true
+    state.locals = [local('local:general-instruct'), local('local:qwen-coder')]
+    state.resident = { ref: 'local:qwen-coder', contextSize: 4096 }
+    state.winner = 'local:general-instruct'
+    expect((await chooseExecutionModel(s, 'answer')).model).toBe('local:general-instruct')
+  })
   it('rejects unknown capacity, oversized and non-chat models with reasons', async () => {
     state.budget = 0
     state.locals = [local(), local('local:embed', 1)]

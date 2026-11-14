@@ -23,7 +23,13 @@ export function shouldConsiderMidRunAdapt(options: {
   noProgressStreak: number
   escalateCount: number
   rerouteCount: number
+  goalRejectCount?: number
+  workspaceMutated?: boolean
 }): boolean {
+  // Rejected completion after a write is not, on its own, evidence that a
+  // different model will repair it. Actual tool/verification failures still count.
+  if (options.workspaceMutated && options.goalRejectCount &&
+      options.consecutiveToolErrors < 3 && options.verifyFailures < 2) return false
   if (options.escalateCount + options.rerouteCount >= MID_RUN_ADAPT_BUDGET) return false
   return (
     options.verifyFailures >= 2 ||
