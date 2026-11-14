@@ -15,9 +15,17 @@ import { join } from 'path'
 // Replay queue: each entry is the full assistant text for one model turn.
 const script: string[] = []
 let scriptAdvanceMs = 0
+let streamedChunks: string[] = []
 vi.mock('../electron/main/services/chat-runtime', () => ({
   // eslint-disable-next-line require-yield
   streamModelChat: async function* () {
+    if (streamedChunks.length) {
+      for (const chunk of streamedChunks.splice(0)) {
+        vi.advanceTimersByTime(1_000)
+        yield chunk
+      }
+      return
+    }
     if (scriptAdvanceMs) vi.advanceTimersByTime(scriptAdvanceMs)
     const next = script.shift() ?? 'DONE: nothing left to do.'
     yield next
@@ -61,6 +69,7 @@ beforeEach(() => {
   ws = mkdtempSync(join(tmpdir(), 'eris-loop-'))
   script.length = 0
   scriptAdvanceMs = 0
+  streamedChunks = []
 })
 afterEach(() => {
   try {
@@ -240,6 +249,22 @@ describe('agent loop (scripted model)', () => {
       getSecret: () => null, mode: 'agent', turnPlan: plan, mcp: 'off' }))
     expect(events.some((event) => event.incomplete === true)).toBe(true)
     expect(events.some((event) => event.type === 'status' && String(event.text).includes('already satisfied'))).toBe(false)
+  })
+  it('emits bounded heartbeats without model text while output arrives (#511)', async () => {
+    vi.useFakeTimers()
+    try {
+      const text = 'Create hello.txt containing a greeting'
+      const plan = editPlan()
+      plan.task = createTaskContract({ workspacePath: ws, text, plan })
+      streamedChunks = ['Private ', 'model ', 'output ', 'is ', 'streamed.']
+      const events = await drain(runAgentWithWorkspaceTools({ workspacePath: ws, settings: getDefaults(),
+        model: 'builtin:composer-lite', messages: [{ role: 'user', content: text }], temperature: 0,
+        getSecret: () => null, mode: 'agent', turnPlan: plan, mcp: 'off', maxEvaluationSteps: 1 }))
+      const heartbeats = events.filter(event => event.type === 'heartbeat')
+      expect(heartbeats.length).toBeGreaterThanOrEqual(2)
+      expect(JSON.stringify(heartbeats)).not.toContain('Private')
+      expect(heartbeats[0]).toMatchObject({ step: 1, elapsedMs: 2000 })
+    } finally { vi.useRealTimers() }
   })
   it('writes a file from a tool call, then finishes on a DONE reply', async () => {
     script.push('{"name":"write_file","path":"hello.txt","content":"hi there\\n"}')

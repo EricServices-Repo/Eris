@@ -167,3 +167,7 @@ Work belongs on feature/rebuild branches with PRs to `main`. The branch-policy w
 The verified `v0.6.10` release workflow built from `f14e409`; this documentation baseline is newer. No test count in an earlier guide should be treated as a fresh execution result for the newer baseline.
 
 Sources: [test profiles](../tests/qualification-profiles.json), [release script](../scripts/release.mjs), [release workflow](../.github/workflows/release.yml), [update guide](UPDATES.md), [workflow rules](GITHUB-WORKFLOW.md), [remaining work](RECOMMENDATIONS.md).
+
+## Live task progress
+
+While a worker streams, transient progress events carry only elapsed time and character counts, not generated text. They update the active task activity time without filling its durable event history; the chat UI shows the current step and last completed tool.

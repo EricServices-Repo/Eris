@@ -235,7 +235,7 @@ export function recordChatJobEvent(
     // Observations after the end (a straggling chunk, status or a second outcome)
     // must not rewrite the recorded answer, model or status line.
     // Thinking and phase updates carry nothing to keep; the timeline is already final.
-    if (channel !== 'chat:thinking' && channel !== 'chat:phase') {
+    if (channel !== 'chat:thinking' && channel !== 'chat:phase' && channel !== 'chat:progress') {
       late(job, channel, {})
       schedulePersist(job)
     }
@@ -272,7 +272,7 @@ export function recordChatJobEvent(
     job.statusText = typeof payload.text === 'string' ? payload.text : job.statusText
   else if (channel === 'chat:model')
     job.model = typeof payload.model === 'string' ? payload.model : job.model
-  if (channel !== 'chat:thinking' && channel !== 'chat:answer') {
+  if (channel !== 'chat:thinking' && channel !== 'chat:answer' && channel !== 'chat:progress') {
     job.cursor = (job.cursor ?? job.events.at(-1)?.sequence ?? 0) + 1
     job.events.push({ sequence: job.cursor, at: job.updatedAt, channel, payload })
     if (job.events.length > MAX_EVENTS) job.events.splice(0, job.events.length - MAX_EVENTS)
