@@ -84,12 +84,12 @@ import { formatSkillsListForAgent, getSkill, slugifySkillId, upsertSkill } from 
 import { userSkillsDir } from '../paths'
 import {
   boundRuntimeInstructions,
-  buildWorkSummary,
   compactAgentMessages,
   contextCompactionTarget,
   estimateTokens,
   microCompactAgentMessages
 } from './compaction'
+
 import { executeTool } from './execute-tool'
 import { toolArgumentRepair, validateToolArguments } from './tool-validation'
 import { finalizeAnswer } from './final-answer'
@@ -192,6 +192,11 @@ import type { AgentHandoffPacket } from '../../../../src/shared/agent-orchestrat
 import { AgentWorkflow } from './workflow'
 
 /** Consecutive rounds with zero mutation → stronger finish nudge (never stops the run). */
+function visibleStopSummary(paths: string[], reason: string): string {
+  const files = [...new Set(paths)]
+  return `${files.length ? `Changed files: ${files.join(', ')}.` : 'No file changes were made.'} ${reason}`
+}
+
 const MAX_NO_PROGRESS = 8
 const MAX_RETRIEVED_READS = 3
 /**
@@ -2276,9 +2281,10 @@ async function* runAgentInternal(options: {
         }
         yield emitSessionStep(stopNote)
         yield { type: 'status', text: 'Paused · run step budget reached' }
+        if (actionLog.length) yield { type: 'thinking', text: `\n\n— Run details:\n${actionLog.map(action => `- ${action}`).join('\n')}` }
         yield {
           type: 'answer',
-          text: `${buildWorkSummary(originalUserGoal, actionLog, latestAssistant)}\n\n${stopNote}`,
+          text: visibleStopSummary(filesTouched, stopNote),
           replace: true
         }
         return
@@ -2873,11 +2879,8 @@ async function* runAgentInternal(options: {
             verifyFailures++
             yield { type: 'terminal', text: `$ ${finalVerify.command}\n${finalVerify.detail}\n` }
             if (verifyFailures >= MAX_VERIFY_FAILURES) {
-              const workerNote = stripToolBlocks(assistantText).trim()
               const answer =
-                buildWorkSummary(originalUserGoal, actionLog, workerNote) +
-                `\n\nVerify still failing after ${verifyFailures} attempts:\n` +
-                truncateForModel(finalVerify.detail, AGENT_HANDOFF_CHARS)
+                visibleStopSummary(filesTouched, `Verification is still failing after ${verifyFailures} attempts; see run details for the output.`)
               yield {
                 type: 'thinking',
                 text: '\n\n— Verify failed too many times; stopping with a summary.\n'
@@ -2890,6 +2893,7 @@ async function* runAgentInternal(options: {
                 incomplete: true
               }
               yield emitSessionStep('Stopped after verify failures')
+              if (actionLog.length) yield { type: 'thinking', text: `\n\n— Run details:\n${actionLog.map(action => `- ${action}`).join('\n')}` }
               yield { type: 'answer', text: answer, replace: true }
               return
             }
@@ -2956,14 +2960,12 @@ async function* runAgentInternal(options: {
           }
           if (goalRejectCount >= MAX_GOAL_REJECTS) {
             workflow.block(unmetReason || 'The requested outcome was not achieved.')
-            const workerNote = stripToolBlocks(assistantText).trim()
             const listed = workflow.listingObserved()
               ? listingAnswer(lastTreeResult, `The run stopped early (${unmetReason}); this list is the directory listing it observed.`)
               : null
             const answer =
               listed ??
-              buildWorkSummary(originalUserGoal, actionLog, workerNote) +
-                `\n\nIncomplete: ${unmetReason}`
+              visibleStopSummary(filesTouched, `The task is incomplete: ${unmetReason}`)
             yield {
               type: 'progress',
               step,
@@ -2972,6 +2974,7 @@ async function* runAgentInternal(options: {
               incomplete: true
             }
             yield { type: 'status', text: 'Incomplete' }
+            if (actionLog.length) yield { type: 'thinking', text: `\n\n— Run details:\n${actionLog.map(action => `- ${action}`).join('\n')}` }
             yield { type: 'answer', text: answer, replace: true }
             return
           }
@@ -3133,9 +3136,10 @@ async function* runAgentInternal(options: {
           }
           yield emitSessionStep(stopNote)
           yield { type: 'status', text: 'Incomplete · repeated tool loop stopped' }
+          if (actionLog.length) yield { type: 'thinking', text: `\n\n— Run details:\n${actionLog.map(action => `- ${action}`).join('\n')}` }
           yield {
             type: 'answer',
-            text: `${buildWorkSummary(originalUserGoal, actionLog, latestAssistant)}\n\n${stopNote}`,
+            text: visibleStopSummary(filesTouched, stopNote),
             replace: true
           }
           return
@@ -4905,10 +4909,7 @@ async function* runAgentInternal(options: {
                 if (adapted) {
                   verifyNote += `\nStaying on ${plan.agentName}. Continue fixing this failure yourself.\n`
                 } else {
-                  const answer =
-                    buildWorkSummary(originalUserGoal, actionLog, '') +
-                    `\n\nStopped: verify failed ${verifyFailures} times.\n` +
-                    truncateForModel(verified.detail, AGENT_HANDOFF_CHARS)
+                  const answer = visibleStopSummary(filesTouched, `Verification is still failing after ${verifyFailures} attempts; see run details for the output.`)
                   yield {
                     type: 'thinking',
                     text: '\n\n— Verify failure budget exhausted; stopping.\n'
@@ -4921,6 +4922,7 @@ async function* runAgentInternal(options: {
                     incomplete: true
                   }
                   yield emitSessionStep('Stopped after verify failures')
+                  if (actionLog.length) yield { type: 'thinking', text: `\n\n— Run details:\n${actionLog.map(action => `- ${action}`).join('\n')}` }
                   yield { type: 'answer', text: answer, replace: true }
                   return
                 }

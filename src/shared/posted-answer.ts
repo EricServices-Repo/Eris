@@ -65,6 +65,25 @@ export function stripAnswerFromThinking(thinking: string, answer: string): strin
     .trim()
 }
 
+/** Remove host/model framing outside code fences without changing ordinary prose. */
+export function cleanAnswerMarkers(text: string): string {
+  const withoutRole = text.replace(/^\s*\[(?:Composer|Coder|Explainer|Reviewer|Plan|Planner|Verification|Verifier|Fast)\][ \t]*(?:\r?\n|$)/i, '')
+  let fenced = false
+  return withoutRole.split('\n').flatMap(line => {
+    if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; return [line] }
+    if (!fenced && /^\s*(?:(?:\*\*)?DONE(?:\*\*)?|_\((?:stopped|incomplete)\)_)\s*$/i.test(line)) return []
+    return [fenced ? line : line.replace(/^(\s*(?:#{1,6}\s+|\*\*)?)DONE Summary(?=\s|\*|$)/i, '$1Summary')]
+  }).join('\n').trim()
+}
+
+/** Old stored markers are rendered as badges without rewriting chat history. */
+export function displayedTerminalReply(content: string, terminal?: string): { content: string; badge: 'Stopped' | 'Incomplete' | null } {
+  const legacy = content.match(/(?:\n\s*)?_\((stopped|incomplete)\)_\s*$/i)
+  const state = terminal === 'stopped' || terminal === 'incomplete' ? terminal : legacy?.[1]?.toLowerCase()
+  return { content: legacy ? content.slice(0, legacy.index).trimEnd() : content,
+    badge: state === 'stopped' ? 'Stopped' : state === 'incomplete' ? 'Incomplete' : null }
+}
+
 /** The renderer and durable main-process history must finalize the same reply. */
 export function finalizePostedAnswer(
   answer: string,
@@ -74,14 +93,10 @@ export function finalizePostedAnswer(
 ): { content: string; thinking: string } {
   let content = promoteThinkingToAnswer(answer, thinkingRaw)
   if (!content.trim() && thinkingRaw && !aborted) content = promoteThinkingToAnswer('', thinkingRaw)
+  content = cleanAnswerMarkers(content)
   if (!content.trim() && !aborted && !hasAssets)
     content = 'The agent ended without a response. Please retry the message or report this run.'
   const thinking = stripAnswerFromThinking(thinkingRaw, content)
-  if (aborted) {
-    if (content)
-      content = content.endsWith('\n') ? `${content}_(stopped)_` : `${content}\n\n_(stopped)_`
-    else if (thinking) content = '_(stopped)_'
-  }
   return { content, thinking }
 }
 

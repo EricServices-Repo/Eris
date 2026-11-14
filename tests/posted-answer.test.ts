@@ -1,4 +1,4 @@
-import { finalizePostedAnswer, modelHistoryContent, upsertTerminalReply, visibleOutcomeAssessment } from '../src/shared/posted-answer'
+import { cleanAnswerMarkers, displayedTerminalReply, finalizePostedAnswer, modelHistoryContent, upsertTerminalReply, visibleOutcomeAssessment } from '../src/shared/posted-answer'
 import type { ChatMessage, ChatThread } from '../src/shared/settings-schema'
 import { describe, expect, it } from 'vitest'
 import { promoteThinkingToAnswer, stripAnswerFromThinking } from '../src/shared/posted-answer'
@@ -81,10 +81,19 @@ describe('promoteThinkingToAnswer', () => {
 it('finalizes identical durable and visible replies for image-only, stopped and empty turns', () => {
   expect(finalizePostedAnswer('', '', false, true)).toEqual({ content: '', thinking: '' })
   expect(finalizePostedAnswer('Partial answer', '— Step', true, false)).toEqual({
-    content: 'Partial answer\n\n_(stopped)_',
+    content: 'Partial answer',
     thinking: '— Step'
   })
   expect(finalizePostedAnswer('', '', false, false).content).toContain('ended without a response')
+})
+
+it('cleans protocol framing while preserving ordinary text and fenced code (#507)', () => {
+  expect(cleanAnswerMarkers('[Composer]\nDONE\n## DONE Summary\nWork is done.')).toBe('## Summary\nWork is done.')
+  expect(cleanAnswerMarkers('We are done with the work.')).toBe('We are done with the work.')
+  expect(cleanAnswerMarkers('```text\nDONE\n## DONE Summary\n```')).toBe('```text\nDONE\n## DONE Summary\n```')
+  expect(displayedTerminalReply('Partial', 'stopped')).toEqual({ content: 'Partial', badge: 'Stopped' })
+  expect(displayedTerminalReply('Partial\n\n_(incomplete)_')).toEqual({ content: 'Partial', badge: 'Incomplete' })
+  expect(finalizePostedAnswer('', '— Working', true, false).content).toBe('')
 })
 
 describe('host notes in model history (#502)', () => {

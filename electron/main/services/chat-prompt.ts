@@ -278,7 +278,7 @@ export function buildChatMessages(
     ...(discussionMessage ? [discussionMessage] : []),
     ...history.map((m) => ({
       role: m.role,
-      content: m.role === 'assistant' && m.agentName ? `[${m.agentName}]\n${m.content}` : m.content
+      content: m.content
     })),
     { role: 'user' as const, content: userContent }
   ]
