@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.22 — 2026-11-13
+
+- Desktop rebuild.
+
 ## 0.6.21 — 2026-11-12
 
 - Improve model warm-up and cancellation, preserve late chat replies, and provide the current date to the agent.
