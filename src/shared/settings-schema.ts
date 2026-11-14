@@ -43,6 +43,9 @@ export const ProjectAgentsSchema = z.object({
   subagents: z.array(AgentDefinitionSchema)
 })
 
+export const ReasoningLevelSchema = z.enum(['default', 'off', 'low', 'medium', 'high'])
+export type ReasoningLevel = z.infer<typeof ReasoningLevelSchema>
+
 export const ModelConnectionSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -72,7 +75,16 @@ export const ModelConnectionSchema = z.object({
    */
   recallApprovedUrl: z.string().optional(),
   /** Ollama: hold the model in memory until the server stops or unloads it. */
-  keepModelLoaded: z.boolean().optional()
+  keepModelLoaded: z.boolean().optional(),
+  /** Model reasoning (#573): how much to ask for, and whether to show it under Thinking. */
+  reasoning: z
+    .object({
+      /** `default` sends nothing and leaves the model and server to decide. */
+      level: ReasoningLevelSchema.default('default'),
+      /** false: reasoning is discarded, never shown or saved. */
+      show: z.boolean().default(true)
+    })
+    .optional()
 })
 
 export const McpServerSchema = z.object({
@@ -335,6 +347,11 @@ export interface ChatMessage {
   content: string
   /** Collapsible model/tool trace shown under Thinking */
   thinking?: string
+  /**
+   * The model's own reasoning (#573), shown under Thinking. Display-only: never sent
+   * back to a model, recalled, or used as evidence.
+   */
+  reasoning?: string
   createdAt: number
   agentId?: string
   agentName?: string

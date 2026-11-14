@@ -12,7 +12,7 @@ import {
   type ModelMessage
 } from './model-protocol'
 import { estimateContextTokens } from '../../../src/shared/token-estimate'
-import type { AppSettings } from '../../../src/shared/settings-schema'
+import type { AppSettings, ReasoningLevel } from '../../../src/shared/settings-schema'
 import {
   isNativeGgufRef,
   releaseLocalChatSession,
@@ -45,6 +45,8 @@ import {
   type ModelTermination
 } from './model-transport'
 
+import { createReasoningSplitter } from './reasoning-split'
+
 export type { NativeToolCall, OpenAIToolDef }
 
 export type StreamModelChatOptions = {
@@ -66,6 +68,46 @@ export type StreamModelChatOptions = {
   purpose?: ModelPurpose
   /** Called once when the provider reports how generation ended. */
   onTermination?: (termination: ModelTermination) => void
+  /**
+   * The model's reasoning, separate from the answer (#573). Display only: never sent
+   * back to a model. Without it, reasoning is still kept out of the yielded text.
+   */
+  onReasoning?: (text: string) => void
+  /** Requested reasoning level; each transport maps it to its own control. */
+  reasoning?: ReasoningLevel
+}
+
+export type { ReasoningLevel }
+
+/**
+ * Keep reasoning out of the text every caller reads (#573). A transport that reports
+ * reasoning in its own field calls `onReasoning` itself; for one that writes inline
+ * `<think>` blocks, the splitter moves them there. Either way the yielded stream is
+ * the answer only, so tool-call parsing and completion checks never see reasoning.
+ */
+async function* withoutInlineReasoning(
+  stream: AsyncGenerator<string, void, unknown>,
+  onReasoning: ((text: string) => void) | undefined,
+  separated: () => boolean
+): AsyncGenerator<string, void, unknown> {
+  const splitter = createReasoningSplitter()
+  const emit = (part: { answer: string; reasoning: string }) => {
+    if (part.reasoning) onReasoning?.(part.reasoning)
+    return part.answer
+  }
+  for await (const chunk of stream) {
+    // A transport with a reasoning field does not also write inline tags.
+    if (separated()) {
+      const rest = emit(splitter.flush())
+      if (rest) yield rest
+      yield chunk
+      continue
+    }
+    const answer = emit(splitter.push(chunk))
+    if (answer) yield answer
+  }
+  const rest = emit(splitter.flush())
+  if (rest) yield rest
 }
 
 /**
@@ -88,14 +130,48 @@ export async function* streamModelChat(
   )
   // A live local session holds its seeded prompt; only a reseed removes revoked text.
   if (revoked && options.sessionKey) releaseLocalChatSession(options.sessionKey)
-  const request = { ...options, messages }
+  let separated = false
+  // show: false discards reasoning here, so nothing downstream can show or save it.
+  const forward = reasoningShown(options.settings, options.model) ? options.onReasoning : undefined
+  const request = {
+    ...options,
+    messages,
+    onReasoning: (text: string) => {
+      separated = true
+      if (text) forward?.(text)
+    }
+  }
   const scope = activeDiagnosticsScope()
   if (scope) {
     reportContextDispatch({ compiled: options.messages, outbound: messages, ...request })
-    yield* modelStreamWithAbort(scope.adapter.stream({ ...request, purpose: request.purpose ?? 'agent' }), options.signal)
+    yield* modelStreamWithAbort(
+      withoutInlineReasoning(
+        scope.adapter.stream({ ...request, purpose: request.purpose ?? 'agent' }),
+        forward,
+        () => separated
+      ),
+      options.signal
+    )
     return
   }
-  yield* modelStreamWithAbort(streamProviderChat(request), options.signal)
+  yield* modelStreamWithAbort(
+    withoutInlineReasoning(streamProviderChat(request), forward, () => separated),
+    options.signal
+  )
+}
+
+/** false when the model's connection turned reasoning display off (#573). */
+export function reasoningShown(settings: AppSettings, model: string): boolean {
+  return resolveConnectionForModel(settings, model)?.reasoning?.show !== false
+}
+
+/** The requested reasoning level: the call's own, else the connection's (#573). */
+function reasoningLevelFor(options: StreamModelChatOptions, model: string): ReasoningLevel {
+  return (
+    options.reasoning ??
+    resolveConnectionForModel(options.settings, model)?.reasoning?.level ??
+    'default'
+  )
 }
 
 function throwIfAborted(signal?: AbortSignal) {
@@ -213,7 +289,10 @@ export async function* streamProviderChat(
       }))
     ) + schemaTokens
   const purpose = options.purpose ?? 'agent'
-  const phase = (value: 'loading' | 'prefill' | 'generating' | 'integrating', reason: string) =>
+  const phase = (
+    value: 'loading' | 'prefill' | 'reasoning' | 'generating' | 'integrating',
+    reason: string
+  ) =>
     reportChatActivity(
       purpose === 'outcome'
         ? 'review'
@@ -231,9 +310,30 @@ export async function* streamProviderChat(
     dispatchedAt = performance.now()
     phase('prefill', reason)
   }
+  let reasoningStarted = false
+  const firstOutputSeen = () => {
+    if (reasoningStarted) return
+    if (dispatchedAt !== undefined)
+      dispatchToFirstChunkMs = Math.round(performance.now() - dispatchedAt)
+  }
+  /** Reasoning arrived on its own channel before any answer text (#573). */
+  const reasoningSeen = () => {
+    if (!firstChunk || reasoningStarted) return
+    firstOutputSeen()
+    reasoningStarted = true
+    phase('reasoning', 'Model reasoning received')
+  }
+  const onReasoning = (text: string) => {
+    if (text) reasoningSeen()
+    options.onReasoning?.(text)
+  }
   const chunkSeen = () => {
     if (firstChunk) {
       firstChunk = false
+      if (reasoningStarted) {
+        phase('generating', 'First model output chunk received')
+        return
+      }
       if (dispatchedAt !== undefined) {
         dispatchToFirstChunkMs = Math.round(performance.now() - dispatchedAt)
         if (
@@ -302,6 +402,8 @@ export async function* streamProviderChat(
       phase('loading', 'Waiting for local resources and model readiness')
       for await (const chunk of streamBuiltinChat({
         onLoaded: () => dispatched('Local model ready; request dispatched'),
+        onReasoning,
+        reasoning: reasoningLevelFor(options, model),
         prepareMessages: async () => {
           if (purpose === 'agent')
             reportChatActivity('prompt', {
@@ -447,6 +549,8 @@ export async function* streamProviderChat(
       tools: protocol === 'native-tools' ? options.tools : undefined,
       toolChoice: options.toolChoice,
       onNativeToolCalls: options.onNativeToolCalls,
+      onReasoning,
+      reasoning: reasoningLevelFor(options, model),
       onUsage: (usage) => {
         reportedPrompt = usage.promptTokens
         reportedCompletion = usage.completionTokens

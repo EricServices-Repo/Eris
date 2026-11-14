@@ -1,7 +1,8 @@
 import type { AppSettings } from '../../../../src/shared/settings-schema'
 import { isNativeGgufRef } from '../builtin-model'
-import { streamModelChat, type OpenAIToolDef } from '../chat-runtime'
+import { reasoningShown, streamModelChat, type OpenAIToolDef } from '../chat-runtime'
 import type { ModelPurpose } from '../model-transport'
+import { splitLeadingReasoning } from '../reasoning-split'
 import { toolProtocolFor } from '../tool-protocol'
 import { looksLikeDegenerateLoop } from './heuristics'
 import {
@@ -52,6 +53,8 @@ export async function* streamThinkingText(options: {
   purpose?: ModelPurpose
 }): AsyncGenerator<
   | { kind: 'thinking'; text: string }
+  /** The model's own reasoning, separate from its reply (#573). */
+  | { kind: 'reasoning'; text: string }
   | {
       kind: 'done'
       full: string
@@ -64,6 +67,8 @@ export async function* streamThinkingText(options: {
   let full = ''
   let shown = 0
   let nativeToolCalls: ToolCall[] | undefined
+  let finished = false
+  let sawReasoning = false
   const localAbort = new AbortController()
   const onParentAbort = () => localAbort.abort()
   options.signal?.addEventListener('abort', onParentAbort)
@@ -91,7 +96,8 @@ export async function* streamThinkingText(options: {
 
   try {
     rethrowIfUserStop()
-    for await (const chunk of streamModelChat({
+    for await (const item of interleaveReasoning((onReasoning) => streamModelChat({
+      onReasoning,
       settings: options.settings,
       model: options.model,
       messages: options.messages,
@@ -108,8 +114,15 @@ export async function* streamThinkingText(options: {
             nativeToolCalls = nativeToToolCalls(calls)
           }
         : undefined
-    })) {
+    }))) {
       rethrowIfUserStop()
+      // Reasoning is shown, never parsed: it stays out of `full` (#573).
+      if (item.kind === 'reasoning') {
+        sawReasoning = true
+        yield { kind: 'reasoning', text: item.text }
+        continue
+      }
+      const chunk = item.text
       full += chunk
       const visible = thinkingBeforeTools(full)
       if (visible.length > shown) {
@@ -144,6 +157,7 @@ export async function* streamThinkingText(options: {
         return
       }
     }
+    finished = true
     rethrowIfUserStop()
     if (nativeToolCalls?.length) {
       yield {
@@ -177,7 +191,62 @@ export async function* streamThinkingText(options: {
     throw err
   } finally {
     options.signal?.removeEventListener('abort', onParentAbort)
+    // A consumer that stops iterating early must not leave the model generating.
+    if (!finished) localAbort.abort()
   }
 
+  // A block opened in the prompt ends with a bare closing tag; only the whole reply
+  // shows it (see reasoning-split.ts).
+  // A transport that separated reasoning itself never also writes it inline.
+  const leading = sawReasoning ? null : splitLeadingReasoning(full)
+  if (leading) {
+    if (leading.reasoning && reasoningShown(options.settings, options.model))
+      yield { kind: 'reasoning', text: leading.reasoning }
+    full = leading.answer
+  }
   yield { kind: 'done', full, nativeToolCalls }
+}
+
+/**
+ * Merge a text stream and the reasoning reported beside it into one ordered stream.
+ * Reasoning arrives through a callback, often while no text is flowing (a model
+ * reasons before it answers), so it cannot wait for the next text chunk. Text is
+ * still pulled one chunk at a time, so the model stream keeps its backpressure.
+ */
+export async function* interleaveReasoning(
+  start: (onReasoning: (text: string) => void) => AsyncGenerator<string, void, unknown>
+): AsyncGenerator<{ kind: 'text' | 'reasoning'; text: string }, void, unknown> {
+  const reasoning: string[] = []
+  let wake: (() => void) | null = null
+  const stream = start((text) => {
+    if (!text) return
+    reasoning.push(text)
+    wake?.()
+  })
+  let next: Promise<IteratorResult<string, void>> | null = null
+  let ended = false
+  try {
+    while (true) {
+      while (reasoning.length) yield { kind: 'reasoning', text: reasoning.shift()! }
+      next ??= stream.next()
+      const arrived = new Promise<null>((resolve) => (wake = () => resolve(null)))
+      // The generator may report reasoning synchronously from inside next().
+      if (reasoning.length) wake!()
+      const result = await Promise.race([next, arrived])
+      wake = null
+      if (result === null) continue
+      next = null
+      if (result.done) break
+      yield { kind: 'text', text: result.value }
+    }
+    ended = true
+    while (reasoning.length) yield { kind: 'reasoning', text: reasoning.shift()! }
+  } finally {
+    if (!ended) {
+      // Do not wait for a pull that is still running: the caller aborts the model,
+      // which ends it. Waiting here would hold the caller's own cleanup back.
+      next?.catch(() => undefined)
+      void stream.return(undefined).catch(() => undefined)
+    }
+  }
 }

@@ -109,6 +109,14 @@ export async function* streamOpenAICompatible(options: {
   toolChoice?: 'auto' | 'none' | 'required'
   /** Filled when the stream ends with native function tool calls. */
   onNativeToolCalls?: (calls: NativeToolCall[]) => void
+  /**
+   * Reasoning from `reasoning_content` (DeepSeek, vLLM, llama.cpp, LM Studio) or
+   * `reasoning` (OpenRouter, Ollama /v1) deltas (#573). Called with '' once the stream
+   * proves it separates reasoning, so inline tags are no longer split.
+   */
+  onReasoning?: (text: string) => void
+  /** Sent as reasoning_effort only when the user picked a level; `off` sends nothing. */
+  reasoning?: 'default' | 'off' | 'low' | 'medium' | 'high'
 }): AsyncGenerator<string, void, unknown> {
   const root = options.baseUrl.replace(/\/$/, '')
   const url = root.endsWith('/v1') ? `${root}/chat/completions` : `${root}/v1/chat/completions`
@@ -133,6 +141,8 @@ export async function* streamOpenAICompatible(options: {
     body.tools = options.tools
     body.tool_choice = options.toolChoice || 'auto'
   }
+  if (options.reasoning === 'low' || options.reasoning === 'medium' || options.reasoning === 'high')
+    body.reasoning_effort = options.reasoning
 
   const res = await fetch(url, {
     method: 'POST',
@@ -179,6 +189,8 @@ export async function* streamOpenAICompatible(options: {
         choices?: Array<{
           delta?: {
             content?: string | null
+            reasoning_content?: string | null
+            reasoning?: string | null
             tool_calls?: Array<{
               index?: number
               id?: string
@@ -225,6 +237,13 @@ export async function* streamOpenAICompatible(options: {
       const chunk = choice.delta?.content
       if (chunk !== null && chunk !== undefined && typeof chunk !== 'string')
         throw protocolError('Model content delta must be text.')
+      // Reasoning is reported, never yielded: it is not part of the answer (#573).
+      for (const field of ['reasoning_content', 'reasoning'] as const) {
+        const reasoning = choice.delta?.[field]
+        if (reasoning === null || reasoning === undefined) continue
+        if (typeof reasoning !== 'string') throw protocolError('Model reasoning delta must be text.')
+        options.onReasoning?.(reasoning)
+      }
       if (chunk) yield chunk
       const deltas = choice.delta?.tool_calls
       if (deltas !== undefined && !Array.isArray(deltas))

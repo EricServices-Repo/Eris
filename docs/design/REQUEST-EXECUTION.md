@@ -145,6 +145,28 @@ Other model-facing text follows the same rules:
 - **Intent classification**: the turn router and the task resolver share `src/shared/intent-guide.ts`.
 - **Host notes**: nudges and recovery notes are `system` messages inside the loop. On OpenAI-compatible connections every system message after the leading ones is sent as a user message marked `[Eris host note: from the IDE, not the user]` (`hostNotesAsUser`).
 
+## Model reasoning
+
+Reasoning models write a chain of thought before their answer. Eris keeps it on its own channel from the transport to the screen (#573), so it is shown under Thinking but is never part of the answer, never parsed for tool calls, and never sent back to a model.
+
+Where it comes from:
+
+- **OpenAI-compatible**: `delta.reasoning_content` (DeepSeek, vLLM, llama.cpp, LM Studio) and `delta.reasoning` (OpenRouter, Ollama `/v1`). Both are validated as text and reported through `onReasoning`; they are never yielded.
+- **Ollama native**: `message.thinking`.
+- **Built-in and local GGUF**: node-llama-cpp thought segments (`onResponseChunk` with `segmentType: 'thought'`). The worker posts them as `reasoning` messages. They reset the silence watchdog, because a model that reasons for minutes is working, but they do not count as the first answer chunk.
+- **Inline tags**: when a server has no reasoning parser, the model writes `<think>…</think>` (or `<thinking>`) into its text. `streamModelChat` splits a block at the start of the output (`reasoning-split.ts`), and `streamThinkingText` splits a reply whose opening tag was in the prompt, so it ends with a bare `</think>`. That second form is only known once the reply is complete, so while it streams it is shown as progress. Once a transport reports reasoning on its own field, inline tags are left alone.
+
+Path through the app: `streamModelChat({ onReasoning })` → `streamThinkingText` yields `reasoning` items (they never enter `full`) → the loop emits `reasoning` events → `chat-stream.ts` publishes `chat:reasoning`, coalesced with the other stream text → `useChatSession` keeps `reasoningAcc` → `ThinkingBlock` shows a "Model reasoning" section, open while live and collapsed in saved replies. The saved reply stores it as `ChatMessage.reasoning`, capped at 200,000 characters with the end kept. `finalizePostedAnswer` passes it through and never promotes it into the answer; a run that only reasoned saves "The model reasoned but did not produce an answer before it stopped." Model history, recall and outcome review read `content` only. Job event logs do not record reasoning chunks, the same as thinking, so a renderer that reattaches shows reasoning from that point on. Background jobs ignore it.
+
+The timeline has a `reasoning` phase ("Model is reasoning") between prefill and generating. Time to first output counts reasoning.
+
+Settings, per connection (`reasoning: { level, show }`, Settings → Models):
+
+- `level`: `default` sends nothing. Otherwise OpenAI-compatible connections send `reasoning_effort` for low, medium and high, and nothing for off; Ollama sends `think` (`false` for off, the level for gpt-oss, `true` otherwise); local GGUF sets a thought-token budget (0, 1,024, 4,096 or 16,384, never above the reply allowance). A model that does not support the control may reject it, which is why nothing is sent by default.
+- `show: false` discards reasoning in `streamModelChat`, so it is neither shown nor saved. Inline reasoning is still kept out of the answer.
+
+Not yet done: echoing a model's reasoning back to it inside a tool loop, which some providers ask for, and replaying reasoning after a renderer reattaches.
+
 ## Regression coverage
 
 - Exact reported file-generation wording and destination-suffix variants.

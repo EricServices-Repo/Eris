@@ -969,6 +969,31 @@ select:focus {
   opacity: 0.85;
 }
 
+.thinking-reasoning {
+  margin-top: 6px;
+}
+
+.thinking-reasoning-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+/* The model's own words: kept apart from Eris's progress and readable at length (#573). */
+.thinking-reasoning-text {
+  margin: 4px 0 0;
+  max-height: 400px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+}
+
 .thinking-text-live {
   max-height: 140px;
   margin-top: 6px;

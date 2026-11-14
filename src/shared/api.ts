@@ -449,6 +449,8 @@ export interface IdeApi {
     }) => void
   ) => () => void
   onChatThinking: (cb: (data: { requestId: string; chunk: string }) => void) => () => void
+  /** The model's own reasoning, separate from tool progress (#573). */
+  onChatReasoning: (cb: (data: { requestId: string; chunk: string }) => void) => () => void
   onChatProgress: (cb: (data: { requestId: string; step: number; chars: number; elapsedMs: number }) => void) => () => void
   onChatAnswer: (
     cb: (data: { requestId: string; chunk: string; replace?: boolean }) => void
