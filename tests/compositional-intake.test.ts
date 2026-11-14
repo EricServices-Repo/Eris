@@ -9,8 +9,9 @@ const root = mkdtempSync(join(tmpdir(), 'eris-compositional-intake-'))
 writeFileSync(join(root, 'index.html'), '<main>News</main>')
 afterAll(() => rmSync(root, { recursive: true, force: true }))
 
-async function authority(text: string, mode: 'agent' | 'ask' = 'agent') {
-  const result = await captureQuestion(0, text, root, 8192, mode, new AbortController().signal)
+async function authority(text: string, mode: 'agent' | 'ask' = 'agent', followUp = false) {
+  const history = followUp ? [{ role: 'user' as const, content: 'Review the project.' }, { role: 'assistant' as const, content: 'The project could use search.' }] : []
+  const result = await captureQuestion(0, text, root, 8192, mode, new AbortController().signal, { question: { history } })
   return (result.task as TaskContract).authority.edit
 }
 
@@ -62,5 +63,55 @@ describe('compositional intake authority (issue 465)', () => {
         ] }
       })
     expect((result.task as TaskContract).authority.edit).toBe(false)
+  })
+})
+
+
+describe('composed quoted and follow-up requests (#465)', () => {
+  const operations = ['Add', 'Remove'] as const
+  const features = ['search', 'the debug banner'] as const
+  const conjunctions = ['and', 'then'] as const
+  const quotes = ['"Do not edit files"', '"Delete the entire project"'] as const
+  const modes = ['agent', 'ask'] as const
+  const projects = ['this project', 'the workspace'] as const
+  const cases = operations.flatMap((operation) => features.flatMap((feature) =>
+    conjunctions.flatMap((conjunction) => quotes.flatMap((quote) => modes.flatMap((mode) =>
+      projects.flatMap((project) => [false, true].flatMap((followUp) =>
+        [false, true].map((negated) => ({ operation, feature, conjunction, quote, mode, project, followUp, negated }))
+      ))
+    )))
+  ))
+  it('covers each operation, feature, conjunction, quoted instruction, mode and negation', () => {
+    expect(cases).toHaveLength(256)
+    expect(new Set(cases.map((entry) => entry.operation)).size).toBe(2)
+    expect(new Set(cases.map((entry) => entry.feature)).size).toBe(2)
+    expect(new Set(cases.map((entry) => entry.conjunction)).size).toBe(2)
+    expect(new Set(cases.map((entry) => entry.quote)).size).toBe(2)
+    expect(new Set(cases.map((entry) => entry.mode)).size).toBe(2)
+    expect(new Set(cases.map((entry) => entry.project)).size).toBe(2)
+    expect(new Set(cases.map((entry) => entry.followUp)).size).toBe(2)
+    expect(new Set(cases.map((entry) => entry.negated)).size).toBe(2)
+  })
+  it.each(cases)('preserves authority under composition: $operation $feature $conjunction $quote $mode $project follow-up=$followUp no-edit=$negated', async (entry) => {
+    const text = `${entry.operation} ${entry.feature} in ${entry.project} ${entry.conjunction} review the project. The customer wrote ${entry.quote}.${entry.negated ? ' Do not edit files.' : ''}`
+    expect(await authority(text, entry.mode, entry.followUp), text).toBe(entry.mode === 'agent' && !entry.negated)
+  })
+  it.each(modes.flatMap((mode) => quotes.map((quote) => ({ mode, quote }))))(
+    'does not escalate a read-only request from quoted instructions: $mode $quote',
+    async ({ mode, quote }) => {
+      const text = `Review this project and recommend improvements. The customer wrote ${quote}.`
+      expect(await authority(text, mode, true), text).toBe(false)
+    }
+  )
+  it.each(['Add search', 'Remove the debug banner'])('preserves explicit edit and negation on follow-up: %s', async (text) => {
+    const history = [
+      { role: 'user' as const, content: 'Review this project.' },
+      { role: 'assistant' as const, content: 'I recommend adding search and removing the debug banner.' }
+    ]
+    for (const negated of [false, true]) {
+      const request = `${text}${negated ? ', but do not edit files' : ''}`
+      const result = await captureQuestion(0, request, root, 8192, 'agent', new AbortController().signal, { question: { history } })
+      expect((result.task as TaskContract).authority.edit, request).toBe(!negated)
+    }
   })
 })
