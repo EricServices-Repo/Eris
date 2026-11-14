@@ -893,6 +893,7 @@ describe('chat agent complex smoke test', () => {
     )
     expect(events.some((event) => event.type === 'progress' && event.incomplete)).toBe(true)
     expect(lastAnswer(events)).toContain('No file changes were made.')
+    expect(events.filter((event) => event.type === 'progress').at(-1)).toMatchObject({ blockedReason: 'model-not-using-tools' })
     expect(events.some((event) => event.type === 'adapt' && event.kind === 'reroute')).toBe(false)
     expect(lastAnswer(events)).not.toMatch(/Stopped after|What I did:/)
     expect(lastAnswer(events).match(/couldn’t complete/g)).toHaveLength(1)
@@ -1006,6 +1007,16 @@ describe('chat agent complex smoke test', () => {
     expect(harness.replies).toHaveLength(0)
   })
 
+  it('offers a typed empty-response retry only before any tool has run', async () => {
+    harness.replies.push('', '', '')
+    const events = await drain(runAgentWithWorkspaceTools({
+      workspacePath, settings: getDefaults(), model: 'builtin:composer-lite',
+      messages: [{ role: 'user', content: 'Update retry limit to four.' }], temperature: 0,
+      getSecret: () => null, mode: 'agent', turnPlan: fullEditPlan(), mcp: 'off'
+    }))
+    expect(events.filter((event) => event.type === 'progress').at(-1)).toMatchObject({ blockedReason: 'empty-responses' })
+  })
+
   it('bounds repeated empty completions without saving empty assistant turns or claiming success', async () => {
     harness.replies.push(
       JSON.stringify({
@@ -1035,6 +1046,7 @@ describe('chat agent complex smoke test', () => {
     expect(events.some((event) => event.type === 'progress' && event.incomplete)).toBe(true)
     expect(lastAnswer(events)).toContain('empty responses after two fresh-session retries')
     expect(lastAnswer(events)).toContain('implementation has not been confirmed complete')
+    expect(events.filter((event) => event.type === 'progress').at(-1)).not.toHaveProperty('blockedReason')
     expect(harness.prompts).toHaveLength(4)
     expect(
       harness.transcripts.every(

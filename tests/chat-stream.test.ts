@@ -341,6 +341,15 @@ describe('main-process task authority', () => {
     expect(actual?.task?.authority.edit).toBe(false)
     expect(actual?.task?.originalText).toContain('Airbnb')
   })
+  it('passes a safe blocked-model reason through to the terminal event', async () => {
+    const id = randomUUID()
+    runner.script = async function* () {
+      yield { type: 'progress', step: 1, actionLog: [], filesTouched: [], incomplete: true, blockedReason: 'model-not-using-tools' }
+      yield { type: 'answer', text: 'Incomplete.' }
+    }
+    expect(await stream(undefined, id)).toBe(true)
+    expect(sent.find((event) => event.channel === 'chat:done' && event.payload.requestId === id)?.payload.blockedReason).toBe('model-not-using-tools')
+  })
   it('executes one request ID once', async () => {
     let calls = 0
     runner.script = async function* () {

@@ -45,6 +45,7 @@ export type AgentRunnerEvent =
       filesTouched: string[]
       /** Set when the loop stopped before finishing (verify budget or an abort). */
       incomplete?: boolean
+      blockedReason?: 'model-not-using-tools' | 'empty-responses'
     }
   | {
       /** Persisted agent-session step (after a tool batch) for resume/rewind. */

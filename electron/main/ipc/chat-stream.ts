@@ -545,6 +545,7 @@ export function registerChatStreamIpc(): void {
           }
           let run: AgentRunRecord | null = null
           let runIncomplete = false
+          let blockedReason: 'model-not-using-tools' | 'empty-responses' | undefined
           let finalAnswer = ''
           const outcomeEvidence = new OutcomeEvidence()
           /** Accumulated for project memory even when no checkpoint/run record exists. */
@@ -1192,6 +1193,7 @@ export function registerChatStreamIpc(): void {
                   })
                 } else if (evt.type === 'progress') {
                   if (evt.incomplete) runIncomplete = true
+                  if (evt.blockedReason) blockedReason = evt.blockedReason
                   telemetrySteps = evt.step
                   if (evt.filesTouched.length) telemetryMutated = true
                   memoryFiles = [...new Set(evt.filesTouched)].slice(-200)
@@ -1344,7 +1346,7 @@ export function registerChatStreamIpc(): void {
               })
             }
             if (!(await persistReply(runIncomplete ? 'incomplete' : 'done'))) return false
-            publish('chat:done', { requestId, incomplete: runIncomplete, reply: replySnapshot })
+            publish('chat:done', { requestId, incomplete: runIncomplete, reply: replySnapshot, ...(blockedReason ? { blockedReason } : {}) })
             logInfo('Chat stream done', {
               requestId,
               model: resolvedModel,
