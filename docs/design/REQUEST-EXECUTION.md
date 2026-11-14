@@ -10,6 +10,8 @@ The broader [architecture review](../reviews/2026-11-06-router-architecture-revi
 
 ## Request lifecycle
 
+Explicit “explain how to implement” questions without a separate edit clause start as read-only, so the resolver does not need a model call to correct them. This is a narrow routing rule; general candidate-versus-resolved-operation consolidation remains future work.
+
 1. Load canonical recent history and calculate the initial route using existing policy.
 2. Bind historical recommendation/file-proposal references before semantic inference. Source eligibility, project identity and remote disclosure restrictions remain enforced by the existing binder.
 3. Resolve explicit file-creation operands with the pure `resolveFileRequest` helper. Equivalent wording such as “generate those files here in the project” does not require a classification model. Multiple recent file lists remain ambiguous. An unavailable durable binding cannot fall back to incidental prose.
@@ -19,8 +21,6 @@ The broader [architecture review](../reviews/2026-11-06-router-architecture-revi
 7. Execute using the scoped contract. The executor no longer uses its former improve/review/launch phrase scanner to decide whether workspace tools are necessary.
 8. Check the required file set against actual filesystem state and observed reads/mutations, then run the existing verification and outcome gates.
 9. Persist the requested work and actual result. A read-only response does not mark requested edits as completed in durable task state.
-
-Explicit “explain how to implement” questions without a separate edit clause start as read-only, so the resolver does not need a model call to correct them. This is a narrow routing rule; general candidate-versus-resolved-operation consolidation remains future work.
 
 ## Requested work and effective work
 
