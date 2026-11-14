@@ -123,7 +123,7 @@ export function asksToImplementChanges(text: string): boolean {
   // Require the changes to be the verb's object. Proximity alone treats
   // 'Review the website build; recommend improvements' as permission to edit.
   return (
-    /\b(?:code|implement|apply|write|build|make|add)\s+(?:(?:all|of|these|those|the|above|recommended|suggested|requested|following|needed|proposed|some|my|our|\d+)\s+)*(?:changes?|improvements?|fixes?)\b/i.test(
+    /\b(?:code|implement|apply|write|build|make|add)\s+(?:(?:all|of|these|those|the|above|recommended|suggested|requested|following|needed|proposed|latest|recent|some|my|our|\d+)\s+)*(?:changes?|improvements?|fixes?)\b/i.test(
       t
     ) || /\b(?:code|implement|apply|write|build|make|add)\s+(?:it|that|those|them|these)\b/i.test(t)
   )
