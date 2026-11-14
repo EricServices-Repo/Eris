@@ -96,7 +96,7 @@ export function TaskTimelineView({ job }: { job: ChatJobSnapshot }) {
               {row.reason ? ` · ${row.reason}` : ''}
               {row.promptTokens !== undefined ? ` · Prompt estimate: ${row.promptTokens.toLocaleString()} tokens` : ''}
               {row.nativeFirstTokenMs !== undefined ? ` · First token: ${duration(row.nativeFirstTokenMs)}` : ''}
-              {row.nativeFirstTextMs !== undefined ? ` · First visible text: ${duration(row.nativeFirstTextMs)}` : ''}
+              {row.nativeFirstTextMs !== undefined ? ` · First native text chunk: ${duration(row.nativeFirstTextMs)}` : ''}
             </li>
           ))}
         </ol>
