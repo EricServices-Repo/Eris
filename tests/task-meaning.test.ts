@@ -250,3 +250,25 @@ describe('OutcomeEvidence.changes (#501)', () => {
     expect(evidence.changes[0]!.excerpt).toHaveLength(1500)
   })
 })
+
+
+describe('resolved action summary (#469)', () => {
+  it('describes edit, read-only and missing-reference contracts without inventing authority', async () => {
+    const { taskActionSummary } = await import('../src/shared/task-contract')
+    const { createTaskContract } = await import('../electron/main/services/task-intake')
+    const make = (text: string, intent: TurnPlan['intent'], toolPolicy: TurnPlan['toolPolicy']) => createTaskContract({
+      taskId: 'summary', threadId: null, workspacePath: realpathSync(tmpdir()), text,
+      plan: { intent, toolPolicy, agentId: 'composer', agentName: 'Composer', mode: 'agent',
+        models: { chat: 'builtin:composer-lite', tools: 'builtin:composer-lite' }, requiresTools: true,
+        escalateToFull: false, reason: 'test', method: 'heuristic' }
+    })
+    const edit = make('Add a footer to index.html', 'edit', 'edit')
+    expect(taskActionSummary(edit)).toContain('Edit')
+    expect(taskActionSummary(edit)).toContain('file edits allowed')
+    const review = make('Review this project', 'review', 'read')
+    expect(taskActionSummary(review)).toContain('Review')
+    expect(taskActionSummary(review)).not.toContain('file edits allowed')
+    review.requested!.state = 'needs-clarification'
+    expect(taskActionSummary(review)).toBe('Needs clarification · no changes allowed')
+  })
+})

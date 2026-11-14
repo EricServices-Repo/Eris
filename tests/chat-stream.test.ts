@@ -351,6 +351,17 @@ describe('main-process task authority', () => {
     expect(await stream(undefined, id)).toBe(true)
     expect(sent.find((event) => event.channel === 'chat:done' && event.payload.requestId === id)?.payload.blockedReason).toBe('model-not-using-tools')
   })
+  it('publishes the resolved contract before history and agent execution', async () => {
+    runner.script = async function* () { yield { type: 'answer', text: 'ok' } }
+    const id = randomUUID()
+    await stream({ text: 'Review this project' }, id)
+    const events = sent.filter((event) => event.payload.requestId === id)
+    const routed = events.findIndex((event) => event.channel === 'chat:routed')
+    const history = events.findIndex((event) => event.channel === 'chat:phase' && event.payload.phase === 'history')
+    expect(routed).toBeGreaterThanOrEqual(0)
+    expect(history).toBeGreaterThan(routed)
+    expect(events[routed]?.payload.task).toMatchObject({ deliverable: 'review', authority: { edit: false } })
+  })
   it('executes one request ID once', async () => {
     let calls = 0
     runner.script = async function* () {
