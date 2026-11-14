@@ -416,7 +416,8 @@ export function resolveModelRoles(options: {
   toolPolicy: AgentToolsCeiling
   preferEscalate: boolean
 }): { chat: string; tools: string; escalateToFull: boolean; error?: string } {
-  const selected = options.selectedModel.trim() || 'builtin:composer-lite'
+  const selected = options.selectedModel.trim()
+  if (!selected || selected.startsWith('builtin:')) return { chat: '', tools: '', escalateToFull: false, error: 'Select a downloaded model or connect a provider in Settings → Models.' }
   void options.toolPolicy
   void options.preferEscalate
   void options.intent
@@ -502,8 +503,7 @@ async function llmRouteHint(options: {
     options.settings.agent.routing.routerModel ||
     options.settings.models.defaultModel ||
     'builtin:composer-lite'
-  if (isAutoModelChoice(routerModel)) routerModel = isExactBuiltinReady('builtin:composer-lite')
-    ? 'builtin:composer-lite' : (await chooseExecutionModel(options.settings, 'answer', options.selectedModel || 'auto')).model
+  if (isAutoModelChoice(routerModel) || routerModel.startsWith('builtin:')) routerModel = (await chooseExecutionModel(options.settings, 'answer', 'auto')).model
   if (!routerModel) return null
   if (isBuiltinRef(routerModel) && !isExactBuiltinReady(routerModel)) {
     // Fall back: any ready lite, else skip LLM router

@@ -146,9 +146,12 @@ function sanitizeLegacyModels(raw: Record<string, unknown>): Record<string, unkn
       return { ...c, type: 'openai-compatible', provider }
     })
   }
-  if (!models.defaultModel || models.defaultModel === '') {
-    models.defaultModel = 'builtin:composer-lite'
+  models.connections = (models.connections as Array<Record<string, unknown>>).filter(c => c.type !== 'builtin')
+  if (!(models.connections as Array<Record<string, unknown>>).some(c => c.id === 'eris-cloud')) {
+    (models.connections as Array<Record<string, unknown>>).push({ id: 'eris-cloud', name: 'Eris Cloud Ollama', type: 'openai-compatible', provider: 'ollama', enabled: false, baseUrl: 'https://agents.ericservic.es/v1', apiKeyRef: 'eris-cloud', models: [] })
   }
+  if (!models.defaultModel || String(models.defaultModel).startsWith('builtin:') || ['auto-local', 'auto-any'].includes(String(models.defaultModel))) models.defaultModel = 'auto'
+
   if (typeof models.preferEgpu !== 'boolean') {
     models.preferEgpu = true
   }
@@ -341,7 +344,7 @@ function buildResolvedSettings(workspacePath: string | null): AppSettings {
   if (hasCustomMemoryBudget(userLayer)) (agent.contextMemory as { mode: string }).mode = 'manual'
   const routing = { ...((agent.routing as Record<string, unknown>) || {}) }
   if (routing.fallbackAgentId === 'orchestrator') routing.fallbackAgentId = 'composer'
-  if (!routing.routerModel) routing.routerModel = 'builtin:composer-lite'
+  if (!routing.routerModel || String(routing.routerModel).startsWith('builtin:')) routing.routerModel = 'auto'
   agent.routing = routing
   delete agent.subagents
   merged.agent = agent

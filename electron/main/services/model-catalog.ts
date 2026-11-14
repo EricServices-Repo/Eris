@@ -64,6 +64,7 @@ function lightConnectionSnapshot(
         name,
         source: 'connection',
         connectionId: conn.id,
+        provider: conn.provider,
         ready: true
       })
     }
@@ -82,7 +83,7 @@ export async function getModelsStatus(
 
   const builtin = getBuiltinStatuses()
   const local = getLocalStatuses()
-  const models = catalogModels(builtin, local)
+  const models = catalogModels([], local)
   const gpu = includeGpu ? await getGpuAccelStatus(preferEgpu) : undefined
 
   let connections: ModelsStatus['connections'] = []
@@ -116,6 +117,7 @@ export async function getModelsStatus(
             name,
             source: 'connection',
             connectionId: conn.id,
+        provider: conn.provider,
             ready: true
           })
         }
@@ -134,6 +136,7 @@ export async function getModelsStatus(
             name,
             source: 'connection' as const,
             connectionId: conn.id,
+        provider: conn.provider,
             ready: false
           }))
         }

@@ -89,8 +89,8 @@ describe('production Auto model selection', () => {
       recordNativeLatency(s, 'local:qwen-coder', 'warm-answer', latency * 2)
       recordNativeLatency(s, 'local:qwen-coder', 'load', 5000)
     }
-    expect((await chooseExecutionModel(s, 'answer')).model).toBe('builtin:composer-lite')
-    expect((await chooseExecutionModel(s, 'edit')).model).toBe('local:qwen-coder')
+    expect((await chooseExecutionModel(s, 'answer')).model).toBe('local:qwen-coder')
+    expect((await chooseExecutionModel(s, 'edit', 'auto-local')).model).toBe('local:qwen-coder')
     s.evals.useScoresForRouting = true
     state.winner = 'local:qwen-coder'
     expect((await chooseExecutionModel(s, 'answer')).model).toBe('local:qwen-coder')
@@ -101,19 +101,19 @@ describe('production Auto model selection', () => {
     s.evals.useScoresForRouting = true
     state.winner = 'remote-coder'
     s.models.connections[0].recallApprovedUrl = s.models.connections[0].baseUrl
-    expect((await chooseExecutionModel(s, 'edit')).model).toBe('local:qwen-coder')
+    expect((await chooseExecutionModel(s, 'edit', 'auto-local')).model).toBe('local:qwen-coder')
     expect(state.scored).not.toContain('remote-coder')
   })
   it('allows loopback, but recomputes when its endpoint becomes remote', async () => {
     const s = settings()
     s.models.connections[0].baseUrl = 'http://127.0.0.1:11434/v1'
     expect(
-      (await chooseExecutionModel(s, 'edit')).candidates.find((c) => c.model === 'remote-coder')
+      (await chooseExecutionModel(s, 'edit', 'auto-local')).candidates.find((c) => c.model === 'remote-coder')
         ?.eligible
     ).toBe(true)
     s.models.connections[0].baseUrl = 'https://remote.example/v1'
     expect(
-      (await chooseExecutionModel(s, 'edit')).candidates.find((c) => c.model === 'remote-coder')
+      (await chooseExecutionModel(s, 'edit', 'auto-local')).candidates.find((c) => c.model === 'remote-coder')
         ?.eligible
     ).toBe(false)
   })
@@ -127,7 +127,7 @@ describe('production Auto model selection', () => {
   })
   it('uses intent specialization rather than largest weight file', async () => {
     state.locals = [local('local:general-instruct', 10 * 1024 ** 3), local()]
-    expect((await chooseExecutionModel(settings(), 'edit')).model).toBe('local:qwen-coder')
+    expect((await chooseExecutionModel(settings(), 'edit', 'auto-local')).model).toBe('local:qwen-coder')
     expect((await chooseExecutionModel(settings(), 'answer')).model).toBe('local:general-instruct')
   })
   it('limits reloads across a nine-turn mix with stable eligible models', async () => {
@@ -152,7 +152,7 @@ describe('production Auto model selection', () => {
   it('never retains a resident that declares tools unsupported for an edit', async () => {
     state.locals = [{ ...local('local:general-instruct'), routingCapabilities: { tools: false } }, local('local:qwen-coder')]
     state.resident = { ref: 'local:general-instruct', contextSize: 4096 }
-    const choice = await chooseExecutionModel(settings(), 'edit')
+    const choice = await chooseExecutionModel(settings(), 'edit', 'auto-local')
     expect(choice.model).toBe('local:qwen-coder')
     expect(choice.candidates.find((candidate) => candidate.model === 'local:general-instruct')?.eligible).toBe(false)
   })
@@ -166,8 +166,8 @@ describe('production Auto model selection', () => {
   it('rejects unknown capacity, oversized and non-chat models with reasons', async () => {
     state.budget = 0
     state.locals = [local(), local('local:embed', 1)]
-    const choice = await chooseExecutionModel(settings(), 'edit')
-    expect(choice.model).toBe('builtin:composer-lite')
+    const choice = await chooseExecutionModel(settings(), 'edit', 'auto-local')
+    expect(choice.model).toBe('')
     expect(choice.candidates.find((c) => c.model === 'local:qwen-coder')?.reason).toContain(
       'memory'
     )
@@ -176,45 +176,40 @@ describe('production Auto model selection', () => {
   it('admits measured resident capacity without requiring another copy of the weights', async () => {
     state.budget = 0
     state.resident = { ref: 'local:qwen-coder', contextSize: 4096 }
-    expect((await chooseExecutionModel(settings(), 'edit')).model).toBe('local:qwen-coder')
+    expect((await chooseExecutionModel(settings(), 'edit', 'auto-local')).model).toBe('local:qwen-coder')
   })
   it('uses measured outcomes only inside the eligible pool', async () => {
     const s = settings()
     s.evals.useScoresForRouting = true
-    state.winner = 'builtin:composer-lite'
-    expect(await chooseExecutionModel(s, 'edit')).toMatchObject({
+    state.winner = 'local:qwen-coder'
+    expect(await chooseExecutionModel(s, 'edit', 'auto-local')).toMatchObject({
       model: state.winner,
       basis: 'telemetry'
     })
   })
   it('records which model was selected and why each other eligible model lost', async () => {
-    const choice = await chooseExecutionModel(settings(), 'edit')
+    const choice = await chooseExecutionModel(settings(), 'edit', 'auto-local')
     const reason = (m: string) => choice.candidates.find((c) => c.model === m)?.reason
     expect(choice).toMatchObject({ model: 'local:qwen-coder', basis: 'profile' })
     expect(reason('local:qwen-coder')).toMatch(
       /^selected by heuristic task rank; heuristic task rank 28/
     )
-    expect(reason('builtin:composer-lite')).toMatch(
-      /^eligible, not selected: local:qwen-coder won on heuristic task rank \(28 vs 10\)/
-    )
+    expect(reason('builtin:composer-lite')).toBeUndefined()
     // Ineligible models keep their exclusion reason.
     expect(reason('remote-coder')).toBe('excluded by Auto-local execution policy')
   })
   it('says a measured choice was measured, not ranked', async () => {
     const s = settings()
     s.evals.useScoresForRouting = true
-    state.winner = 'builtin:composer-lite'
-    const choice = await chooseExecutionModel(s, 'edit')
+    state.winner = 'local:qwen-coder'
+    const choice = await chooseExecutionModel(s, 'edit', 'auto-local')
     const reason = (m: string) => choice.candidates.find((c) => c.model === m)?.reason
-    expect(choice).toMatchObject({ model: 'builtin:composer-lite', basis: 'telemetry' })
-    expect(reason('builtin:composer-lite')).toMatch(/^selected by measured run outcomes for edit/)
-    expect(reason('local:qwen-coder')).toBe(
-      'eligible, not selected: builtin:composer-lite won on measured run outcomes for edit; switch/load cost estimated; capability specialization inferred unless declared'
-    )
+    expect(choice).toMatchObject({ model: 'local:qwen-coder', basis: 'telemetry' })
+    expect(reason('local:qwen-coder')).toMatch(/^selected by measured run outcomes for edit/)
   })
   it('names a tie-break by name instead of claiming a higher rank', async () => {
     state.locals = [local('local:b-coder'), local('local:a-coder')]
-    const choice = await chooseExecutionModel(settings(), 'edit')
+    const choice = await chooseExecutionModel(settings(), 'edit', 'auto-local')
     expect(choice.model).toBe('local:a-coder')
     expect(choice.candidates.find((c) => c.model === 'local:b-coder')?.reason).toContain(
       '(tied at 28; broken by name)'
@@ -223,12 +218,12 @@ describe('production Auto model selection', () => {
   it('honors explicit policy independently of the legacy profile', () => {
     expect(executionPolicy(settings(), 'auto-any')).toBe('auto-any')
     expect(executionPolicy(settings(), 'auto-local')).toBe('auto-local')
-    expect(executionPolicy(settings(), 'auto')).toBe('auto-local')
+    expect(executionPolicy(settings(), 'auto')).toBe('auto-any')
   })
   it('excludes previously attempted workers for bounded recovery', async () => {
     expect(
       (await chooseExecutionModel(settings(), 'edit', 'auto-local', ['local:qwen-coder'])).model
-    ).toBe('builtin:composer-lite')
+    ).toBe('')
   })
 
   describe('connection readiness (#305 MO-03)', () => {
@@ -244,7 +239,7 @@ describe('production Auto model selection', () => {
     })
     it('does not prefer a keyed connection whose key is not stored over a ready Lite', async () => {
       const choice = await chooseExecutionModel(keyed('openai-key'), 'edit', 'auto-any')
-      expect(choice.model).toBe('builtin:composer-lite')
+      expect(choice.model).toBe('')
       expect(choice.candidates.find((c) => c.model === 'remote-coder')).toMatchObject({
         eligible: false,
         reason: 'connection API key is not stored'
@@ -253,7 +248,7 @@ describe('production Auto model selection', () => {
     it('treats a blank stored key as missing', async () => {
       state.secrets.set('openai-key', '   ')
       const choice = await chooseExecutionModel(keyed('openai-key'), 'edit', 'auto-any')
-      expect(choice.model).toBe('builtin:composer-lite')
+      expect(choice.model).toBe('')
     })
     it('selects the same connection once its key is stored', async () => {
       state.secrets.set('openai-key', 'sk-test')

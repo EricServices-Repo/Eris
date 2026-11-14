@@ -23,7 +23,7 @@ export async function completeAtCursor(options: {
 }): Promise<{ ok: boolean; text?: string; error?: string }> {
   const prefix = options.prefix.slice(-2400)
   const suffix = options.suffix.slice(0, 800)
-  const model = options.settings.models.defaultModel || 'builtin:composer-lite'
+  const model = options.settings.models.defaultModel || 'auto'
   try {
     const text = await collectText(
       streamModelChat({
@@ -82,7 +82,7 @@ export async function inlineEdit(options: {
   after?: string
   signal?: AbortSignal
 }): Promise<{ ok: boolean; text?: string; error?: string }> {
-  const model = options.settings.models.defaultModel || 'builtin:composer-lite'
+  const model = options.settings.models.defaultModel || 'auto'
   const selection = options.selection.slice(0, 12_000)
   if (!selection.trim() && !options.instruction.trim()) {
     return { ok: false, error: 'Select code or provide an instruction' }

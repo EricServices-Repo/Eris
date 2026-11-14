@@ -1,23 +1,20 @@
 {
   "models": {
-    "defaultModel": "builtin:composer-lite",
+    "defaultModel": "auto",
     "temperature": 0.3,
     "contextWindow": 32768,
     "preferEgpu": true,
     "allowCpuSpill": true,
     "connections": [
       {
-        "id": "builtin",
-        "name": "Built-in Composer",
-        "type": "builtin",
-        "provider": "builtin",
-        "enabled": true,
-        "baseUrl": "",
-        "apiKeyRef": "",
-        "models": [
-          "builtin:composer-lite",
-          "builtin:composer"
-        ]
+        "id": "eris-cloud",
+        "name": "Eris Cloud Ollama",
+        "type": "openai-compatible",
+        "provider": "ollama",
+        "enabled": false,
+        "baseUrl": "https://agents.ericservic.es/v1",
+        "apiKeyRef": "eris-cloud",
+        "models": []
       }
     ]
   },
@@ -31,7 +28,7 @@
     "routing": {
       "enabled": true,
       "mode": "auto",
-      "routerModel": "builtin:composer-lite",
+      "routerModel": "auto",
       "useLlmRouter": true,
       "fallbackAgentId": "composer",
       "profile": "auto",

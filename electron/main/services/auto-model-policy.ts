@@ -30,9 +30,7 @@ export function executionPolicy(settings: AppSettings, selected: string): Execut
   if (selected === 'auto-local') return 'auto-local'
   if (selected === 'auto-any') return 'auto-any'
   if (selected.trim() && selected !== 'auto') return 'fixed'
-  return settings.agent.routing.profile === 'local' || !settings.agent.routing.preferCloudComposer
-    ? 'auto-local'
-    : 'auto-any'
+  return 'auto-any'
 }
 
 /** Execution locality is stricter than permission to disclose recall to an approved LAN host. */
@@ -60,7 +58,7 @@ export async function chooseExecutionModel(
   intent: ChatIntent,
   selected = 'auto',
   excluded: readonly string[] = [],
-  options: { cloudComposer?: boolean } = {}
+  _options: { cloudComposer?: boolean } = {}
 ): Promise<AutoModelChoice> {
   const policy = executionPolicy(settings, selected)
   if (policy === 'fixed') return { model: selected, policy, basis: 'profile', candidates: [] }
@@ -98,16 +96,6 @@ export async function chooseExecutionModel(
       rank
     })
   }
-  add('builtin:composer-lite', isExactBuiltinReady('builtin:composer-lite'), '', 10)
-  const fullLocal =
-    settings.agent.routing.useLocalComposerFull && isExactBuiltinReady('builtin:composer')
-  // Cloud Composer is resolved separately by the production cloud route.
-  add(
-    'builtin:composer',
-    Boolean(fullLocal) || (policy === 'auto-any' && options.cloudComposer === true),
-    '',
-    ['edit', 'verify', 'run'].includes(intent) ? 24 : 8
-  )
   for (const m of locals) {
     const incompatible = /mmproj|embed|clip|vision|encoder/i.test(
       `${m.ref} ${m.name} ${m.filename}`

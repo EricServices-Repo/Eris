@@ -83,7 +83,7 @@ const plan: TurnPlan = {
   agentId: 'composer',
   agentName: 'Composer',
   mode: 'agent',
-  models: { chat: 'builtin:composer-lite', tools: 'builtin:composer-lite' },
+  models: { chat: 'test-provider-model', tools: 'test-provider-model' },
   toolPolicy: 'full',
   requiresTools: true,
   escalateToFull: false,
@@ -96,7 +96,7 @@ function stream(prompt?: Record<string, unknown>, requestId = randomUUID()) {
     { sender },
     {
       requestId,
-      model: 'builtin:composer-lite',
+      model: 'test-provider-model',
       mode: 'agent',
       turnPlan: plan,
       ...(prompt
@@ -208,7 +208,7 @@ describe('main-process task authority', () => {
     const dir=mkdtempSync(join(tmpdir(),'eris-terminal-owner-'))
     let db=new ChatDatabase(dir)
     databases.push(db)
-    const thread=db.save({id:randomUUID(),title:'Terminal',model:'builtin:composer-lite',messages:[],createdAt:1,updatedAt:1})
+    const thread=db.save({id:randomUUID(),title:'Terminal',model:'test-provider-model',messages:[],createdAt:1,updatedAt:1})
     vi.spyOn(chats,'getChat').mockImplementation(async (_root,id,page)=>db.get(id,page))
     const append=vi.spyOn(chats,'appendChatMessage').mockImplementation(async (_root,id,message,model)=>db.append(id,message,model))
     const memory=await import('../electron/main/services/context-memory')
@@ -232,7 +232,7 @@ describe('main-process task authority', () => {
     const dir=mkdtempSync(join(tmpdir(),'eris-partial-reload-'))
     let db=new ChatDatabase(dir)
     databases.push(db)
-    const thread=db.save({id:randomUUID(),title:'Partial',model:'builtin:composer-lite',messages:[],createdAt:1,updatedAt:1})
+    const thread=db.save({id:randomUUID(),title:'Partial',model:'test-provider-model',messages:[],createdAt:1,updatedAt:1})
     vi.spyOn(chats,'getChat').mockImplementation(async (_root,id,page)=>db.get(id,page))
     vi.spyOn(chats,'appendChatMessage').mockImplementation(async (_root,id,message,model)=>db.append(id,message,model))
     const memory=await import('../electron/main/services/context-memory')
@@ -266,7 +266,7 @@ describe('main-process task authority', () => {
     const chats=await import('../electron/main/services/chats')
     const db=new ChatDatabase(mkdtempSync(join(tmpdir(),'eris-partial-storage-')))
     databases.push(db)
-    const thread=db.save({id:randomUUID(),title:'Partial',model:'builtin:composer-lite',messages:[],createdAt:1,updatedAt:1})
+    const thread=db.save({id:randomUUID(),title:'Partial',model:'test-provider-model',messages:[],createdAt:1,updatedAt:1})
     vi.spyOn(chats,'getChat').mockImplementation(async (_root,id,page)=>db.get(id,page))
     vi.spyOn(chats,'appendChatMessage').mockImplementation(async (_root,id,message,model) => {
       if(message.role==='assistant') throw Error('disk full')
@@ -405,7 +405,7 @@ async function reviewedTurn(verdict: Record<string, unknown>) {
   vi.mocked(reviewTaskOutcome).mockClear()
   vi.mocked(reviewTaskOutcome).mockResolvedValueOnce(verdict as never)
   const requestId = randomUUID(), threadId = randomUUID()
-  const thread = { id: threadId, title: 'Booking', model: 'builtin:composer-lite', messages: [], createdAt: 1, updatedAt: 1 }
+  const thread = { id: threadId, title: 'Booking', model: 'test-provider-model', messages: [], createdAt: 1, updatedAt: 1 }
   vi.spyOn(chats, 'getChat').mockResolvedValue(thread)
   vi.spyOn(chats, 'appendChatMessage').mockImplementation(async (_root, _id, message) => ({ ...thread, messages: [message] }))
   const memory = await import('../electron/main/services/context-memory')
@@ -429,7 +429,7 @@ describe('canonical RAM history at the production chat IPC boundary', () => {
       verdict: 'unresolved', failure: 'timeout', reason: 'Semantic assessment timed out.'
     })
     const requestId = randomUUID(), threadId = randomUUID()
-    const thread = { id: threadId, title: 'Booking', model: 'builtin:composer-lite', messages: [], createdAt: 1, updatedAt: 1 }
+    const thread = { id: threadId, title: 'Booking', model: 'test-provider-model', messages: [], createdAt: 1, updatedAt: 1 }
     vi.spyOn(chats, 'getChat').mockResolvedValue(thread)
     vi.spyOn(chats, 'appendChatMessage').mockImplementation(async (_root, _id, message) => ({ ...thread, messages: [message] }))
     const memory = await import('../electron/main/services/context-memory')
@@ -459,7 +459,7 @@ describe('canonical RAM history at the production chat IPC boundary', () => {
       verdict: 'partial', reason: 'The answer does not mention the date range check.'
     })
     const requestId = randomUUID(), threadId = randomUUID()
-    const thread = { id: threadId, title: 'Booking', model: 'builtin:composer-lite', messages: [], createdAt: 1, updatedAt: 1 }
+    const thread = { id: threadId, title: 'Booking', model: 'test-provider-model', messages: [], createdAt: 1, updatedAt: 1 }
     vi.spyOn(chats, 'getChat').mockResolvedValue(thread)
     vi.spyOn(chats, 'appendChatMessage').mockImplementation(async (_root, _id, message) => ({ ...thread, messages: [message] }))
     const memory = await import('../electron/main/services/context-memory')
@@ -515,7 +515,7 @@ describe('canonical RAM history at the production chat IPC boundary', () => {
     const thread = {
       id: threadId,
       title: 'Bookings',
-      model: 'builtin:composer-lite',
+      model: 'test-provider-model',
       messages,
       createdAt: 1,
       updatedAt: 1,
@@ -616,7 +616,7 @@ describe('canonical RAM history at the production chat IPC boundary', () => {
     vi.spyOn(chats, 'getChat').mockResolvedValue({
       id: threadId,
       title: 'History',
-      model: 'builtin:composer-lite',
+      model: 'test-provider-model',
       messages: [],
       createdAt: 1,
       updatedAt: 1
@@ -626,7 +626,7 @@ describe('canonical RAM history at the production chat IPC boundary', () => {
       return {
         id: threadId,
         title: 'History',
-        model: 'builtin:composer-lite',
+        model: 'test-provider-model',
         messages: [message],
         createdAt: 1,
         updatedAt: 1

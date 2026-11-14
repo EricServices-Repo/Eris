@@ -51,7 +51,7 @@ describe('settings defaults', () => {
     const d = getDefaults()
     expect(d.agent.commandApproval).toBe('ask')
     expect(d.agent.allowedCommands).toEqual([])
-    expect(d.models.defaultModel).toBe('builtin:composer-lite')
+    expect(d.models.defaultModel).toBe('auto')
   })
 
   it('caches resolved settings until invalidated by a write', () => {
@@ -79,9 +79,9 @@ describe('settings migrations', () => {
     const models = s.models as Record<string, unknown>
     expect(models.provider).toBeUndefined()
     expect(models.ollama).toBeUndefined()
-    expect(s.models.defaultModel).toBe('builtin:composer-lite')
+    expect(s.models.defaultModel).toBe('auto')
     expect(s.agent.routing.fallbackAgentId).toBe('composer')
-    expect(s.agent.routing.routerModel).toBe('builtin:composer-lite')
+    expect(s.agent.routing.routerModel).toBe('auto')
     expect((s.agent as Record<string, unknown>).subagents).toBeUndefined()
     expect(s.general.logging.level).toBe('info')
     expect(s.editor.inlineSuggest).toBe(true)
@@ -123,11 +123,8 @@ describe('settings migrations', () => {
       }
     })
     const s = getResolvedSettings(null)
-    const builtin = s.models.connections.find((c) => c.id === 'builtin')!
-    expect(builtin.models).toEqual(
-      expect.arrayContaining(['builtin:composer-lite', 'builtin:composer'])
-    )
-    expect(s.models.connections.find((c) => c.id === 'o')!.provider).toBe('custom')
+    expect(s.models.connections.some(c => c.type === 'builtin')).toBe(false)
+    expect(s.models.connections.find(c => c.id === 'eris-cloud')).toMatchObject({ provider: 'ollama', enabled: false, models: [], baseUrl: 'https://agents.ericservic.es/v1' })
   })
 
   it('coerces legacy connection type openai to openai-compatible', () => {

@@ -1701,7 +1701,8 @@ export function warmLocalInference(
     return Promise.resolve({ ok: false, error: 'skipped' })
   }
   const s = settings ?? getResolvedSettings(appState.currentWorkspace)
-  const preferred = requestedModel || s.models.defaultModel || 'builtin:composer-lite'
+  const preferred = requestedModel || s.models.defaultModel || 'auto'
+  if (!foreground && !preferred.startsWith('local:')) return Promise.resolve({ ok: false, error: 'No local model selected' })
   if (
     !foreground &&
     warmInFlight?.modelRef === preferred &&
