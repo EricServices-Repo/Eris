@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   admitChatJob,
   finishChatJob,
@@ -36,6 +36,22 @@ async function admitted() {
 }
 
 describe('terminal chat jobs stay terminal (#303)', () => {
+  it('keeps heartbeats transient while updating activity and rejects them after terminal state (#511)', async () => {
+    const id = await admitted()
+    const before = getChatJob(id)!
+    const now = new Date(Date.parse(before.updatedAt) + 2_000)
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+    try {
+      expect(recordChatJobEvent(id, 'chat:progress', { step: 1, chars: 12, elapsedMs: 2000 })).toBe(true)
+      const after = getChatJob(id)!
+      expect(Date.parse(after.updatedAt)).toBe(now.getTime())
+      expect(after.events).toEqual(before.events)
+      finishChatJob(id, 'done')
+      expect(recordChatJobEvent(id, 'chat:progress', { step: 1, chars: 20, elapsedMs: 4000 })).toBe(false)
+    } finally { vi.useRealTimers() }
+    await flushChatJobs()
+  })
   it('a later failure does not rewrite a completed task', async () => {
     const id = await admitted()
     recordChatJobEvent(id, 'chat:answer', { chunk: 'All checks passed.' })

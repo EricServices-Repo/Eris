@@ -2443,6 +2443,9 @@ async function* runAgentInternal(options: {
       let assistantText = ''
       let abortedLoop = false
       let nativeFromStream: ToolCall[] | undefined
+      const modelStartedAt = Date.now()
+      let lastHeartbeatAt = modelStartedAt
+      let generatedChars = 0
       const constrainThisTurn =
         constrainNextToolCall &&
         localConstrainEnabled &&
@@ -2481,6 +2484,12 @@ async function* runAgentInternal(options: {
         }), modelDeadline.signal)) {
           if (evt.kind === 'thinking') {
             // Model tokens are the reply, not the thinking trace.
+            generatedChars += evt.text.length
+            const now = Date.now()
+            if (now - lastHeartbeatAt >= 2_000) {
+              lastHeartbeatAt = now
+              yield { type: 'heartbeat', step, chars: generatedChars, elapsedMs: now - modelStartedAt }
+            }
           } else {
             assistantText = evt.full
             latestAssistant = evt.full

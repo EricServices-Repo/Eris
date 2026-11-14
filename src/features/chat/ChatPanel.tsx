@@ -1149,7 +1149,7 @@ export function ChatPanel({
                     thinking={thinkingBuffer}
                     status={answerBuffer ? null : agentStatus}
                     tools={toolActivity}
-                    defaultOpen={false}
+                    defaultOpen
                     live={!answerBuffer}
                   />
                   <DelegationCards items={delegations} />

@@ -155,6 +155,9 @@ export function useChatSession({
   const [activeCheckpointId, setActiveCheckpointId] = useState<string | null>(null)
   const completedRequestsRef = useRef(new Set<string>())
   const typedPhaseRequestRef = useRef<string | null>(null)
+  const currentPhaseRef = useRef<string>('')
+  const currentStatusRef = useRef('')
+  const lastToolRef = useRef('')
   const requestIdRef = useRef<string | null>(null)
   /** Survives Stop so late chat:done/error still match the turn we aborted. */
   const lastRequestIdRef = useRef<string | null>(null)
@@ -437,6 +440,9 @@ export function useChatSession({
       }
 
       const requestId = uid()
+      currentPhaseRef.current = ''
+      currentStatusRef.current = ''
+      lastToolRef.current = ''
       requestIdRef.current = requestId
       requestThreadIdRef.current = null
       requestWorkspacePathRef.current = workspacePath
@@ -822,6 +828,9 @@ export function useChatSession({
     })
     const offTool = window.ide.onChatTool(({ requestId, tool }) => {
       if (requestId !== requestIdRef.current) return
+      if (tool.status !== 'running') {
+        lastToolRef.current = `${tool.name}${tool.path ? ` ${tool.path}` : ''}`
+      }
       if (tool.status === 'ok' && tool.effect === 'workspace') {
         for (const path of tool.changedResources?.length
           ? tool.changedResources
@@ -969,6 +978,7 @@ export function useChatSession({
     const offPhase = window.ide.onChatPhase(({ requestId, phase, reason, queuePosition }) => {
       if (requestId !== requestIdRef.current) return
       typedPhaseRequestRef.current = requestId
+      currentPhaseRef.current = phase
       // A chat waiting behind another task (or one still unwinding after Stop)
       // says so, instead of "Working…" (#520).
       setAgentStatus(
@@ -976,12 +986,21 @@ export function useChatSession({
           ? `Queued${queuePosition ? ` (#${queuePosition})` : ''} · finishing the previous task…`
           : reason && (phase === 'loading' || phase === 'prefill')
             ? `${taskPhaseLabels[phase]} · ${reason}`
-            : taskPhaseLabels[phase]
+            : ['generating', 'tool', 'prefill', 'integrating'].includes(phase) && currentStatusRef.current
+              ? currentStatusRef.current
+              : taskPhaseLabels[phase]
       )
     })
     const offStatus = window.ide.onChatStatus(({ requestId, text }) => {
       if (requestId !== requestIdRef.current) return
-      if (typedPhaseRequestRef.current !== requestId) setAgentStatus(text)
+      currentStatusRef.current = text
+      if (typedPhaseRequestRef.current !== requestId || ['generating', 'tool', 'prefill', 'integrating'].includes(currentPhaseRef.current)) setAgentStatus(text)
+    })
+    const offProgress = window.ide.onChatProgress(({ requestId, step, chars, elapsedMs }) => {
+      if (requestId !== requestIdRef.current || !['generating', 'tool', 'prefill', 'integrating'].includes(currentPhaseRef.current)) return
+      const status = currentStatusRef.current || `Step ${step}`
+      const last = lastToolRef.current ? ` · last: ${lastToolRef.current}` : ''
+      setAgentStatus(`${status} · ${Math.round(elapsedMs / 1000)}s · ~${Math.floor(chars / 4)} tokens${last}`)
     })
     const offApproval = window.ide.onChatApprovalRequest(
       ({ requestId, approvalId, kind, command, toolName, canAlwaysAllow }) => {
@@ -1161,6 +1180,7 @@ export function useChatSession({
       offWorkspaceChanged()
       offPhase()
       offStatus()
+      offProgress()
       offApproval()
       offApprovalResolved()
       offQuestion()

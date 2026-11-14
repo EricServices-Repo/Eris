@@ -1102,6 +1102,8 @@ export function registerChatStreamIpc(): void {
                 flushStreamChunks()
                 if (evt.type === 'asset') {
                   publish('chat:asset', { requestId, asset: evt.asset })
+                } else if (evt.type === 'heartbeat') {
+                  publish('chat:progress', { requestId, step: evt.step, chars: evt.chars, elapsedMs: evt.elapsedMs })
                 } else if (evt.type === 'evidence') {
                   publish('chat:evidence', { requestId, evidence: evt.evidence })
                 } else if (evt.type === 'tool') {
