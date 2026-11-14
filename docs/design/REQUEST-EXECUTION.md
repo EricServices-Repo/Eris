@@ -20,7 +20,7 @@ The broader [architecture review](../reviews/2026-11-06-router-architecture-revi
 8. Check the required file set against actual filesystem state and observed reads/mutations, then run the existing verification and outcome gates.
 9. Persist the requested work and actual result. A read-only response does not mark requested edits as completed in durable task state.
 
-After resolution, the chat publishes the contract-derived action, project or chat destination, requirement count and allowed effects before history selection and worker preparation. An unresolved reference is shown as needing clarification. This summary is not a completion claim; semantic resolution may itself use inference before it is available.
+After resolution, the chat publishes the contract-derived action, project or chat destination, requirement count and allowed effects before history selection and agent execution. Model-window preparation can already have occurred during resolution. An unresolved reference is shown as needing clarification. This summary is not a completion claim; semantic resolution may itself use inference before it is available.
 
 ## Requested work and effective work
 
