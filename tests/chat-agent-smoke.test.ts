@@ -293,7 +293,7 @@ describe('chat agent complex smoke test', () => {
     controller.abort('user requested stop')
     const run = async () => {
       for await (const _event of runAgentWithWorkspaceTools({
-        workspacePath, settings: getDefaults(), model: 'builtin:composer-lite',
+        workspacePath, settings: getDefaults(), model: 'test-provider-model',
         messages: [{ role: 'user', content: 'Create src/stopped.ts' }], temperature: 0,
         getSecret: () => null, turnPlan: fullEditPlan(), mcp: 'off', signal: controller.signal
       })) { /* no effect may follow pre-cancellation */ }
@@ -311,7 +311,7 @@ describe('chat agent complex smoke test', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const running = (async () => {
       for await (const event of runAgentWithWorkspaceTools({
-        workspacePath, settings, model: 'builtin:composer-lite',
+        workspacePath, settings, model: 'test-provider-model',
         messages: [{ role: 'user', content: 'Create src/timed.ts' }], temperature: 0,
         getSecret: () => null, turnPlan: fullEditPlan(), mcp: 'off'
       })) events.push(event)
@@ -333,7 +333,7 @@ describe('chat agent complex smoke test', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const running = (async () => {
       for await (const event of runAgentWithWorkspaceTools({
-        workspacePath, settings, model: 'builtin:composer-lite',
+        workspacePath, settings, model: 'test-provider-model',
         messages: [{ role: 'user', content: 'Create src/timed.ts' }], temperature: 0,
         getSecret: () => null, turnPlan: fullEditPlan(), mcp: 'off'
       })) events.push(event)
@@ -355,7 +355,7 @@ describe('chat agent complex smoke test', () => {
     const events: AgentRunnerEvent[] = []
     const run = async () => {
       for await (const event of runAgentWithWorkspaceTools({ workspacePath, settings: getDefaults(),
-        model: 'builtin:composer-lite', messages: [{ role: 'user', content: 'Create src/cancelled.ts in this project' }],
+        model: 'test-provider-model', messages: [{ role: 'user', content: 'Create src/cancelled.ts in this project' }],
         temperature: 0, getSecret: () => null, signal: controller.signal, mode: 'agent', turnPlan: fullEditPlan(), mcp: 'off' })) events.push(event)
     }
     await expect(run()).rejects.toMatchObject({ name: 'AbortError' })
@@ -369,7 +369,7 @@ describe('chat agent complex smoke test', () => {
     const content = 'export const receiptFaultWasApplied = true\n'.repeat(8)
     harness.replies.push(JSON.stringify({ name: 'write_file', path: 'src/receipt.ts', content }))
     const events = await drain(runAgentWithWorkspaceTools({ workspacePath, settings: getDefaults(),
-      model: 'builtin:composer-lite', messages: [{ role: 'user', content: 'Create src/receipt.ts in this project' }],
+      model: 'test-provider-model', messages: [{ role: 'user', content: 'Create src/receipt.ts in this project' }],
       temperature: 0, getSecret: () => null, mode: 'agent', turnPlan: fullEditPlan(), mcp: 'off' }))
     expect(readFileSync(join(workspacePath, 'src/receipt.ts'), 'utf8')).toBe(content)
     expect(events).toContainEqual(expect.objectContaining({ type: 'progress', incomplete: true,
@@ -383,7 +383,7 @@ describe('chat agent complex smoke test', () => {
     const text = 'generate those files here in the project'
     const history = [{ role: 'assistant' as const, content: 'Create src/booking.ts, src/calendar.ts, and src/registration.ts.' }]
     const input = { requestId: 'file-generation-smoke', workspacePath, settings, text,
-      model: 'builtin:composer-lite', mode: 'agent' as const, history, getSecret: () => null }
+      model: 'test-provider-model', mode: 'agent' as const, history, getSecret: () => null }
     const { plan, task } = await resolveChatTurnContract(input, await planInitialChatTurn(input))
     expect(task.requested?.targetFiles).toHaveLength(3)
     expect(task.authority.edit).toBe(true)
@@ -470,7 +470,7 @@ describe('chat agent complex smoke test', () => {
       runAgentWithWorkspaceTools({
         workspacePath,
         settings: getDefaults(),
-        model: 'builtin:composer-lite',
+        model: 'test-provider-model',
         messages: [
           { role: 'system', content: 'You are Explainer.' },
           { role: 'user', content: 'How does retry timing work in this project?' }
@@ -523,7 +523,7 @@ describe('chat agent complex smoke test', () => {
       runAgentWithWorkspaceTools({
         workspacePath,
         settings: getDefaults(),
-        model: 'builtin:composer-lite',
+        model: 'test-provider-model',
         messages: [{ role: 'user', content: 'Create src/config.ts with runtime configuration.' }],
         temperature: 0,
         getSecret: () => null,
@@ -566,7 +566,7 @@ describe('chat agent complex smoke test', () => {
       runAgentWithWorkspaceTools({
         workspacePath,
         settings: getDefaults(),
-        model: 'builtin:composer-lite',
+        model: 'test-provider-model',
         messages: [{ role: 'user', content: 'Update the retry limit to four and run the check.' }],
         temperature: 0,
         getSecret: () => null,
@@ -605,7 +605,7 @@ describe('chat agent complex smoke test', () => {
     harness.replies.push(JSON.stringify({ name: 'run', command: 'node dangerous-check.js' }), 'The command was denied.')
     let approvalReached = false
     await drain(runAgentWithWorkspaceTools({ workspacePath, settings: getDefaults(),
-      model: 'builtin:composer-lite', messages: [{ role: 'user', content: 'Update the retry limit and run the check.' }],
+      model: 'test-provider-model', messages: [{ role: 'user', content: 'Update the retry limit and run the check.' }],
       temperature: 0, getSecret: () => null, mode: 'agent', turnPlan: fullEditPlan(), mcp: 'off',
       approveCommand: async () => {
         const abort = new AbortController()
@@ -624,7 +624,7 @@ describe('chat agent complex smoke test', () => {
     const controller = new AbortController()
     harness.replies.push(JSON.stringify({ name: 'run', command: 'node dangerous-check.js' }))
     const run = drain(runAgentWithWorkspaceTools({ workspacePath, settings: getDefaults(),
-      model: 'builtin:composer-lite', messages: [{ role: 'user', content: 'Update the retry limit and run the check.' }],
+      model: 'test-provider-model', messages: [{ role: 'user', content: 'Update the retry limit and run the check.' }],
       temperature: 0, getSecret: () => null, mode: 'agent', turnPlan: fullEditPlan(), mcp: 'off', signal: controller.signal,
       approveCommand: async () => { controller.abort(); return new Promise<boolean>(() => {}) } }))
     await expect(run).rejects.toMatchObject({ name: 'AbortError' })
@@ -656,7 +656,7 @@ describe('chat agent complex smoke test', () => {
       runAgentWithWorkspaceTools({
         workspacePath,
         settings: getDefaults(),
-        model: 'builtin:composer-lite',
+        model: 'test-provider-model',
         messages: [
           {
             role: 'user',
@@ -695,7 +695,7 @@ describe('chat agent complex smoke test', () => {
       runAgentWithWorkspaceTools({
         workspacePath,
         settings: getDefaults(),
-        model: 'builtin:composer-lite',
+        model: 'test-provider-model',
         messages: [{ role: 'user', content: 'Review the project and recommend 3 improvements.' }],
         temperature: 0,
         getSecret: () => null,
@@ -723,7 +723,7 @@ describe('chat agent complex smoke test', () => {
         runAgentWithWorkspaceTools({
           workspacePath,
           settings: getDefaults(),
-          model: 'builtin:composer-lite',
+          model: 'test-provider-model',
           messages: [{ role: 'user', content: 'Review the project, confirm 5 enhancements to do' }],
           temperature: 0,
           getSecret: () => null,
@@ -855,7 +855,7 @@ describe('chat agent complex smoke test', () => {
       runAgentWithWorkspaceTools({
         workspacePath,
         settings: getDefaults(),
-        model: 'builtin:composer-lite',
+        model: 'test-provider-model',
         messages: [{ role: 'user', content: 'Update the retry limit to four.' }],
         temperature: 0,
         getSecret: () => null,
@@ -879,7 +879,7 @@ describe('chat agent complex smoke test', () => {
       'DONE: Updated src/retry.ts to allow four retries.'
     )
     const events = await drain(runAgentWithWorkspaceTools({
-      workspacePath, settings: getDefaults(), model: 'builtin:composer-lite',
+      workspacePath, settings: getDefaults(), model: 'test-provider-model',
       messages: [{ role: 'user', content: 'Update the retry limit to four.' }],
       temperature: 0, getSecret: () => null, mode: 'agent', turnPlan: fullEditPlan(), mcp: 'off'
     }))
@@ -900,7 +900,7 @@ describe('chat agent complex smoke test', () => {
       runAgentWithWorkspaceTools({
         workspacePath,
         settings: getDefaults(),
-        model: 'builtin:composer-lite',
+        model: 'test-provider-model',
         messages: [{ role: 'user', content: 'Update the retry limit to four.' }],
         temperature: 0,
         getSecret: () => null,
@@ -958,7 +958,7 @@ describe('chat agent complex smoke test', () => {
         workspacePath,
         settings: getDefaults(),
         jobId: 'empty-reply-regression',
-        model: 'builtin:composer-lite',
+        model: 'test-provider-model',
         messages: [
           {
             role: 'user',
@@ -1010,7 +1010,7 @@ describe('chat agent complex smoke test', () => {
       runAgentWithWorkspaceTools({
         workspacePath,
         settings: getDefaults(),
-        model: 'builtin:composer-lite',
+        model: 'test-provider-model',
         messages: [{ role: 'user', content: 'Update the retry limit to four.' }],
         temperature: 0,
         getSecret: () => null,
@@ -1028,7 +1028,7 @@ describe('chat agent complex smoke test', () => {
   it('offers a typed empty-response retry only before any tool has run', async () => {
     harness.replies.push('', '', '')
     const events = await drain(runAgentWithWorkspaceTools({
-      workspacePath, settings: getDefaults(), model: 'builtin:composer-lite',
+      workspacePath, settings: getDefaults(), model: 'test-provider-model',
       messages: [{ role: 'user', content: 'Update retry limit to four.' }], temperature: 0,
       getSecret: () => null, mode: 'agent', turnPlan: fullEditPlan(), mcp: 'off'
     }))
@@ -1050,7 +1050,7 @@ describe('chat agent complex smoke test', () => {
       runAgentWithWorkspaceTools({
         workspacePath,
         settings: getDefaults(),
-        model: 'builtin:composer-lite',
+        model: 'test-provider-model',
         messages: [
           { role: 'user', content: 'Build a news website with registration and admin pages.' }
         ],
@@ -1093,7 +1093,7 @@ describe('chat agent complex smoke test', () => {
       runAgentWithWorkspaceTools({
         workspacePath,
         settings: getDefaults(),
-        model: 'builtin:composer-lite',
+        model: 'test-provider-model',
         messages: [{ role: 'user', content: 'Create greeting.txt with a greeting.' }],
         temperature: 0,
         getSecret: () => null,
@@ -1129,7 +1129,7 @@ describe('chat agent complex smoke test', () => {
           workspacePath,
           settings: getDefaults(),
           maxEvaluationSteps,
-          model: 'builtin:composer-lite',
+          model: 'test-provider-model',
           messages: [{ role: 'user', content: 'Create 65 numbered TypeScript modules in src.' }],
           temperature: 0,
           getSecret: () => null,
@@ -1175,7 +1175,7 @@ describe('chat agent complex smoke test', () => {
       runAgentWithWorkspaceTools({
         workspacePath,
         settings: getDefaults(),
-        model: 'builtin:composer-lite',
+        model: 'test-provider-model',
         messages: [{ role: 'user', content: 'Set MAX_RETRIES to 68 in src/retry.ts.' }],
         temperature: 0,
         getSecret: () => null,
@@ -1225,7 +1225,7 @@ describe('chat agent complex smoke test', () => {
     const events = await drain(runAgentWithWorkspaceTools({
       workspacePath,
       settings: getDefaults(),
-      model: 'builtin:composer-lite',
+      model: 'test-provider-model',
       messages: [{ role: 'user', content: 'Build the CSS and design layout, make it look like www.ericservic.es for colors' }],
       temperature: 0,
       getSecret: () => null,
@@ -1253,7 +1253,7 @@ describe('chat agent complex smoke test', () => {
       runAgentWithWorkspaceTools({
         workspacePath,
         settings: getDefaults(),
-        model: 'builtin:composer-lite',
+        model: 'test-provider-model',
         messages: [{ role: 'user', content: 'Create loop.txt once.' }],
         temperature: 0,
         getSecret: () => null,
@@ -1347,7 +1347,7 @@ describe('chat agent complex smoke test', () => {
       runAgentWithWorkspaceTools({
         workspacePath,
         settings: getDefaults(),
-        model: 'builtin:composer-lite',
+        model: 'test-provider-model',
         messages,
         temperature: 0,
         getSecret: () => null,
@@ -1424,12 +1424,12 @@ it('runs chat specialists in the active workspace even when background delegatio
     runAgentWithWorkspaceTools({
       workspacePath,
       settings: getDefaults(),
-      model: 'builtin:composer-lite',
+      model: 'test-provider-model',
       messages: [{ role: 'user', content: 'Set MAX_RETRIES to 4 in src/retry.ts.' }],
       temperature: 0,
       getSecret: () => null,
       mode: 'agent',
-      turnPlan: fullEditPlan(),
+      turnPlan: { ...fullEditPlan(), models: { chat: 'test-provider-model', tools: 'test-provider-model' } },
       mcp: 'off',
       jobId: 'chat:delegation-regression',
       onDelegate
@@ -1458,7 +1458,7 @@ it('does not inspect or edit an unrelated project when the named site is absent'
     runAgentWithWorkspaceTools({
       workspacePath,
       settings: getDefaults(),
-      model: 'builtin:composer-lite',
+      model: 'test-provider-model',
       messages: [{ role: 'user', content: 'Review the code, improve it for the AirBNB website' }],
       temperature: 0,
       getSecret: () => null,
@@ -1483,7 +1483,7 @@ it('blocks a model write to another project when the named site is present', asy
       workspacePath,
       settings: getDefaults(),
       maxEvaluationSteps: 2,
-      model: 'builtin:composer-lite',
+      model: 'test-provider-model',
       messages: [{ role: 'user', content: 'Improve it for the AirBNB website' }],
       temperature: 0,
       getSecret: () => null,
@@ -1582,7 +1582,7 @@ describe('context pull through the agent loop', () => {
       runAgentWithWorkspaceTools({
         workspacePath,
         settings: getDefaults(),
-        model: 'builtin:composer-lite',
+        model: 'test-provider-model',
         messages: [{ role: 'user', content: 'Read big.txt' }],
         temperature: 0,
         getSecret: () => null,
@@ -1609,7 +1609,7 @@ describe('context pull through the agent loop', () => {
       runAgentWithWorkspaceTools({
         workspacePath,
         settings,
-        model: 'builtin:composer-lite',
+        model: 'test-provider-model',
         messages: [{ role: 'user', content: 'Read every file' }],
         temperature: 0,
         getSecret: () => null,
@@ -1703,7 +1703,7 @@ describe('context pull through the agent loop', () => {
       runAgentWithWorkspaceTools({
         workspacePath,
         settings: getDefaults(),
-        model: 'builtin:composer-lite',
+        model: 'test-provider-model',
         messages: [{ role: 'user', content: 'Review note.txt' }],
         temperature: 0,
         getSecret: () => null,
@@ -1742,7 +1742,7 @@ it('requires fresh verification after a later source edit', async () => {
     runAgentWithWorkspaceTools({
       workspacePath,
       settings: getDefaults(),
-      model: 'builtin:composer-lite',
+      model: 'test-provider-model',
       messages: [{ role: 'user', content: 'Set MAX_RETRIES to 6 in src/retry.ts' }],
       temperature: 0,
       getSecret: () => null,
