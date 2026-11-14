@@ -172,3 +172,14 @@ describe('queued phase reaches the waiting chat (#520)', () => {
     ).not.toThrow()
   })
 })
+
+describe('specific latency stages (#463)', () => {
+  it('attributes distinct synthetic delays to their recorded phase', () => {
+    const phases = ['routing', 'retrieval', 'verification', 'review', 'persistence', 'done'] as const
+    let timeline: ReturnType<typeof transitionTaskTimeline> | undefined
+    for (const [index, phase] of phases.entries())
+      timeline = transitionTaskTimeline('trace', timeline, { phase, at: index * 100 }, index * 100)
+    expect(timeline?.phaseMs).toMatchObject({ routing: 100, retrieval: 100, verification: 100, review: 100, persistence: 100 })
+    expect(timeline?.current.taskId).toBe('trace')
+  })
+})

@@ -84,7 +84,7 @@ export function TaskTimelineView({ job }: { job: ChatJobSnapshot }) {
         </p>
         {timeline.phaseMs && (
           <p>
-            {(['routing', 'history', 'prompt', 'prefill', 'generating', 'tool'] as const)
+            {(['routing', 'history', 'retrieval', 'prompt', 'prefill', 'generating', 'tool', 'verification', 'review', 'persistence'] as const)
               .filter((phase) => timeline.phaseMs?.[phase] !== undefined)
               .map((phase) => `${taskPhaseLabels[phase]} ${duration(timeline.phaseMs![phase]!)}`)
               .join(' · ')}
