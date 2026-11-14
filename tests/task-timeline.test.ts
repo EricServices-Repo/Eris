@@ -172,4 +172,3 @@ describe('specific latency stages (#463)', () => {
     expect(timeline?.current.taskId).toBe('trace')
   })
 })
-
