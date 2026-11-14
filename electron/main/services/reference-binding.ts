@@ -10,7 +10,7 @@ import type { TaskContract, TaskRecommendation } from '../../../src/shared/task-
 import type { TaskReferenceBinding, ReferenceSource } from '../../../src/shared/reference-binding'
 
 export const asksHistoricalReference = (text: string) =>
-  /\b(?:those|these|them|the\s+(?:first|second|third|fourth|fifth|last)\s+(?:one|item|recommendation)|(?:item|recommendation)\s*#?\d+)\b/i.test(
+  /\b(?:those|these|them|(?:latest|most\s+recent)\s+(?:recommendations?|improvements?|suggestions?|changes?|fixes?)|the\s+(?:first|second|third|fourth|fifth|last)\s+(?:one|item|recommendation)|(?:item|recommendation)\s*#?\d+)\b/i.test(
     text
   ) || /\b[a-f0-9]{16}\b/i.test(text)
 export type ResolvedReference = {
@@ -24,6 +24,7 @@ export async function bindTaskReferences(input: {
   settings: AppSettings
   models: string[]
   recentSourceIds?: string[]
+  latestAssistantId?: string
 }): Promise<ResolvedReference | undefined> {
   if (!asksHistoricalReference(input.text)) return undefined
   const explicit = [
@@ -48,9 +49,12 @@ export async function bindTaskReferences(input: {
     binding: { status, remotePolicy, sources: [], reason },
     recommendations: []
   })
+  const immediateSource = input.latestAssistantId && catalog.find((source) => source.messageId === input.latestAssistantId)
   const candidates = explicit.length
     ? catalog.filter((source) => source.items.some((item) => explicit.includes(item.id)))
-    : catalog
+    : immediateSource && /\b(?:those|these|them)\b/i.test(input.text)
+      ? [immediateSource]
+      : catalog
   if (
     !input.settings.agent.contextMemory.enabled &&
     candidates.some((source) => !recent.has(source.messageId))
@@ -71,7 +75,14 @@ export async function bindTaskReferences(input: {
     }),
     [AbortSignal.timeout(input.settings.agent.contextMemory.foregroundDeadlineMs)]
   )
-  const eligible = result.sources.filter((source) => source.recommendations.length)
+  let eligible = result.sources.filter((source) => source.recommendations.length)
+  // “Latest improvements” explicitly names a source in conversation order,
+  // independent of the order in which asynchronous catalog entries were saved.
+  if (!explicit.length && /\b(?:latest|most\s+recent)\s+(?:recommendations?|improvements?|suggestions?|changes?|fixes?)\b/i.test(input.text)) {
+    if (eligible.length !== candidates.length)
+      return fail('Some recommendation sources are unavailable; clarify which improvements to implement.')
+    eligible = [...eligible].sort((a, b) => b.ordinal - a.ordinal).slice(0, 1)
+  }
   if (!eligible.length)
     return fail(
       'Referenced sources were deleted, rewritten, excluded, or are unavailable. Clarify before editing.'
@@ -101,9 +112,11 @@ export async function bindTaskReferences(input: {
   const recommendations: TaskRecommendation[] = []
   const sources: ReferenceSource[] = []
   for (const source of eligible) {
+    const selection = explicit.length ? undefined : selectRecommendations(input.text, source.recommendations)
+    if (selection?.unresolved) return fail(selection.unresolved, 'ambiguous')
     const selected = explicit.length
       ? source.recommendations.filter((item) => explicit.includes(item.id))
-      : selectRecommendations(input.text, source.recommendations).selected
+      : selection!.selected
     if (!selected.length) continue
     sources.push({
       messageId: source.messageId,
@@ -124,7 +137,7 @@ export async function bindTaskReferences(input: {
       'ambiguous'
     )
   // Narrow the destination ceiling to the sources actually selected.
-  const policy = sources.every((source) => recent.has(source.messageId)) ? 'recent' : remotePolicy
+  const policy = sources.every((source) => recent.has(source.messageId)) ? 'recent' : input.settings.agent.contextMemory.shareWithRemoteModels ? 'opt-in' : 'local-only'
   if (policy === 'local-only' && !allModelsLocal)
     return fail(
       'Older recommendation sources are local-only. Choose a local model or explicitly enable remote recall.'
