@@ -46,6 +46,10 @@ export interface TaskPhaseEvent {
   blockedBy?: string | null
   origin?: string
   errorCode?: string
+  /** Native model prompt estimate and prompt-start timings, when reported. */
+  promptTokens?: number
+  nativeFirstTokenMs?: number
+  nativeFirstTextMs?: number
 }
 export interface TaskTimelineEntry extends TaskPhaseEvent {
   taskId: string

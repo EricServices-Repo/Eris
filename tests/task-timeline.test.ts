@@ -127,6 +127,17 @@ describe('owned task phases and FIFO cancellation', () => {
   })
 })
 
+describe('native first-output evidence (#513)', () => {
+  it('retains distinct prompt estimate, first token and first visible text without rewriting dispatch timing', () => {
+    let timeline = transitionTaskTimeline('timing', undefined, { phase: 'prefill', source: 'transport', at: 100 }, 100)
+    timeline = transitionTaskTimeline('timing', timeline, { phase: 'generating', source: 'transport', at: 200 }, 200)
+    timeline = transitionTaskTimeline('timing', timeline, { phase: 'generating', source: 'native-metrics', at: 500,
+      promptTokens: 1000, nativeFirstTokenMs: 80, nativeFirstTextMs: 100 }, 500)
+    expect(timeline.dispatchToFirstChunkMs).toBe(100)
+    expect(timeline.current).toMatchObject({ at: 200, promptTokens: 1000, nativeFirstTokenMs: 80, nativeFirstTextMs: 100 })
+  })
+})
+
 describe('queued phase reaches the waiting chat (#520)', () => {
   it('sends the second task\'s window a queued phase and the running one nothing', async () => {
     const firstOwner = { isDestroyed: () => false, send: vi.fn() }

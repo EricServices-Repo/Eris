@@ -94,6 +94,9 @@ export function TaskTimelineView({ job }: { job: ChatJobSnapshot }) {
               {row.model ? ` · ${row.model}` : ''}
               {row.endedAt ? ` · ${duration(Math.max(0, row.endedAt - row.at))}` : ''}
               {row.reason ? ` · ${row.reason}` : ''}
+              {row.promptTokens !== undefined ? ` · Prompt estimate: ${row.promptTokens.toLocaleString()} tokens` : ''}
+              {row.nativeFirstTokenMs !== undefined ? ` · First token: ${duration(row.nativeFirstTokenMs)}` : ''}
+              {row.nativeFirstTextMs !== undefined ? ` · First native text chunk: ${duration(row.nativeFirstTextMs)}` : ''}
             </li>
           ))}
         </ol>
