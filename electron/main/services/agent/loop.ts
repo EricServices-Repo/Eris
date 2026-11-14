@@ -2325,7 +2325,12 @@ async function* runAgentInternal(options: {
         (step - lastProgressStep >= 3 || earlyStall)
       if (earlyStall || recoveryExhausted || step - lastProgressStep >= MAX_STEPS_WITHOUT_EVIDENCE) {
         const idleSteps = step - lastProgressStep
-        if (awaitingSourceEvidence()) yield* readRetrievedSources()
+        // If an edit model repeatedly answers without tools, give it the same
+        // validated project leads used for review recovery before retrying.
+        // Reading is bounded, uses the normal tool policy, and never authorizes a write.
+        if (awaitingSourceEvidence() ||
+          (workflow.contract.requiresMutation && rejectedReplies > 0 && !sourceReads.length))
+          yield* readRetrievedSources()
         appendTaskEvent(task.taskId, 'no-progress-detected', {
           steps: idleSteps,
           rerouteCount,
