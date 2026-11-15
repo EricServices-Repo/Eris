@@ -1,7 +1,5 @@
 # GitHub development and release workflow
 
-Reviewed against integrated `main` `0a54629` on 2026-11-01. Package version: **0.6.10**; published tag `v0.6.10` is the older immutable `f14e409` source. Later source changes require another build.
-
 `main` is the integration/release source for EricServices-Repo/Eris. The earlier `dev` promotion model is retired for this workflow. Branch operations and release publication are separate permissions.
 
 ## Contributions

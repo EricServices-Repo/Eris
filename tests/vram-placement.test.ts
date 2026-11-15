@@ -14,7 +14,7 @@ import {
 const noMemory = () =>
   Object.assign(new Error('Not enough VRAM'), { name: 'InsufficientMemoryError' })
 
-/** Shaped on a real 1.5B model on capped Metal: see docs/fixes/230-vram-first-placement.md. */
+/** Shaped on a real 1.5B model on capped Metal: measurements recorded in issue #230. */
 function device(options: { allLayersFit?: boolean; biggestWindow?: number }) {
   const loads: Array<{ gpuLayers: unknown }> = []
   const disposed = vi.fn()

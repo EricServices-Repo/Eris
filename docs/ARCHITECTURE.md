@@ -1,173 +1,211 @@
 # Eris architecture
 
-## Request execution update (2026-11-06)
+A map of how Eris is built and how a chat message becomes agent work. For request routing in depth, read [request resolution and execution](design/REQUEST-EXECUTION.md). For model choice, read [automatic model selection](design/AUTO-MODEL-EXECUTION.md). For memory, read [conversation memory](CONTEXT-MEMORY.md).
 
-The current source separates requested work from effective permissions, binds references before semantic classification, resolves explicit file creation without classifier inference, and prepares model windows after intake. Execution uses the scoped contract rather than another phrase scanner. Child capabilities no longer change assigned intent. Required file sets are checked against actual scoped outputs, and semantic outcome assessment has a hard deadline with typed failure reasons. See [request resolution and execution](design/REQUEST-EXECUTION.md) for implementation details, compatibility and remaining proposals. This is a source update, not a released-build or hardware qualification claim.
+## Stack
 
-The historical baseline below predates current versioned handoff evidence, context-origin mappings, aggregate task-tree limits and source-backed child outcomes. Those foundations now exist in `agent-orchestration.ts`, `context-origin.ts`, `background-agents.ts` and `child-outcome.ts`; references to their absence in older review material are superseded.
+Electron 44, React 18, Monaco, xterm.js and TypeScript throughout. Local inference uses `node-llama-cpp` 3.x in a utility process. Settings and IPC payloads are validated with Zod, and tests run on Vitest. The app ships for macOS (Apple Silicon) and Windows (x64).
 
-Request routing, task contracts and coordinator behavior updated on 2026-11-06 against integrated main `067470e`, package **0.6.16**. Unchanged subsystem descriptions retain the original 2026-11-01 baseline `0a54629`. These source updates are not a new release or an installed-app claim.
-
-This is the implemented system map. [Documentation index](README.md) identifies the deeper guides; [RAM target architecture](RAM-CONTEXT-ARCHITECTURE.md) and [Amendment 001](RAM-CONTEXT-AMENDMENT-001.md) explicitly separate remaining targets from shipped source. Historical review evidence is not a current backlog or live-model certification.
-
-## Context pipeline update (#385)
-
-The #385 source changes replace generic native/provider context caps with model metadata, endpoint-scoped declarations and measured allocation; accepted requests extend to 2,097,152 tokens. The local allocator retains resource safety and trained-window bounds. Compaction now requires actual capacity pressure, targets headroom and verifies reduction instead of rewriting repeatedly during recovery. See [the detailed context design and configuration](fixes/385-model-context-and-compaction.md). This is a scoped update to the baseline above, not a fresh certification of every subsystem or a released-build claim.
-
-## Process boundaries and state ownership
+## Processes and ownership
 
 ```mermaid
 flowchart LR
-  UI[React renderer and Monaco] --> Preload[Typed preload API]
-  Preload --> IPC[Main-frame validated IPC]
-  IPC --> Intake[Chat admission and task intake]
-  Intake --> Context[Main-owned bounded RAM context]
-  Context --> DB[Workspace worker and SQLite]
-  Intake --> Agent[Agent loop and specialist jobs]
-  Agent --> Gateway[Tool gateway and approvals]
-  Gateway --> Host[Workspace, Git, commands, LSP and MCP]
-  Agent --> Wire[Model transport and eligibility]
-  Wire --> Native[GGUF utility process]
-  Wire --> API[Resolved API connection]
-  Agent --> Images[Dedicated image service and Python worker]
-  IPC --> Cloud[Separate Cloud Agent service]
-  Dev[Eris-Dev diagnostics] --> Intake
-  Dev --> Wire
+  subgraph Renderer["Renderer (sandboxed React UI)"]
+    Chat["Chat panel"]
+    Editor["Editor, Git, terminal, debug"]
+  end
+  subgraph Main["Main process"]
+    IPC["Validated IPC"]
+    Queue["Foreground task queue"]
+    Loop["Agent loop"]
+    Gate["Tool gateway and approvals"]
+    Gov["Inference governor"]
+  end
+  Worker["Workspace worker (SQLite chats, code index)"]
+  Llama["Local model worker (GGUF)"]
+  Providers["Providers: Ollama, LM Studio, OpenAI-compatible, Eris Cloud"]
+  Images["Image service (Diffusers worker or Images API)"]
+  Host["Workspace files, Git, shell, LSP, DAP, MCP"]
+
+  Chat -->|chat:stream| IPC --> Queue --> Loop
+  Loop --> Gate --> Host
+  Loop --> Gov --> Llama
+  Loop --> Providers
+  Loop --> Images
+  IPC --> Worker
+  Loop -->|events| Chat
 ```
 
-- **Renderer:** interaction, virtualized chat, editor/document models, previews and approvals. It cannot grant itself task authority or directly inspect the RAM store.
-- **Main:** validates senders/payloads, admits tasks, resolves authority/project identity, holds credentials, compiles prompts, owns RAM selection/evidence leases and coordinates effects.
-- **Workspace worker:** canonical chats, source/control revisions, archive/history access, repository/index work through separate worker lanes. The RAM store itself is still main-owned.
-- **Native runtime:** GGUF weights, measured context allocation, tokenization and run-local KV sessions. Normally an Electron utility process; an explicit in-process compatibility path remains.
-- **Image worker:** a separately managed Python/Diffusers runtime and model catalog; it does not become a chat model.
-- **Cloud Agent:** a separate Node service, deployment boundary, dependency tree and tool implementation.
-- **Eris-Dev:** a separate Electron app/profile sharing production intake and agent code behind diagnostics adapters.
+| Process | Owns |
+|---|---|
+| **Renderer** | What you see: chat, editor buffers, diff review and approvals. It is sandboxed and cannot grant itself permissions or read credentials. |
+| **Main** | Everything that decides or acts: task admission, routing, the agent loop, tool permissions, credentials, model selection and the bounded RAM context store. |
+| **Workspace worker** | The canonical chat transcript (SQLite) and the code index, on separate lanes. |
+| **Local model worker** | One loaded GGUF model and its KV sessions, in an Electron utility process so inference can't freeze the UI. It runs one job at a time. |
+| **Image worker** | A private Python/Diffusers runtime for local image models. It is never a chat model. |
+| **Eris-Dev** | A separate diagnostics app that shares the production intake and agent code behind diagnostics adapters ([guide](ERIS-DEV.md)). |
 
-Sources: [main startup](../electron/main/index.ts), [window isolation](../electron/main/window.ts), [preload](../electron/preload/index.ts), [workspace worker](../electron/main/workspace-worker.ts), [model runtime](../electron/main/services/builtin-model.ts).
+Cloud Agents (a separately deployed agent worker) are retired. All agents run on the user's computer, and Eris Cloud is a hosted *model provider* (see [models](#models)).
 
-## Canonical contracts
+## Life of a chat message
 
-`TaskContract` v2 separates requested artifact, destination, project applicability, acceptance criteria, obligations, effect constraints and effective authority. A code example in chat does not authorize editing a file. Recalled instructions or a specialist summary cannot widen permissions.
+Everything starts in `ipcMain.handle('chat:stream')` in [`chat-stream.ts`](../electron/main/ipc/chat-stream.ts).
 
-The optional `requested` record preserves intent, artifact, destination, file targets, optional `evidence: source-read` grounding and resolution state separately from the effective `deliverable`/`interpretation`. Authority remains the enforcement boundary. Old saved tasks load without this additive field; they are not assigned inferred new permissions. `model-task/7` includes the requested-work record in the required model-facing task block, reduced to what differs from the effective task. Ask can finish an explanation while the requested patch remains incomplete in stored task state.
+1. **Validate.** The message must come from the main window's top frame, parse against the submission schema, and belong to a thread in the current workspace.
+2. **Admit.** `admitChatJob` writes a job record before any work starts. Sending the same `requestId` again reattaches instead of running twice.
+3. **Queue.** `ForegroundTasks` is a first-in, first-out queue: one task runs at a time, and up to 50 can wait. A task leaves the queue only when its work function returns.
+4. **Load history.** Main saves the user message and loads recent history itself. The renderer's copy of the transcript is never trusted as the source.
+5. **Plan the turn.** `planInitialChatTurn` classifies intent (`answer`, `capability`, `explore`, `plan`, `edit`, `review`, `verify`, `run`), picks a role and a model, and sets a tool ceiling (`none`, `read`, `edit`, `full`). `resolveChatTurnContract` then binds references such as "those files" and builds the **TaskContract**: what was requested, where the result goes, and what the task may do.
+6. **Prepare the model.** After intake, the model window is prepared. For a local GGUF model, `prepareContextBudget` loads it so the prompt is packed to the context that was actually allocated.
+7. **Recall and build the prompt.** Relevant earlier conversation is selected within a token allowance, then the system instructions, history, open file and attachments are assembled.
+8. **Run the agent loop** (below).
+9. **Review the outcome.** For `review`, `plan`, `edit`, `verify` and `run`, a short second model call checks the answer against the evidence, with a 15-second deadline. Any verdict other than "supported" marks the run incomplete.
+10. **Persist and finish.** Main saves the task result and the assistant reply, then sends `chat:done` with the saved reply (or `chat:error`).
 
-A conversation is durable history; a task is the authorized goal; a job/attempt is one execution; a model is the inference destination; an agent is a role and tool ceiling. These identities must remain separate in routing, status, persistence and debugging.
+The renderer receives typed events while the run is in progress:
 
-Child contracts now also carry `inherited` semantic requirements. Language/framework information, effect prohibitions, bounded explicit requirements/files and the top-level request excerpt survive delegation. Language conflicts are recorded instead of silently changing the parent's stack. Obligations, recommendations and follow-up/result state remain with the parent unless separately assigned.
+- run state: `chat:phase`, `chat:status`, `chat:routed`, `chat:model` and `chat:task`;
+- streamed text: `chat:thinking`, `chat:reasoning` and `chat:answer`;
+- work done: `chat:tool`, `chat:diff`, `chat:checkpoint`, `chat:evidence` and `chat:delegation`;
+- requests to the user: `chat:approval-request` and `chat:question-request`;
+- `chat:terminal`, `chat:outcome`, and one terminal event.
 
-Sources: [task contract](../src/shared/task-contract.ts), [task intake](../electron/main/services/task-intake.ts), [task interpretation](../src/shared/task-interpretation.ts).
+Streamed text is batched every 40 ms. The model's own reasoning (`chat:reasoning`) is display-only. It is never part of the answer, never parsed for tool calls, and never sent back to a model.
 
-## Chat → task → agent
+The task block given to the model uses the `model-task/7` schema ([`context-compiler.ts`](../electron/main/services/agent/context-compiler.ts)). It keeps the *requested* work separate from the *effective* permissions, so a code example in chat doesn't authorize editing a file, and recalled text can't widen permissions.
 
-1. Validate the main-window/frame sender, versioned bounded submission, workspace/thread association and attachments before task admission.
-2. Admit the canonical request digest through task-owned queue/controller state. Same ID/content reattaches; conflicting content is rejected. Persist the current user source before inference.
-3. Load canonical recent history in main. UI pagination does not enlarge a thread-bound submission; normal renderer submissions do not supply the authoritative transcript.
-4. `planInitialChatTurn` creates the deterministic initial plan. `resolveChatTurnContract` binds applicable historical references before semantic inference, resolves explicit file-creation operands without a classifier call, and replans when the resolved intent changes. Clear creative-writing requests without a file destination bypass edit routing.
-5. Remaining semantic intake uses the initial plan's chat/tool destination, not an unconditional Lite coordinator. Production skips cold native and automatic remote classifier calls. Record `models.coordinator` only for a semantic result actually used. Build the scoped task with requested work and effective authority; unresolved references or destination-bound interpretation conflicts do not authorize effects.
-6. Prepare model windows after intake. Shared `taskIntakeBlocked` guards in desktop chat and Eris-Dev avoid context preparation for unresolved work and Agent-mode read-only patch assignments. Allocate history/recall against the selected model's input budget and select optional RAM/archive evidence for the resolved project. Initial model selection still precedes complete intake; capability/cost ranking from a compiled task is a remaining proposal.
-7. Lease that evidence in the request's `AsyncLocalStorage` evidence scope, then build messages and enter the agent loop.
-8. Authorize each proposed tool effect, retain observations/checkpoints, verify completion and persist the visible assistant result before terminal delivery. Explicit file sets require every output to exist, be nonempty, remain in the selected project and have a read/mutation observation. Existing inspected outputs need no gratuitous write. Semantic assessment has a hard deadline and typed failure reasons; nonempty files alone do not establish correctness.
-9. Release sessions, memory evidence and task-owned resources on success, failure or cancellation.
+## The agent loop
 
-The generic answer path has no workspace effects. A short unexplained creative refusal receives one same-model repair using the existing conversation; repeated refusal remains incomplete. Explicit safety refusals are not a reason to model-shop.
+`runAgentWithWorkspaceTools` in [`agent/loop.ts`](../electron/main/services/agent/loop.ts) runs under a wall-clock deadline (`agent.maxRunMinutes`, 15 by default). The deadline pauses while the user is answering a question or an approval.
 
-Sources: [chat IPC](../electron/main/ipc/chat-stream.ts), [shared turn pipeline](../electron/main/services/chat-turn.ts), [resolver](../electron/main/services/task-resolver.ts), [job controller](../electron/main/services/chat-job-controller.ts), [agent loop](../electron/main/services/agent/loop.ts).
+Each step:
 
-## Agent role versus execution-model policy
+1. **Compact** the working transcript if it is near the model's capacity. Old tool output is replaced by handles that the model can pull back with `context_read`.
+2. **Call the model** with the tools visible for this step. Generation stops as soon as a complete tool call is parsed.
+3. **Tool calls** pass through the task tool gateway, which checks that the tool is allowed and that a file was read before it is edited. They then go through the project write lock and, where required, user approval. Read-only tools can run in parallel.
+4. **Text with no tool call** is checked as a finish. If the task still needs evidence or a change, the reply is rejected and the model is nudged back to tools. On local models, the next call can be constrained to valid tool-call JSON with a grammar.
+5. **Finish.** If product code changed, a final verify runs (typecheck or tests) before the answer is written.
 
-**Agent Auto** selects a role; the model picker separately exposes:
+Stalls are bounded. After 6 steps without new evidence, or `agent.maxNoProgressSeconds` (180 by default) without progress, the loop gets one recovery: retrieve sources, switch model, or retry with guidance. If that fails, the task stops incomplete and reports the changes it kept. Model and agent switches share a budget of two. Cancellation never replays a tool effect.
 
-- **Fixed:** retain the chosen model. Explicit agent model overrides become fixed execution choices; an override conflicting with Auto-local fails visibly.
-- **Auto-local:** native GGUFs and actual loopback model-server endpoints. Approved LAN recall endpoints remain remote for execution selection.
-- **Auto-any:** eligible local and enabled configured remote models. Cloud Composer additionally requires the Agent/workspace path and compatible server contract.
-- **Legacy `auto`:** follows the saved routing profile/cloud preference. Existing pins are not silently migrated.
+## Agents and delegation
 
-`chooseExecutionModel` builds policy/resource/capability eligibility before telemetry/evaluation ranking. A ready Lite cannot bypass evaluation of installed fitting local workers. Unknown/non-fitting cold workers and non-chat models are excluded with reasons. Scores never admit a remote candidate excluded by Auto-local.
+Roles are defined in [`resources/agents.json`](../resources/agents.json), and each project can add its own in `.eris/agents.json`.
 
-With sufficient fresh evidence, intent-specific real outcomes precede eval results. Otherwise task-specialization and residency heuristics provide a stable fallback; file size is a fit estimate, not a quality score. Evidence expires after 30 days and is versioned by app/runtime identity, weight identity or endpoint, context configuration and protocol. Unknown provider-side changes behind an unchanged remote ID remain undetectable. Declared/inferred capability is not a measured quality or latency result.
+| Role (id) | Tools | Purpose |
+|---|---|---|
+| **Agent** (`composer`) | full | Changes, builds and multi-step work; delegates when the task splits |
+| **Coder** (`coder`) | edit | One assigned change, small diff |
+| **Explainer** (`explainer`) | read | Explains how the project behaves |
+| **Reviewer** (`reviewer`) | read | Bugs, risks and missing tests |
+| **Plan** (`planner`) | read | A sequenced, workspace-grounded plan |
+| **Verification** (`verifier`) | read | Adversarial verification of changes |
+| **Fast** (`fast`) | read | Short lookups |
 
-Sources: [routing](../electron/main/services/chat-router.ts), [selection](../electron/main/services/auto-model-policy.ts), [routing evidence](../electron/main/services/routing-evidence.ts), [execution design](design/AUTO-MODEL-EXECUTION.md).
+The orchestrator is shown as **Agent**. Its stored id stays `composer`, so existing overrides keep working.
 
-## Agent → agent
+`delegate_to_agent` starts a child task.
 
-Inline delegation is selected for chat-run identities (`jobId` beginning `chat:`); enabled custom specialists can participate. Inline children run sequentially in the same workspace with nested delegation disabled. Background children use inherited or separate worktrees and persistent job records.
+- **Inline children** (in a chat run) run one at a time in the same workspace, with nested delegation turned off.
+- **Background children** run in their own git worktrees, with persistent job records.
 
-Assignment meaning is independent of specialist capability. Inline dispatch no longer turns an answer into an edit because the worker can write, or an edit into a review because it cannot. `childTaskContract` creates child-specific requested work and intersects authority with the parent. A child does not inherit the parent's entire requested file set.
+A child's authority is the intersection of its assignment and its parent's. Required constraints travel in the child's task block: at most 12, of up to 300 characters each. A task tree is capped at depth 4, 16 agents, 600 steps and 60 minutes. Results come back as outcome receipts that separate observed changes, checks, unverified claims and failures.
 
-Both modes now use `handoffMessages`: optional system briefing plus user subgoal. Required parent/subtask goals and inherited constraints live in the required task block. `delegate_to_agent.constraints` admits at most 12 constraints of 300 characters each, including inherited constraints. Overflow is refused, and an oversized required task fails compilation rather than losing a constraint. Summary/files/questions remain optional evidence with omission accounting; constraints written only in summary remain vulnerable to omission.
+## Models
 
-Neither child call site automatically receives or reselects the parent's `MemoryPrompt`. A briefing may contain derived recall, but is not a durable source-backed context envelope. Inline automatic children select for their own intent under the parent's execution policy; direct child/background/debug runners exclude the Cloud-only adapter. Child authority is intersected with the parent. Results distinguish observed changes/checks, unverified prose, incomplete/failed work and integration into another worktree.
+Every model call goes through `streamModelChat` in [`chat-runtime.ts`](../electron/main/services/chat-runtime.ts). It checks what may be sent, packs the prompt to the model's budget, dispatches to a transport, and stops delivery on abort even if the provider ignores it.
 
-Background evidence scopes are captured before enqueue/pump execution; unrelated jobs get fresh scopes. Parent cancellation stops the dependent subtree, refuses new children beneath stopping jobs and stops queued descendants. Discard waits for completion/cleanup up to 30 seconds; on timeout it retains the worktree and exposes `worktreeRetained`. Repeated discard calls join one operation. Merge refuses while descendants still run. A child with its own worktree keeps its work for review.
+| Destination | Transport | Notes |
+|---|---|---|
+| **Local GGUF** (`local:…`) | `node-llama-cpp` utility process | Downloaded from Hugging Face in Settings → Text Models. Only one model is loaded at a time. The inference governor grants one exclusive GPU job at a time and waits up to 120 s. |
+| **Ollama, LM Studio** | Ollama native `/api/chat` or OpenAI-compatible | Loopback servers count as local for privacy and policy. |
+| **OpenAI-compatible APIs** | `/v1/chat/completions` (SSE) | OpenAI, OpenRouter, Groq, Together, DeepSeek or a custom base URL. API keys stay in main. |
+| **Eris Cloud** (`cloud:<model>`) | OpenAI-compatible, `https://agents.ericservic.es/v1` | Hosted Ollama models for signed-in EricServic.es accounts, authenticated with the device token. Switched on automatically when the account offers it. |
 
-The current source implements versioned bounded handoff envelopes and evidence metadata, sealed conversation-to-worktree origin mappings, aggregate task-tree limits and structured child outcome receipts. Qualification and further integration must be assessed against those implementations; the [handoff review index](reviews/handoff-ram-issues-2026-11-01.md) also contains historical findings.
+The model picker offers a named model (Fixed), **Auto (this computer only)** and **Auto (any connected model)**. Auto ranks candidates by capability profile, the *Auto preference* setting (best, local or cheapest), measured outcomes and the loaded model; see [automatic model selection](design/AUTO-MODEL-EXECUTION.md).
 
-Sources: [handoff types](../src/shared/agent-orchestration.ts), [background lifecycle](../electron/main/services/background-agents.ts), [deep design](design/AGENT-HANDOFF-AND-RAM-CONTEXT.md).
+Native tool calls are used where the protocol supports them, and text tool envelopes otherwise. Reasoning is read from `reasoning_content`/`reasoning` deltas, Ollama `message.thinking`, GGUF thought segments, or a leading `<think>` block. Each connection can set a reasoning level and whether reasoning is shown.
 
-## Agent → model and bounded recovery
+## Tools and permissions
 
-All agent/intent/route/outcome/inline/compaction calls use `streamModelChat`. Diagnostics substitute scoped scripted/live adapters at that seam. `model-protocol.ts` validates complete tool exchanges and emits native function calls or text envelopes for the destination protocol.
+Tools are defined in [`tool-registry.ts`](../electron/main/services/tool-registry.ts).
 
-Automatic recovery can change the actual model after no-progress, repeated empty/schema-format failures, verification failures or recoverable native/context failures. Attempted models are excluded and the existing two-adaptation budget bounds transitions. Recovery selects eligible local alternatives; it does not export already-derived local execution state to a remote model. Fixed choices, approval denials and safety refusals cannot trigger model shopping. Unavailable alternatives have explicit exclusion diagnostics.
+| Group | Tools |
+|---|---|
+| Read | `tree`, `list_dir`, `read_file`, `notebook_read`, `grep`, `glob`, `search_symbols`, `find_references`, `lsp`, `semantic_search`, `related_files`, `retrieve`, `git_status`, `git_diff`, `read_context`, `list_skills`, `read_skill` |
+| Context | `context_search`, `context_read` |
+| Web | `web_search`, `web_open` |
+| Edit | `search_replace`, `apply_patch`, `write_file`, `notebook_edit`, `mkdir`, `delete_path`, `rename_path`, `generate_image`, `update_context`, `write_skill`, `git_stage`, `git_commit`, `git_stash` |
+| Full | `run`, `git_sync` |
+| Orchestration | `delegate_to_agent`, `await_children`, `ask_user` |
+| Discovery | `search_tools`, `search_mcp_tools`, plus MCP tools (`mcp__…`) |
 
-Three identical rejected replies, or the configured `agent.maxNoProgressSeconds` without evidence, trigger one bounded recovery. The worker can inspect retrieved sources, switch to an eligible model, or retry with recovery guidance. After three further steps without progress or another timeout, the task stops incomplete and reports preserved changes. New evidence resets the progress clock, and time awaiting a user reply is excluded. Individual worker and final-answer model calls also have a no-progress deadline; cancellation never replays a tool effect.
+Permission layers, from widest to narrowest:
 
-The task deadline pauses while a user considers a question or approval, including during inline specialist work. The project write lock is released for command and MCP approvals, then reacquired and the tool is reauthorized before execution. Cancellation still interrupts a pending approval.
+1. Chat mode (**Ask** or **Agent**) and the role's tool ceiling.
+2. The TaskContract's authority for this request.
+3. The tool gateway, on every call: is the tool allowed, is the path inside the project, and was the file read and not changed since.
+4. Command approval (`agent.commandApproval`, `ask` by default). A short list of inspection commands runs without asking; other commands, pushes and MCP calls ask, and "Always allow" is remembered per workspace.
+5. The project write lock, so two writers never overlap. It is released while an approval is pending.
 
-`prepareModelTransition` rechecks admission, releases old KV, prepares the target through exclusive inference scheduling and serialized load/dispose, checks cancellation and reads measured capacity before rebuilding worker instructions. Task identity, authority, tool transcript, journal, action log, checkpoints and completed edits survive; a failed preparation does not commit the proposed worker.
+File changes are checkpointed with their original contents, so Keep and Undo work per hunk. Commands run as trusted host code in the workspace directory, with owned process groups (POSIX) or a Job Object (Windows). The working directory is not an OS sandbox.
 
-Server preparation is followed by task-reference and recall validation before serialization. Native inference has an additional `prepareMessages` callback after allocation under the inference lease: revalidate, discard revoked session seeds, repack against measured capacity and report the actual payload. Required task/context that cannot fit fails explicitly.
+## Context and memory
 
-The compiler uses native token counts when a loaded tokenizer is available, with bounded counting and labeled fallback. Cold/unavailable tokenizers and some provider/schema/history accounting remain estimated. The model capability record distinguishes measured allocation, runtime placement plan, server-observed/planned and configured ceilings. GPU fitting and allocation retry are safeguards, not live hardware certification.
+| Store | Lifetime | Purpose |
+|---|---|---|
+| Chat transcript (SQLite) | Durable | The canonical conversation |
+| RAM context | Process, bounded (128 MiB default) | Fast recall of earlier turns, selected per turn within a token allowance |
+| Task store | Durable | What each turn requested and what changed, so "those files" and "what changed?" resolve |
+| Run journal | One run | Full tool outputs, so compaction leaves handles instead of losing content |
+| Project context (`.eris/context.md`) | Durable, per workspace | Notes the agent keeps about the project |
+| Native KV session | One run | The prompt cache inside the local model |
 
-Sources: [transport](../electron/main/services/chat-runtime.ts), [protocol](../electron/main/services/model-protocol.ts), [transition](../electron/main/services/agent/model-transition.ts), [recovery](../electron/main/services/agent/mid-run-adapt.ts), [measured compiler](../electron/main/services/agent/measured-context.ts), [capabilities](../electron/main/services/model-capabilities.ts).
+Per turn, history gets about 10% of the input budget in Agent mode (37.5% for tool-free chat), and recall starts at 15%, capped at 8,192 tokens. Recall is not shared with remote models unless you turn that on. Details are in [conversation memory](CONTEXT-MEMORY.md).
 
-## RAM, durable history and run evidence
+## Limits
 
-Detailed RAM history remains a bounded main-process acceleration layer over SQLite. Namespace includes app/profile, canonical workspace identity and thread. Source/control revisions and stable source sequences protect hydration, rewind, replacement and cutoff behavior. Hydration/selection have admission, cancellation, foreground deadlines and pressure fallbacks. The lexical index, durable archive search, pins, decisions and typed working-state receipts are separate from the model's active window.
+| Limit | Value | Where |
+|---|---|---|
+| Run wall clock | 15 min (`agent.maxRunMinutes`, 1–120) | `agent/loop.ts` |
+| No progress | 180 s (`agent.maxNoProgressSeconds`, 30–1,800) | `agent/loop.ts` |
+| Steps without new evidence | 6 | `MAX_STEPS_WITHOUT_EVIDENCE` |
+| Inference lease wait | 120 s | `inference-governor.ts` |
+| Local model first output | 180 s | `llama-worker-channel.ts` |
+| Silence during generation | 90 s | `llama-worker-channel.ts` |
+| Local reply cap | 16,384 tokens | `vram-fit.ts` |
+| Outcome review | 15 s | `task-outcome.ts` |
+| Semantic intent resolver | 1.5 s | `task-resolver.ts` |
+| Shell command | 60 s default, 600 s max | `shell-run.ts` |
+| MCP request | 30 s | `mcp-runtime.ts` |
+| Git command | 20 s | `git-service.ts` |
+| Grep | 15 s | `workspace-search.ts` |
+| `ask_user` reply | 5 min | `user-question.ts` |
+| Foreground queue | 50 waiting, 1 running | `foreground-tasks.ts` |
+| Chat panel message queue | 3 | `ChatPanel.tsx` |
+| Task tree | depth 4, 16 agents, 600 steps, 60 min | `agent-orchestration.ts` |
 
-Current schema defaults are 128 MiB process, 32 MiB/thread, 25,000 messages, eight warm threads, 30-minute idle expiry, 150 ms foreground deadline, an **8,192-token recall ceiling**, and remote sharing off. The per-turn recall allocation starts at 15% of the input budget, bounded by settings and floors/caps; Agent history starts at 10%, chat history at 37.5%. Compiler/transport packing can omit optional items further. Neither logical bytes nor token estimates are exact process RSS.
+## Other subsystems
 
-Evidence leases are now request-scoped. Full derived-text withholding applies to the owning scope or named task, avoiding replacement of an unrelated request. Recognized recalled-item markers are still stripped across scopes when necessary. Dependent jobs inherit the scope while the lease lives; losing the scope or outliving/restarting after the lease leaves a remaining lineage gap.
+- **Settings**: defaults, then user (`settings.json` in the app data folder), then workspace (`.eris/settings.json`). Workspace rules live in `.eris/rules/`, and skills in `.eris/skills/` and the user skills folder.
+- **Credentials**: held in main, in a local file or the OS vault ([`credential-store.ts`](../electron/main/services/credential-store.ts)). The renderer only learns whether a key exists.
+- **Account and sync**: an EricServic.es sign-in syncs settings, projects, chats and skills, and enables Eris Cloud ([account sync](PROFILE-SYNC.md)).
+- **Images**: a dedicated service with a local Diffusers worker or an Images API ([image generation](image-generation.md)).
+- **Feedback**: redacted reports go through the EricServic.es relay and become GitHub issues ([feedback](FEEDBACK.md)).
+- **Updates and release**: GitHub Releases feeds for macOS and Windows ([updates](UPDATES.md), [signing](SIGNING.md), [workflow](GITHUB-WORKFLOW.md)).
+- **Diagnostics**: Eris-Dev, scripted replays and the quality harness ([diagnostics](DIAGNOSTICS-RUNS.md), [checks](../checks/README.md)).
 
-Run tool output is journaled in admitted bounded chunks before prompt insertion. Caps are 32 MiB/run and 64 MiB globally. Append measures bytes/hashes without a full encoded copy, reserves before encoding, and releases on failure. Reads reserve decoded-string scratch; searches reserve additional redaction/lowercase scratch. `busy` means content is retained but cannot currently be materialized; `omitted` means unavailable. Compaction uses recoverable handles when possible, explicit omission otherwise, and optional source-referenced summaries. Journal storage is run-local, not durable after run end.
+## Where to look in the code
 
-`context_search`/`context_read` provide bounded run/thread pull subject to scope, source validity, destination eligibility and call/run budgets. RAM recall, the journal, optional source retrieval, durable history, project `.eris/context.md`, compaction summaries and native KV remain distinct lifecycles. Multi-GiB automatic sizing, a dedicated off-heap memory process, durable journals, CPU embeddings and cross-turn KV parking remain targets.
-
-Sources: [memory guide](CONTEXT-MEMORY.md), [store](../electron/main/services/context-memory-store.ts), [evidence scope](../electron/main/services/memory-dispatch.ts), [journal](../electron/main/services/agent/run-journal.ts), [context pull](../electron/main/services/agent/context-pull.ts).
-
-## Tool effects, editor and persistence
-
-The gateway enforces the task's scoped tool/effect ceiling and inspected-source freshness. File mutations use bounded reversible checkpoints and journals, preserve preimages, serialize overlapping operations and report applied-but-incomplete outcomes when receipt persistence fails. Pending diff review does not mean no disk effect occurred. Multiple operations are individually journaled, not one OS-atomic transaction.
-
-Desktop tests/builds are trusted host code, with workspace trust, environment filtering, approval policy and owned descendant cleanup. A workspace working directory is not an OS sandbox. POSIX commands use owned process groups; Windows uses a build-prepared Job Object helper. Explicit isolated execution is refused when the desktop lacks an accepted isolated runner.
-
-Monaco/document models own current unsaved editor text; stored tab snapshots are not authoritative buffers. Git review, LSP edits, optional DAP adapters, MCP processes and PTYs have separate capability/lifecycle boundaries. Credentials live in main under explicit file/vault policy; renderer APIs expose presence rather than stored values.
-
-Sources: [gateway](../electron/main/services/agent/tool-gateway.ts), [mutation design](fixes/REC-15-checkpoint-reversal.md), [commands](../electron/main/services/shell-run.ts), [language/debug capabilities](changes/REC-36-capability-negotiation.md), [credential store](../electron/main/services/credential-store.ts).
-
-## Images and Cloud
-
-Image generation uses dedicated settings, managed PNG storage and a local Diffusers subprocess or configured Images API. Image weights are downloaded explicitly from Hugging Face, separately from chat models. A tool cannot choose arbitrary model endpoints or silently download weights. Local generation has host/device preflight, inference admission, cancellation, timeouts and MPS watermarks; see the [image guide](image-generation.md). These protect responsiveness without guaranteeing that every model fits every GPU.
-
-Cloud inline requires a compatible task-contract capability. The repository server advertises `taskContractVersion: 1` while v2 qualification remains incomplete, so the desktop v2 path must not assume compatibility. Automatic startup fallback uses the eligible local pool; Fixed Full does not silently become Lite. An interrupted Cloud stream that began workspace work stops with preserved changes rather than replaying operations automatically.
-
-Cloud commands use the separate Linux namespace/cgroup boundary, not desktop trust semantics. Deployment isolation, credentials, endpoint availability and signing remain operational facts requiring separate evidence. Repository stubs/configuration are not proof of production deployment.
-
-Sources: [cloud service](../cloud-agent/README.md), [task policy](../cloud-agent/src/task-policy.ts), [cloud sandbox](../cloud-agent/src/job-sandbox.ts), [fleet contract](CLOUD_AGENT_FLEET.md).
-
-## Eris-Dev, qualification and release
-
-Eris-Dev supports capture-only inspection, opt-in pinned live-model question batches, stateful memory scenarios and budgeted quality scenarios. Capture is not inference; live execution is not an answer-quality oracle; a 10,000-question deterministic routing pass is not 10,000 real model answers. Independent question cases remain isolated unless a stateful scenario explicitly shares thread/task history. See [Eris-Dev](ERIS-DEV.md), [live runs](ERIS-DEV-LIVE-MODELS.md) and [diagnostics](DIAGNOSTICS-RUNS.md).
-
-`npm run check` runs typecheck, lint and all Vitest suites. `build` gates on the agent profile; `build:dev-app` gates on the dev-app profile. Client renderer/worker, quality harness, context, recovery and packaged launch checks have separate scripts. Qualification profiles declare exclusions; source-linked scripted tests do not establish model quality, GPU OOM behavior, accessibility acceptance, deployment isolation or signed-update installation.
-
-Work belongs on feature/rebuild branches with PRs to `main`. The branch-policy workflow accepts PRs to main; repository rulesets are external configuration and were not audited here. Release requires a clean exact `origin/main` checkout, an already-integrated version/changelog, and a new immutable tag. CI builds macOS DMG/ZIP and Windows Eris/Eris-Dev installers, records source/lock/asset provenance and attaches both production update feeds. Source changes require a new version/tag; explicit repair replaces only artifacts of the same immutable source.
-
-The verified `v0.6.10` release workflow built from `f14e409`; this documentation baseline is newer. No test count in an earlier guide should be treated as a fresh execution result for the newer baseline.
-
-Sources: [test profiles](../tests/qualification-profiles.json), [release script](../scripts/release.mjs), [release workflow](../.github/workflows/release.yml), [update guide](UPDATES.md), [workflow rules](GITHUB-WORKFLOW.md), [remaining work](RECOMMENDATIONS.md).
-
-## Live task progress
-
-While a worker streams, transient progress events carry only elapsed time and character counts, not generated text. They update the active task activity time without filling its durable event history; the chat UI shows the current step and last completed tool.
+| Topic | File |
+|---|---|
+| Chat entry point, events and persistence | `electron/main/ipc/chat-stream.ts` |
+| Queue and job records | `electron/main/services/foreground-tasks.ts`, `chat-job-controller.ts` |
+| Turn planning and task contract | `electron/main/services/chat-turn.ts`, `chat-router.ts`, `task-intake.ts`, `task-resolver.ts` |
+| Agent loop and helpers | `electron/main/services/agent/` (`loop.ts`, `stream.ts`, `compaction.ts`, `mid-run-adapt.ts`, `tool-gateway.ts`) |
+| Model transport | `electron/main/services/chat-runtime.ts`, `model-protocol.ts`, `openai-compatible.ts`, `ollama-chat.ts` |
+| Model selection and catalog | `electron/main/services/auto-model-policy.ts`, `model-catalog.ts` |
+| Local runtime | `electron/main/services/builtin-model.ts`, `electron/main/llama-worker.ts`, `inference-governor.ts` |
+| Tools | `electron/main/services/tool-registry.ts`, `agent/execute-tool.ts` |
+| Chat UI | `src/hooks/useChatSession.ts`, `src/features/chat/` |
+| Roles | `resources/agents.json` |

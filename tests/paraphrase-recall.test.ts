@@ -4,8 +4,8 @@ import { RECALL_RANKING_VERSION } from '../src/shared/recall-terms'
 
 /**
  * #234 measurement gate. The recorded misses are the evidence §12.9 asks for before
- * embeddings are built; docs/fixes/234-paraphrase-recall-measurement.md reports them.
- * A ranking change that moves them must re-record that file, not loosen this test.
+ * embeddings are built; issue #234 records the measurements.
+ * A ranking change that moves them must update RECORDED and the issue, not loosen this test.
  */
 const RECORDED = {
   rankingVersion: 2,

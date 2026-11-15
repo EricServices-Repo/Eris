@@ -1,18 +1,12 @@
 # Conversation memory, evidence and context
 
-## Current source reconciliation — 2026-11-07
+This guide describes how Eris keeps conversation history and gives the model the right context for each turn: what is stored, what is recalled, and what reaches the model. The [RAM architecture](RAM-CONTEXT-ARCHITECTURE.md) and its [tier amendment](RAM-CONTEXT-AMENDMENT-001.md) are design references; some names and sizing examples there are targets, not shipped APIs.
 
-Reviewed main `067470e`. Current source includes durable tool-output storage, approved project facts, thread-summary services, versioned child evidence and scoped origin-based recall. The detailed historical sections below retain earlier review snapshots; their references to these foundations as future work are superseded. See [recommendation reconciliation](RECOMMENDATIONS.md), [request execution](design/REQUEST-EXECUTION.md) and [recovery runbooks](RECOVERY-RUNBOOKS.md) for current behavior and acceptance boundaries.
+In short: the RAM store is main-process owned and bounded. Model context is limited by the model's declared capability and its measured allocation. Required task state, eligible recall, durable history and native KV each have their own owner and lifetime.
 
-The RAM store remains main-owned and bounded. Model context is constrained by declared capability and measured allocation. Required task state, eligible recall, durable history and native KV have separate ownership and lifetimes. Consult [the release issue/evidence ledger](reviews/v1.0.1-release-issues-2026-11-02.md) for qualification obligations.
+## Implemented versus target
 
-Reviewed against integrated `main` `0a54629` on 2026-11-01. Package version: **0.6.10**. The published `v0.6.10` tag is `f14e409`; the five subsequent handoff/RAM fixes in this source baseline require a later build to appear in an installed app.
-
-This guide describes implemented behavior. The [RAM architecture](RAM-CONTEXT-ARCHITECTURE.md) and [tier amendment](RAM-CONTEXT-AMENDMENT-001.md) contain additional targets; their names and sizing examples are not all implemented APIs.
-
-## Implemented versus target at the v0.6.11 rebuild baseline
-
-This table reconciles integrated source `d92fc75` (2026-11-02). The detailed sections below retain their explicitly dated `0a54629` review snapshot; older limitations there must be reconciled with this table and later fix reports before implementation. A source feature is not release or hardware certification.
+Issue numbers point to the tracking work for each remaining target.
 
 | Area | Implemented | Target / remaining qualification |
 | --- | --- | --- |
@@ -24,7 +18,7 @@ This table reconciles integrated source `d92fc75` (2026-11-02). The detailed sec
 | Project facts | Explicit user promotion/revocation in the host-owned project store (#308) | Active-run invalidation and bounded fact-history lifecycle (#327/#328) |
 | Specialist handoff | Bounded contracts, source-origin validation, scoped pulls and typed child outcomes | Complete task-tree and persisted derived-evidence qualification (#267/#323) |
 | Model context and KV | Finite admitted model window, measured native repacking and per-run sessions | Cross-turn KV reuse only after measured benefit and safe invalidation (#233) |
-| Certification | Deterministic profiles and packaged startup checks | Separate exact-source live/hardware/installed evidence for v1.x (#311) |
+| Certification | Deterministic profiles and packaged startup checks | Separate exact-source live, hardware and installed-app evidence |
 
 ## What each tier means
 
@@ -40,7 +34,7 @@ RAM makes evidence retrievable; it does not enlarge the context window. Unified-
 
 The current source removes the generic native 64K/provider 128K caps. Requested windows up to 2,097,152 tokens are validated; actual native allocation still follows GGUF training metadata, settings and resource admission. Existing explicit settings remain unchanged. Provider connections can declare per-model context/output limits, and model-list capacity metadata bounds those requests when supplied. Input budgeting subtracts explicit reply/framing reserves instead of reserving 35% of every large window.
 
-Recovery alone no longer forces compaction. Over-budget cleanup targets headroom, rechecks its result, and refuses ineffective repeated rewriting. Memory settings distinguish requested, trained, allocated and usable input values. See [implementation, configuration and qualification boundaries](fixes/385-model-context-and-compaction.md). This scoped source update does not certify native 262K hardware performance or add YaRN extension.
+Recovery alone no longer forces compaction. Over-budget cleanup targets headroom, rechecks its result, and refuses ineffective repeated rewriting. Memory settings distinguish requested, trained, allocated and usable input values. This update (#385) does not certify native 262K hardware performance or add YaRN extension.
 
 ## Canonical send and persistence
 
@@ -62,13 +56,15 @@ Raw RAM history remains in `context-memory-store.ts` in main. The existing dedic
 
 The [schema](../src/shared/context-memory.ts) defaults to:
 
-- enabled; 128 MiB process ceiling (16–512 MiB configurable);
-- 32 MiB/thread (4–128 MiB), bounded by effective process allowance;
+- enabled, in `auto` sizing mode (`manual` is the alternative);
+- 128 MiB process ceiling (16–1,024 MiB configurable);
+- 32 MiB/thread (4–256 MiB), bounded by effective process allowance;
 - 25,000 retained messages/thread (500–100,000);
 - eight warm threads (1–16), 30-minute idle expiry (1–120 minutes);
 - 150 ms foreground deadline (25–2,000 ms);
 - 8,192-token maximum recall setting (128–8,192);
-- remote recall sharing disabled.
+- remote recall sharing disabled;
+- tool output persisted for later recall, 16 MiB per thread (1–256 MiB).
 
 These are schema defaults, not proof of a user's saved values. The recall setting is a ceiling, not the amount inserted into every request. `allocateContext` starts recall at 15% of the model input budget, with reachable floor 128 and cap 8,192. Agent history starts at 10% (500 floor, 16,000 cap); tool-free chat history at 37.5% (1,000 floor, 48,000 cap). Floors cannot consume more than 25% of a very small input budget. Remaining capacity belongs to task/instructions/tools and current evidence. Packing and final adaptation can omit optional evidence further.
 
@@ -112,7 +108,7 @@ Compaction can replace old tool output with reference stubs only when content re
 
 `context_search` and `context_read` return bounded, source-aware run/thread evidence. Tools obey the current task/project, disclosure and source controls, explicit request/response/call/run budgets and secret filtering. Retrieved historical text never becomes instructions. Residual journal redaction/slicing allocations and exact physical peak residency still need measurement.
 
-Sources: [journal](../electron/main/services/agent/run-journal.ts), [pull](../electron/main/services/agent/context-pull.ts), [compaction](../electron/main/services/agent/compaction.ts), [summary coverage](fixes/224-compaction-summary-coverage.md).
+Sources: [journal](../electron/main/services/agent/run-journal.ts), [pull](../electron/main/services/agent/context-pull.ts), [compaction](../electron/main/services/agent/compaction.ts).
 
 ## Handoffs and results
 
@@ -124,6 +120,6 @@ Inline children cannot delegate further and intersect parent authority. Backgrou
 
 The Context inspector supports preview, coverage/source metadata, pins, exclusions, ordinal/sequence cutoffs and reload. Controls use canonical revisions and conflict detection. A preview can be an estimate; actual dispatch records what survived compilation and adaptation. Settings exposes memory configuration plus active/historical resource information; the complete proposed VRAM/RAM tier UX remains #236.
 
-Use the focused suites linked by [the handoff design](design/AGENT-HANDOFF-AND-RAM-CONTEXT.md) and [qualification profiles](../tests/qualification-profiles.json). Stateful replay and isolated exports do not certify packaged native memory behavior or real-model recall quality. Runtime assertions, source markers and expected-source oracles are more informative than raw question counts.
+Use the focused suites listed in the [qualification profiles](../tests/qualification-profiles.json). Stateful replay and isolated exports do not certify packaged native memory behavior or real-model recall quality. Runtime assertions, source markers and expected-source oracles are more informative than raw question counts.
 
 Remaining targets include durable run journals, child evidence provenance and namespace handles, aggregate delegation budgets, dedicated memory-process ownership, hardware-aware multi-GiB sizing, source-backed summaries/project facts, CPU embedding recall, stable-prefix and cross-turn KV experiments. Check live issues rather than reimplementing already-merged work packages from the original RAM proposal.

@@ -1,66 +1,81 @@
-# Automatic model execution and recovery
+# Automatic model selection and recovery
 
-Originally implemented for GitHub issues #268–274. Coordinator/intake behavior updated on 2026-11-06 against integrated main `067470e` (v0.6.16). Model-ranking and transition policies are retained. This is source documentation, not a new release or hardware qualification claim.
+Eris makes two separate choices for every turn. **Agent Auto** picks the *role* (Agent, Coder, Explainer, Reviewer, Plan, Verification or Fast). The **model picker** picks the *execution model*. This guide covers the second choice: how a model is selected, ranked, prepared and, when a run stalls, replaced.
 
-## User contract
+Source: [`auto-model-policy.ts`](../../electron/main/services/auto-model-policy.ts), [`mid-run-adapt.ts`](../../electron/main/services/agent/mid-run-adapt.ts), [`model-transition.ts`](../../electron/main/services/agent/model-transition.ts).
 
-Agent Auto chooses a role. Model policy is separate:
+## Policies
 
-- **Fixed** keeps the selected execution model. Role recovery does not replace it.
-- **Auto-local** admits native GGUFs and actual loopback model endpoints. A LAN endpoint remains remote even if explicitly approved to receive recall.
-- **Auto-any** permits configured remote endpoints as well as local workers. Cloud Composer additionally requires the Agent/workspace execution path.
-- Persisted legacy `auto` follows the routing profile and cloud preference in Settings. Catalog refresh retains an explicit automatic selection. Existing manual selections are not migrated silently.
+| Picker entry | Policy | What it may choose |
+|---|---|---|
+| A named model (for example `local:qwen2.5-coder-7b`, `cloud:qwen3:8b`, `gpt-4o`) | **Fixed** | Exactly that model. Recovery never replaces it. |
+| **Auto (this computer only)** | `auto-local` | Downloaded GGUF models and model servers on a loopback address (Ollama or LM Studio on `127.0.0.1`). A LAN server counts as remote, even if it is approved to receive recalled context. |
+| **Auto (any connected model)** | `auto-any` | Everything above, plus enabled remote connections: OpenAI-compatible APIs, OpenRouter and Eris Cloud. |
+| **Auto (settings policy)** (`auto`, older saved value) | Follows `models.defaultModel` | `auto-local` when the saved default is `auto-local`, or when `agent.routing.profile` is `local`; otherwise `auto-any`. |
 
-An explicit per-agent model overrides automatic ranking, becomes fixed for recovery, and must satisfy Auto-local's locality boundary. A conflict blocks with a corrective explanation rather than silently exporting the request.
+An explicit model on an agent definition (`.eris/agents.json`) acts as a Fixed choice for that role. If it conflicts with the local-only policy, the turn is blocked with an explanation rather than silently sending the request to a remote model.
 
-## Candidate admission and ranking
+## Candidate pool
 
-`auto-model-policy.ts` rebuilds the candidate pool for every selection and recovery. This observes changed readiness, URLs, profiles and available memory without an eligibility cache. Native workers need known weight size and estimated context headroom, or an adequate measured resident allocation. Non-chat files, declared intent/tool incompatibility, unavailable weights and inadequate context are excluded. Connected model readiness follows the existing optimistic persisted-catalog contract; an enabled entry is not proof of current server reachability.
+`chooseExecutionModel` rebuilds the pool for every decision, so changed readiness, URLs, keys and free memory are always seen. A candidate is excluded, with a reason recorded on the route, when:
 
-Scores are applied only after eligibility filtering. Versioned telemetry wins when sufficient evidence exists, then evaluation results; otherwise deterministic task specialization and resident-model heuristics decide. File size is an admission estimate, never a quality score. Name-based coding/general specialization and load costs are estimates, not measured capabilities or latency claims. Optional model-card routing capabilities can explicitly disallow unsupported intents/tools.
+- it is not ready, or was already tried in this run;
+- it is remote and the policy is `auto-local`;
+- it is not a chat model (embedding, projector, CLIP or encoder files);
+- **local GGUF**: its weights plus context headroom don't fit the current GPU/unified-memory budget (a model that is already loaded with at least a 1,024-token context counts as fitting), or its declared routing capabilities rule out the intent or tools;
+- **connections**: the connection has no base URL, or names an API key that isn't stored;
+- its capability profile says it has no tool calling and the turn needs tools, or its declared context window is smaller than the prompt needs.
 
-Production evidence is tied to the app/runtime routing version, local weight hash/stat identity, endpoint, context settings and tool protocol. It expires after 30 days; old unversioned records remain visible but do not drive production Auto. Replaced local files and changed endpoint/protocol configurations cannot inherit old scores. Provider-side changes behind the same remote model identifier cannot be detected without provider provenance. Successful non-mutating answers count as outcomes as well as successful edits.
+Eris Cloud models enter the pool as `cloud:<model>` refs. Their requests go to the Eris Cloud server with the bare model id.
 
-## Coordinator and execution worker
+## Ranking
 
-The primary chat path calls `planChatTurn` with `skipModelRouter: true`. After historical reference binding, `resolveChatTurnContract` uses the initial plan's tool model for tool-requiring Agent requests, otherwise its chat model, for any necessary semantic interpretation. It does not automatically load Lite to classify every message. Production skips classifier inference for a cold native model or an automatic remote destination. Explicit file creation with resolved operands bypasses inference altogether.
+Eligible candidates are sorted by rank. Ties are broken by the user's priority list (`models.priority`), in order.
 
-Only an accepted semantic decision records `models.coordinator`. A route change may then select a different worker. The separate optional routing-hint path in `planChatTurn` can also record the model whose hint was actually used. Skipped, invalid and timed-out classification must not be reported as a successful coordinator handoff.
+1. **Capability profile**, when one is set for the model in `models.capabilityProfiles` (settings JSON; there is no UI for it yet):
+   - the tier sets the base rank: `small` 10, `standard` 30, `strong` 60, `frontier` 90;
+   - native tool calling adds 5 on tool turns.
+2. **Without a profile**, a heuristic applies:
+   - a local GGUF scores 20, adjusted by name-based specialization: coding models get +8 on code tasks and −2 otherwise, and general models get +6 on answer tasks;
+   - a connection model scores 18.
 
-Model selection and model preparation are separate. Initial selection still occurs before complete intake. Model-window and native context preparation are deferred for blocked intake through `taskIntakeBlocked`, shared by desktop chat and Eris-Dev. Missing/ambiguous file lists and Agent-mode permission conflicts produce an explanation before execution inference. Ask-mode explanations remain eligible for a model call.
+   File size is only used to check that a model fits, never as a quality score.
+3. **Auto preference** (Settings → Models → *Auto preference*):
+   - **Prefer best** uses the ranks as they are.
+   - **Prefer local** adds 1,000 to local candidates.
+   - **Prefer cheapest** adds 1,000 for free local models, 500 for `low`-cost profiles and 0 for `high`.
+4. **Measured evidence**, when `evals.useScoresForRouting` is on (the default) and a model has at least `evals.minRuns` runs for the intent (default 3): real outcomes win first, then eval results. Evidence is tied to the runtime, the weights or endpoint, the context settings and the protocol, and it expires after 30 days.
+5. **Residency**: if the choice came from the heuristic or a profile, and the loaded local model is within 10 rank points of the winner (`SWITCH_MARGIN`), Eris keeps the loaded model and avoids a reload. Measured evidence always overrides this.
 
-When the worker differs, the agent loop emits a model-handoff ledger entry and adaptation event, prepares the target, and compiles the original task for it. Tool-free stories use the chosen chat worker without acquiring edit authority. Coding, review and planning use the same selector. Inline child tasks select for their own intent under the inherited policy; fixed choices and explicit child-agent overrides retain precedence.
+## Model preparation
 
-## Recovery transaction
+Selection happens when the turn is planned; preparation happens later, after intake has resolved the request. If intake blocks the turn (missing references, or an Agent-mode request that a read-only assignment can't do), no model is loaded at all. The same guard (`taskIntakeBlocked`) is used by the desktop and by Eris-Dev.
 
-The existing two-adaptation budget bounds recovery. The loop tracks attempted execution models and excludes them from subsequent selection. Recoverable repeated empty output/no progress/tool-format or verification failures may choose a distinct eligible local worker. Recovery deliberately does not transfer already-derived local execution state to a remote endpoint. Safety and permission refusals do not trigger model shopping. No available alternative records an explicit diagnostic with exclusion reasons.
+For local GGUF models, the context window is allocated first and the prompt is then packed to the size that was actually allocated (`prepareMessages`, called under the inference lease). Recall and task references are checked again at that point, so a source that was revoked while the model loaded never reaches the request.
 
-An intake failure is not a worker failure. Resolve missing references and explicit capability conflicts before entering recovery. Requested work remains separate from effective permissions, and recovery cannot satisfy an outstanding patch merely by changing its response into a plan. The current implementation does not include a general failure-diagnosis engine or automatic contract-revision planner.
+## Recovery
 
-A transition occurs between completed streams/tool batches:
+A run can switch model when it repeats empty or invalid output, stops making progress, fails verification, or hits a recoverable native or context failure. Recovery:
 
-1. Revalidate policy, readiness and fit; reject a fixed selection change.
+- is bounded by the shared two-adaptation budget, and every model already tried is excluded;
+- moves only to **local** alternatives, so execution state built on this computer is never sent to a remote endpoint;
+- never applies to a Fixed model, a safety refusal, or an approval the user denied;
+- records the excluded candidates and their reasons when there is no alternative.
+
+A transition happens between completed model calls or tool batches:
+
+1. Check the policy, readiness and fit again.
 2. Check cancellation and release the old KV session.
-3. Use the existing exclusive inference scheduler and serialized model load/dispose path to prepare the target. Native preparation receives the cancellation signal.
-4. Read measured target capacity, rebuild worker instructions/tool protocol, and refresh the context budget.
-5. Commit the execution plan and continue with the same task identity, authority, transcript, tool observations, checkpoints, journal and completed file changes.
+3. Prepare the target through the exclusive inference scheduler, with serialized load and dispose.
+4. Read the target's measured capacity, rebuild the instructions and tool protocol, and refresh the context budget.
+5. Continue with the same task, authority, transcript, tool observations, checkpoints, journal and completed edits.
 
-A failed preparation does not commit the proposed worker or replay completed edits. It consumes bounded recovery budget and records the refusal. Cloud startup failures may select an eligible local worker under automatic policy; Fixed Full stays fixed, and a Cloud stream that already began workspace work stops rather than replaying operations. Direct child/background/debug runners exclude the Cloud-only adapter. Scripted diagnostics skip real allocation; a simulated request that loses its scripted scope is rejected before preparation. Live diagnostics continue through real admission.
+A failed preparation doesn't commit the new model or replay completed edits. It uses up recovery budget and records why.
 
-## Final serialization and RAM eligibility
+## Tests
 
-Server-window preparation is followed by reference validation and a fresh recall eligibility check before serialization. Native inference additionally calls `prepareMessages` after allocation while holding the inference lease. That callback revalidates task references and recall, releases a seeded session when evidence was revoked, then repacks against the measured allocation using the destination protocol. The dispatch inspector and token estimates describe the actual post-load payload.
+- `auto-model-policy.test.ts`: pool ordering, locality before scoring, endpoint changes, Fixed pins, exclusions, residency, profiles and preferences.
+- `model-switching.test.ts`: real planning and the real agent loop over scripted transport. It covers switching to another local worker, edits surviving recovery without being replayed, capacity, cancellation, admission failure and refusal policy.
+- `memory-dispatch.test.ts`: sources revoked while a model is being prepared never reach the final request.
 
-This protects a source forgotten during loading from entering the worker request. Request-owned evidence scopes isolate unrelated leases. Current handoffs also have versioned evidence metadata, sealed source/execution origins, task-tree limits and structured child outcome receipts. These implemented foundations must be reused; broader task-capability ranking and per-obligation child assignment remain proposals. Canonical chat source history is not rewritten during a model transition.
-
-## Qualification
-
-The routing changes add `requested-work.test.ts` and extend `task-meaning.test.ts`, `agent-request-coherence.test.ts` and `chat-agent-smoke.test.ts`. They cover classifier bypass, reference failures, requested/effective state, actual file creation and abort-ignoring outcome evaluators. See [request execution validation](REQUEST-EXECUTION.md#validation-of-this-implementation) for the recorded source-build results and limits.
-
-`auto-model-policy.test.ts` exercises eligible-pool ordering, locality before scoring, endpoint changes, fixed pins, non-chat/resource exclusions, residency and task specialization. `model-switching.test.ts` runs real chat planning and the real agent loop through scripted transport, captures Lite routing to another local story worker, makes actual edits in temporary workspaces after recovery, and verifies an earlier write is not replayed. It also covers transition capacity, cancellation, admission failure, refusal policy and lost diagnostic scopes.
-
-`memory-dispatch.test.ts` revokes sources during mocked native/server preparation and captures the final adapter payload. These suites run in the agent build qualification profile. They are deterministic logic/transport tests, not live-model quality measurements, GPU certification or packaged Windows/macOS validation.
-
-## Later handoff integration
-
-Automatic model choice does not transfer the parent's RAM store to a child. Both child execution modes now share `handoffMessages`, while required inherited requirements and up to 12 constraints of 300 characters live in the canonical task. Optional summary remains cuttable. Background jobs preserve a dependent evidence scope while its parent lease lives; cancellation stops the subtree and discard waits up to 30 seconds before retaining an unfinished worktree. Model-switching acceptance must preserve these contracts and the run journal's `busy`/omission distinction.
+These are deterministic logic and transport tests. They are not live-model quality measurements, GPU certification or packaged-app validation.

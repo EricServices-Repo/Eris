@@ -1,160 +1,156 @@
-# Eris
+<p align="center">
+  <img src="resources/icons/icon-128.png" width="96" height="96" alt="Eris logo">
+</p>
 
-Eris is a desktop IDE for writing software with agents. You open a project folder, talk to an agent in the chat, and review the edits in the file they change.
+<h1 align="center">Eris</h1>
 
-The agent decides how the turn is handled: whether to read, edit, review, or explain. The model menu decides which model runs that turn. Those are separate choices.
+<p align="center">
+  <strong>The AI-first desktop IDE where an agent does the work and you stay in control.</strong><br>
+  Open a project, describe the change, and review every hunk before you keep it.<br>
+  Run it fully offline on your own models, or connect the cloud models you already pay for.
+</p>
 
-The [documentation index](docs/README.md) distinguishes current implementation, remaining design targets and historical evidence.
+<p align="center">
+  <a href="https://github.com/EricServices-Repo/Eris/releases/latest"><strong>Download for macOS and Windows</strong></a> ·
+  <a href="https://ericservices-repo.github.io/Eris/">Documentation</a> ·
+  <a href="docs/ERIS_USAGE.md">User guide</a> ·
+  <a href="docs/ARCHITECTURE.md">Architecture</a>
+</p>
 
-See the [architecture reference](docs/ARCHITECTURE.md) for the current implementation and [next fixes](docs/RECOMMENDATIONS.md) for the prioritized backlog.
+---
 
-**[Download the latest release](https://github.com/EricServices-Repo/Eris/releases/latest)** for macOS (Apple Silicon) and Windows (x64).
+## Why Eris
 
-| Platform | Installer |
-|----------|-----------|
-| macOS | `Eris-<version>-mac-arm64.dmg` or `.zip` |
-| Windows | `Eris-<version>-win-x64-setup.exe` |
+Most AI editors bolt a chat box onto an editor. Eris is built the other way around: a coding agent that reads your project, plans, edits, runs your checks and reports what it verified. Around it sits a full IDE, so you can inspect, steer and undo everything the agent does.
 
-In-app updates check [this repository’s releases](https://github.com/EricServices-Repo/Eris/releases). No GitHub token is required. Unsigned builds may need a manual install from the release page.
-
-The checked-in version is defined in [package.json](package.json).
-
-## What you can do
-
-- Open a folder and work in that project. The terminal, tests, and agent commands run inside it.
-- Ask a question about the code, or hand the agent a change to make.
-- Choose **Agent Auto** for the role and independently choose **Auto-local**, **Auto-any**, or a **Fixed** model.
-- Review each edit as hunks in the open file. Accept writes it in. Reject restores the previous text.
-- Run **Composer Lite** on your machine, **Composer Full** on Cloud Agents, a downloaded GGUF, or a connected provider such as Ollama or an OpenAI-compatible API.
-- Sign in with an [EricServic.es](https://www.ericservic.es) account to sync preferences and use Cloud Agents. Local chat stays available without an account.
+- **Your code, your models.** Use local GGUF models, Ollama or LM Studio on your own machine, and nothing leaves it. Or pick an OpenAI-compatible API, OpenRouter, or Eris Cloud. The model picker always shows where a turn runs.
+- **An agent that finishes the job, and admits when it didn't.** Every request becomes a scoped task with explicit permissions. The agent verifies code changes (typecheck or tests) before it answers, and a second check reviews the answer against the evidence. Unfinished work is reported as unfinished.
+- **Nothing lands without you.** Edits appear as hunks in the file they change, backed by checkpoints, with **Keep** and **Undo** on each. Shell commands, pushes and MCP calls ask for approval first.
+- **Built for real projects.** Specialist agents and git-worktree background jobs. Project rules, memory, skills and MCP servers. Long-running work with stall detection, bounded recovery and live progress.
 
 ## Features
 
-### Chat
+### Agentic chat
 
-The chat is the front door. **Ask** answers without editing. **Agent** can read the project, change files, and run checks.
+| | |
+|---|---|
+| **Ask and Agent modes** | **Ask** reads and explains without changing anything. **Agent** reads, edits, runs commands and verifies. |
+| **Seven specialist roles** | **Agent** (the orchestrator), **Coder**, **Explainer**, **Reviewer**, **Plan**, **Verification** and **Fast**. **Auto** picks the role per message, or you pin one. Add your own in `.eris/agents.json`. |
+| **Delegation** | The Agent hands sub-tasks to specialists. Inline children run in your workspace; background jobs run in their own git worktree for review and merge. Child authority never exceeds the parent's. |
+| **Live progress** | Phases ("Understanding request", "Using workspace tools", "Running verification", …), tool cards, and a **Thinking** panel that shows the model's own reasoning for reasoning models. |
+| **Context you control** | Attach files with `@` and skills with `/`. Inspect exactly which history and evidence were sent to the model. Pin or exclude earlier messages. |
+| **Questions, not guesses** | When a request is ambiguous, the agent can ask you mid-run. The task timer pauses while you decide. |
 
-Type `@` to attach a file and `/` to attach a skill. Enter sends. Shift+Enter inserts a line break.
+### Models: local first, cloud when you want it
 
-### Agents
+| Option | Runs on | Notes |
+|---|---|---|
+| **Local GGUF** | Your GPU or Apple Silicon (Metal), via `node-llama-cpp` | Search and download from Hugging Face in-app. Eris measures the context window it can actually allocate and packs the prompt to fit. |
+| **Ollama, LM Studio** | Your machine (loopback) | Connect from Settings → Providers. Pull and remove Ollama models without leaving Eris. |
+| **Eris Cloud** | Hosted by EricServic.es | Sign in and the models appear as `cloud:<model>`. Free includes 1M tokens per week; Pro is unlimited. |
+| **OpenAI-compatible APIs** | Your provider | OpenAI, OpenRouter, Groq, Together, DeepSeek or any custom base URL. Native tool calling where supported. |
 
-An agent is the role that processes the message: instructions, permitted tools and completion criteria. A Fixed model remains pinned; automatic execution policy can select or recover with another eligible worker without changing the task authority.
+- **Auto (this computer only)** never sends code off your machine. **Auto (any connected model)** ranks every eligible model by capability tier, tool support, context size, your *prefer best / local / cheapest* setting, and measured outcomes.
+- **Reasoning models** are first-class. Reasoning streams into its own panel and is never mistaken for the answer or for a tool call. Each connection can set the reasoning level and whether it's shown.
+- **Recovery.** If a run stalls, Eris can switch to another eligible local model without redoing completed edits. A model you pinned is never swapped.
 
-| Agent | What it does |
-|-------|----------------|
-| **Auto** | Chooses Composer, Explainer, Reviewer, or Fast from the message. |
-| **Composer** | Inspects the project, makes the change, and verifies it. Delegates only when the work splits. |
-| **Explainer** | Reads the code and explains it. Does not edit. |
-| **Reviewer** | Reports bugs, risks, and missing tests. May run the project’s test or typecheck command. Does not edit. |
-| **Fast** | Answers a short lookup in a few sentences. |
-| **Coder** | Implements one assigned change. Pin it, or let Composer delegate to it. |
+### A complete IDE
 
-An inline specialist works sequentially in the same workspace; background specialists can use their own worktrees. Required parent constraints and tool authority are retained, while optional briefing text is budgeted. Delegation is not automatic access to the whole parent conversation. Pin an agent when you want that role on every turn. The pin is remembered.
+- **Monaco editor**: inline AI edit (⌘K), AI completion (Alt+\ then Tab), go to definition (F12) through the TypeScript language server, and diagnostics.
+- **Review hunks** in place, with per-change checkpoints and undo.
+- **Integrated terminal** (xterm.js), with agent commands running in the workspace directory.
+- **Git**: stage, commit, branches and stash. Link a GitHub repository to sync, list and create pull requests.
+- **Run & Debug**: Node launch configurations (`.eris/launch.json`) or any configured stdio DAP adapter.
+- **Search** across files, **code map** and code index, and a **command palette** (⌘⇧P).
+- **Image generation**: `/image <prompt>`, or let the agent create assets. Runs on local Diffusers models (SD-Turbo, SDXL-Turbo) or an Images API.
 
-### Models
+### Project knowledge
 
-The model menu separates execution policy from Agent Auto:
+| Feature | Lives in |
+|---|---|
+| Always-on rules | `.eris/rules/*.md` |
+| Project memory the agent maintains | `.eris/context.md` |
+| Reusable skills | `.eris/skills/` and your user skills folder |
+| Custom agents | `.eris/agents.json` |
+| MCP servers | Settings → MCP |
+| Conversation memory | Bounded RAM recall over a SQLite transcript, with an inspector, pins and exclusions |
 
-- **Auto-local** evaluates fitting ready native GGUFs and genuine loopback model servers before ranking. LAN/remote endpoints are excluded even if approved to receive recalled context.
-- **Auto-any** may choose eligible configured remote or local models. Prompt and project disclosure follows the actual destination and separate memory-sharing settings.
-- **Fixed · model name** keeps the selected execution model. Fixed Composer Full does not silently become Lite if Cloud/local Full is unavailable.
-- **Composer Lite**, downloaded text GGUFs and connected providers are distinct execution destinations. Cloud Composer requires the compatible server/workspace path; locally downloaded Full is an explicit setting.
+### Safety by design
 
-Automatic selection uses task compatibility and fresh outcome/eval evidence when available, with transparent deterministic fallback. Bounded model-changing recovery preserves existing work and does not retry safety/permission refusals on a different model. Clear requests need not invoke a coordinator; ambiguous intake may use Lite before a different worker executes.
+- **Scoped authority.** Each request carries a task contract. A code sample in chat doesn't authorize editing a file, and recalled text or a specialist's summary can't widen permissions.
+- **Every tool call is gated.** The tool must be allowed for this task, the path must be inside the project, and a file must have been read, unchanged since, before it can be edited.
+- **Approvals** for commands, pushes and MCP calls, with a per-workspace "Always allow" list. Workspace trust limits settings from untrusted folders.
+- **Credentials stay in the main process**, in a local file or the OS vault. The sandboxed UI only knows whether a key exists.
+- **Remote models don't get your history** unless you turn recall sharing on.
 
-### Editor, Git, and terminal
+### Account and sync
 
-Agent mutations can already affect workspace files. Pending review shows journal/checkpoint-backed hunks; rejecting attempts to restore the recorded preimage subject to conflict/safety checks. Review is not a promise that no disk write occurred.
+Signing in with an [EricServic.es](https://www.ericservic.es) account syncs settings, projects, chats and skills across computers. Project files, model weights and API keys are not uploaded. Signing in also enables Eris Cloud. Without an account, everything else works.
 
-The IDE includes a file tree, Monaco editor, search, Git, a terminal, and diagnostics. Agent commands use the workspace as their working directory, with task policy, trust and approvals. They execute trusted host code; the working directory is not an OS sandbox or a guarantee against all external effects.
+## Get started
 
-### Project memory, rules, and skills
+1. **Install.** Download from [Releases](https://github.com/EricServices-Repo/Eris/releases/latest).
 
-Each workspace can keep its own instructions:
+   | Platform | Installer |
+   |---|---|
+   | macOS (Apple Silicon) | `Eris-<version>-mac-arm64.dmg` or `.zip` |
+   | Windows (x64) | `Eris-<version>-win-x64-setup.exe` |
 
-| What | Where |
-|------|--------|
-| Workspace settings | `<folder>/.eris/settings.json` |
-| Agents | `<folder>/.eris/agents.json` |
-| Rules | `<folder>/.eris/rules/` |
-| Project memory | `<folder>/.eris/context.md` |
+2. **Connect a model.** The welcome screen opens Settings → Models. Download a local model, point Eris at Ollama or LM Studio, sign in for Eris Cloud, or add an API key.
+3. **Open a folder.** File → Link Folder as Workspace… (⌘O / Ctrl+O).
+4. **Start a chat** (⌘L / Ctrl+L), switch to **Agent**, and describe the change.
+5. **Review** the hunks in the editor and keep what you want.
 
-User settings live outside the project: `~/Library/Application Support/Eris/` on macOS, `%APPDATA%\Eris\` on Windows. Workspace settings override user settings. API keys stay on the machine.
+Eris updates itself from this repository's releases. The [user guide](docs/ERIS_USAGE.md) covers everything else, including shortcuts.
 
-MCP servers and skills extend what an agent can do. Add them in Settings.
+## How it works
 
-### Account and Cloud Agents
+```mermaid
+flowchart LR
+  You["You (chat)"] --> Intake["Task intake: intent, references, permissions"]
+  Intake --> Loop["Agent loop"]
+  Loop -->|"tool calls"| Gate["Tool gateway + approvals"]
+  Gate --> Project["Files, Git, terminal, LSP, MCP"]
+  Loop -->|"model calls"| Models["Local GGUF · Ollama/LM Studio · Eris Cloud · APIs"]
+  Loop -->|"delegate"| Specialists["Specialist agents / worktree jobs"]
+  Loop --> Verify["Verify + outcome review"]
+  Verify --> You
+```
 
-Sign in from Settings to link this Mac or PC to EricServic.es.
+Eris is an Electron app with a sandboxed React renderer. A main process owns every decision and effect: task admission, routing, the agent loop, tool permissions, credentials and model selection. Separate workers hold the SQLite transcript and code index, the loaded GGUF model, and the image runtime, so heavy work never freezes the UI.
 
-- **Free** includes local chat. Cloud Agent jobs are capped over a rolling 30 days.
-- **Pro** removes that Cloud Agent cap.
+Details are in the [architecture overview](docs/ARCHITECTURE.md), [request execution](docs/design/REQUEST-EXECUTION.md), [model selection](docs/design/AUTO-MODEL-EXECUTION.md) and [conversation memory](docs/CONTEXT-MEMORY.md).
 
-Usage for this device and the account is in Settings → Usage.
+## Build from source
 
-### Feedback and updates
-
-**Help → Report a Bug** submits through the feedback relay to the configured Eris issue inbox, validating returned Eris/Eris-feedback links. See [EricServices-Repo/Eris](https://github.com/EricServices-Repo/Eris/issues). Diagnostics and logs are redacted before they are sent.
-
-Eris checks this repository for updates. Install from a release build to update in place. A locally built unsigned app can open the release page instead.
-
-## Usage
-
-1. Install Eris from the [latest release](https://github.com/EricServices-Repo/Eris/releases/latest).
-2. Open a project folder (**File → Open**, or ⌘O / Ctrl+O).
-3. Start a chat (⌘L / Ctrl+L).
-4. Leave **Agent** on **Auto**, or pin Composer, Explainer, Reviewer, Fast, or Coder.
-5. Choose **Auto-local** or **Auto-any** for automatic execution, or a **Fixed** model. Existing manual selections remain pinned.
-6. Describe the change or the question. Attach files with `@` when you want the agent to start from a specific path.
-7. In Agent mode, accept or reject the hunks in the editor before you keep the result.
-8. Optional: sign in under Settings → Account if you want Cloud Agents or synced preferences.
-
-### Shortcuts
-
-| Action | macOS | Windows |
-|--------|-------|---------|
-| Open folder | ⌘O | Ctrl+O |
-| New workspace | ⌘⇧N | Ctrl+Shift+N |
-| Save | ⌘S | Ctrl+S |
-| Settings | ⌘, | Ctrl+, |
-| Command palette | ⌘⇧P | Ctrl+Shift+P |
-| New chat | ⌘L | Ctrl+L |
-| Send message | Enter | Enter |
-| New line in chat | Shift+Enter | Shift+Enter |
-
-## Develop
-
-Requirements: Node.js 20 or newer. macOS or Windows for the desktop app.
+Requirements: Node.js 22 (as used in CI), and macOS or Windows to build the desktop app.
 
 ```bash
 npm install
-npm run dev
+npm run dev          # run in development
+npm run check        # typecheck, lint and the full Vitest suite
 ```
-
-Checks:
-
-```bash
-npm test
-npm run check
-```
-
-### Build
 
 | Command | Result |
-|---------|--------|
-| `npm run dist:mac` | Unsigned macOS app in `dist/mac-arm64/Eris.app` |
+|---|---|
+| `npm run start:app` | Build, then launch the unsigned macOS app from `dist/mac-arm64/Eris.app` |
+| `npm run dist:mac` | Unsigned macOS app directory |
 | `npm run dist:release:mac` | macOS `.dmg` and `.zip` |
 | `npm run dist:release:win` | Windows setup `.exe` |
+| `npm run start:dev-app` | **Eris-Dev**, the diagnostics app for capturing and replaying agent runs |
 
-Build each platform on that platform, or let GitHub Actions do both. A `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which uploads the macOS and Windows installers to [this repository’s releases](https://github.com/EricServices-Repo/Eris/releases).
+Build each platform on that platform, or let CI build both. Changes land on a branch and reach `main` through a pull request. A `v*` tag on an integrated version runs the [release workflow](.github/workflows/release.yml), which publishes the installers and update feeds. See the [GitHub workflow](docs/GITHUB-WORKFLOW.md).
 
-```bash
-npm run release          # do not use; prepare release changes by PR as described in docs/GITHUB-WORKFLOW.md
-npm run release:github   # tag the integrated version from the approved release source
-npm run release:dry      # print the plan only
-```
+The codebase is about 100,000 lines of TypeScript across `electron/` and `src/`, with about 210 Vitest test files.
 
-See [GitHub integration workflow](docs/GITHUB-WORKFLOW.md) for branch and release rules. Work lands on task branches and enters `dev` through pull requests. The planned `dev` → `main` promotion is the v1.0.1 release; the branch model after that promotion must be documented before further integration.
+## Documentation
+
+The full documentation is at **[ericservices-repo.github.io/Eris](https://ericservices-repo.github.io/Eris/)**, and the source is in [`docs/`](docs/README.md).
+
+## Feedback and security
+
+- **Bugs and ideas:** Help → Send Feedback… in the app, or [open an issue](https://github.com/EricServices-Repo/Eris/issues).
+- **Vulnerabilities:** report privately; see [SECURITY.md](SECURITY.md).
 
 ## License
 

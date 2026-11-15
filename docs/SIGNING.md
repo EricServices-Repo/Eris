@@ -1,7 +1,5 @@
 # Code signing Eris releases
 
-Reviewed against integrated `main` `0a54629` on 2026-11-01. Package version: **0.6.10**; published tag `v0.6.10` is the older immutable `f14e409` source. Later source changes require another build.
-
 CI (`.github/workflows/release.yml`) signs installers when the secrets below are present.
 Without them, builds succeed **unsigned** (fine for local testing; not for production auto-update).
 

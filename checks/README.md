@@ -1,7 +1,5 @@
 # Client performance checks
 
-Reviewed against integrated `main` `0a54629` on 2026-11-01; package v0.6.10. Released tag `f14e409` is older than this source baseline. See [the documentation index](../docs/README.md) for the current architecture and evidence boundaries.
-
 Run `npm run check:client` from the repository root. This checks types, tests chat
 migration and partial saves, builds the app, exercises the compiled workspace
 worker, and opens a hidden Electron fixture using an isolated temporary profile.

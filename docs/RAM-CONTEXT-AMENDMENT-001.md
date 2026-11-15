@@ -5,7 +5,6 @@
 - Status: accepted target design; **not a claim that the target is built**
 - Date: 2026-10-31
 - Original baseline: `842bde276230dfc91f3c6e16b56fbb7a91fa9bf2` (v0.6.7)
-- Implementation reconciliation: `0a54629`, 2026-11-01 (package v0.6.10; newer than released tag `f14e409`)
 - Tracking issue: #239
 
 Where this amendment and ERIS-CONTEXT-002 disagree, this amendment wins. Numbers marked *proposed* are starting points to benchmark, not measurements. [CONTEXT-MEMORY.md](CONTEXT-MEMORY.md) remains the record of what is implemented.

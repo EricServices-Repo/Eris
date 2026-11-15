@@ -1,7 +1,5 @@
 # Image generation in Eris
 
-Reviewed against integrated `main` `0a54629` on 2026-11-01. Package version: **0.6.10**; published tag `v0.6.10` is the older immutable `f14e409` source. Later source changes require another build.
-
 Eris uses a dedicated image service rather than passing generation requests to its text chat runtime.
 
 ## Using it
@@ -11,20 +9,18 @@ Eris uses a dedicated image service rather than passing generation requests to i
 3. Setup needs Python 3.10–3.12 installed. It creates `Eris/image-runtime/venv` and installs PyTorch, torchvision, Diffusers, Transformers, Accelerate, and safetensors. On Windows/Linux with `nvidia-smi`, setup installs a CUDA 12.8 PyTorch build; macOS uses its native PyTorch build.
 4. Send `/image a calm blue mountain illustration` in chat. This explicit command works without a downloaded coding model. Attachments and active skills are rejected because this version accepts text prompts only.
 5. Inspect the inline result or enlarge it. Use **Save image** with a new `.png` workspace path to copy it into the project. Existing files are never overwritten.
-6. In Agent mode, ask Composer to create an image and integrate it into an application. The `generate_image` tool automatically uses the installed image model. Image models never appear in the chat model picker, and the tool has no model/provider argument.
+6. In Agent mode, ask the Agent to create an image and integrate it into an application. The `generate_image` tool automatically uses the installed image model. Image models never appear in the chat model picker, and the tool has no model/provider argument.
 
 The newest complete local image download is automatically active. Removing it selects the next available complete download. Downloads are explicit settings operations; a tool call never starts a model download or silently falls back to a cloud provider. Optional gated model tokens are saved through Eris secrets under `huggingface.imageToken`.
 
 For an API backend, configure a model-server connection, choose **Image API**, enter its image model ID, enable generation, and save. Its saved API key is reused.
-
-The cloud inline worker does not expose the desktop image service. Explicit artwork requests use the desktop agent loop so it can call the configured provider. Direct `/image` requests always use the dedicated service.
 
 ## Data flow
 
 ```text
 /image prompt ──→ images:generate IPC ──────────────┐
                                                    ↓
-Composer ──→ generate_image tool ─────────→ image-generation service
+Agent ────→ generate_image tool ─────────→ image-generation service
                                                    ↓
                          backend chosen in image settings
                                    ↙               ↘
@@ -86,4 +82,4 @@ For CPU/MPS shared-memory devices, current conservative preflight requires at le
 
 The subprocess sets MPS high/low watermark ratios 0.75/0.60 and a 0.60 per-process memory fraction where supported, and repeats device/host checks before loading. Cancellation, worker exit and timeout retain explicit failure semantics and cleanup. The default inference timeout is 15 minutes; setup/download stages have their own bounds. This protects an M4 desktop from obvious unsafe SDXL loads without promising that every accepted native workload cannot stall or exceed physical memory.
 
-Read [local-image-model.ts](../electron/main/services/local-image-model.ts), [Python worker](../resources/image-generation/worker.py), [admission design](changes/REC-32-inference-admission.md) and [runtime repair](changes/REC-33-image-runtime-repair.md). Live CUDA/MPS/model quality and packaged setup remain separate acceptance from protocol simulators.
+Read [local-image-model.ts](../electron/main/services/local-image-model.ts) and the [Python worker](../resources/image-generation/worker.py). Live CUDA/MPS/model quality and packaged setup remain separate acceptance from protocol simulators.

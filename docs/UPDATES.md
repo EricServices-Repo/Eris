@@ -1,7 +1,5 @@
 # Eris client updates (GitHub Releases)
 
-Reviewed against integrated `main` `0a54629` on 2026-11-01. Package version: **0.6.10**; published tag `v0.6.10` is the older immutable `f14e409` source. Later source changes require another build.
-
 Eris uses **electron-updater** against the public repository
 [`EricServices-Repo/Eris`](https://github.com/EricServices-Repo/Eris).
 Installers and `latest-mac.yml` / `latest.yml` are attached to that repo’s
@@ -151,9 +149,3 @@ Dev (`electron-vite`) reports updates as **disabled** (packaged only).
 Release CI resolves the tag once and checks out the same SHA on both platforms. Each platform uploads `release-provenance-{platform}.json` with source/tag/lock hashes, signing state, workflow identity and installer checksums. Normal uploads reject asset replacement. Manual `repair_existing` is only for replacing artifacts from the same immutable source after a failed upload; source changes need a new version/tag. Historical tags lacking the new scripts cannot be repaired by silently substituting current main.
 
 Packaged smoke tests use temporary profiles and exercise the renderer/preload and invalid chat rejection without updater or model warmup. This is launch validation; signed update installation still requires certificates and platform acceptance.
-
-## Source and evidence boundary for v0.6.10
-
-Release `v0.6.10` is immutable source `f14e409`; workflow 41312263512 completed successfully and the required macOS DMG/ZIP, Windows setup, both updater feeds, Eris-Dev Windows installer and platform provenance/qualification files were verified on the release. The later `0a54629` source includes additional RAM/handoff fixes, not an updated v0.6.10 binary.
-
-A successful release/packaged launch is not signed-update installation acceptance, a real GPU stress result, or a live-model answer-quality score. The source-matched context evidence policy records which gates ran and which certification was not required; never convert a skipped hardware gate into a pass. Existing tags must not be moved to absorb newer source.
