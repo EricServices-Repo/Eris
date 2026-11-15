@@ -173,7 +173,7 @@ export function useChatSession({
   const answerAcc = useRef('')
   const imageAssetsRef = useRef<GeneratedImageAsset[]>([])
   const directImageRequestRef = useRef<string | null>(null)
-  const routeMetaRef = useRef<{ agentId?: string; agentName?: string; model?: string }>({})
+  const routeMetaRef = useRef<{ agentId?: string; agentName?: string; model?: string; modelDetails?: string }>({})
   const taskSummaryRef = useRef<string | null>(null)
   const paintRaf = useRef(0)
   /** Set when user clicks Stop — unlock UI immediately and skip queue drain. */
@@ -811,10 +811,11 @@ export function useChatSession({
         toolsModel,
         task,
         intent,
-        modelSelection
+        modelSelection,
+        modelDetails
       }) => {
         if (requestId !== requestIdRef.current) return
-        routeMetaRef.current = { agentId, agentName, model }
+        routeMetaRef.current = { agentId, agentName, model, modelDetails }
         if (lastTurnRef.current && intent)
           lastTurnRef.current = {
             ...lastTurnRef.current,
@@ -824,7 +825,7 @@ export function useChatSession({
           }
         if (task) {
           taskSummaryRef.current = taskActionSummary(task)
-          setRouteLabel(`${taskSummaryRef.current} · ${modelSelection || model}`)
+          setRouteLabel(`${taskSummaryRef.current} · ${model}${modelDetails ? ` · ${modelDetails}` : ''}`)
         }
         else if (reason) setRouteLabel(reason)
         else if (agentName) {
@@ -1057,14 +1058,16 @@ export function useChatSession({
     })
     const offModel = window.ide.onChatModel(({ requestId, model, agentId, agentName }) => {
       if (requestId !== requestIdRef.current) return
+      const modelDetails = routeMetaRef.current.model === model ? routeMetaRef.current.modelDetails : undefined
       routeMetaRef.current = {
         ...routeMetaRef.current,
         model,
+        modelDetails,
         agentId: agentId ?? routeMetaRef.current.agentId,
         agentName: agentName ?? routeMetaRef.current.agentName
       }
       const name = agentName || routeMetaRef.current.agentName || 'Agent'
-      const modelLabel = model
+      const modelLabel = `${model}${modelDetails ? ` · ${modelDetails}` : ''}`
       setRouteLabel(taskSummaryRef.current ? `${taskSummaryRef.current} · ${modelLabel}` : `${name} · ${modelLabel}`)
     })
     // Reconcile old snapshots without touching the active request's buffers or status.

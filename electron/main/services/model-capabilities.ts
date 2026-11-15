@@ -94,8 +94,10 @@ export function contextProvenance(settings: AppSettings, model: string) {
 /** Budgets follow the allocation; settings and the model card only bound what is requested. */
 export function resolveModelCapabilities(settings: AppSettings, model: string): ModelCapabilities {
   const declared = declaredModelLimits(settings, model)
+  const override = settings.models.capabilityProfiles?.[model]
   const requestedContext = boundedContextWindow(
-    declared?.contextWindow ?? settings.models.contextWindow
+    (override?.enabled !== false ? override?.contextWindow : undefined) ??
+      declared?.contextWindow ?? settings.models.contextWindow
   )
   const { contextCeiling, contextSource } = contextCapacity(settings, model, requestedContext)
   const native = isNativeGgufRef(model)

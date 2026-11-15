@@ -30,22 +30,12 @@ Eris Cloud models enter the pool as `cloud:<model>` refs. Their requests go to t
 
 ## Ranking
 
-Eligible candidates are sorted by rank. Ties are broken by the user's priority list (`models.priority`), in order.
+Settings → Models exposes per-model capability overrides and tie-breaking priority. Eris resolves a profile from the user override, endpoint-scoped provider facts (model list and Ollama's model details), the bundled family table, and parameter or GGUF size estimates, in that order. An inexpensive model can still rank highly when its capabilities fit the task.
 
-1. **Capability profile**, when one is set for the model in `models.capabilityProfiles` (settings JSON; there is no UI for it yet):
-   - the tier sets the base rank: `small` 10, `standard` 30, `strong` 60, `frontier` 90;
-   - native tool calling adds 5 on tool turns.
-2. **Without a profile**, a heuristic applies:
-   - a local GGUF scores 20, adjusted by name-based specialization: coding models get +8 on code tasks and −2 otherwise, and general models get +6 on answer tasks;
-   - a connection model scores 18.
-
-   File size is only used to check that a model fits, never as a quality score.
-3. **Auto preference** (Settings → Models → *Auto preference*):
-   - **Prefer best** uses the ranks as they are.
-   - **Prefer local** adds 1,000 to local candidates.
-   - **Prefer cheapest** adds 1,000 for free local models, 500 for `low`-cost profiles and 0 for `high`.
-4. **Measured evidence**, when `evals.useScoresForRouting` is on (the default) and a model has at least `evals.minRuns` runs for the intent (default 3): real outcomes win first, then eval results. Evidence is tied to the runtime, the weights or endpoint, the context settings and the protocol, and it expires after 30 days.
-5. **Residency**: if the choice came from the heuristic or a profile, and the loaded local model is within 10 rank points of the winner (`SWITCH_MARGIN`), Eris keeps the loaded model and avoids a reload. Measured evidence always overrides this.
+- Tier weights are 10 for small, 30 for standard, 60 for strong and 90 for frontier. Native tool calling, context fit and task specialization contribute to the rank.
+- Prefer local puts eligible local workers first. Prefer cheapest prioritizes free-local, then low-cost models.
+- Measured outcomes and eval scores can decide among candidates within the preferred group after the configured minimum number of runs. Tied ranks use tier, then the user's priority and stable catalog order. A resident native model can keep its place within the switch margin and same tier.
+- The newest request and framing reserve set the minimum context for Auto. Older history is compacted after allocation. Run details show candidate exclusions and the evidence used to choose a worker.
 
 ## Model preparation
 
@@ -85,7 +75,7 @@ These are deterministic logic and transport tests. They are not live-model quali
 Each role has a `modelClass`: `primary` or `fast` (built-in table in `src/shared/agent-model-class.ts`; Composer, Coder, Plan, Verification and Reviewer are primary, Explainer and Fast are fast). `planChatTurn` resolves both models for every Auto turn and records them as `models.primary` and `models.fast` on the turn plan:
 
 - **Primary** is the normal Auto choice for the turn (or `models.defaultModel` when Fixed).
-- **Fast** is `models.fast` when it is Fixed and eligible under the turn's policy, otherwise *Auto-fast*: `chooseExecutionModel(..., { modelClass: 'fast' })` ranks models at tier standard or below first, then by cost class. A remote model without a capability profile counts as strong and costly.
+- **Fast** is `models.fast` when it is Fixed and eligible under the turn's policy, otherwise *Auto-fast*: `chooseExecutionModel(..., { modelClass: 'fast' })` ranks models at tier standard or below first, then by cost class. The capability hierarchy applies to Auto-fast as well.
 - When both picks are native local models, the fast class keeps the primary model, so roles never swap the loaded worker.
 - A role's `model` pin overrides its class, and a Fixed chat selection applies to every role.
 

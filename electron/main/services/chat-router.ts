@@ -1,3 +1,4 @@
+import { estimateModelMessagesTokens } from './model-protocol'
 import { INTENT_GUIDE, INTENT_RULES } from '../../../src/shared/intent-guide'
 import { isAutomaticModelSelection } from '../../../src/shared/model-execution'
 import {
@@ -475,14 +476,15 @@ export async function resolveFastModel(
   settings: AppSettings,
   intent: ChatIntent,
   policySelection: string,
-  primary: AutoModelChoice
+  primary: AutoModelChoice,
+  requiredContext?: number
 ): Promise<{ model: string; choice?: AutoModelChoice }> {
   const pinned = (settings.models.fast ?? 'auto').trim()
   if (pinned && !isAutoModelChoice(pinned)) {
     const candidate = primary.candidates.find((c) => c.model === pinned)
     if (candidate?.eligible) return { model: pinned }
   }
-  const choice = await chooseExecutionModel(settings, intent, policySelection, [], { modelClass: 'fast' })
+  const choice = await chooseExecutionModel(settings, intent, policySelection, [], { modelClass: 'fast', requiredContext })
   if (!choice.model) return { model: primary.model }
   if (choice.model !== primary.model && isNativeGgufRef(choice.model) && isNativeGgufRef(primary.model))
     return { model: primary.model }
@@ -979,11 +981,16 @@ export async function planChatTurn(options: {
     modelBasis = 'agent'
   } else if (isAutoModelChoice(chosenModel)) {
     const policySelection = chosenModel
-    const choice = await chooseExecutionModel(options.settings, intent, policySelection, [], { cloudComposer: options.allowCloudComposer !== false && mode === 'agent' && Boolean(options.workspacePath) })
+    // The latest request is mandatory; older history is packed to the worker's budget.
+    const requiredContext = Math.max(1024, estimateModelMessagesTokens([{ role: 'user', content: options.context.text }]) + 512)
+    const choice = await chooseExecutionModel(options.settings, intent, policySelection, [], {
+      cloudComposer: options.allowCloudComposer !== false && mode === 'agent' && Boolean(options.workspacePath),
+      requiredContext
+    })
     modelChoice = choice
     chosenModel = choice.model
     modelBasis = choice.basis
-    const fast = await resolveFastModel(options.settings, intent, policySelection, choice)
+    const fast = await resolveFastModel(options.settings, intent, policySelection, choice, requiredContext)
     classModels = { primary: choice.model || undefined, fast: fast.model || choice.model || undefined }
     if (modelClass === 'fast' && fast.model) {
       chosenModel = fast.model
@@ -1007,6 +1014,7 @@ export async function planChatTurn(options: {
     preferEscalate: agent.preferEscalate !== false
   })
 
+  const winnerCapabilities = modelChoice?.candidates.find((candidate) => candidate.model === chosenModel)?.capabilities
   const modelPolicy = agentModelOverride ? 'fixed' : executionPolicy(options.settings, selectedModel)
   const requiresTools = toolPolicy !== 'none' && intentNeedsTools(intent)
   const usingComposerFull = roles.chat === 'builtin:composer' || roles.tools === 'builtin:composer'
@@ -1044,7 +1052,7 @@ export async function planChatTurn(options: {
       escalateToFull: roles.escalateToFull,
       profile: routingProfile,
       cloudPreferred
-    })} · ${agentModelOverride ? `pinned ${agentModelOverride}` : `${modelClass} ${chosenModel || 'none'}`} · model ${modelBasis} · ${policyLabel(modelPolicy, options.settings)}`,
+    })} · ${agentModelOverride ? `pinned ${agentModelOverride}` : `${modelClass} ${chosenModel || 'none'}`} · model ${modelBasis} · ${policyLabel(modelPolicy, options.settings)}${winnerCapabilities ? ` · ${winnerCapabilities}` : ''}`,
     method,
     classifiedIntent,
     routeTrace: { heuristicRule: heuristic.rule, overrides },

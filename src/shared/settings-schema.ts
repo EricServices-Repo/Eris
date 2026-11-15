@@ -133,6 +133,7 @@ export const SettingsSchema = z.object({
     fast: z.string().default('auto'),
     priority: z.array(z.string()).default([]),
     capabilityProfiles: z.record(z.string(), z.object({
+      enabled: z.boolean().optional(),
       tier: z.enum(['small', 'standard', 'strong', 'frontier']),
       toolCalling: z.enum(['native', 'text', 'none']),
       contextWindow: z.number().int().min(512).max(MAX_CONTEXT_TOKENS),
@@ -553,6 +554,7 @@ export interface TurnPlan {
       reason: string
       rank: number
       locality: string
+      capabilities?: string
     }>
   }
   /** Effective tool ceiling after intersecting agent policy + intent + mode. */

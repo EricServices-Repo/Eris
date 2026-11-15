@@ -1486,7 +1486,7 @@ export function ChatPanel({
                       }
                       onModelChange(value)
                     }}
-                    title={`${modelDataHint(modelOptions.find((m) => m.name === selectValue) || modelOptions[0]!)} Automatic policies can select a different worker; Fixed keeps the selected model.`}
+                    title={`${modelDataHint(modelOptions.find((m) => m.name === selectValue) || modelOptions[0]!)}${isAutomaticModelSelection(selectValue) && routeLabel ? ` Latest route: ${routeLabel}` : ''}`}
                     aria-label="Execution model policy and fixed model"
                   >
                     {modelOptions.map((m) => (

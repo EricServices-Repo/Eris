@@ -14,7 +14,7 @@ import { getBuiltinStatuses, isBuiltinRef, resolveReadyBuiltinRef } from './buil
 import { getLocalStatuses, isLocalRef } from './local-model'
 import { listOpenAIModels } from './openai-compatible'
 import { getGpuAccelStatus } from './gpu-accel'
-import { placementsFor } from './ollama-runtime'
+import { isOllamaConnection, placementsFor, probeOllamaModel } from './ollama-runtime'
 
 export type ModelsStatusOptions = {
   /**
@@ -116,6 +116,11 @@ export async function getModelsStatus(
       try {
         const remote = await listOpenAIModels(conn.baseUrl, key)
         const names = isErisCloudConnection(conn) || remote.length > 0 ? remote : conn.models
+        if (isOllamaConnection(conn)) {
+          // Explicit refresh populates a bounded set of routing facts. Models not
+          // refreshed here still use bundled or size-based evidence until first use.
+          await Promise.all(names.slice(0, 6).map((name) => probeOllamaModel(conn, connectionModelRef(conn, name), key)))
+        }
         const discovered: ModelInfo[] = []
         for (const name of names) {
           if (isBuiltinRef(name) || isLocalRef(name)) continue

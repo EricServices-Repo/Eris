@@ -537,6 +537,7 @@ export interface IdeApi {
       task?: import('./task-contract').TaskContract
       toolsModel?: string
       modelSelection?: string
+      modelDetails?: string
     }) => void
   ) => () => void
   checkpointReview: (

@@ -1,3 +1,4 @@
+import { parameterBillions, type ModelCapabilityEvidence } from '../../../src/shared/model-capability-profile'
 import { providerContext } from './provider-context'
 import { boundedContextWindow } from '../../../src/shared/model-context'
 import { logWarn } from './logger'
@@ -26,7 +27,7 @@ export type OllamaPlacement = {
   vramBytes: number
 }
 
-type Probe = { maxContext: number | null; at: number }
+type Probe = { maxContext: number | null; at: number; capabilities?: ModelCapabilityEvidence }
 const probes = new Map<string, Probe>()
 const placements = new Map<string, OllamaPlacement>()
 const key = (connection: ModelConnection, model: string) =>
@@ -91,14 +92,31 @@ export async function probeOllamaModel(
   const ttl = known?.maxContext ? FACTS_TTL_MS : FAILED_PROBE_TTL_MS
   if (known && Date.now() - known.at < ttl) return
   let maxContext: number | null = null
+  let capabilities: ModelCapabilityEvidence | undefined
   try {
-    maxContext = contextLengthOf(
-      await apiRequest(connection, '/api/show', apiKey, { model: providerModelId(model) }, signal)
-    )
+    const body = await apiRequest(connection, '/api/show', apiKey, { model: providerModelId(model) }, signal)
+    maxContext = contextLengthOf(body)
+    const data = body as { capabilities?: unknown; details?: { parameter_size?: unknown } } | null
+    const flags = Array.isArray(data?.capabilities) ? data.capabilities : null
+    const parametersBillions = parameterBillions(data?.details?.parameter_size)
+    capabilities = {
+      ...(maxContext ? { contextWindow: boundedContextWindow(maxContext) } : {}),
+      ...(flags ? {
+        toolCalling: flags.includes('tools') ? 'native' : flags.includes('completion') ? 'text' : 'none',
+        reasoning: flags.includes('thinking'),
+        vision: flags.includes('vision')
+      } : {}),
+      ...(parametersBillions === undefined ? {} : { parametersBillions })
+    }
   } catch {
     /* Recorded below: the route and window stay unverified. */
   }
-  probes.set(key(connection, model), { maxContext, at: Date.now() })
+  probes.set(key(connection, model), { maxContext, at: Date.now(), capabilities })
+}
+
+export function ollamaCapabilityEvidence(connection: ModelConnection, model: string) {
+  const probe = probes.get(key(connection, model))
+  return probe && Date.now() - probe.at <= FACTS_TTL_MS ? probe.capabilities : undefined
 }
 
 /** Prepare model metadata before any budget is computed. Cancellation propagates. */
