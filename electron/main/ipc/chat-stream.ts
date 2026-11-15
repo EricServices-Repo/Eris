@@ -1,4 +1,3 @@
-import { CONNECT_MODEL_MESSAGE } from '../../../src/shared/model-setup'
 import { createContextOrigin } from '../services/context-origin'
 import { chooseExecutionModel } from '../services/auto-model-policy'
 import { currentLoadedModel } from '../services/model-runtime'
@@ -58,6 +57,7 @@ import {
 } from '../services/user-question'
 import { capReasoning, finalizePostedAnswer, REVIEWER_UNAVAILABLE } from '../../../src/shared/posted-answer'
 import { taskIntakeBlocked } from '../../../src/shared/task-contract'
+import { CONNECT_MODEL_MESSAGE } from '../../../src/shared/model-setup'
 import type { ChatMessage, ChatDelegation, TurnPlan } from '../../../src/shared/settings-schema'
 import { AGENT_HANDOFF_CHARS, summarizeAgentResults } from '../../../src/shared/agent-orchestration'
 import { saveTask } from '../services/task-store'

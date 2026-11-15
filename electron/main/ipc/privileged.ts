@@ -74,6 +74,8 @@ const schemas: Record<string, z.ZodType> = {
       .optional()
   ]),
   'fs:write': z.tuple([path, z.string().max(8_000_000)]),
+  'models:setupOptions': empty,
+  'models:connectDetected': z.tuple([z.enum(['ollama', 'lmstudio'])]),
   'models:status': z.tuple([
     z
       .object({ probe: z.boolean().optional(), includeGpu: z.boolean().optional() })
