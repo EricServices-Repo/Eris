@@ -1,3 +1,5 @@
+import { modelDestination } from './model-destination'
+import { helperModel } from './helper-model'
 import { INTENT_GUIDE, INTENT_RULES } from '../../../src/shared/intent-guide'
 import { isAutomaticModelSelection } from '../../../src/shared/model-execution'
 import {
@@ -541,29 +543,24 @@ async function llmRouteHint(options: {
   examples?: string
   selectedModel?: string
 }): Promise<{ intent?: ChatIntent; agentId?: string; confidence: number; model: string } | null> {
-  let routerModel =
-    options.settings.agent.routing.routerModel ||
-    options.settings.models.defaultModel ||
-    'builtin:composer-lite'
-  if (isAutoModelChoice(routerModel) || routerModel.startsWith('builtin:')) routerModel = (await chooseExecutionModel(options.settings, 'answer', 'auto')).model
-  if (!routerModel) return null
-  if (isBuiltinRef(routerModel) && !isExactBuiltinReady(routerModel)) {
-    // Fall back: any ready lite, else skip LLM router
-    if (!isExactBuiltinReady('builtin:composer-lite')) return null
-  }
-  const model = isBuiltinRef(routerModel)
-    ? resolveExactBuiltinRef(routerModel) ||
-      resolveExactBuiltinRef('builtin:composer-lite') ||
-      routerModel
-    : routerModel
-
-  if (executionPolicy(options.settings, options.selectedModel || 'auto') === 'auto-local' &&
-      !executionLocal(options.settings, model)) return null
+  const selection = options.selectedModel || 'auto'
+  const primary = await chooseExecutionModel(options.settings, 'answer', selection)
+  const fast = primary.policy === 'fixed'
+    ? primary.model
+    : (await resolveFastModel(options.settings, 'answer', selection, primary)).model
+  const model = helperModel(options.settings, {
+    intent: 'answer',
+    models: { chat: primary.model, tools: primary.model, primary: primary.model, fast },
+    modelExecution: { policy: primary.policy, selection, basis: primary.basis, candidates: primary.candidates }
+  }, 'route')
+  if (!model) return null
 
   const agentLines = options.agents
     .map((a) => `- ${a.id}: ${a.description || a.name} (tools: ${a.tools ?? 'edit'})`)
     .join('\n')
-  const history = (options.previousMessages ?? [])
+  const shareHistory = modelDestination(options.settings, model).recallAllowed ||
+    options.settings.agent.contextMemory?.shareWithRemoteModels === true
+  const history = (shareHistory ? options.previousMessages ?? [] : [])
     .slice(-6)
     .map(
       (message) =>
@@ -702,6 +699,7 @@ export async function planChatTurn(options: {
   // times out or declines to choose, the deterministic role mapping below wins.
   if (
     mode === 'agent' &&
+    options.settings.agent.helperCalls !== 'off' &&
     options.settings.agent.routing.enabled &&
     (wantLlmRouter || pickedModel === 'auto-local' || pickedModel === 'auto-any') &&
     !options.context.manualAgentId &&

@@ -91,3 +91,7 @@ Each role has a `modelClass`: `primary` or `fast` (built-in table in `src/shared
 
 The route reason names the class and model, for example `fast local:qwen2.5-coder-1.5b`.
 
+
+## Optional helper calls
+
+Fast is the default for conversational routing, semantic interpretation, outcome checks, and optional context summaries. Review and verification use Primary for the outcome check. A fixed selection keeps its own model. Native helpers reuse the loaded model or skip inference before a cold load. Disabling helpers leaves deterministic intake, evidence checks, and context eviction in place.

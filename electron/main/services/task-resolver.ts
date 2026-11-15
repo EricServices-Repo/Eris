@@ -63,7 +63,8 @@ export interface ResolveTaskInput {
   signal?: AbortSignal
   getSecret: (key: string) => string | null
   timeoutMs?: number
-  skipInference?: 'cold-native-routing-skipped' | 'remote-auto-routing-skipped'
+  omitModelHistory?: boolean
+  skipInference?: 'cold-native-routing-skipped' | 'remote-auto-routing-skipped' | 'helper-calls-disabled'
 }
 
 /**
@@ -269,7 +270,7 @@ export async function resolveTaskDecision(input: ResolveTaskInput): Promise<Inte
             {
               role: 'user',
               content: JSON.stringify({
-                history: input.history?.slice(-6).map((message) => ({
+                history: input.omitModelHistory ? undefined : input.history?.slice(-6).map((message) => ({
                   role: message.role,
                   content: message.content.slice(0, 1200)
                 })),

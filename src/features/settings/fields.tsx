@@ -271,6 +271,14 @@ export function settingFields(agentIds: string[]): SettingField[] {
     },
     {
       cat: 'agent',
+      label: 'Helper calls',
+      hint: 'Choose Fast or Primary for optional routing, summaries, and outcome checks, or turn them off.',
+      path: ['agent', 'helperCalls'],
+      type: 'select',
+      options: ['fast', 'primary', 'off']
+    },
+    {
+      cat: 'agent',
       label: 'Max run time (minutes)',
       hint: '1–120 minutes across model calls, tools and retries. Stops incomplete and preserves applied changes.',
       path: ['agent', 'maxRunMinutes'],

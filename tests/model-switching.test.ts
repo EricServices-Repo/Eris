@@ -73,6 +73,7 @@ import { loadBuiltinAgents, saveProjectAgents } from '../electron/main/services/
 import { planChatTurn } from '../electron/main/services/chat-router'
 import { runAgentWithWorkspaceTools } from '../electron/main/services/agent/loop'
 import { decideMidRunAdapt } from '../electron/main/services/agent/mid-run-adapt'
+import { helperModel } from '../electron/main/services/helper-model'
 import { prepareModelTransition } from '../electron/main/services/agent/model-transition'
 import { recordLoadedModel, clearLoadedModel } from '../electron/main/services/model-runtime'
 import {
@@ -528,5 +529,30 @@ describe('bounded recovery admission', () => {
     await expect(
       prepareModelTransition({ ...opts, signal: controller.signal })
     ).rejects.toMatchObject({ name: 'AbortError' })
+  })
+})
+
+describe('optional helper model selection', () => {
+  it('uses Fast for helpers, keeps Primary for outcome checks on a review, and honors off', () => {
+    const s = settings()
+    s.agent.routing.profile = 'auto'
+    const plan = basePlan()
+    plan.modelExecution!.policy = 'auto-any'
+    plan.models = { chat: 'primary', tools: 'primary', primary: 'primary', fast: 'fast' }
+    expect(helperModel(s, plan, 'resolve')).toBe('fast')
+    expect(helperModel(s, plan, 'outcome')).toBe('fast')
+    expect(helperModel(s, { ...plan, intent: 'verify' }, 'outcome')).toBe('primary')
+    s.agent.helperCalls = 'off'
+    for (const purpose of ['route', 'resolve', 'outcome', 'compact'] as const)
+      expect(helperModel(s, plan, purpose)).toBeUndefined()
+  })
+
+  it('reuses a resident native worker and skips cold native helper calls', () => {
+    const s = settings()
+    const plan = basePlan()
+    plan.models = { chat: 'local:primary', tools: 'local:primary', fast: 'local:fast' }
+    expect(helperModel(s, plan, 'resolve')).toBeUndefined()
+    recordLoadedModel({ ref: 'local:primary', contextSize: 4096 })
+    expect(helperModel(s, plan, 'resolve')).toBe('local:primary')
   })
 })

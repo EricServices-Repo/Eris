@@ -1,3 +1,4 @@
+import { helperModel } from '../helper-model'
 import { interpretationOf, type TaskContract } from '../../../../src/shared/task-contract'
 import { caseOutcome, coverageOf, evaluationOf, outcomeClass, timeoutEvidence } from './evaluation'
 import { createHash, randomUUID } from 'crypto'
@@ -827,7 +828,8 @@ async function runCase(
         }
         if (ended !== 'completed') return ended
         terminal = incomplete ? 'incomplete' : 'complete'
-        if (needsOutcomeReview(local.plan, incomplete)) {
+        const reviewer = helperModel(plan.settings, local.plan, 'outcome')
+        if (reviewer && needsOutcomeReview(local.plan, incomplete)) {
           onStatus('Outcome review')
           evidence.addActions(actionLog)
           const verdict = await reviewTaskOutcome({
@@ -835,7 +837,7 @@ async function runCase(
             answer,
             evidence: evidence.items,
             settings: plan.settings,
-            model: local.plan.models.chat,
+            model: reviewer,
             signal: deadline.signal,
             getSecret: deps.getSecret
           })

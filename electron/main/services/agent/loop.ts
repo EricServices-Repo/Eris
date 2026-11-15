@@ -1,3 +1,4 @@
+import { helperModel } from '../helper-model'
 import { createTaskDeadline, modelStreamWithAbort } from '../task-deadline'
 import { raceAbort } from '../llama-worker-channel'
 import { eligibleOutbound } from '../eligible-outbound'
@@ -1761,11 +1762,11 @@ async function* runAgentInternal(options: {
       contextPull.noteCompaction()
       if (countTokens(workerMessages) <= promptBudget) return
     }
-    // Never swap Lite↔Full mid-run — node-llama-cpp holds one runtime; unloading
-    // Full to summarize with Lite freezes the app for minutes and looks "broken".
-    // Stay on the tools model for compaction — never unload Full mid-run.
-    const canSummarizeInline = chatModel === workerModel
-    const skipLite = Boolean(opts.skipLiteSummary) || !canSummarizeInline
+    const summaryModel = helperModel(options.settings, {
+      ...plan,
+      models: { ...plan.models, chat: chatModel, tools: workerModel }
+    }, 'compact')
+    const skipLite = Boolean(opts.skipLiteSummary) || !summaryModel
     yield { type: 'status', text: 'Compacting context…' }
     yield {
       type: 'thinking',
@@ -1782,7 +1783,7 @@ async function* runAgentInternal(options: {
       treeSnapshot: lastTreeResult,
       priorMemory: contextMemory,
       settings: options.settings,
-      liteModel: workerModel,
+      liteModel: summaryModel ?? workerModel,
       temperature: options.temperature,
       signal: options.signal,
       getSecret: options.getSecret,
