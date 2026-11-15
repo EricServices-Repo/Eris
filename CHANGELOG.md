@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.3 — 2026-11-14
+
+- Desktop rebuild.
+
 ## 0.7.2 — 2026-11-14
 
 - Rebuild with Eris Cloud on the hosted Ollama server; Cloud Agents retired.
