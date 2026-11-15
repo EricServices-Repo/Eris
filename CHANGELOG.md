@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.7 — 2026-11-14
+
+- Redesigned Settings navigation and the Usage, GPU, and Cloud Models pages.
+
 ## 0.7.6 — 2026-11-14
 
 - Desktop rebuild.
