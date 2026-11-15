@@ -4348,12 +4348,6 @@ select:focus {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 
-.local-models-installed {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
 .local-models-section-label {
   display: flex;
   flex-wrap: wrap;
@@ -4367,41 +4361,6 @@ select:focus {
 
 .ollama-catalog-row.is-ready {
   border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
-}
-
-.local-models-source {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px 12px;
-  margin-top: 6px;
-}
-
-.local-models-source .btn-link {
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--accent);
-  font-size: 12px;
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.local-models-hf {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.local-models-hf .ollama-library-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
 }
 
 .ollama-catalog-filters {

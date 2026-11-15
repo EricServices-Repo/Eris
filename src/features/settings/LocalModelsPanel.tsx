@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { HfGgufSearchHit, LocalModelStatus } from '@/shared/settings-schema'
 import type { ApplySetting } from './fields'
+import './local-models.css'
 
+const MODEL_VIEWS = [
+  { id: 'installed', label: 'On this device' },
+  { id: 'recommended', label: 'Recommended' },
+  { id: 'hub', label: 'Hugging Face' }
+] as const
+
+const HUB_PAGE_SIZE = 6
 const HF_BROWSE_FALLBACK = 'https://huggingface.co/models?library=gguf&sort=downloads'
 
 function sizeLabel(b: LocalModelStatus): string {
@@ -52,7 +60,11 @@ export function LocalModelsPanel({
   load: () => Promise<void>
 }) {
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  const [view, setView] = useState<(typeof MODEL_VIEWS)[number]['id']>('recommended')
   const [query, setQuery] = useState('')
+  const [hubQuery, setHubQuery] = useState('')
+  const [hubPage, setHubPage] = useState(0)
+  const activeHubQuery = view === 'hub' ? hubQuery.trim() : ''
   const [family, setFamily] = useState('all')
   const [browseUrl, setBrowseUrl] = useState(HF_BROWSE_FALLBACK)
   const [hfHits, setHfHits] = useState<HfGgufSearchHit[]>([])
@@ -82,7 +94,7 @@ export function LocalModelsPanel({
   }, [])
 
   useEffect(() => {
-    const q = query.trim()
+    const q = activeHubQuery
     if (q.length < 2) {
       setHfHits([])
       setHfError(null)
@@ -90,6 +102,7 @@ export function LocalModelsPanel({
       return
     }
     let cancelled = false
+    setHfHits([])
     setHfSearching(true)
     setHfError(null)
     const timer = window.setTimeout(() => {
@@ -112,7 +125,7 @@ export function LocalModelsPanel({
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [query])
+  }, [activeHubQuery])
 
   const families = useMemo(() => {
     const set = new Set(models.map((m) => m.family).filter(Boolean))
@@ -140,21 +153,20 @@ export function LocalModelsPanel({
     })
   }, [models, query, family, installedIds])
 
-  const catalogRepoIds = useMemo(() => {
-    const set = new Set<string>()
-    for (const m of models) {
-      const match = m.downloadUrl.match(
+  const modelsByRepo = useMemo(() => {
+    const byRepo = new Map<string, LocalModelStatus[]>()
+    for (const model of models) {
+      const match = model.downloadUrl.match(
         /^https?:\/\/huggingface\.co\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\//i
       )
-      if (match) set.add(match[1].toLowerCase())
+      if (!match?.[1]) continue
+      const repo = match[1].toLowerCase()
+      const entries = byRepo.get(repo) ?? []
+      entries.push(model)
+      byRepo.set(repo, entries)
     }
-    return set
+    return byRepo
   }, [models])
-
-  const remoteHits = useMemo(
-    () => hfHits.filter((h) => !catalogRepoIds.has(h.repoId.toLowerCase())),
-    [hfHits, catalogRepoIds]
-  )
 
   const startDownload = (m: LocalModelStatus) => {
     setDownloadingId(m.id)
@@ -197,8 +209,6 @@ export function LocalModelsPanel({
       })
   }
 
-  const showHfSection = query.trim().length >= 2
-
   const renderRow = (m: LocalModelStatus) => {
     const isDownloading = downloadingId === m.id || Boolean(m.downloading)
     const pct = Math.round((m.progress || 0) * 100)
@@ -221,12 +231,12 @@ export function LocalModelsPanel({
         <div className="ollama-catalog-main">
           <div className="ollama-catalog-title">
             <strong>{m.displayName}</strong>
-            <code>{m.ref}</code>
-            <span className="badge">{sizeLabel(m)}</span>
-            {m.family ? <span className="badge">{m.family}</span> : null}
             {isDefault && <span className="models-tag is-accent">Default</span>}
           </div>
-          <p>{m.description}</p>
+          <p className="text-models-meta">
+            {[sizeLabel(m), m.family, m.quant].filter(Boolean).join(' · ')}
+          </p>
+          {m.description && m.description !== m.displayName && <p>{m.description}</p>}
           {(isDownloading || (!m.ready && m.progress > 0 && m.progress < 1)) && (
             <div className="models-progress">
               <div style={{ width: `${Math.max(2, pct)}%` }} />
@@ -280,7 +290,7 @@ export function LocalModelsPanel({
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={Boolean(downloadingId)}
+                disabled={Boolean(downloadingId || hfDownloadingRepo)}
                 onClick={() => startDownload(m)}
               >
                 {pct > 0 ? 'Resume' : m.downloadError ? 'Retry' : 'Download'}
@@ -302,180 +312,201 @@ export function LocalModelsPanel({
     )
   }
 
+  const hubPageCount = Math.ceil(hfHits.length / HUB_PAGE_SIZE)
+  const hubPageStart = hubPage * HUB_PAGE_SIZE
+
   return (
-    <div className="ollama-library">
-      <div className="ollama-library-head">
-        <div>
-          <strong>Text models</strong>
-          <span className="model-conn-meta">
-            Download a GGUF and it runs inside Eris — no Ollama app, no separate server.
-          </span>
-          <div className="local-models-source">
-            <button
-              type="button"
-              className="btn-link"
-              onClick={() => void window.ide.openExternal(browseUrl)}
-            >
-              Browse more on Hugging Face
-            </button>
-            <span className="model-conn-meta">
-              Search by model name below, or paste a Hub repo / .gguf URL.
-            </span>
-          </div>
-        </div>
+    <div className="text-models">
+      <div className="text-models-views" role="group" aria-label="Model library">
+        {MODEL_VIEWS.map(({ id, label }) => (
+          <button
+            key={id}
+            type="button"
+            className="btn"
+            aria-pressed={view === id}
+            onClick={() => {
+              setView(id)
+              setHubPage(0)
+            }}
+          >
+            {label}
+            {id === 'installed' && installed.length > 0 && (
+              <span className="models-tag">{installed.length}</span>
+            )}
+          </button>
+        ))}
+        <button type="button" className="btn text-models-refresh" onClick={() => void load()}>
+          Refresh
+        </button>
       </div>
 
-      {installed.length > 0 && (
-        <section className="local-models-installed">
-          <div className="local-models-section-label">
-            <strong>On this device</strong>
-            <span className="model-conn-meta">
-              {(() => {
-                const readyN = installed.filter((m) => m.ready).length
-                const activeN = installed.length - readyN
-                if (activeN > 0 && readyN > 0) {
-                  return `${readyN} ready · ${activeN} downloading`
-                }
-                if (activeN > 0) return `${activeN} downloading`
-                return `${readyN} ready`
-              })()}
-            </span>
-          </div>
+      {view === 'installed' &&
+        (installed.length > 0 ? (
           <div className="ollama-catalog">{installed.map(renderRow)}</div>
-        </section>
+        ) : (
+          <p className="models-empty">Downloaded models and transfers appear here.</p>
+        ))}
+
+      {view === 'recommended' && (
+        <>
+          <div className="text-models-search">
+            <input
+              type="search"
+              className="ollama-catalog-search"
+              aria-label="Filter recommended models"
+              placeholder="Filter recommended models"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            {families.length > 1 && (
+              <select
+                aria-label="Model family"
+                value={family}
+                onChange={(e) => setFamily(e.target.value)}
+              >
+                {families.map((f) => (
+                  <option key={f} value={f}>
+                    {f === 'all' ? 'All families' : f}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+          {catalog.length > 0 ? (
+            <div className="ollama-catalog">{catalog.map(renderRow)}</div>
+          ) : (
+            <p className="models-empty">
+              {query.trim() || family !== 'all'
+                ? 'No recommended models match your filters.'
+                : 'No additional recommended models.'}
+            </p>
+          )}
+        </>
       )}
 
-      <div className="ollama-catalog-filters">
-        <div className="local-models-section-label">
-          <strong>Find more</strong>
-          <span className="model-conn-meta">Curated catalog and Hugging Face search</span>
-        </div>
-        <input
-          className="ollama-catalog-search"
-          value={query}
-          placeholder="Search by name (qwen, phi-4, mistral…) or paste huggingface.co/…"
-          spellCheck={false}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <div className="ollama-family-tabs" role="tablist" aria-label="Model family">
-          {families.map((f) => (
-            <button
-              key={f}
-              type="button"
-              role="tab"
-              aria-selected={family === f}
-              className={`ollama-family-tab${family === f ? ' is-active' : ''}`}
-              onClick={() => setFamily(f)}
-            >
-              {f === 'all' ? 'All' : f}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="ollama-catalog">
-        {catalog.length === 0 ? (
-          <div className="models-empty">
-            {query.trim()
-              ? 'No curated matches — try Hugging Face results below.'
-              : installed.length > 0
-                ? 'All curated models above are already on this device — search Hugging Face for more.'
-                : 'No models in catalog.'}
-          </div>
-        ) : (
-          catalog.map(renderRow)
-        )}
-      </div>
-
-      {showHfSection && (
-        <div className="local-models-hf">
-          <div className="ollama-library-head">
-            <div>
-              <strong>Hugging Face</strong>
-              <span className="model-conn-meta">
-                {hfSearching
-                  ? 'Searching Hub for GGUF models…'
-                  : `Name search on huggingface.co (library=gguf) · prefers Q4_K_M`}
-              </span>
-            </div>
+      {view === 'hub' && (
+        <>
+          <div className="text-models-search">
+            <input
+              type="search"
+              className="ollama-catalog-search"
+              aria-label="Search Hugging Face GGUF models"
+              placeholder="Search GGUF models or paste a model URL"
+              spellCheck={false}
+              value={hubQuery}
+              onChange={(e) => {
+                setHubQuery(e.target.value)
+                setHubPage(0)
+              }}
+            />
             <button
               type="button"
               className="btn"
-              onClick={() =>
-                void window.ide.openExternal(
-                  `${browseUrl}${browseUrl.includes('?') ? '&' : '?'}search=${encodeURIComponent(query.trim())}`
-                )
-              }
+              onClick={() => {
+                const url = new URL(browseUrl)
+                if (activeHubQuery) url.searchParams.set('search', activeHubQuery)
+                void window.ide.openExternal(url.toString())
+              }}
             >
-              Open search
+              Browse Hub
             </button>
           </div>
-          {hfError && <p className="models-download-error">{hfError}</p>}
-          {!hfSearching && !hfError && remoteHits.length === 0 && (
-            <div className="models-empty">No extra Hub matches for “{query.trim()}”.</div>
+          {activeHubQuery.length === 1 && (
+            <p className="model-conn-meta">Enter at least two characters.</p>
           )}
-          <div className="ollama-catalog">
-            {remoteHits.map((hit) => {
-              const busy = hfDownloadingRepo === hit.repoId
-              return (
-                <div key={hit.repoId} className="ollama-catalog-row">
-                  <div className="ollama-catalog-main">
-                    <div className="ollama-catalog-title">
-                      <strong>{hit.name}</strong>
-                      <code>{hit.repoId}</code>
-                      {hit.downloads > 0 && (
-                        <span className="badge">{formatDownloads(hit.downloads)} downloads</span>
-                      )}
-                    </div>
-                    <p>
-                      {busy
-                        ? 'Adding to Text Models…'
-                        : 'GGUF repo on Hugging Face — Eris picks a Q4_K_M (or closest) file.'}
-                    </p>
-                    {busy && (
-                      <div className="models-progress">
-                        <div style={{ width: '8%' }} />
+          {activeHubQuery.length >= 2 &&
+            (hfSearching ? (
+              <p role="status" className="model-conn-meta">
+                Searching Hugging Face…
+              </p>
+            ) : hfError ? (
+              <p role="alert" className="models-download-error">
+                {hfError}
+              </p>
+            ) : hfHits.length === 0 ? (
+              <p className="models-empty">No GGUF models found.</p>
+            ) : (
+              <>
+                <div className="ollama-catalog">
+                  {hfHits.slice(hubPageStart, hubPageStart + HUB_PAGE_SIZE).map((hit) => {
+                    const known = modelsByRepo.get(hit.repoId.toLowerCase())
+                    if (known) return known.map(renderRow)
+                    const busy = hfDownloadingRepo === hit.repoId
+                    return (
+                      <div key={hit.repoId} className="ollama-catalog-row text-models-hub-row">
+                        <div className="ollama-catalog-main">
+                          <strong>{hit.name}</strong>
+                          <p className="text-models-meta">
+                            {hit.repoId}
+                            {hit.downloads > 0 && ` · ${formatDownloads(hit.downloads)} downloads`}
+                          </p>
+                          {busy && <p role="status">Preparing download…</p>}
+                        </div>
+                        <div className="ollama-catalog-actions">
+                          {busy ? (
+                            <button
+                              type="button"
+                              className="btn"
+                              onClick={() => {
+                                void window.ide.cancelLocalDownload()
+                                setHfDownloadingRepo(null)
+                                setDownloadingId(null)
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className="btn btn-primary"
+                                disabled={Boolean(downloadingId || hfDownloadingRepo)}
+                                onClick={() => startHfDownload(hit)}
+                              >
+                                Download
+                              </button>
+                              <button
+                                type="button"
+                                className="btn"
+                                aria-label={`Open ${hit.repoId} on Hugging Face`}
+                                onClick={() => void window.ide.openExternal(hit.url)}
+                              >
+                                Open
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </div>
-                    )}
-                  </div>
-                  <div className="ollama-catalog-actions">
-                    {busy ? (
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={() => {
-                          void window.ide.cancelLocalDownload()
-                          setHfDownloadingRepo(null)
-                          setDownloadingId(null)
-                        }}
-                      >
-                        Cancel
-                      </button>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          className="btn btn-primary"
-                          disabled={Boolean(downloadingId)}
-                          onClick={() => startHfDownload(hit)}
-                        >
-                          Download
-                        </button>
-                        <button
-                          type="button"
-                          className="btn"
-                          onClick={() => void window.ide.openExternal(hit.url)}
-                        >
-                          Open
-                        </button>
-                      </>
-                    )}
-                  </div>
+                    )
+                  })}
                 </div>
-              )
-            })}
-          </div>
-        </div>
+                {hubPageCount > 1 && (
+                  <div className="text-models-pagination">
+                    <span className="model-conn-meta" role="status">
+                      {hubPageStart + 1}–{Math.min(hubPageStart + HUB_PAGE_SIZE, hfHits.length)} of{' '}
+                      {hfHits.length}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={hubPage === 0}
+                      onClick={() => setHubPage((page) => page - 1)}
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={hubPage + 1 >= hubPageCount}
+                      onClick={() => setHubPage((page) => page + 1)}
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </>
+            ))}
+        </>
       )}
     </div>
   )

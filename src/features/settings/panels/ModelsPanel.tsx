@@ -269,15 +269,6 @@ export function TextModelsPanel({ resolved, status, apply, load }: Omit<SharedPr
   return (
     <div className="models-page">
       <section className="models-card">
-        <header className="models-card-head">
-          <div>
-            <h3>Text models</h3>
-            <p>Download GGUF chat and coding models that run inside Eris — no Ollama required.</p>
-          </div>
-          <button type="button" className="btn" onClick={() => void load()}>
-            Refresh
-          </button>
-        </header>
         <LocalModelsPanel
           models={locals}
           defaultModel={resolved.models.defaultModel}
