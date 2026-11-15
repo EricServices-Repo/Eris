@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.8 — 2026-11-15
+
+- Compact Text Models browsing and Hugging Face search.
+
 ## 0.7.7 — 2026-11-14
 
 - Redesigned Settings navigation and the Usage, GPU, and Cloud Models pages.

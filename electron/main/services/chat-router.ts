@@ -1,6 +1,13 @@
 import { INTENT_GUIDE, INTENT_RULES } from '../../../src/shared/intent-guide'
 import { isAutomaticModelSelection } from '../../../src/shared/model-execution'
-import { chooseExecutionModel, executionPolicy, executionLocal, type AutoModelChoice } from './auto-model-policy'
+import {
+  chooseExecutionModel,
+  executionPolicy,
+  executionLocal,
+  workspaceLocalityViolation,
+  type AutoModelChoice,
+  type ExecutionPolicy
+} from './auto-model-policy'
 import { agentModelClass, type AgentModelClass } from '../../../src/shared/agent-model-class'
 import { isNativeGgufRef } from '../../../src/shared/model-destination'
 import { asksForImageGeneration } from '../../../src/shared/image-generation'
@@ -480,6 +487,16 @@ export async function resolveFastModel(
   if (choice.model !== primary.model && isNativeGgufRef(choice.model) && isNativeGgufRef(primary.model))
     return { model: primary.model }
   return { model: choice.model, choice }
+}
+
+/** The execution policy in force, as the route reason names it. */
+export function policyLabel(policy: ExecutionPolicy, settings: AppSettings): string {
+  const label = {
+    'auto-local': 'Auto (this computer only)',
+    'auto-any': 'Auto (any connected model)',
+    fixed: 'Fixed model'
+  }[policy]
+  return settings.agent?.routing?.workspaceLocalOnly ? `${label} · workspace local-only` : label
 }
 
 function formatReason(parts: {
@@ -990,6 +1007,7 @@ export async function planChatTurn(options: {
     preferEscalate: agent.preferEscalate !== false
   })
 
+  const modelPolicy = agentModelOverride ? 'fixed' : executionPolicy(options.settings, selectedModel)
   const requiresTools = toolPolicy !== 'none' && intentNeedsTools(intent)
   const usingComposerFull = roles.chat === 'builtin:composer' || roles.tools === 'builtin:composer'
   const localFull = localComposerFullActive(options.settings)
@@ -1026,7 +1044,7 @@ export async function planChatTurn(options: {
       escalateToFull: roles.escalateToFull,
       profile: routingProfile,
       cloudPreferred
-    })} · ${agentModelOverride ? `pinned ${agentModelOverride}` : `${modelClass} ${chosenModel || 'none'}`} · model ${modelBasis}`,
+    })} · ${agentModelOverride ? `pinned ${agentModelOverride}` : `${modelClass} ${chosenModel || 'none'}`} · model ${modelBasis} · ${policyLabel(modelPolicy, options.settings)}`,
     method,
     classifiedIntent,
     routeTrace: { heuristicRule: heuristic.rule, overrides },
@@ -1034,7 +1052,7 @@ export async function planChatTurn(options: {
       ? `No eligible model for ${modelChoice.policy}. ${modelChoice.candidates.map((c) => `${c.model}: ${c.reason}`).join('; ')}`
       : workspaceLocalityViolation(options.settings, chosenModel) || localityConflict || roles.error,
     modelExecution: {
-      policy: agentModelOverride ? 'fixed' : executionPolicy(options.settings, selectedModel),
+      policy: modelPolicy,
       selection: agentModelOverride || selectedModel,
       basis: modelBasis,
       candidates: modelChoice?.candidates || []
