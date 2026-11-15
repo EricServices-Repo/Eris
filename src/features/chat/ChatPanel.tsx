@@ -495,6 +495,7 @@ function DelegationCards({ items }: { items: ChatDelegation[] }) {
             <span>{item.status === 'running' ? 'working' : item.status}</span>
           </header>
           <p>{item.goal}</p>
+          {item.model && <p className="delegation-model">Model: {item.model}</p>}
           {item.tools.length > 0 && (
             <ul>
               {item.tools.map((tool, index) => (

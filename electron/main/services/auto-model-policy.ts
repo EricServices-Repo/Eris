@@ -66,7 +66,7 @@ export async function chooseExecutionModel(
   intent: ChatIntent,
   selected = 'auto',
   excluded: readonly string[] = [],
-  _options: { cloudComposer?: boolean; requiredContext?: number } = {}
+  _options: { cloudComposer?: boolean; requiredContext?: number; modelClass?: 'primary' | 'fast' } = {}
 ): Promise<AutoModelChoice> {
   const policy = executionPolicy(settings, selected)
   if (policy === 'fixed') return { model: selected, policy, basis: 'profile', candidates: [] }
@@ -107,6 +107,16 @@ export async function chooseExecutionModel(
     if (settings.models.selectionPreference === 'cheapest') {
       const cost = profile?.costClass ?? (local ? 'free-local' : 'high')
       rank += { 'free-local': 1000, low: 500, high: 0 }[cost]
+    }
+    if (_options.modelClass === 'fast') {
+      // Auto-fast: tier standard or below first, then cost, then the smaller tier.
+      // A remote model with no profile is assumed strong and costly.
+      const tier = profile?.tier ?? (local ? 'standard' : 'strong')
+      const cost = profile?.costClass ?? (local ? 'free-local' : 'high')
+      rank =
+        (tier === 'small' || tier === 'standard' ? 2000 : 0) +
+        { 'free-local': 300, low: 200, high: 0 }[cost] +
+        { small: 40, standard: 30, strong: 20, frontier: 10 }[tier]
     }
     candidates.push({
       model,

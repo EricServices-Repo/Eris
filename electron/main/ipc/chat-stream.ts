@@ -692,7 +692,8 @@ export function registerChatStreamIpc(): void {
                       path: tool.path,
                       status: tool.status
                     })),
-                    result: (job.answer || job.liveStatus || '').slice(0, AGENT_HANDOFF_CHARS)
+                    result: (job.answer || job.liveStatus || '').slice(0, AGENT_HANDOFF_CHARS),
+                    model: job.model
                   }
                 })
               }
@@ -934,6 +935,8 @@ export function registerChatStreamIpc(): void {
                     parentJobId: null,
                     sourceThreadId: threadId,
                     model: resolvedModel,
+                    models: { primary: turnPlan.models.primary, fast: turnPlan.models.fast },
+                    policy: turnPlan.modelExecution?.policy,
                     agentId: req.agentId,
                     goal: req.goal,
                     summary: req.summary,

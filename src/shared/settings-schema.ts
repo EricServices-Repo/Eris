@@ -34,7 +34,13 @@ export const AgentDefinitionSchema = z.object({
   /** Max tool access this agent may use (policy ceiling). */
   tools: AgentToolsCeilingSchema.default('edit'),
   /** When true and chat model is Lite, allow escalate tools role to Full. */
-  preferEscalate: z.boolean().default(true)
+  preferEscalate: z.boolean().default(true),
+  /**
+   * primary = models.defaultModel (multi-step and editing work);
+   * fast = models.fast (short and helper work). Absent = the built-in role table.
+   * An explicit `model` pin overrides the class.
+   */
+  modelClass: z.enum(['primary', 'fast']).optional()
 })
 
 export const ProjectAgentsSchema = z.object({
@@ -119,6 +125,12 @@ export const SettingsSchema = z.object({
   models: z.object({
     defaultModel: z.string(),
     selectionPreference: z.enum(['best', 'local', 'cheapest']).default('best'),
+    /**
+     * Model for fast-class roles (Explainer, Fast) and helper work. "auto" = Auto-fast:
+     * the cheapest eligible model at tier standard or below under the turn's policy.
+     * models.defaultModel is the primary model.
+     */
+    fast: z.string().default('auto'),
     priority: z.array(z.string()).default([]),
     capabilityProfiles: z.record(z.string(), z.object({
       tier: z.enum(['small', 'standard', 'strong', 'frontier']),
@@ -347,6 +359,8 @@ export interface ChatDelegation {
   status: 'running' | 'done' | 'failed'
   tools: Array<{ name: string; path?: string; status: string }>
   result: string
+  /** Model the child ran on (inherited from the parent turn or the role's pin). */
+  model?: string
 }
 
 export interface ChatMessage {
@@ -522,6 +536,12 @@ export interface TurnPlan {
     router?: string
     /** Actual model used for the bounded route hint; execution may use a different worker. */
     coordinator?: string
+    /** Resolved primary-class model for this turn; children and helpers reuse it. */
+    primary?: string
+    /** Resolved fast-class model for this turn; equals primary when only one model fits. */
+    fast?: string
+    /** Which class this turn's role ran on. */
+    modelClass?: 'primary' | 'fast'
   }
   modelExecution?: {
     policy: 'fixed' | 'auto-local' | 'auto-any'
@@ -583,6 +603,11 @@ export interface ChatTurnContext {
   forceRoute?: 'tools' | 'answer'
   /** Agent that spoke last in this thread, so a follow-up can stay with them. */
   previousAgentId?: string | null
+  /**
+   * A delegated child's parent models. The child runs on the one its role class names
+   * instead of running Auto again; a role pin must satisfy the parent's policy.
+   */
+  inheritedModels?: { primary: string; fast: string }
   /** Recent turns provided to resolve references such as “that” or “the second option”. */
   previousMessages?: Array<{ role: 'user' | 'assistant'; content: string; agentId?: string }>
 }

@@ -78,6 +78,7 @@ export type AgentRunnerEvent =
         status: 'running' | 'done' | 'failed'
         tools: Array<{ name: string; path?: string; status: string }>
         result: string
+        model?: string
       }
     }
 

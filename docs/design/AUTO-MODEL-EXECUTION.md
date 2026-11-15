@@ -79,3 +79,15 @@ A failed preparation doesn't commit the new model or replay completed edits. It 
 - `memory-dispatch.test.ts`: sources revoked while a model is being prepared never reach the final request.
 
 These are deterministic logic and transport tests. They are not live-model quality measurements, GPU certification or packaged-app validation.
+
+## Model classes
+
+Each role has a `modelClass`: `primary` or `fast` (built-in table in `src/shared/agent-model-class.ts`; Composer, Coder, Plan, Verification and Reviewer are primary, Explainer and Fast are fast). `planChatTurn` resolves both models for every Auto turn and records them as `models.primary` and `models.fast` on the turn plan:
+
+- **Primary** is the normal Auto choice for the turn (or `models.defaultModel` when Fixed).
+- **Fast** is `models.fast` when it is Fixed and eligible under the turn's policy, otherwise *Auto-fast*: `chooseExecutionModel(..., { modelClass: 'fast' })` ranks models at tier standard or below first, then by cost class. A remote model without a capability profile counts as strong and costly.
+- When both picks are native local models, the fast class keeps the primary model, so roles never swap the loaded worker.
+- A role's `model` pin overrides its class, and a Fixed chat selection applies to every role.
+
+The route reason names the class and model, for example `fast local:qwen2.5-coder-1.5b`.
+
