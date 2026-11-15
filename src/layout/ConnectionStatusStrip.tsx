@@ -71,7 +71,7 @@ export function buildConnectionIssues(input: {
       title: 'No local models ready',
       detail:
         input.composerReady === false
-          ? 'Download a Local model or Composer Lite in Settings → Models to chat.'
+          ? 'Connect a provider or download a Local model in Settings → Models to chat.'
           : 'Model probe failed — check Settings → Models.',
       actionLabel: 'Models',
       onAction: input.onOpenModels

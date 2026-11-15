@@ -1,5 +1,9 @@
 import { randomUUID } from 'crypto'
-import { isErisCloudConnection, normalizeErisCloudConnection } from '../../../src/shared/eris-cloud'
+import {
+  erisCloudModelRef,
+  isErisCloudConnection,
+  normalizeErisCloudConnection
+} from '../../../src/shared/eris-cloud'
 import {
   copyFileSync,
   existsSync,
@@ -158,6 +162,17 @@ function sanitizeLegacyModels(raw: Record<string, unknown>): Record<string, unkn
   }
   if (models.defaultModel === 'builtin:composer-lite') models.defaultModel = 'auto-local'
   else if (!models.defaultModel || String(models.defaultModel).startsWith('builtin:')) models.defaultModel = 'auto'
+  // A default picked from Eris Cloud before hosted models were named `cloud:<model>`:
+  // name it so it can't resolve to the same model on the user's own Ollama.
+  const cloudModels = cloudIdx < 0 ? [] : ((connList[cloudIdx]!.models as string[] | undefined) ?? [])
+  const bareDefault = String(models.defaultModel)
+  if (
+    cloudModels.includes(bareDefault) &&
+    !connList.some(
+      (c) => !isErisCloudConnection(c as { id: string }) && ((c.models as string[] | undefined) ?? []).includes(bareDefault)
+    )
+  )
+    models.defaultModel = erisCloudModelRef(bareDefault)
 
   if (typeof models.preferEgpu !== 'boolean') {
     models.preferEgpu = true
