@@ -217,6 +217,8 @@
       "tests/cloud-status-retired.test.ts",
       "tests/eris-cloud-model-names.test.ts",
       "tests/eris-cloud.test.ts",
+      "tests/eris-cloud-model-names.test.ts",
+      "tests/cloud-status-retired.test.ts",
       "tests/code-index-patch.test.ts",
       "tests/diff-review-stats.test.ts",
       "tests/document-store.test.ts",

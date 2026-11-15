@@ -81,6 +81,8 @@ const schemas: Record<string, z.ZodType> = {
       .optional()
   ]),
   'models:warmLocal': z.tuple([z.string().max(512).optional()]),
+  // Settings → Models → Local inference queue (read-only governor snapshot).
+  'models:admission': empty,
   'models:builtinStatus': empty,
   'models:localStatus': empty,
   'models:gpuStatus': empty,
@@ -95,6 +97,10 @@ const schemas: Record<string, z.ZodType> = {
   'models:searchHfGguf': z.tuple([z.string().max(512)]),
   'models:cancelDownload': empty,
   'models:cancelLocalDownload': empty
+}
+/** True when a privileged channel has an argument schema; one without is always rejected. */
+export function hasPrivilegedSchema(channel: string): boolean {
+  return Object.prototype.hasOwnProperty.call(schemas, channel)
 }
 const envelope = z
   .object({ version: z.literal(1), root: path.nullable(), args: z.array(z.unknown()).max(8) })
