@@ -150,9 +150,9 @@ export const SettingsSchema = z.object({
   }),
   agent: z.object({
     contextMemory: ContextMemorySettingsSchema.prefault({}),
-    helperCalls: z.enum(['fast', 'primary', 'off']).default('fast'),
     /** Compaction is lossless without one; a summary is an optional extra model call. */
     summarizeEvictedContext: z.boolean().default(false),
+    helperCalls: z.enum(['fast', 'primary', 'off']).default('fast'),
     systemPrompt: z.string(),
     includeOpenFiles: z.boolean(),
     maxHistoryMessages: z.number().int().min(2).max(200),
