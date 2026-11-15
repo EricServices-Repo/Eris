@@ -139,6 +139,8 @@ export type UsageSyncMeta = {
   authenticated: boolean
 }
 
+export type UsageDestination = 'cloud' | 'local' | 'external'
+
 export type UsageSnapshot = {
   today: {
     date: string
@@ -146,6 +148,7 @@ export type UsageSnapshot = {
       string,
       {
         model: string
+        destination?: UsageDestination
         kind: 'builtin' | 'openai-compatible' | 'other'
         provider: string
         requests: number
@@ -180,6 +183,7 @@ export type UsageSnapshot = {
       string,
       {
         model: string
+        destination?: UsageDestination
         kind: 'builtin' | 'openai-compatible' | 'other'
         provider: string
         requests: number

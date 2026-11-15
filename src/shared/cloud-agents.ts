@@ -13,7 +13,7 @@ export const CLOUD_AGENTS_BASE_URL = 'https://agents.ericservic.es:443'
  */
 export const CLOUD_AGENTS_ENABLED = false
 export const CLOUD_AGENTS_RETIRED_MESSAGE =
-  'Cloud Agents are not available — agents run locally. Hosted models are under Settings → Providers → Eris Cloud.'
+  'Cloud Agents are not available — agents run locally. Hosted models are under Settings → Models → Cloud Models.'
 
 export const CLOUD_AGENTS_HEALTH_PATH = '/v1/health'
 export const CLOUD_AGENTS_JOBS_PATH = '/v1/jobs'
@@ -179,7 +179,7 @@ export function cloudStatusIndicator(
 
 /** Settings → Agent text while Cloud Agents are retired. */
 export const LOCAL_AGENTS_DESCRIPTION =
-  'Agents and subagents run on this computer, with the model chosen in chat or by Auto. To use hosted models, turn on Settings → Providers → Eris Cloud; they appear in the model picker as cloud:<model>.'
+  'Agents and subagents run on this computer, with the model chosen in chat or by Auto. To use hosted models, turn on Settings → Models → Cloud Models; they appear in the model picker as cloud:<model>.'
 
 export function cloudAgentsStatusLabel(health: CloudHealth | null | undefined): string {
   if (!health) return 'Cloud: checking…'

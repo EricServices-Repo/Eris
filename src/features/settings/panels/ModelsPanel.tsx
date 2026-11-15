@@ -1,10 +1,8 @@
-import { InferenceAdmission } from '../InferenceAdmission'
 import { ImageGenerationSettings } from '../ImageGenerationSettings'
 import { useEffect, useMemo, useState } from 'react'
 import type {
   AppSettings,
   BuiltinModelStatus,
-  GpuAccelStatus,
   ModelsStatus
 } from '@/shared/settings-schema'
 import { downloadStatusLabel } from '@/shared/model-download-ui'
@@ -12,219 +10,7 @@ import type { ApplySetting } from '../fields'
 import { LocalModelsPanel } from '../LocalModelsPanel'
 import { ModelConnectionsPanel } from '../ModelConnectionsPanel'
 import { OllamaConfigPanel } from '../OllamaConfigPanel'
-import { ErisCloudPanel } from '../ErisCloudPanel'
 import { isLocalOllamaConnection } from '@/shared/eris-cloud'
-
-function gpuKindLabel(
-  kind: 'integrated' | 'discrete' | 'external',
-  name: string,
-  backend?: GpuAccelStatus['backend']
-): string {
-  if (kind === 'external') return 'eGPU'
-  if (/apple\s+m\d/i.test(name) || backend === 'metal') return 'Metal'
-  if (kind === 'discrete') return 'GPU'
-  return 'Integrated'
-}
-
-function modelPlacementLabel(loaded: NonNullable<GpuAccelStatus['loadedModel']>): string {
-  const window = `${Math.round(loaded.contextSize / 1024)}K window`
-  const layers =
-    loaded.gpuLayers !== undefined && loaded.totalLayers !== undefined
-      ? `${loaded.gpuLayers}/${loaded.totalLayers} layers on ${loaded.device ?? 'GPU'}`
-      : (loaded.device ?? '')
-  const kv = loaded.kvBytes ? formatMemoryStat('', loaded.kvBytes) : null
-  return [layers, window, kv ? `about ${kv} KV` : ''].filter(Boolean).join(' · ')
-}
-
-function formatMemoryStat(name: string, bytes?: number): string | null {
-  if (!bytes || bytes <= 0) return null
-  const size =
-    bytes >= 1e9
-      ? `${(bytes / 1e9).toFixed(bytes >= 10e9 ? 0 : 1)} GB`
-      : `${Math.round(bytes / 1e6)} MB`
-  if (/apple\s+m\d/i.test(name)) return `Unified ${size}`
-  return size
-}
-
-function gpuStatLine(d: {
-  name: string
-  bus?: string
-  vramBytes?: number
-  vramFreeBytes?: number
-  shared?: boolean
-}): string {
-  const parts: string[] = []
-  if (d.shared && d.vramFreeBytes) {
-    parts.push(`${formatMemoryStat(d.name, d.vramFreeBytes)} free`)
-  }
-  const mem = formatMemoryStat(d.name, d.vramBytes)
-  if (mem) parts.push(mem)
-  if (d.bus) parts.push(d.bus)
-  return parts.join(' · ')
-}
-
-function GpuAccelCard({
-  gpu,
-  preferEgpu,
-  allowCpuSpill,
-  apply,
-  onRefresh
-}: {
-  gpu: GpuAccelStatus | null | undefined
-  preferEgpu: boolean
-  allowCpuSpill: boolean
-  apply: ApplySetting
-  onRefresh: () => Promise<void>
-}) {
-  const [busy, setBusy] = useState(false)
-
-  const setSpill = async (next: boolean) => {
-    setBusy(true)
-    try {
-      await apply(['models', 'allowCpuSpill'], next)
-      await window.ide.reloadLlamaGpu()
-      await onRefresh()
-    } finally {
-      setBusy(false)
-    }
-  }
-  const setPrefer = async (next: boolean) => {
-    setBusy(true)
-    try {
-      await apply(['models', 'preferEgpu'], next)
-      await window.ide.reloadLlamaGpu()
-      await onRefresh()
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const devices = gpu?.devices ?? []
-  const shared = devices.filter((d) => d.shared)
-  const preferredId = gpu?.preferredGpu
-    ? `${gpu.preferredGpu.index}:${gpu.preferredGpu.name}`
-    : null
-
-  return (
-    <section className="models-card gpu-accel-card">
-      <header className="models-card-head">
-        <div>
-          <h3>GPU</h3>
-        </div>
-        <button
-          type="button"
-          className="btn"
-          disabled={busy}
-          onClick={() => {
-            setBusy(true)
-            void window.ide
-              .reloadLlamaGpu()
-              .then(() => onRefresh())
-              .finally(() => setBusy(false))
-          }}
-        >
-          Rescan
-        </button>
-      </header>
-
-      {gpu?.vramBudgetBytes && shared.length < 2 ? (
-        <p className="gpu-share-vram">
-          <span>Available for models</span>
-          <strong>{formatMemoryStat('', gpu.vramBudgetBytes)}</strong>
-          <span className="model-conn-meta">
-            used to choose the quant, context length, and GPU layers
-          </span>
-        </p>
-      ) : null}
-
-      {gpu?.loadedModel ? (
-        <p className="gpu-share-vram">
-          <span>Loaded model</span>
-          <strong>{modelPlacementLabel(gpu.loadedModel)}</strong>
-          {gpu.loadedModel.gpuLayers !== undefined &&
-          gpu.loadedModel.totalLayers !== undefined &&
-          gpu.loadedModel.gpuLayers < gpu.loadedModel.totalLayers ? (
-            <span className="model-conn-meta">
-              Some layers run on the CPU, which is much slower. A smaller model will fit fully.
-            </span>
-          ) : null}
-        </p>
-      ) : null}
-
-      {shared.length >= 2 && (
-        <p className="gpu-share-vram">
-          <span>Shared VRAM</span>
-          <strong>
-            {gpu?.vramShareFreeBytes != null
-              ? `${formatMemoryStat('', gpu.vramShareFreeBytes)} free`
-              : formatMemoryStat('', gpu?.vramShareTotalBytes)}
-          </strong>
-          <span className="model-conn-meta">
-            {gpu?.vramShareFreeBytes != null && gpu.vramShareTotalBytes
-              ? `of ${formatMemoryStat('', gpu.vramShareTotalBytes)} across ${shared.length} GPUs`
-              : `across ${shared.length} GPUs`}
-          </span>
-        </p>
-      )}
-
-      <div className="gpu-device-list">
-        {devices.length === 0 ? (
-          <p className="models-hint">No GPUs found</p>
-        ) : (
-          <ul>
-            {devices.map((d) => {
-              const id = `${d.index}:${d.name}`
-              const selected = preferEgpu && id === preferredId
-              const stats = gpuStatLine(d)
-              const tag = gpuKindLabel(d.kind, d.name, gpu?.backend)
-              return (
-                <li
-                  key={id}
-                  className={
-                    [selected ? 'is-selected' : '', d.shared ? 'is-shared' : '']
-                      .filter(Boolean)
-                      .join(' ') || undefined
-                  }
-                >
-                  <span
-                    className={`gpu-kind-tag kind-${d.kind}${tag === 'Metal' ? ' kind-metal' : ''}`}
-                  >
-                    {tag}
-                  </span>
-                  <div className="gpu-device-copy">
-                    <strong>{d.name}</strong>
-                    {stats ? <span className="model-conn-meta">{stats}</span> : null}
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
-        )}
-      </div>
-
-      <label className="gpu-accel-toggle">
-        <input
-          type="checkbox"
-          checked={preferEgpu}
-          disabled={busy}
-          onChange={(e) => void setPrefer(e.target.checked)}
-        />
-        <span title="Prefer the best GPU while keeping other GPUs available for models that need more memory.">
-          Prefer best GPU
-        </span>
-      </label>
-      <label className="gpu-accel-toggle">
-        <input
-          type="checkbox"
-          checked={allowCpuSpill}
-          disabled={busy}
-          onChange={(e) => void setSpill(e.target.checked)}
-        />
-        <span>Allow CPU layers when a model cannot fit on the GPU</span>
-      </label>
-    </section>
-  )
-}
 
 export function useModelsPanelState() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
@@ -473,23 +259,7 @@ function DefaultModelCard({
 
 /** Settings → Composer — built-in Lite/Full downloads + default model. */
 export function ComposerModelsPanel({ resolved, status, apply }: SharedProps) {
-  return <div className="models-page"><DefaultModelCard resolved={resolved} status={status} apply={apply} /><p>Download a text model or configure a provider. Eris Cloud models (hosted by EricServic.es) turn on when you sign in — see Settings → Providers.</p></div>
-}
-
-/** Settings → GPUs — detected accelerators and eGPU preference. */
-export function GpuModelsPanel({ resolved, status, apply, load }: Omit<SharedProps, 'state'>) {
-  return (
-    <div className="models-page">
-      <InferenceAdmission />
-      <GpuAccelCard
-        gpu={status?.gpu}
-        preferEgpu={resolved.models.preferEgpu !== false}
-        allowCpuSpill={resolved.models.allowCpuSpill !== false}
-        apply={apply}
-        onRefresh={load}
-      />
-    </div>
-  )
+  return <div className="models-page"><DefaultModelCard resolved={resolved} status={status} apply={apply} /><p>Download a text model or configure a provider. Eris Cloud models (hosted by EricServic.es) turn on when you sign in — see Settings → Models → Cloud Models.</p></div>
 }
 
 /** Settings → Text Models — local GGUF catalog and downloads. */
@@ -576,27 +346,6 @@ export function ProvidersModelsPanel({
           status={status}
           defaultModel={resolved.models.defaultModel}
           compact
-          onSaveConnections={saveConnections}
-          onRefresh={async () => {
-            await load()
-          }}
-          onSetDefaultModel={async (model) => {
-            await apply(['models', 'defaultModel'], model)
-          }}
-        />
-      </section>
-
-      <section className="models-card">
-        <header className="models-card-head">
-          <div>
-            <h3>Eris Cloud</h3>
-            <p>Hosted models from EricServic.es. Turns on when you sign in to your account.</p>
-          </div>
-        </header>
-        <ErisCloudPanel
-          resolved={resolved}
-          status={status}
-          defaultModel={resolved.models.defaultModel}
           onSaveConnections={saveConnections}
           onRefresh={async () => {
             await load()

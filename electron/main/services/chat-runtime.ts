@@ -46,7 +46,9 @@ import {
 } from './model-transport'
 
 import { createReasoningSplitter } from './reasoning-split'
-import { providerModelId } from '../../../src/shared/eris-cloud'
+import type { UsageDestination } from '../../../src/shared/api'
+import { isLoopbackUrl } from '../../../src/shared/model-destination'
+import { isErisCloudConnection, providerModelId } from '../../../src/shared/eris-cloud'
 
 export type { NativeToolCall, OpenAIToolDef }
 
@@ -356,6 +358,7 @@ export async function* streamProviderChat(
   }
   let outputText = ''
   let provider: string | null = null
+  let destination: UsageDestination | undefined
   let reportedPrompt: number | null = null
   let reportedCompletion: number | null = null
 
@@ -370,8 +373,10 @@ export async function* streamProviderChat(
       measuredPromptTokens: reportedPrompt,
       dispatchToFirstChunkMs
     })
+    if (!destination || dispatchedAt === undefined) return
     try {
       recordModelUsage({
+        destination,
         model,
         provider,
         inputTokens: reportedPrompt ?? inputEstimate,
@@ -405,6 +410,7 @@ export async function* streamProviderChat(
         model = ready
         provider = 'builtin'
       }
+      destination = 'local'
       phase('loading', 'Waiting for local resources and model readiness')
       for await (const chunk of streamBuiltinChat({
         onLoaded: () => dispatched('Local model ready; request dispatched'),
@@ -529,6 +535,11 @@ export async function* streamProviderChat(
     }
 
     provider = connection.provider || connection.name || 'custom'
+    destination = isErisCloudConnection(connection)
+      ? 'cloud'
+      : isLoopbackUrl(connection.baseUrl)
+        ? 'local'
+        : 'external'
     const apiKey = connection.apiKeyRef ? options.getSecret(connection.apiKeyRef) : null
     dispatched('Provider request dispatched; network time is included')
     const numCtx = ollamaRequestWindow(connection, model, capabilities.requestedContext)

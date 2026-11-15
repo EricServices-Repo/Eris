@@ -8,6 +8,7 @@ export type Category =
   | 'composer'
   | 'textModels'
   | 'imageModels'
+  | 'cloudModels'
   | 'providers'
   | 'usage'
   | 'memory'

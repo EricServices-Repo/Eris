@@ -1,3 +1,4 @@
+import type { UsageDestination } from '../../../src/shared/api'
 import { join } from 'path'
 import { atomicEvidenceJson, readEvidence } from './evidence-records'
 import { userDataRoot } from './paths'
@@ -15,6 +16,7 @@ function notifyProfileUsageDelta(delta: {
 export type ModelUsageKind = 'builtin' | 'openai-compatible' | 'other'
 
 export type ModelUsageEntry = {
+  destination?: UsageDestination
   model: string
   kind: ModelUsageKind
   /** Connection provider hint: ollama | openai | openrouter | … */
@@ -146,6 +148,7 @@ export function classifyModel(
 }
 
 export function recordModelUsage(options: {
+  destination?: UsageDestination
   inputSource?: 'measured' | 'estimated'
   outputSource?: 'measured' | 'estimated'
   model: string
@@ -162,9 +165,10 @@ export function recordModelUsage(options: {
   const file = loadFile()
   const date = todayKey()
   const day = file.days[date] || emptyDay(date)
-  const key = `${kind}::${provider}::${model}`
+  const key = [kind, provider, model, options.destination].filter(Boolean).join('::')
   const existing = day.models[key] || {
     model,
+    destination: options.destination,
     kind,
     provider,
     requests: 0,

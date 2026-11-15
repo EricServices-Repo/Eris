@@ -1,172 +1,57 @@
 import { useCallback, useEffect, useState } from 'react'
-import type {
-  UsageDayTotals,
-  UsageEntitlement,
-  UsageLimitMeter,
-  UsageSnapshot,
-  UsageSyncMeta
-} from '@/shared/api'
+import type { UsageDestination, UsageSnapshot } from '@/shared/api'
+import { isErisCloudModelRef } from '@/shared/eris-cloud'
+import { ERIS_CLOUD_WEEKLY_TOKEN_LIMIT } from '@/shared/eris-plan'
+import { isNativeGgufRef } from '@/shared/model-destination'
+import './weekly-usage.css'
 
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`
-  if (n >= 10_000) return `${(n / 1000).toFixed(1)}k`
-  if (n >= 1000) return `${(n / 1000).toFixed(2)}k`
-  return String(n)
+const destinations = [
+  { id: 'cloud', label: 'Eris Cloud' },
+  { id: 'local', label: 'Local' },
+  { id: 'external', label: 'Other providers' },
+  { id: 'unclassified', label: 'Unclassified' }
+] as const
+
+type Destination = UsageDestination | 'unclassified'
+const numberFormat = new Intl.NumberFormat()
+const compactFormat = new Intl.NumberFormat(undefined, {
+  notation: 'compact',
+  maximumFractionDigits: 1
+})
+
+function displayDate(key: string, options: Intl.DateTimeFormatOptions): string {
+  const [year, month, day] = key.split('-').map(Number)
+  return new Date(year!, month! - 1, day!).toLocaleDateString(undefined, options)
 }
 
-function niceModelName(model: string): string {
-  if (model === 'builtin:composer-lite') return 'Composer Lite'
-  if (model === 'builtin:composer') return 'Composer Full'
-  if (model.startsWith('builtin:')) return model.replace(/^builtin:/, 'Composer ')
-  return model
-}
+function dayUsage(day: UsageSnapshot['days'][number]) {
+  const split: Record<Destination, number> = { cloud: 0, local: 0, external: 0, unclassified: 0 }
+  const total = day.totalInputTokens + day.totalOutputTokens
 
-function kindAccent(kind: string): string {
-  if (kind === 'builtin') return 'usage-accent-builtin'
-  if (kind === 'openai-compatible') return 'usage-accent-api'
-  return 'usage-accent-other'
-}
-
-function formatSyncTime(iso: string | null): string {
-  if (!iso) return 'never'
-  try {
-    const d = new Date(iso)
-    if (Number.isNaN(d.getTime())) return 'never'
-    return d.toLocaleString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit'
-    })
-  } catch {
-    return 'never'
+  for (const entry of Object.values(day.models ?? {})) {
+    let destination: Destination = entry.destination ?? 'unclassified'
+    if (!entry.destination) {
+      if (isErisCloudModelRef(entry.model)) destination = 'cloud'
+      else if (entry.kind === 'builtin' || isNativeGgufRef(entry.model)) destination = 'local'
+    }
+    split[destination] += entry.inputTokens + entry.outputTokens
   }
-}
-
-function syncLabel(sync: UsageSyncMeta | undefined, refreshing: boolean): string {
-  if (refreshing || sync?.state === 'syncing') return 'Syncing…'
-  if (!sync?.authenticated) return 'Sign in to sync account usage'
-  if (sync.state === 'ok') return `Synced ${formatSyncTime(sync.lastSyncedAt)}`
-  if (sync.state === 'offline') {
-    return sync.lastError
-      ? `Offline — ${sync.lastError}`
-      : 'Offline — showing device totals until sync works'
-  }
-  if (sync.state === 'error') {
-    return sync.lastError ? `Sync error — ${sync.lastError}` : 'Sync error'
-  }
-  return sync.lastSyncedAt
-    ? `Last synced ${formatSyncTime(sync.lastSyncedAt)}`
-    : 'Account sync idle'
-}
-
-type UsageDay = UsageSnapshot['days'][number]
-
-function dayLabel(date: string): string {
-  const [y, m, d] = date.split('-').map((part) => Number(part))
-  if (!y || !m || !d) return date
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric'
-  })
-}
-
-function chartsForDay(day: UsageDay | undefined): {
-  byKind: UsageSnapshot['byKind']
-  byModel: UsageSnapshot['byModel']
-} {
-  const models = Object.values(day?.models || {})
-  const kindMap = new Map<
-    UsageSnapshot['byKind'][number]['kind'],
-    { requests: number; inputTokens: number; outputTokens: number }
-  >()
-  for (const entry of models) {
-    const cur = kindMap.get(entry.kind) || { requests: 0, inputTokens: 0, outputTokens: 0 }
-    cur.requests += entry.requests
-    cur.inputTokens += entry.inputTokens
-    cur.outputTokens += entry.outputTokens
-    kindMap.set(entry.kind, cur)
-  }
-  const labels: Record<string, string> = {
-    builtin: 'Built-in Composer',
-    'openai-compatible': 'OpenAI-compatible',
-    other: 'Other'
-  }
-  const byKind = (['builtin', 'openai-compatible', 'other'] as const)
-    .map((kind) => {
-      const cur = kindMap.get(kind) || { requests: 0, inputTokens: 0, outputTokens: 0 }
-      return {
-        kind,
-        label: labels[kind] || kind,
-        ...cur,
-        totalTokens: cur.inputTokens + cur.outputTokens
-      }
-    })
-    .filter((row) => row.totalTokens > 0 || row.requests > 0)
-  const total = models.reduce((sum, entry) => sum + entry.inputTokens + entry.outputTokens, 0)
-  const byModel = models
-    .map((entry) => {
-      const totalTokens = entry.inputTokens + entry.outputTokens
-      return { ...entry, totalTokens, share: total > 0 ? totalTokens / total : 0 }
-    })
-    .sort((a, b) => b.totalTokens - a.totalTokens)
-  return { byKind, byModel }
-}
-
-function totalsLine(t: UsageDayTotals | null | undefined): string {
-  if (!t) return '—'
-  const tokens = t.inputTokens + t.outputTokens
-  return `${t.requests} req · ${formatTokens(tokens)} tok · ${t.cloudJobs} cloud`
-}
-
-function LimitMeter({
-  label,
-  meter,
-  format = (n) => String(n)
-}: {
-  label: string
-  meter: UsageLimitMeter
-  format?: (n: number) => string
-}) {
-  const unlimited = meter.limit == null
-  const pct = unlimited ? 0 : Math.round(meter.ratio * 100)
-  return (
-    <div className={`usage-limit-meter${meter.exhausted ? ' is-exhausted' : ''}`}>
-      <div className="usage-limit-meter-head">
-        <span>{label}</span>
-        <span className="usage-muted">
-          {unlimited
-            ? `${format(meter.used)} · unlimited`
-            : `${format(meter.used)} / ${format(meter.limit!)}`}
-        </span>
-      </div>
-      <div className="usage-bar-track">
-        <div
-          className={`usage-bar-fill ${meter.exhausted ? 'usage-accent-other' : 'usage-accent-builtin'}`}
-          style={{ width: unlimited ? '8%' : `${Math.max(meter.used > 0 ? 4 : 0, pct)}%` }}
-        />
-      </div>
-    </div>
-  )
+  const attributed = Object.values(split).reduce((sum, tokens) => sum + tokens, 0)
+  split.unclassified += Math.max(0, total - attributed)
+  return { ...day, split, total }
 }
 
 export function UsagePanel() {
   const [stats, setStats] = useState<UsageSnapshot | null>(null)
-  const [selectedDate, setSelectedDate] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     setBusy(true)
     setError(null)
     try {
-      // Refresh account plan from Control Hub when signed in
-      try {
-        await window.ide.ericServicesStatus()
-      } catch {
-        /* offline / signed out — local Free caps still apply */
-      }
-      setStats(await window.ide.getUsageStats())
+      await window.ide.ericServicesStatus().catch(() => undefined)
+      setStats(await window.ide.getUsageStats(7, { refresh: false }))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load usage')
     } finally {
@@ -178,370 +63,202 @@ export function UsagePanel() {
     void refresh()
   }, [refresh])
 
-  const today = stats?.today
-  const ent: UsageEntitlement | undefined = stats?.entitlement
-  const profile = stats?.profile
-  const sync = profile?.sync
-  const isPro = ent?.plan === 'pro'
-  const syncing = busy || sync?.state === 'syncing'
-  const windowTotals = profile?.effectiveWindow || stats?.window
-  const windowTokens = (windowTotals?.inputTokens || 0) + (windowTotals?.outputTokens || 0)
-  const windowDays = stats?.window?.days || ent?.window?.days || stats?.days.length || 30
-  const windowRange =
-    stats?.window?.from && stats?.window?.to
-      ? `${dayLabel(stats.window.from)} – ${dayLabel(stats.window.to)}`
-      : `Last ${windowDays} days`
-  const focus =
-    stats?.days.find((day) => day.date === selectedDate) ||
-    stats?.days.find((day) => day.date === today?.date) ||
-    today
-  const focusCharts = chartsForDay(focus)
-  const focusTokens = (focus?.totalInputTokens || 0) + (focus?.totalOutputTokens || 0)
-  const maxModel = Math.max(1, ...focusCharts.byModel.map((m) => m.totalTokens), 1)
-  const maxKind = Math.max(1, ...focusCharts.byKind.map((k) => k.totalTokens), 1)
-  const trendMax = Math.max(
-    1,
-    ...(stats?.days || []).map((d) => d.totalInputTokens + d.totalOutputTokens)
+  async function clearHistory(todayOnly: boolean) {
+    const range = todayOnly ? 'today’s' : 'all'
+    if (!window.confirm(`Clear ${range} usage history on this device?`)) return
+    setBusy(true)
+    setError(null)
+    try {
+      const snapshot = await window.ide.clearUsageStats({ todayOnly })
+      setStats((previous) => ({
+        ...snapshot,
+        days: snapshot.days.slice(0, 7),
+        entitlement: previous?.entitlement
+      }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to clear usage')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const days = [...(stats?.days ?? [])].reverse().map(dayUsage)
+  const split = days.reduce(
+    (sum, day) => {
+      for (const { id } of destinations) sum[id] += day.split[id]
+      return sum
+    },
+    { cloud: 0, local: 0, external: 0, unclassified: 0 }
   )
+  const total = Object.values(split).reduce((sum, tokens) => sum + tokens, 0)
+  const requests = days.reduce((sum, day) => sum + day.totalRequests, 0)
+  const peak = Math.max(
+    1,
+    ...days.map((day) => Object.values(day.split).reduce((sum, n) => sum + n, 0))
+  )
+  const visibleDestinations = destinations.filter(
+    ({ id }) => id === 'cloud' || id === 'local' || split[id] > 0
+  )
+  const entitlement = stats?.entitlement
+  const dateOptions = { month: 'short', day: 'numeric' } as const
+  const firstDay = days[0]
+  const lastDay = days[days.length - 1]
 
   return (
-    <div className="usage-panel">
-      {ent?.authenticated && (
-        <div className={`usage-sync-card${syncing ? ' is-syncing' : ''}`}>
-          <div className="usage-sync-head">
-            <strong>Account usage</strong>
-            <span className="usage-sync-status">{syncLabel(sync, busy)}</span>
-          </div>
-          <p className="usage-sync-copy">
-            Free limits use the last {windowDays} days. Each day counts the higher of this device
-            and your EricServic.es profile, so multi-device use stays honest.
+    <div className="usage-panel weekly-usage">
+      <header className="weekly-usage-header">
+        <div>
+          <h2>Weekly usage</h2>
+          <p className="usage-muted">
+            Last 7 days on this device
+            {firstDay &&
+              lastDay &&
+              ` · ${displayDate(firstDay.date, dateOptions)} – ${displayDate(lastDay.date, dateOptions)}`}
           </p>
-          <div className="usage-sync-grid">
-            <div className="usage-sync-cell">
-              <div className="usage-sync-cell-label">This device · {windowDays}d</div>
-              <div className="usage-sync-cell-value">
-                {totalsLine(profile?.deviceWindow)}
-              </div>
-            </div>
-            <div className="usage-sync-cell">
-              <div className="usage-sync-cell-label">Account · {windowDays}d</div>
-              <div className="usage-sync-cell-value">
-                {syncing && !profile?.accountWindow
-                  ? 'Syncing…'
-                  : totalsLine(profile?.accountWindow)}
-              </div>
-            </div>
-            <div className="usage-sync-cell is-effective">
-              <div className="usage-sync-cell-label">Counted toward limits</div>
-              <div className="usage-sync-cell-value">
-                {totalsLine(profile?.effectiveWindow)}
-              </div>
-            </div>
-          </div>
         </div>
+        <button type="button" className="btn" disabled={busy} onClick={() => void refresh()}>
+          {busy ? 'Loading…' : 'Refresh'}
+        </button>
+      </header>
+
+      {error && (
+        <p role="alert" className="usage-limit-alert">
+          {error}
+        </p>
+      )}
+      {stats && (
+        <section className="usage-section weekly-usage-summary" aria-label="Weekly model usage">
+          <div className="weekly-usage-total">
+            <strong title={numberFormat.format(total)}>{compactFormat.format(total)}</strong>
+            <span>tokens</span>
+            <span className="usage-muted">{numberFormat.format(requests)} model requests</span>
+          </div>
+          <div className="weekly-usage-stack" aria-hidden="true">
+            {visibleDestinations.map(({ id }) => (
+              <span
+                key={id}
+                data-destination={id}
+                style={{ flexBasis: total ? `${(split[id] / total) * 100}%` : '0%' }}
+              />
+            ))}
+          </div>
+          <dl className="weekly-usage-legend">
+            {visibleDestinations.map(({ id, label }) => (
+              <div key={id}>
+                <dt>
+                  <i data-destination={id} />
+                  {label}
+                </dt>
+                <dd title={numberFormat.format(split[id])}>
+                  {compactFormat.format(split[id])} tokens
+                </dd>
+              </div>
+            ))}
+          </dl>
+
+          {total > 0 ? (
+            <div className="weekly-usage-days" aria-label="Daily token totals">
+              {days.map((day) => (
+                <div key={day.date} className="weekly-usage-day">
+                  <div className="weekly-usage-column" aria-hidden="true">
+                    {visibleDestinations.map(({ id }) => (
+                      <span
+                        key={id}
+                        data-destination={id}
+                        style={{ height: `${(day.split[id] / peak) * 100}%` }}
+                      />
+                    ))}
+                  </div>
+                  <span
+                    title={`${displayDate(day.date, dateOptions)} · ${numberFormat.format(day.total)} tokens`}
+                  >
+                    {displayDate(day.date, { weekday: 'short' })}
+                    <span className="weekly-usage-sr-only">
+                      , {numberFormat.format(day.total)} tokens
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="usage-muted">No model usage recorded in the last 7 days.</p>
+          )}
+          <p className="usage-muted weekly-usage-footnote">
+            {split.unclassified > 0
+              ? 'Token counts may include estimates. Some older records lack provider location.'
+              : 'Token counts may include estimates.'}
+          </p>
+        </section>
       )}
 
-      <div className={`usage-plan-banner${isPro ? ' is-pro' : ' is-free'}`}>
-        <div className="usage-plan-banner-main">
-          <div className="usage-plan-badge">{ent?.planLabel || 'Free'}</div>
-          <div>
-            <div className="usage-plan-title">
-              {isPro ? 'Pro — unlimited usage' : `Free plan — last ${windowDays} days`}
+      <section className="usage-section weekly-usage-plans" aria-label="Eris Cloud plans">
+        <h3>Eris Cloud plans</h3>
+        <div className="weekly-usage-plan-grid">
+          {(['free', 'pro'] as const).map((plan) => (
+            <div
+              key={plan}
+              className="weekly-usage-plan"
+              data-current={entitlement?.authenticated && entitlement.plan === plan}
+            >
+              <div className="weekly-usage-plan-title">
+                <strong>Cloud {plan === 'free' ? 'Free' : 'Pro'}</strong>
+                {entitlement?.authenticated && entitlement.plan === plan && (
+                  <span className="usage-muted">Your plan</span>
+                )}
+              </div>
+              <div>
+                {ERIS_CLOUD_WEEKLY_TOKEN_LIMIT[plan] === null
+                  ? 'Unlimited cloud tokens'
+                  : `${compactFormat.format(ERIS_CLOUD_WEEKLY_TOKEN_LIMIT.free)} cloud tokens per week`}
+              </div>
             </div>
-            <p className="usage-plan-copy">
-              {ent?.authenticated
-                ? isPro
-                  ? 'Your EricServic.es account is on Pro. Plan is managed in the Control Hub.'
-                  : `Limits apply to a rolling ${windowDays}-day window (${windowRange}). An admin can upgrade your account to Pro on www.ericservic.es.`
-                : `Sign in under Settings → Account to sync your plan from EricServic.es. Until then, Free limits apply to the last ${windowDays} days.`}
-            </p>
-          </div>
+          ))}
         </div>
-        <div className="usage-plan-actions">
-          {!isPro && (
+        <p className="usage-muted weekly-usage-footnote">
+          Local and other provider tokens are outside the Eris Cloud allowance. The usage above
+          shows activity on this device.
+        </p>
+        <div className="weekly-usage-actions">
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void window.ide.ericServicesOpenAccount()}
+          >
+            {entitlement?.authenticated ? 'Manage account' : 'Sign in'}
+          </button>
+          {entitlement?.plan !== 'pro' && (
             <button
               type="button"
               className="btn btn-primary"
-              disabled={busy}
               onClick={() => void window.ide.ericServicesOpenUpgrade()}
             >
               Upgrade to Pro
             </button>
           )}
+        </div>
+      </section>
+
+      <details className="weekly-usage-history">
+        <summary>Manage device history</summary>
+        <div className="weekly-usage-actions">
           <button
             type="button"
             className="btn"
             disabled={busy}
-            onClick={() => void window.ide.ericServicesOpenAccount()}
+            onClick={() => void clearHistory(true)}
           >
-            {ent?.authenticated ? 'Manage account' : 'Sign in'}
+            Clear today
           </button>
-        </div>
-      </div>
-
-      {ent?.blockedReason && (
-        <div className="usage-limit-alert">
-          {ent.blockedReason}
           <button
             type="button"
-            className="btn btn-primary"
-            style={{ marginLeft: 12 }}
-            onClick={() => void window.ide.ericServicesOpenUpgrade()}
+            className="btn"
+            disabled={busy}
+            onClick={() => void clearHistory(false)}
           >
-            Upgrade to Pro
+            Clear all
           </button>
         </div>
-      )}
-
-      {ent && (
-        <section className="usage-section">
-          <div className="usage-section-head">
-            <h3>Allowance</h3>
-            <span className="usage-muted">{windowRange}</span>
-          </div>
-          <div className="usage-limit-grid">
-            <LimitMeter label="Requests" meter={ent.requests} />
-            <LimitMeter label="Tokens" meter={ent.tokens} format={formatTokens} />
-            <LimitMeter label="Cloud Agent jobs" meter={ent.cloudJobs} />
-          </div>
-        </section>
-      )}
-
-      <p className="subtitle" style={{ marginTop: 0 }}>
-        Allowance meters use the last {windowDays} days. Pick a day to see that day’s model
-        breakdown on this device (chars÷4 when providers don’t report usage).
-      </p>
-
-      <div className="usage-hero">
-        <div className="usage-hero-card">
-          <div className="usage-hero-label">Last {windowDays} days</div>
-          <div className="usage-hero-value">{formatTokens(windowTokens)}</div>
-          <div className="usage-hero-sub">
-            tokens · {windowTotals?.requests || 0} requests · {windowTotals?.cloudJobs || 0} cloud
-          </div>
-        </div>
-        <div className="usage-hero-card">
-          <div className="usage-hero-label">{focus ? dayLabel(focus.date) : 'Day'}</div>
-          <div className="usage-hero-value">{formatTokens(focusTokens)}</div>
-          <div className="usage-hero-sub">tokens · {focus?.totalRequests || 0} requests</div>
-        </div>
-        <div className="usage-hero-card">
-          <div className="usage-hero-label">Input</div>
-          <div className="usage-hero-value usage-tone-in">
-            {formatTokens(focus?.totalInputTokens || 0)}
-          </div>
-          <div className="usage-hero-sub">prompt tokens that day</div>
-        </div>
-        <div className="usage-hero-card">
-          <div className="usage-hero-label">Output</div>
-          <div className="usage-hero-value usage-tone-out">
-            {formatTokens(focus?.totalOutputTokens || 0)}
-          </div>
-          <div className="usage-hero-sub">completion tokens that day</div>
-        </div>
-      </div>
-
-      <section className="usage-section">
-        <div className="usage-section-head">
-          <h3>By model type</h3>
-          <span className="usage-muted">{focus ? dayLabel(focus.date) : '—'}</span>
-        </div>
-        {focusCharts.byKind.length === 0 ? (
-          <div className="usage-empty">
-            {focusTokens > 0
-              ? 'No per-model breakdown for this day.'
-              : 'No model usage recorded for this day.'}
-          </div>
-        ) : (
-          <div className="usage-bars">
-            {focusCharts.byKind.map((k) => (
-              <div key={k.kind} className="usage-bar-row">
-                <div className="usage-bar-meta">
-                  <span className="usage-bar-title">{k.label}</span>
-                  <span className="usage-bar-stats">
-                    {formatTokens(k.totalTokens)} · {k.requests} req · in{' '}
-                    {formatTokens(k.inputTokens)} / out {formatTokens(k.outputTokens)}
-                  </span>
-                </div>
-                <div className="usage-bar-track">
-                  <div
-                    className={`usage-bar-fill ${kindAccent(k.kind)}`}
-                    style={{ width: `${Math.max(4, (k.totalTokens / maxKind) * 100)}%` }}
-                  />
-                </div>
-                <div className="usage-bar-split">
-                  <div
-                    className="usage-bar-split-in"
-                    style={{
-                      width: `${
-                        k.totalTokens
-                          ? Math.max(2, (k.inputTokens / k.totalTokens) * 100)
-                          : 0
-                      }%`
-                    }}
-                    title={`Input ${formatTokens(k.inputTokens)}`}
-                  />
-                  <div
-                    className="usage-bar-split-out"
-                    style={{
-                      width: `${
-                        k.totalTokens
-                          ? Math.max(2, (k.outputTokens / k.totalTokens) * 100)
-                          : 0
-                      }%`
-                    }}
-                    title={`Output ${formatTokens(k.outputTokens)}`}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="usage-section">
-        <div className="usage-section-head">
-          <h3>By model</h3>
-          <div className="usage-legend">
-            <span>
-              <i className="usage-dot usage-dot-in" /> Input
-            </span>
-            <span>
-              <i className="usage-dot usage-dot-out" /> Output
-            </span>
-          </div>
-        </div>
-        {focusCharts.byModel.length === 0 ? (
-          <div className="usage-empty">No model usage recorded for this day.</div>
-        ) : (
-          <div className="usage-bars">
-            {focusCharts.byModel.map((m) => (
-              <div key={`${m.kind}-${m.provider}-${m.model}`} className="usage-bar-row">
-                <div className="usage-bar-meta">
-                  <span className="usage-bar-title">
-                    {niceModelName(m.model)}
-                    <span className="usage-pill">{m.provider}</span>
-                  </span>
-                  <span className="usage-bar-stats">
-                    {formatTokens(m.totalTokens)} total · {m.requests} req ·{' '}
-                    {Math.round(m.share * 100)}%
-                  </span>
-                </div>
-                <div className="usage-bar-track usage-bar-track-stack">
-                  <div
-                    className="usage-bar-fill usage-fill-in"
-                    style={{
-                      width: `${Math.max(2, (m.inputTokens / maxModel) * 100)}%`
-                    }}
-                  />
-                  <div
-                    className="usage-bar-fill usage-fill-out"
-                    style={{
-                      width: `${Math.max(2, (m.outputTokens / maxModel) * 100)}%`
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="usage-section">
-        <div className="usage-section-head">
-          <h3>Daily usage</h3>
-          <label className="usage-day-picker">
-            <span className="usage-muted">Day</span>
-            <select
-              value={focus?.date || ''}
-              onChange={(event) => setSelectedDate(event.target.value)}
-            >
-              {(stats?.days || []).map((day) => (
-                <option key={day.date} value={day.date}>
-                  {dayLabel(day.date)} ·{' '}
-                  {formatTokens(day.totalInputTokens + day.totalOutputTokens)} tok · {day.totalRequests}{' '}
-                  req
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        {(stats?.days.length || 0) === 0 ? (
-          <div className="usage-empty">No history yet.</div>
-        ) : (
-          <div className="usage-trend" role="listbox" aria-label="Usage by day">
-            {[...(stats?.days || [])].reverse().map((d) => {
-              const total = d.totalInputTokens + d.totalOutputTokens
-              const selected = d.date === focus?.date
-              return (
-                <button
-                  key={d.date}
-                  type="button"
-                  className={`usage-trend-col${selected ? ' is-selected' : ''}`}
-                  title={`${dayLabel(d.date)}: ${formatTokens(total)} tokens, ${d.totalRequests} requests, ${d.cloudJobs || 0} cloud jobs`}
-                  aria-pressed={selected}
-                  onClick={() => setSelectedDate(d.date)}
-                >
-                  <div className="usage-trend-bar-wrap">
-                    <div
-                      className="usage-trend-bar"
-                      style={{ height: `${Math.max(total > 0 ? 8 : 4, (total / trendMax) * 100)}%` }}
-                    />
-                  </div>
-                  <div className="usage-trend-label">{d.date.slice(8)}</div>
-                </button>
-              )
-            })}
-          </div>
-        )}
-      </section>
-
-      <div className="model-conn-actions" style={{ marginTop: 8 }}>
-        <button type="button" className="btn" disabled={busy} onClick={() => void refresh()}>
-          {syncing ? 'Syncing…' : 'Refresh'}
-        </button>
-        <button
-          type="button"
-          className="btn"
-          disabled={busy}
-          onClick={() =>
-            void (async () => {
-              if (!window.confirm('Clear today’s usage counters on this device?')) return
-              setBusy(true)
-              try {
-                setStats(await window.ide.clearUsageStats({ todayOnly: true }))
-              } finally {
-                setBusy(false)
-              }
-            })()
-          }
-        >
-          Clear today
-        </button>
-        <button
-          type="button"
-          className="btn"
-          disabled={busy}
-          onClick={() =>
-            void (async () => {
-              if (!window.confirm('Clear all stored usage history on this device?')) return
-              setBusy(true)
-              try {
-                setStats(await window.ide.clearUsageStats())
-              } finally {
-                setBusy(false)
-              }
-            })()
-          }
-        >
-          Clear all
-        </button>
-      </div>
-      {error && (
-        <p className="model-conn-hint" style={{ color: 'var(--danger)' }}>
-          {error}
-        </p>
-      )}
+      </details>
     </div>
   )
 }

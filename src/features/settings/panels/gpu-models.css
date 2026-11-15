@@ -1,0 +1,199 @@
+.gpu-dashboard .models-card-head p {
+  overflow-wrap: anywhere;
+}
+
+.gpu-dashboard-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.gpu-dashboard-metrics > div {
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 10px 12px;
+}
+
+.gpu-dashboard dt {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.gpu-dashboard dd {
+  margin: 3px 0 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.gpu-hardware-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 245px), 1fr));
+  gap: 12px;
+}
+
+.gpu-hardware-card {
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-sidebar);
+}
+
+.gpu-hardware-art {
+  display: grid;
+  place-items: center;
+  height: 138px;
+  background:
+    radial-gradient(ellipse at center, #4267c548, transparent 70%),
+    repeating-linear-gradient(0deg, #a7bdff0a 0 1px, transparent 1px 16px),
+    repeating-linear-gradient(90deg, #a7bdff0a 0 1px, transparent 1px 16px), #111721;
+  border-bottom: 1px solid #829df426;
+  perspective: 440px;
+}
+
+.gpu-board {
+  position: relative;
+  display: flex;
+  justify-content: space-evenly;
+  align-items: center;
+  gap: 4px;
+  width: min(70%, 214px);
+  height: 75px;
+  border: 1px solid #65758d;
+  border-radius: 8px 15px 15px 8px;
+  background: linear-gradient(150deg, #465368, #1a212d 42%, #292f40 80%);
+  box-shadow:
+    0 13px 21px #0008,
+    inset 0 -3px #111622;
+  transform: rotateX(12deg) rotateZ(-8deg);
+}
+
+.gpu-board::before {
+  position: absolute;
+  inset: -5px auto -5px -6px;
+  width: 8px;
+  border-radius: 2px;
+  background: repeating-linear-gradient(0deg, #546273 0 5px, #273244 5px 7px);
+  content: '';
+}
+
+.gpu-board::after {
+  position: absolute;
+  left: 18%;
+  bottom: -7px;
+  width: 45%;
+  height: 7px;
+  background: repeating-linear-gradient(90deg, #cf9c56 0 3px, #564437 3px 5px);
+  border-radius: 0 0 2px 2px;
+  content: '';
+}
+
+.gpu-fan {
+  width: min(38%, 60px);
+  aspect-ratio: 1;
+  border: 2px solid #364354;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, #8195c4 0 8%, #252d44 10% 21%, transparent 23%),
+    repeating-conic-gradient(from 24deg, #151b27 0deg 12deg, #485572 25deg 35deg, #151b27 45deg);
+  box-shadow:
+    0 0 0 2px #111722,
+    inset 0 0 12px #05060b;
+}
+
+.gpu-hardware-art[data-integrated='true'] {
+  background:
+    radial-gradient(ellipse at center, #21a89d42, transparent 70%),
+    repeating-linear-gradient(45deg, #a7eff10d 0 1px, transparent 1px 18px), #101b21;
+}
+
+.gpu-chip {
+  display: grid;
+  place-items: center;
+  width: 78px;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  border: 2px solid #456268;
+  background: repeating-linear-gradient(90deg, #5b7778 0 2px, #263a41 2px 6px);
+  box-shadow:
+    0 10px 23px #000a,
+    0 0 30px #43cabb2a;
+  transform: rotateX(18deg) rotateZ(-14deg);
+}
+
+.gpu-chip-die {
+  width: 51px;
+  aspect-ratio: 1;
+  border-radius: 5px;
+  border: 1px solid #abffef8c;
+  background:
+    repeating-linear-gradient(90deg, #ffffff28 0 1px, transparent 1px 9px),
+    repeating-linear-gradient(0deg, #ffffff28 0 1px, transparent 1px 7px),
+    linear-gradient(135deg, #377573, #4dbaa7 65%, #aaebcd);
+  box-shadow: 0 0 0 4px #132b33;
+}
+
+.gpu-device-data {
+  padding: 13px 14px 15px;
+}
+
+.gpu-device-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.gpu-device-tags > span {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.gpu-device-tags .gpu-badge-preferred {
+  background: #477cd828;
+  color: #a7c9ff;
+}
+
+.gpu-device-data h4 {
+  margin: 9px 0 0;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
+.gpu-device-bus {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 3px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.gpu-device-memory {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  margin: 12px 0 0;
+}
+
+.gpu-memory-meter {
+  overflow: hidden;
+  height: 6px;
+  margin-top: 10px;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.gpu-memory-meter > span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #4386dc, #64dfbc);
+}
+
+.gpu-queue h3 {
+  margin-top: 0;
+}

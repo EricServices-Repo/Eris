@@ -115,7 +115,7 @@ export async function getModelsStatus(
       const key = conn.apiKeyRef ? getSecret(conn.apiKeyRef) : null
       try {
         const remote = await listOpenAIModels(conn.baseUrl, key)
-        const names = remote.length > 0 ? remote : conn.models
+        const names = isErisCloudConnection(conn) || remote.length > 0 ? remote : conn.models
         const discovered: ModelInfo[] = []
         for (const name of names) {
           if (isBuiltinRef(name) || isLocalRef(name)) continue
