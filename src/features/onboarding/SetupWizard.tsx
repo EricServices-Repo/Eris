@@ -18,7 +18,7 @@ export function SetupWizard({ open, onFinished, onCreateWorkspace, onLinkWorkspa
   return <div className="modal-backdrop"><div className="modal" role="dialog" aria-modal="true" aria-label="Welcome to Eris" ref={dialogRef}>
     <h2>Welcome to Eris</h2>
     <p>Download a local model or connect a provider in Settings. Auto selects an available model for each task; you can also select a specific model in chat.</p>
-    <p>Eris Cloud connects to Ollama at agents.ericservic.es. Enable it only after that server is configured.</p>
+    <p>Eris Cloud models are hosted by EricServic.es. Sign in to your account and they appear under Settings → Providers.</p>
     <button onClick={onOpenModelsSettings}>Configure models</button>
     {!hasWorkspace && <><button onClick={onCreateWorkspace}>Create workspace</button><button onClick={onLinkWorkspace}>Open workspace</button></>}
     {hasWorkspace && hasReadyModel && onStartFirstWin && <button onClick={onStartFirstWin}>Try an agent task</button>}

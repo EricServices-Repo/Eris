@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { isLocalOllamaConnection } from '@/shared/eris-cloud'
 import { ReasoningFields } from './ReasoningFields'
 import type {
   AppSettings,
@@ -10,8 +11,9 @@ import type {
 export const OLLAMA_DEFAULT_URL = 'http://127.0.0.1:11434/v1'
 export const OLLAMA_CONNECTION_ID = 'ollama'
 
+/** The user's own Ollama daemon — the hosted Eris Cloud connection has its own card. */
 function isOllamaConnection(c: ModelConnection): boolean {
-  return c.type !== 'builtin' && (c.provider === 'ollama' || c.id === OLLAMA_CONNECTION_ID)
+  return isLocalOllamaConnection(c)
 }
 
 /** Requested, loaded and placed, so a slow model has a visible cause. */

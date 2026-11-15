@@ -1,3 +1,4 @@
+import { isLocalOllamaConnection } from '../../../src/shared/eris-cloud'
 import type {
   AppSettings,
   ModelConnection,
@@ -201,7 +202,10 @@ export function resolveConnectionForModel(
   const byModel = external.find((c) => c.models.includes(model))
   if (byModel) return byModel
 
-  const ollama = external.find((c) => c.provider === 'ollama' || c.id === 'ollama')
+  // Prefer the user's own daemon; fall back to the hosted Eris Cloud server.
+  const ollama =
+    external.find((c) => isLocalOllamaConnection(c)) ??
+    external.find((c) => c.provider === 'ollama' || c.id === 'ollama')
   // Open-ended connection (empty models list = accept any id from that server)
   const openEnded = external.filter((c) => c.models.length === 0)
   if (openEnded.length === 1) return openEnded[0]!

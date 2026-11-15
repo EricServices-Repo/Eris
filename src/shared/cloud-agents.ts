@@ -6,6 +6,15 @@ import type { TaskContract } from './task-contract'
  */
 export const CLOUD_AGENTS_BASE_URL = 'https://agents.ericservic.es:443'
 
+/**
+ * The eris-cloud-agent container is retired: agents.ericservic.es now fronts the
+ * hosted Ollama server (see src/shared/eris-cloud.ts). While false, the client makes
+ * no Cloud Agents requests and every agent runs locally.
+ */
+export const CLOUD_AGENTS_ENABLED = false
+export const CLOUD_AGENTS_RETIRED_MESSAGE =
+  'Cloud Agents are not available — agents run locally. Hosted models are under Settings → Providers → Eris Cloud.'
+
 export const CLOUD_AGENTS_HEALTH_PATH = '/v1/health'
 export const CLOUD_AGENTS_JOBS_PATH = '/v1/jobs'
 

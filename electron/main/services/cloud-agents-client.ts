@@ -4,6 +4,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
 import { join, relative } from 'path'
 import {
   CLOUD_AGENTS_BASE_URL,
+  CLOUD_AGENTS_ENABLED,
+  CLOUD_AGENTS_RETIRED_MESSAGE,
   CLOUD_AGENTS_HEALTH_PATH,
   CLOUD_AGENTS_JOBS_PATH,
   cloudAgentsFallbackReason,
@@ -84,6 +86,9 @@ async function cloudFetch(
   path: string,
   init?: RequestInit & { logLabel?: string; timeoutMs?: number; auth?: boolean }
 ): Promise<{ ok: boolean; status: number; data: Record<string, unknown>; error?: string }> {
+  if (!CLOUD_AGENTS_ENABLED) {
+    return { ok: false, status: 0, data: {}, error: CLOUD_AGENTS_RETIRED_MESSAGE }
+  }
   const { logLabel, timeoutMs = DEFAULT_TIMEOUT_MS, auth = true, ...fetchInit } = init || {}
   const method = (fetchInit.method || 'GET').toUpperCase()
   const url = `${cloudAgentsBaseUrl()}${path}`
@@ -156,6 +161,19 @@ async function cloudFetch(
 }
 
 export async function cloudAgentsHealth(authenticated = false): Promise<CloudHealth> {
+  if (!CLOUD_AGENTS_ENABLED) {
+    return {
+      ok: false,
+      service: 'eris-cloud-agent',
+      version: '',
+      llmConfigured: false,
+      maxParallel: 0,
+      running: 0,
+      queued: 0,
+      error: CLOUD_AGENTS_RETIRED_MESSAGE,
+      authenticated
+    }
+  }
   if (healthCache && Date.now() - healthCache.at < HEALTH_CACHE_TTL_MS) {
     return { ...healthCache.value, authenticated }
   }
@@ -293,6 +311,7 @@ export async function getCloudJob(id: string): Promise<CloudJob | null> {
  * Stream job updates over SSE (auth once). Falls back to throwing so callers can poll.
  */
 export async function* watchCloudJob(id: string, signal?: AbortSignal): AsyncGenerator<CloudJob> {
+  if (!CLOUD_AGENTS_ENABLED) throw new Error(CLOUD_AGENTS_RETIRED_MESSAGE)
   const rawId = id.replace(/^cloud:/, '')
   const url = `${cloudAgentsBaseUrl()}${CLOUD_AGENTS_JOBS_PATH}/${encodeURIComponent(rawId)}/events`
   const headers: Record<string, string> = {

@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import { isErisCloudConnection, normalizeErisCloudConnection } from '../../../src/shared/eris-cloud'
 import {
   copyFileSync,
   existsSync,
@@ -147,8 +148,13 @@ function sanitizeLegacyModels(raw: Record<string, unknown>): Record<string, unkn
     })
   }
   models.connections = (models.connections as Array<Record<string, unknown>>).filter(c => c.type !== 'builtin')
-  if (!(models.connections as Array<Record<string, unknown>>).some(c => c.id === 'eris-cloud')) {
-    (models.connections as Array<Record<string, unknown>>).push({ id: 'eris-cloud', name: 'Eris Cloud Ollama', type: 'openai-compatible', provider: 'ollama', enabled: false, baseUrl: 'https://agents.ericservic.es/v1', apiKeyRef: 'eris-cloud', models: [] })
+  const connList = models.connections as Array<Record<string, unknown>>
+  const cloudIdx = connList.findIndex((c) => isErisCloudConnection(c as { id: string }))
+  if (cloudIdx < 0) {
+    connList.push(normalizeErisCloudConnection({ enabled: false, models: [] }))
+  } else {
+    // Older builds stored apiKeyRef 'eris-cloud' (never set) — auth uses the device token.
+    connList[cloudIdx] = normalizeErisCloudConnection(connList[cloudIdx]!)
   }
   if (models.defaultModel === 'builtin:composer-lite') models.defaultModel = 'auto-local'
   else if (!models.defaultModel || String(models.defaultModel).startsWith('builtin:')) models.defaultModel = 'auto'

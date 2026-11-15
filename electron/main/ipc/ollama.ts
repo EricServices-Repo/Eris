@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron'
+import { isLocalOllamaConnection } from '../../../src/shared/eris-cloud'
 import { getResolvedSettings, setSettings } from '../services/settings'
 import { appState } from '../app-state'
 import { logInfo, logWarn } from '../services/logger'
@@ -16,7 +17,7 @@ const OLLAMA_ID = 'ollama'
 function ollamaBaseUrl(): string {
   const settings = getResolvedSettings(appState.currentWorkspace)
   const conn = settings.models.connections.find(
-    (c) => c.type !== 'builtin' && (c.provider === 'ollama' || c.id === OLLAMA_ID)
+    (c) => isLocalOllamaConnection(c)
   )
   return conn?.baseUrl || 'http://127.0.0.1:11434/v1'
 }
@@ -26,7 +27,7 @@ function registerModelOnConnection(name: string): void {
   const settings = getResolvedSettings(appState.currentWorkspace)
   const connections = settings.models.connections.map((c) => c)
   const idx = connections.findIndex(
-    (c) => c.type !== 'builtin' && (c.provider === 'ollama' || c.id === OLLAMA_ID)
+    (c) => isLocalOllamaConnection(c)
   )
   if (idx < 0) {
     connections.push({
@@ -95,7 +96,7 @@ export function registerOllamaIpc(): void {
       // Drop it from the connection's model list too.
       const settings = getResolvedSettings(appState.currentWorkspace)
       const connections = settings.models.connections.map((c) =>
-        c.type !== 'builtin' && (c.provider === 'ollama' || c.id === OLLAMA_ID)
+        isLocalOllamaConnection(c)
           ? { ...c, models: c.models.filter((m) => m !== model) }
           : c
       )
