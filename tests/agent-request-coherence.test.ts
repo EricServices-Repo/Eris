@@ -460,14 +460,14 @@ describe('release routing examples from desktop reports', () => {
   })
 
   it.each([
-    ['Go code the project', 'agent', 'Composer', true],
+    ['Go code the project', 'agent', 'Agent', true],
     ['Go code the project', 'ask', 'Explainer', false],
     ['Review this project and recommend three improvements', 'agent', 'Reviewer', false],
-    ['Code those changes', 'agent', 'Composer', true],
-    ['Generate those files', 'agent', 'Composer', true],
-    ['Generate those files here in the project', 'agent', 'Composer', true],
-    ['Please generate those files in this project.', 'agent', 'Composer', true],
-    ['Create those files here', 'agent', 'Composer', true]
+    ['Code those changes', 'agent', 'Agent', true],
+    ['Generate those files', 'agent', 'Agent', true],
+    ['Generate those files here in the project', 'agent', 'Agent', true],
+    ['Please generate those files in this project.', 'agent', 'Agent', true],
+    ['Create those files here', 'agent', 'Agent', true]
   ] as const)('routes %s in %s to %s', async (text, mode, agentName, edits) => {
     const workspace = fixture(PHP)
     const result = await captureQuestion(

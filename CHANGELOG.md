@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.1 — 2026-11-14
+
+- Desktop rebuild with updated model selection.
+
 ## 0.6.25 — 2026-11-14
 
 - Rebuild with provider model selection and qualification fixes.
