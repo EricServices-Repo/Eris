@@ -1,4 +1,5 @@
 import type { SyncedProject } from './profile-workspaces'
+import { ERIS_CLOUD_TOKEN_REF, parseHostedModels, type ErisHostedModels } from '../../../src/shared/eris-cloud'
 import type { ChatThread } from '../../../src/shared/settings-schema'
 import type {
   AppSettings,
@@ -59,7 +60,7 @@ export type ErisSyncEnvelope = {
   clientUpdatedAt?: string
 }
 
-const TOKEN_REF = 'ericServices.token'
+const TOKEN_REF = ERIS_CLOUD_TOKEN_REF
 
 export function normalizeApiBase(base: string): string {
   let b = (base || 'https://www.ericservic.es').trim().replace(/\/+$/, '')
@@ -504,10 +505,22 @@ export async function ericServicesLogout(
 export async function ericServicesFetchMe(
   apiBase: string,
   token: string
-): Promise<{ ok: boolean; error?: string; status?: number; profile?: EricServicesProfile }> {
+): Promise<{
+  ok: boolean
+  error?: string
+  status?: number
+  profile?: EricServicesProfile
+  /** Null when the server predates hosted models (field absent). */
+  hostedModels?: ErisHostedModels | null
+}> {
   const result = await erisFetch(apiBase, '/me.php', { method: 'GET', token })
   if (!result.ok) return { ok: false, error: result.error, status: result.status }
-  return { ok: true, status: result.status, profile: result.data.profile as EricServicesProfile }
+  return {
+    ok: true,
+    status: result.status,
+    profile: result.data.profile as EricServicesProfile,
+    hostedModels: parseHostedModels(result.data.hostedModels)
+  }
 }
 
 /** True when /me failed because the device token is missing, revoked, or expired. */

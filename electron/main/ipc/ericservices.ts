@@ -23,6 +23,11 @@ import {
   summarizeProfileChanges
 } from '../services/ericservices'
 import { syncMcpRuntime } from '../services/mcp-runtime'
+import {
+  applyHostedModelsRefresh,
+  enableErisCloudAfterSignIn,
+  setErisCloudEnabled
+} from '../services/eris-cloud-connection'
 import { appState } from '../app-state'
 import { getSecret, storeSecret } from './shared'
 
@@ -64,6 +69,7 @@ export function registerEricServicesIpc(): void {
         linked: needsReauth ? false : base.linked
       }
     }
+    applyHostedModelsRefresh(me.hostedModels)
     if (me.profile) {
       const planPatch = planPatchFromProfile(me.profile)
       setSettings(
@@ -109,6 +115,7 @@ export function registerEricServicesIpc(): void {
       }
       const ref = ericServicesTokenRef()
       storeSecret(ref, result.token)
+      await enableErisCloudAfterSignIn(apiBase, result.token)
       const planPatch = planPatchFromProfile(result.profile)
       setSettings(
         'user',
@@ -191,6 +198,7 @@ export function registerEricServicesIpc(): void {
       if (polled.status === 'approved' && polled.token) {
         const ref = ericServicesTokenRef()
         storeSecret(ref, polled.token)
+        await enableErisCloudAfterSignIn(apiBase, polled.token)
         const planPatch = planPatchFromProfile(polled.profile)
         setSettings(
           'user',
@@ -250,6 +258,7 @@ export function registerEricServicesIpc(): void {
     const result = await ericServicesRevokeDevice(settings.ericServices.apiBase, token, Number(id))
     if (result.ok && result.revokedCurrent) {
       storeSecret(ericServicesTokenRef(), '')
+      setErisCloudEnabled(false)
       setSettings(
         'user',
         {
@@ -276,6 +285,7 @@ export function registerEricServicesIpc(): void {
       await ericServicesLogout(settings.ericServices.apiBase, token).catch(() => undefined)
     }
     storeSecret(ericServicesTokenRef(), '')
+    setErisCloudEnabled(false)
     setSettings(
       'user',
       {

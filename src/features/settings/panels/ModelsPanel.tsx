@@ -12,6 +12,8 @@ import type { ApplySetting } from '../fields'
 import { LocalModelsPanel } from '../LocalModelsPanel'
 import { ModelConnectionsPanel } from '../ModelConnectionsPanel'
 import { OllamaConfigPanel } from '../OllamaConfigPanel'
+import { ErisCloudPanel } from '../ErisCloudPanel'
+import { isLocalOllamaConnection } from '@/shared/eris-cloud'
 
 function gpuKindLabel(
   kind: 'integrated' | 'discrete' | 'external',
@@ -471,7 +473,7 @@ function DefaultModelCard({
 
 /** Settings → Composer — built-in Lite/Full downloads + default model. */
 export function ComposerModelsPanel({ resolved, status, apply }: SharedProps) {
-  return <div className="models-page"><DefaultModelCard resolved={resolved} status={status} apply={apply} /><p>Download a text model or configure a provider. Eris Cloud uses Ollama at agents.ericservic.es and must be enabled after the server is configured.</p></div>
+  return <div className="models-page"><DefaultModelCard resolved={resolved} status={status} apply={apply} /><p>Download a text model or configure a provider. Eris Cloud models (hosted by EricServic.es) turn on when you sign in — see Settings → Providers.</p></div>
 }
 
 /** Settings → GPUs — detected accelerators and eGPU preference. */
@@ -537,7 +539,7 @@ export function ProvidersModelsPanel({
 
   const ollamaLive = useMemo(() => {
     const conn = (resolved.models.connections ?? []).find(
-      (c) => c.type !== 'builtin' && (c.provider === 'ollama' || c.id === 'ollama')
+      (c) => isLocalOllamaConnection(c)
     )
     if (!conn) return { present: false, reachable: false, enabled: false }
     const live = status?.connections?.find((c) => c.id === conn.id)
@@ -574,6 +576,27 @@ export function ProvidersModelsPanel({
           status={status}
           defaultModel={resolved.models.defaultModel}
           compact
+          onSaveConnections={saveConnections}
+          onRefresh={async () => {
+            await load()
+          }}
+          onSetDefaultModel={async (model) => {
+            await apply(['models', 'defaultModel'], model)
+          }}
+        />
+      </section>
+
+      <section className="models-card">
+        <header className="models-card-head">
+          <div>
+            <h3>Eris Cloud</h3>
+            <p>Hosted models from EricServic.es. Turns on when you sign in to your account.</p>
+          </div>
+        </header>
+        <ErisCloudPanel
+          resolved={resolved}
+          status={status}
+          defaultModel={resolved.models.defaultModel}
           onSaveConnections={saveConnections}
           onRefresh={async () => {
             await load()

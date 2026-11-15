@@ -129,7 +129,35 @@ describe('settings migrations', () => {
     })
     const s = getResolvedSettings(null)
     expect(s.models.connections.some(c => c.type === 'builtin')).toBe(false)
-    expect(s.models.connections.find(c => c.id === 'eris-cloud')).toMatchObject({ provider: 'ollama', enabled: false, models: [], baseUrl: 'https://agents.ericservic.es/v1' })
+    expect(s.models.connections.find(c => c.id === 'eris-cloud')).toMatchObject({ provider: 'ollama', enabled: false, models: [], baseUrl: 'https://agents.ericservic.es/v1', apiKeyRef: 'ericServices.token' })
+  })
+
+  it('migrates an older Eris Cloud connection to device-token auth, keeping user choices', () => {
+    writeUserSettings({
+      models: {
+        connections: [
+          {
+            id: 'eris-cloud',
+            name: 'Eris Cloud Ollama',
+            type: 'openai-compatible',
+            provider: 'ollama',
+            enabled: true,
+            baseUrl: 'https://example.invalid/v1',
+            apiKeyRef: 'eris-cloud',
+            models: ['qwen3:8b']
+          }
+        ]
+      }
+    })
+    const cloud = getResolvedSettings(null).models.connections.filter(c => c.id === 'eris-cloud')
+    expect(cloud).toHaveLength(1)
+    expect(cloud[0]).toMatchObject({
+      name: 'Eris Cloud',
+      enabled: true,
+      models: ['qwen3:8b'],
+      baseUrl: 'https://agents.ericservic.es/v1',
+      apiKeyRef: 'ericServices.token'
+    })
   })
 
   it('coerces legacy connection type openai to openai-compatible', () => {
