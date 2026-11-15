@@ -4,6 +4,7 @@ import type { UpdateStatusSnapshot, UsageEntitlement } from '@/shared/api'
 import {
   CLOUD_AGENTS_BASE_URL,
   cloudAgentsStatusLabel,
+  cloudStatusIndicator,
   isCloudAgentsReady,
   shouldUseCloudAgents
 } from '@/shared/cloud-agents'
@@ -49,27 +50,27 @@ function modelsLight(
     return {
       tone: 'ok',
       label: 'Models',
-      title: 'Local / Composer models and connected providers are ready'
+      title: 'Local models and connected providers are ready'
     }
   }
   if (composerReady && !modelsOk) {
     return {
       tone: 'ok',
       label: 'Models',
-      title: 'Local or Composer model ready (external Ollama/API optional)'
+      title: 'Local model ready (connected providers optional)'
     }
   }
   if (!composerReady && modelsOk) {
     return {
       tone: 'warn',
       label: 'Models',
-      title: 'External providers ready · download a Local model or Composer Lite for offline chat'
+      title: 'Connected providers ready · download a Local model for offline chat'
     }
   }
   return {
     tone: 'danger',
     label: 'No models',
-    title: 'No models ready — download a Local model or Composer Lite in Settings → Models'
+    title: 'No models ready — connect a provider or download a Local model in Settings → Models'
   }
 }
 
@@ -95,6 +96,7 @@ export function StatusBar({
   onCheckUpdates,
   onAgentChange
 }: Props) {
+  const cloudIndicator = cloudStatusIndicator(accountNeedsReauth)
   const cloudReady = isCloudAgentsReady(cloudHealth)
   const preferCloud = shouldUseCloudAgents(cloudHealth)
   const cloudTitle = `${cloudAgentsStatusLabel(cloudHealth)}\n${CLOUD_AGENTS_BASE_URL} (TLS)\nOpen Settings → Agent for metrics`
@@ -149,19 +151,35 @@ export function StatusBar({
               : `v${appVersion}`}
           </button>
         )}
-        <button
-          type="button"
-          className={`status-bar-btn${accountNeedsReauth ? ' is-warn' : ''}`}
-          onClick={onOpenAgentSettings}
-          title={cloudTitle}
-        >
-          <span
-            className={`status-dot${preferCloud && !accountNeedsReauth ? ' ok' : ''}${
-              accountNeedsReauth ? ' warn' : ''
-            }`}
-          />
-          <span className="status-bar-label">{cloudLabel}</span>
-        </button>
+        {cloudIndicator === 'cloud' ? (
+          <button
+            type="button"
+            className={`status-bar-btn${accountNeedsReauth ? ' is-warn' : ''}`}
+            onClick={onOpenAgentSettings}
+            title={cloudTitle}
+          >
+            <span
+              className={`status-dot${preferCloud && !accountNeedsReauth ? ' ok' : ''}${
+                accountNeedsReauth ? ' warn' : ''
+              }`}
+            />
+            <span className="status-bar-label">{cloudLabel}</span>
+          </button>
+        ) : (
+          // Cloud Agents are retired, so there is no cloud status to show; an expired
+          // EricServic.es session still needs a way back to Account.
+          cloudIndicator === 'reauth' && (
+            <button
+              type="button"
+              className="status-bar-btn is-warn"
+              onClick={onOpenAccount}
+              title="Session expired — sign in again"
+            >
+              <span className="status-dot warn" />
+              <span className="status-bar-label">Re-auth</span>
+            </button>
+          )
+        )}
         {entitlement && (
           <button
             type="button"
@@ -204,7 +222,7 @@ export function StatusBar({
           value={selectedAgentId}
           disabled={disabled}
           onChange={(e) => onAgentChange(e.target.value as string | 'auto')}
-          title="Auto assigns Composer, Explainer, Plan, Reviewer, Verification, or Fast. Pin an agent to keep that role."
+          title="Auto assigns Agent, Explainer, Plan, Reviewer, Verification, or Fast. Pin an agent to keep that role."
         >
           <option value="auto">Auto</option>
           {agents.map((a) => {

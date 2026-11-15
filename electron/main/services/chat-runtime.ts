@@ -46,6 +46,7 @@ import {
 } from './model-transport'
 
 import { createReasoningSplitter } from './reasoning-split'
+import { providerModelId } from '../../../src/shared/eris-cloud'
 
 export type { NativeToolCall, OpenAIToolDef }
 
@@ -545,7 +546,8 @@ export async function* streamProviderChat(
     for await (const chunk of stream({
       baseUrl: connection.baseUrl,
       apiKey,
-      model,
+      // The provider knows the bare id; `cloud:` is Eris's name for hosted models.
+      model: providerModelId(model),
       messages: compiled,
       temperature: options.temperature,
       maxOutputTokens: capabilities.outputCap,

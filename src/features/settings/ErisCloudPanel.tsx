@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { AppSettings, ModelConnection, ModelsStatus } from '@/shared/settings-schema'
 import {
   ERIS_CLOUD_BASE_URL,
+  erisCloudModelRef,
   isErisCloudConnection,
   normalizeErisCloudConnection
 } from '@/shared/eris-cloud'
@@ -116,17 +117,21 @@ export function ErisCloudPanel({
         <div className="providers-models-block">
           <span className="providers-models-label">Set chat default</span>
           <div className="model-chip-row">
-            {models.map((m) => (
-              <button
-                key={m}
-                type="button"
-                className={`model-chip ${defaultModel === m ? 'active' : ''}`}
-                title={`Use ${m} (Eris Cloud) as default chat model`}
-                onClick={() => void onSetDefaultModel(m)}
-              >
-                {m}
-              </button>
-            ))}
+            {models.map((id) => {
+              // Saved as `cloud:<model>` so it never resolves to the same model on a local Ollama.
+              const ref = erisCloudModelRef(id)
+              return (
+                <button
+                  key={ref}
+                  type="button"
+                  className={`model-chip ${defaultModel === ref ? 'active' : ''}`}
+                  title={`Use ${ref} (Eris Cloud) as default chat model`}
+                  onClick={() => void onSetDefaultModel(ref)}
+                >
+                  {ref}
+                </button>
+              )
+            })}
           </div>
         </div>
       )}

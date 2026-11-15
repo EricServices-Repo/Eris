@@ -1,5 +1,6 @@
 import { estimatedNativeAnswerMs } from './model-latency'
 import { isNativeGgufRef } from '../../../src/shared/model-destination'
+import { connectionModelRef } from '../../../src/shared/eris-cloud'
 import type { AppSettings, ChatIntent } from '../../../src/shared/settings-schema'
 import { isExactBuiltinReady } from './builtin-model'
 import { getSecret } from './credentials'
@@ -140,7 +141,8 @@ export async function chooseExecutionModel(
     // ready, so Auto must not prefer it over a ready worker (#305 MO-03).
     const keyMissing = Boolean(c.apiKeyRef.trim()) && !secretPresent(c.apiKeyRef)
     const baseMissing = !c.baseUrl.trim()
-    for (const model of c.models.filter((m) => m.trim() && !/^(local:|builtin:)/.test(m))) {
+    for (const id of c.models.filter((m) => m.trim() && !/^(local:|builtin:)/.test(m))) {
+      const model = connectionModelRef(c, id)
       add(
         model,
         true,

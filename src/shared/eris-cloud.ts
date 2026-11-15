@@ -15,6 +15,32 @@ export function isErisCloudConnection(c: Pick<ModelConnection, 'id'>): boolean {
   return c.id === ERIS_CLOUD_CONNECTION_ID
 }
 
+/**
+ * Eris Cloud models are named `cloud:<model>` everywhere in Eris (picker, settings,
+ * Auto, saved selections), so a hosted model is never confused with the same model
+ * on the user's own Ollama. The server itself only knows the bare id.
+ */
+export const ERIS_CLOUD_MODEL_PREFIX = 'cloud:'
+
+export function isErisCloudModelRef(ref: string): boolean {
+  return ref.startsWith(ERIS_CLOUD_MODEL_PREFIX) && ref.length > ERIS_CLOUD_MODEL_PREFIX.length
+}
+
+/** `cloud:<model>` for a model id the Eris Cloud server lists. */
+export function erisCloudModelRef(id: string): string {
+  return isErisCloudModelRef(id) ? id : `${ERIS_CLOUD_MODEL_PREFIX}${id}`
+}
+
+/** The model ref Eris uses for a model listed by a connection. */
+export function connectionModelRef(c: Pick<ModelConnection, 'id'>, id: string): string {
+  return isErisCloudConnection(c) ? erisCloudModelRef(id) : id
+}
+
+/** The id a provider's API expects: an Eris Cloud ref without its `cloud:` prefix. */
+export function providerModelId(ref: string): string {
+  return isErisCloudModelRef(ref) ? ref.slice(ERIS_CLOUD_MODEL_PREFIX.length) : ref
+}
+
 /** A user's own Ollama daemon (local or LAN) — never the hosted Eris Cloud server. */
 export function isLocalOllamaConnection(c: Pick<ModelConnection, 'id' | 'type' | 'provider'>): boolean {
   if (isErisCloudConnection(c)) return false

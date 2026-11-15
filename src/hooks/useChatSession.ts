@@ -1064,12 +1064,7 @@ export function useChatSession({
         agentName: agentName ?? routeMetaRef.current.agentName
       }
       const name = agentName || routeMetaRef.current.agentName || 'Agent'
-      const modelLabel =
-        model === 'builtin:composer-lite'
-          ? 'Composer Lite'
-          : model === 'builtin:composer' || model === 'composer'
-            ? 'Composer Full'
-            : model
+      const modelLabel = model
       setRouteLabel(taskSummaryRef.current ? `${taskSummaryRef.current} · ${modelLabel}` : `${name} · ${modelLabel}`)
     })
     // Reconcile old snapshots without touching the active request's buffers or status.

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import type { CloudHealth } from '@/shared/cloud-agents'
 import {
   CLOUD_AGENTS_BASE_URL,
+  CLOUD_AGENTS_ENABLED,
+  LOCAL_AGENTS_DESCRIPTION,
   cloudAgentsStatusLabel,
   isCloudAgentsReady,
   shouldUseCloudAgents
@@ -22,7 +24,30 @@ function offlineHealth(error: string): CloudHealth {
   }
 }
 
+const ROUTING_DESCRIPTION =
+  'Picks an orchestrator or specialist from the project agent config. Edit specialists under Subagents.'
+
 export function AgentPanel() {
+  return CLOUD_AGENTS_ENABLED ? <CloudAgentsAgentPanel /> : <LocalAgentPanel />
+}
+
+/**
+ * Cloud Agents are retired: every agent runs on this computer, so there is no
+ * cloud worker to report on. Hosted models are a provider, not a place agents run.
+ */
+function LocalAgentPanel() {
+  return (
+    <SettingsPage>
+      <SettingsSection title="Routing" description={ROUTING_DESCRIPTION} />
+      <SettingsSection
+        title="Where agents run"
+        description={LOCAL_AGENTS_DESCRIPTION}
+      />
+    </SettingsPage>
+  )
+}
+
+function CloudAgentsAgentPanel() {
   const [cloud, setCloud] = useState<CloudHealth | null>(null)
   const [busy, setBusy] = useState(false)
   const [clearBusy, setClearBusy] = useState(false)
@@ -78,14 +103,11 @@ export function AgentPanel() {
 
   return (
     <SettingsPage>
-      <SettingsSection
-        title="Routing"
-        description="Picks an orchestrator or specialist from the project agent config. Edit specialists under Subagents."
-      />
+      <SettingsSection title="Routing" description={ROUTING_DESCRIPTION} />
 
       <SettingsSection
         title="Cloud Agents"
-        description={`Shared worker at ${host} runs Composer Full. Sign in under Account. This Mac uses Composer Lite locally; Cloud Agents handle Full when available.`}
+        description={`Shared worker at ${host} runs agent jobs in the cloud. Sign in under Account.`}
         actions={
           <>
             <button

@@ -4,6 +4,7 @@ import { logWarn } from './logger'
 import { ollamaNativeHost } from './ollama'
 import { resolveConnectionForModel } from './model-catalog'
 import { isLoopbackUrl } from '../../../src/shared/model-destination'
+import { providerModelId } from '../../../src/shared/eris-cloud'
 import type { AppSettings, ModelConnection } from '../../../src/shared/settings-schema'
 
 const FACTS_TTL_MS = 5 * 60_000
@@ -29,7 +30,7 @@ type Probe = { maxContext: number | null; at: number }
 const probes = new Map<string, Probe>()
 const placements = new Map<string, OllamaPlacement>()
 const key = (connection: ModelConnection, model: string) =>
-  `${ollamaNativeHost(connection.baseUrl)}\n${model}`
+  `${ollamaNativeHost(connection.baseUrl)}\n${providerModelId(model)}`
 
 export function clearOllamaRuntimeFacts(): void {
   probes.clear()
@@ -92,7 +93,7 @@ export async function probeOllamaModel(
   let maxContext: number | null = null
   try {
     maxContext = contextLengthOf(
-      await apiRequest(connection, '/api/show', apiKey, { model }, signal)
+      await apiRequest(connection, '/api/show', apiKey, { model: providerModelId(model) }, signal)
     )
   } catch {
     /* Recorded below: the route and window stay unverified. */
@@ -151,19 +152,19 @@ export const isPartlyOnCpu = (placement: OllamaPlacement) =>
 
 /** Endpoint-scoped user declarations; never infer capacity from a model name. */
 export function declaredModelLimits(settings: AppSettings, model: string) {
-  return resolveConnectionForModel(settings, model)?.modelLimits?.[model]
+  return resolveConnectionForModel(settings, model)?.modelLimits?.[providerModelId(model)]
 }
 
 export function advertisedModelLimits(settings: AppSettings, model: string) {
   const connection = resolveConnectionForModel(settings, model)
-  return connection && providerContext(connection.baseUrl, model)
+  return connection && providerContext(connection.baseUrl, providerModelId(model))
 }
 
 /** What this server gives a request. Null leaves the caller's ceiling for hosted providers. */
 export function serverWindow(settings: AppSettings, model: string, requested: number) {
   const connection = resolveConnectionForModel(settings, model)
   if (connection?.type !== 'openai-compatible') return null
-  const advertised = providerContext(connection.baseUrl, model)
+  const advertised = providerContext(connection.baseUrl, providerModelId(model))
   if (advertised && !isOllamaConnection(connection))
     return {
       contextCeiling: boundedContextWindow(requested, advertised.contextWindow),
@@ -171,7 +172,7 @@ export function serverWindow(settings: AppSettings, model: string, requested: nu
     }
   const target = ollamaRequestWindow(connection, model, requested)
   if (target === null)
-    return isLocalServer(connection) && !connection.modelLimits?.[model]
+    return isLocalServer(connection) && !connection.modelLimits?.[providerModelId(model)]
       ? {
           contextCeiling: Math.min(UNVERIFIED_WINDOW, Math.max(512, requested)),
           contextSource: 'unverified-window' as const
@@ -213,7 +214,8 @@ export async function observeOllamaPlacement(
         context_length?: number
       }>
     }
-    const loaded = body.models?.find((item) => item.name === model || item.model === model)
+    const id = providerModelId(model)
+    const loaded = body.models?.find((item) => item.name === id || item.model === id)
     if (!loaded || typeof loaded.size !== 'number' || typeof loaded.size_vram !== 'number') return
     const placement: OllamaPlacement = {
       model,

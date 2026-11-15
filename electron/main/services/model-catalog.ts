@@ -1,4 +1,9 @@
-import { isLocalOllamaConnection } from '../../../src/shared/eris-cloud'
+import {
+  connectionModelRef,
+  isErisCloudConnection,
+  isErisCloudModelRef,
+  isLocalOllamaConnection
+} from '../../../src/shared/eris-cloud'
 import type {
   AppSettings,
   ModelConnection,
@@ -62,7 +67,7 @@ function lightConnectionSnapshot(
     for (const name of conn.models) {
       if (isBuiltinRef(name) || isLocalRef(name)) continue
       models.push({
-        name,
+        name: connectionModelRef(conn, name),
         source: 'connection',
         connectionId: conn.id,
         provider: conn.provider,
@@ -115,7 +120,7 @@ export async function getModelsStatus(
         for (const name of names) {
           if (isBuiltinRef(name) || isLocalRef(name)) continue
           discovered.push({
-            name,
+            name: connectionModelRef(conn, name),
             source: 'connection',
             connectionId: conn.id,
         provider: conn.provider,
@@ -134,7 +139,7 @@ export async function getModelsStatus(
             error: err instanceof Error ? err.message : 'Unreachable'
           },
           models: conn.models.map((name) => ({
-            name,
+            name: connectionModelRef(conn, name),
             source: 'connection' as const,
             connectionId: conn.id,
         provider: conn.provider,
@@ -195,11 +200,19 @@ export function resolveConnectionForModel(
   const external = settings.models.connections.filter(
     (c) => c.enabled && c.type === 'openai-compatible'
   )
+  // `cloud:<model>` always means the hosted Eris Cloud server, never another connection.
+  if (isErisCloudModelRef(model)) {
+    return external.find((c) => isErisCloudConnection(c)) ?? null
+  }
   if (hintConnectionId) {
     const hinted = external.find((c) => c.id === hintConnectionId)
     if (hinted) return hinted
   }
-  const byModel = external.find((c) => c.models.includes(model))
+  // A bare id is the user's own connection first; Eris Cloud only for an older saved
+  // selection made before hosted models carried the `cloud:` prefix.
+  const byModel =
+    external.find((c) => !isErisCloudConnection(c) && c.models.includes(model)) ??
+    external.find((c) => c.models.includes(model))
   if (byModel) return byModel
 
   // Prefer the user's own daemon; fall back to the hosted Eris Cloud server.

@@ -23,6 +23,7 @@ import { VirtualList } from '@/components/VirtualList'
 import { searchLoadedHistory } from '@/shared/chat-history-search'
 import type { historyView } from '@/shared/chat-history-window'
 import { queuePauseLabel, type QueuePause } from '@/shared/chat-queue'
+import { isErisCloudModelRef } from '@/shared/eris-cloud'
 
 export type { ToolActivityItem }
 export type ChatMode = 'ask' | 'agent'
@@ -802,6 +803,8 @@ export function ChatPanel({
     if (m.name === 'auto-any') return 'Auto (any connected model)'
     if (m.name === 'auto') return 'Auto (settings policy)'
     if (m.source === 'local') return m.name
+    // Eris Cloud models already carry their `cloud:` name; other providers get theirs.
+    if (isErisCloudModelRef(m.name)) return m.name
     return m.provider ? `${m.provider}:${m.name}` : m.name
   }
 
@@ -814,10 +817,10 @@ export function ChatPanel({
       return 'Eris selects a ready model for this task. When outcome routing is enabled, saved run outcomes and eval scores can influence the choice. The selected provider may receive your prompt and attached project context.'
     if (m.ready === false)
       return 'This model is not currently ready. Reconnect or enable its provider in Settings → Models.'
-    if (m.name === 'builtin:composer')
-      return 'Uses Composer Full as configured in Settings. Cloud execution sends the prompt and attached context to Cloud Composer; local execution stays on this device.'
     if (m.source === 'builtin' || m.source === 'local')
       return 'Runs on this device. Prompts and attached files stay local to Eris.'
+    if (isErisCloudModelRef(m.name))
+      return 'Eris Cloud: hosted by EricServic.es. Prompts and attached project context are sent to the Eris Cloud server.'
     const connection = m.connectionId
       ? models.find((candidate) => candidate.connectionId === m.connectionId)
       : undefined
