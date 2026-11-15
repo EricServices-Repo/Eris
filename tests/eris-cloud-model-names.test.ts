@@ -64,6 +64,18 @@ describe('cloud: model names', () => {
     expect(names).toEqual(expect.arrayContaining(['eris-cloud=cloud:qwen3:8b', 'ollama=qwen3:8b']))
   })
 
+  it('uses the live Eris Cloud catalog even when the server lists zero models', async () => {
+    vi.stubGlobal('fetch', async () => Response.json({ data: [] }))
+    const status = await getModelsStatus(settingsWith(['retired-model']), () => null, {
+      probeConnections: true
+    })
+    expect(status.connections.find(c => c.id === 'eris-cloud')).toMatchObject({
+      reachable: true,
+      models: []
+    })
+    expect(status.models.filter(m => m.connectionId === 'eris-cloud')).toEqual([])
+  })
+
   it('routes cloud: to Eris Cloud and a bare id to the user’s own Ollama', () => {
     const settings = settingsWith(['qwen3:8b'], ['qwen3:8b'])
     expect(resolveConnectionForModel(settings, 'cloud:qwen3:8b')?.id).toBe('eris-cloud')

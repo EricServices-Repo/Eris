@@ -38,6 +38,20 @@ describe('rolling usage window', () => {
 describe('usage.json durability', () => {
   const usagePath = () => join(userDataRoot(), 'usage.json')
 
+  it('keeps the same provider model separate when it runs locally and remotely', () => {
+    clearUsageStats()
+    const usage = { model: 'qwen3:8b', provider: 'ollama', inputTokens: 10, outputTokens: 2 }
+    recordModelUsage({ ...usage, destination: 'local' })
+    recordModelUsage({ ...usage, destination: 'external' })
+    const { today, days } = getUsageSnapshot(7)
+    expect(days).toHaveLength(7)
+    expect(today.totalRequests).toBe(2)
+    expect(Object.values(today.models)).toEqual([
+      expect.objectContaining({ destination: 'local', requests: 1 }),
+      expect.objectContaining({ destination: 'external', requests: 1 })
+    ])
+  })
+
   it('quarantines an unreadable usage file instead of overwriting it', () => {
     mkdirSync(userDataRoot(), { recursive: true })
     writeFileSync(usagePath(), '{"version":1,"days":{"2026-11-0')

@@ -1511,20 +1511,39 @@ select:focus {
 }
 
 .modal-nav-group {
+  flex-shrink: 0;
+}
+
+.modal-nav button.modal-nav-group-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  font-weight: 600;
+}
+
+.modal-nav-group-toggle[data-current='true'] {
+  color: var(--text);
+}
+
+.modal-nav-chevron {
+  width: 7px;
+  height: 7px;
+  margin-right: 2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+}
+
+.modal-nav-group-toggle[aria-expanded='true'] .modal-nav-chevron {
+  transform: rotate(45deg);
+}
+
+.modal-nav-group-items:not([hidden]) {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin-bottom: 10px;
-}
-
-.modal-nav-group-label {
-  padding: 6px 10px 4px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  opacity: 0.85;
+  padding: 2px 0 6px 12px;
 }
 
 .modal-nav button {

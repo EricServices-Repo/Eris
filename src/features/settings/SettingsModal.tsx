@@ -1,7 +1,7 @@
 import { useDialogFocus } from '@/hooks/useDialogFocus'
 /* eslint-disable react-hooks/exhaustive-deps -- effects below fire on open/category transitions;
    the loaders are plain per-render functions and must not retrigger them. */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import type {
   AppSettings,
   ModelsStatus,
@@ -13,17 +13,18 @@ import { mergeModelsDownloadStatus, upsertDownloadRow } from '@/shared/model-dow
 import { GitHubSettingsPanel } from './GitHubSettingsPanel'
 import { EricServicesAccountPanel } from './EricServicesAccountPanel'
 import { UsagePanel } from './UsagePanel'
+import { ErisCloudPanel } from './ErisCloudPanel'
 import { type Category, SettingRows, setAt, settingFields } from './fields'
 import { MemoryPanel } from './panels/MemoryPanel'
 import { AgentPanel } from './panels/AgentPanel'
 import { ContextPanel, useContextPanelState } from './panels/ContextPanel'
 import { FeedbackPanel } from './panels/FeedbackPanel'
+import { GpuModelsPanel } from './panels/GpuModelsPanel'
 import { GeneralPanel } from './panels/GeneralPanel'
 import { LoggingPanel, useLogsState } from './panels/LoggingPanel'
 import { McpPanel, useMcpPanelState } from './panels/McpPanel'
 import {
   ComposerModelsPanel,
-  GpuModelsPanel,
   ImageModelsPanel,
   ProvidersModelsPanel,
   TextModelsPanel,
@@ -71,6 +72,15 @@ export function SettingsModal({
 }: Props) {
   const dialogRef = useDialogFocus(onClose)
   const [category, setCategory] = useState<Category>('composer')
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(
+    () => SETTINGS_NAV.find(group => group.items.includes(category))?.label ?? null
+  )
+  const navId = useId()
+
+  function selectCategory(next: Category) {
+    setCategory(next)
+    setExpandedGroup(SETTINGS_NAV.find(group => group.items.includes(next))?.label ?? null)
+  }
   const [layered, setLayered] = useState<LayeredSettings | null>(null)
   const [scope, setScope] = useState<SettingsScope>('user')
   const [status, setStatus] = useState<ModelsStatus | null>(null)
@@ -121,13 +131,13 @@ export function SettingsModal({
   useEffect(() => {
     if (!open) return
     if (startCreateSkill) {
-      setCategory('skills')
+      selectCategory('skills')
       void loadSkills(null, true)
       return
     }
     if (initialCategory) {
       const resolvedCat = resolveSettingsCategory(initialCategory) || 'composer'
-      setCategory(resolvedCat)
+      selectCategory(resolvedCat)
       if (resolvedCat === 'skills') void loadSkills(null, false)
       if (resolvedCat === 'rules') void loadRules()
       if (resolvedCat === 'context') void loadWorkspaceContextDoc()
@@ -334,28 +344,46 @@ export function SettingsModal({
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="modal-nav">
+        <nav className="modal-nav" aria-label="Settings sections">
           <div className="modal-nav-brand">SETTINGS</div>
-          {SETTINGS_NAV.map((group) => (
-            <div key={group.label} className="modal-nav-group">
-              <div className="modal-nav-group-label">{group.label}</div>
-              {group.items.map((id) => (
+          {SETTINGS_NAV.map((group, index) => {
+            const expanded = expandedGroup === group.label
+            const containsCurrent = group.items.includes(category)
+            const groupId = `${navId}-group-${index}`
+            return (
+              <div key={group.label} className="modal-nav-group">
                 <button
-                  key={id}
                   type="button"
-                  className={category === id ? 'active' : ''}
-                  onClick={() => setCategory(id)}
+                  className="modal-nav-group-toggle"
+                  data-current={containsCurrent}
+                  aria-expanded={expanded}
+                  aria-controls={groupId}
+                  onClick={() => setExpandedGroup(expanded ? null : group.label)}
                 >
-                  {SETTINGS_LABELS[id]}
+                  {group.label}
+                  <span className="modal-nav-chevron" aria-hidden="true" />
                 </button>
-              ))}
-            </div>
-          ))}
+                <div id={groupId} className="modal-nav-group-items" hidden={!expanded}>
+                  {group.items.map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className={category === id ? 'active' : ''}
+                      aria-current={category === id ? 'page' : undefined}
+                      onClick={() => selectCategory(id)}
+                    >
+                      {SETTINGS_LABELS[id]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
           <div style={{ flex: 1 }} />
           <button type="button" className="modal-nav-close" onClick={onClose}>
             Close
           </button>
-        </div>
+        </nav>
         <div className="modal-content">
           <header className="settings-page-header">
             <div>
@@ -395,7 +423,7 @@ export function SettingsModal({
                       key={id}
                       type="button"
                       className={`settings-search-hit${id === category ? ' is-active' : ''}`}
-                      onClick={() => setCategory(id)}
+                      onClick={() => selectCategory(id)}
                     >
                       <strong>{SETTINGS_LABELS[id]}</strong>
                       <span>{SETTINGS_SUBTITLES[id]}</span>
@@ -411,7 +439,7 @@ export function SettingsModal({
                       key={r.path.join('.')}
                       type="button"
                       className="settings-search-hit"
-                      onClick={() => setCategory(r.cat)}
+                      onClick={() => selectCategory(r.cat)}
                     >
                       <strong>{r.label}</strong>
                       <span>
@@ -454,6 +482,17 @@ export function SettingsModal({
           )}
 
           {category === 'imageModels' && <ImageModelsPanel resolved={resolved} apply={apply} />}
+
+          {category === 'cloudModels' && (
+            <ErisCloudPanel
+              resolved={resolved}
+              status={status}
+              onOpenAccount={() => selectCategory('account')}
+              onSaveConnections={connections => apply(['models', 'connections'], connections)}
+              onSetDefaultModel={model => apply(['models', 'defaultModel'], model)}
+              onRefresh={async () => setStatus(await window.ide.modelsStatus({ probe: true, includeGpu: true }))}
+            />
+          )}
 
           {category === 'providers' && (
             <ProvidersModelsPanel resolved={resolved} status={status} apply={apply} load={load} />

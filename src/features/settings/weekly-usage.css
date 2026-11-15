@@ -1,0 +1,168 @@
+.weekly-usage {
+  gap: 14px;
+}
+
+.weekly-usage-header,
+.weekly-usage-plan-title,
+.weekly-usage-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.weekly-usage-header h2 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: -0.03em;
+}
+
+.weekly-usage-header p {
+  margin: 4px 0 0;
+}
+
+.weekly-usage-summary,
+.weekly-usage-plans {
+  padding: 18px;
+}
+
+.weekly-usage-total {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.weekly-usage-total strong {
+  font-size: 34px;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+.weekly-usage [data-destination='cloud'] {
+  background: #7774ed;
+}
+.weekly-usage [data-destination='local'] {
+  background: #37bc9c;
+}
+.weekly-usage [data-destination='external'] {
+  background: #d49951;
+}
+.weekly-usage [data-destination='unclassified'] {
+  background: #8793a3;
+}
+
+.weekly-usage-stack {
+  display: flex;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.weekly-usage-stack > span,
+.weekly-usage-column > span {
+  flex-shrink: 0;
+}
+
+.weekly-usage-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  margin: 14px 0 0;
+}
+
+.weekly-usage-legend dt {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+}
+
+.weekly-usage-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.weekly-usage-legend dd {
+  margin: 4px 0 0 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.weekly-usage-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.weekly-usage-day {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.weekly-usage-column {
+  display: flex;
+  flex-direction: column-reverse;
+  width: min(24px, 100%);
+  height: 68px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: var(--bg);
+}
+
+.weekly-usage-plans h3 {
+  margin: 0 0 12px;
+}
+
+.weekly-usage-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 179px), 1fr));
+  gap: 10px;
+}
+
+.weekly-usage-plan {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.weekly-usage-plan[data-current='true'] {
+  border-color: #7774ed;
+}
+
+.weekly-usage-footnote {
+  margin: 12px 0 0;
+}
+
+.weekly-usage-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.weekly-usage-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.weekly-usage-history summary {
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+}

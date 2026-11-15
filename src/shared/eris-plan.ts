@@ -12,6 +12,9 @@
  * Pro → all limits null (unlimited). Free → FREE_PLAN_LIMITS (or overrides).
  */
 
+/** Hosted model plan allowances. Cloud Agent jobs have separate limits. */
+export const ERIS_CLOUD_WEEKLY_TOKEN_LIMIT = { free: 1_000_000, pro: null } as const
+
 export type ErisPlanId = 'free' | 'pro'
 
 export type ErisPlanLimits = {

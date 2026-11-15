@@ -13,11 +13,11 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
   },
   {
     label: 'Models',
-    items: ['gpu', 'composer', 'textModels', 'imageModels']
+    items: ['composer', 'cloudModels', 'providers', 'textModels', 'imageModels', 'gpu']
   },
   {
     label: 'AI',
-    items: ['providers', 'usage', 'memory', 'agent', 'subagents', 'skills']
+    items: ['usage', 'memory', 'agent', 'subagents', 'skills']
   },
   {
     label: 'Project',
@@ -38,6 +38,7 @@ export const SETTINGS_LABELS: Record<Category, string> = {
   composer: 'Models',
   textModels: 'Text Models',
   imageModels: 'Image Models',
+  cloudModels: 'Cloud Models',
   providers: 'Providers',
   usage: 'Usage',
   memory: 'Memory',
@@ -61,8 +62,9 @@ export const SETTINGS_SUBTITLES: Record<Category, string> = {
   composer: 'Default chat model and provider setup',
   textModels: 'Download local GGUF chat and coding models from Hugging Face',
   imageModels: 'Configure image generation and download local Diffusers models',
+  cloudModels: 'Connection and hosted model catalog from EricServic.es',
   providers: 'Optional cloud APIs and local servers (LM Studio, Ollama)',
-  usage: 'Plan limits and 30-day model usage',
+  usage: 'Weekly model usage and Eris Cloud plans',
   memory: 'Conversation RAM, saved history, recall, and privacy',
   agent: 'Routing, Cloud Agents, and background jobs',
   subagents: 'Project specialists in .eris/agents.json',
@@ -116,6 +118,7 @@ export const SETTINGS_PAGE_KEYWORDS: Record<Category, string[]> = {
     'download',
     'api'
   ],
+  cloudModels: ['eris cloud', 'hosted', 'ericservic.es', 'ollama', 'connection'],
   providers: [
     'ollama',
     'openai',
