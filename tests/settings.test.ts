@@ -68,9 +68,21 @@ describe('settings defaults', () => {
 })
 
 describe('settings migrations', () => {
-  it.each(['auto-local', 'auto-any', 'builtin:composer-lite'])('preserves the privacy policy for %s', (model) => {
+  it.each([
+    ['auto-local', 'auto-local'],
+    ['auto-any', 'auto-any'],
+    ['builtin:composer-lite', 'auto-local'],
+    ['builtin:composer', 'auto'],
+    ['auto', 'auto'],
+    ['', 'auto']
+  ])('migrates a %j default to %j without widening where code goes', (model, expected) => {
     writeUserSettings({ models: { defaultModel: model } })
-    expect(getResolvedSettings(null).models.defaultModel).toBe(model === 'builtin:composer-lite' ? 'auto-local' : model)
+    expect(getResolvedSettings(null).models.defaultModel).toBe(expected)
+  })
+
+  it('does not let the user layer set the workspace local-only ceiling', () => {
+    writeUserSettings({ agent: { routing: { workspaceLocalOnly: true } } })
+    expect(getResolvedSettings(null).agent.routing.workspaceLocalOnly).toBe(false)
   })
 
   it('upgrades legacy user settings', () => {
@@ -401,5 +413,6 @@ describe('unreadable settings files', () => {
       writeFileSync(workspaceSettingsPath(root), JSON.stringify({ models: { defaultModel: 'auto-local' } }))
       invalidateResolvedSettingsCache()
       expect(getResolvedSettings(root).agent.routing.profile).toBe('local')
+      expect(getResolvedSettings(root).agent.routing.workspaceLocalOnly).toBe(true)
     } finally { rmSync(root, { recursive: true, force: true }) }
   })

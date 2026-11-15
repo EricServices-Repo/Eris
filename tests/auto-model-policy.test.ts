@@ -35,7 +35,8 @@ vi.mock('../electron/main/services/agent-telemetry', () => ({
   }
 }))
 vi.mock('../electron/main/services/eval-store', () => ({ bestEvalModelForIntent: () => null }))
-import { chooseExecutionModel, executionPolicy } from '../electron/main/services/auto-model-policy'
+import { chooseExecutionModel, executionPolicy, workspaceLocalityViolation } from '../electron/main/services/auto-model-policy'
+import { policyLabel } from '../electron/main/services/chat-router'
 import { getDefaults } from '../electron/main/services/settings'
 const local = (ref = 'local:qwen-coder', bytes = 5 * 1024 ** 3) => ({
   ref,
@@ -298,5 +299,40 @@ describe('explicit capability ranking', () => {
   it('excludes insufficient profile context', async () => {
     const s = setup()
     expect((await chooseExecutionModel(s, 'edit', 'auto-any', [], { requiredContext: 200000 })).model).toBe('')
+  })
+})
+
+describe('workspace local-only ceiling', () => {
+  it('refuses a fixed remote model only when the workspace sets the ceiling', () => {
+    const s = settings()
+    expect(workspaceLocalityViolation(s, 'remote-coder')).toBeUndefined()
+    s.agent.routing.workspaceLocalOnly = true
+    expect(workspaceLocalityViolation(s, 'remote-coder')).toMatch(/limited to models on this computer/)
+    expect(workspaceLocalityViolation(s, 'local:qwen-coder')).toBeUndefined()
+    expect(workspaceLocalityViolation(s, 'auto-any')).toBeUndefined()
+  })
+  it('turns Auto (any) into local-only selection with a stated reason', async () => {
+    const s = settings()
+    s.agent.routing.profile = 'local'
+    s.agent.routing.workspaceLocalOnly = true
+    expect(executionPolicy(s, 'auto-any')).toBe('auto-local')
+    const choice = await chooseExecutionModel(s, 'edit', 'auto-any')
+    expect(choice.model).toBe('local:qwen-coder')
+    expect(choice.candidates.find((c) => c.model === 'remote-coder')).toMatchObject({
+      eligible: false,
+      reason: 'excluded by Auto-local execution policy'
+    })
+  })
+  it('never picks a remote model for recovery when the only local worker was already tried', async () => {
+    const s = settings()
+    const choice = await chooseExecutionModel(s, 'edit', 'auto-local', ['local:qwen-coder'])
+    expect(choice.model).not.toBe('remote-coder')
+  })
+  it('names the policy in force for the route reason', () => {
+    const s = settings()
+    expect(policyLabel('auto-local', s)).toBe('Auto (this computer only)')
+    expect(policyLabel('auto-any', s)).toBe('Auto (any connected model)')
+    s.agent.routing.workspaceLocalOnly = true
+    expect(policyLabel('fixed', s)).toBe('Fixed model · workspace local-only')
   })
 })

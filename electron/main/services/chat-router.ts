@@ -1032,7 +1032,7 @@ export async function planChatTurn(options: {
     routeTrace: { heuristicRule: heuristic.rule, overrides },
     error: modelChoice && !modelChoice.model
       ? `No eligible model for ${modelChoice.policy}. ${modelChoice.candidates.map((c) => `${c.model}: ${c.reason}`).join('; ')}`
-      : localityConflict || roles.error,
+      : workspaceLocalityViolation(options.settings, chosenModel) || localityConflict || roles.error,
     modelExecution: {
       policy: agentModelOverride ? 'fixed' : executionPolicy(options.settings, selectedModel),
       selection: agentModelOverride || selectedModel,

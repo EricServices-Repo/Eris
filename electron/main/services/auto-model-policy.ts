@@ -41,6 +41,13 @@ export function executionLocal(settings: AppSettings, model: string): boolean {
   return modelDestination(settings, model).locality !== 'remote'
 }
 
+/** Why a model may not run under this workspace's local-only ceiling, or undefined if it may. */
+export function workspaceLocalityViolation(settings: AppSettings, model: string): string | undefined {
+  if (settings.agent?.routing?.workspaceLocalOnly !== true || !model.trim()) return undefined
+  if (['auto', 'auto-local', 'auto-any'].includes(model) || executionLocal(settings, model)) return undefined
+  return `This workspace is limited to models on this computer (.eris/settings.json), so ${model} cannot be used. Choose a local model or Auto (this computer only).`
+}
+
 function secretPresent(ref: string): boolean {
   try {
     return Boolean(getSecret(ref)?.trim())

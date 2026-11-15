@@ -232,6 +232,11 @@ export async function* streamProviderChat(
     if (task) await assertTaskReferences(task, options.settings, model)
   }
   assertProviderCallAllowed(options.settings, model)
+  {
+    const { workspaceLocalityViolation } = await import('./auto-model-policy')
+    const violation = workspaceLocalityViolation(options.settings, model)
+    if (violation) throw new Error(violation)
+  }
   await prepareModelWindows(options.settings, [model], options.getSecret, options.signal)
   throwIfAborted(options.signal)
   // Preparation can load/reconfigure a server model asynchronously. Validate again
