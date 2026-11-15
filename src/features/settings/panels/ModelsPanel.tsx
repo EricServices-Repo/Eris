@@ -265,16 +265,16 @@ function DefaultModelCard({
         </select>
       </label>
       <p className="models-hint">Used by the Explainer and Fast roles and for short helper calls. Follows the same privacy policy as the primary model; with one model, both use it.</p>
-      <label className="models-default-field"><span>Auto preference</span>
-        <select value={resolved.models.selectionPreference ?? 'best'} onChange={e => void apply(['models', 'selectionPreference'], e.target.value)}>
-          <option value="best">Prefer best</option><option value="local">Prefer local</option><option value="cheapest">Prefer cheapest</option>
-        </select>
-      </label>
       <ModelCapabilityEditor
         models={resolved.models}
         options={readyOptions.filter((option) => !isAutomaticModelSelection(option.value))}
         apply={apply}
       />
+      <label className="models-default-field"><span>Auto preference</span>
+        <select value={resolved.models.selectionPreference ?? 'best'} onChange={e => void apply(['models', 'selectionPreference'], e.target.value)}>
+          <option value="best">Prefer best</option><option value="local">Prefer local</option><option value="cheapest">Prefer cheapest</option>
+        </select>
+      </label>
     </section>
   )
 }

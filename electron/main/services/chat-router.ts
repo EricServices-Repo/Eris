@@ -1,4 +1,3 @@
-import { estimateModelMessagesTokens } from './model-protocol'
 import { INTENT_GUIDE, INTENT_RULES } from '../../../src/shared/intent-guide'
 import { isAutomaticModelSelection } from '../../../src/shared/model-execution'
 import {
@@ -24,6 +23,7 @@ import type {
 import { allAgentsFlat, findAgent } from './agents'
 import { isBuiltinRef, isExactBuiltinReady, resolveExactBuiltinRef } from './builtin-model'
 import { isLocalRef, resolveExactLocalRef } from './local-model'
+import { estimateModelMessagesTokens } from './model-protocol'
 import { streamModelChat } from './chat-runtime'
 import { getToolContract, type ToolAccess } from './tool-registry'
 import { routeHeuristic, routeMessage } from './router'
@@ -482,7 +482,22 @@ export async function resolveFastModel(
   const pinned = (settings.models.fast ?? 'auto').trim()
   if (pinned && !isAutoModelChoice(pinned)) {
     const candidate = primary.candidates.find((c) => c.model === pinned)
-    if (candidate?.eligible) return { model: pinned }
+    if (candidate?.eligible) {
+      return {
+        model: pinned,
+        choice: {
+          ...primary,
+          model: pinned,
+          basis: 'profile',
+          candidates: primary.candidates.map((item) => !item.eligible ? item : {
+            ...item,
+            reason: item.model === pinned
+              ? `selected as the configured Fast model · ${item.capabilities ?? ''}`
+              : `eligible · configured Fast model ${pinned} has priority · ${item.capabilities ?? ''}`
+          })
+        }
+      }
+    }
   }
   const choice = await chooseExecutionModel(settings, intent, policySelection, [], { modelClass: 'fast', requiredContext })
   if (!choice.model) return { model: primary.model }
