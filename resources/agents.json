@@ -28,7 +28,8 @@
       "generate",
       "improve",
       "review"
-    ]
+    ],
+    "modelClass": "primary"
   },
   "subagents": [
     {
@@ -55,7 +56,8 @@
         "error",
         "compile",
         "type"
-      ]
+      ],
+      "modelClass": "primary"
     },
     {
       "id": "explainer",
@@ -78,7 +80,8 @@
         "document",
         "summarize",
         "why"
-      ]
+      ],
+      "modelClass": "fast"
     },
     {
       "id": "reviewer",
@@ -101,7 +104,8 @@
         "regression",
         "smell",
         "review"
-      ]
+      ],
+      "modelClass": "primary"
     },
     {
       "id": "planner",
@@ -120,7 +124,8 @@
         "architecture plan",
         "how should we build",
         "steps to implement"
-      ]
+      ],
+      "modelClass": "primary"
     },
     {
       "id": "verifier",
@@ -140,7 +145,8 @@
         "test changes",
         "check whether it works",
         "edge cases"
-      ]
+      ],
+      "modelClass": "primary"
     },
     {
       "id": "fast",
@@ -159,7 +165,8 @@
         "tl;dr",
         "yes/no",
         "where is"
-      ]
+      ],
+      "modelClass": "fast"
     }
   ]
 }

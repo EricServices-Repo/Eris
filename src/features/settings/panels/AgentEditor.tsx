@@ -1,10 +1,12 @@
 import type { AgentDefinition } from '@/shared/settings-schema'
+import { agentModelClass } from '@/shared/agent-model-class'
 
 export function AgentEditor({
   agent,
   role,
   models,
   defaultModel,
+  fastModel = 'auto',
   onChange,
   onRemove
 }: {
@@ -12,6 +14,8 @@ export function AgentEditor({
   role: 'orchestrator' | 'specialist'
   models: string[]
   defaultModel: string
+  /** models.fast: the model fast-class roles run on ("auto" = Auto-fast). */
+  fastModel?: string
   onChange: (next: AgentDefinition) => void
   onRemove?: () => void
 }) {
@@ -70,6 +74,27 @@ export function AgentEditor({
             ))}
           </select>
           <div className="subtitle">A specific model is used when chat is set to Auto.</div>
+        </div>
+      </div>
+      <div className="setting-row" style={{ gridTemplateColumns: '120px 1fr', border: 'none' }}>
+        <label>Model class</label>
+        <div>
+          <select
+            value={agentModelClass(agent)}
+            onChange={(e) => onChange({ ...agent, modelClass: e.target.value as 'primary' | 'fast' })}
+            disabled={Boolean(agent.model.trim())}
+            title="Primary runs multi-step and editing work; Fast runs short lookups and helper calls."
+          >
+            <option value="primary">Primary</option>
+            <option value="fast">Fast</option>
+          </select>
+          <div className="subtitle">
+            {agent.model.trim()
+              ? `Pinned to ${agent.model}; the class does not apply.`
+              : agentModelClass(agent) === 'fast'
+                ? `Runs on the fast model: ${fastModel === 'auto' ? 'Auto-fast' : fastModel}.`
+                : `Runs on the primary model: ${defaultModel || 'auto'}.`}
+          </div>
         </div>
       </div>
       <div className="setting-row" style={{ gridTemplateColumns: '120px 1fr', border: 'none' }}>

@@ -1,6 +1,8 @@
 import { INTENT_GUIDE, INTENT_RULES } from '../../../src/shared/intent-guide'
 import { isAutomaticModelSelection } from '../../../src/shared/model-execution'
 import { chooseExecutionModel, executionPolicy, executionLocal, type AutoModelChoice } from './auto-model-policy'
+import { agentModelClass, type AgentModelClass } from '../../../src/shared/agent-model-class'
+import { isNativeGgufRef } from '../../../src/shared/model-destination'
 import { asksForImageGeneration } from '../../../src/shared/image-generation'
 import type {
   AgentDefinition,
@@ -455,6 +457,29 @@ export function resolveModelRoles(options: {
   // Desktop runs Composer Lite locally. Composer Full is the Cloud Agents model
   // and stays selected so the chat can send the turn there.
   return { chat: exact, tools: exact, escalateToFull: false }
+}
+
+/**
+ * The fast-class model for a turn: a Fixed `models.fast` the policy allows, else Auto-fast.
+ * On native local models the loaded primary is kept, since one worker holds one model and
+ * swapping per role would reload it every turn.
+ */
+export async function resolveFastModel(
+  settings: AppSettings,
+  intent: ChatIntent,
+  policySelection: string,
+  primary: AutoModelChoice
+): Promise<{ model: string; choice?: AutoModelChoice }> {
+  const pinned = (settings.models.fast ?? 'auto').trim()
+  if (pinned && !isAutoModelChoice(pinned)) {
+    const candidate = primary.candidates.find((c) => c.model === pinned)
+    if (candidate?.eligible) return { model: pinned }
+  }
+  const choice = await chooseExecutionModel(settings, intent, policySelection, [], { modelClass: 'fast' })
+  if (!choice.model) return { model: primary.model }
+  if (choice.model !== primary.model && isNativeGgufRef(choice.model) && isNativeGgufRef(primary.model))
+    return { model: primary.model }
+  return { model: choice.model, choice }
 }
 
 function formatReason(parts: {
@@ -926,11 +951,25 @@ export async function planChatTurn(options: {
     : 'user'
   let modelChoice: AutoModelChoice | undefined
   let chosenModel = agentModelOverride || selectedModel
+  const modelClass: AgentModelClass = agentModelClass(agent)
+  let classModels: { primary?: string; fast?: string } = {}
   if (isAutoModelChoice(chosenModel)) {
-    const choice = await chooseExecutionModel(options.settings, intent, chosenModel, [], { cloudComposer: options.allowCloudComposer !== false && mode === 'agent' && Boolean(options.workspacePath) })
+    const policySelection = chosenModel
+    const choice = await chooseExecutionModel(options.settings, intent, policySelection, [], { cloudComposer: options.allowCloudComposer !== false && mode === 'agent' && Boolean(options.workspacePath) })
     modelChoice = choice
     chosenModel = choice.model
     modelBasis = choice.basis
+    const fast = await resolveFastModel(options.settings, intent, policySelection, choice)
+    classModels = { primary: choice.model || undefined, fast: fast.model || choice.model || undefined }
+    if (modelClass === 'fast' && fast.model) {
+      chosenModel = fast.model
+      if (fast.choice) {
+        modelChoice = fast.choice
+        modelBasis = fast.choice.basis
+      }
+    }
+  } else if (chosenModel) {
+    classModels = { primary: chosenModel, fast: chosenModel }
   }
   const localityConflict = agentModelOverride && executionPolicy(options.settings, selectedModel) === 'auto-local' &&
     !executionLocal(options.settings, agentModelOverride)
@@ -961,7 +1000,10 @@ export async function planChatTurn(options: {
       chat: roles.chat,
       tools: roles.tools,
       coordinator,
-      router: wantLlmRouter ? options.settings.agent.routing.routerModel : undefined
+      router: wantLlmRouter ? options.settings.agent.routing.routerModel : undefined,
+      primary: classModels.primary,
+      fast: classModels.fast,
+      modelClass: agentModelOverride ? undefined : modelClass
     },
     toolPolicy,
     requiresTools,
@@ -975,7 +1017,7 @@ export async function planChatTurn(options: {
       escalateToFull: roles.escalateToFull,
       profile: routingProfile,
       cloudPreferred
-    })} · model ${modelBasis}`,
+    })} · ${agentModelOverride ? `pinned ${agentModelOverride}` : `${modelClass} ${chosenModel || 'none'}`} · model ${modelBasis}`,
     method,
     classifiedIntent,
     routeTrace: { heuristicRule: heuristic.rule, overrides },

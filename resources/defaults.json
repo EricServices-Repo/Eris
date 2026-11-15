@@ -1,6 +1,7 @@
 {
   "models": {
     "defaultModel": "auto",
+    "fast": "auto",
     "temperature": 0.3,
     "contextWindow": 32768,
     "preferEgpu": true,

@@ -62,7 +62,8 @@ function normalizeAgent(raw: unknown, fallbackBuiltin = false): AgentDefinition 
     preferEscalate:
       typeof input.preferEscalate === 'boolean'
         ? input.preferEscalate
-        : tools === 'edit' || tools === 'full'
+        : tools === 'edit' || tools === 'full',
+    modelClass: input.modelClass === 'primary' || input.modelClass === 'fast' ? input.modelClass : undefined
   })
 }
 
