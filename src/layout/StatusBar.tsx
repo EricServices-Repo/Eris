@@ -3,8 +3,8 @@ import type { CloudHealth } from '@/shared/cloud-agents'
 import type { UpdateStatusSnapshot, UsageEntitlement } from '@/shared/api'
 import {
   CLOUD_AGENTS_BASE_URL,
-  CLOUD_AGENTS_ENABLED,
   cloudAgentsStatusLabel,
+  cloudStatusIndicator,
   isCloudAgentsReady,
   shouldUseCloudAgents
 } from '@/shared/cloud-agents'
@@ -96,6 +96,7 @@ export function StatusBar({
   onCheckUpdates,
   onAgentChange
 }: Props) {
+  const cloudIndicator = cloudStatusIndicator(accountNeedsReauth)
   const cloudReady = isCloudAgentsReady(cloudHealth)
   const preferCloud = shouldUseCloudAgents(cloudHealth)
   const cloudTitle = `${cloudAgentsStatusLabel(cloudHealth)}\n${CLOUD_AGENTS_BASE_URL} (TLS)\nOpen Settings → Agent for metrics`
@@ -150,7 +151,7 @@ export function StatusBar({
               : `v${appVersion}`}
           </button>
         )}
-        {CLOUD_AGENTS_ENABLED ? (
+        {cloudIndicator === 'cloud' ? (
           <button
             type="button"
             className={`status-bar-btn${accountNeedsReauth ? ' is-warn' : ''}`}
@@ -167,7 +168,7 @@ export function StatusBar({
         ) : (
           // Cloud Agents are retired, so there is no cloud status to show; an expired
           // EricServic.es session still needs a way back to Account.
-          accountNeedsReauth && (
+          cloudIndicator === 'reauth' && (
             <button
               type="button"
               className="status-bar-btn is-warn"

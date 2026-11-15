@@ -3,6 +3,7 @@ import type { CloudHealth } from '@/shared/cloud-agents'
 import {
   CLOUD_AGENTS_BASE_URL,
   CLOUD_AGENTS_ENABLED,
+  LOCAL_AGENTS_DESCRIPTION,
   cloudAgentsStatusLabel,
   isCloudAgentsReady,
   shouldUseCloudAgents
@@ -40,7 +41,7 @@ function LocalAgentPanel() {
       <SettingsSection title="Routing" description={ROUTING_DESCRIPTION} />
       <SettingsSection
         title="Where agents run"
-        description="Agents and subagents run on this computer, with the model chosen in chat or by Auto. To use hosted models, turn on Settings → Providers → Eris Cloud; they appear in the model picker as cloud:<model>."
+        description={LOCAL_AGENTS_DESCRIPTION}
       />
     </SettingsPage>
   )

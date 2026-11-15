@@ -165,6 +165,22 @@ export function isCloudAgentsReady(health: CloudHealth | null | undefined): bool
   return !health!.localModel || health!.localModel.status === 'ready'
 }
 
+/**
+ * What the status bar shows for the cloud. While Cloud Agents are retired there is no
+ * worker to report on, so nothing is shown unless the account session needs renewing.
+ */
+export function cloudStatusIndicator(
+  accountNeedsReauth: boolean,
+  enabled: boolean = CLOUD_AGENTS_ENABLED
+): 'cloud' | 'reauth' | 'hidden' {
+  if (enabled) return 'cloud'
+  return accountNeedsReauth ? 'reauth' : 'hidden'
+}
+
+/** Settings → Agent text while Cloud Agents are retired. */
+export const LOCAL_AGENTS_DESCRIPTION =
+  'Agents and subagents run on this computer, with the model chosen in chat or by Auto. To use hosted models, turn on Settings → Providers → Eris Cloud; they appear in the model picker as cloud:<model>.'
+
 export function cloudAgentsStatusLabel(health: CloudHealth | null | undefined): string {
   if (!health) return 'Cloud: checking…'
   const fallback = cloudAgentsFallbackReason(health)
