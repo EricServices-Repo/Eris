@@ -234,7 +234,7 @@ function DefaultModelCard({
   return (
     <section className="models-card">
       <label className="models-default-field">
-        <span>Default chat model</span>
+        <span>Primary model</span>
         <select
           value={resolved.models.defaultModel || ''}
           onChange={(e) => void apply(['models', 'defaultModel'], e.target.value)}
@@ -247,7 +247,21 @@ function DefaultModelCard({
           ))}
         </select>
       </label>
-      <p className="models-hint">Used for Ask / Agent when you don’t pick another model in chat.</p>
+      <p className="models-hint">Primary model. Used for Ask / Agent and multi-step or editing work when you don’t pick another model in chat.</p>
+      <label className="models-default-field">
+        <span>Fast model</span>
+        <select
+          value={resolved.models.fast || 'auto'}
+          onChange={(e) => void apply(['models', 'fast'], e.target.value)}
+        >
+          {readyOptions.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.value === 'auto' ? 'Auto-fast (cheapest eligible model)' : o.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="models-hint">Used by the Explainer and Fast roles and for short helper calls. Follows the same privacy policy as the primary model; with one model, both use it.</p>
       <label className="models-default-field"><span>Auto preference</span>
         <select value={resolved.models.selectionPreference ?? 'best'} onChange={e => void apply(['models', 'selectionPreference'], e.target.value)}>
           <option value="best">Prefer best</option><option value="local">Prefer local</option><option value="cheapest">Prefer cheapest</option>

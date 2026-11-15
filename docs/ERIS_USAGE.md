@@ -60,7 +60,9 @@ These are two separate choices.
 - **Auto (any connected model)**: any enabled model, local or remote.
 - **A named model**: exactly that model. Eris Cloud models appear as `cloud:<model>`.
 
-Set **Auto preference** (prefer best, local or cheapest) in Settings → Models. How Auto ranks models is described in [automatic model selection](design/AUTO-MODEL-EXECUTION.md).
+Set **Auto preference** (prefer best, local or cheapest) in Settings → Models.
+
+Settings → Models also has a **Primary model** and a **Fast model**. Composer, Coder, Plan, Verification and Reviewer run on the primary model. Explainer and Fast run on the fast model, which defaults to *Auto-fast*: the cheapest eligible model at tier standard or below, under the same privacy policy. A role can change its class in Settings → Agents, and a model pinned on a role overrides its class. With one model available, both classes use it. How Auto ranks models is described in [automatic model selection](design/AUTO-MODEL-EXECUTION.md).
 
 ## Review changes
 

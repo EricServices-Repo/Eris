@@ -88,6 +88,7 @@ export function SubagentsPanel({
                 role="orchestrator"
                 models={status?.models.map((m) => m.name) ?? []}
                 defaultModel={resolved.models.defaultModel}
+                fastModel={resolved.models.fast}
                 onChange={(next) => {
                   setProjectAgents({ ...projectAgents, orchestrator: next })
                   setAgentsDirty(true)
@@ -101,6 +102,7 @@ export function SubagentsPanel({
                   role="specialist"
                   models={status?.models.map((m) => m.name) ?? []}
                   defaultModel={resolved.models.defaultModel}
+                  fastModel={resolved.models.fast}
                   onChange={(next) => {
                     const subagents = projectAgents.subagents.map((a, i) =>
                       i === index ? next : a
