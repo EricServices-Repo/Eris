@@ -214,6 +214,7 @@
       "tests/chat-history-window.test.ts",
       "tests/chat-pages.test.ts",
       "tests/cloud-agents.test.ts",
+      "tests/eris-cloud.test.ts",
       "tests/code-index-patch.test.ts",
       "tests/diff-review-stats.test.ts",
       "tests/document-store.test.ts",
