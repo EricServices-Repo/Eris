@@ -207,12 +207,12 @@ describe('production Auto model selection', () => {
     expect(choice).toMatchObject({ model: 'local:qwen-coder', basis: 'telemetry' })
     expect(reason('local:qwen-coder')).toMatch(/^selected by measured run outcomes for edit/)
   })
-  it('names a tie-break by name instead of claiming a higher rank', async () => {
+  it('uses catalog order rather than alphabetical names to break ties', async () => {
     state.locals = [local('local:b-coder'), local('local:a-coder')]
     const choice = await chooseExecutionModel(settings(), 'edit', 'auto-local')
-    expect(choice.model).toBe('local:a-coder')
-    expect(choice.candidates.find((c) => c.model === 'local:b-coder')?.reason).toContain(
-      '(tied at 28; broken by name)'
+    expect(choice.model).toBe('local:b-coder')
+    expect(choice.candidates.find((c) => c.model === 'local:a-coder')?.reason).toContain(
+      '(tied at 28; broken by configured priority or catalog order)'
     )
   })
   it('honors explicit policy independently of the legacy profile', () => {
@@ -272,5 +272,31 @@ describe('production Auto model selection', () => {
       ])
       expect(choice.model).toBe('')
     })
+  })
+})
+
+
+describe('explicit capability ranking', () => {
+  const setup = () => {
+    const s = settings()
+    s.agent.routing.profile = 'auto'
+    s.models.capabilityProfiles = {
+      'local:qwen-coder': { tier: 'small', toolCalling: 'text', contextWindow: 8192, reasoning: false, vision: false, costClass: 'free-local' },
+      'remote-coder': { tier: 'frontier', toolCalling: 'native', contextWindow: 131072, reasoning: true, vision: false, costClass: 'high' }
+    }
+    return s
+  }
+  it.each(['edit', 'review', 'verify'] as const)('prefers capability over location for %s', async intent => {
+    expect((await chooseExecutionModel(setup(), intent, 'auto-any')).model).toBe('remote-coder')
+  })
+  it('honors local preference without widening eligibility', async () => {
+    const s = setup(); s.models.selectionPreference = 'local'
+    expect((await chooseExecutionModel(s, 'edit', 'auto-any')).model).toBe('local:qwen-coder')
+    s.models.capabilityProfiles['local:qwen-coder'].toolCalling = 'none'
+    expect((await chooseExecutionModel(s, 'edit', 'auto-any')).model).toBe('remote-coder')
+  })
+  it('excludes insufficient profile context', async () => {
+    const s = setup()
+    expect((await chooseExecutionModel(s, 'edit', 'auto-any', [], { requiredContext: 200000 })).model).toBe('')
   })
 })

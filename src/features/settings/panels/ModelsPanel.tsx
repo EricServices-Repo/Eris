@@ -460,6 +460,11 @@ function DefaultModelCard({
         </select>
       </label>
       <p className="models-hint">Used for Ask / Agent when you don’t pick another model in chat.</p>
+      <label className="models-default-field"><span>Auto preference</span>
+        <select value={resolved.models.selectionPreference ?? 'best'} onChange={e => void apply(['models', 'selectionPreference'], e.target.value)}>
+          <option value="best">Prefer best</option><option value="local">Prefer local</option><option value="cheapest">Prefer cheapest</option>
+        </select>
+      </label>
     </section>
   )
 }
