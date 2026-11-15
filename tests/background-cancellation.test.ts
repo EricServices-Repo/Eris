@@ -349,6 +349,15 @@ describe('background model admission', () => {
     expect(status(second.id)).toBe('running')
   })
 
+  it('rejects a fixed model whose provider was removed before persisting a job', async () => {
+    const before = listBackgroundJobs(h.root).length
+    await expect(planAndEnqueueBackgroundJob(h.root, {
+      goal: 'Needs a provider',
+      model: 'removed-model'
+    })).rejects.toThrow('No provider connection for removed-model')
+    expect(listBackgroundJobs(h.root)).toHaveLength(before)
+  })
+
   it('rejects an empty catalog before persisting a job', async () => {
     h.resolvedModel = ''
     const before = listBackgroundJobs(h.root).length

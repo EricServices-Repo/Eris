@@ -54,6 +54,8 @@ import { captureReceiptEvidence } from './context-evidence'
 import { findAgent } from './agents'
 import { inheritedModelForAgent } from '../../../src/shared/agent-model-class'
 import { executionLocal, executionPolicy } from './auto-model-policy'
+import { resolveConnectionForModel } from './model-catalog'
+import { isNativeGgufRef } from '../../../src/shared/model-destination'
 import {
   captureHandoffEvidence,
   currentEvidenceScope,
@@ -289,12 +291,15 @@ export async function planAndEnqueueBackgroundJob(
   if (plan.error) throw new Error(plan.error)
   const model = plan.models.tools || plan.models.chat
   if (!model) throw new Error('Connect a model in Settings → Models before starting a background task.')
-  return enqueueBackgroundJob(
-    workspacePath,
-    { ...request, model },
-    undefined,
-    plan.modelExecution?.policy ?? executionPolicy(settings, selectedModel)
-  )
+  const modelPolicy = executionPolicy(settings, selectedModel)
+  if ((plan.modelExecution?.policy ?? modelPolicy) === 'fixed' && !isNativeGgufRef(model)) {
+    const connection = resolveConnectionForModel(settings, model)
+    if (!connection?.baseUrl.trim())
+      throw new Error(`No provider connection for ${model}. Connect it in Settings → Models.`)
+    if (connection.apiKeyRef && !currentGetSecret(connection.apiKeyRef)?.trim())
+      throw new Error(`Add an API key for ${connection.name} in Settings → Models.`)
+  }
+  return enqueueBackgroundJob(workspacePath, { ...request, model }, undefined, modelPolicy)
 }
 
 export function enqueueBackgroundJob(
