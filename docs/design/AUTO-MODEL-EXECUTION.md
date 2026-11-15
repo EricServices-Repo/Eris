@@ -94,3 +94,4 @@ Each role has a `modelClass`: `primary` or `fast` (built-in table in `src/shared
 - A role's `model` pin overrides its class, and a Fixed chat selection applies to every role.
 
 The route reason names the class and model, for example `fast local:qwen2.5-coder-1.5b`.
+
