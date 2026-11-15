@@ -449,6 +449,21 @@ describe('a restart', () => {
     expect(() => childOf('root')).not.toThrow()
   })
 
+  it('resumes an interrupted queued job on its persisted model', async () => {
+    await reload([saved('root', 0, {
+      status: 'queued',
+      modelPolicy: 'auto-local',
+      startedAt: undefined,
+      step: 0
+    })])
+    expect(job('root')).toMatchObject({ status: 'stopped', resumable: true })
+    expect(agents.resumeBackgroundJob(h.root, 'root')).toMatchObject({
+      id: 'root', model: 'local:t', modelPolicy: 'auto-local'
+    })
+    await quiet()
+    expect(job('root')).toMatchObject({ status: 'done', model: 'local:t', chatModel: 'local:t' })
+  })
+
   it('accepts a job saved before trees existed', async () => {
     const { tree: _tree, startedAt: _startedAt, ...legacy } = saved('old', 0)
     await reload([legacy])

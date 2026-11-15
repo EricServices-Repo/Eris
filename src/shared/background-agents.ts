@@ -49,8 +49,11 @@ export interface BackgroundJob {
   worktreePath: string
   branch: string
   goal: string
-  /** Model selected in the UI (may differ from toolsModel after escalate) */
+  /** Resolved execution model saved before admission. */
   model: string
+  modelPolicy?: 'auto-local' | 'auto-any' | 'fixed'
+  mode?: 'ask' | 'agent'
+  forceRoute?: 'tools' | 'answer'
   agentId: string
   agentName?: string
   intent?: ChatIntent
@@ -80,7 +83,7 @@ export interface BackgroundJob {
   routeHistory?: AgentRouteStep[]
   escalateCount?: number
   rerouteCount?: number
-  waitReason?: 'children' | 'approval' | 'question' | null
+  waitReason?: 'children' | 'approval' | 'question' | 'local-model' | null
   destinationBranch?: string
   baseSha?: string
   /** A discard could not finish because agents were still stopping, so the worktree stays. */

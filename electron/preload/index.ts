@@ -273,6 +273,7 @@ const api: IdeApi = {
   onDebugRunEvent: (cb) => subscribe('debugRuns:event', cb),
   listBackgroundJobs: () => ipcRenderer.invoke('agents:jobs'),
   enqueueBackgroundJob: (payload) => ipcRenderer.invoke('agents:enqueue', payload),
+  resumeBackgroundJob: (id) => ipcRenderer.invoke('agents:resumeJob', id),
   stopBackgroundJob: (id) => ipcRenderer.invoke('agents:stopJob', id),
   discardBackgroundJob: (id) => ipcRenderer.invoke('agents:discardJob', id),
   mergeBackgroundJob: (id) => ipcRenderer.invoke('agents:mergeJob', id),

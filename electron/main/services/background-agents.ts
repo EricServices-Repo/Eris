@@ -53,7 +53,7 @@ import { ThreadWorkingStateBuilder } from './thread-working-state'
 import { captureReceiptEvidence } from './context-evidence'
 import { findAgent } from './agents'
 import { inheritedModelForAgent } from '../../../src/shared/agent-model-class'
-import { executionLocal } from './auto-model-policy'
+import { executionLocal, executionPolicy } from './auto-model-policy'
 import {
   captureHandoffEvidence,
   currentEvidenceScope,
@@ -94,6 +94,7 @@ function loadPersisted(): void {
     for (const job of raw.jobs ?? []) {
       job.model = migrateRetiredModel(job.model || 'auto')
       if (job.status === 'running' || job.status === 'queued') {
+        job.resumable = job.status === 'queued' && !job.parentId && Boolean(job.modelPolicy)
         job.status = 'stopped'
         job.error = job.error || 'Interrupted when Eris quit'
         job.updatedAt = new Date().toISOString()
@@ -261,19 +262,46 @@ export function getBackgroundJob(id: string): BackgroundJob | null {
   return jobs.get(id) ?? null
 }
 
-const pendingHints = new Map<
-  string,
-  {
-    mode: 'ask' | 'agent'
-    forceRoute?: 'tools' | 'answer'
-    manualAgentId: string | null
-  }
->()
+export async function planAndEnqueueBackgroundJob(
+  workspacePath: string,
+  request: EnqueueBackgroundJobRequest
+): Promise<BackgroundJob> {
+  const goal = request.goal?.trim()
+  if (!goal) throw new Error('Goal is required')
+  const settings = getResolvedSettings(workspacePath)
+  const selectedModel = migrateRetiredModel(request.model?.trim() || settings.models.defaultModel || 'auto')
+  const handoff = request.handoff ? parseHandoff(request.handoff) : null
+  if (handoff && !handoff.ok) throw new Error(handoff.error)
+  const plan = await planChatTurn({
+    workspacePath,
+    settings,
+    allowCloudComposer: false,
+    context: {
+      text: handoff?.ok ? `${formatHandoffForPrompt(handoff.packet)}\n\n${goal}` : goal,
+      selectedModel,
+      manualAgentId: request.agentId && request.agentId !== 'auto' ? request.agentId : null,
+      mode: request.mode === 'ask' ? 'ask' : 'agent',
+      forceRoute: request.forceRoute,
+      skipModelRouter: true
+    },
+    getSecret: currentGetSecret
+  })
+  if (plan.error) throw new Error(plan.error)
+  const model = plan.models.tools || plan.models.chat
+  if (!model) throw new Error('Connect a model in Settings → Models before starting a background task.')
+  return enqueueBackgroundJob(
+    workspacePath,
+    { ...request, model },
+    undefined,
+    plan.modelExecution?.policy ?? executionPolicy(settings, selectedModel)
+  )
+}
 
 export function enqueueBackgroundJob(
   workspacePath: string,
   request: EnqueueBackgroundJobRequest,
-  evidenceScope?: EvidenceScope
+  evidenceScope?: EvidenceScope,
+  modelPolicy: BackgroundJob['modelPolicy'] = 'fixed'
 ): BackgroundJob {
   // A persisted job would outlive the diagnostics case and its disposable
   // sandbox, then run outside the scope with the user's settings.
@@ -291,6 +319,9 @@ export function enqueueBackgroundJob(
   if (!goal) throw new Error('Goal is required')
   const handoff = request.handoff ? parseHandoff(request.handoff) : null
   if (handoff && !handoff.ok) throw new Error(handoff.error)
+  const model = migrateRetiredModel(request.model?.trim() || 'auto')
+  if (['auto', 'auto-local', 'auto-any'].includes(model))
+    throw new Error('A resolved model is required for a background task.')
 
   let worktreePath = ''
   let branch = ''
@@ -314,7 +345,10 @@ export function enqueueBackgroundJob(
     worktreePath,
     branch,
     goal,
-    model: migrateRetiredModel(String(request.model || '').trim() || 'auto'),
+    model,
+    modelPolicy,
+    mode: request.mode === 'ask' ? 'ask' : 'agent',
+    forceRoute: request.forceRoute,
     agentId,
     source: request.source || 'panel',
     sourceThreadId: request.sourceThreadId ?? parent?.sourceThreadId ?? null,
@@ -339,11 +373,6 @@ export function enqueueBackgroundJob(
     createdAt: now,
     updatedAt: now
   }
-  pendingHints.set(job.id, {
-    mode: request.mode === 'ask' ? 'ask' : 'agent',
-    forceRoute: request.forceRoute,
-    manualAgentId: request.agentId && request.agentId !== 'auto' ? request.agentId : null
-  })
   upsert(job)
   // Before the pump below, which can start this job before enqueue returns.
   if (evidenceScope) evidenceScopes.set(job.id, evidenceScope)
@@ -405,8 +434,27 @@ export function delegateFromAgent(options: {
       handoff: { ...options.handoff, evidence: captureHandoffEvidence() },
       claim: options.claim || `${options.agentId}: ${options.goal.slice(0, 48)}`
     },
-    currentEvidenceScope()
+    currentEvidenceScope(),
+    options.policy
   )
+}
+
+export function resumeBackgroundJob(workspacePath: string, id: string): BackgroundJob {
+  const job = getBackgroundJob(id)
+  if (!job || workspaceKey(job.workspacePath) !== workspaceKey(workspacePath) ||
+      job.status !== 'stopped' || !job.resumable || job.parentId || active.has(id))
+    throw new Error('This background task cannot be resumed.')
+  const queued = upsert({
+    ...job,
+    status: 'queued',
+    liveStatus: 'Queued',
+    waitReason: null,
+    resumable: false,
+    error: undefined,
+    tree: job.tree ? { ...job.tree, deadlineAt: newTreeDeadline() } : undefined
+  })
+  void pumpQueue()
+  return queued
 }
 
 export async function awaitChildJobs(
@@ -494,7 +542,6 @@ function stopOne(id: string): boolean {
       error: 'Cancelled before start',
       liveStatus: 'Stopped'
     })
-    pendingHints.delete(id)
     evidenceScopes.delete(id)
     return true
   }
@@ -726,12 +773,23 @@ export async function stopAllBackgroundJobs(): Promise<void> {
   for (const id of [...aborts.keys(), ...jobs.keys()]) stopBackgroundJob(id)
 }
 
+function localRuntimeBusy(candidate: BackgroundJob): boolean {
+  // A suspended coordinator reserves the runtime for its subtree until it resumes.
+  const ancestors = new Set<string>()
+  for (let id = candidate.parentId; id && !ancestors.has(id); id = jobs.get(id)?.parentId)
+    ancestors.add(id)
+  return [...active.keys()].some((id) => {
+    const job = jobs.get(id)
+    if (!job || !executionLocal(getResolvedSettings(job.workspacePath), job.model)) return false
+    return job.waitReason !== 'children' || !ancestors.has(id)
+  })
+}
+
 async function pumpQueue(): Promise<void> {
   if (pumping) return
   pumping = true
   try {
     loadPersisted()
-    let launched = 0
     const queued = [...jobs.values()]
       .filter((j) => j.status === 'queued')
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -753,9 +811,14 @@ async function pumpQueue(): Promise<void> {
         if (j.waitReason === 'children') return false
         return true
       }).length
-      const slots = Math.max(0, settings.backgroundAgents.maxParallel - running)
-      for (let i = 0; i < slots && i < group.length; i++) {
-        const job = group[i]!
+      let slots = Math.max(0, settings.backgroundAgents.maxParallel - running)
+      for (const job of group) {
+        if (executionLocal(settings, job.model) && localRuntimeBusy(job)) {
+          if (job.waitReason !== 'local-model')
+            patch(job.id, (j) => ({ ...j, waitReason: 'local-model', liveStatus: 'Waiting for local inference · local jobs run one at a time' }))
+          continue
+        }
+        if (slots === 0) continue
         const overrun = treeOverrun(job)
         if (overrun) {
           upsert({
@@ -765,7 +828,6 @@ async function pumpQueue(): Promise<void> {
             error: treeLimitMessage(overrun),
             liveStatus: 'Task budget exhausted'
           })
-          pendingHints.delete(job.id)
           evidenceScopes.delete(job.id)
           continue
         }
@@ -775,13 +837,14 @@ async function pumpQueue(): Promise<void> {
             ? {
                 ...j,
                 status: 'running',
+                waitReason: null,
                 startedAt: new Date().toISOString(),
                 liveStatus: 'Planning route…'
               }
             : j
         )
         if (getBackgroundJob(job.id)?.status !== 'running') continue
-        launched++
+        slots--
         // The pump can run inside any request's context, so a job always states its own.
         const run = runInEvidenceScope(
           () => runWithHandoffEvidence(job.handoff?.evidence, () => runOne(job, settings)),
@@ -794,7 +857,6 @@ async function pumpQueue(): Promise<void> {
         active.set(job.id, run)
       }
     }
-    void launched
   } finally {
     pumping = false
   }
@@ -814,12 +876,6 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
   const deadline = job.tree
     ? setTimeout(() => stopForBudget('deadline'), Date.parse(job.tree.deadlineAt) - Date.now())
     : undefined
-  const hints = pendingHints.get(job.id) ?? {
-    mode: 'agent' as const,
-    manualAgentId: job.agentId !== 'auto' ? job.agentId : null
-  }
-  pendingHints.delete(job.id)
-
   let observedState: ThreadWorkingStateBuilder | undefined
   const sourcePaths = new Set<string>()
 
@@ -841,9 +897,11 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
       context: {
         text: planText,
         selectedModel: job.model,
-        mode: hints.mode,
-        manualAgentId: hints.manualAgentId,
-        forceRoute: hints.forceRoute
+        mode: job.mode ?? 'agent',
+        manualAgentId: job.agentId !== 'auto' ? job.agentId : null,
+        forceRoute: job.forceRoute,
+        preserveModelSelection: true,
+        skipModelRouter: true
       },
       getSecret: currentGetSecret,
       signal: ac.signal
@@ -883,7 +941,6 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
       routeReason: turnPlan.reason,
       chatModel: turnPlan.models.chat,
       toolsModel: turnPlan.models.tools,
-      model: turnPlan.models.tools || turnPlan.models.chat || j.model,
       escalateCount: turnPlan.escalateToFull ? 1 : j.escalateCount || 0,
       claim: j.claim || `${turnPlan.agentName}: ${j.goal.slice(0, 48)}`,
       liveStatus: j.worktreePath ? `Running · ${turnPlan.agentName}` : 'Preparing worktree…',
@@ -988,7 +1045,7 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
       temperature: settings.models.temperature,
       signal: ac.signal,
       getSecret: currentGetSecret,
-      mode: hints.mode,
+      mode: job.mode ?? 'agent',
       turnPlan,
       mcp: 'reuse',
       jobId: job.id,
@@ -1000,7 +1057,7 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
             sourceThreadId: job.sourceThreadId,
             model: turnPlan.models.tools || getBackgroundJob(job.id)?.model || job.model,
             models: { primary: turnPlan.models.primary, fast: turnPlan.models.fast },
-            policy: turnPlan.modelExecution?.policy,
+            policy: job.modelPolicy ?? turnPlan.modelExecution?.policy,
             agentId: req.agentId,
             goal: req.goal,
             summary: req.summary,
