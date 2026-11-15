@@ -52,6 +52,8 @@ import { childOutcome, outcomeDigest } from './child-outcome'
 import { ThreadWorkingStateBuilder } from './thread-working-state'
 import { captureReceiptEvidence } from './context-evidence'
 import { findAgent } from './agents'
+import { inheritedModelForAgent } from '../../../src/shared/agent-model-class'
+import { executionLocal } from './auto-model-policy'
 import {
   captureHandoffEvidence,
   currentEvidenceScope,
@@ -364,6 +366,10 @@ export function delegateFromAgent(options: {
   parentJobId?: string | null
   sourceThreadId?: string | null
   model: string
+  /** The parent turn's resolved models; the child's role class picks one (#593). */
+  models?: { primary?: string; fast?: string }
+  /** The parent turn's execution policy; a role pin must satisfy it. */
+  policy?: 'fixed' | 'auto-local' | 'auto-any'
   agentId: string
   goal: string
   summary: string
@@ -375,11 +381,19 @@ export function delegateFromAgent(options: {
 }): BackgroundJob {
   const parent = options.parentJobId ? jobs.get(options.parentJobId) : null
   const inherit = Boolean(parent?.worktreePath)
+  const childAgent = findAgent(options.workspacePath, options.agentId)
+  const childModel = inheritedModelForAgent(childAgent, options.models ?? {}, options.model || parent?.model || 'auto')
+  const pin = childAgent?.model?.trim()
+  if (pin && childModel === pin && options.policy === 'auto-local' && !executionLocal(getResolvedSettings(options.workspacePath), pin))
+    throw new Error(
+      `Agent ${childAgent?.name || options.agentId} pins remote model ${pin}, which the parent turn's policy (Auto, this computer only) does not allow. The delegation did not run.`
+    )
   return enqueueBackgroundJob(
     options.workspacePath,
     {
       goal: options.goal,
-      model: options.model || parent?.model || 'auto',
+      // Store a resolved model, never `auto`, so the child cannot re-pick another provider.
+      model: childModel,
       agentId: options.agentId,
       mode: 'agent',
       source: 'delegate',
@@ -984,7 +998,9 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
             workspacePath: job.workspacePath,
             parentJobId: job.id,
             sourceThreadId: job.sourceThreadId,
-            model: getBackgroundJob(job.id)?.model || job.model,
+            model: turnPlan.models.tools || getBackgroundJob(job.id)?.model || job.model,
+            models: { primary: turnPlan.models.primary, fast: turnPlan.models.fast },
+            policy: turnPlan.modelExecution?.policy,
             agentId: req.agentId,
             goal: req.goal,
             summary: req.summary,

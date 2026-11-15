@@ -4192,7 +4192,11 @@ async function* runAgentInternal(options: {
                       : workerModel,
                   mode: 'agent',
                   manualAgentId: agentId,
-                  skipModelRouter: true
+                  skipModelRouter: true,
+                  inheritedModels: {
+                    primary: plan.models.primary || workerModel,
+                    fast: plan.models.fast || plan.models.primary || workerModel
+                  }
                 },
                 getSecret: options.getSecret,
                 signal: options.signal
@@ -4216,6 +4220,7 @@ async function* runAgentInternal(options: {
               specialistPlan.toolPolicy = intersectToolPolicy(specialistPlan.toolPolicy, task)
               specialistPlan.escalateToFull = false
               specialistPlan.cloudPreferred = false
+              const childModel = specialistPlan.models.tools
               const delegationId = `${options.jobId}:${agentId}:${step}`
               const runningDelegation = {
                 id: delegationId,
@@ -4224,125 +4229,137 @@ async function* runAgentInternal(options: {
                 goal,
                 status: 'running' as const,
                 tools: [] as Array<{ name: string; path?: string; status: string }>,
-                result: ''
+                result: '',
+                model: childModel
               }
-              yield { type: 'delegation', delegation: runningDelegation }
-              yield {
-                type: 'thinking',
-                text: `\n\n— ${runningDelegation.agentName} working in this workspace…\n`
-              }
-              releaseGgufSession()
-              let answer = ''
-              let specialistMutated = false
-              let specialistIncomplete = false
-              const specTools: Array<{ name: string; path?: string; status: string }> = []
-              try {
-                for await (const specEvt of runAgentWithWorkspaceTools({
-                  workspacePath,
-                  settings: options.settings,
-                  model: specialistPlan.models.tools,
-                  messages: handoffMessages(parsedHandoff.packet),
-                  temperature: specialist?.temperature ?? options.temperature,
-                  signal: options.signal,
-                  getSecret: options.getSecret,
-                  mode: 'agent',
-                  turnPlan: specialistPlan,
-                  approveCommand: options.approveCommand,
-                  approveMcpTool: options.approveMcpTool,
-                  askUser: options.askUser,
-                  userWait: options.userWait,
-                  mcp: 'reuse',
-                  jobId: `${options.jobId}:inline:${agentId}`,
-                  allowDelegate: false
-                })) {
-                  if (
-                    specEvt.type === 'thinking' ||
-                    specEvt.type === 'reasoning' ||
-                    specEvt.type === 'tool' ||
-                    specEvt.type === 'evidence' ||
-                    specEvt.type === 'diff' ||
-                    specEvt.type === 'status' ||
-                    specEvt.type === 'workspace-changed' ||
-                    specEvt.type === 'checkpoint' ||
-                    specEvt.type === 'terminal'
-                  ) {
-                    yield specEvt
-                  }
-                  if (specEvt.type === 'diff') {
-                    specialistMutated = true
-                    filesTouched.push(specEvt.diff.path)
-                    recordFileState(specEvt.diff.path, specEvt.diff.before)
-                    recordFileState(specEvt.diff.path, specEvt.diff.after)
-                    forgetWorkspaceRead(specEvt.diff.path)
-                    if (pathNeedsProjectVerify(specEvt.diff.path)) {
-                      codeMutated = true
-                      codeMutatedThisRound = true
-                      verifyPassedOnce = false
-                      workflow.invalidateVerification()
+              if (specialistPlan.error) {
+                // A pin the parent's policy forbids: refuse instead of quietly using another model.
+                yield {
+                  type: 'delegation',
+                  delegation: { ...runningDelegation, status: 'failed', result: specialistPlan.error }
+                }
+                result = { ok: false, detail: specialistPlan.error, mutated: false }
+              } else {
+                yield { type: 'delegation', delegation: runningDelegation }
+                yield {
+                  type: 'thinking',
+                  text: `\n\n— ${runningDelegation.agentName} working in this workspace…\n`
+                }
+                // Frees only the parent's KV cache for the child's context. The inherited
+                // model stays loaded, so a same-model child causes no reload.
+                releaseGgufSession()
+                let answer = ''
+                let specialistMutated = false
+                let specialistIncomplete = false
+                const specTools: Array<{ name: string; path?: string; status: string }> = []
+                try {
+                  for await (const specEvt of runAgentWithWorkspaceTools({
+                    workspacePath,
+                    settings: options.settings,
+                    model: specialistPlan.models.tools,
+                    messages: handoffMessages(parsedHandoff.packet),
+                    temperature: specialist?.temperature ?? options.temperature,
+                    signal: options.signal,
+                    getSecret: options.getSecret,
+                    mode: 'agent',
+                    turnPlan: specialistPlan,
+                    approveCommand: options.approveCommand,
+                    approveMcpTool: options.approveMcpTool,
+                    askUser: options.askUser,
+                    userWait: options.userWait,
+                    mcp: 'reuse',
+                    jobId: `${options.jobId}:inline:${agentId}`,
+                    allowDelegate: false
+                  })) {
+                    if (
+                      specEvt.type === 'thinking' ||
+                      specEvt.type === 'reasoning' ||
+                      specEvt.type === 'tool' ||
+                      specEvt.type === 'evidence' ||
+                      specEvt.type === 'diff' ||
+                      specEvt.type === 'status' ||
+                      specEvt.type === 'workspace-changed' ||
+                      specEvt.type === 'checkpoint' ||
+                      specEvt.type === 'terminal'
+                    ) {
+                      yield specEvt
+                    }
+                    if (specEvt.type === 'diff') {
+                      specialistMutated = true
+                      filesTouched.push(specEvt.diff.path)
+                      recordFileState(specEvt.diff.path, specEvt.diff.before)
+                      recordFileState(specEvt.diff.path, specEvt.diff.after)
+                      forgetWorkspaceRead(specEvt.diff.path)
+                      if (pathNeedsProjectVerify(specEvt.diff.path)) {
+                        codeMutated = true
+                        codeMutatedThisRound = true
+                        verifyPassedOnce = false
+                        workflow.invalidateVerification()
+                      }
+                    }
+                    if (specEvt.type === 'progress' && specEvt.incomplete) specialistIncomplete = true
+                    if (specEvt.type === 'answer')
+                      answer = specEvt.replace ? specEvt.text : answer + specEvt.text
+                    if (specEvt.type === 'tool' && specEvt.tool.status !== 'running') {
+                      specTools.push({
+                        name: specEvt.tool.name,
+                        path: specEvt.tool.path,
+                        status: specEvt.tool.status
+                      })
                     }
                   }
-                  if (specEvt.type === 'progress' && specEvt.incomplete) specialistIncomplete = true
-                  if (specEvt.type === 'answer')
-                    answer = specEvt.replace ? specEvt.text : answer + specEvt.text
-                  if (specEvt.type === 'tool' && specEvt.tool.status !== 'running') {
-                    specTools.push({
-                      name: specEvt.tool.name,
-                      path: specEvt.tool.path,
-                      status: specEvt.tool.status
-                    })
+                  // A specialist claim with no tool evidence is a lead, not a fact.
+                  const unverified = Boolean(answer.trim()) && specTools.length === 0
+                  result = {
+                    ok: !specialistIncomplete && Boolean(answer.trim()),
+                    detail: [
+                      specialistIncomplete
+                        ? 'Specialist stopped before completing the assignment.'
+                        : '',
+                      unverified
+                        ? 'Unverified: the specialist cited no tool evidence. Check its claims against the source before relying on them.'
+                        : '',
+                      `Specialist: ${runningDelegation.agentName}. Workspace: current chat workspace.`,
+                      `Tool evidence: ${specTools.map((tool) => `${tool.name}${tool.path ? ` ${tool.path}` : ''}: ${tool.status}`).join('; ') || 'none'}`,
+                      answer.trim() ||
+                        'Specialist returned no answer; the assignment remains unresolved.'
+                    ]
+                      .filter(Boolean)
+                      .join('\n'),
+                    mutated: specialistMutated
                   }
-                }
-                // A specialist claim with no tool evidence is a lead, not a fact.
-                const unverified = Boolean(answer.trim()) && specTools.length === 0
-                result = {
-                  ok: !specialistIncomplete && Boolean(answer.trim()),
-                  detail: [
-                    specialistIncomplete
-                      ? 'Specialist stopped before completing the assignment.'
-                      : '',
-                    unverified
-                      ? 'Unverified: the specialist cited no tool evidence. Check its claims against the source before relying on them.'
-                      : '',
-                    `Specialist: ${runningDelegation.agentName}. Workspace: current chat workspace.`,
-                    `Tool evidence: ${specTools.map((tool) => `${tool.name}${tool.path ? ` ${tool.path}` : ''}: ${tool.status}`).join('; ') || 'none'}`,
-                    answer.trim() ||
-                      'Specialist returned no answer; the assignment remains unresolved.'
-                  ]
-                    .filter(Boolean)
-                    .join('\n'),
-                  mutated: specialistMutated
-                }
-                recordDelegation(
-                  agentId,
-                  goal,
-                  !result.ok ? 'failed' : unverified ? 'unverified' : 'done',
-                  specialistPlan.task
-                )
-                yield {
-                  type: 'delegation',
-                  delegation: {
-                    ...runningDelegation,
-                    status: result.ok ? 'done' : 'failed',
-                    tools: specTools.slice(-6),
-                    result: result.detail.slice(0, AGENT_HANDOFF_CHARS)
+                  recordDelegation(
+                    agentId,
+                    goal,
+                    !result.ok ? 'failed' : unverified ? 'unverified' : 'done',
+                    specialistPlan.task
+                  )
+                  yield {
+                    type: 'delegation',
+                    delegation: {
+                      ...runningDelegation,
+                      status: result.ok ? 'done' : 'failed',
+                      tools: specTools.slice(-6),
+                      result: result.detail.slice(0, AGENT_HANDOFF_CHARS)
+                    }
                   }
-                }
-              } catch (err) {
-                const message = err instanceof Error ? err.message : String(err)
-                result = { ok: false, detail: message, mutated: specialistMutated }
-                recordDelegation(
-                  agentId,
-                  goal,
-                  options.signal?.aborted ? 'cancelled' : 'failed',
-                  specialistPlan.task
-                )
-                yield {
-                  type: 'delegation',
-                  delegation: {
-                    ...runningDelegation,
-                    status: 'failed',
-                    tools: specTools.slice(-6),
-                    result: message.slice(0, AGENT_HANDOFF_CHARS)
+                } catch (err) {
+                  const message = err instanceof Error ? err.message : String(err)
+                  result = { ok: false, detail: message, mutated: specialistMutated }
+                  recordDelegation(
+                    agentId,
+                    goal,
+                    options.signal?.aborted ? 'cancelled' : 'failed',
+                    specialistPlan.task
+                  )
+                  yield {
+                    type: 'delegation',
+                    delegation: {
+                      ...runningDelegation,
+                      status: 'failed',
+                      tools: specTools.slice(-6),
+                      result: message.slice(0, AGENT_HANDOFF_CHARS)
+                    }
                   }
                 }
               }

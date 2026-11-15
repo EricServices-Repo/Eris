@@ -353,6 +353,8 @@ export interface ChatDelegation {
   status: 'running' | 'done' | 'failed'
   tools: Array<{ name: string; path?: string; status: string }>
   result: string
+  /** Model the child ran on (inherited from the parent turn or the role's pin). */
+  model?: string
 }
 
 export interface ChatMessage {
@@ -595,6 +597,11 @@ export interface ChatTurnContext {
   forceRoute?: 'tools' | 'answer'
   /** Agent that spoke last in this thread, so a follow-up can stay with them. */
   previousAgentId?: string | null
+  /**
+   * A delegated child's parent models. The child runs on the one its role class names
+   * instead of running Auto again; a role pin must satisfy the parent's policy.
+   */
+  inheritedModels?: { primary: string; fast: string }
   /** Recent turns provided to resolve references such as “that” or “the second option”. */
   previousMessages?: Array<{ role: 'user' | 'assistant'; content: string; agentId?: string }>
 }
