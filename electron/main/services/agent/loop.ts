@@ -643,6 +643,7 @@ async function* runAgentInternal(options: {
   }
   let chatModel = plan.models.chat
   let workerModel = plan.models.tools
+  const startingModel = workerModel
   const attemptedModels = new Set([workerModel])
   if (
     plan.models.coordinator &&
@@ -1518,6 +1519,7 @@ async function* runAgentInternal(options: {
             plan,
             selectedModel: workerModel,
             attemptedModels: [...attemptedModels],
+            startingModel,
             failureText: latestAssistant + ' ' + actionLog.slice(-3).join(' '),
             goal: originalUserGoal,
             getSecret: options.getSecret,

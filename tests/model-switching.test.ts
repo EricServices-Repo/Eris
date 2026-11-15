@@ -436,7 +436,7 @@ describe('recovery preserves completed operations', () => {
 })
 
 describe('bounded recovery admission', () => {
-  const decide = (plan = basePlan(), extra = {}) =>
+  const decide = (plan = basePlan(), extra: Partial<Parameters<typeof decideMidRunAdapt>[0]> = {}) =>
     decideMidRunAdapt({
       workspacePath: root,
       settings: settings(),
@@ -455,6 +455,33 @@ describe('bounded recovery admission', () => {
     expect((await decide(basePlan(), { attemptedModels: ['local:worker'] })).kind).toBeNull()
     expect((await decide(basePlan(), { rerouteCount: 2 })).kind).toBeNull()
   })
+  it('recovers within a remote provider, honors fallback order and requires cross-provider consent', async () => {
+    const s = settings()
+    s.agent.routing.profile = 'auto'
+    s.agent.routing.preferCloudComposer = true
+    s.models.connections = [
+      { id: 'first', name: 'First', provider: 'custom', type: 'openai-compatible', enabled: true,
+        baseUrl: 'https://first.example/v1', apiKeyRef: '', models: ['initial', 'same-a', 'same-b'] },
+      { id: 'second', name: 'Second', provider: 'custom', type: 'openai-compatible', enabled: true,
+        baseUrl: 'https://second.example/v1', apiKeyRef: '', models: ['cross'] }
+    ]
+    s.models.fallbacks = ['cross', 'same-b', 'same-a']
+    h.budget = 0
+    const plan = basePlan()
+    plan.modelExecution!.policy = 'auto-any'
+    const args = { settings: s, selectedModel: 'initial', startingModel: 'initial' }
+    const same = await decide(plan, args)
+    expect(same.nextPlan?.models.tools).toBe('same-b')
+    expect(same.reason).toContain('configured fallback')
+    expect((await decide(plan, { ...args, attemptedModels: ['same-a', 'same-b'] })).kind).toBeNull()
+    s.agent.recoveryAcrossProviders = true
+    expect((await decide(plan, args)).nextPlan?.models.tools).toBe('cross')
+    expect((await decide(plan, { ...args, startingModel: 'local:worker' })).kind).toBeNull()
+    expect((await decide(plan, { ...args, attemptedModels: ['local:worker'] })).kind).toBeNull()
+    s.agent.routing.workspaceLocalOnly = true
+    expect((await decide(plan, args)).kind).toBeNull()
+  })
+
   it('preserves fixed choices, safety refusals and permission denials', async () => {
     const fixed = basePlan()
     fixed.modelExecution!.policy = 'fixed'

@@ -124,6 +124,7 @@ export const SettingsSchema = z.object({
   images: ImageGenerationSettingsSchema.prefault({}),
   models: z.object({
     defaultModel: z.string(),
+    fallbacks: z.array(z.string().trim().min(1)).default([]),
     selectionPreference: z.enum(['best', 'local', 'cheapest']).default('best'),
     /**
      * Model for fast-class roles (Explainer, Fast) and helper work. "auto" = Auto-fast:
@@ -150,6 +151,7 @@ export const SettingsSchema = z.object({
   }),
   agent: z.object({
     contextMemory: ContextMemorySettingsSchema.prefault({}),
+    recoveryAcrossProviders: z.boolean().default(false),
     /** Compaction is lossless without one; a summary is an optional extra model call. */
     summarizeEvictedContext: z.boolean().default(false),
     systemPrompt: z.string(),

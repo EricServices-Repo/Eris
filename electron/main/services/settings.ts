@@ -363,6 +363,9 @@ function buildResolvedSettings(workspacePath: string | null): AppSettings {
       userLayer.agent?.contextMemory?.shareWithRemoteModels === true &&
       workspaceLayer.agent?.contextMemory?.shareWithRemoteModels !== false
   }
+  agent.recoveryAcrossProviders =
+    userLayer.agent?.recoveryAcrossProviders === true &&
+    workspaceLayer.agent?.recoveryAcrossProviders !== false
   if (hasCustomMemoryBudget(userLayer)) (agent.contextMemory as { mode: string }).mode = 'manual'
   const routing = { ...((agent.routing as Record<string, unknown>) || {}) }
   if (routing.fallbackAgentId === 'orchestrator') routing.fallbackAgentId = 'composer'
