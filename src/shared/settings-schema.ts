@@ -181,6 +181,12 @@ export const SettingsSchema = z.object({
        * Ignored until that model is downloaded.
        */
       useLocalComposerFull: z.boolean().default(false),
+      /**
+       * Set only from the workspace layer (`.eris/settings.json` with
+       * `models.defaultModel: "auto-local"` or `agent.routing.profile: "local"`).
+       * A ceiling: no model off this computer runs for the workspace, Fixed included.
+       */
+      workspaceLocalOnly: z.boolean().default(false),
       /** Composer picker. "auto" assigns a roster role from the message. */
       pinnedAgentId: z.string().min(1).default('auto')
     })

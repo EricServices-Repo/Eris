@@ -1,6 +1,6 @@
 import { INTENT_GUIDE, INTENT_RULES } from '../../../src/shared/intent-guide'
 import { isAutomaticModelSelection } from '../../../src/shared/model-execution'
-import { chooseExecutionModel, executionPolicy, executionLocal, type AutoModelChoice } from './auto-model-policy'
+import { chooseExecutionModel, executionPolicy, executionLocal, workspaceLocalityViolation, type AutoModelChoice } from './auto-model-policy'
 import { asksForImageGeneration } from '../../../src/shared/image-generation'
 import type {
   AgentDefinition,
@@ -455,6 +455,12 @@ export function resolveModelRoles(options: {
   // Desktop runs Composer Lite locally. Composer Full is the Cloud Agents model
   // and stays selected so the chat can send the turn there.
   return { chat: exact, tools: exact, escalateToFull: false }
+}
+
+/** The execution policy in force, as the route reason names it. */
+export function policyLabel(policy: 'fixed' | 'auto-local' | 'auto-any', settings: AppSettings): string {
+  const base = policy === 'auto-local' ? 'Auto (this computer only)' : policy === 'auto-any' ? 'Auto (any connected model)' : 'Fixed model'
+  return settings.agent?.routing?.workspaceLocalOnly ? `${base} · workspace local-only` : base
 }
 
 function formatReason(parts: {
@@ -975,13 +981,13 @@ export async function planChatTurn(options: {
       escalateToFull: roles.escalateToFull,
       profile: routingProfile,
       cloudPreferred
-    })} · model ${modelBasis}`,
+    })} · model ${modelBasis} · ${policyLabel(agentModelOverride ? 'fixed' : executionPolicy(options.settings, selectedModel), options.settings)}`,
     method,
     classifiedIntent,
     routeTrace: { heuristicRule: heuristic.rule, overrides },
     error: modelChoice && !modelChoice.model
       ? `No eligible model for ${modelChoice.policy}. ${modelChoice.candidates.map((c) => `${c.model}: ${c.reason}`).join('; ')}`
-      : localityConflict || roles.error,
+      : workspaceLocalityViolation(options.settings, chosenModel) || localityConflict || roles.error,
     modelExecution: {
       policy: agentModelOverride ? 'fixed' : executionPolicy(options.settings, selectedModel),
       selection: agentModelOverride || selectedModel,
