@@ -1200,6 +1200,11 @@ select:focus {
   white-space: pre-wrap;
 }
 
+.delegation-model {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .agent-roster span {
   color: var(--text-muted);
   font-size: 12px;

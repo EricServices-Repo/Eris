@@ -953,7 +953,14 @@ export async function planChatTurn(options: {
   let chosenModel = agentModelOverride || selectedModel
   const modelClass: AgentModelClass = agentModelClass(agent)
   let classModels: { primary?: string; fast?: string } = {}
-  if (isAutoModelChoice(chosenModel)) {
+  const inherited = options.context.inheritedModels
+  if (inherited && isAutoModelChoice(chosenModel) && (inherited.primary || inherited.fast)) {
+    // A delegated child reuses its parent's resolved models: no second Auto pick that
+    // could land on another provider or force a local model swap (#593).
+    classModels = { primary: inherited.primary || inherited.fast, fast: inherited.fast || inherited.primary }
+    chosenModel = (modelClass === 'fast' ? classModels.fast : classModels.primary) || ''
+    modelBasis = 'agent'
+  } else if (isAutoModelChoice(chosenModel)) {
     const policySelection = chosenModel
     const choice = await chooseExecutionModel(options.settings, intent, policySelection, [], { cloudComposer: options.allowCloudComposer !== false && mode === 'agent' && Boolean(options.workspacePath) })
     modelChoice = choice
@@ -973,7 +980,9 @@ export async function planChatTurn(options: {
   }
   const localityConflict = agentModelOverride && executionPolicy(options.settings, selectedModel) === 'auto-local' &&
     !executionLocal(options.settings, agentModelOverride)
-      ? `Agent ${agent.name} pins remote model ${agentModelOverride}, which conflicts with Auto-local. Choose a local agent model, Fixed remote, or Auto-any.` : undefined
+      ? inherited
+        ? `Agent ${agent.name} pins remote model ${agentModelOverride}, which the parent turn's policy (Auto, this computer only) does not allow. The delegation did not run.`
+        : `Agent ${agent.name} pins remote model ${agentModelOverride}, which conflicts with Auto-local. Choose a local agent model, Fixed remote, or Auto-any.` : undefined
   const roles = resolveModelRoles({
     selectedModel: chosenModel,
     intent,
