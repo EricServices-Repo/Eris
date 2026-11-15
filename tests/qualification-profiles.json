@@ -96,6 +96,7 @@
         "tests/chat-stream.test.ts",
         "tests/chat-stall-watch.test.ts",
         "tests/context-inspector-ipc.test.ts",
+        "tests/privileged-ipc-schemas.test.ts",
         "tests/context-memory-identity.test.ts",
         "tests/context-origin.test.ts",
         "tests/context-continuity.test.ts",
