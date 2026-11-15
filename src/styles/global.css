@@ -7752,3 +7752,20 @@ button:disabled {
 
 .memory-trend-bars { display: flex; align-items: end; height: 64px; gap: 3px; border-bottom: 1px solid var(--border); }
 .memory-trend-bars span { display: block; min-width: 2px; flex: 1; background: var(--accent); border-radius: 3px 3px 0 0; }
+
+.model-setup-card {
+  margin: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.model-setup-card p {
+  margin: 4px 0 10px;
+}
+
+.model-setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

@@ -79,6 +79,8 @@ function Fixture() {
           onAttachOpenTab={noop}
           onOpenPath={noop}
           onOpenModelsSettings={noop}
+          onOpenProviders={noop}
+          onModelsChanged={async () => {}}
           onOpenSkillsSettings={noop}
           onCreateSkill={noop}
           onDismissError={noop}

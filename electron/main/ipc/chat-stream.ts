@@ -1,3 +1,4 @@
+import { CONNECT_MODEL_MESSAGE } from '../../../src/shared/model-setup'
 import { createContextOrigin } from '../services/context-origin'
 import { chooseExecutionModel } from '../services/auto-model-policy'
 import { currentLoadedModel } from '../services/model-runtime'
@@ -131,6 +132,29 @@ export function registerChatStreamIpc(): void {
       [...(payload.messages ?? [])].reverse().find((message) => message.role === 'user')?.content ||
       ''
     try {
+      // Duplicate submissions replay the existing task even if its model has since
+      // been disconnected. Only a new request needs to pass model admission.
+      if (!getChatJob(payload.requestId)) {
+        const history = payload.prompt?.history
+        const plan = await planInitialChatTurn({
+          requestId: payload.requestId,
+          workspacePath,
+          settings: getResolvedSettings(workspacePath),
+          text: userText,
+          model: payload.model,
+          mode: payload.mode,
+          manualAgentId: payload.agentId,
+          fileNames: payload.prompt?.attachments.map((file) => file.name),
+          previousAgentId: [...(history ?? [])].reverse().find((message) => message.role === 'assistant')?.agentId,
+          forceRoute: payload.forceRoute,
+          preserveModelSelection: payload.preserveModelSelection,
+          history,
+          getSecret
+        })
+        if (plan.error) throw new Error(plan.models.chat ? plan.error : CONNECT_MODEL_MESSAGE)
+      }
+      if (workspacePath !== appState.currentWorkspace)
+        throw new Error('The workspace changed before this task could start.')
       const admission = await admitChatJob({
         id: payload.requestId,
         workspacePath,

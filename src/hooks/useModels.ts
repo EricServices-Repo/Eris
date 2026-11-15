@@ -41,19 +41,10 @@ export function useModels(settings: AppSettings | null) {
       if (generation !== refreshGeneration.current) return
       setModelsKnown(true)
       setModelsError(null)
-      const builtinReady =
-        status.models.some((m) => m.source === 'builtin' && m.ready) ||
-        (status.builtin?.some((b) => b.ready) ?? false)
-      const localReady =
-        status.models.some((m) => m.source === 'local' && m.ready) ||
-        (status.local?.some((m) => m.ready) ?? false)
-      setComposerReady(builtinReady || localReady)
-      setOllamaOk(
-        builtinReady ||
-          localReady ||
-          Boolean(status.models.some((m) => m.source === 'connection' && m.ready))
-      )
-      setModels(status.models.filter((m) => m.source !== 'builtin'))
+      const ready = status.models.filter((model) => model.source !== 'builtin')
+      setComposerReady(ready.some((model) => model.source === 'local' && model.ready))
+      setOllamaOk(ready.some((model) => model.ready))
+      setModels(ready)
       const s = resolved ?? settings
       setSelectedModel((prev) => {
         const desired = prev || s?.models.defaultModel || 'auto'

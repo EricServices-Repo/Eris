@@ -1,3 +1,5 @@
+import { imagePromptFromCommand } from '@/shared/image-generation'
+import { ModelSetupCard } from '@/features/onboarding/ModelSetupCard'
 import { isAutomaticModelSelection } from '@/shared/model-execution'
 import { PanelActions } from '@/components/PanelActions'
 import { ContextMemoryInspector } from './ContextMemoryInspector'
@@ -343,6 +345,8 @@ interface Props {
   onAttachOpenTab: (path: string) => void
   onOpenPath: (path: string) => void
   onOpenModelsSettings: () => void
+  onOpenProviders: () => void
+  onModelsChanged: () => Promise<void>
   onOpenSkillsSettings: () => void
   onCreateSkill: () => void
   onDismissError: () => void
@@ -553,6 +557,8 @@ export function ChatPanel({
   onAttachOpenTab,
   onOpenPath,
   onOpenModelsSettings,
+  onOpenProviders,
+  onModelsChanged,
   onOpenSkillsSettings,
   onCreateSkill,
   onDismissError,
@@ -775,7 +781,8 @@ export function ChatPanel({
     setDraft('')
   }
 
-  const canCompose = Boolean(draft.trim()) || attachments.length > 0 || activeSkills.length > 0
+  const canCompose = (composerReady || modelsOk || Boolean(imagePromptFromCommand(draft))) &&
+    (Boolean(draft.trim()) || attachments.length > 0 || activeSkills.length > 0)
   const queueFull = queuedMessages.length >= MAX_QUEUED_MESSAGES
 
   const modelOptions = useMemo(() => {
@@ -1010,25 +1017,11 @@ export function ChatPanel({
         </div>
       )}
       {modelsKnown && !modelsError && !composerReady && !modelsOk && (
-        <div className="composer-banner">
-          <span>
-            Download a <strong>Local model</strong> or connect a provider in Settings →
-            Models to start chatting (Ollama is optional).
-          </span>
-          <button className="btn btn-primary" onClick={onOpenModelsSettings}>
-            Open Models
-          </button>
-        </div>
-      )}
-      {!composerReady && modelsOk && (
-        <div className="composer-banner composer-banner-soft">
-          <span>
-            Using your connected API / Ollama models. Optional: download a Local model for offline chat inside Eris.
-          </span>
-          <button className="btn" onClick={onOpenModelsSettings}>
-            Models
-          </button>
-        </div>
+        <ModelSetupCard
+          onChanged={onModelsChanged}
+          onOpenModels={onOpenModelsSettings}
+          onOpenProviders={onOpenProviders}
+        />
       )}
 
       {streaming && liveSessionSteps.length > 0 && (

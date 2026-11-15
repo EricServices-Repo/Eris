@@ -25,6 +25,8 @@ interface Props {
   revealLine?: number | null
   /** When true, skip as-you-type ghost completes (chat owns the model). */
   chatBusy?: boolean
+  hasReadyModel?: boolean
+  onOpenModels?: () => void
   onSelect: (path: string) => void
   onClose: (path: string) => void
   onChange: (path: string, content: string) => void
@@ -41,6 +43,8 @@ export function EditorArea({
   pendingPatch,
   revealLine,
   chatBusy = false,
+  hasReadyModel = true,
+  onOpenModels,
   onSelect,
   onClose,
   onChange,
@@ -264,7 +268,7 @@ export function EditorArea({
 
   const runInlineEdit = useCallback(async () => {
     const ed = editorRef.current
-    if (!ed || !active) return
+    if (!ed || !active || !hasReadyModel) return
     const model = ed.getModel()
     if (!model) return
     const sel = ed.getSelection()
@@ -306,12 +310,12 @@ export function EditorArea({
     } finally {
       setEditBusy(false)
     }
-  }, [active, editInstruction, onChange])
+  }, [active, editInstruction, hasReadyModel, onChange])
 
   const requestTabComplete = useCallback(
     async (opts?: { quiet?: boolean }) => {
       const ed = editorRef.current
-      if (!ed || !active) return
+      if (!ed || !active || !hasReadyModel) return
       const model = ed.getModel()
       const pos = ed.getPosition()
       if (!model || !pos) return
@@ -363,12 +367,12 @@ export function EditorArea({
       ])
       setCompleteHint('Tab to accept · Esc to dismiss')
     },
-    [active, clearGhost]
+    [active, hasReadyModel, clearGhost]
   )
 
   const scheduleInlineSuggest = useCallback(() => {
     if (!settings.editor.inlineSuggest) return
-    if (chatBusy) {
+    if (chatBusy || !hasReadyModel) {
       setCompleteHint('Tab complete pauses while chat is busy')
       return
     }
@@ -376,7 +380,7 @@ export function EditorArea({
     suggestTimerRef.current = setTimeout(() => {
       void requestTabComplete({ quiet: true })
     }, 280)
-  }, [requestTabComplete, settings.editor.inlineSuggest, chatBusy])
+  }, [requestTabComplete, settings.editor.inlineSuggest, chatBusy, hasReadyModel])
 
   const acceptGhost = useCallback(() => {
     const ed = editorRef.current
@@ -416,7 +420,7 @@ export function EditorArea({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && active) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && active && hasReadyModel) {
         e.preventDefault()
         setEditOpen(true)
         setEditError(null)
@@ -424,7 +428,7 @@ export function EditorArea({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [active])
+  }, [active, hasReadyModel])
 
   useEffect(() => {
     return () => {
@@ -489,10 +493,11 @@ export function EditorArea({
         </div>
         <PanelActions label="Editor actions">
           <div className="editor-ai-actions">
+            {!hasReadyModel && <button type="button" className="btn" onClick={onOpenModels}>Connect a model</button>}
             <button
               type="button"
               className="btn"
-              disabled={!active}
+              disabled={!active || !hasReadyModel}
               onClick={() => {
                 setEditOpen(true)
                 setEditError(null)
@@ -503,7 +508,7 @@ export function EditorArea({
             <button
               type="button"
               className="btn"
-              disabled={!active}
+              disabled={!active || !hasReadyModel}
               onClick={() => void requestTabComplete()}
             >
               Complete ⌥\
@@ -815,7 +820,7 @@ export function EditorArea({
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={editBusy}
+                disabled={editBusy || !hasReadyModel}
                 onClick={() => void runInlineEdit()}
               >
                 {editBusy ? 'Editing…' : 'Apply'}

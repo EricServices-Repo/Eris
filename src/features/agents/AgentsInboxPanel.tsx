@@ -4,6 +4,8 @@ import { formatBackgroundJobDetail } from '@/shared/background-job-detail'
 import type { BackgroundJob } from '@/shared/background-agents'
 
 type Props = {
+  hasReadyModel?: boolean
+  onOpenModels?: () => void
   onOpenPath?: (path: string) => void
   onOpenChat?: () => void
 }
@@ -19,7 +21,9 @@ function statusTone(status: BackgroundJob['status'] | string): string {
   return ''
 }
 
-export function AgentsInboxPanel({ onOpenPath, onOpenChat }: Props) {
+export function AgentsInboxPanel({
+  hasReadyModel = true,
+  onOpenModels, onOpenPath, onOpenChat }: Props) {
   const [jobs, setJobs] = useState<BackgroundJob[]>([])
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -93,7 +97,7 @@ export function AgentsInboxPanel({ onOpenPath, onOpenChat }: Props) {
 
   const enqueueLocal = async () => {
     const text = goal.trim()
-    if (!text || enqueueing) return
+    if (!hasReadyModel || !text || enqueueing) return
     setEnqueueing(true)
     setError(null)
     try {
@@ -138,6 +142,7 @@ export function AgentsInboxPanel({ onOpenPath, onOpenChat }: Props) {
         </select>
       </div>
       <div className="agents-inbox-compose">
+        {!hasReadyModel && <button type="button" className="btn" onClick={onOpenModels}>Connect a model</button>}
         <textarea
           value={goal}
           onChange={(e) => setGoal(e.target.value)}
@@ -147,7 +152,7 @@ export function AgentsInboxPanel({ onOpenPath, onOpenChat }: Props) {
         <button
           type="button"
           className="btn btn-primary"
-          disabled={!goal.trim() || enqueueing}
+          disabled={!hasReadyModel || !goal.trim() || enqueueing}
           onClick={() => void enqueueLocal()}
         >
           {enqueueing ? 'Starting…' : 'Run in background'}
