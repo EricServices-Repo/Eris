@@ -823,8 +823,14 @@ export default function App() {
         hasReadyModel={models.some((model) => model.ready)}
         onCreateWorkspace={() => setWorkspaceModal('create')}
         onLinkWorkspace={() => setWorkspaceModal('link')}
-        onOpenModelsSettings={() => openSettings('models')}
-        onOpenProviders={() => openSettings('providers')}
+        onOpenModelsSettings={() => {
+          setShowSetupWizard(false)
+          openSettings('models')
+        }}
+        onOpenProviders={() => {
+          setShowSetupWizard(false)
+          openSettings('providers')
+        }}
         onModelsChanged={() => refreshSettings().then((resolved) => refreshModels(resolved))}
         onFinished={() => {
           setShowSetupWizard(false)
