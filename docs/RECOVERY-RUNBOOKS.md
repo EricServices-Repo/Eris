@@ -1,6 +1,6 @@
 # Eris recovery runbooks
 
-Reviewed against main `067470e` on 2026-11-07. These procedures cover the desktop, Eris-Dev and their local evidence. Use a disposable workspace for acceptance exercises. Preserve the original failing run and its version before retrying.
+These procedures cover the desktop, Eris-Dev and their local evidence. Use a disposable workspace for acceptance exercises. Preserve the original failing run and its version before retrying.
 
 ## Capture the failure
 

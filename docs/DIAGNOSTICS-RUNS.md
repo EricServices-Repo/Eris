@@ -1,6 +1,6 @@
 # Build and agent diagnostics
 
-Implementation guide for the diagnostics runtime. The current system map is in [ARCHITECTURE.md](ARCHITECTURE.md); remaining work and acceptance criteria are in [RECOMMENDATIONS.md](RECOMMENDATIONS.md). Reviewed against integrated `main` `0a54629` on 2026-11-01 (package v0.6.10). The published v0.6.10 tag is `f14e409`; later source fixes require another build.
+Implementation guide for the diagnostics runtime. The current system map is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## What ships
 
@@ -37,7 +37,7 @@ Implementation guide for the diagnostics runtime. The current system map is in [
   - MCP: `syncMcpRuntime` never connects, `listMcpTools`/`getMcpStatuses` return nothing, and `callMcpTool` refuses.
   - `generateImage`.
   - `enqueueBackgroundJob`. A persisted job would outlive the case's sandbox and run outside the scope.
-  - Cloud Agents inline: `cloudInlineAvailable` and `runCloudAgentInline`.
+  - Cloud Agents inline: `cloudInlineAvailable` and `runCloudAgentInline` (Cloud Agents are retired, so these never run in production either).
 
   The coordinator also passes `mcp: 'off'` and `allowDelegate: false` and disables images, as a second layer. Replays therefore re-encounter every effect and are refused again.
 - **Terminal states are distinct.** `task-deadline.ts` links run cancellation and a per-task timer and records which fired first. `drainUntilStopped` abandons a producer that ignores its signal.
@@ -47,7 +47,7 @@ Implementation guide for the diagnostics runtime. The current system map is in [
 
 Earlier routing observations from the first diagnostics implementation are historical. Current task interpretation separates artifact, project applicability, obligations and effect constraints; the follow-up and live-review regression suites cover corrections added since that implementation. Do not reuse the removed review findings as current bugs without reproducing them against the checked-out source.
 
-For the next work, use [RECOMMENDATIONS.md](RECOMMENDATIONS.md), especially REC-09 (desktop interaction coverage), REC-10 (independent quality evaluation), and REC-12 (model capabilities and context budgets). Eris-Dev's [live-model guide](ERIS-DEV-LIVE-MODELS.md) describes its separate opted-in inference path.
+Open work is tracked in GitHub issues. Eris-Dev's [live-model guide](ERIS-DEV-LIVE-MODELS.md) describes its separate opted-in inference path.
 
 The simulated diagnostics suite, real-model smoke runs, request-boundary corpus captures, Eris-Dev deliverable checks, and actual desktop installation tests establish different properties. Preserve their labels and exclusions in every report. A successful runtime or request-invariant result is not an answer-quality score.
 

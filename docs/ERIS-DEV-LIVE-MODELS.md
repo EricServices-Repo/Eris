@@ -1,7 +1,5 @@
 # Run question files through a model in Eris-Dev
 
-Reviewed against integrated `main` `0a54629` on 2026-11-01 (package v0.6.10). The published v0.6.10 tag is `f14e409`; later source fixes require another build.
-
 1. Open Eris-Dev and import the TXT, JSON or JSONL question file (up to 10,000 questions).
 2. Choose a local or API **Model** in the toolbar, then click **Run questions**. Live model testing is the default. For request inspection without inference, choose **Capture requests only (no model)** in the same picker.
 3. If you need another server, open **Settings → Connect a model server**, enter its API URL and optional key, then click **Connect**. Ollama commonly uses `http://localhost:11434/v1`.

@@ -1,7 +1,5 @@
 # Eris-Dev: model and agent debugging
 
-Reviewed against integrated `main` `0a54629` on 2026-11-01 (package v0.6.10). The published v0.6.10 tag is `f14e409`; later source fixes require another build.
-
 Eris-Dev is a separate Electron app (`app.eris.dev`) with its own data/profile and no production updater registration. It shares production chat intake, task contracts, prompt compilation, agent loop and model transport. It is not a second independent implementation of agent behavior.
 
 ## Choose the kind of evidence
@@ -49,7 +47,7 @@ Native GGUF inference uses the same utility-process implementation as Eris, incl
 
 Live model discovery reads Eris's saved model-connection configuration. Main resolves the chosen credential through the credential abstraction; stored secrets are never returned through IPC or included in manifests. Temporary custom endpoint credentials are session-scoped and must be reconnected after restart. Capture-only settings remove connections and carry a simulated marker; losing the scripted scope must fail instead of reaching a provider or loading a model.
 
-Sources: [dev model selection](../electron/dev/models.ts), [shared discovery fix](fixes/eris-dev-shared-model-discovery.md), [native runtime](../electron/main/services/builtin-model.ts), [credentials](../electron/main/services/credential-store.ts).
+Sources: [dev model selection](../electron/dev/models.ts), [native runtime](../electron/main/services/builtin-model.ts), [credentials](../electron/main/services/credential-store.ts).
 
 ## Persistence and exports
 

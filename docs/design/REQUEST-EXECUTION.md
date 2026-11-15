@@ -1,12 +1,12 @@
 # Request resolution and execution
 
-Implementation update, 2026-11-06, against integrated main `067470e` (v0.6.16). Both source bundles were compiled; no new installer/release or installed-app replacement is implied.
+How a chat message becomes a scoped task and runs: reference resolution, requested versus effective work, model-window preparation, child assignments, completion checks and evaluator deadlines. Start here before changing chat routing.
 
 ## Design decision
 
 Keep one task contract and the existing execution workflow. Do not introduce another coordinator agent, task database, or general task-graph scheduler to fix request interpretation. Use deterministic reference resolution for explicit file requests, retain the requested outcome separately from effective permissions, and check observable outputs.
 
-The broader [architecture review](../reviews/2026-11-06-router-architecture-review.md) contains proposed future architecture as well as defects. This implementation addresses the immediate routing, execution, handoff and completion failures. It does not implement every proposed work package or certify model quality on real hardware.
+The 2026-11-06 router architecture review (findings R01–R12, now in git history) proposed future architecture as well as defects. This implementation addresses the immediate routing, execution, handoff and completion failures. It does not implement every proposed work package or certify model quality on real hardware.
 
 ## Request lifecycle
 
@@ -160,7 +160,7 @@ Path through the app: `streamModelChat({ onReasoning })` → `streamThinkingText
 
 The timeline has a `reasoning` phase ("Model is reasoning") between prefill and generating. Time to first output counts reasoning.
 
-Settings, per connection (`reasoning: { level, show }`, Settings → Models):
+Settings, per connection (`reasoning: { level, show }`, Settings → Providers):
 
 - `level`: `default` sends nothing. Otherwise OpenAI-compatible connections send `reasoning_effort` for low, medium and high, and nothing for off; Ollama sends `think` (`false` for off, the level for gpt-oss, `true` otherwise); local GGUF sets a thought-token budget (0, 1,024, 4,096 or 16,384, never above the reply allowance). A model that does not support the control may reject it, which is why nothing is sent by default.
 - `show: false` discards reasoning in `streamModelChat`, so it is neither shown nor saved. Inline reasoning is still kept out of the answer.
@@ -188,7 +188,7 @@ Task graphs, calibrated semantic interpretation, rich resumable clarification UI
 
 ## Implementation status against the review
 
-The original R01–R12 identifiers refer to the [pre-change architecture review](../reviews/2026-11-06-router-architecture-review.md). Status here describes this implementation, not release certification.
+R01–R12 are the findings of the 2026-11-06 router architecture review. Status here describes this implementation, not release certification.
 
 - **R01, fallback changes requested work — addressed for explicit file creation and destination-bound ambiguity.** File operands bypass classifier failure; unresolved operands block without becoming a plan. General natural-language interpretation is still heuristic/semantic.
 - **R02, permissions redefine outcomes — addressed with an additive requested/effective split.** Existing consumers retain compatible effective fields. A wholesale replacement of task schemas is not required for this fix.
@@ -216,16 +216,6 @@ The original R01–R12 identifiers refer to the [pre-change architecture review]
 - [chat-stream.ts](../../electron/main/ipc/chat-stream.ts), [capture.ts](../../electron/dev/capture.ts): shared desktop/Eris-Dev model preparation guards.
 - [requested-work.test.ts](../../tests/requested-work.test.ts), [task-meaning.test.ts](../../tests/task-meaning.test.ts), [agent-request-coherence.test.ts](../../tests/agent-request-coherence.test.ts), [chat-agent-smoke.test.ts](../../tests/chat-agent-smoke.test.ts): deterministic intake, persistence, negative cases, timeout behavior and real temporary-workspace writes.
 
-## Validation of this implementation
-
-- Complete Vitest suite: 174 files, 2,171 tests passed.
-- Agent prebuild qualification: 119 files, 1,795 tests passed.
-- Eris-Dev prebuild qualification: seven files, 133 tests passed.
-- Both production and Eris-Dev bundles compiled successfully.
-- Node and renderer TypeScript checks passed. Build-info files were redirected to temporary storage because the worktree output directory requires additional write permission.
-- ESLint completed with zero errors and 11 pre-existing warnings outside the changed implementation.
-- The 10,000-question boundary test is simulated intake/capture coverage, not 10,000 live-model answers. The new three-file smoke test executes real filesystem tools against a temporary workspace using scripted model output and a simulated verification result.
-
-No version bump, installer packaging, installed-app replacement, Git commit or PR is included in this source change.
+## Naming
 
 The orchestrator is displayed as **Agent**. Its persisted agent ID remains `composer` for overrides and telemetry compatibility; it is not a selectable model ID.

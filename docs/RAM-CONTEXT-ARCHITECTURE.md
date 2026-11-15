@@ -4,7 +4,7 @@
 - Status: implementation-ready target design; **not a claim that the target is already built**
 - Design date: 2026-10-29
 - Original design baseline: `37b3da2e2d8742766d1269754eef115d34ef465e`
-- Implementation reconciliation: integrated `main` `0a54629`, 2026-11-01, package v0.6.10 (newer than release tag `f14e409`)
+- Implementation status: see [CONTEXT-MEMORY.md](CONTEXT-MEMORY.md) for what is built today
 - Primary audience: AI coding agents, architecture reviewers, performance engineers and maintainers
 - Companion: [current implementation](CONTEXT-MEMORY.md), [system architecture](ARCHITECTURE.md)
 - Amended by: [Amendment 001, tiered VRAM and RAM memory](RAM-CONTEXT-AMENDMENT-001.md), which takes precedence where the two disagree
@@ -79,7 +79,7 @@ Increasing one does not automatically increase the others. A 100,000-message sea
 
 ## 3. Source-confirmed implementation baseline
 
-Baseline: integrated `main` `0a54629`, 2026-11-01. [CONTEXT-MEMORY.md](CONTEXT-MEMORY.md) is the detailed current-behavior reference; [agent handoff](design/AGENT-HANDOFF-AND-RAM-CONTEXT.md) covers child semantics and model transitions.
+Baseline: integrated `main` `0a54629`, 2026-11-01. [CONTEXT-MEMORY.md](CONTEXT-MEMORY.md) is the detailed current-behavior reference; [the architecture overview](ARCHITECTURE.md) covers child semantics and model transitions.
 
 ### 3.1 Canonical history and admission
 
@@ -328,7 +328,7 @@ Failure, abort, worker death and timeout all release reservations exactly once. 
 
 ### 8.1 Recent-turn ring
 
-Implementation status and acceptance limits: [132 implementation notes](fixes/132-incremental-context-history.md).
+Implementation status and acceptance limits: issue #132.
 
 Keep exact recent turns in a bounded ring/deque rather than rebuilding a map and sorted array on every append. Append is amortized O(1); duplicate lookup uses a bounded message-ID map. Byte counters update from the added/removed record delta.
 
@@ -401,7 +401,7 @@ A context-change outbox is committed with each canonical mutation. The memory wo
 
 ### 9.4 Archive search without a raw-text replica
 
-Implementation status and acceptance limits: [134 implementation notes](fixes/134-durable-context-archive.md).
+Implementation status and acceptance limits: issue #134.
 
 Prefer a capability-probed SQLite FTS5 contentless index over a second unbounded in-memory inverted index. Index bounded message chunks and join candidate row IDs with scope/version metadata. Materialize exact source text only after candidates pass eligibility checks.
 
@@ -776,7 +776,7 @@ Model-generated summaries run only in an admitted idle job with explicit local/r
 
 ### 12.9 Optional semantic retrieval
 
-Add embeddings only if the lexical/structured benchmark misses material paraphrase cases and a measured quality gain justifies memory/latency. The benchmark is `checks/paraphrase-recall.ts`; its first result (ranking version 2) misses 8 of 22 paraphrases at recall@5, with synonyms and descriptions at or below 0.43 — see [docs/fixes/234-paraphrase-recall-measurement.md](fixes/234-paraphrase-recall-measurement.md). A CPU embedding model (bge-small, 37 MB) then lifts paraphrase recall@5 from 0.64 to 0.95 on the same set, but only when its hits can compete on their own rank: plain reciprocal rank fusion with the lexical list recovers none of the misses — see [docs/fixes/234-embedding-gain-measurement.md](fixes/234-embedding-gain-measurement.md). No embedding path is implemented. Keep the vector index on disk with a bounded RAM cache. Record embedding model/version/dimension and namespace every vector.
+Add embeddings only if the lexical/structured benchmark misses material paraphrase cases and a measured quality gain justifies memory/latency. The benchmark is `checks/paraphrase-recall.ts`; its first result (ranking version 2) misses 8 of 22 paraphrases at recall@5, with synonyms and descriptions at or below 0.43 (issue #234). A CPU embedding model (bge-small, 37 MB) then lifts paraphrase recall@5 from 0.64 to 0.95 on the same set, but only when its hits can compete on their own rank: plain reciprocal rank fusion with the lexical list recovers none of the misses (issue #234). No embedding path is implemented. Keep the vector index on disk with a bounded RAM cache. Record embedding model/version/dimension and namespace every vector.
 
 No embedding generation runs synchronously on send. If the embedding model is absent, busy or disallowed, the deterministic path remains fully functional. Embedding upgrades rebuild derived indexes without changing canonical transcript truth.
 
@@ -990,7 +990,7 @@ Preview uses a sandboxed snapshot and the same selection/compiler logic. It must
 
 ### 18.4 Chat history UX
 
-Implementation status and acceptance limits: [143 implementation notes](fixes/143-bounded-renderer-history.md).
+Implementation status and acceptance limits: issue #143.
 
 Use stable IDs and paged/virtualized rendering. Bound the renderer history-page cache to the 8 MiB share of the recent-text pool in the 128 MiB profile, not merely the number of DOM nodes. Evict offscreen pages with a stable scroll anchor and reloadable cursors. Sidebar thread lists retain metadata only, without hidden full message arrays for every conversation. Avoid retaining equivalent message arrays in multiple stores or closures. Searching visible messages and searching the durable archive are separate actions with clear coverage. Jumping to a search hit loads a bounded page around the original source, not every intervening page.
 
@@ -1025,7 +1025,7 @@ A test can compare selection and actual dispatch digests to detect a model/backe
 
 ### 19.3 Eris-Dev modes
 
-Implementation status and acceptance limits: [146 implementation notes](fixes/146-stateful-memory-replay.md).
+Implementation status and acceptance limits: issue #146.
 
 Provide four explicit modes:
 
@@ -1050,7 +1050,7 @@ These targets are proposed for the controlled harness, not statements about the 
 
 ### 20.1 Harness conditions
 
-Implementation status and acceptance limits: [147 implementation notes](fixes/147-context-release-gates.md).
+Implementation status and acceptance limits: issue #147.
 
 Record app/Electron/Node/SQLite versions, CPU/RAM/GPU, power mode, build mode, storage type, background load, selected model, context window, tokenizer method and corpus hash. Use packaged/release-like builds for release gates; development builds may be diagnostic but are not substitutes.
 

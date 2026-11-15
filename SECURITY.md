@@ -1,21 +1,24 @@
-# Security Policy
+# Security policy
 
-## Supported Versions
+## Supported versions
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
+Security fixes go into the latest release. Eris updates itself from [GitHub Releases](https://github.com/EricServices-Repo/Eris/releases), so stay on the newest version.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+| Version | Supported |
+| ------- | --------- |
+| Latest release | Yes |
+| Older releases | No |
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-Use this section to tell people how to report a vulnerability.
+Please report vulnerabilities privately through GitHub: **[Report a vulnerability](https://github.com/EricServices-Repo/Eris/security/advisories/new)** (Security tab → Advisories). Don't open a public issue or use in-app feedback for security reports, because those create public issues.
 
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+Include the Eris version, your OS, steps to reproduce, and what an attacker could do. You'll get an acknowledgement on the advisory, and the fix will ship in a new release.
+
+Areas of particular interest:
+
+- agent tool execution and command approval;
+- workspace trust;
+- credential storage;
+- the IPC boundary between the renderer and the main process;
+- the update feed.
