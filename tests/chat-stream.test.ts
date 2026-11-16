@@ -91,12 +91,12 @@ const plan: TurnPlan = {
   method: 'manual'
 }
 
-function stream(prompt?: Record<string, unknown>, requestId = randomUUID()) {
+function stream(prompt?: Record<string, unknown>, requestId = randomUUID(), model = 'test-provider-model') {
   return handlers['chat:stream']!(
     { sender },
     {
       requestId,
-      model: 'test-provider-model',
+      model,
       mode: 'agent',
       turnPlan: plan,
       ...(prompt
@@ -126,6 +126,16 @@ beforeEach(() => {
   }) as never)
   registerChatStreamIpc()
   appState.currentWorkspace = realpathSync(mkdtempSync(join(tmpdir(), 'eris-chat-')))
+})
+
+it('refuses a request with no eligible model before admitting a task', async () => {
+  const requestId = randomUUID()
+  await expect(stream(undefined, requestId, 'auto')).resolves.toBe(false)
+  expect(channels()).not.toContain('chat:accepted')
+  expect(sent).toContainEqual({
+    channel: 'chat:error',
+    payload: { requestId, code: 'ADMISSION_FAILED', error: 'Connect a model in Settings → Models to continue.' }
+  })
 })
 
 describe('chat:stream command approval', () => {

@@ -1,3 +1,4 @@
+import { CONNECT_MODEL_MESSAGE } from '@/shared/model-setup'
 import { taskActionSummary } from '@/shared/task-contract'
 import { taskPhaseLabels } from '@/shared/task-timeline'
 import { imagePromptFromCommand, type GeneratedImageAsset } from '@/shared/image-generation'
@@ -537,11 +538,14 @@ export function useChatSession({
           const status = await window.ide.modelsStatus()
           catalog = status.models
         }
-        const builtinReady = catalog.some((m) => m.source === 'builtin' && m.ready)
         const localReady = catalog.some((m) => m.source === 'local' && m.ready)
         const hasConnection = catalog.some((m) => m.source === 'connection' && m.ready)
-        setComposerReady(builtinReady || localReady)
-        setOllamaOk(builtinReady || localReady || hasConnection)
+        setComposerReady(localReady)
+        setOllamaOk(localReady || hasConnection)
+        if (!localReady && !hasConnection) {
+          setChatError(CONNECT_MODEL_MESSAGE)
+          return
+        }
 
         let thread = opts?.thread ?? activeThread
         if (!thread) {

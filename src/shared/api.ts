@@ -1,3 +1,4 @@
+import type { LocalModelServiceId, ModelSetupOptions } from './model-setup'
 import type { LanguageCapabilities } from './ide-capabilities'
 import type { LanguageEditInput, LanguageEditPreview } from './language-edit'
 import type { LocalImageStatus, LocalImageProgress } from './image-generation'
@@ -279,6 +280,8 @@ export interface IdeApi {
   pickFiles: () => Promise<string[]>
   /** Light by default (no connection probes). Pass `{ probe: true }` from Settings → Providers. */
   inferenceAdmission: () => Promise<import('./inference').InferenceSnapshot>
+  modelSetupOptions: () => Promise<ModelSetupOptions>
+  connectDetectedModelService: (id: LocalModelServiceId) => Promise<void>
   modelsStatus: (opts?: { probe?: boolean; includeGpu?: boolean }) => Promise<ModelsStatus>
   /** Background-load a selected or default ready GGUF into the llama worker. */
   warmLocalModel: (modelRef?: string) => Promise<{ ok: boolean; model?: string; error?: string }>

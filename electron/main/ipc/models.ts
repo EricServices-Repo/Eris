@@ -1,3 +1,4 @@
+import { connectDetectedModelService, getModelSetupOptions } from '../services/model-setup'
 import { currentLoadedModel } from '../services/model-runtime'
 import { inferenceGovernorStatus } from '../services/inference-governor'
 import { ipcMain } from 'electron'
@@ -45,6 +46,11 @@ function flattenError(err: unknown): string {
 }
 
 export function registerModelsIpc(): void {
+  ipcMain.handle('models:setupOptions', () => getModelSetupOptions())
+  ipcMain.handle('models:connectDetected', (_event, id: string) =>
+    connectDetectedModelService(id, appState.currentWorkspace)
+  )
+
   ipcMain.handle('models:admission', (event) => {
     if (
       !appState.mainWindow ||

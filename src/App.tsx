@@ -823,7 +823,15 @@ export default function App() {
         hasReadyModel={models.some((model) => model.ready)}
         onCreateWorkspace={() => setWorkspaceModal('create')}
         onLinkWorkspace={() => setWorkspaceModal('link')}
-        onOpenModelsSettings={() => openSettings('models')}
+        onOpenModelsSettings={() => {
+          setShowSetupWizard(false)
+          openSettings('models')
+        }}
+        onOpenProviders={() => {
+          setShowSetupWizard(false)
+          openSettings('providers')
+        }}
+        onModelsChanged={() => refreshSettings().then((resolved) => refreshModels(resolved))}
         onFinished={() => {
           setShowSetupWizard(false)
           void refreshSettings().then((resolved) => refreshModels(resolved))
@@ -1078,6 +1086,8 @@ export default function App() {
                     )
                   }}
                   onOpenModelsSettings={() => openSettings('models')}
+                  onOpenProviders={() => openSettings('providers')}
+                  onModelsChanged={() => refreshSettings().then((resolved) => refreshModels(resolved))}
                   onOpenSkillsSettings={() => {
                     void refreshSkills()
                     openSettings('skills')
@@ -1286,6 +1296,8 @@ export default function App() {
               ) : rightPanel === 'agents' ? (
                 <Suspense fallback={<div className="editor-empty">Loading agents…</div>}>
                   <AgentsInboxPanel
+                    hasReadyModel={ollamaOk}
+                    onOpenModels={() => openSettings('models')}
                     onOpenPath={(path) => {
                       void openFile(resolveWorkspacePath(path))
                       showRightPanel('editor')
@@ -1298,6 +1310,8 @@ export default function App() {
               ) : (
                 <Suspense fallback={<div className="editor-empty">Loading editor…</div>}>
                   <EditorArea
+                    hasReadyModel={ollamaOk}
+                    onOpenModels={() => openSettings('models')}
                     tabs={tabs}
                     activePath={activeFile}
                     settings={settings!}

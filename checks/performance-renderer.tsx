@@ -91,9 +91,14 @@ window.runPerformance = async (baseline) => {
     list.getEntries().forEach((e) => longTasks.push(e.duration))
   )
   observer.observe({ entryTypes: ['longtask'] })
-  scroll.scrollTop = scroll.scrollHeight
-  scroll.dispatchEvent(new Event('scroll'))
-  await until(() => !!scroll.querySelector('[data-virtual-key="m9999"]'), 'initial tail row m9999')
+  await until(() => {
+    if (scroll.querySelector('[data-virtual-key="m9999"]')) return true
+    // Initial row measurement can move the bottom between frames. Reapply the
+    // setup scroll and notify the list in the hidden Electron window.
+    scroll.scrollTop = scroll.scrollHeight
+    scroll.dispatchEvent(new Event('scroll'))
+    return false
+  }, 'initial tail row m9999')
   counts.push(rows().length)
   scroll.scrollTop = scroll.scrollHeight / 2
   scroll.dispatchEvent(new Event('scroll'))

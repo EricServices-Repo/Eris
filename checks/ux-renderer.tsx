@@ -45,7 +45,7 @@ Object.assign(window, {
     })
   }
 })
-function Fixture() {
+function Fixture({ modelsReady = true }: { modelsReady?: boolean }) {
   const [mode, setMode] = useState<ChatMode>('agent')
   return (
     <div id="layout-fixture" style={{ width: 640 }}>
@@ -53,8 +53,8 @@ function Fixture() {
         <ChatPanel
           activeThread={thread}
           routeLabel={null}
-          composerReady
-          modelsOk
+          composerReady={modelsReady}
+          modelsOk={modelsReady}
           streaming={false}
           chatError={null}
           openTabs={[]}
@@ -79,6 +79,8 @@ function Fixture() {
           onAttachOpenTab={noop}
           onOpenPath={noop}
           onOpenModelsSettings={noop}
+          onOpenProviders={noop}
+          onModelsChanged={async () => {}}
           onOpenSkillsSettings={noop}
           onCreateSkill={noop}
           onDismissError={noop}
@@ -133,7 +135,7 @@ async function checkModelReadiness() {
   const ready: ModelsStatus = {
     ok: true,
     builtin: [],
-    models: [{ name: 'builtin:composer-lite', source: 'builtin', ready: true }],
+    models: [{ name: 'local:qwen25-coder-3b', source: 'local', ready: true }],
     connections: []
   }
   Object.assign(window.ide, {
@@ -191,6 +193,44 @@ async function checkModelReadiness() {
     host.remove()
   }
 }
+async function checkEmptyModelComposer() {
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  let connection = ''
+  Object.assign(window.ide, {
+    modelSetupOptions: async () => ({
+      services: [{ id: 'ollama', name: 'Ollama', models: ['qwen'] }],
+      recommended: null
+    }),
+    connectDetectedModelService: async (id: string) => { connection = id }
+  })
+  try {
+    root.render(<Fixture modelsReady={false} />)
+    await tick()
+    const card = host.querySelector('[aria-label="Connect a model"]')
+    assert(card, 'A confirmed empty catalog must show the model setup card')
+    const textarea = host.querySelector<HTMLTextAreaElement>('textarea')!
+    const setText = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+    setText.call(textarea, 'A task to send')
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    await tick()
+    const send = host.querySelector<HTMLButtonElement>('.composer-send-btn')!
+    assert(send.disabled, 'Chat Send must remain disabled with a draft and no model')
+    const connect = [...card.querySelectorAll('button')].find((button) => button.textContent === 'Connect Ollama')
+    assert(connect, 'The detected Ollama service must have a one-click connect action')
+    connect.click()
+    await tick()
+    assert(connection === 'ollama', 'The connect action must use the detected service')
+    root.render(<Fixture modelsReady />)
+    await tick()
+    assert(!send.disabled, 'The existing draft must be sendable once a model is ready')
+  } finally {
+    root.unmount()
+    host.remove()
+  }
+}
+
 async function checkMemorySettings() {
   const host = document.createElement('div')
   host.style.width = '620px'
@@ -304,6 +344,7 @@ window.uxCheck = async () => {
   await checkMemorySettings()
 
   await checkModelReadiness()
+  await checkEmptyModelComposer()
   await tick()
   assert(!document.querySelector('[data-history-search]'), 'Search must be hidden initially')
   assert(
