@@ -49,6 +49,8 @@ export interface ChatTurnInput {
   mode?: 'ask' | 'agent'
   manualAgentId?: string | null
   fileNames?: string[]
+  /** Desktop intake can defer ranking until the operation and references are known. */
+  deferAutoWorker?: boolean
   previousAgentId?: string | null
   forceRoute?: 'tools' | 'answer'
   preserveModelSelection?: boolean
@@ -77,6 +79,7 @@ function previousMessages(history: ChatPromptInput['history'] | undefined) {
 /** Deterministic first route for the turn; the model router is skipped as in chat. */
 export function planInitialChatTurn(input: ChatTurnInput): Promise<TurnPlan> {
   return planChatTurn({
+    deferAutoWorker: input.deferAutoWorker,
     workspacePath: input.workspacePath,
     settings: input.settings,
     context: {
@@ -116,6 +119,7 @@ export async function resolveChatTurnContract(
   } catch {
     /* reported by runtime */
   }
+  const deferred = input.deferAutoWorker === true && !initial.models.chat && !initial.error
   let references = input.referenceBinding
   if (!references && input.threadId && input.priorTask === undefined) {
     try {
@@ -124,7 +128,7 @@ export async function resolveChatTurnContract(
         threadId: input.threadId,
         text: input.text,
         settings: input.settings,
-        models: [plan.models.chat, plan.models.tools],
+        models: deferred ? [] : [plan.models.chat, plan.models.tools],
         recentSourceIds: input.history?.flatMap((message) => (message.id ? [message.id] : [])),
         latestAssistantId: [...(input.history ?? [])].reverse().find((message) => message.role === 'assistant')?.id
       })
@@ -175,14 +179,18 @@ export async function resolveChatTurnContract(
         }
       })
   const semanticIntent = resolution.intent
-  if (semanticIntent !== plan.intent) {
+  if (deferred || semanticIntent !== plan.intent) {
+    const referenceChars = references?.binding.status === 'bound'
+      ? references.recommendations.reduce((size, item) => size + item.text.length, 0) : 0
     plan = await planChatTurn({
+      requiredContext: referenceChars ? Math.ceil((input.text.length + referenceChars) / 3) + 512 : undefined,
       workspacePath: input.workspacePath,
       settings: input.settings,
       context: {
         text: input.text,
         mode: input.mode ?? 'agent',
-        selectedModel: input.model,
+        selectedModel: deferred && references?.binding.remotePolicy === 'local-only'
+          ? 'auto-local' : input.model || input.settings.models.defaultModel,
         manualAgentId: input.manualAgentId ?? null,
         resolvedIntent: semanticIntent,
         fileNames: input.fileNames,
@@ -213,7 +221,7 @@ export async function resolveChatTurnContract(
   })
   plan.task = task
   // Reference and scope problems are cheap intake results, not model-load requests.
-  if (!taskIntakeBlocked(task, plan.mode) &&
+  if (!plan.error && !taskIntakeBlocked(task, plan.mode) &&
       (task.scope.state === 'resolved' || task.scope.applicability === 'generic'))
     await prepareModelWindows(input.settings, [plan.models.chat, plan.models.tools], input.getSecret, input.signal)
   // The workflow follows the resolved scope: a generic request has no inspection step.

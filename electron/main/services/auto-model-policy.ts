@@ -58,6 +58,16 @@ function secretPresent(ref: string): boolean {
   }
 }
 
+/** Inventory-only admission. GPU fit and intent requirements are checked after intake. */
+export function hasAutoModelInventory(settings: AppSettings, policy: ExecutionPolicy): boolean {
+  if (getLocalStatuses().some((model) => model.ready)) return true
+  return settings.models.connections.some((connection) =>
+    connection.enabled && connection.type === 'openai-compatible' && connection.baseUrl.trim() &&
+    (!connection.apiKeyRef || secretPresent(connection.apiKeyRef)) &&
+    connection.models.some((name) => name.trim() && !/^(?:local:|builtin:)/.test(name) &&
+      (policy !== 'auto-local' || executionLocal(settings, connectionModelRef(connection, name))))
+  )
+}
 /**
  * Rebuilt at every decision; no cached eligibility survives a URL/profile/inventory change.
  * File size is an admission/cost estimate, never evidence of task quality. Name-based

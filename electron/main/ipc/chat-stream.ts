@@ -139,6 +139,7 @@ export function registerChatStreamIpc(): void {
         const history = payload.prompt?.history
         const plan = await planInitialChatTurn({
           requestId: payload.requestId,
+          deferAutoWorker: true,
           workspacePath,
           settings: getResolvedSettings(workspacePath),
           text: userText,
@@ -359,6 +360,7 @@ export function registerChatStreamIpc(): void {
           let turnPlan: TurnPlan
           const turnInput: ChatTurnInput = {
             requestId,
+            deferAutoWorker: true,
             workspacePath,
             settings,
             text: userText,
@@ -401,6 +403,7 @@ export function registerChatStreamIpc(): void {
           try {
             const contract = await resolveChatTurnContract(turnInput, turnPlan)
             turnPlan = contract.plan
+            if (turnPlan.error && !taskIntakeBlocked(contract.task, turnPlan.mode)) throw new Error(turnPlan.error)
             if (contract.task.threadId) {
               try {
                 contract.task.contextOrigin = await createContextOrigin(
