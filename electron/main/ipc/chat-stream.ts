@@ -613,6 +613,7 @@ export function registerChatStreamIpc(): void {
           let telemetrySteps = 0
           let telemetryMutated = false
           let verifiedAfterLastEdit = false
+          let projectCheck: import('../../../src/shared/task-contract').ProjectCheckEvidence | undefined
           let verificationState: 'passed' | 'failed' | 'not-run' = 'not-run'
           let editOwner: string | undefined
           let mixedEditOwners = false
@@ -1141,8 +1142,15 @@ export function registerChatStreamIpc(): void {
               if (evt.type === 'diff' || (evt.type === 'evidence' && evt.evidence.mutated)) {
                 verifiedAfterLastEdit = false
                 verificationState = 'not-run'
+                projectCheck = undefined
                 editOwner ??= resolvedModel
                 if (editOwner !== resolvedModel) mixedEditOwners = true
+              }
+              if (evt.type === 'project-check') {
+                projectCheck = evt.check
+                observedCheck = evt.check.status !== 'skipped'
+                verifiedAfterLastEdit = evt.check.status === 'passed'
+                verificationState = evt.check.status === 'skipped' ? 'not-run' : evt.check.status
               }
               if (evt.type === 'tool' && evt.tool.name === 'verify') {
                 observedCheck = true
@@ -1304,6 +1312,7 @@ export function registerChatStreamIpc(): void {
             completionEvidence = {
               execution: runIncomplete ? 'incomplete' : 'completed',
               verification: verificationState,
+              projectCheck,
               assessment: { status: 'not-run' },
               persistence: contextThreadId ? 'saved' : 'not-required'
             }

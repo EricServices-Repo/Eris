@@ -1,3 +1,4 @@
+import { projectCheckSummary } from '../../../../src/shared/task-contract'
 import { helperModel } from '../helper-model'
 import { createTaskDeadline, modelStreamWithAbort } from '../task-deadline'
 import { raceAbort } from '../llama-worker-channel'
@@ -2902,6 +2903,7 @@ async function* runAgentInternal(options: {
           continue
         }
 
+        let checkSummary: string | undefined
         // Final verify only for product-code edits — skip skills/rules/context under .eris/
         if (workspaceMutated && !codeMutated) {
           yield {
@@ -2921,6 +2923,10 @@ async function* runAgentInternal(options: {
               ? (cmd) => whileUserDecides(() => options.approveCommand!('run', cmd))
               : undefined
           })
+          if (finalVerify.check) {
+            checkSummary = projectCheckSummary(finalVerify.check)
+            yield { type: 'project-check', check: { ...finalVerify.check, taskRevision: task.revision } }
+          }
           appendToolObservation(
             workerMessages,
             'run',
@@ -3065,6 +3071,7 @@ async function* runAgentInternal(options: {
         const unapplied = failedRefinementPaths(actionLog)
         const completionNotes = [
           workflow.verificationNote(),
+          checkSummary,
           unapplied.length
             ? `A later edit to ${unapplied.join(', ')} failed and was not applied; the earlier change to ${unapplied.length === 1 ? 'that file is' : 'those files are'} in place.`
             : null
