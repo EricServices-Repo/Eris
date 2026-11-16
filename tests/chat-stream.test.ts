@@ -213,6 +213,43 @@ describe('chat:stream command approval', () => {
 describe('main-process task authority', () => {
   const databases: ChatDatabase[]=[]
   afterEach(()=>databases.splice(0).forEach(db=>db.close()))
+  it.each([
+    ['Add pagination', 'patch', true],
+    ['Review the files and improve the layout', 'patch', true],
+    ['Review the files and refactor booking.php', 'patch', true],
+    ['Review the files and remove the debug banner', 'patch', true],
+    ['Review the files and recommend improvements', 'review', false],
+    ['Review this code sample:\n```js\nconst sum = (a, b) => a - b\n```', 'review', false]
+  ] as const)('retains the reviewed request contract through desktop admission for %s', async (text, artifact, canEdit) => {
+    const chats = await import('../electron/main/services/chats')
+    const db = new ChatDatabase(mkdtempSync(join(tmpdir(), 'eris-admission-regression-')))
+    databases.push(db)
+    const thread = db.save({
+      id: randomUUID(), title: 'Regression', model: 'test-provider-model',
+      messages: [], createdAt: 1, updatedAt: 1
+    })
+    vi.spyOn(chats, 'getChat').mockImplementation(async (_root, id, page) => db.get(id, page))
+    vi.spyOn(chats, 'appendChatMessage').mockImplementation(async (_root, id, message, model) => db.append(id, message, model))
+    const memory = await import('../electron/main/services/context-memory')
+    vi.spyOn(memory, 'conversationContext').mockRejectedValue(Error('cache unavailable'))
+    let contract: TurnPlan['task']
+    runner.script = async function* ({ turnPlan }) {
+      contract = turnPlan.task
+      yield { type: 'answer', text: 'Recorded the scripted result.' }
+    }
+    const id = randomUUID()
+    expect(await stream({ text, threadId: thread.id }, id)).toBe(true)
+    expect(contract?.requested).toMatchObject({ artifact })
+    expect(contract?.authority.edit).toBe(canEdit)
+    if (text.startsWith('Review this code sample')) {
+      expect(contract?.scope.applicability).toBe('generic')
+      expect(contract?.authority).toMatchObject({ tools: 'none', execute: 'none' })
+    }
+    expect(db.get(thread.id)?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: `${id}:user`, content: text }),
+      expect.objectContaining({ id: `${id}:assistant`, contextResult: expect.objectContaining({ taskId: id }) })
+    ]))
+  })
   it('publishes and replays the one canonical completed reply without another append (#451)', async () => {
     const chats=await import('../electron/main/services/chats')
     const dir=mkdtempSync(join(tmpdir(),'eris-terminal-owner-'))
