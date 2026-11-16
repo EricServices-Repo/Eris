@@ -366,6 +366,13 @@ export function registerChatStreamIpc(): void {
             mode,
             manualAgentId: agentId ?? null,
             fileNames: payload.prompt?.attachments.map((file) => file.name),
+            openFilePath: payload.prompt?.openFile?.path,
+            askTarget: async (question, choices) => {
+              const reply = await requestUserQuestion(chatSender(), requestId, question, {
+                choices, signal: controller.signal, timeoutMs: USER_QUESTION_TIMEOUT_MS
+              })
+              return reply.kind === 'reply' ? reply.text : null
+            },
             previousAgentId,
             forceRoute: payload.forceRoute,
             preserveModelSelection: payload.preserveModelSelection,

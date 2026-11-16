@@ -634,7 +634,11 @@ async function* runAgentInternal(options: {
   }
   if (task.requested?.state === 'needs-clarification') {
     yield { type: 'progress', step: 0, actionLog: [], filesTouched: [], incomplete: true }
-    yield { type: 'answer', text: 'Should I make these changes in the project, or explain the approach in chat? I could not resolve that distinction, so no changes were made.', replace: true }
+    const question = task.requested.targetQuestion
+    const text = question
+      ? [question.text, ...question.choices.map((path) => `- ${path}`)].join('\n')
+      : 'Should I make these changes in the project, or explain the approach in chat? I could not resolve that distinction, so no changes were made.'
+    yield { type: 'answer', text, replace: true }
     return
   }
   if (mode !== 'ask' && task.requested?.artifact === 'patch' && !task.authority.edit) {
