@@ -658,7 +658,11 @@ export function compiledTurnMessages(
   const prefix: AgentChatMessage = { role: 'system', content: compiled.layers.prefix }
   const prior = history
     .filter((message) => message.role !== 'system')
-    .map((message) => ({ ...message }))
+    .map((message) => (
+      message.role === 'user' || (message.role === 'assistant' && !message.tool_calls?.length)
+        ? { ...message, historical: true as const }
+        : { ...message }
+    ))
   compiled.budget.stablePrefixTokens = estimateModelMessagesTokens([prefix, ...prior])
   compiled.bundle.stablePrefixTokens = compiled.budget.stablePrefixTokens
   return [
