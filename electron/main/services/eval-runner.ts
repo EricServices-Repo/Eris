@@ -13,6 +13,8 @@ import {
 } from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
+import { isDeepStrictEqual } from 'node:util'
+import ts from 'typescript'
 import type { AppSettings, TurnPlan } from '../../../src/shared/settings-schema'
 import type {
   EvalCheck,
@@ -117,6 +119,50 @@ export function evaluateChecks(
   return checks.map((check) => runCheck(workspacePath, check, ctx))
 }
 
+function readOracleArtifact(root: string, path: string): string {
+  const file = resolveSandboxPath(root, path)
+  const stat = lstatSync(file)
+  if (!stat.isFile() || stat.size > 256 * 1024)
+    throw new Error(`Expected a regular artifact of at most 256 KiB at ${path}`)
+  return readFileSync(file, 'utf8')
+}
+
+function compileOracleFiles(root: string, files: string[]): string | undefined {
+  const options: ts.CompilerOptions = {
+    noEmit: true, strict: true, types: [], target: ts.ScriptTarget.ES2022,
+    module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler
+  }
+  const sources = new Map(files.map((path) => [
+    '/' + path.replace(/\\/g, '/').replace(/^\.\//, ''), readOracleArtifact(root, path)
+  ]))
+  const libRoot = dirname(ts.getDefaultLibFilePath(options)).replace(/\\/g, '/')
+  const read = (name: string) => {
+    const key = name.replace(/\\/g, '/')
+    if (sources.has(key)) return sources.get(key)
+    const libName = key.slice(libRoot.length + 1)
+    return key.startsWith(libRoot + '/') && /^lib(?:\.[a-z0-9.]+)?\.d\.ts$/i.test(libName)
+      ? ts.sys.readFile(key) : undefined
+  }
+  const host: ts.CompilerHost = {
+    getSourceFile: (name, version) => {
+      const text = read(name)
+      return text === undefined ? undefined : ts.createSourceFile(name, text, version)
+    },
+    getDefaultLibFileName: () => ts.getDefaultLibFilePath(options),
+    writeFile: () => {},
+    getCurrentDirectory: () => '/',
+    getCanonicalFileName: (name) => name,
+    useCaseSensitiveFileNames: () => true,
+    getNewLine: () => '\n',
+    fileExists: (name) => read(name) !== undefined,
+    readFile: read
+  }
+  const diagnostics = ts.getPreEmitDiagnostics(ts.createProgram([...sources.keys()], options, host))
+  return diagnostics.length ? diagnostics.slice(0, 5)
+    .map((item) => `${item.file?.fileName ?? 'TypeScript'} TS${item.code}: ${ts.flattenDiagnosticMessageText(item.messageText, ' ')}`)
+    .join('\n') : undefined
+}
+
 function runCheck(workspacePath: string, check: EvalCheck, ctx: EvalContext): EvalCheckResult {
   try {
     switch (check.type) {
@@ -135,6 +181,23 @@ function runCheck(workspacePath: string, check: EvalCheck, ctx: EvalContext): Ev
         return re.test(readFileSync(abs, 'utf8'))
           ? pass(check, `matched ${check.path}`)
           : fail(check, `/${check.pattern}/ not in ${check.path}`)
+      }
+      case 'typescript_compile': {
+        const detail = compileOracleFiles(workspacePath, check.files)
+        return detail ? fail(check, detail) : pass(check, `Typechecked ${check.files.length} declared files`)
+      }
+      case 'json_fields': {
+        const data: unknown = JSON.parse(readOracleArtifact(workspacePath, check.path))
+        for (const field of check.fields) {
+          let value = data
+          for (const key of field.path) {
+            value = value && typeof value === 'object' && Object.hasOwn(value, key)
+              ? (value as Record<string, unknown>)[key] : undefined
+          }
+          if (!isDeepStrictEqual(value, field.value))
+            return fail(check, `JSON field ${field.path.join('.') || '(root)'} did not match`)
+        }
+        return pass(check, `Matched ${check.fields.length} JSON fields`)
       }
       case 'file_exists':
         return existsSync(resolveSandboxPath(workspacePath, check.path))
