@@ -553,7 +553,9 @@ async function runCase(
     },
     // Delegation and recovery decisions are evidence; keep them in the timeline.
     onTaskEvent: (event) => {
-      if (event.type === 'delegation') {
+      if (event.type === 'context-dispatched') {
+        timeline.add('status', 'model', 'Dispatched context manifest', JSON.stringify(event.data))
+      } else if (event.type === 'delegation') {
         const data = event.data as { agentId?: string; status?: string }
         timeline.add('status', 'tool_execution', `delegation ${data.agentId}: ${data.status}`)
       } else if (event.type === 'reroute' || event.type === 'reroute-refused') {

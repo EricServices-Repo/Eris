@@ -170,6 +170,11 @@ describe('the first native request after a smaller allocation', () => {
     ])
     const dispatches = h.events.filter((event) => event.type === 'context-dispatched')
     expect(dispatches).toHaveLength(1)
+    expect(dispatches[0]!.data).toMatchObject({
+      transport: 'native-gguf',
+      toolProtocol: 'text-tools',
+      packing: { inputTokens: expect.any(Number), maxOutputTokens: expect.any(Number) }
+    })
     expect(dispatches[0]!.data.context).toMatchObject({
       source: 'measured-allocation',
       tokens: 2048,
