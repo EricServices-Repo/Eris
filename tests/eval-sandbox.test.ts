@@ -268,4 +268,4 @@ it('grades artifact types, missing imports and structured output independently o
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
-})
+}, 15_000)

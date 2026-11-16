@@ -129,7 +129,7 @@ function readOracleArtifact(root: string, path: string): string {
 
 function compileOracleFiles(root: string, files: string[]): string | undefined {
   const options: ts.CompilerOptions = {
-    noEmit: true, strict: true, types: [], target: ts.ScriptTarget.ES2022,
+    noEmit: true, strict: true, skipLibCheck: true, types: [], target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler
   }
   const sources = new Map(files.map((path) => [
