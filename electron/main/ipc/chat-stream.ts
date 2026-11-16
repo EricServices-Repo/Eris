@@ -78,7 +78,7 @@ import { findAgent } from '../services/agents'
 import { appState } from '../app-state'
 import { getSecret, abortAllCompletes } from './shared'
 import { addWorkspaceAllowedCommand, workspaceAllowedCommands } from '../services/workspace-trust'
-import { assertChatWithinPlan, assertCloudJobWithinPlan } from '../services/eris-entitlements'
+import { assertChatWithinPlan } from '../services/eris-entitlements'
 import { logError, logInfo, logWarn } from '../services/logger'
 import { recordAgentRun } from '../services/agent-telemetry'
 import { rememberAgentRun, rememberAskUserReply } from '../services/project-memory'
@@ -611,7 +611,6 @@ export function registerChatStreamIpc(): void {
           let verificationState: 'passed' | 'failed' | 'not-run' = 'not-run'
           let editOwner: string | undefined
           let mixedEditOwners = false
-          let usedCloud = false
           let firstModelOutputMs: number | null = null
           const noteFirstAgentOutput = (evt: { type: string; text?: string }) => {
             const hasOutput =
@@ -631,7 +630,7 @@ export function registerChatStreamIpc(): void {
             if (!telemetryOn) return
             try {
               recordAgentRun({
-                model: usedCloud ? 'composer' : resolvedModel,
+                model: resolvedModel,
                 settings,
                 intent: turnPlan.intent,
                 steps: telemetrySteps,
@@ -640,7 +639,6 @@ export function registerChatStreamIpc(): void {
                 aborted: outcome === 'aborted',
                 verifiedEditMs:
                   verifiedAfterLastEdit &&
-                  !usedCloud &&
                   !mixedEditOwners &&
                   editOwner === resolvedModel
                     ? Date.now() - requestReceivedAt
