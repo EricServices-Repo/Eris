@@ -398,7 +398,7 @@ export function formatJobResultForChat(options: {
 export function deriveBlackboardStatus(job: {
   status: string
   liveStatus?: string | null
-  waitReason?: 'children' | 'approval' | 'question' | null
+  waitReason?: 'children' | 'approval' | 'question' | 'local-model' | null
 }): BlackboardStatus {
   if (job.status === 'queued') return 'queued'
   if (job.status === 'merged') return 'merged'

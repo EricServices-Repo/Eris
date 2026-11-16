@@ -896,6 +896,7 @@ export interface IdeApi {
   onDebugRunEvent: (cb: (event: DebugRunProgressEvent) => void) => () => void
   listBackgroundJobs: () => Promise<BackgroundJob[]>
   enqueueBackgroundJob: (payload: EnqueueBackgroundJobRequest) => Promise<BackgroundJob>
+  resumeBackgroundJob: (id: string) => Promise<BackgroundJob>
   stopBackgroundJob: (id: string) => Promise<boolean>
   discardBackgroundJob: (id: string) => Promise<BackgroundJob>
   mergeBackgroundJob: (id: string) => Promise<BackgroundJob>

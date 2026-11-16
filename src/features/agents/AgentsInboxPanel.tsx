@@ -154,6 +154,8 @@ export function AgentsInboxPanel({ onOpenPath, onOpenChat }: Props) {
         </button>
       </div>
 
+      <p className="agents-inbox-live">Local jobs run one at a time.</p>
+
       {error && (
         <div className="agents-inbox-error" role="alert">
           {error}
@@ -162,8 +164,7 @@ export function AgentsInboxPanel({ onOpenPath, onOpenChat }: Props) {
 
       {active.length === 0 ? (
         <div className="agents-inbox-empty">
-          No active jobs. Delegate from chat or enqueue a task above. Cloud Composer still runs
-          inline in Agent mode when signed in.
+          No active jobs. Delegate from chat or start a task above.
         </div>
       ) : (
         <ul className="agents-inbox-list">
@@ -189,6 +190,7 @@ export function AgentsInboxPanel({ onOpenPath, onOpenChat }: Props) {
                     {job.handoff.fromAgentId} → {job.handoff.toAgentId}
                   </div>
                 )}
+                {job.model && <div className="agents-inbox-live" title={job.model}>{job.model}</div>}
                 {job.routeReason && <p className="agents-inbox-live">{job.routeReason}</p>}
                 {job.liveStatus && <div className="agents-inbox-live">{job.liveStatus}</div>}
                 {job.integration && (
@@ -272,6 +274,16 @@ export function AgentsInboxPanel({ onOpenPath, onOpenChat }: Props) {
                   >
                     Open in chat
                   </button>
+                  {!cloud && job.resumable && job.status === 'stopped' && (
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={busy}
+                      onClick={() => void runAction(job.id, () => window.ide.resumeBackgroundJob(job.id))}
+                    >
+                      Resume
+                    </button>
+                  )}
                   {['running', 'queued'].includes(job.status) && (
                     <button
                       type="button"

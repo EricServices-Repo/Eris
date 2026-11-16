@@ -8,10 +8,11 @@ import {
   bringJobIntoChat,
   configureBackgroundAgents,
   discardBackgroundJob,
-  enqueueBackgroundJob,
+  planAndEnqueueBackgroundJob,
   listBackgroundJobs,
   mergeBackgroundJob,
   onBackgroundJobEvent,
+  resumeBackgroundJob,
   stopBackgroundJob
 } from '../services/background-agents'
 import { getCloudJob } from '../services/cloud-agents-client'
@@ -28,7 +29,12 @@ export function registerBackgroundAgentsIpc(): void {
   ipcMain.handle('agents:enqueue', (event, payload: EnqueueBackgroundJobRequest) => {
     if (!appState.currentWorkspace) throw new Error('Open a workspace first')
     configureBackgroundAgents({ sender: event.sender, getSecret })
-    return enqueueBackgroundJob(appState.currentWorkspace, payload)
+    return planAndEnqueueBackgroundJob(appState.currentWorkspace, payload)
+  })
+  ipcMain.handle('agents:resumeJob', (event, id: string) => {
+    if (!appState.currentWorkspace) throw new Error('Open a workspace first')
+    configureBackgroundAgents({ sender: event.sender, getSecret })
+    return resumeBackgroundJob(appState.currentWorkspace, String(id))
   })
   ipcMain.handle('agents:stopJob', (_e, id: string) => stopBackgroundJob(String(id)))
   ipcMain.handle('agents:discardJob', (_e, id: string) => discardBackgroundJob(String(id)))

@@ -19,6 +19,7 @@ const h = vi.hoisted(() => ({
   planHold: null as null | Promise<void>,
   awaitChildren: new Map<string, Promise<void>>(),
   maxParallel: 6,
+  resolvedModel: 'api:one',
   removed: [] as string[]
 }))
 vi.mock('../electron/main/services/paths', async (original) => ({
@@ -26,8 +27,9 @@ vi.mock('../electron/main/services/paths', async (original) => ({
   userDataRoot: () => h.root
 }))
 vi.mock('../electron/main/services/chat-router', () => ({
-  planChatTurn: async () => {
+  planChatTurn: async ({ context }: { context: { selectedModel: string } }) => {
     if (h.planHold) await h.planHold
+    const model = context.selectedModel === 'auto' ? h.resolvedModel : context.selectedModel
     return {
       mode: 'agent',
       agentId: 'composer',
@@ -35,7 +37,7 @@ vi.mock('../electron/main/services/chat-router', () => ({
       intent: 'edit',
       reason: 'test',
       toolPolicy: 'edit',
-      models: { chat: 'local:t', tools: 'local:t' }
+      models: { chat: model, tools: model }
     }
   }
 }))
@@ -94,6 +96,7 @@ import {
   enqueueBackgroundJob,
   getBackgroundJob,
   listBackgroundJobs,
+  planAndEnqueueBackgroundJob,
   mergeBackgroundJob,
   stopBackgroundJob
 } from '../electron/main/services/background-agents'
@@ -118,17 +121,18 @@ beforeEach(() => {
   h.awaitChildren.clear()
   h.planHold = null
   h.maxParallel = 6
+  h.resolvedModel = 'api:one'
 })
 
 // These poll for an end state, so a long limit only slows a failure, never a pass.
 vi.setConfig({ testTimeout: 30_000 })
 const until = (check: () => void) => vi.waitFor(check, { timeout: 10_000, interval: 10 })
-const root = (goal = 'Parent') => enqueueBackgroundJob(h.root, { goal, model: 'local:t' })
+const root = (goal = 'Parent') => enqueueBackgroundJob(h.root, { goal, model: 'api:one' })
 const child = (parentJobId: string, goal = 'Child') =>
   delegateFromAgent({
     workspacePath: h.root,
     parentJobId,
-    model: 'local:t',
+    model: 'api:one',
     agentId: 'composer',
     goal,
     summary: 's',
@@ -167,6 +171,7 @@ describe('stopping a job tree', () => {
     const queued = child(parent.id)
     expect(status(queued.id)).toBe('queued')
     h.maxParallel = 6
+  h.resolvedModel = 'api:one'
     stopBackgroundJob(parent.id)
     await until(() => expect(status(parent.id)).toBe('stopped'))
     await new Promise((resolve) => setTimeout(resolve, 30))
@@ -258,7 +263,7 @@ describe('discarding a job tree', () => {
     const parent = await treeOf()
     const own = enqueueBackgroundJob(h.root, {
       goal: 'Separate',
-      model: 'local:t',
+      model: 'api:one',
       parentId: parent.id
     })
     await running(own.id)
@@ -314,5 +319,49 @@ describe('merging', () => {
     await expect(mergeBackgroundJob(parent.id)).rejects.toThrow('still running')
     Object.assign(internal, { status: 'running' })
     stopBackgroundJob(parent.id)
+  })
+})
+
+describe('background model admission', () => {
+  it.each(['local:one', 'local:two'])('queues a second local job on %s while a remote job can start', async (model) => {
+    h.maxParallel = 2
+    const first = enqueueBackgroundJob(h.root, { goal: 'First', model: 'local:one' })
+    await running(first.id)
+    h.resolvedModel = model
+    const second = await planAndEnqueueBackgroundJob(h.root, { goal: 'Second', model: 'auto' })
+    expect(getBackgroundJob(second.id)).toMatchObject({ model, status: 'queued', waitReason: 'local-model' })
+    const remote = root('Remote')
+    await running(remote.id)
+    expect(h.started.has(second.id)).toBe(false)
+    h.resolvedModel = 'api:changed'
+    stopBackgroundJob(first.id)
+    await running(second.id)
+    expect(getBackgroundJob(second.id)).toMatchObject({ model, chatModel: model, toolsModel: model })
+  })
+
+  it('admits two remote jobs in parallel', async () => {
+    h.maxParallel = 2
+    const first = root('First remote')
+    const second = root('Second remote')
+    await running(first.id)
+    await running(second.id)
+    expect(status(first.id)).toBe('running')
+    expect(status(second.id)).toBe('running')
+  })
+
+  it('rejects a fixed model whose provider was removed before persisting a job', async () => {
+    const before = listBackgroundJobs(h.root).length
+    await expect(planAndEnqueueBackgroundJob(h.root, {
+      goal: 'Needs a provider',
+      model: 'removed-model'
+    })).rejects.toThrow('No provider connection for removed-model')
+    expect(listBackgroundJobs(h.root)).toHaveLength(before)
+  })
+
+  it('rejects an empty catalog before persisting a job', async () => {
+    h.resolvedModel = ''
+    const before = listBackgroundJobs(h.root).length
+    await expect(planAndEnqueueBackgroundJob(h.root, { goal: 'Needs a model', model: 'auto' })).rejects.toThrow('Connect a model')
+    expect(listBackgroundJobs(h.root)).toHaveLength(before)
   })
 })
