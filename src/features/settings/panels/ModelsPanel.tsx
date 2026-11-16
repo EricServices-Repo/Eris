@@ -267,6 +267,23 @@ function DefaultModelCard({
           <option value="best">Prefer best</option><option value="local">Prefer local</option><option value="cheapest">Prefer cheapest</option>
         </select>
       </label>
+      <label className="models-default-field">
+        <span>Recovery models (one model ID per line, in order)</span>
+        <textarea
+          key={resolved.models.fallbacks?.join('\n')}
+          defaultValue={resolved.models.fallbacks?.join('\n')}
+          onBlur={e => {
+            const next = [...new Set(e.target.value.split('\n').map(model => model.trim()).filter(Boolean))]
+            if (next.join('\n') !== (resolved.models.fallbacks ?? []).join('\n'))
+              void apply(['models', 'fallbacks'], next)
+          }}
+        />
+      </label>
+      <label className="gpu-accel-toggle">
+        <input type="checkbox" checked={resolved.agent.recoveryAcrossProviders === true}
+          onChange={e => void apply(['agent', 'recoveryAcrossProviders'], e.target.checked)} />
+        <span>Allow remote runs to recover on a different provider</span>
+      </label>
     </section>
   )
 }

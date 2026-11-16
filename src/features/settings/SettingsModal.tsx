@@ -247,7 +247,7 @@ export function SettingsModal({
 
   const apply = async (path: string[], value: unknown) => {
     const saveScope: SettingsScope =
-      (path[0] === 'agent' && path[1] === 'autoKeepDiffs') || path[0] === 'ericServices'
+      (path[0] === 'agent' && ['autoKeepDiffs', 'recoveryAcrossProviders'].includes(path[1] ?? '')) || path[0] === 'ericServices'
         ? 'user'
         : scope
     const next = await window.ide.setSettings(saveScope, setAt(path, value))

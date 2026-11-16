@@ -1,4 +1,5 @@
-import { chooseExecutionModel, executionLocal } from '../auto-model-policy'
+import { chooseExecutionModel, executionLocal, workspaceLocalityViolation } from '../auto-model-policy'
+import { resolveConnectionForModel } from '../model-catalog'
 import { prohibitsModelRecovery } from './model-transition'
 import type { AppSettings, TurnPlan } from '../../../../src/shared/settings-schema'
 import { findAgent, getProjectAgents, listResolvedAgents } from '../agents'
@@ -50,6 +51,7 @@ export async function decideMidRunAdapt(options: {
   escalateCount: number
   rerouteCount: number
   attemptedModels?: readonly string[]
+  startingModel?: string
   failureText?: string
   actionLog: string[]
   filesTouched: string[]
@@ -69,24 +71,46 @@ export async function decideMidRunAdapt(options: {
       policy,
       excluded
     )
-    // Recovery is conservative: never export already-derived local execution state
-    // to a remote endpoint while trying to escape a model-format/no-progress failure.
-    const alternate = choice.candidates
-      .filter((c) => c.eligible && executionLocal(options.settings, c.model))
-      .sort(
-        (a, b) =>
-          Number(b.model === choice.model) - Number(a.model === choice.model) ||
-          b.rank - a.rank ||
-          a.model.localeCompare(b.model)
-      )[0]
+    const start = options.startingModel ?? options.selectedModel
+    const origin = resolveConnectionForModel(options.settings, start)
+    const hasLocalState = [start, options.selectedModel, ...(options.attemptedModels ?? [])]
+      .some(model => executionLocal(options.settings, model))
+    const canUseRemote = policy === 'auto-any' && !hasLocalState && origin?.type === 'openai-compatible'
+    const candidates = choice.candidates.filter(candidate => {
+      if (!candidate.eligible || workspaceLocalityViolation(options.settings, candidate.model)) return false
+      if (executionLocal(options.settings, candidate.model)) return true
+      if (!canUseRemote) return false
+      const target = resolveConnectionForModel(options.settings, candidate.model)
+      return target?.type === 'openai-compatible' && (
+        target.id === origin.id || options.settings.agent.recoveryAcrossProviders === true
+      )
+    })
+    const fallbacks = options.settings.models.fallbacks ?? []
+    const explicit = fallbacks.map(model => candidates.find(candidate => candidate.model === model)).find(Boolean)
+    const tierRank = { small: 0, standard: 1, strong: 2, frontier: 3 }
+    const tier = (model: string) => {
+      const profile = options.settings.models.capabilityProfiles?.[model]
+      return profile ? tierRank[profile.tier] : -1
+    }
+    const alternate = explicit ?? candidates.sort((a, b) =>
+      tier(b.model) - tier(a.model) ||
+      Number(b.model === choice.model) - Number(a.model === choice.model) ||
+      b.rank - a.rank
+    )[0]
     if (alternate)
       return {
         kind: 'reroute',
-        reason: `Model recovery: ${options.selectedModel} → ${alternate.model}`,
+        reason: `Model recovery: ${options.selectedModel} → ${alternate.model} · ${explicit ? 'configured fallback' : 'eligible recovery model'}`,
         nextPlan: {
           ...options.plan,
           method: 'handoff',
-          models: { ...options.plan.models, chat: alternate.model, tools: alternate.model },
+          models: {
+            ...options.plan.models,
+            chat: alternate.model,
+            tools: alternate.model,
+            primary: options.plan.models.primary === options.selectedModel ? alternate.model : options.plan.models.primary,
+            fast: options.plan.models.fast === options.selectedModel ? alternate.model : options.plan.models.fast
+          },
           modelExecution: {
             ...options.plan.modelExecution!,
             candidates: choice.candidates,
@@ -96,7 +120,7 @@ export async function decideMidRunAdapt(options: {
       }
     return {
       kind: null,
-      reason: `No untried eligible local recovery model. ${choice.candidates.map((c) => `${c.model}: ${c.reason}`).join('; ')}`
+      reason: `No untried model eligible under the recovery policy. ${choice.candidates.map((c) => `${c.model}: ${c.reason}`).join('; ')}`
     }
   }
   if (prohibitsModelRecovery(options.failureText || ''))

@@ -91,3 +91,9 @@ Each role has a `modelClass`: `primary` or `fast` (built-in table in `src/shared
 
 The route reason names the class and model, for example `fast local:qwen2.5-coder-1.5b`.
 
+
+## Recovery destinations
+
+Automatic recovery keeps the existing two-transition budget and skips attempted models. An eligible model on the original provider can recover a remote run. Crossing to a different remote provider requires Auto-any and an explicit account-level opt-in, which a workspace can restrict. A run that has used a local model can only recover locally. A workspace's local-only ceiling takes precedence.
+
+Configured recovery model IDs are tried in order within those constraints. Automatic fallback prefers a higher declared capability tier when available.
