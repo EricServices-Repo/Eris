@@ -1247,7 +1247,7 @@ export function ChatPanel({
                         ? ` · ${queuePauseLabel[queuePaused]}`
                         : ''}
                   </span>
-                  {queuePaused && !streaming && onResumeQueue && (
+                  {!streaming && onResumeQueue && (
                     <button
                       type="button"
                       className="btn"
