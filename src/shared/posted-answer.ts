@@ -148,7 +148,7 @@ export function visibleOutcomeAssessment(
   // A reviewer that could not run says nothing about the answer (#500).
   if (assessment.status === 'unresolved' && REVIEWER_UNAVAILABLE.has(assessment.failure ?? ''))
     return null
-  return { label: `Outcome check: ${assessment.status}`, reason: assessment.reason }
+  return { label: `Outcome check: ${assessment.status}${assessment.model ? ` · ${assessment.model}` : ''}`, reason: assessment.reason }
 }
 
 /**

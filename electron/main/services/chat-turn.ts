@@ -1,7 +1,6 @@
+import { helperModel } from './helper-model'
 import { modelDestination } from './model-destination'
 import { isNativeGgufRef } from '../../../src/shared/model-destination'
-import { resolveModelCapabilities } from './model-capabilities'
-import { activeDiagnosticsScope } from './model-transport'
 import { bindTaskReferences, type ResolvedReference } from './reference-binding'
 import { realpathSync } from 'fs'
 import type {
@@ -142,19 +141,13 @@ export async function resolveChatTurnContract(
       }
     }
   }
-  // Keep classification on the selected destination so it does not evict the worker
-  // just to make a routing hint. Only the final plan grants tool authority.
-  const coordinatorModel = plan.mode === 'agent' && plan.requiresTools
-    ? plan.models.tools
-    : plan.models.chat
-  const skipInference = activeDiagnosticsScope() ? undefined
-    : isNativeGgufRef(coordinatorModel) &&
-        resolveModelCapabilities(input.settings, coordinatorModel).contextSource !== 'measured-allocation'
+  const selectedHelper = helperModel(input.settings, plan, 'resolve')
+  const coordinatorModel = selectedHelper || plan.models.tools || plan.models.chat
+  const skipInference = input.settings.agent.helperCalls === 'off'
+    ? 'helper-calls-disabled'
+    : !selectedHelper
       ? 'cold-native-routing-skipped'
-      : plan.modelExecution?.policy !== 'fixed' &&
-          modelDestination(input.settings, coordinatorModel).locality === 'remote'
-        ? 'remote-auto-routing-skipped'
-        : undefined
+      : undefined
   const resolution: IntentResolution = input.forceRoute
     ? {
         intent: plan.intent,
@@ -170,6 +163,8 @@ export async function resolveChatTurnContract(
         model: coordinatorModel,
         mode: input.mode ?? 'agent',
         history: input.history,
+        omitModelHistory: !modelDestination(input.settings, coordinatorModel).recallAllowed &&
+          input.settings.agent.contextMemory?.shareWithRemoteModels !== true,
         signal: input.signal,
         getSecret: input.getSecret,
         timeoutMs: input.resolverTimeoutMs,

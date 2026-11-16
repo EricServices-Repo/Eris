@@ -72,6 +72,10 @@ A transition happens between completed model calls or tool batches:
 
 A failed preparation doesn't commit the new model or replay completed edits. It uses up recovery budget and records why.
 
+## Optional helper calls
+
+Fast is the default for conversational routing, semantic interpretation, outcome checks, and optional context summaries. Review and verification use Primary for the outcome check. A fixed selection keeps its own model. Native helpers reuse the loaded model or skip inference before a cold load. Disabling helpers leaves deterministic intake, evidence checks, and context eviction in place.
+
 ## Tests
 
 - `auto-model-policy.test.ts`: pool ordering, locality before scoring, endpoint changes, Fixed pins, exclusions, residency, profiles and preferences.

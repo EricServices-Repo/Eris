@@ -94,6 +94,7 @@ export interface TaskCompletionEvidence {
   verification: 'passed' | 'failed' | 'not-run'
   assessment: {
     status: 'supported' | 'partial' | 'unresolved' | 'not-run'
+    model?: string
     failure?: string
     reason?: string
   }

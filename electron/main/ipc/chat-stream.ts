@@ -1,3 +1,4 @@
+import { helperModel } from '../services/helper-model'
 import { createContextOrigin } from '../services/context-origin'
 import { chooseExecutionModel } from '../services/auto-model-policy'
 import { currentLoadedModel } from '../services/model-runtime'
@@ -1278,8 +1279,12 @@ export function registerChatStreamIpc(): void {
               assessment: { status: 'not-run' },
               persistence: contextThreadId ? 'saved' : 'not-required'
             }
-            if (turnPlan.task && needsOutcomeReview(turnPlan, runIncomplete)) {
-              publish('chat:phase', { requestId, phase: 'review', source: 'outcome', reason: 'Checking the response against task evidence' })
+            const outcomeModel = helperModel(settings, {
+              ...turnPlan,
+              models: { ...turnPlan.models, tools: resolvedModel || turnPlan.models.tools }
+            }, 'outcome')
+            if (turnPlan.task && outcomeModel && needsOutcomeReview(turnPlan, runIncomplete)) {
+              publish('chat:phase', { requestId, phase: 'review', source: 'outcome', model: outcomeModel, reason: 'Checking the response against task evidence' })
               publish('chat:status', {
                 requestId,
                 text: 'Checking the response against task evidence…'
@@ -1291,14 +1296,14 @@ export function registerChatStreamIpc(): void {
                 evidence: outcomeEvidence.items,
                 changes: outcomeEvidence.changes,
                 settings,
-                model: turnPlan.models.chat,
+                model: outcomeModel,
                 signal: controller.signal,
                 getSecret
               })
               publish('chat:outcome', { requestId, ...verdict })
               // Recorded in every case, so the stored reply keeps what the reviewer said.
               completionEvidence.assessment = {
-                status: verdict.verdict, failure: verdict.failure, reason: verdict.reason
+                status: verdict.verdict, failure: verdict.failure, reason: verdict.reason, model: outcomeModel
               }
               const reviewerUnavailable =
                 verdict.verdict === 'unresolved' && REVIEWER_UNAVAILABLE.has(verdict.failure ?? '')
