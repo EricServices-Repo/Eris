@@ -1351,13 +1351,20 @@ export function registerChatStreamIpc(): void {
             if (turnPlan.task) {
               // The next turn in this thread resolves “those” and “what changed?” against this.
               try {
-                saveTask(
-                  completeChatTurnTask(turnPlan.task, {
-                    answer: finalAnswer,
-                    changedFiles: memoryFiles.length ? memoryFiles : (run?.filesTouched ?? []),
-                    terminal: runIncomplete ? 'incomplete' : 'complete'
-                  })
-                )
+                const completedTask = completeChatTurnTask(turnPlan.task, {
+                  answer: finalAnswer,
+                  changedFiles: memoryFiles.length ? memoryFiles : (run?.filesTouched ?? []),
+                  terminal: runIncomplete ? 'incomplete' : 'complete'
+                })
+                if (completedTask.result?.requirements) {
+                  completionEvidence.requirements = completedTask.result.requirements
+                  if (completedTask.result.terminal === 'incomplete' &&
+                      completedTask.result.requirements.some((item) => item.remainingPaths.length)) {
+                    completionEvidence.execution = 'incomplete'
+                    runIncomplete = true
+                  }
+                }
+                saveTask(completedTask)
               } catch (error) {
                 completionEvidence.persistence = 'failed'
                 runIncomplete = true

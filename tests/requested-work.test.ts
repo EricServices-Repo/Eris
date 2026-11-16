@@ -211,3 +211,26 @@ describe('file-set completion evidence', () => {
     expect(requestedFilesProblem(task, ['booking.ts'])).toContain('booking.ts')
   })
 })
+
+it('keeps missing requested targets incomplete despite a completion claim', () => {
+  const root = workspace()
+  const task = createTaskContract({
+    workspacePath: root,
+    text: 'Create auth.ts, search.ts and confirmation.ts',
+    plan: plan()
+  })
+  const result = completeChatTurnTask(task, {
+    answer: 'All three files are complete.',
+    changedFiles: ['auth.ts', 'search.ts', 'other/confirmation.ts'],
+    terminal: 'complete'
+  })
+  expect(result.result).toMatchObject({
+    terminal: 'incomplete',
+    requirements: [
+      { state: 'satisfied', evidencePaths: ['auth.ts'], remainingPaths: [] },
+      { state: 'satisfied', evidencePaths: ['search.ts'], remainingPaths: [] },
+      { state: 'not-attempted', evidencePaths: [], remainingPaths: ['confirmation.ts'] }
+    ]
+  })
+  expect(parsePersistedTask(result).result?.requirements).toEqual(result.result?.requirements)
+})
