@@ -242,17 +242,10 @@ export function settingFields(agentIds: string[]): SettingField[] {
     {
       cat: 'agent',
       label: 'Routing profile',
-      hint: 'Auto = seamless Lite + Cloud; Local = never Cloud; Max = prefer Cloud Composer for agent work',
+      hint: 'Auto can use connected providers. Local limits execution to this computer.',
       path: ['agent', 'routing', 'profile'],
       type: 'select',
-      options: ['auto', 'local', 'max']
-    },
-    {
-      cat: 'agent',
-      label: 'Prefer Cloud Composer',
-      hint: 'When signed in, Agent mode may run built-in tools on Cloud (ignored when profile is Local)',
-      path: ['agent', 'routing', 'preferCloudComposer'],
-      type: 'boolean'
+      options: ['auto', 'local']
     },
     {
       cat: 'agent',
@@ -265,7 +258,7 @@ export function settingFields(agentIds: string[]): SettingField[] {
     {
       cat: 'agent',
       label: 'Use LLM router',
-      hint: 'Ask routerModel to classify intent + agent (Auto/Max profiles enable this automatically)',
+      hint: 'Ask routerModel to classify intent + agent (Auto enables this automatically)',
       path: ['agent', 'routing', 'useLlmRouter'],
       type: 'boolean'
     },

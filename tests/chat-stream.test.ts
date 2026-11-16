@@ -86,7 +86,6 @@ const plan: TurnPlan = {
   models: { chat: 'test-provider-model', tools: 'test-provider-model' },
   toolPolicy: 'full',
   requiresTools: true,
-  escalateToFull: false,
   reason: 'test',
   method: 'manual'
 }

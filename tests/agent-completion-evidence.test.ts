@@ -58,7 +58,7 @@ afterEach(() => rmSync(ws, { recursive: true, force: true }))
 const plan = (): TurnPlan => ({
   intent: 'edit', agentId: 'composer', agentName: 'Composer', mode: 'agent',
   models: { chat: 'builtin:composer-lite', tools: 'builtin:composer-lite' },
-  toolPolicy: 'edit', requiresTools: true, escalateToFull: false, reason: 'test', method: 'manual'
+  toolPolicy: 'edit', requiresTools: true, reason: 'test', method: 'manual'
 })
 const call = (name: string, args: Record<string, unknown>) => JSON.stringify({ name, ...args })
 

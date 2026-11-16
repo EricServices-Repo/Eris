@@ -91,7 +91,6 @@ export async function prepareLiveModel(id: string, context: number) {
   selected.images.enabled = false
   selected.agent.allowedCommands = []
   selected.agent.projectMemory = 'off'
-  selected.agent.routing.preferCloudComposer = false
   selected.agent.routing.profile = 'local'
   selected.agent.routing.useLlmRouter = false
   selected.evals.useScoresForRouting = false

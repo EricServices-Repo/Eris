@@ -19,7 +19,6 @@ const plan: TurnPlan = {
   models: { chat: 'test', tools: 'test' },
   toolPolicy: 'read',
   requiresTools: true,
-  escalateToFull: false,
   reason: 'fixture',
   method: 'heuristic'
 }

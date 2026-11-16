@@ -23,7 +23,6 @@ const plan: TurnPlan = {
   mode: 'agent',
   toolPolicy: 'full',
   requiresTools: true,
-  escalateToFull: false,
   models: { chat: 'local:test', tools: 'local:test' },
   reason: 'test',
   method: 'override'

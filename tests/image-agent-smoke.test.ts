@@ -72,7 +72,6 @@ const plan: TurnPlan = {
   mode: 'agent',
   toolPolicy: 'edit',
   requiresTools: true,
-  escalateToFull: false,
   models: { chat: 'builtin:composer-lite', tools: 'builtin:composer-lite' },
   reason: 'Generate a project illustration',
   method: 'manual'

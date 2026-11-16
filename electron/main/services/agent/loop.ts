@@ -494,7 +494,6 @@ async function* runAgentInternal(options: {
   let plan =
     options.turnPlan ??
     (await planChatTurn({
-      allowCloudComposer: false,
       workspacePath: options.workspacePath,
       settings: options.settings,
       context: {
@@ -869,21 +868,6 @@ async function* runAgentInternal(options: {
     agentId: plan.agentId,
     agentName: plan.agentName
   }
-  if (plan.escalateToFull) {
-    yield {
-      type: 'thinking',
-      text: `\n\n— Escalating tools to Composer Full (chat stays on ${chatModel.replace(/^builtin:/, '')})…\n`
-    }
-    yield {
-      type: 'adapt',
-      kind: 'escalate',
-      reason: plan.reason,
-      model: workerModel,
-      agentId: plan.agentId,
-      agentName: plan.agentName
-    }
-  }
-
   const preflightStartedAt = Date.now()
   let mcpSyncMs = 0
   let retrievalMs = 0
@@ -1164,7 +1148,6 @@ async function* runAgentInternal(options: {
   let consecutiveToolErrors = 0
   let goalRejectCount = 0
   let verifyPassedOnce = false
-  const escalateCount = plan.escalateToFull ? 1 : 0
   let rerouteCount = 0
   let recoveryExclusionReason = ''
   const reviewOnly =
@@ -1502,7 +1485,6 @@ async function* runAgentInternal(options: {
         noProgressStreak,
         goalRejectCount,
         workspaceMutated,
-        escalateCount,
         rerouteCount
       })
     ) {
@@ -1525,7 +1507,6 @@ async function* runAgentInternal(options: {
             goal: originalUserGoal,
             getSecret: options.getSecret,
             signal: options.signal,
-            escalateCount,
             rerouteCount,
             actionLog,
             filesTouched
@@ -1595,7 +1576,7 @@ async function* runAgentInternal(options: {
         toModel: workerModel,
         attemptedModels: [...attemptedModels],
         trigger,
-        budget: { used: escalateCount + rerouteCount, max: MID_RUN_ADAPT_BUDGET },
+        budget: { used: rerouteCount, max: MID_RUN_ADAPT_BUDGET },
         taskId: task.taskId,
         intent: task.intent,
         artifact: interpretationOf(task).artifact,
@@ -2459,7 +2440,6 @@ async function* runAgentInternal(options: {
           noProgressStreak,
           goalRejectCount,
           workspaceMutated,
-          escalateCount,
           rerouteCount
         })
       ) {
@@ -4184,7 +4164,6 @@ async function* runAgentInternal(options: {
               // The child is the specialist that was asked for, within its own tool
               // ceiling. Routing the goal must not swap in an editor or force edits.
               const specialistPlan = await planChatTurn({
-                allowCloudComposer: false,
                 workspacePath,
                 settings: options.settings,
                 context: {
@@ -4221,8 +4200,6 @@ async function* runAgentInternal(options: {
                 constraints
               )
               specialistPlan.toolPolicy = intersectToolPolicy(specialistPlan.toolPolicy, task)
-              specialistPlan.escalateToFull = false
-              specialistPlan.cloudPreferred = false
               const childModel = specialistPlan.models.tools
               const delegationId = `${options.jobId}:${agentId}:${step}`
               const runningDelegation = {

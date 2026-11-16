@@ -34,7 +34,6 @@ export const AgentDefinitionSchema = z.object({
   /** Max tool access this agent may use (policy ceiling). */
   tools: AgentToolsCeilingSchema.default('edit'),
   /** When true and chat model is Lite, allow escalate tools role to Full. */
-  preferEscalate: z.boolean().default(true),
   /**
    * primary = models.defaultModel (multi-step and editing work);
    * fast = models.fast (short and helper work). Absent = the built-in role table.
@@ -184,19 +183,7 @@ export const SettingsSchema = z.object({
       routerModel: z.string(),
       useLlmRouter: z.boolean(),
       fallbackAgentId: z.string().min(1),
-      /**
-       * auto = LLM router + Cloud Composer when signed in (seamless default)
-       * local = never hand off to Cloud; stay on Lite / BYO
-       * max = prefer Cloud for agent work; heavier intents escalate to cloud
-       */
-      profile: z.enum(['auto', 'local', 'max']).default('auto'),
-      /** When true (default), Agent mode may run built-in tools on Cloud Composer. */
-      preferCloudComposer: z.boolean().default(true),
-      /**
-       * When true, Composer Full runs from the local GGUF and Cloud Composer is not used.
-       * Ignored until that model is downloaded.
-       */
-      useLocalComposerFull: z.boolean().default(false),
+      profile: z.preprocess((value) => value === 'max' ? 'auto' : value, z.enum(['auto', 'local']).default('auto')),
       /**
        * Set only from the workspace layer (`.eris/settings.json` with
        * `models.defaultModel: "auto-local"` or `agent.routing.profile: "local"`).
@@ -563,7 +550,6 @@ export interface TurnPlan {
   /** Effective tool ceiling after intersecting agent policy + intent + mode. */
   toolPolicy: AgentToolsCeiling
   requiresTools: boolean
-  escalateToFull: boolean
   reason: string
   method:
     | 'manual'
@@ -580,9 +566,7 @@ export interface TurnPlan {
   /** Set when the selected chat model cannot run (e.g. builtin not downloaded). */
   error?: string
   /** Routing profile that produced this plan (auto / local / max). */
-  routingProfile?: 'auto' | 'local' | 'max'
-  /** True when this turn should prefer Cloud Composer for built-in Agent tools. */
-  cloudPreferred?: boolean
+  routingProfile?: 'auto' | 'local'
   /** Small, explicit work plan and completion condition shown to the user and worker. */
   executionPlan?: {
     steps: string[]

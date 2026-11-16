@@ -119,7 +119,6 @@ describe('semantic outcome check', () => {
     models: { chat: 'local:test', tools: 'local:test' },
     toolPolicy: 'read',
     requiresTools: true,
-    escalateToFull: false,
     reason: 'test',
     method: 'heuristic'
   }
@@ -172,7 +171,7 @@ describe('outcome review judges the workspace changes (#501)', () => {
   const editPlan: TurnPlan = {
     intent: 'edit', agentId: 'composer', agentName: 'Composer', mode: 'agent',
     models: { chat: 'local:test', tools: 'local:test' }, toolPolicy: 'edit',
-    requiresTools: true, escalateToFull: false, reason: 'test', method: 'heuristic'
+    requiresTools: true, reason: 'test', method: 'heuristic'
   }
   const HELLO = '<!DOCTYPE html>\n<html>\n<body>\n<h1>Hello</h1>\n<button>Click me</button>\n</body>\n</html>\n'
   let ws = ''
@@ -266,7 +265,7 @@ describe('resolved action summary (#469)', () => {
       taskId: 'summary', threadId: null, workspacePath: realpathSync(tmpdir()), text,
       plan: { intent, toolPolicy, agentId: 'composer', agentName: 'Composer', mode: 'agent',
         models: { chat: 'builtin:composer-lite', tools: 'builtin:composer-lite' }, requiresTools: true,
-        escalateToFull: false, reason: 'test', method: 'heuristic' }
+        reason: 'test', method: 'heuristic' }
     })
     const edit = make('Add a footer to index.html', 'edit', 'edit')
     expect(taskActionSummary(edit)).toContain('Edit')

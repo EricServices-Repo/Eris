@@ -277,7 +277,6 @@ export async function planAndEnqueueBackgroundJob(
   const plan = await planChatTurn({
     workspacePath,
     settings,
-    allowCloudComposer: false,
     context: {
       text: handoff?.ok ? `${formatHandoffForPrompt(handoff.packet)}\n\n${goal}` : goal,
       selectedModel,
@@ -365,7 +364,6 @@ export function enqueueBackgroundJob(
     handoff: handoff?.ok ? handoff.packet : null,
     claim: request.claim ?? null,
     routeHistory: [],
-    escalateCount: 0,
     rerouteCount: 0,
     status: 'queued',
     step: 0,
@@ -896,7 +894,6 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
       job.handoff != null ? `${formatHandoffForPrompt(job.handoff)}\n\n${job.goal}` : job.goal
 
     const turnPlan = await planChatTurn({
-      allowCloudComposer: false,
       workspacePath: job.workspacePath,
       settings,
       context: {
@@ -946,7 +943,6 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
       routeReason: turnPlan.reason,
       chatModel: turnPlan.models.chat,
       toolsModel: turnPlan.models.tools,
-      escalateCount: turnPlan.escalateToFull ? 1 : j.escalateCount || 0,
       claim: j.claim || `${turnPlan.agentName}: ${j.goal.slice(0, 48)}`,
       liveStatus: j.worktreePath ? `Running · ${turnPlan.agentName}` : 'Preparing worktree…',
       actionLog: [...j.actionLog, turnPlan.reason].slice(-80),
@@ -1182,7 +1178,6 @@ async function runOne(job: BackgroundJob, settings: AppSettings): Promise<void> 
           agentName: evt.agentName || cur.agentName,
           toolsModel: evt.model || cur.toolsModel,
           model: evt.model || cur.model,
-          escalateCount: evt.kind === 'escalate' ? (cur.escalateCount || 0) + 1 : cur.escalateCount,
           rerouteCount: evt.kind === 'reroute' ? (cur.rerouteCount || 0) + 1 : cur.rerouteCount,
           liveStatus: evt.reason,
           routeHistory: pushRoute(cur, {

@@ -22,7 +22,7 @@ afterEach(() => roots.splice(0).forEach(root => rmSync(root, { recursive: true, 
 const plan = (intent: TurnPlan['intent'] = 'edit'): TurnPlan => ({
   intent, agentId: 'coder', agentName: 'Coder', mode: 'agent',
   toolPolicy: intent === 'edit' ? 'edit' : 'none', requiresTools: intent === 'edit',
-  models: { chat: 'local:test', tools: 'local:test' }, escalateToFull: false,
+  models: { chat: 'local:test', tools: 'local:test' },
   method: 'heuristic', reason: 'test'
 })
 

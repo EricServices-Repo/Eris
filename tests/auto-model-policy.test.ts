@@ -49,7 +49,6 @@ const local = (ref = 'local:qwen-coder', bytes = 5 * 1024 ** 3) => ({
 const settings = () => {
   const s = structuredClone(getDefaults())
   s.agent.routing.profile = 'local'
-  s.agent.routing.preferCloudComposer = false
   s.models.connections = [
     {
       id: 'server',
@@ -231,7 +230,6 @@ describe('production Auto model selection', () => {
     const keyed = (apiKeyRef: string, baseUrl = 'https://remote.example/v1') => {
       const s = settings()
       s.agent.routing.profile = 'auto'
-      s.agent.routing.preferCloudComposer = true
       s.models.connections[0] = { ...s.models.connections[0]!, apiKeyRef, baseUrl }
       return s
     }

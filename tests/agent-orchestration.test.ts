@@ -115,7 +115,7 @@ describe('agent orchestration', () => {
 describe('mid-run adapt gates', () => {
   it('does not switch for completion rejections after edits, but allows tool-error recovery', () => {
     const base = { verifyFailures: 0, consecutiveToolErrors: 0, noProgressStreak: 4,
-      escalateCount: 0, rerouteCount: 0, goalRejectCount: 3, workspaceMutated: true }
+ rerouteCount: 0, goalRejectCount: 3, workspaceMutated: true }
     expect(shouldConsiderMidRunAdapt(base)).toBe(false)
     expect(shouldConsiderMidRunAdapt({ ...base, consecutiveToolErrors: 3 })).toBe(true)
   })
@@ -125,7 +125,6 @@ describe('mid-run adapt gates', () => {
         verifyFailures: 2,
         consecutiveToolErrors: 0,
         noProgressStreak: 0,
-        escalateCount: 0,
         rerouteCount: 0
       })
     ).toBe(true)
@@ -134,8 +133,7 @@ describe('mid-run adapt gates', () => {
         verifyFailures: 0,
         consecutiveToolErrors: 0,
         noProgressStreak: 0,
-        escalateCount: 1,
-        rerouteCount: 1
+        rerouteCount: 2
       })
     ).toBe(false)
   })

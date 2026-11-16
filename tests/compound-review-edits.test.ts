@@ -31,7 +31,7 @@ describe('issue 436 combined inspection and implementation', () => {
     expect(task.authority.edit).toBe(true)
     const workflow = new AgentWorkflow({ intent: 'edit', agentId: 'composer', agentName: 'Composer', mode: 'agent',
       models: {chat:'simulated:test',tools:'simulated:test'}, toolPolicy:'edit', requiresTools:true,
-      escalateToFull:false, reason:'test', method:'heuristic', task })
+       reason:'test', method:'heuristic', task })
     workflow.noteTool({name:'read_file',ok:true,mutated:false,path:target})
     expect(workflow.evaluateOutcome({workspaceMutated:false,codeMutated:false,verifyPassed:false}).ok).toBe(false)
     workflow.noteTool({name:'write_file',ok:true,mutated:true,path:target})

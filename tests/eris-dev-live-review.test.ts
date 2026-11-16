@@ -281,7 +281,6 @@ describe('MR-002/MR-007/MR-009/MR-012 live capture', () => {
         models: ['test-selected-model']
       }
     ]
-    settings.agent.routing.preferCloudComposer = false
     settings.agent.routing.useLlmRouter = false
     settings.agent.routing.profile = 'local'
     return {

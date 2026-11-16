@@ -22,7 +22,6 @@ export function shouldConsiderMidRunAdapt(options: {
   verifyFailures: number
   consecutiveToolErrors: number
   noProgressStreak: number
-  escalateCount: number
   rerouteCount: number
   goalRejectCount?: number
   workspaceMutated?: boolean
@@ -31,7 +30,7 @@ export function shouldConsiderMidRunAdapt(options: {
   // different model will repair it. Actual tool/verification failures still count.
   if (options.workspaceMutated && options.goalRejectCount &&
       options.consecutiveToolErrors < 3 && options.verifyFailures < 2) return false
-  if (options.escalateCount + options.rerouteCount >= MID_RUN_ADAPT_BUDGET) return false
+  if (options.rerouteCount >= MID_RUN_ADAPT_BUDGET) return false
   return (
     options.verifyFailures >= 2 ||
     options.consecutiveToolErrors >= 3 ||
@@ -48,7 +47,6 @@ export async function decideMidRunAdapt(options: {
   goal: string
   getSecret: (key: string) => string | null
   signal?: AbortSignal
-  escalateCount: number
   rerouteCount: number
   attemptedModels?: readonly string[]
   startingModel?: string
@@ -56,7 +54,7 @@ export async function decideMidRunAdapt(options: {
   actionLog: string[]
   filesTouched: string[]
 }): Promise<MidRunAdaptDecision> {
-  if (options.escalateCount + options.rerouteCount >= MID_RUN_ADAPT_BUDGET)
+  if (options.rerouteCount >= MID_RUN_ADAPT_BUDGET)
     return { kind: null, reason: 'Recovery transition budget exhausted' }
   const policy = options.plan.modelExecution?.policy
   if (

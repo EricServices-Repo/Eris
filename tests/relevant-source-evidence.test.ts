@@ -26,7 +26,6 @@ function fixture(text = 'Review the booking flow') {
     toolPolicy: 'read',
     models: { chat: 'simulated:review', tools: 'simulated:review' },
     requiresTools: true,
-    escalateToFull: false,
     method: 'heuristic',
     reason: 'test'
   }

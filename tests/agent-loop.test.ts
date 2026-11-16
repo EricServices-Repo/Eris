@@ -88,7 +88,6 @@ function editPlan(): TurnPlan {
     models: { chat: 'builtin:composer-lite', tools: 'builtin:composer-lite' },
     toolPolicy: 'edit',
     requiresTools: true,
-    escalateToFull: false,
     reason: 'test',
     method: 'manual'
   }
