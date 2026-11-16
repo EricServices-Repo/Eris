@@ -1,3 +1,4 @@
+import { MAX_QUEUED_MESSAGES } from '@/shared/chat-queue'
 import { imagePromptFromCommand } from '@/shared/image-generation'
 import { ModelSetupCard } from '@/features/onboarding/ModelSetupCard'
 import { isAutomaticModelSelection } from '@/shared/model-execution'
@@ -52,7 +53,7 @@ export interface QueuedChatMessage {
   skillIds: string[]
 }
 
-export const MAX_QUEUED_MESSAGES = 3
+
 
 const messageKey = (message: ChatMessage) => message.id
 const EMPTY_MESSAGES: ChatMessage[] = []
@@ -333,7 +334,7 @@ interface Props {
   onSend: (text: string, attachments: ChatAttachment[], skillIds: string[]) => void
   onStop: () => void
   queuedMessages: QueuedChatMessage[]
-  onQueueMessage: (text: string, attachments: ChatAttachment[], skillIds: string[]) => void
+  onQueueMessage: (text: string, attachments: ChatAttachment[], skillIds: string[]) => void | Promise<boolean>
   onRemoveQueued: (id: string) => void
   /** Why queued messages are waiting instead of being sent (#521). */
   queuePaused?: QueuePause
@@ -844,16 +845,22 @@ export function ChatPanel({
     if (selectValue && selectValue !== selectedModel) onModelChange(selectValue)
   }, [selectValue, selectedModel, onModelChange])
 
-  const submit = () => {
+  const queueSaving = useRef(false)
+  const submit = async () => {
     const text = draft.trim()
     if (!canCompose) return
     if (slashQuery !== null && slashItems.length > 0) return
     const payload = text || 'Please follow the attached skills and files.'
     const skillIds = activeSkills.map((s) => s.id)
     if (streaming) {
-      if (queueFull) return
-      setDraft('')
-      onQueueMessage(payload, attachments, skillIds)
+      if (queueFull || queueSaving.current) return
+      queueSaving.current = true
+      try {
+        if (await onQueueMessage(payload, attachments, skillIds) === false) return
+        setDraft((current) => current === draft ? '' : current)
+      } finally {
+        queueSaving.current = false
+      }
       onAttachmentsChange([])
       onActiveSkillsChange([])
       return

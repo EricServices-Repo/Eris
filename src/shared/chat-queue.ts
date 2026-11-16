@@ -1,3 +1,17 @@
+import type { ChatPromptInput } from './settings-schema'
+
+export const MAX_QUEUED_MESSAGES = 3
+
+export interface QueuedChatDraft {
+  requestId: string
+  threadId: string
+  workspacePath: string | null
+  model: string
+  mode: 'ask' | 'agent'
+  agentId: string
+  prompt: ChatPromptInput
+}
+
 /**
  * What the chat's local message queue does when a reply ends (#521).
  *
@@ -21,9 +35,10 @@ export function nextQueueAction(input: {
 }
 
 /** Why the queue is waiting, shown above the queued messages. */
-export type QueuePause = null | 'stopped' | 'error'
+export type QueuePause = null | 'stopped' | 'error' | 'deferred'
 
 export const queuePauseLabel: Record<Exclude<QueuePause, null>, string> = {
   stopped: 'Paused after stop',
-  error: 'Paused after an error'
+  error: 'Paused after an error',
+  deferred: 'Ready to send'
 }

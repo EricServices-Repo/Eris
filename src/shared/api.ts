@@ -406,11 +406,16 @@ export interface IdeApi {
     mode?: 'ask' | 'agent'
     workspacePath?: string | null
     forceRoute?: 'tools' | 'answer'
+    queueResume?: true
     preserveModelSelection?: boolean
     turnPlan?: TurnPlan
     threadId?: string | null
     planningDurationMs?: number
   }) => Promise<boolean>
+  saveQueuedChat: (draft: import('./chat-queue').QueuedChatDraft) => Promise<void>
+  listQueuedChat: (workspacePath: string | null, threadId: string) => Promise<import('./chat-queue').QueuedChatDraft[]>
+  removeQueuedChat: (workspacePath: string | null, threadId: string, requestId: string) => Promise<void>
+  onChatAccepted: (cb: (data: { requestId: string }) => void) => () => void
   getLatestChatJob: (threadId?: string | null) => Promise<ChatJobSnapshot | null>
   stopChat: (requestId?: string) => Promise<boolean>
   /** Absolute path of a dropped File ('' when it has none) */

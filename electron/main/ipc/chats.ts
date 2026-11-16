@@ -1,3 +1,4 @@
+import { removeQueuedChat } from '../services/queued-chat'
 import { resolveModelCapabilities } from '../services/model-capabilities'
 import { inferenceGovernorStatus } from '../services/inference-governor'
 import { currentLoadedModel } from '../services/model-runtime'
@@ -368,6 +369,7 @@ export function registerChatsIpc(): void {
     const root = appState.currentWorkspace
     deleteConversationEvidence(root, id)
     await deleteChat(root, id)
+    removeQueuedChat(root, id)
     logInfo('Chat deleted', { id })
     return true
   })
