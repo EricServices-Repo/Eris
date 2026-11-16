@@ -10,7 +10,9 @@ import type { ApplySetting } from '../fields'
 import { LocalModelsPanel } from '../LocalModelsPanel'
 import { ModelConnectionsPanel } from '../ModelConnectionsPanel'
 import { OllamaConfigPanel } from '../OllamaConfigPanel'
-import { isLocalOllamaConnection } from '@/shared/eris-cloud'
+import { connectionModelRef, isLocalOllamaConnection } from '@/shared/eris-cloud'
+import { isAutomaticModelSelection } from '@/shared/model-execution'
+import { ModelCapabilityEditor } from './ModelCapabilityEditor'
 
 export function useModelsPanelState() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
@@ -221,7 +223,8 @@ function DefaultModelCard({
       if (!c.reachable || c.type === 'builtin') continue
       for (const name of c.models || []) {
         if (name.startsWith('builtin:') || name.startsWith('local:')) continue
-        opts.push({ value: name, label: `${name} · ${c.name}` })
+        const ref = connectionModelRef(c, name)
+        if (!opts.some((option) => option.value === ref)) opts.push({ value: ref, label: `${name} · ${c.name}` })
       }
     }
     const def = resolved.models.defaultModel
@@ -262,6 +265,11 @@ function DefaultModelCard({
         </select>
       </label>
       <p className="models-hint">Used by the Explainer and Fast roles and for short helper calls. Follows the same privacy policy as the primary model; with one model, both use it.</p>
+      <ModelCapabilityEditor
+        models={resolved.models}
+        options={readyOptions.filter((option) => !isAutomaticModelSelection(option.value))}
+        apply={apply}
+      />
       <label className="models-default-field"><span>Auto preference</span>
         <select value={resolved.models.selectionPreference ?? 'best'} onChange={e => void apply(['models', 'selectionPreference'], e.target.value)}>
           <option value="best">Prefer best</option><option value="local">Prefer local</option><option value="cheapest">Prefer cheapest</option>

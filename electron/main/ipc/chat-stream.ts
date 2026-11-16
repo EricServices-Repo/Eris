@@ -442,6 +442,7 @@ export function registerChatStreamIpc(): void {
             executionPlan: turnPlan.executionPlan,
             task: turnPlan.task,
             toolsModel: turnPlan.models.tools,
+            modelDetails: turnPlan.modelExecution?.candidates.find((candidate) => candidate.model === turnPlan.models.chat)?.capabilities,
             modelSelection:
               turnPlan.modelExecution?.policy === 'fixed'
                 ? turnPlan.modelExecution.selection
@@ -686,6 +687,9 @@ export function registerChatStreamIpc(): void {
               pendingThinking += `${notice}\n`
             }
             pendingThinking += `Route: ${turnPlan.reason}${turnPlan.classifiedIntent && turnPlan.classifiedIntent !== turnPlan.intent ? ` (classified ${turnPlan.classifiedIntent})` : ''} · tools ${turnPlan.toolPolicy}\n`
+            if (turnPlan.modelExecution?.candidates.length) {
+              pendingThinking += `Model candidates:\n${turnPlan.modelExecution.candidates.map((candidate) => `- ${candidate.model} · ${candidate.reason}`).join('\n')}\n`
+            }
             if (turnPlan.executionPlan) {
               pendingThinking += `Plan: ${turnPlan.executionPlan.steps.join(' → ')}. Done when: ${turnPlan.executionPlan.doneWhen}\n`
             }

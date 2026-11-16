@@ -1,11 +1,12 @@
 import { estimatedNativeAnswerMs } from './model-latency'
 import { isNativeGgufRef } from '../../../src/shared/model-destination'
 import { connectionModelRef } from '../../../src/shared/eris-cloud'
-import type { AppSettings, ChatIntent } from '../../../src/shared/settings-schema'
+import type { AppSettings, ChatIntent, LocalModelStatus, ModelConnection } from '../../../src/shared/settings-schema'
 import { isExactBuiltinReady } from './builtin-model'
 import { getSecret } from './credentials'
 import { getLocalStatuses } from './local-model'
 import { modelDestination } from './model-destination'
+import { formatRoutingCapabilities, resolveRoutingCapabilityProfile, TIER_WEIGHT } from './model-capability-ranking'
 import { currentLoadedModel } from './model-runtime'
 import { CONTEXT_HEADROOM_BYTES, inferenceBudgetBytes } from './vram-fit'
 
@@ -20,6 +21,7 @@ export type ModelCandidate = {
   rank: number
   locality: string
   estimatedAnswerMs?: number
+  capabilities?: string
 }
 export type AutoModelChoice = {
   model: string
@@ -89,41 +91,42 @@ export async function chooseExecutionModel(
   const resident = currentLoadedModel()
   const candidates: ModelCandidate[] = []
   const seen = new Set<string>()
-  const add = (model: string, ready: boolean, reason: string, rank: number) => {
+  const tierWeights = new Map<string, number>()
+  const preferenceWeights = new Map<string, number>()
+  const requiresTools = !['answer', 'capability'].includes(intent)
+  const add = (model: string, ready: boolean, reason: string, specialization: number,
+    source: { gguf?: LocalModelStatus; connection?: ModelConnection }) => {
     if (seen.has(model)) return
     seen.add(model)
     const local = executionLocal(settings, model)
     if (!ready) reason = reason || 'not ready'
     else if (excluded.includes(model)) reason = 'already attempted in this run'
     else if (policy === 'auto-local' && !local) reason = 'excluded by Auto-local execution policy'
-    const profile = settings.models.capabilityProfiles?.[model]
-    if (profile) {
-      if (!reason && !['answer', 'capability'].includes(intent) && profile.toolCalling === 'none') reason = 'profile declares no tool calling'
-      if (!reason && profile.contextWindow < (_options.requiredContext ?? 1024)) reason = 'profile context below required prompt capacity'
-      rank = { small: 10, standard: 30, strong: 60, frontier: 90 }[profile.tier]
-      if (!['answer', 'capability'].includes(intent) && profile.toolCalling === 'native') rank += 5
-    }
-    if (settings.models.selectionPreference === 'local' && local) rank += 1000
-    if (settings.models.selectionPreference === 'cheapest') {
-      const cost = profile?.costClass ?? (local ? 'free-local' : 'high')
-      rank += { 'free-local': 1000, low: 500, high: 0 }[cost]
-    }
-    if (_options.modelClass === 'fast') {
-      // Auto-fast: tier standard or below first, then cost, then the smaller tier.
-      // A remote model with no profile is assumed strong and costly.
-      const tier = profile?.tier ?? (local ? 'standard' : 'strong')
-      const cost = profile?.costClass ?? (local ? 'free-local' : 'high')
-      rank =
-        (tier === 'small' || tier === 'standard' ? 2000 : 0) +
-        { 'free-local': 300, low: 200, high: 0 }[cost] +
-        { small: 40, standard: 30, strong: 20, frontier: 10 }[tier]
-    }
+    const profile = resolveRoutingCapabilityProfile(settings, model, { local, ...source })
+    const requiredContext = _options.requiredContext ?? 1024
+    if (!reason && requiresTools && profile.toolCalling === 'none') reason = 'capability profile declares no tool calling'
+    if (!reason && profile.contextWindow < requiredContext)
+      reason = `context window ${profile.contextWindow} below required ${requiredContext} tokens`
+
+    const tierWeight = TIER_WEIGHT[profile.tier]
+    const costWeight = { 'free-local': 3, low: 2, high: 0 }[profile.costClass]
+    const preference = settings.models.selectionPreference
+    const preferenceWeight = preference === 'local' && local ? 1 :
+      preference === 'cheapest' ? costWeight : 0
+    tierWeights.set(model, tierWeight)
+    preferenceWeights.set(model, preferenceWeight)
+    const contextFit = Math.min(4, Math.max(0, Math.floor(Math.log2(profile.contextWindow / requiredContext))))
+    const toolFit = requiresTools && profile.toolCalling === 'native' ? 5 : 0
+    const rank = _options.modelClass === 'fast'
+      ? (tierWeight <= TIER_WEIGHT.standard ? 2000 : 0) + costWeight * 100 - tierWeight + toolFit + contextFit
+      : tierWeight + specialization + toolFit + contextFit
     candidates.push({
       model,
       eligible: ready && !reason,
-      reason: reason || 'eligible; heuristic fallback',
+      reason,
       locality: local ? 'local' : 'remote',
-      rank
+      rank: rank + 5000 * preferenceWeight,
+      capabilities: formatRoutingCapabilities(profile)
     })
   }
   for (const m of locals) {
@@ -137,7 +140,6 @@ export async function chooseExecutionModel(
     const codeTask = ['edit', 'verify', 'run', 'review', 'explore'].includes(intent)
     const specialization = coding ? (codeTask ? 8 : -2) : codeTask ? 0 : 6
     const declared = m.routingCapabilities
-    const requiresTools = !['answer', 'capability'].includes(intent)
     const unsupported =
       (declared?.intents && !declared.intents.includes(intent)) ||
       (requiresTools && declared?.tools === false)
@@ -150,7 +152,7 @@ export async function chooseExecutionModel(
           : !fits
             ? 'insufficient or unknown memory budget'
             : ''
-    add(m.ref, m.ready, reason, 20 + specialization)
+    add(m.ref, m.ready, reason, specialization, { gguf: m })
   }
   for (const c of settings.models.connections) {
     if (!c.enabled || c.type === 'builtin') continue
@@ -170,7 +172,8 @@ export async function chooseExecutionModel(
             : keyMissing
               ? 'connection API key is not stored'
               : '',
-        18
+        0,
+        { connection: c }
       )
     }
   }
@@ -181,9 +184,10 @@ export async function chooseExecutionModel(
         const i = settings.models.priority?.indexOf(ref) ?? -1
         return i < 0 ? Number.MAX_SAFE_INTEGER : i
       }
-      return b.rank - a.rank || priority(a.model) - priority(b.model)
+      return b.rank - a.rank || tierWeights.get(b.model)! - tierWeights.get(a.model)! || priority(a.model) - priority(b.model)
     })
-  const refs = eligible.map((c) => c.model)
+  const preferredWeight = preferenceWeights.get(eligible[0]?.model)
+  const refs = eligible.filter((c) => preferenceWeights.get(c.model) === preferredWeight).map((c) => c.model)
   let model = eligible[0]?.model || ''
   let basis: AutoModelChoice['basis'] = 'profile'
   if (settings.evals?.useScoresForRouting && refs.length) {
@@ -214,6 +218,7 @@ export async function chooseExecutionModel(
     ? eligible.find((candidate) => candidate.model === resident.ref)
     : undefined
   if (basis === 'profile' && residentCandidate && eligible[0] &&
+      tierWeights.get(eligible[0].model) === tierWeights.get(residentCandidate.model) &&
       eligible[0].rank - residentCandidate.rank < SWITCH_MARGIN) {
     keptResident = model !== residentCandidate.model
     model = residentCandidate.model
@@ -283,8 +288,8 @@ export async function chooseExecutionModel(
           }; ${cost}`
   }
   for (const c of eligible) {
-    const p = settings.models.capabilityProfiles?.[c.model]
-    if (p) c.reason += `; ${p.tier} · ${p.toolCalling} tools · ${p.contextWindow} context · ${p.costClass}`
+    c.reason += `; ${c.capabilities}`
+    if (preferenceWeights.get(c.model)) c.reason += ' · preferred by settings'
   }
   return { model, basis, policy, candidates }
 }

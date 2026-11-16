@@ -193,7 +193,7 @@ describe('production Auto model selection', () => {
     const reason = (m: string) => choice.candidates.find((c) => c.model === m)?.reason
     expect(choice).toMatchObject({ model: 'local:qwen-coder', basis: 'profile' })
     expect(reason('local:qwen-coder')).toMatch(
-      /^selected by heuristic task rank; heuristic task rank 28/
+      /^selected by heuristic task rank; heuristic task rank \d+/
     )
     expect(reason('builtin:composer-lite')).toBeUndefined()
     // Ineligible models keep their exclusion reason.
@@ -213,7 +213,7 @@ describe('production Auto model selection', () => {
     const choice = await chooseExecutionModel(settings(), 'edit', 'auto-local')
     expect(choice.model).toBe('local:b-coder')
     expect(choice.candidates.find((c) => c.model === 'local:a-coder')?.reason).toContain(
-      '(tied at 28; broken by configured priority or catalog order)'
+      'broken by configured priority or catalog order)'
     )
   })
   it('honors explicit policy independently of the legacy profile', () => {
@@ -299,6 +299,39 @@ describe('explicit capability ranking', () => {
   it('excludes insufficient profile context', async () => {
     const s = setup()
     expect((await chooseExecutionModel(s, 'edit', 'auto-any', [], { requiredContext: 200000 })).model).toBe('')
+  })
+})
+
+describe('ranked Auto without custom profiles', () => {
+  const setup = () => {
+    const s = settings()
+    s.agent.routing.profile = 'auto'
+    s.models.connections[0].models = ['deepseek-chat', 'gpt-5']
+    state.locals = [{ ...local('local:qwen-coder-1.5b', 1024 ** 3), parameters: '1.5B' }]
+    return s
+  }
+  it.each(['edit', 'review', 'verify'] as const)('picks a frontier API model for %s', async (intent) => {
+    const result = await chooseExecutionModel(setup(), intent, 'auto')
+    expect(result.model).toBe('gpt-5')
+    expect(result.candidates.map((c) => c.reason)).toEqual(expect.arrayContaining([
+      expect.stringContaining('small · text tools'),
+      expect.stringContaining('strong · native tools'),
+      expect.stringContaining('frontier · native tools')
+    ]))
+  })
+  it('applies local preference before measured remote outcomes', async () => {
+    const s = setup()
+    s.models.selectionPreference = 'local'
+    s.evals.useScoresForRouting = true
+    state.winner = 'gpt-5'
+    expect((await chooseExecutionModel(s, 'edit')).model).toBe('local:qwen-coder-1.5b')
+    expect(state.scored).toEqual(['local:qwen-coder-1.5b'])
+  })
+  it('uses explicit priority for equal profiles', async () => {
+    const s = setup()
+    s.models.connections[0].models = ['gpt-5-older', 'gpt-5-newer']
+    s.models.priority = ['gpt-5-newer', 'gpt-5-older']
+    expect((await chooseExecutionModel(s, 'verify')).model).toBe('gpt-5-newer')
   })
 })
 

@@ -157,6 +157,7 @@
         "tests/context-memory-recovery.test.ts",
         "tests/auto-model-policy.test.ts",
         "tests/model-classes.test.ts",
+        "tests/model-capability-ranking.test.ts",
         "tests/subagent-models.test.ts",
         "tests/background-child-model.test.ts",
         "tests/model-switching.test.ts",

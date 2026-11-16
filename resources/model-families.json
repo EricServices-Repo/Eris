@@ -1,0 +1,8 @@
+[
+  { "pattern": "^(?:openai/)?(?:gpt-5(?:\\.[0-9]+)?-(?:nano|mini)|o4-mini)(?:$|[-:])", "tier": "strong", "toolCalling": "native", "reasoning": true, "costClass": "low" },
+  { "pattern": "^(?:openai/)?(?:gpt-5(?:\\.[0-9]+)?|o[134])(?:$|[-:])", "tier": "frontier", "toolCalling": "native", "reasoning": true, "costClass": "high" },
+  { "pattern": "^(?:anthropic/)?claude-(?:opus-4|sonnet-4|4-(?:opus|sonnet))(?:$|[-.])", "tier": "frontier", "toolCalling": "native", "reasoning": true, "vision": true, "costClass": "high" },
+  { "pattern": "^(?:google/)?gemini-(?:2\\.5|3(?:\\.[0-9]+)?)-pro(?:$|[-:])", "tier": "frontier", "toolCalling": "native", "reasoning": true, "vision": true, "costClass": "high" },
+  { "pattern": "^(?:google/)?gemini-(?:2\\.5|3(?:\\.[0-9]+)?)-flash(?:$|[-:])", "tier": "strong", "toolCalling": "native", "reasoning": true, "vision": true, "costClass": "low" },
+  { "pattern": "^(?:deepseek/)?deepseek-(?:chat|v3)(?:$|[-.:])", "tier": "strong", "toolCalling": "native", "costClass": "low" }
+]
