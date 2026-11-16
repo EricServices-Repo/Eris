@@ -25,12 +25,13 @@ import type { AgentRunnerEvent } from './agent/types'
 import { buildChatMessages, type BuiltChatMessage } from './chat-prompt'
 import type { ContextAllocation } from '../../../src/shared/context-allocation'
 import { localComposerFullActive, planChatTurn } from './chat-router'
-import { createTaskContract, implicitHtmlElement } from './task-intake'
+import { createTaskContract } from './task-intake'
 import { resolveTaskDecision } from './task-resolver'
 import { executionPlanFor } from './execution-plan'
 import { appendTaskEvent } from './task-ledger'
 import { previousTask } from './task-store'
 import { prepareModelWindows } from './ollama-runtime'
+import { implicitHtmlElement } from './task-intake'
 
 /**
  * Production chat turn pipeline shared by the chat IPC handler and in-app

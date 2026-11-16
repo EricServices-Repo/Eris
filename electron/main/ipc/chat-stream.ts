@@ -369,7 +369,7 @@ export function registerChatStreamIpc(): void {
             openFilePath: payload.prompt?.openFile?.path,
             askTarget: async (question, choices) => {
               const reply = await requestUserQuestion(chatSender(), requestId, question, {
-                choices, signal: controller.signal, timeoutMs: USER_QUESTION_TIMEOUT_MS
+                choices, choiceLimit: 20, signal: controller.signal, timeoutMs: USER_QUESTION_TIMEOUT_MS
               })
               return reply.kind === 'reply' ? reply.text : null
             },

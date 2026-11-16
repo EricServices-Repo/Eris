@@ -1,6 +1,6 @@
 /* eslint-disable require-yield -- fake runners only need to exercise approveCommand */
 import { randomUUID } from 'crypto'
-import { mkdtempSync, realpathSync } from 'fs'
+import { mkdtempSync, realpathSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -64,11 +64,15 @@ let handlers: Record<string, Handler> = {}
 let sent: Array<{ channel: string; payload: Record<string, unknown> }> = []
 /** Decision the fake renderer answers approval prompts with (null = never answer) */
 let reply: 'allow' | 'always' | 'deny' | null = 'allow'
+let pageChoice: string | undefined
 
 const sender = {
   isDestroyed: () => false,
   send: (channel: string, payload: Record<string, unknown>) => {
     sent.push({ channel, payload })
+    if (channel === 'chat:question-request' && pageChoice) {
+      queueMicrotask(() => { void handlers['chat:questionRespond']!({ sender }, payload.questionId, pageChoice) })
+    }
     if (channel === 'chat:approval-request' && reply) {
       const decision = reply
       queueMicrotask(() => {
@@ -121,11 +125,28 @@ beforeEach(() => {
   handlers = {}
   sent = []
   reply = 'allow'
+  pageChoice = undefined
   vi.spyOn(ipcMain, 'handle').mockImplementation(((channel: string, fn: Handler) => {
     handlers[channel] = fn
   }) as never)
   registerChatStreamIpc()
   appState.currentWorkspace = realpathSync(mkdtempSync(join(tmpdir(), 'eris-chat-')))
+})
+
+it('asks which page to edit before starting the agent and binds the reply', async () => {
+  const root = appState.currentWorkspace!
+  for (const file of ['hello.html', 'todo.html']) writeFileSync(join(root, file), '<body></body>')
+  pageChoice = 'todo.html'
+  runner.script = async function* ({ turnPlan }) {
+    expect(channels()).toContain('chat:question-request')
+    expect(turnPlan.task?.requested).toMatchObject({
+      targetFiles: ['todo.html'], targetReason: 'chosen by user', state: 'resolved'
+    })
+    yield { type: 'answer', text: 'The page was selected.' }
+  }
+  await expect(stream({ text: 'Add a footer' })).resolves.toBe(true)
+  expect(sent.find(({ channel }) => channel === 'chat:question-request')?.payload.choices)
+    .toEqual(['hello.html', 'todo.html'])
 })
 
 it('refuses a request with no eligible model before admitting a task', async () => {
