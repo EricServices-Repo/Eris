@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import {
+  ERIS_CLOUD_CONNECTION_ID,
   erisCloudModelRef,
   isErisCloudConnection,
   normalizeErisCloudConnection
@@ -334,20 +335,34 @@ const SUPERSEDED_SHARED_RULES = [
 function buildResolvedSettings(workspacePath: string | null): AppSettings {
   const userLayer = getUserSettings()
   const workspaceLayer = getWorkspaceSettings(workspacePath)
+  const effectiveWorkspace = getEffectiveWorkspaceSettings(workspacePath)
+  const combined = deepMerge(
+    deepMerge(getDefaults() as unknown as Record<string, unknown>, userLayer as Record<string, unknown>),
+    effectiveWorkspace as Record<string, unknown>
+  )
+  const workspaceConnections = effectiveWorkspace.models?.connections
+  if (Array.isArray(workspaceConnections)) {
+    // The signed-in profile owns the Cloud catalog. A workspace can disable it locally.
+    const accountCloud = userLayer.models?.connections?.find((conn) => conn?.id === ERIS_CLOUD_CONNECTION_ID)
+    const workspaceCloud = workspaceConnections.find((conn) => conn?.id === ERIS_CLOUD_CONNECTION_ID)
+    combined.models = {
+      ...(combined.models as Record<string, unknown>),
+      connections: [
+        ...workspaceConnections.filter((conn) => conn?.id !== ERIS_CLOUD_CONNECTION_ID),
+        normalizeErisCloudConnection({
+          ...accountCloud,
+          enabled: accountCloud?.enabled === true && workspaceCloud?.enabled !== false,
+          models: accountCloud?.models ?? []
+        })
+      ]
+    }
+  }
   const merged = sanitizeEditor(
     sanitizeEricServices(
       sanitizeGithub(
         sanitizeMcp(
           sanitizeGeneral(
-            sanitizeLegacyModels(
-              deepMerge(
-                deepMerge(
-                  getDefaults() as unknown as Record<string, unknown>,
-                  userLayer as Record<string, unknown>
-                ),
-                getEffectiveWorkspaceSettings(workspacePath) as Record<string, unknown>
-              ) as Record<string, unknown>
-            )
+            sanitizeLegacyModels(combined)
           )
         )
       )

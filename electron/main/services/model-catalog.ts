@@ -305,7 +305,7 @@ export function connectionsWithDiscoveredModels(
     const cloud = isErisCloudConnection(c)
     if ((options.cloudOnly && !cloud) || (options.keepCloud && cloud)) return c
     const live = status.connections.find((x) => x.id === c.id)
-    if (!live || live.baseUrl !== c.baseUrl || (!cloud && (!live.reachable || !live.models.length))) return c
+    if (!live?.enabled || live.baseUrl !== c.baseUrl || (!cloud && (!live.reachable || !live.models.length))) return c
     const same =
       c.models.length === live.models.length && c.models.every((m, i) => m === live.models[i])
     if (same) return c
