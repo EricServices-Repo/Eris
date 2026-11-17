@@ -49,10 +49,9 @@ export function intentPlaybook(
   }
   if (intent === 'verify') {
     return (
-      `VERIFICATION PLAYBOOK — Read the implementation, its callers and its tests, then look for the boundary, ` +
-      `error and regression cases that happy-path checks miss. Run only the relevant tests, typecheck or lint ` +
-      `through the run tool, and report each command with its actual output. Separate what you verified from ` +
-      `the risks that remain. Do not edit files, run unrelated commands, or report a pass you did not observe.`
+      'VERIFICATION PLAYBOOK — Map each criterion to evidence. Inspect affected callers, tests, and failure paths. ' +
+      'Run the narrowest relevant check when authorized. Report each criterion as passed, failed, or unverified. ' +
+      'Distinguish checks that failed from checks that did not run. Do not edit.'
     )
   }
   if (greenfield) {
