@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.10 — 2026-11-17
+
+- Improved shared and specialist prompts, verification guidance, and delegated handoffs.
+
 ## 0.7.9 — 2026-11-17
 
 - Saved chat queues, clearer task completion evidence, and Auto model selection after task resolution.
