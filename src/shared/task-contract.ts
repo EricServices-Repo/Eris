@@ -122,6 +122,7 @@ export interface TaskCompletionEvidence {
   execution: 'completed' | 'incomplete'
   verification: 'passed' | 'failed' | 'not-run'
   projectCheck?: ProjectCheckEvidence
+  requirements?: RequirementProgress[]
   assessment: {
     status: 'supported' | 'partial' | 'unresolved' | 'not-run'
     model?: string
