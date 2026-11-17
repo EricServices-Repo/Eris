@@ -170,13 +170,13 @@ ${REPLY_STYLE}`
   // One grammar per backend: native calls, or the text envelope the parser accepts.
   const calls =
     toolProtocol === 'native-tools'
-      ? 'Use native function calls. Never put a tool call in reply text.'
+      ? 'Use native function calling. Never put a tool call in reply text.'
       : `Emit one envelope per call. The arguments must be a JSON object:\n${TEXT_TOOL_EXAMPLE}`
   // Permissions only. What the reply contains comes from the response contract, so a
   // read-only code example is never told to return a findings report.
   const effects = task.authority.edit
     ? 'Read existing files before editing. In an empty project, create the requested application files.'
-    : 'Read-only task. Do not create, edit, or delete files.'
+    : 'This task is read-only. Do not create, edit, or delete files.'
   const evidence = evidenceRequirementFor(task.scope.applicability)
   const grounding =
     evidence === 'none'
@@ -188,7 +188,7 @@ ${REPLY_STYLE}`
   const delegation =
     task.authority.tools === 'full' ? ' Delegated work keeps this project and these permissions.' : ''
   return `${AUTHORITY_PREAMBLE}
-TOOLS — ${calls} Call tools when needed. Read accessible files yourself. ${effects} ${grounding} When done, reply with the result, failures, and unverified work.${delegation}
+TOOLS — ${calls} Call needed tools now. Read accessible files yourself. ${effects} ${grounding} Stop calling tools when done. Report the result, failures, and unverified work.${delegation}
 ${REPLY_STYLE}`
 }
 
