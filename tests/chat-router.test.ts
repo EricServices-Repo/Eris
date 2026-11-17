@@ -491,7 +491,8 @@ describe('read-only safety net (#505)', () => {
     const [system] = buildChatMessages(null, getDefaults(), {
       text: 'x', mode: 'agent', agentId: 'explainer', history: [], attachments: [], skillIds: []
     })
-    expect(system!.content).toContain('Never say that Eris cannot edit files or run commands.')
+    expect(system!.content).toContain('For an edit request, explain that this role is read-only.')
+    expect(system!.content).toContain('Suggest Agent mode with Agent or Auto.')
     const [composer] = buildChatMessages(null, getDefaults(), {
       text: 'x', mode: 'agent', agentId: 'composer', history: [], attachments: [], skillIds: []
     })
