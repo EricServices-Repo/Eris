@@ -1656,7 +1656,8 @@ describe('context pull through the agent loop', () => {
         mcp: 'off'
       })
     )
-    expect(harness.prompts[0]).toContain('Older context stays available')
+    expect(harness.prompts[0]).toContain('Use context_search for relevant earlier details')
+    expect(harness.prompts[0]).not.toContain('{"name":"context_search"')
     expect(lastToolResult(1)).toContain('HISTORICAL EVIDENCE')
   })
 
