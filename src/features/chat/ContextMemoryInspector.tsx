@@ -74,26 +74,29 @@ export function ContextMemoryInspector({
   }
   const controls = snapshot?.controlsAvailable ? snapshot.controls : undefined
   const [facts, setFacts] = useState<ProjectFact[]>([])
+  const [factError, setFactError] = useState('')
   useEffect(() => {
-    if (!open || !workspacePath) return setFacts([])
+    setFactError('')
+    setFacts([])
+    if (!open || !workspacePath) return
     let current = true
     // Facts are an extra here: failing to list them must never take recall controls down.
     Promise.resolve()
       .then(() => window.ide.listProjectFacts())
       .then((rows) => current && setFacts(rows.filter((fact) => fact.status === 'active')))
-      .catch(() => current && setFacts([]))
+      .catch((error) => { if (current) setFactError(String(error)) })
     return () => {
       current = false
     }
   }, [open, workspacePath])
   const changeFact = async (work: () => Promise<unknown>) => {
     setBusy(true)
-    setError('')
+    setFactError('')
     try {
       await work()
       setFacts((await window.ide.listProjectFacts()).filter((fact) => fact.status === 'active'))
     } catch (e) {
-      setError(String(e))
+      setFactError(String(e))
     } finally {
       setBusy(false)
     }
@@ -351,6 +354,7 @@ export function ContextMemoryInspector({
                 </li>
               ))}
             </ul>
+            {factError && <p role="alert">{factError}</p>}
             {facts.length > 0 && (
               <>
                 <h3>Project facts</h3>

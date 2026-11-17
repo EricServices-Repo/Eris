@@ -1,10 +1,12 @@
 import { randomUUID } from 'crypto'
 import {
-  existsSync,
+  closeSync,
+  constants,
+  fstatSync,
   mkdirSync,
-  readFileSync,
+  openSync,
+  readSync,
   renameSync,
-  statSync,
   unlinkSync,
   writeFileSync
 } from 'fs'
@@ -34,13 +36,25 @@ type Read = { file: ProjectFactFile } | { unreadable: string }
 
 function read(workspaceId: string): Read {
   const path = factsPath(workspaceId)
-  if (!existsSync(path)) return { file: { version: 1, facts: [] } }
+  let fd: number | undefined
   try {
-    // Checked before reading, so a huge file is never decoded.
-    if (statSync(path).size > PROJECT_FACTS_MAX_FILE_BYTES)
-      return { unreadable: 'it is larger than 8 MiB' }
-    return { file: ProjectFactFileSchema.parse(JSON.parse(readFileSync(path, 'utf8'))) }
+    fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK)
+    const info = fstatSync(fd)
+    if (!info.isFile()) return { unreadable: 'it is not a regular file' }
+    if (info.size > PROJECT_FACTS_MAX_FILE_BYTES) return { unreadable: 'it is larger than 8 MiB' }
+    // Check and read the same file handle. A concurrent growth cannot allocate an unbounded buffer.
+    const bytes = Buffer.alloc(info.size + 1)
+    let offset = 0
+    while (offset < bytes.length) {
+      const received = readSync(fd, bytes, offset, bytes.length - offset, null)
+      if (!received) break
+      offset += received
+    }
+    if (offset !== info.size) return { unreadable: 'its size changed while it was being read' }
+    return { file: ProjectFactFileSchema.parse(JSON.parse(bytes.toString('utf8', 0, offset))) }
   } catch (error) {
+    if (fd === undefined && (error as NodeJS.ErrnoException).code === 'ENOENT')
+      return { file: { version: 1, facts: [] } }
     return {
       unreadable:
         error instanceof SyntaxError
@@ -49,6 +63,8 @@ function read(workspaceId: string): Read {
             ? `it could not be opened (${(error as NodeJS.ErrnoException).code})`
             : 'it does not match the expected format'
     }
+  } finally {
+    if (fd !== undefined) closeSync(fd)
   }
 }
 
@@ -78,6 +94,7 @@ function bounded(facts: ProjectFact[]): ProjectFact[] {
   const kept = new Set(
     facts
       .filter((fact) => fact.status !== 'active')
+      .reverse()
       .sort((a, b) => (b.endedAt ?? b.promotedAt) - (a.endedAt ?? a.promotedAt))
       .slice(0, PROJECT_FACTS_MAX_HISTORY)
   )
@@ -91,9 +108,9 @@ function save(workspaceId: string, file: ProjectFactFile) {
     null,
     2
   )
-  mkdirSync(join(userDataRoot(), 'project-facts'), { recursive: true })
   const next = `${path}.${randomUUID()}.tmp`
   try {
+    mkdirSync(join(userDataRoot(), 'project-facts'), { recursive: true })
     writeFileSync(next, body, 'utf8')
     renameSync(next, path)
   } catch (error) {
@@ -112,7 +129,7 @@ function save(workspaceId: string, file: ProjectFactFile) {
 export const activeProjectFacts = (workspaceId: string) =>
   load(workspaceId).facts.filter((fact) => fact.status === 'active')
 
-export const listProjectFacts = (workspaceId: string) => load(workspaceId).facts
+export const listProjectFacts = (workspaceId: string) => loadForChange(workspaceId).facts
 
 /** Reached only from the user's action in the inspector. No model tool can call this. */
 export function promoteProjectFact(input: {
@@ -129,7 +146,13 @@ export function promoteProjectFact(input: {
     : undefined
   if (supersedes && !replaced) throw new Error('That project fact is no longer active.')
   const repeat = file.facts.find((fact) => fact.status === 'active' && fact.text === pin.text)
-  if (repeat) return repeat
+  if (repeat) {
+    if (replaced && replaced.id !== repeat.id) {
+      Object.assign(replaced, { status: 'superseded', endedAt: Date.now(), supersededBy: repeat.id })
+      save(workspaceId, file)
+    }
+    return repeat
+  }
   const active = file.facts.filter((fact) => fact.status === 'active').length
   if (active - (replaced ? 1 : 0) >= PROJECT_FACTS_MAX_ACTIVE)
     throw new Error(`A project can keep ${PROJECT_FACTS_MAX_ACTIVE} facts. Revoke one first.`)
