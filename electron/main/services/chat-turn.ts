@@ -31,6 +31,7 @@ import { executionPlanFor } from './execution-plan'
 import { appendTaskEvent } from './task-ledger'
 import { previousTask } from './task-store'
 import { prepareModelWindows } from './ollama-runtime'
+import { implicitHtmlElement } from './task-intake'
 
 /**
  * Production chat turn pipeline shared by the chat IPC handler and in-app
@@ -49,6 +50,8 @@ export interface ChatTurnInput {
   mode?: 'ask' | 'agent'
   manualAgentId?: string | null
   fileNames?: string[]
+  openFilePath?: string
+  askTarget?: (question: string, choices: string[]) => Promise<string | null>
   previousAgentId?: string | null
   forceRoute?: 'tools' | 'answer'
   preserveModelSelection?: boolean
@@ -141,6 +144,30 @@ export async function resolveChatTurnContract(
       }
     }
   }
+  const priorTask = input.priorTask !== undefined
+    ? (input.priorTask ?? undefined)
+    : previousTask(canonicalRoot, input.threadId ?? null)
+  const taskInput = {
+    referenceBinding: references,
+    taskId: input.requestId,
+    threadId: input.threadId,
+    workspacePath: input.workspacePath,
+    text: input.text,
+    skillIds: input.skillIds,
+    history: input.history,
+    openFilePath: input.openFilePath,
+    priorTask
+  }
+  let pageTask = plan.mode === 'agent' && plan.intent === 'edit' && implicitHtmlElement(input.text)
+    ? createTaskContract({ ...taskInput, plan }) : undefined
+  const question = pageTask?.requested?.targetQuestion
+  if (question && input.askTarget) {
+    const reply = await input.askTarget(question.text, question.choices)
+    input.signal?.throwIfAborted()
+    if (reply && question.choices.includes(reply))
+      pageTask = createTaskContract({ ...taskInput, plan, selectedEditTarget: reply })
+  }
+  const pageBound = pageTask?.requested?.targetQuestion || pageTask?.requested?.targetReason
   const selectedHelper = helperModel(input.settings, plan, 'resolve')
   const coordinatorModel = selectedHelper || plan.models.tools || plan.models.chat
   const skipInference = input.settings.agent.helperCalls === 'off'
@@ -148,12 +175,12 @@ export async function resolveChatTurnContract(
     : !selectedHelper
       ? 'cold-native-routing-skipped'
       : undefined
-  const resolution: IntentResolution = input.forceRoute
+  const resolution: IntentResolution = input.forceRoute || pageBound
     ? {
         intent: plan.intent,
         initialIntent: plan.intent,
         source: 'forced',
-        rule: `force-route:${input.forceRoute}`,
+        rule: pageBound ? 'html-target-intake' : `force-route:${input.forceRoute}`,
         durationMs: 0
       }
     : await resolveTaskDecision({
@@ -196,21 +223,7 @@ export async function resolveChatTurnContract(
     })
   }
   if (resolution.source === 'semantic') plan = { ...plan, models: { ...plan.models, coordinator: coordinatorModel } }
-  const task = createTaskContract({
-    referenceBinding: references,
-    taskId: input.requestId,
-    threadId: input.threadId,
-    workspacePath: input.workspacePath,
-    text: input.text,
-    plan,
-    skillIds: input.skillIds,
-    history: input.history,
-    priorTask:
-      input.priorTask !== undefined
-        ? (input.priorTask ?? undefined)
-        : previousTask(canonicalRoot, input.threadId ?? null),
-    resolution
-  })
+  const task = pageBound && pageTask ? pageTask : createTaskContract({ ...taskInput, plan, resolution })
   plan.task = task
   // Reference and scope problems are cheap intake results, not model-load requests.
   if (!taskIntakeBlocked(task, plan.mode) &&

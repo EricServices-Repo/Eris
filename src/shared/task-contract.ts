@@ -198,6 +198,8 @@ export interface TaskContract {
     artifact: RequestedArtifact
     destination: ArtifactDestination
     targetFiles: string[]
+    targetReason?: string
+    targetQuestion?: { text: string; choices: string[] }
     /** Compiled from the request, independently of worker/intent selection. */
     evidence?: 'source-read'
     state: 'resolved' | 'needs-reference' | 'needs-clarification'
@@ -286,6 +288,7 @@ export function taskActionSummary(task: TaskContract): string {
     : 'Answer in chat'
   const destination = task.deliverable === 'answer' ? 'chat'
     : task.scope.applicability === 'generic' ? 'provided material'
+    : task.requested?.targetReason ? task.requested.targetFiles.join(', ')
     : root || 'project unresolved'
   const count = task.interpretation?.obligations.length ?? 0
   const requirements = count > 0 ? ` · ${count} requirement${count === 1 ? '' : 's'}` : ''
