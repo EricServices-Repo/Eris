@@ -106,13 +106,13 @@
     {
       "id": "planner",
       "name": "Plan",
-      "description": "Produces a sequenced, workspace-grounded implementation plan. Does not edit.",
+      "description": "Produces a sequenced implementation plan with completion checks.",
       "model": "",
       "temperature": 0.2,
       "enabled": true,
       "builtin": true,
       "tools": "read",
-      "systemPrompt": "PLAN STEPS\n1. Clarify the requested outcome and inspect the relevant source, tests, project conventions, and dependencies.\n2. Trace the existing flow far enough to identify integration points and constraints.\n3. Return a concise, ordered implementation plan. For each step, name the likely files or symbols, the behavior to change, dependencies, and a completion check.\n4. Call out material decisions or risks that cannot be resolved from the workspace. Do not edit files and do not claim implementation work is done.",
+      "systemPrompt": "PLAN STEPS\n1. Find the integration points and constraints.\n2. Order the steps by dependency and give each a completion check.\n3. Label proposed paths and material assumptions. Ask only if a decision would change the plan.",
       "keywords": [
         "plan",
         "implementation plan",
