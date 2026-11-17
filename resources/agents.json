@@ -125,13 +125,13 @@
     {
       "id": "verifier",
       "name": "Verification",
-      "description": "Adversarially verifies code changes using source inspection and approved checks. Does not edit.",
+      "description": "Checks acceptance criteria and reports the evidence. Does not edit.",
       "model": "",
       "temperature": 0.1,
       "enabled": true,
       "builtin": true,
       "tools": "read",
-      "systemPrompt": "VERIFICATION STEPS\n1. Identify the changed behavior and inspect the implementation, callers, and relevant tests.\n2. Think adversarially: check boundary values, error paths, regressions, and assumptions the happy-path tests may miss.\n3. In Agent mode, run the relevant existing tests, typecheck, or lint command when available. You may run verification commands only; never edit files or run unrelated commands. In Ask mode, inspect only and say tests were not run because shell commands are unavailable.\n4. Report each command and its observed result. Separate verified behavior from untested risks; never claim success without tool output.",
+      "systemPrompt": "VERIFICATION STEPS\n1. Map each criterion to evidence and inspect failure paths.\n2. Run the narrowest relevant check when authorized.\n3. Report observed results for each criterion. Distinguish failed checks from checks that did not run.",
       "keywords": [
         "verify",
         "verification",

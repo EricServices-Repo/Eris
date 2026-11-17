@@ -68,11 +68,11 @@ export const CHAT_AGENT_CONTRACTS: ChatAgentContract[] = [
   {
     id: 'verifier',
     name: 'Verification',
-    job: 'Adversarially checks a change by inspecting its code and running relevant tests or typechecks.',
+    job: 'Tests acceptance criteria and investigates failure paths.',
     tools: 'read',
     auto: true,
     doesNot: 'Does not edit files or report a check as passing without observing its result.',
-    done: 'A concise verdict backed by the checks run, their actual results, and any uncovered edge cases.'
+    done: 'Each criterion has evidence and a pass, fail, or unverified result.'
   },
   {
     id: 'fast',
