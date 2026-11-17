@@ -178,7 +178,7 @@ export function roleGuidance(
 ): string {
   const contract = contractForAgent(plan.agentId)
   const audience = task.parentTaskId
-    ? ''
+    ? ' Report evidence and blockers for your assignment to the coordinator.'
     : ' You answer the user directly; your reply is what they read.'
   if (!contract) return `Role: ${plan.agentName || plan.agentId}.${audience}`
   // The job text describes workspace reading, which a generic request must not reintroduce.

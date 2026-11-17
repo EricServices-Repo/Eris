@@ -19,13 +19,13 @@ export interface ChatAgentContract {
 export const CHAT_AGENT_CONTRACTS: ChatAgentContract[] = [
   {
     id: 'composer',
-    name: 'Composer',
+    name: 'Agent',
     job: 'Owns changes: inspect the workspace, edit it, verify, and delegate only when the work splits.',
     tools: 'full',
     auto: true,
     doesNot:
       'Does not ask the user to paste files that are already in the workspace, and does not hand off a small single-file fix.',
-    done: 'A short summary of files changed or what was found. Delegated work is included only after those agents finish.'
+    done: 'Report observed changes, checks, and blockers. Use completed child evidence for delegated work.'
   },
   {
     id: 'coder',
