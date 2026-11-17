@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   winner: null as string | null,
   released: [] as string[],
   warm: [] as string[],
+  preparedWindows: [] as string[],
   warmOk: true,
   prepareHook: () => {}
 }))
@@ -51,6 +52,7 @@ vi.mock('../electron/main/services/builtin-model', async (original) => ({
   isExactBuiltinReady: (m: string) => m === 'builtin:composer-lite',
   resolveExactBuiltinRef: (m: string) => (m === 'builtin:composer-lite' ? m : null),
   releaseLocalChatSession: (key: string) => h.released.push(key),
+  prepareNativeModelWindow: async (model: string) => { h.preparedWindows.push(model) },
   warmLocalInference: async (_: unknown, model: string) => {
     h.warm.push(model)
     h.prepareHook()
@@ -177,6 +179,7 @@ describe('coordinator to worker at the actual transport boundary', () => {
     expect(h.warm).toEqual([]) // scripted diagnostics never allocate real models
   })
   it('defers worker ranking until intake and keeps the final model local', async () => {
+    h.preparedWindows.length = 0
     const s = settings()
     s.models.connections.push({
       id: 'remote', name: 'Remote', type: 'openai-compatible', provider: 'openai',
@@ -191,10 +194,12 @@ describe('coordinator to worker at the actual transport boundary', () => {
     expect(initial.error).toBeUndefined()
     expect(initial.models.chat).toBe('')
     expect(initial.modelExecution?.candidates).toEqual([])
+    expect(h.preparedWindows).toEqual([])
     const result = await resolveChatTurnContract(input, initial)
     expect(result.task.intent).toBe('edit')
     expect(result.plan.models.tools).toBe('local:worker')
     expect(result.plan.modelExecution?.candidates.find(item => item.model === 'gpt-5')?.eligible).toBe(false)
+    expect(h.preparedWindows).toEqual(['local:worker'])
     expect(h.warm).toEqual([])
   })
 

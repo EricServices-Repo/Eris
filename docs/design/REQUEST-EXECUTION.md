@@ -17,7 +17,7 @@ Explicit “explain how to implement” questions without a separate edit clause
 3. Resolve explicit file-creation operands with the pure `resolveFileRequest` helper. Equivalent wording such as “generate those files here in the project” does not require a classification model. Multiple recent file lists remain ambiguous. An unavailable durable binding cannot fall back to incidental prose.
 4. Use the semantic resolver for remaining ambiguous language under its existing deadline. Preserve explicit destination-bound work when the conservative fallback would replace it with a plan. Ordinary general advice still receives an answer without clarification.
 5. Create the task with `requested` metadata independent of effective authority. Legacy tasks omit the field and retain their compatibility behavior. An unresolved requested operation cannot grant write, execution or external authority.
-6. Prepare model windows only after references and scope are resolved. Generic questions without a workspace can still prepare their selected model. The initial model candidate is still selected before this stage; task-capability ranking is a separate future improvement.
+6. Desktop Auto intake checks catalog eligibility first. It ranks the worker after resolving the operation and references, then prepares each selected model window once after scope checks. Generic questions can still prepare their model. The route event records window requests and preparation time. A window request can reuse cached metadata and is distinct from a model load.
 7. Execute using the scoped contract. The executor no longer uses its former improve/review/launch phrase scanner to decide whether workspace tools are necessary.
 8. Check the required file set against actual filesystem state and observed reads/mutations, then run the existing verification and outcome gates.
 9. Persist the requested work and actual result. A read-only response does not mark requested edits as completed in durable task state.
@@ -88,7 +88,7 @@ flowchart TD
     Evidence --> Result[Persist answer and requested-work status]
 ```
 
-General RAM recall occurs after task resolution. Historical reference binding occurs before it. The diagram intentionally keeps initial model selection before complete intake, matching the source; moving all selection after a new compiler is still a proposal.
+General RAM recall occurs after task resolution. Historical reference binding occurs before it. For Desktop Auto, the initial model stage represents catalog eligibility and worker ranking takes place before preparation.
 
 ## References and RAM
 
