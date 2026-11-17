@@ -11,7 +11,7 @@ const root=mkdtempSync(join(tmpdir(),'eris-task-doc-'))
 afterAll(()=>rmSync(root,{recursive:true,force:true}))
 const plan:TurnPlan={intent:'review',agentId:'reviewer',agentName:'Reviewer',mode:'agent',
   models:{chat:'simulated:docs',tools:'simulated:docs'},toolPolicy:'read',requiresTools:true,
-  escalateToFull:false,reason:'documentation fixture',method:'heuristic'}
+  reason:'documentation fixture',method:'heuristic'}
 const task=createTaskContract({workspacePath:root,text:'Review the files',taskId:'source-review-example',plan})
 const projection=modelFacingTask(task)
 describe('canonical model-task documentation (#471)',()=>{

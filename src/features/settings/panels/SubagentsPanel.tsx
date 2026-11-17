@@ -140,7 +140,6 @@ export function SubagentsPanel({
                         enabled: true,
                         builtin: false,
                         tools: 'edit',
-                        preferEscalate: true,
                         systemPrompt: 'You are a project specialist in Eris.',
                         keywords: []
                       }

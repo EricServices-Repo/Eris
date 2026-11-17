@@ -22,7 +22,7 @@ afterEach(() => roots.splice(0).forEach(root => rmSync(root, { recursive: true, 
 const plan = (intent: TurnPlan['intent'] = 'edit'): TurnPlan => ({
   intent, agentId: 'coder', agentName: 'Coder', mode: 'agent',
   toolPolicy: intent === 'edit' ? 'edit' : 'none', requiresTools: intent === 'edit',
-  models: { chat: 'local:test', tools: 'local:test' }, escalateToFull: false,
+  models: { chat: 'local:test', tools: 'local:test' },
   method: 'heuristic', reason: 'test'
 })
 
@@ -209,5 +209,32 @@ describe('file-set completion evidence', () => {
     expect(requestedFilesProblem(task, ['booking.ts'])).toBeNull()
     rmSync(join(root, 'booking.ts'))
     expect(requestedFilesProblem(task, ['booking.ts'])).toContain('booking.ts')
+  })
+})
+
+describe('implicit HTML edit targets', () => {
+  it('asks when two pages fit and accepts the chosen page', () => {
+    const root = workspace()
+    for (const file of ['hello.html', 'todo.html']) writeFileSync(join(root, file), '<body></body>')
+    const input = { workspacePath: root, text: 'Add a footer', plan: plan() }
+    const ambiguous = createTaskContract(input)
+    expect(ambiguous.requested).toMatchObject({
+      state: 'needs-clarification',
+      targetQuestion: { choices: ['hello.html', 'todo.html'] }
+    })
+    expect(taskIntakeBlocked(ambiguous, 'agent')).toBe(true)
+    expect(ambiguous.authority.edit).toBe(false)
+    expect(parsePersistedTask(ambiguous).requested).toEqual(ambiguous.requested)
+    expect(createTaskContract({ ...input, selectedEditTarget: 'todo.html' }).requested)
+      .toMatchObject({ state: 'resolved', targetFiles: ['todo.html'], targetReason: 'chosen by user' })
+    expect(createTaskContract({ ...input, openFilePath: join(root, 'todo.html') }).requested)
+      .toMatchObject({ state: 'resolved', targetFiles: ['todo.html'], targetReason: 'open editor' })
+    const priorTask = completeChatTurnTask(createTaskContract({ ...input, text: 'Create todo.html' }), {
+      answer: 'Created the page.', changedFiles: ['todo.html'], terminal: 'complete'
+    })
+    expect(createTaskContract({ ...input, priorTask }).requested)
+      .toMatchObject({ state: 'resolved', targetFiles: ['todo.html'], targetReason: 'previous task' })
+    rmSync(join(root, 'hello.html'))
+    expect(createTaskContract(input).requested).toMatchObject({ state: 'resolved', targetFiles: ['todo.html'] })
   })
 })

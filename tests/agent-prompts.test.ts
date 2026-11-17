@@ -20,7 +20,7 @@ import defaults from '../resources/defaults.json'
 const plan = (over: Partial<TurnPlan> = {}): TurnPlan => ({
   intent: 'edit', agentId: 'composer', agentName: 'Composer', mode: 'agent',
   models: { chat: 'simulated:prompts', tools: 'simulated:prompts' },
-  toolPolicy: 'edit', requiresTools: true, escalateToFull: false, reason: 'test', method: 'manual',
+  toolPolicy: 'edit', requiresTools: true, reason: 'test', method: 'manual',
   ...over
 })
 

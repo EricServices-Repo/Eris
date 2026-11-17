@@ -20,12 +20,14 @@ it('marks a successful zero-test CRA invocation as skipped', async () => {
   const result = await runVerify(root, undefined, { allowInstall: false })
   expect(result).toMatchObject({ ok: true, skipped: true })
   expect(result.detail).toContain('no test files found')
+  expect(result.check).toMatchObject({ kind: 'test', status: 'skipped', testCount: 0, requirementIds: [] })
 })
 
 it('reports a completed test suite as passed', async () => {
   run.mockResolvedValue({ ok: true, timedOut: false, code: 0, stdout: 'Tests: 2 passed, 2 total', stderr: '' })
   const result = await runVerify(root, undefined, { allowInstall: false })
   expect(result.ok).toBe(true)
+  expect(result.check).toMatchObject({ kind: 'test', status: 'passed', testCount: 2, requirementIds: [] })
   expect(result.skipped).toBeUndefined()
 })
 
@@ -34,4 +36,18 @@ it('does not hide a timeout as a skipped suite', async () => {
   const result = await runVerify(root, undefined, { allowInstall: false })
   expect(result.ok).toBe(false)
   expect(result.skipped).toBeUndefined()
+})
+
+it('classifies a typecheck as project evidence without claiming behavior coverage', async () => {
+  const project = mkdtempSync(join(tmpdir(), 'eris-typecheck-evidence-'))
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ scripts: { typecheck: 'tsc --noEmit' } }))
+    run.mockResolvedValue({ ok: true, timedOut: false, code: 0, stdout: '', stderr: '' })
+    const result = await runVerify(project, undefined, { allowInstall: false })
+    expect(result.check).toMatchObject({
+      kind: 'typecheck', scope: 'project', status: 'passed', command: 'npm run typecheck', requirementIds: []
+    })
+  } finally {
+    rmSync(project, { recursive: true, force: true })
+  }
 })

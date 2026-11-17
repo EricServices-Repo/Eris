@@ -65,7 +65,6 @@ vi.mock('../electron/main/services/agent-telemetry', () => ({ bestModelForIntent
 vi.mock('../electron/main/services/eval-store', () => ({ bestEvalModelForIntent: () => null }))
 import { getDefaults } from '../electron/main/services/settings'
 import {
-  localChatTurnModel,
   planInitialChatTurn,
   resolveChatTurnContract
 } from '../electron/main/services/chat-turn'
@@ -100,7 +99,6 @@ afterEach(() => {
 const settings = () => {
   const s = structuredClone(getDefaults())
   s.agent.routing.profile = 'local'
-  s.agent.routing.preferCloudComposer = false
   s.agent.routing.routerModel = 'builtin:composer-lite'
   s.agent.routing.useLlmRouter = true
   return s
@@ -113,7 +111,6 @@ const basePlan = (): TurnPlan => ({
   models: { chat: 'builtin:composer-lite', tools: 'builtin:composer-lite' },
   toolPolicy: 'edit',
   requiresTools: true,
-  escalateToFull: false,
   reason: 'test',
   method: 'heuristic',
   modelExecution: { policy: 'auto-local', selection: 'auto-local', basis: 'test', candidates: [] }
@@ -398,21 +395,12 @@ describe('policy precedence through production planning', () => {
     expect(plan.error).toContain('conflicts with Auto-local')
     expect(plan.modelExecution?.policy).toBe('fixed')
   })
-  it('does not silently convert fixed Full to Lite when local Full is unavailable', () => {
-    const plan = basePlan()
-    plan.modelExecution!.policy = 'fixed'
-    plan.models = { chat: 'builtin:composer', tools: 'builtin:composer' }
-    const local = localChatTurnModel(plan, 'builtin:composer', settings())
-    expect(local.model).toBe('builtin:composer')
-    expect(local.plan.error).toContain('Fixed Composer Full is unavailable')
-  })
   it('does not select cloud-only Composer for an Ask or workspace-free request', async () => {
     for (const [mode, workspacePath] of [
       ['ask', root],
       ['agent', null]
     ] as const) {
       const s = settings()
-      s.agent.routing.preferCloudComposer = true
       s.agent.routing.profile = 'auto'
       const plan = await planChatTurn({
         workspacePath,
@@ -421,7 +409,6 @@ describe('policy precedence through production planning', () => {
         context: { text: 'Verify the code', selectedModel: 'auto-any', mode, skipModelRouter: true }
       })
       expect(plan.models.tools).not.toBe('builtin:composer')
-      expect(plan.cloudPreferred).toBe(false)
     }
   })
 })
@@ -467,7 +454,6 @@ describe('bounded recovery admission', () => {
       selectedModel: plan.models.tools,
       goal: 'Create hello.txt',
       getSecret: () => null,
-      escalateCount: 0,
       rerouteCount: 0,
       actionLog: [],
       filesTouched: [],
@@ -481,7 +467,6 @@ describe('bounded recovery admission', () => {
   it('recovers within a remote provider, honors fallback order and requires cross-provider consent', async () => {
     const s = settings()
     s.agent.routing.profile = 'auto'
-    s.agent.routing.preferCloudComposer = true
     s.models.connections = [
       { id: 'first', name: 'First', provider: 'custom', type: 'openai-compatible', enabled: true,
         baseUrl: 'https://first.example/v1', apiKeyRef: '', models: ['initial', 'same-a', 'same-b'] },

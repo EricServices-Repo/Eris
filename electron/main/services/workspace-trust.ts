@@ -43,11 +43,6 @@ export const RISKY_WORKSPACE_SETTINGS: Array<{
     restricts: (value) => value === 'local'
   },
   {
-    path: ['agent', 'routing', 'preferCloudComposer'],
-    label: 'Run agent tools on Cloud Composer',
-    restricts: (value) => value === false
-  },
-  {
     path: ['intelligence', 'remoteEmbeddingPolicy'],
     label: 'Send workspace text to a remote embedding model',
     restricts: (value) => value === 'disabled'

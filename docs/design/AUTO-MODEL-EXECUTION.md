@@ -45,6 +45,8 @@ For local GGUF models, the context window is allocated first and the prompt is t
 
 ## Recovery
 
+A turn uses one execution model for both its conversation and tool calls. The legacy Max routing setting loads as Auto.
+
 A run can switch model when it repeats empty or invalid output, stops making progress, fails verification, or hits a recoverable native or context failure. Recovery:
 
 - is bounded by the shared two-adaptation budget, and every model already tried is excluded;

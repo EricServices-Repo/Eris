@@ -2,7 +2,6 @@ import { estimatedNativeAnswerMs } from './model-latency'
 import { isNativeGgufRef } from '../../../src/shared/model-destination'
 import { connectionModelRef } from '../../../src/shared/eris-cloud'
 import type { AppSettings, ChatIntent, LocalModelStatus, ModelConnection } from '../../../src/shared/settings-schema'
-import { isExactBuiltinReady } from './builtin-model'
 import { getSecret } from './credentials'
 import { getLocalStatuses } from './local-model'
 import { modelDestination } from './model-destination'
@@ -38,8 +37,6 @@ export function executionPolicy(settings: AppSettings, selected: string): Execut
 
 /** Execution locality is stricter than permission to disclose recall to an approved LAN host. */
 export function executionLocal(settings: AppSettings, model: string): boolean {
-  if (model === 'builtin:composer')
-    return settings.agent.routing.useLocalComposerFull === true && isExactBuiltinReady(model)
   return modelDestination(settings, model).locality !== 'remote'
 }
 
@@ -78,7 +75,7 @@ export async function chooseExecutionModel(
   intent: ChatIntent,
   selected = 'auto',
   excluded: readonly string[] = [],
-  _options: { cloudComposer?: boolean; requiredContext?: number; modelClass?: 'primary' | 'fast' } = {}
+  _options: { requiredContext?: number; modelClass?: 'primary' | 'fast' } = {}
 ): Promise<AutoModelChoice> {
   const policy = executionPolicy(settings, selected)
   if (policy === 'fixed') return { model: selected, policy, basis: 'profile', candidates: [] }

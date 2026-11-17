@@ -283,7 +283,6 @@ export async function runCorpusDebug(
         question: question.text
       })
       const plan = await planChatTurn({
-      allowCloudComposer: false,
         workspacePath,
         settings,
         context: {

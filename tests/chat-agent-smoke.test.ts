@@ -239,7 +239,6 @@ function fullEditPlan(): TurnPlan {
     models: { chat: 'builtin:composer-lite', tools: 'builtin:composer-lite' },
     toolPolicy: 'full',
     requiresTools: true,
-    escalateToFull: false,
     reason: 'chat smoke test',
     method: 'manual'
   }
@@ -254,7 +253,6 @@ function workspaceQuestionPlan(): TurnPlan {
     models: { chat: 'builtin:composer-lite', tools: 'builtin:composer-lite' },
     toolPolicy: 'read',
     requiresTools: true,
-    escalateToFull: false,
     reason: 'workspace question smoke test',
     method: 'manual'
   }

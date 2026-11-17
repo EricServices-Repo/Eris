@@ -279,21 +279,13 @@ export async function* streamProviderChat(
   // the actual allocation. Otherwise a cold 262K request can fail against an 8K
   // planning forecast without ever giving the allocator a chance to run.
   const budgeted = isNativeGgufRef(model)
-    ? { messages: inputMessages }
+    ? { messages: inputMessages, estimatedTokens: 0 }
     : budgetModelMessages(inputMessages, capabilities.promptBudget - schemaTokens, protocol)
   let compiled = compileModelMessages(budgeted.messages, {
     protocol,
     contextWindow: capabilities.contextCeiling,
     outputReserve: capabilities.outputReserve
   })
-  if (!isNativeGgufRef(model))
-    reportContextDispatch({
-      compiled: options.messages,
-      outbound: compiled,
-      adapted: true,
-      ...options,
-      context: contextProvenance(options.settings, model)
-    })
   let inputEstimate =
     estimateMessagesTokens(
       compiled.map((message) => ({
@@ -471,22 +463,33 @@ export async function* streamProviderChat(
               content: m.content ?? ''
             }))
           )
-          reportContextDispatch({
-            ...options,
-            compiled: latest.messages,
-            outbound: compiled,
-            adapted: true,
-            context: {
-              ...contextProvenance(options.settings, model),
-              ...(allocated.contextCeiling === plannedTokens ? {} : { plannedTokens })
-            }
-          })
-          return compiled
+          const outbound = compiled
             .filter((m) => m.role === 'system' || m.role === 'user' || m.role === 'assistant')
             .map((m) => ({
               role: m.role as 'system' | 'user' | 'assistant',
               content: String(m.content ?? '')
             }))
+          reportContextDispatch({
+            compiled: latest.messages,
+            outbound,
+            model,
+            settings: options.settings,
+            adapted: true,
+            transport: 'native-gguf',
+            toolProtocol: 'text-tools',
+            schema: options.tools?.length ? options.tools : undefined,
+            packing: {
+              method: counter.method,
+              tokenizer: counter.tokenizer,
+              inputTokens: packed.estimatedTokens,
+              maxOutputTokens: allocated.outputCap
+            },
+            context: {
+              ...contextProvenance(options.settings, model),
+              ...(allocated.contextCeiling === plannedTokens ? {} : { plannedTokens })
+            }
+          })
+          return outbound
         },
         modelRef: model,
         contextWindow: capabilities.requestedContext,
@@ -559,6 +562,24 @@ export async function* streamProviderChat(
                 ? KEEP_LOADED_INDEFINITELY
                 : ACTIVE_SESSION_KEEP_ALIVE
             })
+    const nativeTools = protocol === 'native-tools' ? options.tools : undefined
+    reportContextDispatch({
+      compiled: options.messages,
+      outbound: compiled,
+      model,
+      settings: options.settings,
+      tools: nativeTools,
+      adapted: true,
+      transport: numCtx === null ? 'openai-compatible' : 'ollama',
+      toolProtocol: protocol,
+      schema: options.tools?.length ? options.tools : undefined,
+      packing: {
+        method: 'serialized-character-estimate',
+        inputTokens: budgeted.estimatedTokens + schemaTokens,
+        maxOutputTokens: capabilities.outputCap
+      },
+      context: contextProvenance(options.settings, model)
+    })
     for await (const chunk of stream({
       baseUrl: connection.baseUrl,
       apiKey,
@@ -569,7 +590,7 @@ export async function* streamProviderChat(
       maxOutputTokens: capabilities.outputCap,
       signal: options.signal,
       refuseRedirects: modelDestination(options.settings, model).recallAllowed,
-      tools: protocol === 'native-tools' ? options.tools : undefined,
+      tools: nativeTools,
       toolChoice: options.toolChoice,
       onNativeToolCalls: options.onNativeToolCalls,
       onReasoning,

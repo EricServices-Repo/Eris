@@ -49,7 +49,7 @@ async function nudges(model: string) {
   const turnPlan: TurnPlan = {
     intent: 'edit', agentId: 'composer', agentName: 'Composer', mode: 'agent',
     models: { chat: model, tools: model }, toolPolicy: 'edit', requiresTools: true,
-    escalateToFull: false, reason: 'test', method: 'manual'
+    reason: 'test', method: 'manual'
   }
   turnPlan.task = createTaskContract({ workspacePath: ws, text, plan: turnPlan })
   for await (const _ of runAgentWithWorkspaceTools({

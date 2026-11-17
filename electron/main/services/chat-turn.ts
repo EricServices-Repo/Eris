@@ -1,6 +1,5 @@
 import { helperModel } from './helper-model'
 import { modelDestination } from './model-destination'
-import { isNativeGgufRef } from '../../../src/shared/model-destination'
 import { bindTaskReferences, type ResolvedReference } from './reference-binding'
 import { realpathSync } from 'fs'
 import type {
@@ -24,13 +23,14 @@ import {
 import type { AgentRunnerEvent } from './agent/types'
 import { buildChatMessages, type BuiltChatMessage } from './chat-prompt'
 import type { ContextAllocation } from '../../../src/shared/context-allocation'
-import { localComposerFullActive, planChatTurn } from './chat-router'
+import { planChatTurn } from './chat-router'
 import { createTaskContract } from './task-intake'
 import { resolveTaskDecision } from './task-resolver'
 import { executionPlanFor } from './execution-plan'
 import { appendTaskEvent } from './task-ledger'
 import { previousTask } from './task-store'
 import { prepareModelWindows } from './ollama-runtime'
+import { implicitHtmlElement } from './task-intake'
 
 /**
  * Production chat turn pipeline shared by the chat IPC handler and in-app
@@ -49,8 +49,8 @@ export interface ChatTurnInput {
   mode?: 'ask' | 'agent'
   manualAgentId?: string | null
   fileNames?: string[]
-  /** Desktop intake can defer ranking until the operation and references are known. */
-  deferAutoWorker?: boolean
+  openFilePath?: string
+  askTarget?: (question: string, choices: string[]) => Promise<string | null>
   previousAgentId?: string | null
   forceRoute?: 'tools' | 'answer'
   preserveModelSelection?: boolean
@@ -145,6 +145,30 @@ export async function resolveChatTurnContract(
       }
     }
   }
+  const priorTask = input.priorTask !== undefined
+    ? (input.priorTask ?? undefined)
+    : previousTask(canonicalRoot, input.threadId ?? null)
+  const taskInput = {
+    referenceBinding: references,
+    taskId: input.requestId,
+    threadId: input.threadId,
+    workspacePath: input.workspacePath,
+    text: input.text,
+    skillIds: input.skillIds,
+    history: input.history,
+    openFilePath: input.openFilePath,
+    priorTask
+  }
+  let pageTask = plan.mode === 'agent' && plan.intent === 'edit' && implicitHtmlElement(input.text)
+    ? createTaskContract({ ...taskInput, plan }) : undefined
+  const question = pageTask?.requested?.targetQuestion
+  if (question && input.askTarget) {
+    const reply = await input.askTarget(question.text, question.choices)
+    input.signal?.throwIfAborted()
+    if (reply && question.choices.includes(reply))
+      pageTask = createTaskContract({ ...taskInput, plan, selectedEditTarget: reply })
+  }
+  const pageBound = pageTask?.requested?.targetQuestion || pageTask?.requested?.targetReason
   const selectedHelper = helperModel(input.settings, plan, 'resolve')
   const coordinatorModel = selectedHelper || plan.models.tools || plan.models.chat
   const skipInference = input.settings.agent.helperCalls === 'off'
@@ -152,12 +176,12 @@ export async function resolveChatTurnContract(
     : !selectedHelper
       ? 'cold-native-routing-skipped'
       : undefined
-  const resolution: IntentResolution = input.forceRoute
+  const resolution: IntentResolution = input.forceRoute || pageBound
     ? {
         intent: plan.intent,
         initialIntent: plan.intent,
         source: 'forced',
-        rule: `force-route:${input.forceRoute}`,
+        rule: pageBound ? 'html-target-intake' : `force-route:${input.forceRoute}`,
         durationMs: 0
       }
     : await resolveTaskDecision({
@@ -204,21 +228,7 @@ export async function resolveChatTurnContract(
     })
   }
   if (resolution.source === 'semantic') plan = { ...plan, models: { ...plan.models, coordinator: coordinatorModel } }
-  const task = createTaskContract({
-    referenceBinding: references,
-    taskId: input.requestId,
-    threadId: input.threadId,
-    workspacePath: input.workspacePath,
-    text: input.text,
-    plan,
-    skillIds: input.skillIds,
-    history: input.history,
-    priorTask:
-      input.priorTask !== undefined
-        ? (input.priorTask ?? undefined)
-        : previousTask(canonicalRoot, input.threadId ?? null),
-    resolution
-  })
+  const task = pageBound && pageTask ? pageTask : createTaskContract({ ...taskInput, plan, resolution })
   plan.task = task
   // Reference and scope problems are cheap intake results, not model-load requests.
   if (!plan.error && !taskIntakeBlocked(task, plan.mode) &&
@@ -301,24 +311,6 @@ export function buildChatTurnMessages(
         : {})
     }
   )
-}
-
-/** Composer Full runs locally only when its local runtime is active; otherwise Lite. */
-export function localChatTurnModel(
-  plan: TurnPlan,
-  model: string,
-  settings: AppSettings
-): { model: string; plan: TurnPlan } {
-  if (
-    (model === 'builtin:composer' || model === 'composer') &&
-    !localComposerFullActive(settings)
-  ) {
-    if (plan.modelExecution?.policy === 'fixed') return { model, plan: { ...plan,
-      error: 'Fixed Composer Full is unavailable for local execution. Enable local Full or explicitly choose another model or automatic policy.' } }
-    const lite = 'builtin:composer-lite'
-    return { model: lite, plan: { ...plan, models: { ...plan.models, chat: lite, tools: lite } } }
-  }
-  return { model, plan }
 }
 
 const OUTCOME_EVIDENCE_TOOLS = ['read_file', 'notebook_read', 'run', 'search_replace', 'write_file']

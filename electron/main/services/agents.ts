@@ -59,10 +59,6 @@ function normalizeAgent(raw: unknown, fallbackBuiltin = false): AgentDefinition 
       ? input.keywords.map((k) => String(k))
       : [],
     tools,
-    preferEscalate:
-      typeof input.preferEscalate === 'boolean'
-        ? input.preferEscalate
-        : tools === 'edit' || tools === 'full',
     modelClass: input.modelClass === 'primary' || input.modelClass === 'fast' ? input.modelClass : undefined
   })
 }
@@ -109,8 +105,7 @@ export function mergeAgentConfigs(
       systemPrompt: isBuiltin ? existing.systemPrompt : incoming.systemPrompt,
       keywords: isBuiltin ? existing.keywords : incoming.keywords,
       description: isBuiltin ? existing.description : incoming.description,
-      tools: isBuiltin ? existing.tools : incoming.tools,
-      preferEscalate: isBuiltin ? existing.preferEscalate : incoming.preferEscalate
+      tools: isBuiltin ? existing.tools : incoming.tools
     })
   }
 
