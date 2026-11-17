@@ -22,6 +22,12 @@ export const SandboxPathSchema = z.string().superRefine((path, ctx) => {
 export const EvalCheckSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('file_contains'), path: SandboxPathSchema, text: z.string() }),
   z.object({ type: z.literal('file_matches'), path: SandboxPathSchema, pattern: z.string() }),
+  z.object({ type: z.literal('typescript_compile'), files: z.array(SandboxPathSchema).min(1).max(32) }),
+  z.object({
+    type: z.literal('json_fields'),
+    path: SandboxPathSchema,
+    fields: z.array(z.object({ path: z.array(z.string()).max(12), value: z.json() })).min(1).max(32)
+  }),
   z.object({ type: z.literal('file_exists'), path: SandboxPathSchema }),
   z.object({ type: z.literal('file_absent'), path: SandboxPathSchema }),
   z.object({
