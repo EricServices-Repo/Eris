@@ -30,11 +30,11 @@ export const CHAT_AGENT_CONTRACTS: ChatAgentContract[] = [
   {
     id: 'coder',
     name: 'Coder',
-    job: 'Implements one assigned change with a small diff. Used when pinned, or when Composer delegates.',
+    job: 'Implements one assigned change with a focused diff.',
     tools: 'edit',
     auto: false,
     doesNot: 'Does not widen the task, open pull requests, or delegate further.',
-    done: 'The assigned files are edited and, when the project has them, tests or typecheck have been run.'
+    done: 'Assigned behavior is delivered. Changed paths, permitted checks, and blockers are reported.'
   },
   {
     id: 'explainer',

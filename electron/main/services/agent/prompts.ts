@@ -93,13 +93,9 @@ export function intentPlaybook(
       )
     case 'edit':
       return (
-        `EDIT PLAYBOOK — (1) Find and read the files involved, including where the code you change is used. ` +
-        `(2) Make the smallest change that fully does the request, in the project's style. ` +
-        // #509: a second footer was added inside an existing one.
-        `If the element already exists, update it instead of adding a second one. ` +
-        `(3) Run the project's tests, typecheck or lint when it has them; fix what you broke. ` +
-        `(4) End with a short summary: the files changed, what changed, and what you ran with its result. ` +
-        `Do not call a change correct, verified or tested unless a check you ran shows it.`
+        'EDIT PLAYBOOK — Read the assigned files and affected callers. Keep the diff focused and preserve unrelated work. ' +
+        'If the element exists, update it instead of adding a second one. Check each requested behavior with the tools granted. ' +
+        'End with a summary: the files changed, what the checks showed, and any blockers.'
       )
     case 'run':
       return (
