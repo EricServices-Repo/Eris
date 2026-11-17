@@ -351,8 +351,8 @@ describe('AG-056/AG-058 delegation outcomes and recovery in the loop', () => {
     const handoff = requests.find((request) =>
       request.messages.some((message) => String(message.content).includes('[Eris handoff'))
     )
-    expect(handoff?.messages.map((message) => message.content).join('\n')).toContain(
-      'not answering the user'
+    expect(handoff?.messages.find((message) => message.role === 'system')?.content).toContain(
+      'Report evidence and blockers for your assignment to the coordinator.'
     )
     const delegation = events.find((event) => event.type === 'delegation')?.data as {
       status: string

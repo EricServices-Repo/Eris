@@ -10,8 +10,22 @@ import type { BackgroundJob } from '../src/shared/background-agents'
 import { compactAgentMessages } from '../electron/main/services/agent/compaction'
 import { getDefaults } from '../electron/main/services/settings'
 import { shouldConsiderMidRunAdapt } from '../electron/main/services/agent/mid-run-adapt'
+import { roleGuidance } from '../electron/main/services/agent/prompts'
+import type { TaskContract } from '../src/shared/task-contract'
 
 describe('agent orchestration', () => {
+  it('keeps the coordinator audience in required role guidance without a handoff briefing', () => {
+    const plan = { agentId: 'coder', agentName: 'Coder', toolPolicy: 'edit' } as const
+    const child: Pick<TaskContract, 'scope' | 'parentTaskId' | 'authority'> = {
+      scope: { workspaceRoot: null, projectRoot: null, projectId: null,
+        state: 'missing', applicability: 'generic', candidates: [] },
+      parentTaskId: 'parent',
+      authority: { tools: 'edit', edit: true, execute: 'none', externalEffects: false }
+    }
+    expect(roleGuidance(plan, child)).toContain('to the coordinator')
+    expect(roleGuidance(plan, { ...child, parentTaskId: undefined })).toContain('answer the user directly')
+  })
+
   it('formats handoff packets for specialists', () => {
     const text = formatHandoffForPrompt({
       goal: 'Add login button',

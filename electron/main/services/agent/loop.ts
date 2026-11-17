@@ -961,7 +961,11 @@ async function* runAgentInternal(options: {
   // Role policy, feature settings, MCP catalog and discovery resolve to one record.
   const toolCapabilities = () =>
     resolveToolCapabilities({
-      allowedByPolicy: (name) => toolAllowedByPolicy(name, plan.toolPolicy, false),
+      allowedByPolicy: (name) => {
+        if (name === 'delegate_to_agent' && options.allowDelegate === false) return false
+        if (name === 'await_children' && !options.onAwaitChildren) return false
+        return toolAllowedByPolicy(name, plan.toolPolicy, false)
+      },
       toolPolicy: plan.toolPolicy,
       imagesEnabled: Boolean(options.settings.images?.enabled),
       mcpToolCount,
