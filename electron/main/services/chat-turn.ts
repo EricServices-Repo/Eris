@@ -52,6 +52,7 @@ export interface ChatTurnInput {
   mode?: 'ask' | 'agent'
   manualAgentId?: string | null
   fileNames?: string[]
+  deferAutoWorker?: boolean
   openFilePath?: string
   askTarget?: (question: string, choices: string[]) => Promise<string | null>
   previousAgentId?: string | null
