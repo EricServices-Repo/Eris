@@ -1,4 +1,5 @@
 import { isAutomaticModelSelection } from '@/shared/model-execution'
+import { isErisCloudModelRef } from '@/shared/eris-cloud'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AppSettings, ModelInfo, ResolvedAgent } from '@/shared/settings-schema'
 
@@ -31,7 +32,7 @@ export function useModels(settings: AppSettings | null) {
         .catch(() => {})
       let status: Awaited<ReturnType<typeof window.ide.modelsStatus>>
       try {
-        status = await window.ide.modelsStatus()
+        status = await window.ide.modelsStatus({ probeCloud: true })
       } catch (error) {
         if (generation === refreshGeneration.current) {
           setModelsError(error instanceof Error ? error.message : String(error))
@@ -49,12 +50,20 @@ export function useModels(settings: AppSettings | null) {
       setSelectedModel((prev) => {
         const desired = prev || s?.models.defaultModel || 'auto'
         if (desired.startsWith('builtin:')) return 'auto-local'
+        if (isErisCloudModelRef(desired) && !ready.some((model) => model.name === desired && model.ready))
+          return 'auto-local'
         if (isAutomaticModelSelection(desired)) return desired
         return desired
       })
     },
     [settings]
   )
+
+  useEffect(() => {
+    const refresh = () => { void refreshModels() }
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [refreshModels])
 
   return {
     models,

@@ -48,7 +48,7 @@ import {
 import { createReasoningSplitter } from './reasoning-split'
 import type { UsageDestination } from '../../../src/shared/api'
 import { isLoopbackUrl } from '../../../src/shared/model-destination'
-import { isErisCloudConnection, providerModelId } from '../../../src/shared/eris-cloud'
+import { isErisCloudConnection, isErisCloudModelRef, providerModelId } from '../../../src/shared/eris-cloud'
 
 export type { NativeToolCall, OpenAIToolDef }
 
@@ -533,6 +533,8 @@ export async function* streamProviderChat(
     }
 
     const connection = resolveConnectionForModel(options.settings, model)
+    if (!connection && isErisCloudModelRef(model))
+      throw new Error(`“${model}” is unavailable in the Eris Cloud catalog. Refresh Cloud Models or select another model.`)
     if (!connection || connection.type !== 'openai-compatible') {
       throw new Error(
         `No model connection for “${model}”. Connect Ollama or another API in Settings → Models (Refresh models after ollama pull), or download Composer Lite.`
