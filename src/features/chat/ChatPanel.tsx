@@ -224,6 +224,19 @@ export const HistoricalMessages = memo(function HistoricalMessages({
                 <ImageMessage key={asset.id} asset={asset} />
               ))}
               {message.role === 'assistant' && <OutcomeNote message={message} />}
+              {Boolean(message.contextResult?.completion?.requirements?.length) && (
+                <details className="message-details">
+                  <summary>Requested work</summary>
+                  <ul>
+                    {message.contextResult?.completion?.requirements?.map((item) => (
+                      <li key={item.id}>
+                        {item.text} · {{ satisfied: 'Target changed', partial: 'Changes observed', blocked: 'Blocked', 'not-attempted': 'No change recorded' }[item.state]}
+                        {item.remainingPaths.length ? ` · Pending ${item.remainingPaths.join(', ')}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
               {message.role === 'assistant' &&
               (message.thinking ||
                 message.reasoning ||

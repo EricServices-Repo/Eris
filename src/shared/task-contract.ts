@@ -78,6 +78,14 @@ export interface RecommendationStatus {
   reason?: string
 }
 
+export interface RequirementProgress {
+  id: string
+  text: string
+  state: 'satisfied' | 'partial' | 'blocked' | 'not-attempted'
+  evidencePaths: string[]
+  remainingPaths: string[]
+}
+
 export interface TaskTurnResult {
   terminal: 'complete' | 'incomplete' | 'error' | 'stopped'
   /** Recommendations offered by this turn's answer. */
@@ -86,6 +94,7 @@ export interface TaskTurnResult {
   answerDigest: string
   /** Per-recommendation accounting for a turn that implemented earlier recommendations. */
   recommendationStatus?: RecommendationStatus[]
+  requirements?: RequirementProgress[]
 }
 
 export interface ProjectCheckEvidence {

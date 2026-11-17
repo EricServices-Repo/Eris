@@ -123,7 +123,12 @@ const task = z
         terminal: z.enum(['complete', 'incomplete', 'error', 'stopped']),
         offeredRecommendations: z.array(recommendation).max(100),
         changedFiles: z.array(path).max(4096),
-        answerDigest: z.string()
+        answerDigest: z.string(),
+        requirements: z.array(z.object({
+          id: z.string().max(512), text,
+          state: z.enum(['satisfied', 'partial', 'blocked', 'not-attempted']),
+          evidencePaths: z.array(path).max(100), remainingPaths: z.array(path).max(100)
+        })).max(100).optional()
       })
       .passthrough()
       .optional()

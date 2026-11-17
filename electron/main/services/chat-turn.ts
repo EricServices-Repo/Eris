@@ -2,6 +2,8 @@ import { helperModel } from './helper-model'
 import { modelDestination } from './model-destination'
 import { bindTaskReferences, type ResolvedReference } from './reference-binding'
 import { realpathSync } from 'fs'
+import { relative, resolve } from 'path'
+import { isPathInside } from './workspace-fs'
 import type {
   AppSettings,
   ChatIntent,
@@ -13,6 +15,7 @@ import {
   taskIntakeBlocked,
   type IntentResolution,
   type TaskContract,
+  type RequirementProgress,
   type TaskTurnResult
 } from '../../../src/shared/task-contract'
 import {
@@ -259,10 +262,37 @@ export async function resolveChatTurnContract(
  * Record what a turn produced on its task, so the next turn in the thread can
  * refer to it: recommendations as stable objects and the files actually changed.
  */
+function observedRequirements(task: TaskContract, changedFiles: string[]): RequirementProgress[] {
+  const { workspaceRoot, projectRoot } = task.scope
+  if (!workspaceRoot || !projectRoot || task.requested?.artifact !== 'patch') return []
+  const prefix = relative(workspaceRoot, projectRoot).replace(/\\/g, '/')
+  const recorded = new Set(changedFiles.map((name) => resolve(workspaceRoot, name)))
+  const known = (name: string) => {
+    const path = name.replace(/\\/g, '/')
+    const full = resolve(prefix && path.startsWith(prefix + '/') ? workspaceRoot : projectRoot, path)
+    return isPathInside(projectRoot, full) && recorded.has(full)
+  }
+  const items = task.recommendations.length
+    ? task.recommendations.map((item) => ({ id: item.id, text: item.text, paths: item.targets ?? [], artifactOnly: false }))
+    : (task.requested.targetFiles ?? []).map((path, index) => ({
+        id: `file-${index + 1}`, text: `Change ${path}`, paths: [path], artifactOnly: true
+      }))
+  return items.map((item) => {
+    const evidencePaths = item.paths.filter(known)
+    const remainingPaths = item.paths.filter((path) => !evidencePaths.includes(path))
+    const state = !task.authority.edit || task.requested?.state !== 'resolved' ? 'blocked'
+      : item.artifactOnly && !remainingPaths.length ? 'satisfied'
+      : evidencePaths.length ? 'partial' : 'not-attempted'
+    return { id: item.id, text: item.text, state, evidencePaths, remainingPaths }
+  })
+}
+
 export function completeChatTurnTask(
   task: TaskContract,
   outcome: { answer: string; changedFiles: string[]; terminal: TaskTurnResult['terminal'] }
 ): TaskContract {
+  const requirements = observedRequirements(task, outcome.changedFiles)
+  const missingTargets = requirements.some((item) => item.remainingPaths.length)
   const offersAdvice =
     ['review', 'plan'].includes(task.deliverable) ||
     ['review', 'plan', 'design'].includes(interpretationOf(task).artifact)
@@ -270,12 +300,13 @@ export function completeChatTurnTask(
     ...task,
     result: {
       terminal: outcome.terminal === 'complete' && task.requested &&
-        (task.requested.state !== 'resolved' ||
+        (missingTargets || task.requested.state !== 'resolved' ||
           (task.requested.artifact === 'patch' && (!task.authority.edit || outcome.changedFiles.length === 0)))
         ? 'incomplete' : outcome.terminal,
       offeredRecommendations: offersAdvice ? extractRecommendations(outcome.answer) : [],
       changedFiles: [...new Set(outcome.changedFiles)].sort(),
       answerDigest: stableHash(outcome.answer),
+      ...(requirements.length ? { requirements } : {}),
       ...(task.recommendations.length && task.deliverable === 'patch'
         ? { recommendationStatus: recommendationAccounting(outcome.answer, task.recommendations) }
         : {})
