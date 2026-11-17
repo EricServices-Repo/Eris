@@ -1,3 +1,4 @@
+import { budgetModelMessages, compileModelMessages, modelPromptMessages } from '../electron/main/services/model-protocol'
 import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -102,4 +103,40 @@ describe('turn-to-turn prompt prefix (#233)', () => {
       expect(shared).toBeGreaterThanOrEqual(floor)
     }
   })
+})
+
+it('sheds older chat before shortening the current requirements and exact target list', async () => {
+  const workspace = mkdtempSync(join(tmpdir(), 'eris-current-context-'))
+  folders.push(workspace)
+  const text = 'Create checkout.ts and receipt.ts without changing the public API.'
+  const task = createTaskContract({ workspacePath: workspace, text, taskId: 'current', plan })
+  const history: AgentChatMessage[] = [
+    { role: 'user', content: 'Unrelated old request ' + 'older material '.repeat(1000) },
+    { role: 'assistant', content: 'Unrelated old reply' },
+    { role: 'user', content: 'Recent related request' },
+    { role: 'assistant', content: 'Recent related reply' }
+  ]
+  const compiled = await buildPreservedWorkerMessages({
+    workspacePath: workspace,
+    settings: getDefaults(),
+    plan: { ...plan, task },
+    originalUserGoal: text,
+    retrievalHint: '',
+    mcpToolCount: 0,
+    messages: [...history, { role: 'user', content: text }]
+  })
+  const protocol = 'native-tools'
+  const messages = modelPromptMessages(compiled, [], protocol)
+  expect(() => budgetModelMessages(
+    messages.map(({ historical: _historical, ...message }) => message), 1800, protocol
+  )).toThrow(/context budget/)
+  const packed = budgetModelMessages(messages, 1800, protocol)
+  const outbound = compileModelMessages(packed.messages, { protocol, contextWindow: 2048, outputReserve: 248 })
+  const actual = JSON.stringify(outbound)
+  expect(actual).not.toContain('Unrelated old')
+  expect(outbound.every((message) => !Object.hasOwn(message, 'historical'))).toBe(true)
+  expect(actual).toContain('Recent related request')
+  expect(outbound.at(-1)?.content).toContain('"targetFiles":["checkout.ts","receipt.ts"]')
+  expect(outbound.at(-1)?.content).toContain('without changing the public API')
+  expect(outbound.at(-1)?.content).toContain(text)
 })
