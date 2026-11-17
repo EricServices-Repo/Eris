@@ -82,6 +82,21 @@ describe('settings defaults', () => {
 })
 
 describe('settings migrations', () => {
+  const oldSharedPrompt =
+    'You are working inside Eris with the built-in Composer agent stack. Be concise, accurate, and cite file paths when referring to code.'
+
+  it('resolves the old stock shared prompt to the new default', () => {
+    writeUserSettings({ agent: { systemPrompt: oldSharedPrompt } })
+    expect(getResolvedSettings(null).agent.systemPrompt).toBe(getDefaults().agent.systemPrompt)
+    expect(getResolvedSettings(null).agent.systemPrompt).not.toBe(oldSharedPrompt)
+  })
+
+  it('preserves a shared prompt customized from the old stock text', () => {
+    const customized = `${oldSharedPrompt}\nWrite user-facing summaries in Spanish.`
+    writeUserSettings({ agent: { systemPrompt: customized } })
+    expect(getResolvedSettings(null).agent.systemPrompt).toBe(customized)
+  })
+
   it.each([
     ['auto-local', 'auto-local'],
     ['auto-any', 'auto-any'],

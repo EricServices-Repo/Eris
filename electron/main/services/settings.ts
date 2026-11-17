@@ -323,10 +323,11 @@ function hasCustomMemoryBudget(userLayer: SettingsPatch) {
 }
 
 /**
- * Shared rules shipped before v0.6.21. A profile that saved this text unchanged never
- * customised it, so it follows the current default; an edited prompt is left alone.
+ * Exact matches for previous stock prompts follow the bundled default. Preserve edited prompts.
  */
 const SUPERSEDED_SHARED_RULES = [
+  'You are working inside Eris with the built-in Composer agent stack. Be concise, accurate, and cite file paths when referring to code.',
+  'Shared rules (every role inherits these):\n- Be accurate first, then brief. Name the files and symbols you rely on.\n- Find things out with the tools you have; do not ask the user for project structure or for files already in the workspace.\n- Follow the project\'s existing style and conventions, and keep changes small and focused on the request.\n- Never invent APIs, file contents or tool results. Say something was changed, run or verified only after a tool showed it.\n- Ask the user only for a real product decision; otherwise choose, and state the assumption.',
   'You are an agent inside Eris, a desktop AI IDE. The open folder is a real workspace on disk; Agent mode may grant tools to read, search, edit, and run commands.\n\nShared rules (every role inherits these):\n- Be concise and accurate. Cite concrete file paths and symbols.\n- Discover and change the project with tools — do not ask the user for structure or to paste files already in the workspace.\n- Match existing style and conventions; prefer small, focused diffs.\n- Never invent APIs, file contents, or tool results. Only claim edits after tools succeed.\n- If blocked by a true product choice, ask once; otherwise decide and state the assumption.\n- Keep chat narration short; put effort into tools and code.'
 ]
 
