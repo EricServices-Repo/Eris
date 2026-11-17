@@ -53,6 +53,9 @@ const skip = new Set([
   '.git',
   '.eris'
 ])
+
+export const asksToResumeFileRequirements = (text: string) =>
+  /^(?:please\s+)?(?:finish|complete|resume|continue(?:\s+with)?)\s+(?:the\s+)?(?:remaining|unfinished)\s+files[.!]?$/i.test(text.trim())
 const identity = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '')
 export function projectRegistry(
   root: string
@@ -368,7 +371,8 @@ export function createTaskContract(input: {
         (other) => other.root !== project.root && project.root.startsWith(other.root + '/')
       )
   )
-  const continuation = /\b(those|these|them|that|continue)\b/i.test(input.text)
+  const resumeFiles = asksToResumeFileRequirements(input.text)
+  const continuation = resumeFiles || /\b(those|these|them|that|continue)\b/i.test(input.text)
   const priorScope = input.priorTask?.scope
   const inheritedRoot =
     continuation &&
@@ -454,6 +458,13 @@ export function createTaskContract(input: {
     text: input.text, intent: requestedIntent, canEdit: !forbidden.edit,
     revision: 1, route: input.plan.routeTrace
   })
+  const prior = input.priorTask
+  const remainingFiles = resumeFiles && prior?.result?.terminal === 'incomplete' &&
+    prior.requested?.artifact === 'patch' && !prior.recommendations.length &&
+    prior.scope.workspaceRoot === root && prior.scope.projectRoot === selected && Boolean(selected)
+    ? [...new Set((prior.result.requirements ?? []).flatMap((item) => item.remainingPaths))]
+        .filter((path) => prior.requested?.targetFiles.includes(path))
+    : []
   const fileRequest = requestedIntent === 'edit'
     ? resolveFileRequest(input.text, input.history, input.referenceBinding && {
         status: input.referenceBinding.binding.status,
@@ -474,14 +485,15 @@ export function createTaskContract(input: {
     intent: requestedIntent,
     artifact: requestedReading.artifact,
     destination: requestedReading.destination,
-    targetFiles: chosenPage ? [chosenPage] : input.resolution?.targetFiles ?? fileRequest?.paths ?? [],
+    targetFiles: resumeFiles ? remainingFiles : chosenPage ? [chosenPage] : input.resolution?.targetFiles ?? fileRequest?.paths ?? [],
+    ...(resumeFiles ? { resumeFileRequirements: true, targetReason: 'remaining files from the prior task' } : {}),
     ...(chosenPage ? { targetReason: input.selectedEditTarget === chosenPage ? 'chosen by user' : pageTargets!.reason } : {}),
     ...(targetQuestion ? { targetQuestion } : {}),
-    state: referenceBlocked || (fileRequest && fileRequest.state !== 'resolved')
+    state: referenceBlocked || (resumeFiles && !remainingFiles.length) || (fileRequest && fileRequest.state !== 'resolved')
       ? 'needs-reference'
       : targetQuestion || requestedIntent !== input.plan.intent ? 'needs-clarification' : 'resolved'
   }
-  const noCommands = forbidden.execution || forbidden.verification
+  const noCommands = resumeFiles || forbidden.execution || forbidden.verification
   const requestedScope = scopeApplicability(input.text, requestedReading,
     Boolean(target && selected && !inheritedRoot), Boolean(selected), input.plan.intent,
     Boolean(inheritedRoot || recommendations.length))
@@ -516,6 +528,12 @@ export function createTaskContract(input: {
     revision: 1,
     route: input.plan.routeTrace
   })
+  if (resumeFiles && remainingFiles.length && prior && reading.artifact === 'patch') {
+    reading.obligations = [...reading.obligations, {
+      id: 'resume-file-requirements', kind: 'implementation',
+      text: `Apply the earlier request only to the remaining target files. Earlier request: ${prior.originalText.slice(0, 1200)}`
+    }]
+  }
   const projectStack = detectProjectStack(selected)
   // Implementing referenced recommendations makes each one a separate obligation —
   // every selected item, never an implicit first ten. The full text stays on the

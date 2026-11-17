@@ -230,6 +230,7 @@ export interface TaskContract {
     destination: ArtifactDestination
     targetFiles: string[]
     targetReason?: string
+    resumeFileRequirements?: boolean
     targetQuestion?: { text: string; choices: string[] }
     /** Compiled from the request, independently of worker/intent selection. */
     evidence?: 'source-read'

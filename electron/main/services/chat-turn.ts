@@ -27,7 +27,7 @@ import type { AgentRunnerEvent } from './agent/types'
 import { buildChatMessages, type BuiltChatMessage } from './chat-prompt'
 import type { ContextAllocation } from '../../../src/shared/context-allocation'
 import { planChatTurn } from './chat-router'
-import { createTaskContract } from './task-intake'
+import { asksToResumeFileRequirements, createTaskContract } from './task-intake'
 import { resolveTaskDecision } from './task-resolver'
 import { executionPlanFor } from './execution-plan'
 import { appendTaskEvent } from './task-ledger'
@@ -180,7 +180,9 @@ export async function resolveChatTurnContract(
     : !selectedHelper
       ? 'cold-native-routing-skipped'
       : undefined
-  const resolution: IntentResolution = input.forceRoute || pageBound
+  const resolution: IntentResolution = !input.forceRoute && asksToResumeFileRequirements(input.text)
+    ? { intent: 'edit', initialIntent: plan.intent, source: 'forced', rule: 'resume-file-requirements', durationMs: 0 }
+    : input.forceRoute || pageBound
     ? {
         intent: plan.intent,
         initialIntent: plan.intent,

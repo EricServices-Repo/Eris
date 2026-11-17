@@ -130,6 +130,10 @@ export class TaskToolGateway {
     }
     if (contract?.effect === 'workspace' && !authority.edit)
       return 'The task contract does not permit workspace changes.'
+    const resume = this.task.requested?.resumeFileRequirements === true
+    if (resume && contract?.effect === 'workspace' &&
+        !['write_file', 'search_replace', 'apply_patch', 'notebook_edit'].includes(call.name))
+      return 'A file resume can only edit the remaining requested files.'
     if (
       (contract?.effect === 'external' || call.name.startsWith('mcp__')) &&
       !mcpReadOnly &&
@@ -183,6 +187,9 @@ export class TaskToolGateway {
           const abs = realpathAllowMissing(resolveInWorkspace(workspace, path))
           if (!path || !isPathInside(scope.projectRoot, abs))
             return `Blocked ${call.name}: ${path} belongs to another project.`
+          if (resume && contract?.effect === 'workspace' && !this.task.requested!.targetFiles.some((target) =>
+            realpathAllowMissing(resolveInWorkspace(scope.projectRoot!, target)) === abs))
+            return `Blocked ${call.name}: ${path} is outside the remaining requested files.`
           if (call.name === 'write_file' && this.partialReads.has(abs))
             return 'The file was only partially inspected. Use search_replace or read the full file before rewriting it.'
           const before = this.readHashes.get(abs)
