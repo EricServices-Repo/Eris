@@ -28,8 +28,7 @@ import type {
   ChatAttachment,
   ChatMode,
   PendingCommandApproval,
-  PendingUserQuestion,
-  QueuedChatMessage
+  PendingUserQuestion
 } from '@/features/chat/ChatPanel'
 import type { PendingDiff } from '@/features/chat/DiffReview'
 import { joinWorkspacePath, pathBasename } from '@/shared/paths'
@@ -45,7 +44,7 @@ import {
 } from '@/state/chat-stream'
 import { snapshotTab } from '@/state/documents'
 import { mergeChatTail } from '@/shared/chat-pages'
-import { nextQueueAction, type QueuePause } from '@/shared/chat-queue'
+import { nextQueueAction, type QueuedChatDraft, type QueuePause } from '@/shared/chat-queue'
 
 function latestUserMessageId(messages: readonly ChatMessage[]): string | undefined {
   for (let i = messages.length - 1; i >= 0; i--)
@@ -150,9 +149,12 @@ export function useChatSession({
     agentId: string
   } | null>(null)
   const [chatMode, setChatMode] = useState<ChatMode>('agent')
-  const [messageQueue, setMessageQueue] = useState<QueuedChatMessage[]>([])
-  const messageQueueRef = useRef<QueuedChatMessage[]>([])
-  messageQueueRef.current = messageQueue
+  const [queuedDrafts, setQueuedDrafts] = useState<QueuedChatDraft[]>([])
+  const queueScopeRef = useRef({ workspacePath, threadId: activeThread?.id })
+  queueScopeRef.current = { workspacePath, threadId: activeThread?.id }
+  const messageQueue = queuedDrafts.filter((item) =>
+    item.workspacePath === workspacePath && item.threadId === activeThread?.id
+  )
   const [pendingDiffs, setPendingDiffs] = useState<PendingDiff[]>([])
   const pendingDiffsRef = useRef(pendingDiffs)
   pendingDiffsRef.current = pendingDiffs
@@ -380,8 +382,6 @@ export function useChatSession({
   }, [])
 
   const newChat = useCallback(async () => {
-    setMessageQueue([])
-    setQueuePaused(null)
     const model = selectedModel || settings?.models.defaultModel || ''
     const thread = await window.ide.createChat(model)
     await refreshChats(thread.id)
@@ -417,6 +417,7 @@ export function useChatSession({
         thread?: ChatThread
         retry?: { prompt: ChatPromptInput; model: string }
         agentId?: string
+        queued?: QueuedChatDraft
       }
     ) => {
       if (streaming) return
@@ -450,7 +451,7 @@ export function useChatSession({
         setActiveCheckpointId(null)
       }
 
-      const requestId = uid()
+      const requestId = opts?.queued?.requestId ?? uid()
       currentPhaseRef.current = ''
       currentStatusRef.current = ''
       lastToolRef.current = ''
@@ -543,10 +544,12 @@ export function useChatSession({
         setComposerReady(localReady)
         setOllamaOk(localReady || hasConnection)
         if (!localReady && !hasConnection) {
-          setChatError(CONNECT_MODEL_MESSAGE)
-          return
+          throw new Error(CONNECT_MODEL_MESSAGE)
         }
 
+        if (opts?.queued && (queueScopeRef.current.workspacePath !== opts.queued.workspacePath ||
+            queueScopeRef.current.threadId !== opts.queued.threadId))
+          throw new Error('Return to the original chat to send this queued message.')
         let thread = opts?.thread ?? activeThread
         if (!thread) {
           thread = await window.ide.createChat(
@@ -596,7 +599,7 @@ export function useChatSession({
         const withUser: ChatThread = {
           ...thread,
           model: runModel,
-          messages: [...thread.messages, userMsg]
+          messages: [...thread.messages.filter((message) => message.id !== userMsg.id), userMsg]
         }
         // Optimistic paint + persist in parallel with stream start.
         setActiveThread(withUser)
@@ -604,7 +607,7 @@ export function useChatSession({
         setThreads((prev) => [withUser, ...prev.filter((t) => t.id !== withUser.id)])
         setAttachments([])
         setActiveSkills([])
-        void window.ide
+        if (!opts?.queued) void window.ide
           .appendChatMessage(thread.id, userMsg, runModel, workspacePath)
           .then((saved) => {
             if (requestIdRef.current !== requestId && lastRequestIdRef.current !== requestId) return
@@ -654,7 +657,9 @@ export function useChatSession({
           intent: 'answer',
           agentId: runAgentId
         }
-        const ok = await window.ide.streamChat({
+        const ok = await window.ide.streamChat(opts?.queued
+          ? { ...opts.queued, queueResume: true }
+          : {
           requestId,
           model: runModel,
           agentId: runAgentId === 'auto' ? undefined : runAgentId,
@@ -665,6 +670,7 @@ export function useChatSession({
           threadId: thread.id,
           prompt
         })
+        if (!ok && opts?.queued) setQueuePaused('error')
         if (!ok && requestIdRef.current === requestId) {
           setStreaming(false)
           setAgentStatus(null)
@@ -678,6 +684,7 @@ export function useChatSession({
         setStreaming(false)
         setAgentStatus(null)
         requestIdRef.current = null
+        if (opts?.queued) setQueuePaused('error')
         setChatError(err instanceof Error ? err.message : 'Chat failed')
       }
     },
@@ -734,44 +741,101 @@ export function useChatSession({
     [sendMessage, streaming, activeThreadRef, workspacePath]
   )
 
-  // When the active reply finishes, send the next queued message (FIFO, max 3).
+  const queueThreadId = activeThread?.id
+  useEffect(() => {
+    let current = true
+    setQueuedDrafts([])
+    setQueuePaused(null)
+    if (queueThreadId) {
+      void window.ide.listQueuedChat(workspacePath, queueThreadId).then((drafts) => {
+        if (!current) return
+        setQueuedDrafts(drafts)
+        if (drafts.length) setQueuePaused('deferred')
+      }).catch((error) => {
+        if (current) setChatError(String(error))
+      })
+    }
+    return () => { current = false }
+  }, [queueThreadId, workspacePath])
+
+  const enqueueMessage = useCallback(async (text: string, files: ChatAttachment[], skillIds: string[]) => {
+    const threadId = activeThreadRef.current?.id
+    if (!threadId || imagePromptFromCommand(text) !== null) {
+      setChatError('Open a chat to queue a text message. Send image requests when the chat is idle.')
+      return false
+    }
+    const draft: QueuedChatDraft = {
+      requestId: uid(),
+      threadId,
+      workspacePath,
+      model: selectedModel || settings?.models.defaultModel || 'auto',
+      agentId: selectedAgentId,
+      mode: chatMode,
+      prompt: {
+        threadId, text, mode: chatMode, agentId: selectedAgentId, skillIds, history: [],
+        attachments: files.map((file) => {
+          const tab = tabsRef.current.find((entry) => entry.path === file.path)
+          const open = tab && tab.loaded !== false ? snapshotTab(tab) : undefined
+          return open ? { ...file, language: open.language, content: open.content } : file
+        })
+      }
+    }
+    try {
+      await window.ide.saveQueuedChat(draft)
+      const scope = queueScopeRef.current
+      if (scope.workspacePath === workspacePath && scope.threadId === threadId)
+        setQueuedDrafts((prior) => [...prior, draft])
+      return true
+    } catch (error) {
+      setChatError(String(error))
+      return false
+    }
+  }, [activeThreadRef, workspacePath, selectedModel, settings, selectedAgentId, chatMode, tabsRef])
+
+  const removeQueuedMessage = useCallback(async (requestId: string) => {
+    if (!queueThreadId) return
+    try {
+      await window.ide.removeQueuedChat(workspacePath, queueThreadId, requestId)
+      setQueuedDrafts((prior) => prior.filter((item) => item.requestId !== requestId))
+    } catch (error) {
+      setChatError(String(error))
+    }
+  }, [queueThreadId, workspacePath])
+
+  useEffect(() => window.ide.onChatAccepted(({ requestId }) => {
+    setQueuedDrafts((prior) => prior.filter((item) => item.requestId !== requestId))
+  }), [])
+
+  const next = messageQueue[0]
+  const resumeQueue = useCallback(() => {
+    const thread = activeThreadRef.current
+    if (!next || streaming || thread?.id !== next.threadId || workspacePath !== next.workspacePath) return
+    void sendMessage(next.prompt.text, [], [], {
+      thread,
+      queued: next,
+      retry: { model: next.model, prompt: next.prompt }
+    })
+  }, [next, streaming, workspacePath, activeThreadRef, sendMessage])
+
   const wasStreamingRef = useRef(false)
   useEffect(() => {
     const justFinished = wasStreamingRef.current && !streaming
     wasStreamingRef.current = streaming
-    if (!justFinished) return
-    const q = messageQueueRef.current
+    if (!justFinished || requestThreadIdRef.current !== queueThreadId ||
+        requestWorkspacePathRef.current !== workspacePath || queuePaused !== null) return
     const action = nextQueueAction({
       stopped: userStoppedRef.current,
       errored: lastTerminalWasErrorRef.current,
-      queued: q.length
+      queued: next ? 1 : 0
     })
-    userStoppedRef.current = false
-    lastTerminalWasErrorRef.current = false
-    // After Stop or an error the queue waits, and says why, until "Send next" (#521).
     if (action === 'pause-stopped') setQueuePaused('stopped')
     else if (action === 'pause-error') setQueuePaused('error')
-    if (action !== 'drain') return
-    const [next, ...rest] = q
-    messageQueueRef.current = rest
-    setMessageQueue(rest)
-    void sendMessage(next!.text, next!.attachments, next!.skillIds)
-  }, [streaming, sendMessage])
+    else if (action === 'drain') resumeQueue()
+  }, [streaming, queueThreadId, workspacePath, queuePaused, next, resumeQueue])
 
-  /** Send the oldest queued message after the queue paused on Stop or an error. */
-  const resumeQueue = useCallback(() => {
-    setQueuePaused(null)
-    const [next, ...rest] = messageQueueRef.current
-    if (!next || streaming) return
-    messageQueueRef.current = rest
-    setMessageQueue(rest)
-    void sendMessage(next.text, next.attachments, next.skillIds)
-  }, [sendMessage, streaming])
-
-  // An emptied queue has nothing to resume.
   useEffect(() => {
-    if (messageQueue.length === 0) setQueuePaused(null)
-  }, [messageQueue.length])
+    if (!next) setQueuePaused(null)
+  }, [next])
 
   useEffect(() => {
     const offAsset = window.ide.onChatAsset(({ requestId, asset }) => {
@@ -1259,8 +1323,12 @@ export function useChatSession({
     liveSessionSteps,
     chatMode,
     setChatMode,
-    messageQueue,
-    setMessageQueue,
+    messageQueue: messageQueue.map((draft) => ({
+      id: draft.requestId, text: draft.prompt.text,
+      attachments: draft.prompt.attachments, skillIds: draft.prompt.skillIds
+    })),
+    enqueueMessage,
+    removeQueuedMessage,
     queuePaused,
     resumeQueue,
     pendingDiffs,

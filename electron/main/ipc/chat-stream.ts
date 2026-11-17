@@ -93,12 +93,44 @@ import {
   isChatJobTerminal
 } from '../services/chat-job-controller'
 
+import { persistQueuedChat, readQueuedChat, removeQueuedChat } from '../services/queued-chat'
+
 /** Routing and task intake read this much recent history, whatever the window. */
 const ROUTING_HISTORY_MESSAGES = 20
 
 export function registerChatStreamIpc(): void {
+  const admittingQueue = new Set<string>()
+  const assertQueueSender = (event: Electron.IpcMainInvokeEvent, workspacePath: string | null) => {
+    if ((appState.mainWindow && event.sender !== appState.mainWindow.webContents) ||
+        (event.senderFrame?.top && event.senderFrame !== event.senderFrame.top))
+      throw new Error('Chat queue access requires the main application frame.')
+    if (workspacePath !== appState.currentWorkspace)
+      throw new Error('The workspace changed before accessing its chat queue.')
+  }
+  ipcMain.handle('chat:queueSave', async (event, raw: unknown) => {
+    const payload = parseChatSubmission(raw)
+    const root = appState.currentWorkspace
+    assertQueueSender(event, root)
+    const threadId = payload.threadId
+    validateSubmissionPaths(payload, root)
+    if (!threadId || !(await getChat(root, threadId, { limit: 1 })))
+      throw new Error('The queued message requires a chat in this workspace.')
+    assertQueueSender(event, root)
+    persistQueuedChat(root, payload)
+  })
+  ipcMain.handle('chat:queueList', (event, root: string | null, threadId: string) => {
+    assertQueueSender(event, root)
+    return readQueuedChat(root, threadId)
+  })
+  ipcMain.handle('chat:queueRemove', (event, root: string | null, threadId: string, id: string) => {
+    assertQueueSender(event, root)
+    if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(id)) throw new Error('Invalid queued message.')
+    if (admittingQueue.has(id)) throw new Error('This message is starting. Use Stop once it starts.')
+    removeQueuedChat(root, threadId, id)
+  })
   ipcMain.handle('chat:stream', async (event, raw: unknown) => {
-    let payload
+    let payload: ReturnType<typeof parseChatSubmission>
+    let queuedThread: string | undefined
     const workspacePath = appState.currentWorkspace
     try {
       if (appState.mainWindow && event.sender !== appState.mainWindow.webContents)
@@ -108,8 +140,21 @@ export function registerChatStreamIpc(): void {
       payload = parseChatSubmission(raw)
       validateSubmissionPaths(payload, workspacePath)
       const threadId = payload.threadId ?? payload.prompt?.threadId
-      if (threadId && !(await getChat(workspacePath, threadId, { limit: 1 })))
-        throw new Error('The chat thread does not belong to the selected workspace.')
+      if (threadId) {
+        if (!(await getChat(workspacePath, threadId, { limit: 1 })))
+          throw new Error('The chat thread does not belong to the selected workspace.')
+        const requestId = payload.requestId
+        const draft = payload.queueResume
+          ? readQueuedChat(workspacePath, threadId).find((entry) => entry.requestId === requestId)
+          : undefined
+        if (payload.queueResume && !draft && !getChatJob(payload.requestId))
+          throw new Error('This queued message was removed before it started.')
+        if (draft) {
+          validateSubmissionPaths(draft, workspacePath)
+          payload = draft
+          queuedThread = threadId
+        }
+      }
     } catch (error) {
       const id =
         raw && typeof raw === 'object' && 'requestId' in raw && typeof raw.requestId === 'string'
@@ -153,6 +198,11 @@ export function registerChatStreamIpc(): void {
       }
       if (workspacePath !== appState.currentWorkspace)
         throw new Error('The workspace changed before this task could start.')
+      if (queuedThread) {
+        if (!readQueuedChat(workspacePath, queuedThread).some((entry) => entry.requestId === payload.requestId))
+          throw new Error('This queued message was removed before it started.')
+        admittingQueue.add(payload.requestId)
+      }
       const admission = await admitChatJob({
         id: payload.requestId,
         workspacePath,
@@ -160,6 +210,13 @@ export function registerChatStreamIpc(): void {
         goal: userText,
         submissionDigest: submissionDigest(payload, workspacePath)
       })
+      if (queuedThread) {
+        try {
+          removeQueuedChat(workspacePath, queuedThread, payload.requestId)
+        } catch (error) {
+          logWarn('Could not remove the admitted chat draft', { requestId: payload.requestId, error: String(error) })
+        }
+      }
       event.sender.send('chat:accepted', {
         requestId: payload.requestId,
         cursor: admission.job.cursor ?? 0,
@@ -176,6 +233,8 @@ export function registerChatStreamIpc(): void {
         code: 'ADMISSION_FAILED'
       })
       return false
+    } finally {
+      if (queuedThread) admittingQueue.delete(payload.requestId)
     }
     try {
       const run = inEvidenceScope(async (controller: AbortController) => {

@@ -22,6 +22,10 @@ describe('chat queue after a reply ends', () => {
         expect(nextQueueAction({ stopped, errored, queued: 0 })).toBe('idle')
   })
   it('labels each pause', () => {
-    expect(queuePauseLabel).toEqual({ stopped: 'Paused after stop', error: 'Paused after an error' })
+    expect(queuePauseLabel).toEqual({
+      stopped: 'Paused after stop',
+      error: 'Paused after an error',
+      deferred: 'Ready to send'
+    })
   })
 })

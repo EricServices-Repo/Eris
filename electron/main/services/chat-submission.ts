@@ -65,6 +65,7 @@ export const ChatSubmissionSchema = z
     workspacePath: path.nullable().optional(),
     forceRoute: z.enum(['tools', 'answer']).optional(),
     preserveModelSelection: z.boolean().optional(),
+    queueResume: z.literal(true).optional(),
     // Accepted only for older clients. It never owns planning or authority.
     turnPlan: z.unknown().optional(),
     planningDurationMs: z.number().finite().min(0).max(3600000).optional(),
@@ -116,7 +117,7 @@ function ordered(value: unknown): unknown {
   return value
 }
 export function submissionDigest(input: ChatSubmission, workspace: string | null): string {
-  const { turnPlan: _plan, planningDurationMs: _timing, ...request } = input
+  const { turnPlan: _plan, planningDurationMs: _timing, queueResume: _resume, ...request } = input
   return createHash('sha256')
     .update(JSON.stringify(ordered({ ...request, workspacePath: workspace })))
     .digest('hex')

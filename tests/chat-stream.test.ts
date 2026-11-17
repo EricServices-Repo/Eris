@@ -294,6 +294,54 @@ describe('main-process task authority', () => {
     expect(append.mock.calls.filter(call=>call[2].role==='assistant')).toHaveLength(1)
     expect(sent.filter(event=>event.channel==='chat:done').at(-1)?.payload.reply).toEqual(canonical)
   })
+  it('admits a saved queue item once in its original thread with its original inputs', async () => {
+    const root = appState.currentWorkspace
+    const chats = await import('../electron/main/services/chats')
+    const db = new ChatDatabase(mkdtempSync(join(tmpdir(), 'eris-durable-queue-')))
+    databases.push(db)
+    const makeThread = () => db.save({
+      id: randomUUID(), title: 'Queue', model: 'test-provider-model',
+      messages: [], createdAt: 1, updatedAt: 1
+    })
+    const original = makeThread()
+    const other = makeThread()
+    vi.spyOn(chats, 'getChat').mockImplementation(async (_root, id, page) => db.get(id, page))
+    vi.spyOn(chats, 'appendChatMessage').mockImplementation(async (_root, id, message, model) => db.append(id, message, model))
+    const memory = await import('../electron/main/services/context-memory')
+    vi.spyOn(memory, 'conversationContext').mockRejectedValue(Error('cache unavailable'))
+    const draft = {
+      requestId: randomUUID(), threadId: original.id, workspacePath: root,
+      model: 'test-provider-model', mode: 'ask', agentId: 'auto',
+      prompt: { text: 'Original queued question', mode: 'ask', agentId: 'auto',
+        attachments: [], skillIds: [], history: [], threadId: original.id }
+    }
+    const event = { sender }
+    await handlers['chat:queueSave']!(event, draft)
+    expect(await handlers['chat:queueList']!(event, root, other.id)).toEqual([])
+    expect(await handlers['chat:queueList']!(event, root, original.id)).toMatchObject([draft])
+    let started = 0
+    runner.script = async function* ({ turnPlan }) {
+      started++
+      expect(turnPlan.task?.originalText).toBe(draft.prompt.text)
+      expect(turnPlan.mode).toBe('ask')
+      yield { type: 'answer', text: 'Answer to the queued question.' }
+    }
+    const otherDraft = { ...draft, threadId: other.id, prompt: { ...draft.prompt, threadId: other.id }, queueResume: true }
+    expect(await handlers['chat:stream']!(event, otherDraft)).toBe(false)
+    expect(started).toBe(0)
+    expect(await handlers['chat:stream']!(event, { ...draft, queueResume: true })).toBe(true)
+    expect(await handlers['chat:queueList']!(event, root, original.id)).toEqual([])
+    expect(await handlers['chat:stream']!(event, { ...draft, queueResume: true })).toBe(true)
+    expect(started).toBe(1)
+    expect(db.get(original.id)?.messages.filter((message) => message.role === 'user').map((message) => message.content))
+      .toEqual([draft.prompt.text])
+    expect(db.get(other.id)?.messages).toEqual([])
+    const removed = { ...draft, requestId: randomUUID() }
+    await handlers['chat:queueSave']!(event, removed)
+    await handlers['chat:queueRemove']!(event, root, original.id, removed.requestId)
+    expect(await handlers['chat:stream']!(event, { ...removed, queueResume: true })).toBe(false)
+    expect(started).toBe(1)
+  })
   it('persists partial text and applied files before an error and reloads one reply (#449)', async () => {
     const chats=await import('../electron/main/services/chats')
     const dir=mkdtempSync(join(tmpdir(),'eris-partial-reload-'))

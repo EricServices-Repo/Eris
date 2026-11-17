@@ -21,8 +21,6 @@ import { useColumnWidths } from '@/layout/useColumnResize'
 import type { UpdateStatusSnapshot, UsageEntitlement } from '@/shared/api'
 import { meterAgainstLimit, previewPlanLabel } from '@/shared/eris-plan'
 
-/** Keep in sync with ChatPanel.MAX_QUEUED_MESSAGES (avoid eager ChatPanel import). */
-const MAX_QUEUED_MESSAGES = 3
 import { CommandPalette, type CommandItem } from '@/features/palette/CommandPalette'
 import { CreateWorkspaceModal } from '@/features/workspace/CreateWorkspaceModal'
 import { SetupWizard } from '@/features/onboarding/SetupWizard'
@@ -347,7 +345,8 @@ export default function App() {
     chatMode,
     setChatMode,
     messageQueue,
-    setMessageQueue,
+    enqueueMessage,
+    removeQueuedMessage,
     queuePaused,
     resumeQueue,
     pendingDiffs,
@@ -1027,7 +1026,6 @@ export default function App() {
                   }}
                   onNewChat={() => {
                     setChatError(null)
-                    setMessageQueue([])
                     void newChat()
                   }}
                   onSend={(text, files, skillIds) => void sendMessage(text, files, skillIds)}
@@ -1062,17 +1060,10 @@ export default function App() {
                   retryAgents={agents.filter((agent) => agent.enabled)}
                   liveSessionSteps={liveSessionSteps}
                   queuedMessages={messageQueue}
-                  onQueueMessage={(text, files, skillIds) => {
-                    setMessageQueue((prev) => {
-                      if (prev.length >= MAX_QUEUED_MESSAGES) return prev
-                      return [...prev, { id: uid(), text, attachments: files, skillIds }]
-                    })
-                  }}
+                  onQueueMessage={enqueueMessage}
                   queuePaused={queuePaused}
                   onResumeQueue={resumeQueue}
-                  onRemoveQueued={(id) =>
-                    setMessageQueue((prev) => prev.filter((q) => q.id !== id))
-                  }
+                  onRemoveQueued={(id) => void removeQueuedMessage(id)}
                   onAttachmentsChange={setAttachments}
                   onActiveSkillsChange={setActiveSkills}
                   onImportFiles={() => void importFiles()}
