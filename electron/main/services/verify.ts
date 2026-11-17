@@ -1,3 +1,4 @@
+import type { ProjectCheckEvidence } from '../../../src/shared/task-contract'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { runWorkspaceCommand } from './shell-run'
@@ -16,6 +17,7 @@ export type VerifyResult = {
   skipped?: boolean
   /** Set whenever `skipped` is true. */
   skipReason?: VerifySkipReason
+  check?: ProjectCheckEvidence
 }
 
 type PkgJson = {
@@ -160,7 +162,7 @@ export function detectVerifyCommand(
     }
   }
 
-  for (const name of ['typecheck', 'type-check', 'tsc', 'test', 'lint']) {
+  for (const name of ['test', 'typecheck', 'type-check', 'tsc', 'lint']) {
     if (!scripts[name]) continue
     if (name === 'test') {
       if (/react-scripts/.test(scripts[name])) {
@@ -230,7 +232,7 @@ async function ensureNpmInstall(
   }
 }
 
-export async function runVerify(
+async function executeVerification(
   workspacePath: string,
   signal?: AbortSignal,
   opts?: VerifyOptions
@@ -418,5 +420,37 @@ export async function runVerify(
     detail: ran.timedOut
       ? `${installNote}Verify timed out: ${usedCommand}\n${out}`
       : `${installNote}Verify ${ran.ok ? 'passed' : 'failed'}: ${usedCommand}\nexit ${ran.code ?? '?'}\n${out || '(no output)'}${hint}`
+  }
+}
+
+export async function runVerify(
+  workspacePath: string,
+  signal?: AbortSignal,
+  opts?: VerifyOptions
+): Promise<VerifyResult> {
+  const result = await executeVerification(workspacePath, signal, opts)
+  if (!result.command || result.command === 'npm install') return result
+  const kind = /\b(?:react-scripts test|npm (?:run )?test)\b/.test(result.command) ? 'test'
+    : /\b(?:type-?check|tsc)\b/.test(result.command) ? 'typecheck'
+    : /\blint\b/.test(result.command) ? 'lint' : 'other'
+  const output = result.detail.replace(new RegExp(String.fromCharCode(27) + '\\[[0-9;]*m', 'g'), '')
+  const countMatch = kind === 'test'
+    ? /^\s*Tests:\s*(?:.*?,\s*)?(\d+) total\s*$/mi.exec(output) ??
+      /^\s*[#ℹ] tests (\d+)\s*$/mi.exec(output)
+    : null
+  const testCount = countMatch ? Number(countMatch[1]) : undefined
+  const empty = kind === 'test' && result.ok && (testCount === 0 || result.skipReason === 'no-tests')
+  const skipped = result.skipped || empty
+  const check: ProjectCheckEvidence = {
+    kind, command: result.command, scope: 'project',
+    status: skipped ? 'skipped' : result.ok ? 'passed' : 'failed',
+    testCount: empty ? 0 : testCount,
+    // Project scripts have no requirement mapping. Successful checks are project evidence.
+    requirementIds: []
+  }
+  return {
+    ...result,
+    ...(empty ? { skipped: true, skipReason: 'no-tests' as const } : {}),
+    check
   }
 }

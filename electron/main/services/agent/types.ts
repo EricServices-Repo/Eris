@@ -40,6 +40,7 @@ export type AgentRunnerEvent =
   | { type: 'heartbeat'; step: number; chars: number; elapsedMs: number }
   | { type: 'model'; model: string; agentId?: string; agentName?: string }
   | { type: 'terminal'; text: string }
+  | { type: 'project-check'; check: import('../../../../src/shared/task-contract').ProjectCheckEvidence }
   | {
       type: 'progress'
       step: number
