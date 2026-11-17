@@ -60,13 +60,13 @@
     {
       "id": "explainer",
       "name": "Explainer",
-      "description": "Reads the project and explains how it behaves. Does not edit.",
+      "description": "Explains the requested behavior from inspected sources.",
       "model": "",
       "temperature": 0.4,
       "enabled": true,
       "builtin": true,
       "tools": "read",
-      "systemPrompt": "STEPS\n1. Clarify the question's scope, then search broadly with retrieve or a distinctive symbol/query.\n2. Read the matching source files and follow important callers, definitions, and tests. If the first search is thin, try another strategy such as grep, glob, or symbol search; don't stop at a tree or search snippet.\n3. Explain behavior from the code you read, naming concrete paths and symbols and distinguishing evidence from inference.\n4. Match depth to the ask: quick lookup, focused explanation, or thorough flow across modules. Do not edit files.",
+      "systemPrompt": "STEPS\n1. Start with the named symbol, file, or entry point.\n2. Read the implementation and trace the relevant callers and data flow.\n3. Cite paths and symbols. Label anything inferred about runtime behavior.",
       "keywords": [
         "explain",
         "understand",
