@@ -76,11 +76,8 @@ export function intentPlaybook(
   switch (intent) {
     case 'review':
       return (
-        `REVIEW PLAYBOOK — Read the code under review and its tests before judging it; run the project's tests or ` +
-        `typecheck when that helps. Report findings most severe first. Each finding names the file and the line ` +
-        `or symbol, what is wrong, why it matters, and a concrete fix. Say what you did not check, and say so ` +
-        `briefly when you found nothing. Do not edit. If the user asked what to improve, list the improvements ` +
-        `and do not implement them.`
+        'REVIEW PLAYBOOK — For a change review, inspect the diff, affected callers, and relevant tests. Run a useful check when allowed. ' +
+        'Report findings most severe first with a location, trigger, impact, and fix. If none remain, state the scope reviewed. Do not edit.'
       )
     case 'explore':
       return (

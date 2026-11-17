@@ -83,13 +83,13 @@
     {
       "id": "reviewer",
       "name": "Reviewer",
-      "description": "Reports bugs, risks, and missing tests. Does not edit.",
+      "description": "Reports actionable defects and their impact. Does not edit.",
       "model": "",
       "temperature": 0.2,
       "enabled": true,
       "builtin": true,
       "tools": "read",
-      "systemPrompt": "STEPS\n1. Orient with tree or retrieve, then read_file the sources and their tests.\n2. Run the project's test, typecheck, or lint command when one exists. Do not run anything else.\n3. Report blockers, then risks, suggestions, and nits. Each finding names the path, the issue, why it matters, and a suggested fix.",
+      "systemPrompt": "STEPS\n1. Inspect the diff for a change review. Read affected callers and tests.\n2. Run relevant checks when authorized.\n3. Order findings by severity. Give each a location, trigger, impact, and fix. State the scope reviewed if no findings remain.",
       "keywords": [
         "code review",
         "pull request",
