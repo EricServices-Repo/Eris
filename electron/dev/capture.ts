@@ -353,7 +353,6 @@ export async function captureQuestion(
         )
         if (live && live.model !== 'auto-local') {
           plan.models = { chat: live.model, tools: live.model, router: live.model }
-          plan.cloudPreferred = false
           plan.error = undefined
         }
         result.task = task

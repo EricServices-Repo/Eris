@@ -18,7 +18,7 @@ import type { TurnPlan } from '../src/shared/settings-schema'
 const runPlan = (mode: TurnPlan['mode'] = 'agent'): TurnPlan => ({
   intent: 'run', agentId: 'composer', agentName: 'Composer', mode,
   toolPolicy: 'full', requiresTools: true,
-  models: { chat: 'local:test', tools: 'local:test' }, escalateToFull: false,
+  models: { chat: 'local:test', tools: 'local:test' },
   method: 'heuristic', reason: 'test'
 } as TurnPlan)
 

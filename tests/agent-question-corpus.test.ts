@@ -191,7 +191,6 @@ function planFor(testCase: AgentQuestionCase): TurnPlan {
     models: { chat: 'builtin:composer-lite', tools: 'builtin:composer-lite' },
     toolPolicy: policy,
     requiresTools: testCase.intent !== 'answer',
-    escalateToFull: false,
     reason: `corpus ${testCase.id}`,
     method: 'manual'
   }
@@ -265,7 +264,6 @@ function naturalPlanFor(testCase: NaturalQuestionCase): TurnPlan {
     models: { chat: 'builtin:composer-lite', tools: 'builtin:composer-lite' },
     toolPolicy: policy,
     requiresTools: policy !== 'none',
-    escalateToFull: false,
     reason: `natural question corpus ${testCase.id}`,
     method: 'manual'
   }

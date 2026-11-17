@@ -61,7 +61,7 @@ afterEach(() => rmSync(ws, { recursive: true, force: true }))
 const plan = (): TurnPlan => ({
   intent: 'explore', agentId: 'explainer', agentName: 'Explainer', mode: 'agent',
   models: { chat: 'builtin:composer-lite', tools: 'builtin:composer-lite' },
-  toolPolicy: 'read', requiresTools: true, escalateToFull: false, reason: 'test', method: 'manual'
+  toolPolicy: 'read', requiresTools: true, reason: 'test', method: 'manual'
 })
 const call = (name: string, args: Record<string, unknown>) => JSON.stringify({ name, ...args })
 
@@ -118,7 +118,7 @@ describe('#508 listing contract and formatter', () => {
   const plan = (intent: TurnPlan['intent'] = 'explore'): TurnPlan => ({
     intent, agentId: 'explainer', agentName: 'Explainer', mode: 'agent',
     models: { chat: 'local:test', tools: 'local:test' },
-    toolPolicy: 'read', requiresTools: true, escalateToFull: false, reason: 'test', method: 'heuristic'
+    toolPolicy: 'read', requiresTools: true, reason: 'test', method: 'heuristic'
   })
   const outcome = (workflow: AgentWorkflow) =>
     workflow.evaluateOutcome({ workspaceMutated: false, codeMutated: false, verifyPassed: false })

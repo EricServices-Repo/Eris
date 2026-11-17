@@ -19,7 +19,7 @@ import {
   isErisCapabilityQuestion,
   planChatTurn,
   isAutoModelChoice,
-  resolveModelRoles,
+  resolveExecutionModel,
   toolAllowedByPolicy
 } from '../electron/main/services/chat-router'
 import { recordRoutingCorrection } from '../electron/main/services/routing-feedback'
@@ -39,7 +39,6 @@ function agent(tools: AgentDefinition['tools']): AgentDefinition {
     systemPrompt: '',
     keywords: [],
     tools,
-    preferEscalate: true
   }
 }
 
@@ -157,50 +156,12 @@ describe('tool policy filtering', () => {
   })
 })
 
-describe('resolveModelRoles', () => {
-  it('keeps local chat and tools on Composer Lite (Full is Cloud Agents only)', () => {
-    const r = resolveModelRoles({
-      selectedModel: 'builtin:composer-lite',
-      intent: 'edit',
-      toolPolicy: 'edit',
-      preferEscalate: true
-    })
-    expect(r).toMatchObject({ chat: '', tools: '', escalateToFull: false, error: expect.stringContaining('Select a downloaded model') })
+describe('resolveExecutionModel', () => {
+  it('keeps a selected provider model', () => {
+    expect(resolveExecutionModel('qwen3:0.6b')).toEqual({ model: 'qwen3:0.6b' })
   })
-
-  it('keeps Composer Full selected for Cloud Agents', () => {
-    const r = resolveModelRoles({
-      selectedModel: 'builtin:composer',
-      intent: 'edit',
-      toolPolicy: 'edit',
-      preferEscalate: true
-    })
-    expect(r.chat).toBe('')
-    expect(r.tools).toBe('')
-    expect(r.escalateToFull).toBe(false)
-    expect(r.error).toContain('Select a downloaded model')
-  })
-
-  it('never swaps external models', () => {
-    const r = resolveModelRoles({
-      selectedModel: 'qwen3:0.6b',
-      intent: 'edit',
-      toolPolicy: 'edit',
-      preferEscalate: true
-    })
-    expect(r).toMatchObject({ chat: 'qwen3:0.6b', tools: 'qwen3:0.6b', escalateToFull: false })
-  })
-
-  it('keeps Composer Full even when Lite is not installed', () => {
-    ready.delete('builtin:composer-lite')
-    const r = resolveModelRoles({
-      selectedModel: 'builtin:composer',
-      intent: 'answer',
-      toolPolicy: 'none',
-      preferEscalate: true
-    })
-    expect(r.chat).toBe('')
-    expect(r.error).toContain('Select a downloaded model')
+  it.each(['composer', 'builtin:composer', 'builtin:composer-lite'])('rejects retired model %s', (model) => {
+    expect(resolveExecutionModel(model)).toMatchObject({ model: '', error: expect.stringContaining('Select a downloaded model') })
   })
 })
 
@@ -218,40 +179,6 @@ describe('planChatTurn', () => {
     workspacePath: null,
     getSecret: () => null
   }
-
-  it('runs Composer Full on this Mac when Cloud Composer is turned off and Full is downloaded', async () => {
-    const settings = structuredClone(getDefaults())
-    settings.agent.routing.useLocalComposerFull = true
-    const plan = await planChatTurn({
-      ...base,
-      settings,
-      context: {
-        text: 'implement a login form',
-        selectedModel: 'auto',
-        mode: 'agent'
-      }
-    })
-    expect(plan.models.chat).toBe('')
-    expect(plan.cloudPreferred).toBe(false)
-  })
-
-  it('keeps Cloud Composer when Full is not downloaded', async () => {
-    ready.delete('builtin:composer')
-    const settings = structuredClone(getDefaults())
-    settings.agent.routing.useLocalComposerFull = true
-    const plan = await planChatTurn({
-      ...base,
-      workspacePath: '/workspace',
-      settings,
-      context: {
-        text: 'implement a login form',
-        selectedModel: 'auto',
-        mode: 'agent'
-      }
-    })
-    expect(plan.models.chat).toBe('')
-    expect(plan.cloudPreferred).toBe(false)
-  })
 
   it('searches the web for a person instead of answering with no tools', async () => {
     const plan = await planChatTurn({
@@ -309,7 +236,6 @@ describe('planChatTurn', () => {
     })
     expect(plan.agentId).toBe('composer')
     expect(plan.models.chat).toBe('')
-    expect(plan.cloudPreferred).toBe(false)
   })
 
   it('assigns Composer to edits and does not steal them for Coder', async () => {
@@ -574,5 +500,5 @@ describe('read-only safety net (#505)', () => {
 })
 
 it('rejects the orchestrator ID as a model reference', () => {
-  expect(resolveModelRoles({ selectedModel: 'composer', intent: 'edit', toolPolicy: 'edit', preferEscalate: false }).error).toBeTruthy()
+  expect(resolveExecutionModel('composer').error).toBeTruthy()
 })

@@ -48,7 +48,6 @@ const plan = (overrides: Partial<TurnPlan>): TurnPlan => ({
   models: { chat: SIMULATED_MODEL_REF, tools: SIMULATED_MODEL_REF },
   toolPolicy: 'read',
   requiresTools: true,
-  escalateToFull: false,
   reason: 'test',
   method: 'heuristic',
   ...overrides
@@ -567,7 +566,6 @@ describe('AG-056/AG-058 delegation outcomes and recovery in the loop', () => {
       selectedModel: SIMULATED_MODEL_REF,
       goal: 'Fix src/retry.ts',
       getSecret: () => null,
-      escalateCount: 0,
       rerouteCount: 0,
       actionLog: [],
       filesTouched: []

@@ -94,7 +94,6 @@ describe('agent context boundaries', () => {
       mode: 'agent',
       toolPolicy: 'full',
       requiresTools: true,
-      escalateToFull: false,
       models: { chat: 'local:test', tools: 'local:test' },
       reason: 'Apply recommendations',
       method: 'override'
@@ -186,7 +185,6 @@ describe('memory at model boundaries', () => {
       mode: 'ask',
       toolPolicy: 'none',
       requiresTools: false,
-      escalateToFull: false,
       models: { chat: 'local:test', tools: 'local:test' },
       reason: 'test',
       method: 'manual'

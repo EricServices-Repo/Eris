@@ -16,7 +16,7 @@ const params = (name: string) =>
 const plan = (over: Partial<TurnPlan> = {}): TurnPlan => ({
   intent: 'edit', agentId: 'composer', agentName: 'Composer', mode: 'agent',
   models: { chat: 'simulated:x', tools: 'simulated:x' }, toolPolicy: 'edit',
-  requiresTools: true, escalateToFull: false, reason: 'test', method: 'manual', ...over
+  requiresTools: true, reason: 'test', method: 'manual', ...over
 })
 
 describe('tool definitions a model reads', () => {

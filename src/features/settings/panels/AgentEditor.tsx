@@ -156,17 +156,6 @@ export function AgentEditor({
         </select>
       </div>
       <div className="setting-row" style={{ gridTemplateColumns: '120px 1fr', border: 'none' }}>
-        <label>Escalate</label>
-        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <input
-            type="checkbox"
-            checked={agent.preferEscalate !== false}
-            onChange={(e) => onChange({ ...agent, preferEscalate: e.target.checked })}
-          />
-          Allow Lite → Full for tools
-        </label>
-      </div>
-      <div className="setting-row" style={{ gridTemplateColumns: '120px 1fr', border: 'none' }}>
         <label>System prompt</label>
         <textarea
           rows={4}

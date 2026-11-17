@@ -1,6 +1,5 @@
 import { helperModel } from './helper-model'
 import { modelDestination } from './model-destination'
-import { isNativeGgufRef } from '../../../src/shared/model-destination'
 import { bindTaskReferences, type ResolvedReference } from './reference-binding'
 import { realpathSync } from 'fs'
 import type {
@@ -24,7 +23,7 @@ import {
 import type { AgentRunnerEvent } from './agent/types'
 import { buildChatMessages, type BuiltChatMessage } from './chat-prompt'
 import type { ContextAllocation } from '../../../src/shared/context-allocation'
-import { localComposerFullActive, planChatTurn } from './chat-router'
+import { planChatTurn } from './chat-router'
 import { createTaskContract } from './task-intake'
 import { resolveTaskDecision } from './task-resolver'
 import { executionPlanFor } from './execution-plan'
@@ -306,24 +305,6 @@ export function buildChatTurnMessages(
         : {})
     }
   )
-}
-
-/** Composer Full runs locally only when its local runtime is active; otherwise Lite. */
-export function localChatTurnModel(
-  plan: TurnPlan,
-  model: string,
-  settings: AppSettings
-): { model: string; plan: TurnPlan } {
-  if (
-    (model === 'builtin:composer' || model === 'composer') &&
-    !localComposerFullActive(settings)
-  ) {
-    if (plan.modelExecution?.policy === 'fixed') return { model, plan: { ...plan,
-      error: 'Fixed Composer Full is unavailable for local execution. Enable local Full or explicitly choose another model or automatic policy.' } }
-    const lite = 'builtin:composer-lite'
-    return { model: lite, plan: { ...plan, models: { ...plan.models, chat: lite, tools: lite } } }
-  }
-  return { model, plan }
 }
 
 const OUTCOME_EVIDENCE_TOOLS = ['read_file', 'notebook_read', 'run', 'search_replace', 'write_file']

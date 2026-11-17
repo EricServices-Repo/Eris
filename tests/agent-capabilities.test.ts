@@ -78,7 +78,6 @@ const plan = (overrides: Partial<TurnPlan>): TurnPlan => ({
   models: { chat: 'builtin:composer-lite', tools: 'builtin:composer-lite' },
   toolPolicy: 'none',
   requiresTools: false,
-  escalateToFull: false,
   reason: 'test',
   method: 'heuristic',
   ...overrides

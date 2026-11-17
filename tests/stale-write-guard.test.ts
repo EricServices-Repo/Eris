@@ -15,7 +15,6 @@ const plan: TurnPlan = {
   mode: 'agent',
   toolPolicy: 'edit',
   requiresTools: true,
-  escalateToFull: false,
   reason: 'test',
   method: 'heuristic',
   models: { chat: 'local:test', tools: 'local:test' }

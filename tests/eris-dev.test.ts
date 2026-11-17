@@ -325,7 +325,6 @@ describe('Eris-Dev live model runs', () => {
         models: ['test-selected-model']
       }
     ]
-    settings.agent.routing.preferCloudComposer = false
     settings.agent.routing.useLlmRouter = false
     settings.agent.routing.profile = 'local'
     return {

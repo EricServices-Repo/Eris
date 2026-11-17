@@ -1,6 +1,5 @@
 import { helperModel } from '../services/helper-model'
 import { createContextOrigin } from '../services/context-origin'
-import { chooseExecutionModel } from '../services/auto-model-policy'
 import { currentLoadedModel } from '../services/model-runtime'
 import { ThreadWorkingStateBuilder } from '../services/thread-working-state'
 import { pendingCommandApprovals } from '../services/command-approval'
@@ -27,13 +26,11 @@ import { appendTaskEvent } from '../services/task-ledger'
 import type { MemoryPrompt } from '../../../src/shared/context-memory'
 import { flushTaskLedger } from '../services/task-ledger'
 import { reviewTaskOutcome } from '../services/task-outcome'
-import { asksForImageGeneration } from '../../../src/shared/image-generation'
 import { ipcMain } from 'electron'
 import { getResolvedSettings, setSettings } from '../services/settings'
 import { turnPlanToRouteResult } from '../services/chat-router'
 import {
   buildChatTurnMessages,
-  localChatTurnModel,
   needsOutcomeReview,
   OutcomeEvidence,
   planInitialChatTurn,
@@ -81,10 +78,9 @@ import { findAgent } from '../services/agents'
 import { appState } from '../app-state'
 import { getSecret, abortAllCompletes } from './shared'
 import { addWorkspaceAllowedCommand, workspaceAllowedCommands } from '../services/workspace-trust'
-import { assertChatWithinPlan, assertCloudJobWithinPlan } from '../services/eris-entitlements'
+import { assertChatWithinPlan } from '../services/eris-entitlements'
 import { logError, logInfo, logWarn } from '../services/logger'
 import { recordAgentRun } from '../services/agent-telemetry'
-import { cloudInlineAvailable, runCloudAgentInline } from '../services/cloud-agent-inline'
 import { rememberAgentRun, rememberAskUserReply } from '../services/project-memory'
 import { watchForStall } from '../services/chat-stall-watch'
 import { inferenceGovernorStatus } from '../services/inference-governor'
@@ -470,7 +466,6 @@ export function registerChatStreamIpc(): void {
               model ||
               settings.models.defaultModel
             const budget =
-              turnPlan.cloudPreferred ||
               (workspacePath && turnPlan.task?.scope.state !== 'resolved') ||
               taskIntakeBlocked(turnPlan.task, turnPlan.mode)
                 ? contextBudgetTokens(settings, selectedModel)
@@ -624,7 +619,6 @@ export function registerChatStreamIpc(): void {
           let verificationState: 'passed' | 'failed' | 'not-run' = 'not-run'
           let editOwner: string | undefined
           let mixedEditOwners = false
-          let usedCloud = false
           let firstModelOutputMs: number | null = null
           const noteFirstAgentOutput = (evt: { type: string; text?: string }) => {
             const hasOutput =
@@ -644,7 +638,7 @@ export function registerChatStreamIpc(): void {
             if (!telemetryOn) return
             try {
               recordAgentRun({
-                model: usedCloud ? 'composer' : resolvedModel,
+                model: resolvedModel,
                 settings,
                 intent: turnPlan.intent,
                 steps: telemetrySteps,
@@ -653,7 +647,6 @@ export function registerChatStreamIpc(): void {
                 aborted: outcome === 'aborted',
                 verifiedEditMs:
                   verifiedAfterLastEdit &&
-                  !usedCloud &&
                   !mixedEditOwners &&
                   editOwner === resolvedModel
                     ? Date.now() - requestReceivedAt
@@ -735,213 +728,6 @@ export function registerChatStreamIpc(): void {
                 })
               }
             }
-
-            // Agent mode: prefer Cloud Composer inline in chat (thinking/tools/answer),
-            // not a background Agents-panel job. Fall back to local Lite on failure.
-            // Only hand off to Cloud Composer when the turn would otherwise run the
-            // built-in local model. If the user picked their own API/cloud model
-            // (OpenAI, Anthropic, OpenRouter, Ollama, …), run it directly in the
-            // local agent loop so BYO keys are first-class in Agent mode.
-            const usingComposerFull =
-              turnPlan.models.tools === 'builtin:composer' ||
-              turnPlan.models.chat === 'builtin:composer'
-            const cloudPreferred = turnPlan.cloudPreferred === true && usingComposerFull
-            const wantCloudInline =
-              !asksForImageGeneration(userText) &&
-              (mode ?? 'agent') === 'agent' &&
-              turnPlan.mode === 'agent' &&
-              Boolean(workspacePath) &&
-              usingComposerFull &&
-              cloudPreferred
-
-            const cloudCompatible =
-              wantCloudInline &&
-              (await cloudInlineAvailable(settings, getSecret, turnPlan.task?.version))
-            if (wantCloudInline && !cloudCompatible) {
-              if (!turnPlan.modelExecution || turnPlan.modelExecution.policy === 'fixed')
-                throw new Error(
-                  'Fixed Cloud Composer is unavailable. Select another model or an automatic execution policy to continue.'
-                )
-              const fallback = await chooseExecutionModel(settings, turnPlan.intent, 'auto-local', [
-                resolvedModel
-              ])
-              if (!fallback.model)
-                throw new Error(
-                  `Cloud Composer is unavailable and no eligible local worker is ready. ${fallback.candidates.map((c) => `${c.model}: ${c.reason}`).join('; ')}`
-                )
-              const coordinator = resolvedModel
-              resolvedModel = fallback.model
-              turnPlan = {
-                ...turnPlan,
-                cloudPreferred: false,
-                models: {
-                  ...turnPlan.models,
-                  coordinator,
-                  chat: resolvedModel,
-                  tools: resolvedModel
-                },
-                modelExecution: {
-                  ...turnPlan.modelExecution,
-                  candidates: fallback.candidates,
-                  basis: 'cloud-unavailable'
-                }
-              }
-              publish('chat:status', {
-                requestId,
-                text: `Cloud server is unavailable or lacks the required task contract. Continuing with ${resolvedModel} under the same permissions.`
-              })
-            }
-            if (cloudCompatible) {
-              let cloudWorkObserved = false
-              try {
-                assertCloudJobWithinPlan(settings, getSecret)
-                usedCloud = true
-                publish('chat:model', {
-                  requestId,
-                  model: 'composer',
-                  agentId: turnPlan.agentId,
-                  agentName: turnPlan.agentName
-                })
-                for await (const evt of runCloudAgentInline({
-                  task: turnPlan.task,
-                  workspacePath: workspacePath!,
-                  settings,
-                  goal: userText,
-                  agentId: turnPlan.agentId,
-                  agentName: turnPlan.agentName,
-                  getSecret,
-                  signal: controller.signal
-                })) {
-                  if (evt.type === 'tool') cloudWorkObserved = true
-                  workingState?.observe(evt)
-                  noteFirstAgentOutput(evt)
-                  if (evt.type === 'diff' && evidencePaths.size < 32)
-                    evidencePaths.add(evt.diff.path)
-                  if (evt.type === 'tool' && evt.tool.name === 'verify') observedCheck = true
-                  if (evt.type === 'thinking') {
-                    pendingThinking += evt.text
-                    scheduleStreamFlush()
-                  } else if (evt.type === 'answer') {
-                    pendingAnswer += evt.text
-                    scheduleStreamFlush()
-                  } else {
-                    flushStreamChunks()
-                    if (evt.type === 'tool') {
-                      publish('chat:tool', { requestId, tool: evt.tool })
-                    } else if (evt.type === 'diff') {
-                      telemetryMutated = true
-                      publish('chat:diff', { requestId, diff: evt.diff })
-                    } else if (evt.type === 'checkpoint') {
-                      publish('chat:checkpoint', {
-                        requestId,
-                        checkpointId: evt.checkpointId
-                      })
-                    } else if (evt.type === 'workspace-changed') {
-                      publish('chat:workspace-changed', { requestId })
-                    } else if (evt.type === 'status') {
-                      publish('chat:status', { requestId, text: evt.text })
-                    } else if (evt.type === 'model') {
-                      resolvedModel = evt.model
-                      publish('chat:model', {
-                        requestId,
-                        model: evt.model,
-                        agentId: evt.agentId ?? turnPlan.agentId,
-                        agentName: evt.agentName ?? turnPlan.agentName
-                      })
-                    }
-                  }
-                }
-                flushStreamChunks()
-                persistRun({ status: 'done' })
-                recordTelemetry('done')
-                try {
-                  const mem = rememberAgentRun(workspacePath, getResolvedSettings(workspacePath), {
-                    intent: turnPlan.intent,
-                    goal: userText,
-                    filesTouched: memoryFiles,
-                    actionLog: memoryActions,
-                    aborted: false
-                  })
-                  if (mem.needsConfirm) {
-                    publish('chat:memory-proposal', {
-                      requestId,
-                      note: mem.note,
-                      summary: mem.summary,
-                      preview: mem.preview
-                    })
-                  } else if (mem.wrote) {
-                    publish('chat:memory-updated', {
-                      requestId,
-                      kind: mem.kind,
-                      preview: mem.preview
-                    })
-                  }
-                } catch {
-                  /* memory is best-effort */
-                }
-                if (!(await persistReply('done'))) return false
-                publish('chat:done', { requestId, reply: replySnapshot })
-                logInfo('Chat stream done (cloud inline)', {
-                  requestId,
-                  totalMs: externalPlanningDurationMs + Date.now() - requestReceivedAt,
-                  firstOutputMs: firstModelOutputMs,
-                  promptBuildMs
-                })
-                return true
-              } catch (cloudErr) {
-                if ((cloudErr as Error).name === 'AbortError') {
-                  flushStreamChunks()
-                  persistRun({ status: 'stopped' })
-                  if (!(await persistReply('stopped'))) return false
-                  publish('chat:done', { requestId, aborted: true, reply: replySnapshot })
-                  return false
-                }
-                if (!turnPlan.modelExecution || turnPlan.modelExecution.policy === 'fixed')
-                  throw cloudErr
-                if (telemetryMutated || cloudWorkObserved)
-                  throw new Error(
-                    'Cloud execution stopped after beginning workspace work. Existing changes are preserved; automatic model recovery was stopped to avoid replaying operations.'
-                  )
-                const fallback = await chooseExecutionModel(
-                  settings,
-                  turnPlan.intent,
-                  'auto-local',
-                  [resolvedModel]
-                )
-                if (!fallback.model)
-                  throw new Error(
-                    `Cloud execution failed and no eligible local recovery model is available. ${fallback.candidates.map((c) => `${c.model}: ${c.reason}`).join('; ')}`
-                  )
-                logWarn('Cloud inline chat falling back to local', {
-                  requestId,
-                  error: cloudErr instanceof Error ? cloudErr.message : String(cloudErr)
-                })
-                pendingThinking += `\nCloud unavailable — continuing with ${fallback.model}.\n`
-                usedCloud = false
-                const coordinator = resolvedModel
-                resolvedModel = fallback.model
-                turnPlan = {
-                  ...turnPlan,
-                  models: {
-                    ...turnPlan.models,
-                    coordinator,
-                    chat: resolvedModel,
-                    tools: resolvedModel
-                  },
-                  modelExecution: {
-                    ...turnPlan.modelExecution,
-                    candidates: fallback.candidates,
-                    basis: 'cloud-recovery'
-                  },
-                  cloudPreferred: false
-                }
-                scheduleStreamFlush()
-              }
-            }
-
-            const localTurn = localChatTurnModel(turnPlan, resolvedModel, settings)
-            resolvedModel = localTurn.model
-            turnPlan = localTurn.plan
 
             for await (const evt of runAgentWithWorkspaceTools({
               workspacePath: workspacePath,
