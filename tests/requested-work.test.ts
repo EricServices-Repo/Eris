@@ -39,8 +39,8 @@ describe('reference-first file requests', () => {
     expect(resumed.requested).toMatchObject({ state: 'resolved', targetFiles: ['confirm.ts'] })
     expect(resumed.authority.execute).toBe('none')
     const gateway = new TaskToolGateway(resumed)
-    expect(gateway.authorize(resumed.scope.workspaceRoot!, { name: 'write_file', args: { path: 'auth.ts' } })).toContain('outside the remaining')
-    expect(gateway.authorize(resumed.scope.workspaceRoot!, { name: 'write_file', args: { path: 'confirm.ts' } })).toBeNull()
+    expect(gateway.authorize(resumed.scope.workspaceRoot!, { name: 'write_file', args: { path: 'auth.ts' }, raw: '' })).toContain('outside the remaining')
+    expect(gateway.authorize(resumed.scope.workspaceRoot!, { name: 'write_file', args: { path: 'confirm.ts' }, raw: '' })).toBeNull()
     expect(createTaskContract({ ...input, workspacePath: workspace() }).requested?.state).toBe('needs-reference')
   })
   it('retains proposed files in the existing durable recommendation representation', () => {
