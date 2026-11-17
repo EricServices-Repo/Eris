@@ -228,6 +228,7 @@ describe('release asset contract', () => {
     'Eris-1.2.3-mac-arm64.dmg',
     'Eris-1.2.3-mac-arm64.dmg.blockmap',
     'Eris-1.2.3-mac-arm64.zip',
+    'Eris-Dev-1.2.3-mac-arm64.zip',
     'latest-mac.yml',
     'context-qualification-mac.json',
     'release-provenance-mac.json'
@@ -251,6 +252,11 @@ describe('release asset contract', () => {
     ).toThrow(
       /missing Eris-1\.2\.3-win-x64-setup\.exe, Eris-Dev-1\.2\.3-win-x64-setup\.exe, latest\.yml/
     )
+  })
+
+  it('requires the separate macOS dev archive for release', () => {
+    expect(() => verifyReleaseAssets(mac.filter((name) => !name.startsWith('Eris-Dev-')), 'mac', '1.2.3', feed('1.2.3')))
+      .toThrow('missing Eris-Dev-1.2.3-mac-arm64.zip')
   })
 
   it('rejects stale, foreign-platform and orphan blockmap assets', () => {

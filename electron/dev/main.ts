@@ -81,7 +81,9 @@ declare const __ERIS_DEV_BUILD__:
   { gitSha: string; dirty: boolean | null; dirtyDigest: string | null; buildId: string } | undefined
 
 app.setName('Eris-Dev')
-app.setPath('userData', join(app.getPath('appData'), 'Eris-Dev'))
+const packagedSmokeProfile = process.argv.includes('--eris-dev-smoke-test')
+  ? process.env.ERIS_DEV_SMOKE_PROFILE : undefined
+app.setPath('userData', packagedSmokeProfile || join(app.getPath('appData'), 'Eris-Dev'))
 let window: BrowserWindow | null = null
 let corpus: DevImportPreview | null = null
 let project: string | null = null
@@ -1015,6 +1017,7 @@ app.whenReady().then(async () => {
     minWidth: 900,
     minHeight: 650,
     title: 'Eris-Dev',
+    show: !packagedSmokeProfile,
     backgroundColor: '#10131a',
     webPreferences: {
       preload: join(__dirname, '../preload/preload.js'),
@@ -1025,6 +1028,20 @@ app.whenReady().then(async () => {
   })
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', (event) => event.preventDefault())
+  if (packagedSmokeProfile) {
+    try {
+      await window.loadFile(join(__dirname, '../renderer/index.html'))
+      const preloadReady = await window.webContents.executeJavaScript('typeof window.erisDev === "object"')
+      if (!app.isPackaged || !preloadReady || app.getPath('userData') !== packagedSmokeProfile)
+        throw new Error('Packaged Eris-Dev identity, preload, or isolated profile check failed.')
+      console.log('ERIS_DEV_PACKAGED_SMOKE_OK')
+      app.exit(0)
+    } catch (error) {
+      console.error(error)
+      app.exit(1)
+    }
+    return
+  }
   if (process.env.ELECTRON_RENDERER_URL) void window.loadURL(process.env.ELECTRON_RENDERER_URL)
   else void window.loadFile(join(__dirname, '../renderer/index.html'))
 })
