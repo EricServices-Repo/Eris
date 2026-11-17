@@ -75,11 +75,11 @@ export const CHAT_AGENT_CONTRACTS: ChatAgentContract[] = [
   {
     id: 'fast',
     name: 'Fast',
-    job: 'Answers a short lookup in a few sentences, reading the workspace when the answer depends on it.',
+    job: 'Resolves a narrow lookup with one targeted source search when needed.',
     tools: 'read',
     auto: true,
-    doesNot: 'Does not edit, plan, or write a long tour of the codebase.',
-    done: 'One to three sentences with the path or symbol, or a single line saying Composer should take an edit.'
+    doesNot: 'Does not edit files.',
+    done: 'A few sentences by default, with an inspected source if needed and material ambiguity stated.'
   }
 ]
 
