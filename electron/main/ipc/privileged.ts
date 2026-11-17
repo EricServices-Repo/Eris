@@ -78,7 +78,7 @@ const schemas: Record<string, z.ZodType> = {
   'models:connectDetected': z.tuple([z.enum(['ollama', 'lmstudio'])]),
   'models:status': z.tuple([
     z
-      .object({ probe: z.boolean().optional(), includeGpu: z.boolean().optional() })
+      .object({ probe: z.boolean().optional(), probeCloud: z.boolean().optional(), includeGpu: z.boolean().optional() })
       .strict()
       .optional()
   ]),

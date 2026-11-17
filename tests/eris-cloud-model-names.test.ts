@@ -9,7 +9,7 @@ import {
   providerModelId
 } from '../src/shared/eris-cloud'
 import type { AppSettings, ModelConnection } from '../src/shared/settings-schema'
-import { getModelsStatus, resolveConnectionForModel } from '../electron/main/services/model-catalog'
+import { connectionsWithDiscoveredModels, getModelsStatus, resolveConnectionForModel } from '../electron/main/services/model-catalog'
 import { streamModelChat } from '../electron/main/services/chat-runtime'
 import {
   getDefaults,
@@ -66,7 +66,8 @@ describe('cloud: model names', () => {
 
   it('uses the live Eris Cloud catalog even when the server lists zero models', async () => {
     vi.stubGlobal('fetch', async () => Response.json({ data: [] }))
-    const status = await getModelsStatus(settingsWith(['retired-model']), () => null, {
+    const settings = settingsWith(['retired-model'])
+    const status = await getModelsStatus(settings, () => 'fixture-token', {
       probeConnections: true
     })
     expect(status.connections.find(c => c.id === 'eris-cloud')).toMatchObject({
@@ -74,6 +75,34 @@ describe('cloud: model names', () => {
       models: []
     })
     expect(status.models.filter(m => m.connectionId === 'eris-cloud')).toEqual([])
+    const update = connectionsWithDiscoveredModels(settings, status)
+    expect(update.changed).toBe(true)
+    settings.models.connections = update.connections
+    const offline = await getModelsStatus(settings, () => null)
+    expect(offline.models.find(model => model.name === 'cloud:retired-model')).toBeUndefined()
+    expect(resolveConnectionForModel(settings, 'cloud:retired-model')).toBeNull()
+    expect(resolveConnectionForModel(settings, 'retired-model')).toBeNull()
+  })
+
+  it('refreshes only Cloud and preserves a same-named local Ollama model', async () => {
+    const fetch = vi.fn(async () => Response.json({ data: [{ id: 'still-on' }] }))
+    vi.stubGlobal('fetch', fetch)
+    const settings = settingsWith(['retired-model', 'still-on'], ['retired-model'])
+    const status = await getModelsStatus(settings, () => 'fixture-token', { probeCloud: true })
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(status.models.map(model => model.name)).toEqual(expect.arrayContaining(['cloud:still-on', 'retired-model']))
+    expect(status.models.some(model => model.name === 'cloud:retired-model')).toBe(false)
+    settings.models.connections = connectionsWithDiscoveredModels(settings, status, { cloudOnly: true }).connections
+    expect(resolveConnectionForModel(settings, 'cloud:retired-model')).toBeNull()
+    expect(resolveConnectionForModel(settings, 'retired-model')?.id).toBe('ollama')
+  })
+
+  it('does not restore old Cloud entries when the signed-in catalog request fails', async () => {
+    vi.stubGlobal('fetch', async () => new Response(null, { status: 401 }))
+    const settings = settingsWith(['retired-model'])
+    const status = await getModelsStatus(settings, () => 'fixture-token', { probeCloud: true })
+    expect(status.connections.find(c => c.id === 'eris-cloud')).toMatchObject({ reachable: false, models: [] })
+    expect(connectionsWithDiscoveredModels(settings, status, { cloudOnly: true }).connections.find(c => c.id === 'eris-cloud')?.models).toEqual([])
   })
 
   it('routes cloud: to Eris Cloud and a bare id to the user’s own Ollama', () => {
@@ -82,6 +111,20 @@ describe('cloud: model names', () => {
     expect(resolveConnectionForModel(settings, 'qwen3:8b')?.id).toBe('ollama')
     // An older saved selection of a model only Eris Cloud has still resolves there.
     expect(resolveConnectionForModel(settingsWith(['gemma3']), 'gemma3')?.id).toBe('eris-cloud')
+  })
+
+  it('rejects a removed Cloud selection without sending its chat to another connection', async () => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    const reply = streamModelChat({
+      settings: settingsWith([], ['retired-model']),
+      model: 'cloud:retired-model',
+      messages: [{ role: 'user', content: 'hello' }],
+      temperature: 0,
+      getSecret: () => 'fixture-token'
+    })
+    await expect(reply.next()).rejects.toThrow('unavailable in the Eris Cloud catalog')
+    expect(fetch).not.toHaveBeenCalled()
   })
 
   it('sends the bare model id to the Eris Cloud server', async () => {

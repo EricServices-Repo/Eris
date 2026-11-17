@@ -29,6 +29,8 @@ import { HF_GGUF_BROWSE_URL, searchHfGgufModels } from '../services/hf-gguf'
 import { logError, logInfo, logWarn } from '../services/logger'
 import { appState } from '../app-state'
 import { getSecret } from './shared'
+import { ERIS_CLOUD_TOKEN_REF, isErisCloudConnection } from '../../../src/shared/eris-cloud'
+import type { IdeApi } from '../../../src/shared/api'
 
 function flattenError(err: unknown): string {
   const parts: string[] = []
@@ -60,29 +62,32 @@ export function registerModelsIpc(): void {
       throw new Error('Unauthorized admission inspection')
     return inferenceGovernorStatus()
   })
+  let cloudProbeGeneration = 0
   ipcMain.handle(
     'models:status',
-    async (_e, options?: { probe?: boolean; includeGpu?: boolean }) => {
+    async (_e, options?: Parameters<IdeApi['modelsStatus']>[0]) => {
       const root = appState.currentWorkspace
       const settings = getResolvedSettings(root)
       const probe = options?.probe === true
+      const probeCloud = probe || options?.probeCloud === true
+      const cloudGeneration = probeCloud ? ++cloudProbeGeneration : 0
+      const cloudToken = probeCloud && settings.models.connections.some((c) => c.enabled && isErisCloudConnection(c))
+        ? getSecret(ERIS_CLOUD_TOKEN_REF) : null
       const includeGpu = options?.includeGpu === true || probe
       const status = await getModelsStatus(settings, getSecret, {
         probeConnections: probe,
+        probeCloud,
         includeGpu
       })
       // Persist live /v1/models lists only when we actually probed.
-      if (probe && appState.currentWorkspace === root) {
-        const { connections, changed } = connectionsWithDiscoveredModels(settings, status)
+      if (probeCloud && appState.currentWorkspace === root) {
+        const keepCloud = cloudGeneration !== cloudProbeGeneration ||
+          cloudToken !== getSecret(ERIS_CLOUD_TOKEN_REF)
+        const { connections, changed } = connectionsWithDiscoveredModels(getResolvedSettings(probe ? root : null), status, {
+          cloudOnly: !probe, keepCloud
+        })
         if (changed) {
           setSettings('user', { models: { connections } }, root)
-          return {
-            ...status,
-            connections: status.connections.map((c) => {
-              const updated = connections.find((u) => u.id === c.id)
-              return updated ? { ...c, models: updated.models } : c
-            })
-          }
         }
       }
       return status

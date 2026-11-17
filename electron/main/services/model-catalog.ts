@@ -2,7 +2,8 @@ import {
   connectionModelRef,
   isErisCloudConnection,
   isErisCloudModelRef,
-  isLocalOllamaConnection
+  isLocalOllamaConnection,
+  providerModelId
 } from '../../../src/shared/eris-cloud'
 import type {
   AppSettings,
@@ -22,6 +23,8 @@ export type ModelsStatusOptions = {
    * Default false — use persisted connection.models for chat/boot hot paths.
    */
   probeConnections?: boolean
+  /** Refresh only the account-scoped Eris Cloud catalog. */
+  probeCloud?: boolean
   /** Include GPU accel probe (Settings). Default false on light paths. */
   includeGpu?: boolean
 }
@@ -48,12 +51,12 @@ function catalogModels(
 
 /** Fast path: disk catalog + persisted connection lists (no network). */
 function lightConnectionSnapshot(
-  settings: AppSettings,
+  configured: readonly ModelConnection[],
   builtinReady: boolean
 ): { connections: ModelsStatus['connections']; models: ModelInfo[] } {
   const connections: ModelsStatus['connections'] = []
   const models: ModelInfo[] = []
-  for (const conn of settings.models.connections) {
+  for (const conn of configured) {
     if (conn.type === 'builtin') {
       connections.push({ ...conn, reachable: builtinReady })
       continue
@@ -94,9 +97,9 @@ export async function getModelsStatus(
 
   let connections: ModelsStatus['connections'] = []
 
-  if (!probeConnections) {
+  if (!probeConnections && !options.probeCloud) {
     const snap = lightConnectionSnapshot(
-      settings,
+      settings.models.connections,
       builtin.some((b) => b.ready)
     )
     connections = snap.connections
@@ -112,11 +115,17 @@ export async function getModelsStatus(
       if (!conn.enabled) {
         return { connection: { ...conn, reachable: false }, models: [] as ModelInfo[] }
       }
+      const cloud = isErisCloudConnection(conn)
+      if (!probeConnections && !cloud) {
+        const snap = lightConnectionSnapshot([conn], false)
+        return { connection: snap.connections[0]!, models: snap.models }
+      }
       const key = conn.apiKeyRef ? getSecret(conn.apiKeyRef) : null
       try {
+        if (cloud && !key) throw new Error('Sign in to EricServic.es to see Eris Cloud models.')
         const remote = await listOpenAIModels(conn.baseUrl, key)
-        const names = isErisCloudConnection(conn) || remote.length > 0 ? remote : conn.models
-        if (isOllamaConnection(conn)) {
+        const names = cloud || remote.length > 0 ? remote : conn.models
+        if (probeConnections && isOllamaConnection(conn)) {
           // Explicit refresh populates a bounded set of routing facts. Models not
           // refreshed here still use bundled or size-based evidence until first use.
           await Promise.all(names.slice(0, 6).map((name) => probeOllamaModel(conn, connectionModelRef(conn, name), key)))
@@ -140,10 +149,11 @@ export async function getModelsStatus(
         return {
           connection: {
             ...conn,
+            ...(cloud ? { models: [] } : {}),
             reachable: false,
             error: err instanceof Error ? err.message : 'Unreachable'
           },
-          models: conn.models.map((name) => ({
+          models: (cloud ? [] : conn.models).map((name) => ({
             name: connectionModelRef(conn, name),
             source: 'connection' as const,
             connectionId: conn.id,
@@ -207,10 +217,12 @@ export function resolveConnectionForModel(
   )
   // `cloud:<model>` always means the hosted Eris Cloud server, never another connection.
   if (isErisCloudModelRef(model)) {
-    return external.find((c) => isErisCloudConnection(c)) ?? null
+    return external.find((c) => isErisCloudConnection(c) && c.models.some((name) =>
+      providerModelId(name) === providerModelId(model))) ?? null
   }
   if (hintConnectionId) {
-    const hinted = external.find((c) => c.id === hintConnectionId)
+    const hinted = external.find((c) => c.id === hintConnectionId &&
+      (!isErisCloudConnection(c) || c.models.includes(model)))
     if (hinted) return hinted
   }
   // A bare id is the user's own connection first; Eris Cloud only for an older saved
@@ -220,17 +232,17 @@ export function resolveConnectionForModel(
     external.find((c) => c.models.includes(model))
   if (byModel) return byModel
 
-  // Prefer the user's own daemon; fall back to the hosted Eris Cloud server.
+  // Eris Cloud is a closed catalog. Only generic connections may accept unlisted IDs.
+  const generic = external.filter((c) => !isErisCloudConnection(c))
   const ollama =
-    external.find((c) => isLocalOllamaConnection(c)) ??
-    external.find((c) => c.provider === 'ollama' || c.id === 'ollama')
+    generic.find((c) => isLocalOllamaConnection(c)) ??
+    generic.find((c) => c.provider === 'ollama' || c.id === 'ollama')
   // Open-ended connection (empty models list = accept any id from that server)
-  const openEnded = external.filter((c) => c.models.length === 0)
+  const openEnded = generic.filter((c) => c.models.length === 0)
   if (openEnded.length === 1) return openEnded[0]!
   // Prefer Ollama when the model isn't in any persisted list yet (fresh pull / before Refresh)
   if (ollama) return ollama
-  if (external.length === 1) return external[0]!
-  return external[0] ?? null
+  return generic[0] ?? null
 }
 
 /**
@@ -284,13 +296,16 @@ export function formatAvailableModelsPrompt(settings: AppSettings, selectedModel
 /** Persist live /v1/models lists onto connection.models so chat routing stays accurate. */
 export function connectionsWithDiscoveredModels(
   settings: AppSettings,
-  status: ModelsStatus
+  status: ModelsStatus,
+  options: { cloudOnly?: boolean; keepCloud?: boolean } = {}
 ): { connections: ModelConnection[]; changed: boolean } {
   let changed = false
   const connections = settings.models.connections.map((c) => {
     if (c.type !== 'openai-compatible' || !c.enabled) return c
+    const cloud = isErisCloudConnection(c)
+    if ((options.cloudOnly && !cloud) || (options.keepCloud && cloud)) return c
     const live = status.connections.find((x) => x.id === c.id)
-    if (!live?.reachable || !live.models?.length) return c
+    if (!live || live.baseUrl !== c.baseUrl || (!cloud && (!live.reachable || !live.models.length))) return c
     const same =
       c.models.length === live.models.length && c.models.every((m, i) => m === live.models[i])
     if (same) return c

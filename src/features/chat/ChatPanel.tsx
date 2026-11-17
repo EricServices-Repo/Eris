@@ -806,7 +806,7 @@ export function ChatPanel({
     byName.set('auto-any', { name: 'auto-any', ready: true })
     if (selectedModel === 'auto') byName.set('auto', { name: 'auto', ready: true })
     for (const model of ready) byName.set(model.name, model)
-    if (selectedModel && !isAutomaticModelSelection(selectedModel) && !selectedModel.startsWith('builtin:') && !byName.has(selectedModel)) {
+    if (selectedModel && !isAutomaticModelSelection(selectedModel) && !selectedModel.startsWith('builtin:') && !isErisCloudModelRef(selectedModel) && !byName.has(selectedModel)) {
       byName.set(selectedModel, {
         name: selectedModel,
         ready: false,
@@ -854,7 +854,7 @@ export function ChatPanel({
     : modelOptions[0]?.name || 'auto'
 
   useEffect(() => {
-    if (isAutomaticModelSelection(selectedModel)) return
+    if (isAutomaticModelSelection(selectedModel) || isErisCloudModelRef(selectedModel)) return
     if (selectValue && selectValue !== selectedModel) onModelChange(selectValue)
   }, [selectValue, selectedModel, onModelChange])
 
