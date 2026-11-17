@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.11 — 2026-11-17
+
+- Refreshes the Eris Cloud catalog, removes stale hosted models, and improves task recovery and verification evidence.
+
 ## 0.7.10 — 2026-11-17
 
 - Improved shared and specialist prompts, verification guidance, and delegated handoffs.
