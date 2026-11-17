@@ -128,6 +128,10 @@ export function reportContextDispatch(input: {
   tools?: unknown
   adapted?: boolean
   context?: ContextDispatch['context']
+  transport?: ContextDispatch['transport']
+  toolProtocol?: ContextDispatch['toolProtocol']
+  packing?: ContextDispatch['packing']
+  schema?: unknown
 }): void {
   const bundle = input.compiled.find((message) => message.contextBundle)?.contextBundle
   if (!bundle) return
@@ -152,6 +156,15 @@ export function reportContextDispatch(input: {
     version: 1,
     taskId: bundle.taskId,
     stablePrefixTokens: bundle.stablePrefixTokens,
+    operation: bundle.operation,
+    taskRevision: bundle.taskRevision,
+    omittedBlocks: bundle.omittedBlocks,
+    transport: input.transport,
+    toolProtocol: input.toolProtocol,
+    packing: input.packing,
+    ...(input.schema ? {
+      toolSchemaDigest: createHash('sha256').update(JSON.stringify(input.schema)).digest('hex')
+    } : {}),
     model: input.model,
     destination: destinationLabel(modelDestination(input.settings, input.model).locality),
     adapted: Boolean(input.adapted),

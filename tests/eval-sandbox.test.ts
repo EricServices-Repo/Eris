@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readdirSync,
   realpathSync,
+  rmSync,
   symlinkSync,
   writeFileSync
 } from 'fs'
@@ -243,3 +244,28 @@ describe('eval task lifecycle', () => {
     timed.dispose()
   })
 })
+
+it('grades artifact types, missing imports and structured output independently of the answer', () => {
+  const root = mkdtempSync(join(tmpdir(), 'eris-artifact-oracle-'))
+  const checks = [
+    EvalCheckSchema.parse({ type: 'typescript_compile', files: ['handler.ts', 'state.ts'] }),
+    EvalCheckSchema.parse({ type: 'json_fields', path: 'routes.json', fields: [
+      { path: ['routes', '0'], value: { path: '/confirm', status: 200 } },
+      { path: ['routes', '1', 'path'], value: '/search' }
+    ] })
+  ]
+  const evaluate = () => evaluateChecks(root, checks, { answer: 'DONE. All features work.', snapshot: {}, files: {} })
+  try {
+    writeFileSync(join(root, 'handler.ts'), 'import { status } from "./state"; export const response: number = status')
+    writeFileSync(join(root, 'state.ts'), 'export const status = "200"')
+    writeFileSync(join(root, 'routes.json'), '{"routes":[{"path":"/confirm","status":200}]}')
+    expect(evaluate().map((result) => result.ok)).toEqual([false, false])
+    writeFileSync(join(root, 'state.ts'), 'export const status = Number("200")')
+    writeFileSync(join(root, 'routes.json'), '{"routes":[{"status":200,"path":"/confirm"},{"path":"/search"}]}')
+    expect(evaluate().map((result) => result.ok)).toEqual([true, true])
+    writeFileSync(join(root, 'handler.ts'), 'import { status } from "./wrong-folder/state"; export const result = status')
+    expect(evaluate()[0]?.ok).toBe(false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 15_000)

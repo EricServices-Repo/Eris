@@ -97,11 +97,31 @@ export interface TaskTurnResult {
   requirements?: RequirementProgress[]
 }
 
+export interface ProjectCheckEvidence {
+  kind: 'test' | 'typecheck' | 'lint' | 'other'
+  command: string
+  scope: 'project'
+  status: 'passed' | 'failed' | 'skipped'
+  testCount?: number
+  taskRevision?: number
+  requirementIds: string[]
+}
+
+export function projectCheckSummary(check: ProjectCheckEvidence): string {
+  const name = { test: 'Project test command', typecheck: 'Typecheck', lint: 'Lint', other: 'Project check' }[check.kind]
+  if (check.status === 'skipped') return `${name} skipped${check.testCount === 0 ? ' (zero tests)' : ''}.`
+  const count = check.kind === 'test'
+    ? check.testCount === undefined ? ' (test count unavailable)' : ` (${check.testCount} tests reported)` : ''
+  const relevance = !check.requirementIds.length && check.status === 'passed'
+    ? ' Requested behavior still needs a targeted check.' : ''
+  return `${name} ${check.status}${count}.${relevance}`
+}
+
 /** Independent finalization dimensions; evaluator availability is not execution evidence. */
 export interface TaskCompletionEvidence {
   execution: 'completed' | 'incomplete'
   verification: 'passed' | 'failed' | 'not-run'
-  requirements?: RequirementProgress[]
+  projectCheck?: ProjectCheckEvidence
   assessment: {
     status: 'supported' | 'partial' | 'unresolved' | 'not-run'
     model?: string
@@ -208,6 +228,8 @@ export interface TaskContract {
     artifact: RequestedArtifact
     destination: ArtifactDestination
     targetFiles: string[]
+    targetReason?: string
+    targetQuestion?: { text: string; choices: string[] }
     /** Compiled from the request, independently of worker/intent selection. */
     evidence?: 'source-read'
     state: 'resolved' | 'needs-reference' | 'needs-clarification'
@@ -296,6 +318,7 @@ export function taskActionSummary(task: TaskContract): string {
     : 'Answer in chat'
   const destination = task.deliverable === 'answer' ? 'chat'
     : task.scope.applicability === 'generic' ? 'provided material'
+    : task.requested?.targetReason ? task.requested.targetFiles.join(', ')
     : root || 'project unresolved'
   const count = task.interpretation?.obligations.length ?? 0
   const requirements = count > 0 ? ` · ${count} requirement${count === 1 ? '' : 's'}` : ''

@@ -27,6 +27,9 @@ Sources: [import](../electron/dev/questions.ts), [runs](../electron/dev/runs.ts)
 
 Each record distinguishes boundary reachability, request coherence, inference status and answer-quality status. Capture-only records have no model response; live records contain bounded model output, inference timing and termination/error data. `answerQuality` remains `not-evaluated` until independent review/oracles provide separate evidence. A visually plausible answer or reported DONE is not a verified patch.
 
+Scenario authors can add a `typescript_compile` check with an explicit `files` list or a `json_fields` check with a sandbox file path and expected field values. The compiler reads the declared artifacts and its bundled standard library. Neither check executes generated code or interprets the model's answer as evidence.
+
+
 Default live settings use 8,192 context and a three-minute question deadline; capture-only timeout is 30 seconds. Live semantic resolution can use up to two minutes within the overall question deadline for cold startup. Live execution is bounded to twelve model calls including intake, ten agent steps and 250,000 output characters across calls. Scenario/quality adapters can use their own explicit caps; consult the manifest rather than assuming these defaults apply to every profile.
 
 The ordinary model picker selects an exact native/API model. `capture.ts` pins live transport calls to that selected model, so the standard live corpus run is not an Auto-local/Auto-any comparative routing benchmark. Production automatic-selection/handoff tests exercise the shared plan/loop separately. Direct debug runners exclude the Cloud-only adapter.

@@ -19,6 +19,20 @@ function writeUserSettings(raw: unknown) {
 }
 
 describe('settings defaults', () => {
+  it('loads retired escalation settings as the normal automatic profile', () => {
+    const defaults = getDefaults()
+    const settings = SettingsSchema.parse({
+      ...defaults,
+      agent: {
+        ...defaults.agent,
+        routing: { ...defaults.agent.routing, profile: 'max', preferCloudComposer: true, useLocalComposerFull: true }
+      }
+    })
+    expect(settings.agent.routing.profile).toBe('auto')
+    expect(settings.agent.routing).not.toHaveProperty('preferCloudComposer')
+    expect(settings.agent.routing).not.toHaveProperty('useLocalComposerFull')
+  })
+
   it('fills image defaults when older settings omit the section', () => {
     const settings = SettingsSchema.parse({ ...getDefaults(), images: undefined })
     expect(settings.images).toEqual({

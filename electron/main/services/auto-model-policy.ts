@@ -2,7 +2,6 @@ import { estimatedNativeAnswerMs } from './model-latency'
 import { isNativeGgufRef } from '../../../src/shared/model-destination'
 import { connectionModelRef } from '../../../src/shared/eris-cloud'
 import type { AppSettings, ChatIntent, LocalModelStatus, ModelConnection } from '../../../src/shared/settings-schema'
-import { isExactBuiltinReady } from './builtin-model'
 import { getSecret } from './credentials'
 import { getLocalStatuses } from './local-model'
 import { modelDestination } from './model-destination'
@@ -38,8 +37,6 @@ export function executionPolicy(settings: AppSettings, selected: string): Execut
 
 /** Execution locality is stricter than permission to disclose recall to an approved LAN host. */
 export function executionLocal(settings: AppSettings, model: string): boolean {
-  if (model === 'builtin:composer')
-    return settings.agent.routing.useLocalComposerFull === true && isExactBuiltinReady(model)
   return modelDestination(settings, model).locality !== 'remote'
 }
 
@@ -58,6 +55,16 @@ function secretPresent(ref: string): boolean {
   }
 }
 
+/** Inventory-only admission. GPU fit and intent requirements are checked after intake. */
+export function hasAutoModelInventory(settings: AppSettings, policy: ExecutionPolicy): boolean {
+  if (getLocalStatuses().some((model) => model.ready)) return true
+  return settings.models.connections.some((connection) =>
+    connection.enabled && connection.type === 'openai-compatible' && connection.baseUrl.trim() &&
+    (!connection.apiKeyRef || secretPresent(connection.apiKeyRef)) &&
+    connection.models.some((name) => name.trim() && !/^(?:local:|builtin:)/.test(name) &&
+      (policy !== 'auto-local' || executionLocal(settings, connectionModelRef(connection, name))))
+  )
+}
 /**
  * Rebuilt at every decision; no cached eligibility survives a URL/profile/inventory change.
  * File size is an admission/cost estimate, never evidence of task quality. Name-based
@@ -68,7 +75,7 @@ export async function chooseExecutionModel(
   intent: ChatIntent,
   selected = 'auto',
   excluded: readonly string[] = [],
-  _options: { cloudComposer?: boolean; requiredContext?: number; modelClass?: 'primary' | 'fast' } = {}
+  _options: { requiredContext?: number; modelClass?: 'primary' | 'fast' } = {}
 ): Promise<AutoModelChoice> {
   const policy = executionPolicy(settings, selected)
   if (policy === 'fixed') return { model: selected, policy, basis: 'profile', candidates: [] }

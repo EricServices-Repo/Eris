@@ -55,7 +55,7 @@ async function firstRequest(text: string, over: Partial<TurnPlan>) {
   const turnPlan: TurnPlan = {
     intent: 'edit', agentId: 'composer', agentName: 'Composer', mode: 'agent',
     models: { chat: 'remote-model', tools: 'remote-model' }, toolPolicy: 'edit',
-    requiresTools: true, escalateToFull: false, reason: 'test', method: 'manual', ...over
+    requiresTools: true, reason: 'test', method: 'manual', ...over
   }
   turnPlan.task = createTaskContract({ workspacePath: ws, text, plan: turnPlan })
   const messages = buildChatMessages(ws, settings, {

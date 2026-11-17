@@ -161,7 +161,6 @@ describe('agent loop reasoning', () => {
     models: { chat: SIMULATED_MODEL_REF, tools: SIMULATED_MODEL_REF },
     toolPolicy: 'read',
     requiresTools: false,
-    escalateToFull: false,
     reason: 'test',
     method: 'heuristic'
   }

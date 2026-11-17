@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { AppSettings } from '../src/shared/settings-schema'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const h = vi.hoisted(() => ({
@@ -174,7 +175,13 @@ describe('actual dispatch', () => {
     expect(JSON.stringify(h.provider[0]!.messages)).not.toContain('contextBundle')
     const [report] = dispatches()
     expect(report).toMatchObject({ destination: 'remote', adapted: true, model: REMOTE })
-    expect(report!.requestDigest).toMatch(/^[0-9a-f]{64}$/)
+    expect(report).toMatchObject({
+      transport: 'openai-compatible',
+      taskRevision: 1,
+      packing: { method: 'serialized-character-estimate', inputTokens: expect.any(Number) }
+    })
+    expect(report!.requestDigest).toBe(createHash('sha256')
+      .update(JSON.stringify([h.provider[0]!.messages, null])).digest('hex'))
     expect(report!.counts.sent).toBe(4)
     expect(JSON.stringify(report)).not.toContain(PRIVATE)
   })

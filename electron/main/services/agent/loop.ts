@@ -1,3 +1,4 @@
+import { projectCheckSummary } from '../../../../src/shared/task-contract'
 import { helperModel } from '../helper-model'
 import { createTaskDeadline, modelStreamWithAbort } from '../task-deadline'
 import { raceAbort } from '../llama-worker-channel'
@@ -494,7 +495,6 @@ async function* runAgentInternal(options: {
   let plan =
     options.turnPlan ??
     (await planChatTurn({
-      allowCloudComposer: false,
       workspacePath: options.workspacePath,
       settings: options.settings,
       context: {
@@ -634,7 +634,11 @@ async function* runAgentInternal(options: {
   }
   if (task.requested?.state === 'needs-clarification') {
     yield { type: 'progress', step: 0, actionLog: [], filesTouched: [], incomplete: true }
-    yield { type: 'answer', text: 'Should I make these changes in the project, or explain the approach in chat? I could not resolve that distinction, so no changes were made.', replace: true }
+    const question = task.requested.targetQuestion
+    const text = question
+      ? [question.text, ...question.choices.map((path) => `- ${path}`)].join('\n')
+      : 'Should I make these changes in the project, or explain the approach in chat? I could not resolve that distinction, so no changes were made.'
+    yield { type: 'answer', text, replace: true }
     return
   }
   if (mode !== 'ask' && task.requested?.artifact === 'patch' && !task.authority.edit) {
@@ -869,21 +873,6 @@ async function* runAgentInternal(options: {
     agentId: plan.agentId,
     agentName: plan.agentName
   }
-  if (plan.escalateToFull) {
-    yield {
-      type: 'thinking',
-      text: `\n\n— Escalating tools to Composer Full (chat stays on ${chatModel.replace(/^builtin:/, '')})…\n`
-    }
-    yield {
-      type: 'adapt',
-      kind: 'escalate',
-      reason: plan.reason,
-      model: workerModel,
-      agentId: plan.agentId,
-      agentName: plan.agentName
-    }
-  }
-
   const preflightStartedAt = Date.now()
   let mcpSyncMs = 0
   let retrievalMs = 0
@@ -1164,7 +1153,6 @@ async function* runAgentInternal(options: {
   let consecutiveToolErrors = 0
   let goalRejectCount = 0
   let verifyPassedOnce = false
-  const escalateCount = plan.escalateToFull ? 1 : 0
   let rerouteCount = 0
   let recoveryExclusionReason = ''
   const reviewOnly =
@@ -1502,7 +1490,6 @@ async function* runAgentInternal(options: {
         noProgressStreak,
         goalRejectCount,
         workspaceMutated,
-        escalateCount,
         rerouteCount
       })
     ) {
@@ -1525,7 +1512,6 @@ async function* runAgentInternal(options: {
             goal: originalUserGoal,
             getSecret: options.getSecret,
             signal: options.signal,
-            escalateCount,
             rerouteCount,
             actionLog,
             filesTouched
@@ -1595,7 +1581,7 @@ async function* runAgentInternal(options: {
         toModel: workerModel,
         attemptedModels: [...attemptedModels],
         trigger,
-        budget: { used: escalateCount + rerouteCount, max: MID_RUN_ADAPT_BUDGET },
+        budget: { used: rerouteCount, max: MID_RUN_ADAPT_BUDGET },
         taskId: task.taskId,
         intent: task.intent,
         artifact: interpretationOf(task).artifact,
@@ -2459,7 +2445,6 @@ async function* runAgentInternal(options: {
           noProgressStreak,
           goalRejectCount,
           workspaceMutated,
-          escalateCount,
           rerouteCount
         })
       ) {
@@ -2902,6 +2887,7 @@ async function* runAgentInternal(options: {
           continue
         }
 
+        let checkSummary: string | undefined
         // Final verify only for product-code edits — skip skills/rules/context under .eris/
         if (workspaceMutated && !codeMutated) {
           yield {
@@ -2921,6 +2907,10 @@ async function* runAgentInternal(options: {
               ? (cmd) => whileUserDecides(() => options.approveCommand!('run', cmd))
               : undefined
           })
+          if (finalVerify.check) {
+            checkSummary = projectCheckSummary(finalVerify.check)
+            yield { type: 'project-check', check: { ...finalVerify.check, taskRevision: task.revision } }
+          }
           appendToolObservation(
             workerMessages,
             'run',
@@ -3065,6 +3055,7 @@ async function* runAgentInternal(options: {
         const unapplied = failedRefinementPaths(actionLog)
         const completionNotes = [
           workflow.verificationNote(),
+          checkSummary,
           unapplied.length
             ? `A later edit to ${unapplied.join(', ')} failed and was not applied; the earlier change to ${unapplied.length === 1 ? 'that file is' : 'those files are'} in place.`
             : null
@@ -4184,7 +4175,6 @@ async function* runAgentInternal(options: {
               // The child is the specialist that was asked for, within its own tool
               // ceiling. Routing the goal must not swap in an editor or force edits.
               const specialistPlan = await planChatTurn({
-                allowCloudComposer: false,
                 workspacePath,
                 settings: options.settings,
                 context: {
@@ -4221,8 +4211,6 @@ async function* runAgentInternal(options: {
                 constraints
               )
               specialistPlan.toolPolicy = intersectToolPolicy(specialistPlan.toolPolicy, task)
-              specialistPlan.escalateToFull = false
-              specialistPlan.cloudPreferred = false
               const childModel = specialistPlan.models.tools
               const delegationId = `${options.jobId}:${agentId}:${step}`
               const runningDelegation = {

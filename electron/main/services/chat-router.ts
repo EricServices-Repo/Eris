@@ -4,6 +4,7 @@ import { INTENT_GUIDE, INTENT_RULES } from '../../../src/shared/intent-guide'
 import { isAutomaticModelSelection } from '../../../src/shared/model-execution'
 import {
   chooseExecutionModel,
+  hasAutoModelInventory,
   executionPolicy,
   executionLocal,
   workspaceLocalityViolation,
@@ -23,7 +24,6 @@ import type {
   TurnPlan
 } from '../../../src/shared/settings-schema'
 import { allAgentsFlat, findAgent } from './agents'
-import { isBuiltinRef, isExactBuiltinReady, resolveExactBuiltinRef } from './builtin-model'
 import { isLocalRef, resolveExactLocalRef } from './local-model'
 import { estimateModelMessagesTokens } from './model-protocol'
 import { streamModelChat } from './chat-runtime'
@@ -83,12 +83,6 @@ const POLICY_ACCESS_RANK: Record<AgentToolsCeiling, number> = {
   read: 1,
   edit: 2,
   full: 3
-}
-
-export function localComposerFullActive(settings: AppSettings): boolean {
-  return (
-    settings.agent.routing.useLocalComposerFull === true && isExactBuiltinReady('builtin:composer')
-  )
 }
 
 export function intentNeedsTools(intent: ChatIntent): boolean {
@@ -422,51 +416,16 @@ async function chooseAutoChatModel(settings: AppSettings, intent: ChatIntent): P
   return chooseExecutionModel(settings, intent)
 }
 
-export function resolveModelRoles(options: {
-  selectedModel: string
-  intent: ChatIntent
-  toolPolicy: AgentToolsCeiling
-  preferEscalate: boolean
-}): { chat: string; tools: string; escalateToFull: boolean; error?: string } {
-  const selected = options.selectedModel.trim()
-  if (!selected || selected === 'composer' || selected.startsWith('builtin:')) return { chat: '', tools: '', escalateToFull: false, error: 'Select a downloaded model or connect a provider in Settings → Models.' }
-  void options.toolPolicy
-  void options.preferEscalate
-  void options.intent
-
-  if (isLocalRef(selected)) {
-    const ready = resolveExactLocalRef(selected)
-    if (!ready) {
-      return {
-        chat: selected,
-        tools: selected,
-        escalateToFull: false,
-        error: `Local model “${selected}” is not ready. Download it in Settings → Models → Local.`
-      }
-    }
-    return { chat: ready, tools: ready, escalateToFull: false }
+export function resolveExecutionModel(model: string): { model: string; error?: string } {
+  const selected = model.trim()
+  if (!selected || selected === 'composer' || selected.startsWith('builtin:'))
+    return { model: '', error: 'Select a downloaded model or connect a provider in Settings → Models.' }
+  if (!isLocalRef(selected)) return { model: selected }
+  const ready = resolveExactLocalRef(selected)
+  return ready ? { model: ready } : {
+    model: selected,
+    error: `Local model “${selected}” is not ready. Download it in Settings → Models → Local.`
   }
-
-  if (!isBuiltinRef(selected)) {
-    return { chat: selected, tools: selected, escalateToFull: false }
-  }
-
-  const exact = resolveExactBuiltinRef(selected)
-  if (selected === 'builtin:composer' || selected === 'composer') {
-    return { chat: 'builtin:composer', tools: 'builtin:composer', escalateToFull: false }
-  }
-  if (!exact) {
-    return {
-      chat: selected,
-      tools: selected,
-      escalateToFull: false,
-      error: `Model “${selected}” is not ready. Download it in Settings → Models.`
-    }
-  }
-
-  // Desktop runs Composer Lite locally. Composer Full is the Cloud Agents model
-  // and stays selected so the chat can send the turn there.
-  return { chat: exact, tools: exact, escalateToFull: false }
 }
 
 /**
@@ -516,38 +475,6 @@ export function policyLabel(policy: ExecutionPolicy, settings: AppSettings): str
     fixed: 'Fixed model'
   }[policy]
   return settings.agent?.routing?.workspaceLocalOnly ? `${label} · workspace local-only` : label
-}
-
-function formatReason(parts: {
-  method: TurnPlan['method']
-  agentName: string
-  intent: ChatIntent
-  chat: string
-  tools: string
-  escalateToFull: boolean
-  profile?: 'auto' | 'local' | 'max'
-  cloudPreferred?: boolean
-}): string {
-  const chatShort = parts.chat.replace(/^builtin:/, '')
-  const toolsShort = parts.tools.replace(/^builtin:/, '')
-  const modelBit =
-    parts.escalateToFull || parts.chat !== parts.tools
-      ? `${chatShort} → tools:${toolsShort}`
-      : chatShort
-  const profileBit = parts.profile === 'max' ? 'Max' : parts.profile === 'local' ? 'Local' : 'Auto'
-  const cloudBit = parts.cloudPreferred ? ' · Cloud' : ''
-  const label: Record<TurnPlan['method'], string> = {
-    manual: 'Manual',
-    llm: 'LLM',
-    heuristic: 'Auto',
-    default: 'Auto',
-    override: 'Override',
-    learned: 'Learned',
-    eval: 'Eval',
-    telemetry: 'Usage',
-    handoff: 'Handoff'
-  }
-  return `${profileBit}${cloudBit} · ${label[parts.method]} → ${parts.agentName} · ${parts.intent} · ${modelBit}`
 }
 
 async function llmRouteHint(options: {
@@ -651,7 +578,6 @@ async function llmRouteHint(options: {
 
 export async function planChatTurn(options: {
   /** Direct/local worker runners do not have the chat Cloud execution adapter. */
-  allowCloudComposer?: boolean
   workspacePath: string | null
   settings: AppSettings
   context: ChatTurnContext
@@ -688,12 +614,10 @@ export async function planChatTurn(options: {
   let intent = heuristicIntent
 
   const routingProfile = selectedModel === 'auto-local' ? 'local' : selectedModel === 'auto-any' ? 'auto' : options.settings.agent.routing.profile ?? 'auto'
-  const preferCloudSetting = selectedModel === 'auto-any' || options.settings.agent.routing.preferCloudComposer !== false
-  // Auto/Max profiles turn on the LLM router even if the legacy toggle is off.
+  // Automatic routing enables the optional model router.
   const wantLlmRouter =
     options.settings.agent.routing.useLlmRouter ||
-    routingProfile === 'auto' ||
-    routingProfile === 'max'
+    routingProfile === 'auto'
 
   const roster = allAgentsFlat(options.workspacePath)
   let llmAgentSelected = false
@@ -926,7 +850,6 @@ export async function planChatTurn(options: {
       models: { chat: selectedModel, tools: selectedModel },
       toolPolicy: 'none',
       requiresTools: false,
-      escalateToFull: false,
       reason: 'No agents configured',
       method: 'default',
       error: 'No agents configured'
@@ -973,7 +896,9 @@ export async function planChatTurn(options: {
   }
 
   const toolPolicy = effectiveToolPolicy(agent, intent, mode)
+  const deferred = options.deferAutoWorker === true && isAutoModelChoice(selectedModel)
   const agentModelOverride =
+    !deferred &&
     !options.context.preserveModelSelection &&
     (!pickedModel || isAutoModelChoice(pickedModel)) && agent.model.trim() && !isAutoModelChoice(agent.model)
       ? agent.model.trim()
@@ -986,7 +911,9 @@ export async function planChatTurn(options: {
   const modelClass: AgentModelClass = agentModelClass(agent)
   let classModels: { primary?: string; fast?: string } = {}
   const inherited = options.context.inheritedModels
-  if (inherited && isAutoModelChoice(chosenModel) && (inherited.primary || inherited.fast)) {
+  if (deferred) {
+    chosenModel = ''
+  } else if (inherited && isAutoModelChoice(chosenModel) && (inherited.primary || inherited.fast)) {
     // A delegated child reuses its parent's resolved models: no second Auto pick that
     // could land on another provider or force a local model swap (#593).
     classModels = { primary: inherited.primary || inherited.fast, fast: inherited.fast || inherited.primary }
@@ -995,9 +922,8 @@ export async function planChatTurn(options: {
   } else if (isAutoModelChoice(chosenModel)) {
     const policySelection = chosenModel
     // The latest request is mandatory; older history is packed to the worker's budget.
-    const requiredContext = Math.max(1024, estimateModelMessagesTokens([{ role: 'user', content: options.context.text }]) + 512)
+    const requiredContext = Math.max(options.requiredContext ?? 1024, 1024, estimateModelMessagesTokens([{ role: 'user', content: options.context.text }]) + 512)
     const choice = await chooseExecutionModel(options.settings, intent, policySelection, [], {
-      cloudComposer: options.allowCloudComposer !== false && mode === 'agent' && Boolean(options.workspacePath),
       requiredContext
     })
     modelChoice = choice
@@ -1020,33 +946,18 @@ export async function planChatTurn(options: {
       ? inherited
         ? `Agent ${agent.name} pins remote model ${agentModelOverride}, which the parent turn's policy (Auto, this computer only) does not allow. The delegation did not run.`
         : `Agent ${agent.name} pins remote model ${agentModelOverride}, which conflicts with Auto-local. Choose a local agent model, Fixed remote, or Auto-any.` : undefined
-  const roles = resolveModelRoles({
-    selectedModel: chosenModel,
-    intent,
-    toolPolicy,
-    preferEscalate: agent.preferEscalate !== false
-  })
-
+  const selected = resolveExecutionModel(chosenModel)
   const winnerCapabilities = modelChoice?.candidates.find((candidate) => candidate.model === chosenModel)?.capabilities
   const modelPolicy = agentModelOverride ? 'fixed' : executionPolicy(options.settings, selectedModel)
   const requiresTools = toolPolicy !== 'none' && intentNeedsTools(intent)
-  const usingComposerFull = roles.chat === 'builtin:composer' || roles.tools === 'builtin:composer'
-  const localFull = localComposerFullActive(options.settings)
-  const cloudPreferred =
-    mode === 'agent' &&
-    usingComposerFull &&
-    routingProfile !== 'local' &&
-    preferCloudSetting &&
-    !localFull
-
   return {
     intent,
     agentId: agent.id,
     agentName: agent.name,
     mode,
     models: {
-      chat: roles.chat,
-      tools: roles.tools,
+      chat: selected.model,
+      tools: selected.model,
       coordinator,
       router: wantLlmRouter ? options.settings.agent.routing.routerModel : undefined,
       primary: classModels.primary,
@@ -1055,23 +966,15 @@ export async function planChatTurn(options: {
     },
     toolPolicy,
     requiresTools,
-    escalateToFull: roles.escalateToFull || (cloudPreferred && routingProfile === 'max'),
-    reason: `${formatReason({
-      method,
-      agentName: agent.name,
-      intent,
-      chat: roles.chat,
-      tools: roles.tools,
-      escalateToFull: roles.escalateToFull,
-      profile: routingProfile,
-      cloudPreferred
-    })} · ${agentModelOverride ? `pinned ${agentModelOverride}` : `${modelClass} ${chosenModel || 'none'}`} · model ${modelBasis} · ${policyLabel(modelPolicy, options.settings)}${winnerCapabilities ? ` · ${winnerCapabilities}` : ''}`,
+    reason: `${agent.name} · ${intent} · ${agentModelOverride ? 'pinned' : modelClass} ${selected.model || 'No model'} · ${policyLabel(modelPolicy, options.settings)}${winnerCapabilities ? ` · ${winnerCapabilities}` : ''}`,
     method,
     classifiedIntent,
     routeTrace: { heuristicRule: heuristic.rule, overrides },
-    error: modelChoice && !modelChoice.model
+    error: deferred
+      ? hasAutoModelInventory(options.settings, modelPolicy) ? undefined : 'No eligible model in the configured catalog.'
+      : modelChoice && !modelChoice.model
       ? `No eligible model for ${modelChoice.policy}. ${modelChoice.candidates.map((c) => `${c.model}: ${c.reason}`).join('; ')}`
-      : workspaceLocalityViolation(options.settings, chosenModel) || localityConflict || roles.error,
+      : workspaceLocalityViolation(options.settings, chosenModel) || localityConflict || selected.error,
     modelExecution: {
       policy: modelPolicy,
       selection: agentModelOverride || selectedModel,
@@ -1079,7 +982,6 @@ export async function planChatTurn(options: {
       candidates: modelChoice?.candidates || []
     },
     routingProfile,
-    cloudPreferred,
     executionPlan: executionPlanFor(mode, intent)
   }
 }

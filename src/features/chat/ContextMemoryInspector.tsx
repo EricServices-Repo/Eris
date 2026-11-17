@@ -161,6 +161,14 @@ export function ContextMemoryInspector({
                 {snapshot.lastDispatch.counts.omitted} left out.
               </p>
             )}
+            {snapshot?.lastDispatch?.packing && (
+              <p>
+                {snapshot.lastDispatch.operation ?? 'Task'} · {snapshot.lastDispatch.transport} ·{' '}
+                {snapshot.lastDispatch.packing.inputTokens.toLocaleString()} estimated input tokens ·{' '}
+                {snapshot.lastDispatch.packing.maxOutputTokens.toLocaleString()} maximum output tokens ·{' '}
+                {snapshot.lastDispatch.toolProtocol}
+              </p>
+            )}
             {snapshot?.lastDispatch?.context && (
               <p>
                 Requested{' '}

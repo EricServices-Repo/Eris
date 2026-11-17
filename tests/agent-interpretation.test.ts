@@ -72,7 +72,6 @@ const plan = (overrides: Partial<TurnPlan>): TurnPlan => ({
   models: { chat: 'local:test', tools: 'local:test' },
   toolPolicy: 'none',
   requiresTools: false,
-  escalateToFull: false,
   reason: 'test',
   method: 'heuristic',
   ...overrides

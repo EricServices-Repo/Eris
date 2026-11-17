@@ -71,7 +71,7 @@ describe('issue 431 explicit source inspection', () => {
     const result = await captureQuestion(0, question, root, 8192, 'agent', new AbortController().signal)
     const task = result.task as TaskContract
     const workflow = new AgentWorkflow({ intent: 'answer', agentId: 'explainer', agentName: 'Explainer', mode: 'agent',
-      models: {chat:'simulated:test',tools:'simulated:test'}, toolPolicy:'read', requiresTools:false, escalateToFull:false, reason:'injected downgrade', method:'heuristic', task })
+      models: {chat:'simulated:test',tools:'simulated:test'}, toolPolicy:'read', requiresTools:false, reason:'injected downgrade', method:'heuristic', task })
     workflow.noteTool({name:'tree',ok:true,mutated:false,path:'.'})
     expect(workflow.evaluateOutcome({workspaceMutated:false,codeMutated:false,verifyPassed:false}).ok).toBe(false)
     workflow.noteTool({name:'read_file',ok:true,mutated:false,path:'index.html'})

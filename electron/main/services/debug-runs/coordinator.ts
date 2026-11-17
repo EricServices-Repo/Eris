@@ -45,7 +45,6 @@ import { runAgentWithWorkspaceTools } from '../agent-runner'
 import { findAgent } from '../agents'
 import {
   buildChatTurnMessages,
-  localChatTurnModel,
   needsOutcomeReview,
   OutcomeEvidence,
   planInitialChatTurn,
@@ -553,7 +552,9 @@ async function runCase(
     },
     // Delegation and recovery decisions are evidence; keep them in the timeline.
     onTaskEvent: (event) => {
-      if (event.type === 'delegation') {
+      if (event.type === 'context-dispatched') {
+        timeline.add('status', 'model', 'Dispatched context manifest', JSON.stringify(event.data))
+      } else if (event.type === 'delegation') {
         const data = event.data as { agentId?: string; status?: string }
         timeline.add('status', 'tool_execution', `delegation ${data.agentId}: ${data.status}`)
       } else if (event.type === 'reroute' || event.type === 'reroute-refused') {
@@ -737,29 +738,24 @@ async function runCase(
           history: [...history]
         }
         const messages = buildChatTurnMessages(sandbox, plan.settings, prompt, turnPlan, null)
-        const local = localChatTurnModel(
-          turnPlan,
-          turnPlan.models.chat || spec.model || plan.settings.models.defaultModel,
-          plan.settings
-        )
         const temperature =
-          findAgent(sandbox, local.plan.agentId)?.temperature ?? plan.settings.models.temperature
+          findAgent(sandbox, turnPlan.agentId)?.temperature ?? plan.settings.models.temperature
         const evidence = new OutcomeEvidence()
         let incomplete = false
-        onStatus(`${local.plan.agentName} · ${local.plan.intent}`)
+        onStatus(`${turnPlan.agentName} · ${turnPlan.intent}`)
         let ended: Awaited<ReturnType<typeof drainUntilStopped>>
         try {
           ended = await drainUntilStopped(
             runAgentWithWorkspaceTools({
               workspacePath: sandbox,
               settings: plan.settings,
-              model: local.model,
+              model: turnPlan.models.chat || spec.model || plan.settings.models.defaultModel,
               messages,
               temperature,
               signal: deadline.signal,
               getSecret: deps.getSecret,
               mode: turn.mode,
-              turnPlan: local.plan,
+              turnPlan: turnPlan,
               mcp: 'off',
               allowDelegate: false,
               // Diagnostics never inherit or grant approvals, including on replay.
@@ -828,8 +824,8 @@ async function runCase(
         }
         if (ended !== 'completed') return ended
         terminal = incomplete ? 'incomplete' : 'complete'
-        const reviewer = helperModel(plan.settings, local.plan, 'outcome')
-        if (reviewer && needsOutcomeReview(local.plan, incomplete)) {
+        const reviewer = helperModel(plan.settings, turnPlan, 'outcome')
+        if (reviewer && needsOutcomeReview(turnPlan, incomplete)) {
           onStatus('Outcome review')
           evidence.addActions(actionLog)
           const verdict = await reviewTaskOutcome({
@@ -878,8 +874,8 @@ async function runCase(
           {
             role: 'assistant',
             content: answer,
-            agentId: local.plan.agentId,
-            agentName: local.plan.agentName
+            agentId: turnPlan.agentId,
+            agentName: turnPlan.agentName
           }
         )
         if (turnIndex < turns.length - 1) {

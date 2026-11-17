@@ -33,7 +33,7 @@ export function requestUserQuestion(
   sender: WebContents,
   requestId: string,
   question: string,
-  options?: { choices?: string[]; timeoutMs?: number; signal?: AbortSignal }
+  options?: { choices?: string[]; timeoutMs?: number; signal?: AbortSignal; choiceLimit?: number }
 ): Promise<UserQuestionOutcome> {
   const questionId = randomUUID()
   const timeoutMs = Math.max(1_000, options?.timeoutMs ?? USER_QUESTION_TIMEOUT_MS)
@@ -41,7 +41,7 @@ export function requestUserQuestion(
   const choices = options?.choices
     ?.map((c) => c.trim())
     .filter(Boolean)
-    .slice(0, 6)
+    .slice(0, Math.min(20, options.choiceLimit ?? 6))
 
   return new Promise((resolve) => {
     let settled = false

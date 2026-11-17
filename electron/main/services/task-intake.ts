@@ -3,8 +3,8 @@ import { handoffConstraintProblem } from '../../../src/shared/agent-orchestratio
 import type { ResolvedReference } from './reference-binding'
 import { isPathInside } from './workspace-fs'
 import { createHash, randomUUID } from 'crypto'
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'fs'
-import { basename, join, relative } from 'path'
+import { existsSync, lstatSync, opendirSync, readFileSync, readdirSync, realpathSync } from 'fs'
+import { basename, join, relative, resolve } from 'path'
 import {
   extractRecommendations,
   pathsIn,
@@ -277,6 +277,59 @@ function structuresNewCode(text: string): boolean {
   )
 }
 
+export function implicitHtmlElement(text: string): string | undefined {
+  if (pathsIn(text).length || effectConstraints(text).edit) return undefined
+  return /^(?:please\s+)?(?:add|insert|update|change|remove|replace|fix)\s+(?:a\s+|an\s+|the\s+)?(?:(?:html|page)\s+)?(footer|header|nav(?:igation)?|section|form|heading|paragraph|button)\b(?:[.!?]|\s+(?:to|in|on)\s+(?:the\s+)?(?:current\s+)?page[.!?]?)?$/i
+    .exec(requestTextForIntent(text).trim())?.[1]?.toLowerCase()
+}
+
+function htmlTargets(root: string, input: {
+  openFilePath?: string
+  priorTask?: TaskContract
+  history?: Array<{ role: string; content: string }>
+}) {
+  const existing = (names: string[]) => [...new Set(names.flatMap((name) => {
+    if (!/\.html?$/i.test(name)) return []
+    try {
+      const file = realpathSync(resolve(root, name))
+      return isPathInside(root, file) && lstatSync(file).isFile() ? [relative(root, file).replace(/\\/g, '/')] : []
+    } catch { return [] }
+  }))]
+  const previous = input.priorTask?.scope.projectRoot === root && input.priorTask.result
+    ? input.priorTask.result.changedFiles.map((file) => relative(root, join(input.priorTask!.scope.workspaceRoot ?? root, file)))
+    : []
+  const userFiles = (input.history ?? []).filter((item) => item.role === 'user')
+    .slice(-2).flatMap((item) => pathsIn(item.content))
+  const sources = [
+    { paths: existing(input.openFilePath ? [input.openFilePath] : []), reason: 'open editor' },
+    { paths: existing(previous), reason: 'previous task' },
+    { paths: existing(userFiles), reason: 'recent request' }
+  ]
+  const preferred = sources.find((source) => source.paths.length)
+  if (preferred) return { ...preferred, truncated: false }
+  const paths: string[] = []
+  let scanned = 0
+  const scan = (folder: string, depth: number) => {
+    try {
+      const dir = opendirSync(folder)
+      try {
+        while (scanned < 512 && paths.length < 20) {
+          const entry = dir.readSync()
+          if (!entry) break
+          scanned++
+          if (entry.name.startsWith('.') || ['node_modules', 'dist', 'build', 'vendor'].includes(entry.name)) continue
+          const path = join(folder, entry.name)
+          if (entry.isDirectory() && depth < 1) scan(path, depth + 1)
+          else if (entry.isFile() && /\.html?$/i.test(entry.name))
+            paths.push(relative(root, path).replace(/\\/g, '/'))
+        }
+      } finally { dir.closeSync() }
+    } catch { /* Unreadable directories provide no trusted candidates. */ }
+  }
+  scan(root, 0)
+  return { paths: paths.sort(), reason: 'matching pages in project', truncated: scanned === 512 }
+}
+
 export function createTaskContract(input: {
   referenceBinding?: ResolvedReference
   taskId?: string
@@ -288,6 +341,8 @@ export function createTaskContract(input: {
   priorTask?: TaskContract
   history?: Array<{ role: string; content: string }>
   resolution?: IntentResolution
+  openFilePath?: string
+  selectedEditTarget?: string
 }): TaskContract {
   const root =
     input.workspacePath && existsSync(input.workspacePath)
@@ -405,15 +460,26 @@ export function createTaskContract(input: {
         paths: input.referenceBinding.recommendations.flatMap(item => item.targets ?? [])
       })
     : null
+  const element = requestedIntent === 'edit' && input.plan.mode === 'agent' && !fileRequest &&
+    !input.resolution?.targetFiles?.length ? implicitHtmlElement(input.text) : undefined
+  const pageTargets = element && selected ? htmlTargets(selected, input) : null
+  const chosenPage = pageTargets && (input.selectedEditTarget
+    ? pageTargets.paths.find((path) => path === input.selectedEditTarget)
+    : pageTargets.paths.length === 1 && !pageTargets.truncated ? pageTargets.paths[0] : undefined)
+  const targetQuestion = pageTargets && !chosenPage && (input.selectedEditTarget || pageTargets.truncated || pageTargets.paths.length > 1)
+    ? { text: `Which page should receive the ${element} change?`, choices: pageTargets.paths.slice(0, 20) }
+    : undefined
   const requested: NonNullable<TaskContract['requested']> = {
     ...(!providedReviewOperands(input.text).length && asksForWorkspaceInspection(requestTextForIntent(input.text)) ? { evidence: 'source-read' as const } : {}),
     intent: requestedIntent,
     artifact: requestedReading.artifact,
     destination: requestedReading.destination,
-    targetFiles: input.resolution?.targetFiles ?? fileRequest?.paths ?? [],
+    targetFiles: chosenPage ? [chosenPage] : input.resolution?.targetFiles ?? fileRequest?.paths ?? [],
+    ...(chosenPage ? { targetReason: input.selectedEditTarget === chosenPage ? 'chosen by user' : pageTargets!.reason } : {}),
+    ...(targetQuestion ? { targetQuestion } : {}),
     state: referenceBlocked || (fileRequest && fileRequest.state !== 'resolved')
       ? 'needs-reference'
-      : requestedIntent !== input.plan.intent ? 'needs-clarification' : 'resolved'
+      : targetQuestion || requestedIntent !== input.plan.intent ? 'needs-clarification' : 'resolved'
   }
   const noCommands = forbidden.execution || forbidden.verification
   const requestedScope = scopeApplicability(input.text, requestedReading,

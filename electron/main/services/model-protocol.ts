@@ -12,6 +12,8 @@ function decodedArguments(value: string): unknown {
 
 export type ModelMessage = Omit<ChatRequestMessage, 'content'> & {
   content: string
+  /** Earlier conversation eligible for trimming before the current request. */
+  historical?: true
   /** Item accounting for a compiled context. Removed before a request is serialized. */
   contextBundle?: import('../../../src/shared/context-memory').ContextBundle
 }
@@ -56,7 +58,8 @@ export function adaptModelMessagesForAccounting(
   messages: readonly ModelMessage[],
   protocol: ModelCapabilities['protocol']
 ): ChatRequestMessage[] {
-  if (protocol === 'native-tools') return messages.map((message) => ({ ...message }))
+  if (protocol === 'native-tools')
+    return messages.map(({ historical: _historical, ...message }) => ({ ...message }))
   return messages.map((message) => {
     if (message.role === 'tool')
       return {
@@ -196,7 +199,24 @@ export function budgetModelMessages(
     throw new Error(
       'Task instructions exceed model context. Increase the context window or reduce project rules.'
     )
-  const result = messages.map((message) => ({ ...message }))
+  let result = messages.map((message) => ({ ...message }))
+  if (size(result) > maxTokens) {
+    // Earlier chat couples a user request with its replies. Trim in groups so a
+    // retained assistant answer cannot lose its owning request. Tool exchanges
+    // and the current task are never marked as historical by the compiler.
+    const groups: ModelMessage[][] = []
+    for (const message of result) {
+      if (!message.historical || message.tool_calls?.length ||
+          (message.role !== 'user' && message.role !== 'assistant')) continue
+      if (!groups.length || message.role === 'user') groups.push([])
+      groups.at(-1)!.push(message)
+    }
+    for (const group of groups) {
+      const removed = new Set(group)
+      result = result.filter((message) => !removed.has(message))
+      if (size(result) <= maxTokens) break
+    }
+  }
   // Shorten old evidence; do not remove call/result records or original user intent.
   for (let index = 0; index < result.length - 3 && size(result) > maxTokens; index++) {
     const item = result[index]!
