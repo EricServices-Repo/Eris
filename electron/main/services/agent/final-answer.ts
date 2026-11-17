@@ -338,7 +338,7 @@ export async function finalizeAnswer(
   if (options.mode === 'agent' && capabilityDenials(text).length) {
     const again = await answerAgain(
       ' Eris can edit files and run commands in Agent mode. Never say that Eris cannot edit files or run commands. ' +
-        'If this role could not do what was asked, say that this role is read-only and that the user can switch to Composer.'
+        'If the current turn lacked permission, explain the specific limit. For edits, suggest Agent mode with Agent or Auto.'
     )
     if (vet('re-answer', again, !capabilityDenials(again).length && !protocolProblems(again, options.goal, options.task))) {
       text = again.trim()

@@ -181,6 +181,16 @@ describe('worker prompt states each thing once', () => {
     expect(role).toMatch(/this role is read-only/)
     expect(roleGuidance({ agentId: 'explainer', agentName: 'Explainer', toolPolicy: 'read' }, { ...task, parentTaskId: 'parent' })).not.toMatch(/You answer the user directly/)
   })
+
+  it('tells Verification to run permitted checks while keeping edit authority read-only', () => {
+    const turn = plan({ agentId: 'verifier', intent: 'verify', toolPolicy: 'read' })
+    const task = createTaskContract({ workspacePath: ws, text: 'Verify the retry logic in package.json', plan: turn })
+    const role = roleGuidance(turn, task)
+    expect(role).toContain('For an edit request')
+    expect(role).toContain('Run only authorized verification checks')
+    expect(roleGuidance(turn, { ...task, authority: { ...task.authority, execute: 'none' } }))
+      .not.toContain('Run only authorized verification checks')
+  })
 })
 
 describe('shipped prompts', () => {

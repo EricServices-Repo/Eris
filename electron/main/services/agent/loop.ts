@@ -957,10 +957,7 @@ async function* runAgentInternal(options: {
   // Reviewer and Verification, and edit tasks whose contract grants verification,
   // see a run tool limited to test/typecheck/lint commands by the gateway.
   const verificationRunAllowed = (): boolean =>
-    mode !== 'ask' &&
-    (plan.agentId === 'reviewer' ||
-      plan.agentId === 'verifier' ||
-      (task.authority.edit && task.authority.execute === 'verification'))
+    mode !== 'ask' && task.authority.execute === 'verification'
   // Role policy, feature settings, MCP catalog and discovery resolve to one record.
   const toolCapabilities = () =>
     resolveToolCapabilities({
