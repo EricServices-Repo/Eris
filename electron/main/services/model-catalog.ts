@@ -297,13 +297,13 @@ export function formatAvailableModelsPrompt(settings: AppSettings, selectedModel
 export function connectionsWithDiscoveredModels(
   settings: AppSettings,
   status: ModelsStatus,
-  options: { cloudOnly?: boolean; keepCloud?: boolean } = {}
+  options: { cloudOnly?: boolean } = {}
 ): { connections: ModelConnection[]; changed: boolean } {
   let changed = false
   const connections = settings.models.connections.map((c) => {
     if (c.type !== 'openai-compatible' || !c.enabled) return c
     const cloud = isErisCloudConnection(c)
-    if ((options.cloudOnly && !cloud) || (options.keepCloud && cloud)) return c
+    if (options.cloudOnly && !cloud) return c
     const live = status.connections.find((x) => x.id === c.id)
     if (!live?.enabled || live.baseUrl !== c.baseUrl || (!cloud && (!live.reachable || !live.models.length))) return c
     const same =

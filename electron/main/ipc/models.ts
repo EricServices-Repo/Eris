@@ -2,6 +2,7 @@ import { connectDetectedModelService, getModelSetupOptions } from '../services/m
 import { currentLoadedModel } from '../services/model-runtime'
 import { inferenceGovernorStatus } from '../services/inference-governor'
 import { ipcMain } from 'electron'
+import { createHash } from 'crypto'
 import { getResolvedSettings, setSettings } from '../services/settings'
 import { connectionsWithDiscoveredModels, getModelsStatus } from '../services/model-catalog'
 import {
@@ -29,8 +30,42 @@ import { HF_GGUF_BROWSE_URL, searchHfGgufModels } from '../services/hf-gguf'
 import { logError, logInfo, logWarn } from '../services/logger'
 import { appState } from '../app-state'
 import { getSecret } from './shared'
-import { ERIS_CLOUD_TOKEN_REF, isErisCloudConnection } from '../../../src/shared/eris-cloud'
+import {
+  ERIS_CLOUD_CONNECTION_ID,
+  ERIS_CLOUD_TOKEN_REF,
+  isErisCloudConnection,
+  isErisCloudModelRef
+} from '../../../src/shared/eris-cloud'
 import type { IdeApi } from '../../../src/shared/api'
+import type { AppSettings, ModelInfo, ModelsStatus } from '../../../src/shared/settings-schema'
+
+type CloudProbe = {
+  root: string | null
+  account: string | null
+  enabled: boolean
+  result: Promise<ModelsStatus>
+}
+
+const cloudAccount = (token: string | null) =>
+  token ? createHash('sha256').update(token).digest('hex') : null
+
+function cloudEnabled(settings: AppSettings): boolean {
+  return settings.models.connections.some((conn) => conn.enabled && isErisCloudConnection(conn))
+}
+
+function withCloudCatalog(status: ModelsStatus, latest?: ModelsStatus): ModelsStatus {
+  const isCloud = (model: ModelInfo) =>
+    model.connectionId === ERIS_CLOUD_CONNECTION_ID || isErisCloudModelRef(model.name)
+  const models = [...status.models.filter((model) => !isCloud(model)), ...(latest?.models.filter(isCloud) ?? [])]
+  const connections = status.connections.filter((conn) => !isErisCloudConnection(conn))
+  const cloud = latest?.connections.find(isErisCloudConnection)
+  if (cloud) connections.push(cloud)
+  const ok = status.builtin.some((model) => model.ready) || models.some((model) => model.ready)
+  return {
+    ...status, models, connections, ok,
+    error: ok ? undefined : status.error ?? 'No models ready. Refresh models or choose an available provider.'
+  }
+}
 
 function flattenError(err: unknown): string {
   const parts: string[] = []
@@ -62,7 +97,7 @@ export function registerModelsIpc(): void {
       throw new Error('Unauthorized admission inspection')
     return inferenceGovernorStatus()
   })
-  let cloudProbeGeneration = 0
+  let latestCloudProbe: CloudProbe | undefined
   ipcMain.handle(
     'models:status',
     async (_e, options?: Parameters<IdeApi['modelsStatus']>[0]) => {
@@ -70,27 +105,48 @@ export function registerModelsIpc(): void {
       const settings = getResolvedSettings(root)
       const probe = options?.probe === true
       const probeCloud = probe || options?.probeCloud === true
-      const cloudGeneration = probeCloud ? ++cloudProbeGeneration : 0
-      const cloudToken = probeCloud && settings.models.connections.some((c) => c.enabled && isErisCloudConnection(c))
-        ? getSecret(ERIS_CLOUD_TOKEN_REF) : null
+      const enabled = probeCloud && cloudEnabled(settings)
+      const cloudToken = enabled ? getSecret(ERIS_CLOUD_TOKEN_REF) : null
       const includeGpu = options?.includeGpu === true || probe
-      const status = await getModelsStatus(settings, getSecret, {
+      const result = getModelsStatus(settings, (key) =>
+        probeCloud && key === ERIS_CLOUD_TOKEN_REF ? cloudToken : getSecret(key), {
         probeConnections: probe,
         probeCloud,
         includeGpu
       })
-      // Persist live /v1/models lists only when we actually probed.
-      if (probeCloud && appState.currentWorkspace === root) {
-        const keepCloud = cloudGeneration !== cloudProbeGeneration ||
-          cloudToken !== getSecret(ERIS_CLOUD_TOKEN_REF)
+      if (!probeCloud) return result
+      const ownProbe: CloudProbe = { root, account: cloudAccount(cloudToken), enabled, result }
+      latestCloudProbe = ownProbe
+      const status = await result
+      const inCurrentScope = () => appState.currentWorkspace === root &&
+        cloudEnabled(getResolvedSettings(root)) === enabled &&
+        (!enabled || getSecret(ERIS_CLOUD_TOKEN_REF) === cloudToken)
+      if (inCurrentScope() && latestCloudProbe === ownProbe) {
         const { connections, changed } = connectionsWithDiscoveredModels(getResolvedSettings(null), status, {
-          cloudOnly: !probe, keepCloud
+          cloudOnly: !probe
         })
         if (changed) {
           setSettings('user', { models: { connections } }, root)
         }
+        return status
       }
-      return status
+
+      // A caller of the older probe still needs a response. Use the newest Cloud
+      // result for this scope, while preserving the caller's other provider data.
+      let current = ownProbe
+      let cloudStatus = status
+      while (inCurrentScope() && current !== latestCloudProbe) {
+        const next = latestCloudProbe
+        if (!next || next.root !== root || next.account !== ownProbe.account || next.enabled !== enabled)
+          return withCloudCatalog(status)
+        current = next
+        try {
+          cloudStatus = await next.result
+        } catch {
+          return withCloudCatalog(status)
+        }
+      }
+      return withCloudCatalog(status, inCurrentScope() ? cloudStatus : undefined)
     }
   )
 
