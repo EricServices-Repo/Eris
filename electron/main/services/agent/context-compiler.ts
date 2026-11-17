@@ -577,6 +577,10 @@ export function compileTaskContext(input: CompileTaskContextInput): {
       : {}),
     version: 1,
     taskId: input.task.taskId,
+    taskRevision: input.task.revision,
+    operation: input.task.intent,
+    omittedBlocks: manifest.filter((block) => block.omittedChars > 0)
+      .map(({ kind, omittedChars }) => ({ kind, omittedChars })),
     ...(input.memoryNamespace ? { namespace: input.memoryNamespace } : {}),
     tokenizer: {
       method: 'characters',

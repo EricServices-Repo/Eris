@@ -142,6 +142,9 @@ export type ContextBundleCounts = Record<ContextItemStatus, number> & { selected
 export type ContextBundle = {
   /** Character-estimated instruction/project/history prefix before the volatile current turn. */
   stablePrefixTokens?: number
+  operation?: import('./settings-schema').ChatIntent
+  taskRevision?: number
+  omittedBlocks?: Array<{ kind: string; omittedChars: number }>
   referenceTask?: Pick<
     import('./task-contract').TaskContract,
     'referenceBinding' | 'scope' | 'threadId'
@@ -173,6 +176,18 @@ export type ContextDispatch = {
   /** False when a diagnostics adapter received the request before provider adaptation. */
   adapted: boolean
   requestDigest: string
+  operation?: import('./settings-schema').ChatIntent
+  taskRevision?: number
+  omittedBlocks?: ContextBundle['omittedBlocks']
+  transport?: 'openai-compatible' | 'ollama' | 'native-gguf'
+  toolProtocol?: 'native-tools' | 'text-tools'
+  toolSchemaDigest?: string
+  packing?: {
+    method: 'native-tokenizer-with-estimated-edits' | 'serialized-character-estimate'
+    tokenizer?: string
+    inputTokens: number
+    maxOutputTokens: number
+  }
   /** Conservative estimate for the whole request; never a provider measurement. */
   estimatedTokens: number
   /** The window this request was packed for, and the plan it replaced if a load changed it. */
