@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.9 — 2026-11-17
+
+- Saved chat queues, clearer task completion evidence, and Auto model selection after task resolution.
+
 ## 0.7.8 — 2026-11-15
 
 - Compact Text Models browsing and Hugging Face search.
