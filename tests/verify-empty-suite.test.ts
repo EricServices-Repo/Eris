@@ -31,6 +31,23 @@ it('reports a completed test suite as passed', async () => {
   expect(result.skipped).toBeUndefined()
 })
 
+it.each([
+  ['No test files found, exiting with code 0', 0, 'skipped'],
+  ['Tests  4 passed | 1 skipped (5)', 5, 'passed'],
+  ['Tests  2 skipped (2)', 0, 'skipped'],
+  ['TAP version 13\n1..0\n# tests 0', 0, 'skipped']
+] as const)('records project evidence from %s without inferring relevance', async (stdout, testCount, status) => {
+  const project = mkdtempSync(join(tmpdir(), 'eris-test-evidence-'))
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ scripts: { test: 'vitest run' } }))
+    run.mockResolvedValue({ ok: true, timedOut: false, code: 0, stdout, stderr: '' })
+    const result = await runVerify(project, undefined, { allowInstall: false })
+    expect(result.check).toMatchObject({ kind: 'test', status, testCount, requirementIds: [] })
+  } finally {
+    rmSync(project, { recursive: true, force: true })
+  }
+})
+
 it('does not hide a timeout as a skipped suite', async () => {
   run.mockResolvedValue({ ok: false, timedOut: true, code: null, stdout: 'No tests found', stderr: '' })
   const result = await runVerify(root, undefined, { allowInstall: false })

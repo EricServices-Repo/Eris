@@ -112,6 +112,8 @@ For explicit file-generation requests, every required file must be present, none
 
 This file-set gate supplements the general workflow. It does not claim that nonempty files are functionally correct, nor that every path mentioned in an arbitrary request is an output. General edits, deletions and recommendations retain their existing acceptance logic.
 
+Project-wide verification reports the command kind, status, and recognized test counts. A zero-test or all-skipped suite supplies no behavioral evidence. A passing project check does not establish that it covered a requested requirement.
+
 ## Outcome assessment
 
 The semantic reviewer uses the same hard-deadline iterator primitive as intake. A transport that ignores abort cannot hold terminal delivery indefinitely. Output-limit failures also close the iterator. The result distinguishes timeout, transport error, malformed JSON, invalid schema, unavailable reference and response-limit failures.

@@ -4963,7 +4963,7 @@ async function* runAgentInternal(options: {
                 detail: verified.detail.slice(0, AGENT_HANDOFF_CHARS)
               }
             }
-            verifyNote = `\n\nVerification ${verified.ok ? 'passed' : 'failed'}; full result recorded above.\n`
+            verifyNote = `\n\n${verified.check ? projectCheckSummary(verified.check) : `Project check ${verified.ok ? 'passed' : 'failed'}.`} Full result recorded above.\n`
             if (!verified.ok) {
               workflow.noteVerification('failed')
               verifyFailures++
