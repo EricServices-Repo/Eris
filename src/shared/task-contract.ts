@@ -122,6 +122,7 @@ export interface TaskCompletionEvidence {
   execution: 'completed' | 'incomplete'
   verification: 'passed' | 'failed' | 'not-run'
   projectCheck?: ProjectCheckEvidence
+  requirements?: RequirementProgress[]
   assessment: {
     status: 'supported' | 'partial' | 'unresolved' | 'not-run'
     model?: string
@@ -229,6 +230,7 @@ export interface TaskContract {
     destination: ArtifactDestination
     targetFiles: string[]
     targetReason?: string
+    resumeFileRequirements?: boolean
     targetQuestion?: { text: string; choices: string[] }
     /** Compiled from the request, independently of worker/intent selection. */
     evidence?: 'source-read'

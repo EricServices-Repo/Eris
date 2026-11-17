@@ -7,6 +7,7 @@ import { createTaskContract, childTaskContract } from '../electron/main/services
 import { parsePersistedTask } from '../electron/main/services/evidence-schemas'
 import { requestedFilesProblem } from '../electron/main/services/agent/requested-files'
 import { AgentWorkflow } from '../electron/main/services/agent/workflow'
+import { TaskToolGateway } from '../electron/main/services/agent/tool-gateway'
 import { completeChatTurnTask } from '../electron/main/services/chat-turn'
 import { extractRecommendations } from '../src/shared/recommendations'
 import type { TurnPlan } from '../src/shared/settings-schema'
@@ -27,6 +28,21 @@ const plan = (intent: TurnPlan['intent'] = 'edit'): TurnPlan => ({
 })
 
 describe('reference-first file requests', () => {
+  it('resumes only the missing file from an incomplete three-file task', () => {
+    const root = workspace()
+    const previous = createTaskContract({ workspacePath: root, text: 'Create auth.ts, search.ts and confirm.ts', plan: plan() })
+    const priorTask = completeChatTurnTask(previous, { answer: 'Auth and search added.',
+      changedFiles: ['auth.ts', 'search.ts'], terminal: 'complete' })
+    const input = { text: 'Finish the remaining files.', plan: plan(), priorTask }
+    const resumed = createTaskContract({ ...input, workspacePath: root })
+    expect(priorTask.result?.terminal).toBe('incomplete')
+    expect(resumed.requested).toMatchObject({ state: 'resolved', targetFiles: ['confirm.ts'] })
+    expect(resumed.authority.execute).toBe('none')
+    const gateway = new TaskToolGateway(resumed)
+    expect(gateway.authorize(resumed.scope.workspaceRoot!, { name: 'write_file', args: { path: 'auth.ts' } })).toContain('outside the remaining')
+    expect(gateway.authorize(resumed.scope.workspaceRoot!, { name: 'write_file', args: { path: 'confirm.ts' } })).toBeNull()
+    expect(createTaskContract({ ...input, workspacePath: workspace() }).requested?.state).toBe('needs-reference')
+  })
   it('retains proposed files in the existing durable recommendation representation', () => {
     const items = extractRecommendations('Create booking.ts and calendar.ts for the booking flow.')
     expect(items.flatMap(item => item.targets ?? [])).toEqual(['booking.ts', 'calendar.ts'])

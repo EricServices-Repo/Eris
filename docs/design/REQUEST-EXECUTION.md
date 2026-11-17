@@ -106,6 +106,8 @@ Inline child intent comes from the assignment. A writable specialist no longer t
 
 ## Completion evidence
 
+For an incomplete explicit file request, a follow-up such as “Finish the remaining files” resumes the pending targets of the same project. The resumed task can edit only those paths and has no shell or external-effect authority. Recommendation semantics still require separate evidence.
+
 For explicit file-generation requests, every required file must be present, nonempty, inside the selected project and observed in this run. A file with the same basename elsewhere cannot satisfy it. A removed file no longer counts even if an earlier mutation receipt named it. Reads of already-correct files can establish presence without gratuitous writes; semantic correctness remains subject to the existing verification and semantic checks.
 
 This file-set gate supplements the general workflow. It does not claim that nonempty files are functionally correct, nor that every path mentioned in an arbitrary request is an output. General edits, deletions and recommendations retain their existing acceptance logic.

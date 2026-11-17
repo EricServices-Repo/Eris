@@ -64,6 +64,7 @@ const task = z
       destination: interpretation.shape.destination,
       targetFiles: z.array(path).max(100),
       targetReason: z.string().max(200).optional(),
+      resumeFileRequirements: z.boolean().optional(),
       targetQuestion: z.object({ text: z.string().max(200), choices: z.array(path).max(20) }).optional(),
       evidence: z.literal('source-read').optional(),
       state: z.enum(['resolved', 'needs-reference', 'needs-clarification'])
