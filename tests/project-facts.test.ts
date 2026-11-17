@@ -185,6 +185,14 @@ describe('approved project facts', () => {
     expect(activeProjectFacts('workspace-a')).toHaveLength(1)
   })
 
+  it('ends an old fact when the selected replacement is already active', () => {
+    const first = promote()
+    const second = promote('Ledger exports use ISO dates')
+    expect(promote(second.text, first.id).id).toBe(second.id)
+    expect(activeProjectFacts('workspace-a').map((row) => row.id)).toEqual([second.id])
+    expect(listProjectFacts('workspace-a')[0]).toMatchObject({ status: 'superseded', supersededBy: second.id })
+  })
+
   it('caps active facts', () => {
     for (let index = 0; index < PROJECT_FACTS_MAX_ACTIVE; index++) promote(`Fact ${index}`)
     expect(() => promote('One more')).toThrow(/Revoke one first/)
@@ -200,6 +208,9 @@ describe('approved project facts', () => {
     expect(compiled(task(projectA))).not.toContain(fact.text)
     writeFileSync(file, 'not json')
     expect(activeProjectFacts('workspace-a')).toEqual([])
+    expect(() => listProjectFacts('workspace-a')).toThrow(/file is kept/)
+    expect(() => promote('Replacement')).toThrow(/file is kept/)
+    expect(readFileSync(file, 'utf8')).toBe('not json')
   })
 
   it('keeps the store outside the repository', () => {

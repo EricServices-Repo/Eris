@@ -110,6 +110,12 @@ Compaction can replace old tool output with reference stubs only when content re
 
 Sources: [journal](../electron/main/services/agent/run-journal.ts), [pull](../electron/main/services/agent/context-pull.ts), [compaction](../electron/main/services/agent/compaction.ts).
 
+## Approved project facts
+
+Project facts belong to the registered workspace and may be used across its chats when the workspace is in scope. In a monorepo, this store belongs to the registered root, so keep a fact's text specific to any package it describes. A promoted fact is stored independently of its original pin. Turn project memory off to stop using saved facts, or revoke a fact in the inspector to end its use. To edit a fact, pin the corrected note and select the prior fact as its replacement.
+
+The store keeps up to 32 active and 200 ended facts. It prunes older ended records on save. If the file is unreadable, the inspector shows its location and preserves it for recovery. A failed write preserves the previous file.
+
 ## Handoffs and results
 
 Neither inline nor background child automatically gets the parent `MemoryPrompt`. Both get required inherited task constraints and an optional briefing through the unified handoff message shape. Constraints admit at most 12 × 300 characters including inherited constraints; required task overflow blocks before inference. Optional summary/source lists can still be omitted. A full child-source envelope and source-backed return receipts remain open work.
