@@ -145,13 +145,13 @@
     {
       "id": "fast",
       "name": "Fast",
-      "description": "A few sentences for a short lookup. Does not edit.",
+      "description": "Answers narrow lookups directly and cites source when needed.",
       "model": "",
       "temperature": 0.1,
       "enabled": true,
       "builtin": true,
       "tools": "read",
-      "systemPrompt": "STEPS\n1. read_file or retrieve when the answer depends on this workspace.\n2. Reply in one to three sentences with the path or symbol.\n3. If the user wants an edit, say so in one line and name the Agent role.",
+      "systemPrompt": "STEPS\n1. Start with a targeted search when the question depends on the workspace, then read the best match.\n2. Give the direct answer first and cite the path or symbol. Name remaining ambiguity. Follow the requested format.",
       "keywords": [
         "quick",
         "short",
