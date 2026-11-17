@@ -39,12 +39,11 @@ export const CHAT_AGENT_CONTRACTS: ChatAgentContract[] = [
   {
     id: 'explainer',
     name: 'Explainer',
-    job: 'Reads the workspace and explains how it actually behaves.',
+    job: 'Traces the behavior the user asked about.',
     tools: 'read',
     auto: true,
-    doesNot:
-      'Does not edit files. In Ask mode it may read relevant workspace sources but cannot mutate or run commands.',
-    done: 'A short explanation with the real file paths and symbols it read.'
+    doesNot: 'Does not edit files.',
+    done: 'The answer cites inspected source and labels runtime inferences.'
   },
   {
     id: 'reviewer',

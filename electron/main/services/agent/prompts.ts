@@ -84,12 +84,9 @@ export function intentPlaybook(
       )
     case 'explore':
       return (
-        `EXPLORE PLAYBOOK — Find the code that answers the question (search by name, text or symbol), then read ` +
-        `the implementation and what calls it. A file listing or a search snippet is not an answer; if a search ` +
-        `comes back thin, try another kind. For “what is this project”, read the README, the manifest and the ` +
-        `main entry point, not only .eris config. Answer the question first, then support it with the paths and ` +
-        `symbols you read, and mark what you inferred. For a question about the outside world, use web_search ` +
-        `then web_open, and state only what the page says; if it does not answer, say so. Do not edit.`
+        'EXPLORE PLAYBOOK — Start with the named symbol, file, or entry point. Read the implementation and trace relevant callers and data flow. ' +
+        'If a search is inconclusive, try another. For a project overview, inspect its README, manifest, and entry point. ' +
+        'Answer the question first. Cite sources and label runtime inferences. For public facts, search and open the source when available. Do not edit.'
       )
     case 'edit':
       return (
