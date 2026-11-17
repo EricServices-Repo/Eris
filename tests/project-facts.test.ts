@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { randomUUID } from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
@@ -6,6 +7,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  truncateSync,
   writeFileSync
 } from 'fs'
 import { tmpdir } from 'os'
@@ -35,7 +37,7 @@ import {
 } from '../electron/main/services/agent/context-compiler'
 import { createTaskContract } from '../electron/main/services/task-intake'
 import { getDefaults } from '../electron/main/services/settings'
-import { PROJECT_FACTS_MAX_ACTIVE } from '../src/shared/project-facts'
+import { PROJECT_FACTS_MAX_ACTIVE, PROJECT_FACTS_MAX_FILE_BYTES, PROJECT_FACTS_MAX_HISTORY } from '../src/shared/project-facts'
 import type { AppSettings } from '../src/shared/settings-schema'
 import { evidenceRequirementFor, type TaskContract } from '../src/shared/task-contract'
 
@@ -196,6 +198,30 @@ describe('approved project facts', () => {
   it('caps active facts', () => {
     for (let index = 0; index < PROJECT_FACTS_MAX_ACTIVE; index++) promote(`Fact ${index}`)
     expect(() => promote('One more')).toThrow(/Revoke one first/)
+  })
+
+  it('compacts a full legacy history and still accepts a new promotion', () => {
+    const active = promote()
+    const file = join(h.root, 'project-facts', 'workspace-a.json')
+    const history = Array.from({ length: 999 }, (_, endedAt) => ({
+      ...active, id: randomUUID(), text: `Former fact ${endedAt}`, status: 'revoked', endedAt
+    }))
+    writeFileSync(file, JSON.stringify({ version: 1, facts: [active, ...history] }))
+    const added = promote('New project fact')
+    const remaining = listProjectFacts('workspace-a')
+    expect(remaining).toHaveLength(PROJECT_FACTS_MAX_HISTORY + 2)
+    expect(remaining.map((row) => row.id)).toContain(history.at(-1)!.id)
+    expect(remaining.map((row) => row.id)).not.toContain(history[0]!.id)
+    expect(activeProjectFacts('workspace-a').map((row) => row.id)).toEqual([active.id, added.id])
+  })
+
+  it('keeps an oversized file for recovery', () => {
+    promote()
+    const file = join(h.root, 'project-facts', 'workspace-a.json')
+    truncateSync(file, PROJECT_FACTS_MAX_FILE_BYTES + 1)
+    expect(() => promote('New project fact')).toThrow(/larger than 8 MiB/)
+    expect(() => listProjectFacts('workspace-a')).toThrow(/file is kept/)
+    expect(existsSync(file)).toBe(true)
   })
 
   it('treats an unreadable or hand-edited file as no facts', () => {
