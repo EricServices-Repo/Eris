@@ -59,11 +59,11 @@ export const CHAT_AGENT_CONTRACTS: ChatAgentContract[] = [
   {
     id: 'planner',
     name: 'Plan',
-    job: 'Reads the workspace and produces an implementation plan with dependencies, risks, and files to change.',
+    job: 'Builds an implementation sequence grounded in the available evidence.',
     tools: 'read',
     auto: true,
     doesNot: 'Does not edit files or claim the plan has been implemented.',
-    done: 'A sequenced plan with the relevant files, key decisions, dependencies, and completion checks.'
+    done: 'Steps follow dependencies, with named integration points and completion checks.'
   },
   {
     id: 'verifier',

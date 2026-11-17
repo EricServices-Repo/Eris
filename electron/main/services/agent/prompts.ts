@@ -37,26 +37,15 @@ export function intentPlaybook(
 ): string {
   const evidence = evidenceRequirementFor(applicability)
   // A generic request is answered from the conversation; the project is not its evidence.
-  if (evidence === 'none' && (intent === 'plan' || intent === 'explore')) {
-    return intent === 'plan'
-      ? `PLAN PLAYBOOK — Plan from the request itself. State the assumptions you make about stack, ` +
-          `scale and constraints. Do not edit files or claim the plan was implemented.`
-      : `ANSWER PLAYBOOK — Answer from the request itself and state your assumptions. Do not edit.`
-  }
-  if (intent === 'plan' && evidence === 'optional') {
-    return (
-      `PLAN PLAYBOOK — If the plan depends on the open project, read the files involved first and ` +
-      `name the files each step affects; otherwise plan from the request and state assumptions. ` +
-      `Separate observed facts from assumptions. Do not edit files or claim the plan was implemented.`
-    )
-  }
+  if (evidence === 'none' && intent === 'explore')
+    return 'ANSWER PLAYBOOK — Answer from the request itself and state your assumptions. Do not edit.'
   if (intent === 'plan') {
-    return (
-      `PLAN PLAYBOOK — Read the code the plan touches (sources, tests, conventions, dependencies) and trace ` +
-      `the existing flow before planning. Return ordered steps; each names the files or symbols it changes, ` +
-      `what changes, what it depends on, and how to check it is done. List material risks and open decisions. ` +
-      `Separate observed facts from assumptions. Do not edit files or claim the plan was implemented.`
-    )
+    const source = evidence === 'none'
+      ? 'Plan from the request and supplied material.'
+      : evidence === 'optional'
+        ? 'Inspect project integration points only if the plan depends on them.'
+        : 'Read the relevant source and tests to identify integration points and constraints.'
+    return `PLAN PLAYBOOK — ${source} Order steps by dependency and give each a completion check. Label proposed files and material assumptions. Ask only if a decision would change the plan. Do not edit.`
   }
   if (intent === 'verify') {
     return (
