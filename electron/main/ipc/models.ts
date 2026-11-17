@@ -83,7 +83,7 @@ export function registerModelsIpc(): void {
       if (probeCloud && appState.currentWorkspace === root) {
         const keepCloud = cloudGeneration !== cloudProbeGeneration ||
           cloudToken !== getSecret(ERIS_CLOUD_TOKEN_REF)
-        const { connections, changed } = connectionsWithDiscoveredModels(getResolvedSettings(probe ? root : null), status, {
+        const { connections, changed } = connectionsWithDiscoveredModels(getResolvedSettings(null), status, {
           cloudOnly: !probe, keepCloud
         })
         if (changed) {

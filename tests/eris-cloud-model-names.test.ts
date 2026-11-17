@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, writeFileSync } from 'fs'
-import { dirname } from 'path'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { dirname, join } from 'path'
+import { tmpdir } from 'os'
 import {
   connectionModelRef,
   erisCloudModelRef,
@@ -14,7 +15,8 @@ import { streamModelChat } from '../electron/main/services/chat-runtime'
 import {
   getDefaults,
   getResolvedSettings,
-  invalidateResolvedSettingsCache
+  invalidateResolvedSettingsCache,
+  setSettings
 } from '../electron/main/services/settings'
 import { userSettingsPath } from '../electron/main/services/paths'
 
@@ -125,6 +127,37 @@ describe('cloud: model names', () => {
     })
     await expect(reply.next()).rejects.toThrow('unavailable in the Eris Cloud catalog')
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('uses the account catalog in trusted workspaces and honors a workspace Cloud disable', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'eris-cloud-scope-'))
+    try {
+      const withCloud = settingsWith(['hidden-tag'], ['local-tag'])
+      const cloud = withCloud.models.connections.find(c => c.id === 'eris-cloud')!
+      setSettings('user', { models: { connections: withCloud.models.connections } }, root)
+      setSettings('workspace', { models: { connections: withCloud.models.connections } }, root)
+      const updated = settingsWith(['visible-tag'], ['local-tag'])
+      setSettings('user', { models: { connections: updated.models.connections } }, root)
+
+      const resolved = getResolvedSettings(root)
+      expect(resolveConnectionForModel(resolved, 'cloud:hidden-tag')).toBeNull()
+      expect(resolveConnectionForModel(resolved, 'cloud:visible-tag')?.id).toBe('eris-cloud')
+      expect(resolveConnectionForModel(resolved, 'local-tag')?.id).toBe('ollama')
+
+      setSettings('workspace', { models: { connections: [{ ...cloud, enabled: false }] } }, root)
+      expect(resolveConnectionForModel(getResolvedSettings(root), 'cloud:visible-tag')).toBeNull()
+      expect(resolveConnectionForModel(getResolvedSettings(null), 'cloud:visible-tag')?.id).toBe('eris-cloud')
+      const profile = getResolvedSettings(null)
+      const status = await getModelsStatus(getResolvedSettings(root), () => null, { probeCloud: true })
+      expect(connectionsWithDiscoveredModels(profile, status).changed).toBe(false)
+
+      setSettings('user', { models: { connections: [] } }, root)
+      setSettings('workspace', { models: { connections: [cloud] } }, root)
+      expect(getResolvedSettings(root).models.connections.find(c => c.id === 'eris-cloud'))
+        .toMatchObject({ enabled: false, models: [] })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('sends the bare model id to the Eris Cloud server', async () => {
