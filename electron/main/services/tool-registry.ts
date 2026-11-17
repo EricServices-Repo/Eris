@@ -458,11 +458,11 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   ),
   tool(
     'delegate_to_agent',
-    'Hand one self-contained part of the work to a specialist agent that runs separately and reports back. Use it only when the work splits; give a concrete goal and the context it needs.',
+    'Assign one self-contained part to a specialist. Give its goal, relevant paths, constraints, and completion criteria. Use the returned inline result or background receipt as evidence.',
     {
       agent_id: {
         type: 'string',
-        description: 'Specialist id: coder | explainer | reviewer | fast (or project agent id)'
+        description: 'Specialist id: coder | explainer | reviewer | planner | verifier | fast (or project agent id)'
       },
       agentId: { type: 'string' },
       goal: {
@@ -501,7 +501,7 @@ export const COMPOSER_OPENAI_TOOLS: OpenAIToolDef[] = [
   ),
   tool(
     'await_children',
-    'Wait for delegated child agents to finish and return their results.',
+    'Wait for delegated background agents and return their results. Inline delegation returns its own result.',
     {
       timeout_ms: {
         type: 'number',

@@ -179,8 +179,9 @@ export function buildChatMessages(
   const roleSteps = !(options.genericScope && agent?.builtin !== false)
   const parts: string[] = [
     contract && roleSteps
-      ? `AGENT CONTRACT — ${contract.name}\nJob: ${contract.job}\nTools: ${contract.tools}. ${contract.doesNot}\nDone when: ${contract.done}` +
-        (contract.tools === 'read' && input.mode === 'agent' ? `\n${READ_ONLY_ROLE_NOTE}` : '')
+      ? `AGENT CONTRACT — ${contract.name}\nJob: ${contract.job}\nTools: ${contract.tools}. ${contract.doesNot}` +
+        (contract.tools === 'read' && input.mode === 'agent' ? ` ${READ_ONLY_ROLE_NOTE}` : '') +
+        `\nDone when: ${contract.done}`
       : '',
     shared.systemPrompt,
     // A chat turn's agent owns the user-facing reply. Delegated children get a

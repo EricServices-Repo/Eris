@@ -19,13 +19,13 @@ export interface ChatAgentContract {
 export const CHAT_AGENT_CONTRACTS: ChatAgentContract[] = [
   {
     id: 'composer',
-    name: 'Composer',
+    name: 'Agent',
     job: 'Owns changes: inspect the workspace, edit it, verify, and delegate only when the work splits.',
     tools: 'full',
     auto: true,
     doesNot:
       'Does not ask the user to paste files that are already in the workspace, and does not hand off a small single-file fix.',
-    done: 'A short summary of files changed or what was found. Delegated work is included only after those agents finish.'
+    done: 'Report observed changes, checks, and blockers. Use completed child evidence for delegated work.'
   },
   {
     id: 'coder',
@@ -490,12 +490,10 @@ export function asksWorkspaceQuestion(text: string, fileNames: string[] = []): b
 }
 
 /**
- * Shared instruction for every read-only role (#505). A mis-routed edit or run
- * request must be answered with the role's limit and the way to switch, never
- * with a claim that Eris itself cannot edit files or run commands.
+ * Describe the edit ceiling independently of any verification permission.
  */
 export const READ_ONLY_ROLE_NOTE =
-  'If the user asks you to change files or run a command, say that this role is read-only and that they can switch to Composer (or Auto) to do it. Never say that Eris cannot edit files or run commands.'
+  'For an edit request, explain that this role is read-only. Suggest Agent mode with Agent or Auto.'
 
 const BY_ID = new Map(CHAT_AGENT_CONTRACTS.map((c) => [c.id, c]))
 

@@ -157,7 +157,7 @@ describe('handoff serialization', () => {
     expect(briefing).not.toContain('Check the validator')
     expect(briefing).not.toContain('Parent request:')
     expect(briefing).toContain('Looked at the form')
-    expect(briefing).toContain('not answering the user')
+    expect(briefing).not.toContain('Report evidence and blockers')
   })
 
   it('still shows constraints wherever the whole packet is displayed', () => {
