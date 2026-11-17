@@ -52,6 +52,7 @@ export interface ChatTurnInput {
   mode?: 'ask' | 'agent'
   manualAgentId?: string | null
   fileNames?: string[]
+  deferAutoWorker?: boolean
   openFilePath?: string
   askTarget?: (question: string, choices: string[]) => Promise<string | null>
   previousAgentId?: string | null
@@ -208,7 +209,8 @@ export async function resolveChatTurnContract(
   const semanticIntent = resolution.intent
   if (deferred || semanticIntent !== plan.intent) {
     const referenceChars = references?.binding.status === 'bound'
-      ? references.recommendations.reduce((size, item) => size + item.text.length, 0) : 0
+      ? references.recommendations.reduce((size, item) => size + item.text.length +
+          (item.targets ?? []).reduce((total, path) => total + path.length + 4, 0), 0) : 0
     plan = await planChatTurn({
       requiredContext: referenceChars ? Math.ceil((input.text.length + referenceChars) / 3) + 512 : undefined,
       workspacePath: input.workspacePath,
@@ -223,6 +225,7 @@ export async function resolveChatTurnContract(
         fileNames: input.fileNames,
         previousAgentId: input.previousAgentId ?? null,
         skipModelRouter: true,
+        forceRoute: input.forceRoute,
         preserveModelSelection: input.preserveModelSelection,
         previousMessages: previousMessages(input.history)
       },
@@ -234,9 +237,12 @@ export async function resolveChatTurnContract(
   const task = pageBound && pageTask ? pageTask : createTaskContract({ ...taskInput, plan, resolution })
   plan.task = task
   // Reference and scope problems are cheap intake results, not model-load requests.
-  if (!plan.error && !taskIntakeBlocked(task, plan.mode) &&
-      (task.scope.state === 'resolved' || task.scope.applicability === 'generic'))
-    await prepareModelWindows(input.settings, [plan.models.chat, plan.models.tools], input.getSecret, input.signal)
+  const preparationModels = !plan.error && !taskIntakeBlocked(task, plan.mode) &&
+      (task.scope.state === 'resolved' || task.scope.applicability === 'generic')
+    ? [...new Set([plan.models.chat, plan.models.tools].filter(Boolean))] : []
+  const preparationStarted = Date.now()
+  if (preparationModels.length)
+    await prepareModelWindows(input.settings, preparationModels, input.getSecret, input.signal)
   // The workflow follows the resolved scope: a generic request has no inspection step.
   if (plan.executionPlan)
     plan.executionPlan = executionPlanFor(plan.mode, plan.intent, task.scope.applicability)
@@ -245,6 +251,7 @@ export async function resolveChatTurnContract(
     revision: task.revision,
     initial: { intent: initial.intent, agentId: initial.agentId, trace: initial.routeTrace },
     resolution,
+    preparation: { models: preparationModels, windowRequests: preparationModels.length, durationMs: Date.now() - preparationStarted },
     final: {
       intent: plan.intent,
       agentId: plan.agentId,

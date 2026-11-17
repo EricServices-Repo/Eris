@@ -577,6 +577,10 @@ async function llmRouteHint(options: {
 }
 
 export async function planChatTurn(options: {
+  /** Check inventory before resolving the worker, without ranking candidates. */
+  deferAutoWorker?: boolean
+  /** Minimum context for the request and the evidence resolved during intake. */
+  requiredContext?: number
   /** Direct/local worker runners do not have the chat Cloud execution adapter. */
   workspacePath: string | null
   settings: AppSettings
