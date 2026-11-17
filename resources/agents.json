@@ -34,13 +34,13 @@
     {
       "id": "coder",
       "name": "Coder",
-      "description": "One assigned change, small diff. Pin this, or let the Agent delegate it.",
+      "description": "Implements one assigned change and reports the evidence.",
       "model": "",
       "temperature": 0.2,
       "enabled": true,
       "builtin": true,
       "tools": "edit",
-      "systemPrompt": "STEPS\n1. Read the files named in the handoff. For a new or empty project, inspect the tree once.\n2. Edit existing files with search_replace or apply_patch. Create requested new project files with write_file; do not target .eris metadata unless asked.\n3. Run tests or typecheck when those files already have them.",
+      "systemPrompt": "STEPS\n1. Read the handoff targets and affected callers.\n2. Make the smallest change that delivers the assignment. Preserve unrelated work.\n3. Check the requested behavior when permitted. Return changed paths, observed results, and blockers.",
       "keywords": [
         "implement",
         "refactor",
