@@ -4,6 +4,7 @@ import { INTENT_GUIDE, INTENT_RULES } from '../../../src/shared/intent-guide'
 import { isAutomaticModelSelection } from '../../../src/shared/model-execution'
 import {
   chooseExecutionModel,
+  hasAutoModelInventory,
   executionPolicy,
   executionLocal,
   workspaceLocalityViolation,
@@ -895,7 +896,9 @@ export async function planChatTurn(options: {
   }
 
   const toolPolicy = effectiveToolPolicy(agent, intent, mode)
+  const deferred = options.deferAutoWorker === true && isAutoModelChoice(selectedModel)
   const agentModelOverride =
+    !deferred &&
     !options.context.preserveModelSelection &&
     (!pickedModel || isAutoModelChoice(pickedModel)) && agent.model.trim() && !isAutoModelChoice(agent.model)
       ? agent.model.trim()
@@ -908,7 +911,9 @@ export async function planChatTurn(options: {
   const modelClass: AgentModelClass = agentModelClass(agent)
   let classModels: { primary?: string; fast?: string } = {}
   const inherited = options.context.inheritedModels
-  if (inherited && isAutoModelChoice(chosenModel) && (inherited.primary || inherited.fast)) {
+  if (deferred) {
+    chosenModel = ''
+  } else if (inherited && isAutoModelChoice(chosenModel) && (inherited.primary || inherited.fast)) {
     // A delegated child reuses its parent's resolved models: no second Auto pick that
     // could land on another provider or force a local model swap (#593).
     classModels = { primary: inherited.primary || inherited.fast, fast: inherited.fast || inherited.primary }
@@ -917,7 +922,7 @@ export async function planChatTurn(options: {
   } else if (isAutoModelChoice(chosenModel)) {
     const policySelection = chosenModel
     // The latest request is mandatory; older history is packed to the worker's budget.
-    const requiredContext = Math.max(1024, estimateModelMessagesTokens([{ role: 'user', content: options.context.text }]) + 512)
+    const requiredContext = Math.max(options.requiredContext ?? 1024, 1024, estimateModelMessagesTokens([{ role: 'user', content: options.context.text }]) + 512)
     const choice = await chooseExecutionModel(options.settings, intent, policySelection, [], {
       requiredContext
     })
@@ -965,7 +970,9 @@ export async function planChatTurn(options: {
     method,
     classifiedIntent,
     routeTrace: { heuristicRule: heuristic.rule, overrides },
-    error: modelChoice && !modelChoice.model
+    error: deferred
+      ? hasAutoModelInventory(options.settings, modelPolicy) ? undefined : 'No eligible model in the configured catalog.'
+      : modelChoice && !modelChoice.model
       ? `No eligible model for ${modelChoice.policy}. ${modelChoice.candidates.map((c) => `${c.model}: ${c.reason}`).join('; ')}`
       : workspaceLocalityViolation(options.settings, chosenModel) || localityConflict || selected.error,
     modelExecution: {
