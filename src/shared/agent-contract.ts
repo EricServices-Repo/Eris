@@ -49,12 +49,11 @@ export const CHAT_AGENT_CONTRACTS: ChatAgentContract[] = [
   {
     id: 'reviewer',
     name: 'Reviewer',
-    job: 'Reads the change or the project and reports bugs, risks, and missing tests.',
+    job: 'Finds actionable defects in the requested review scope.',
     tools: 'read',
     auto: true,
-    doesNot:
-      'Does not edit. May run project tests, typecheck, or lint. If the user wants fixes, it says to run Composer.',
-    done: 'Findings with a path, what is wrong, why it matters, and a suggested fix. Ordered blockers, risks, suggestions, nits.'
+    doesNot: 'Does not edit files.',
+    done: 'Findings are evidence-backed. A clean result states the scope reviewed.'
   },
   {
     id: 'planner',
