@@ -65,13 +65,20 @@ beforeEach(() => {
 })
 
 describe('Cloud catalog refresh IPC', () => {
-  it('returns the latest catalog to a superseded caller even if the older probe finishes first', async () => {
+  it.each(['older', 'newer'] as const)('returns the latest catalog when the %s probe finishes first', async (first) => {
     const finishOld = pendingStatus()
     const finishNew = pendingStatus()
     const old = refreshModels()
     const latest = refreshModels()
-    finishOld(status('removed', 'local:kept'))
-    finishNew(status('available'))
+    if (first === 'older') {
+      finishOld(status('removed', 'local:kept'))
+      await Promise.resolve()
+      finishNew(status('available'))
+    } else {
+      finishNew(status('available'))
+      await latest
+      finishOld(status('removed', 'local:kept'))
+    }
 
     expect((await latest).models.map(m => m.name)).toEqual(['cloud:available'])
     expect((await old).models.map(m => m.name)).toEqual(['local:kept', 'cloud:available'])
