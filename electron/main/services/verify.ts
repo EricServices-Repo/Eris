@@ -434,12 +434,15 @@ export async function runVerify(
     : /\b(?:type-?check|tsc)\b/.test(result.command) ? 'typecheck'
     : /\blint\b/.test(result.command) ? 'lint' : 'other'
   const output = result.detail.replace(new RegExp(String.fromCharCode(27) + '\\[[0-9;]*m', 'g'), '')
-  const countMatch = kind === 'test'
-    ? /^\s*Tests:\s*(?:.*?,\s*)?(\d+) total\s*$/mi.exec(output) ??
-      /^\s*[#ℹ] tests (\d+)\s*$/mi.exec(output)
-    : null
+  const countMatch = kind === 'test' ?
+    /^\s*Tests:\s*(?:.*?,\s*)?(\d+) total\s*$/mi.exec(output) ??
+    /^\s*[#ℹ] tests (\d+)\s*$/mi.exec(output) ??
+    /^\s*Tests\s+[^\n]*\((\d+)\)\s*$/m.exec(output) : null
   const testCount = countMatch ? Number(countMatch[1]) : undefined
-  const empty = kind === 'test' && result.ok && (testCount === 0 || result.skipReason === 'no-tests')
+  const emptyOutput = /^(?:No (?:test files|tests) found(?:, exiting with code 0)?|TAP version \d+\n1\.\.0)\s*$/mi.test(output)
+  const onlySkipped = /^\s*Tests[:\s]+\s*\d+ skipped(?:,\s*\d+ total|\s*\(\d+\))\s*$/mi.test(output)
+  const empty = kind === 'test' && result.ok &&
+    (testCount === 0 || result.skipReason === 'no-tests' || onlySkipped || (testCount === undefined && emptyOutput))
   const skipped = result.skipped || empty
   const check: ProjectCheckEvidence = {
     kind, command: result.command, scope: 'project',
