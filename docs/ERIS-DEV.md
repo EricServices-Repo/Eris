@@ -62,10 +62,11 @@ Inspect `sourceMode`, timing, response reason and inference fields instead of as
 
 - `npm run build:dev-app`: dev-app qualification plus main/preload/renderer/worker bundles.
 - `npm run dist:dev-app:mac`: macOS app directory under `dist-dev/mac-arm64/Eris-Dev.app`.
+- `npm run dist:dev-app:mac-archive`: macOS arm64 ZIP under `dist-dev/`. The builder extracts the archive into a temporary location, checks bundle identity and version, and launches an isolated preload smoke test.
 - `npm run start:dev-app`: package and open the macOS app.
 - `npm run dist:dev-app:win -- --publish never`: Windows x64 NSIS installer under `dist-dev/`; run on Windows so the owned-command helper is prepared.
 - `npm run test:dev-app`: deterministic import/capture/live-adapter/stateful/quality scenarios listed in qualification profiles.
 
-PR CI builds the Windows dev installer artifact. Release CI attaches `Eris-Dev-<version>-win-x64-setup.exe` alongside Eris installers; Eris-Dev does not consume the production update feed. These workflows do not make a local build a published release or certify an installed model's answer quality.
+PR CI builds the Windows dev installer artifact. Release CI attaches `Eris-Dev-<version>-mac-arm64.zip` and `Eris-Dev-<version>-win-x64-setup.exe` alongside Eris installers. The macOS release job uses the release signing configuration when available. Release provenance lists the archive and its digest independently of the production updater feed. Eris-Dev uses its own profile and does not consume that feed.
 
 See [architecture](ARCHITECTURE.md), [test profiles](../tests/qualification-profiles.json), [release workflow](../.github/workflows/release.yml) and [build configuration](../eris-dev-builder.json).

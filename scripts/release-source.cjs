@@ -41,6 +41,7 @@ function releaseAssetContract(platform, version) {
       required: [
         `Eris-${version}-mac-arm64.dmg`,
         `Eris-${version}-mac-arm64.zip`,
+        `Eris-Dev-${version}-mac-arm64.zip`,
         'latest-mac.yml',
         'context-qualification-mac.json'
       ],

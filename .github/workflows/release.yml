@@ -133,6 +133,7 @@ jobs:
             unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
           fi
           npm run dist:release:mac -- --publish never
+          npm run dist:dev-app:mac-archive
         env:
           MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
           MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
@@ -187,6 +188,7 @@ jobs:
             for f in dist/*.dmg dist/*.zip dist/*mac*.dmg dist/*mac*.zip dist/latest-mac.yml dist/*.blockmap; do
               [ -f "$f" ] && cp "$f" release-assets/
             done
+            cp "dist-dev/Eris-Dev-${{ needs.resolve-version.outputs.version }}-mac-arm64.zip" release-assets/
           else
             for f in dist/*.exe dist/*win*.exe dist/latest.yml dist/*.blockmap; do
               [ -f "$f" ] && cp "$f" release-assets/

@@ -30,7 +30,6 @@
   ],
   "mac": {
     "target": ["dir"],
-    "identity": null,
     "icon": "resources/icons/icon.icns"
   },
   "win": {
