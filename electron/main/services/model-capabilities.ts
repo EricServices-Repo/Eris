@@ -7,7 +7,7 @@ import { findLocalEntry, isLocalRef, localEntryAsBuiltin } from './local-model'
 import { loadedModelFacts } from './model-runtime'
 import {
   advertisedModelLimits,
-  ollamaMaximumContext,
+  modelMaximumContext,
   declaredModelLimits,
   serverWindow,
   serverWindowFacts
@@ -97,7 +97,7 @@ export function contextProvenance(settings: AppSettings, model: string) {
 export function resolveModelCapabilities(settings: AppSettings, model: string): ModelCapabilities {
   const declared = declaredModelLimits(settings, model)
   const override = settings.models.capabilityProfiles?.[model]
-  const maximum = usesModelMaximum(settings, model) ? ollamaMaximumContext(settings, model, false) : undefined
+  const maximum = usesModelMaximum(settings, model) ? modelMaximumContext(settings, model, false) : undefined
   const requestedContext = boundedContextWindow(
     maximum ??
       (override?.enabled !== false ? override?.contextWindow : undefined) ??

@@ -358,7 +358,7 @@ export async function* streamOpenAICompatible(options: {
 
 const LIST_MODELS_TIMEOUT_MS = 2_500
 
-export async function listOpenAIModels(baseUrl: string, apiKey?: string | null): Promise<string[]> {
+export async function listOpenAIModels(baseUrl: string, apiKey?: string | null, signal?: AbortSignal): Promise<string[]> {
   const root = baseUrl.replace(/\/$/, '')
   if (!root) throw new Error('Base URL is required')
   const url = root.endsWith('/v1') ? `${root}/models` : `${root}/v1/models`
@@ -369,11 +369,11 @@ export async function listOpenAIModels(baseUrl: string, apiKey?: string | null):
 
   let res: Response
   try {
-    const signal =
+    const timeout =
       typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal
         ? AbortSignal.timeout(LIST_MODELS_TIMEOUT_MS)
         : undefined
-    res = await fetch(url, { headers, signal })
+    res = await fetch(url, { headers, redirect: 'error', signal: signal && timeout ? AbortSignal.any([signal, timeout]) : signal ?? timeout })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     throw new Error(`Cannot reach ${url} — is the server running? (${message})`)
