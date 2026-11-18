@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.15 — 2026-11-18
+
+- Adds verified maximum context for Ollama and provider-reported maximum context for Eris Cloud and hosted models.
+
 ## 0.7.14 — 2026-11-18
 
 - Improves inline suggestions, reasoning-only recovery, and project-fact saves, and adds provider and JSON state-transition checks.
