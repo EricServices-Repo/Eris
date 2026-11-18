@@ -491,7 +491,8 @@ export function createTaskContract(input: {
     ...(targetQuestion ? { targetQuestion } : {}),
     state: referenceBlocked || (resumeFiles && !remainingFiles.length) || (fileRequest && fileRequest.state !== 'resolved')
       ? 'needs-reference'
-      : targetQuestion || requestedIntent !== input.plan.intent ? 'needs-clarification' : 'resolved'
+      : targetQuestion || requestedIntent !== input.plan.intent ||
+        input.resolution?.rule === 'unresolved-localized-workspace-request' ? 'needs-clarification' : 'resolved'
   }
   const noCommands = resumeFiles || forbidden.execution || forbidden.verification
   const requestedScope = scopeApplicability(input.text, requestedReading,

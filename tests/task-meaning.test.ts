@@ -14,6 +14,8 @@ import { resolveTaskIntent, resolveTaskDecision } from '../electron/main/service
 import { reviewTaskOutcome } from '../electron/main/services/task-outcome'
 import { createTaskContract } from '../electron/main/services/task-intake'
 import { getDefaults } from '../electron/main/services/settings'
+import { planInitialChatTurn, resolveChatTurnContract } from '../electron/main/services/chat-turn'
+import { runAgentWithWorkspaceTools } from '../electron/main/services/agent/loop'
 import { modelStreamWithAbort } from '../electron/main/services/task-deadline'
 import type { TurnPlan } from '../src/shared/settings-schema'
 beforeEach(() => {
@@ -82,6 +84,48 @@ describe('task meaning resolution', () => {
       .toMatchObject({ rule: 'unresolved-reference' })
     expect(model.requests).toHaveLength(0)
   })
+  const localizedRequests = [
+    ['Crea una página en este proyecto', 'edit'],
+    ['Créez une page dans ce projet', 'edit'],
+    ['Erstelle eine Seite in diesem Projekt', 'edit'],
+    ['Crie uma página neste projeto', 'edit'],
+    ['¿Cómo se crea una página en este proyecto?', 'answer'],
+    ['Comment créer une page dans ce projet ?', 'answer'],
+    ['Wie erstelle ich eine Seite in diesem Projekt?', 'answer'],
+    ['Como criar uma página neste projeto?', 'answer'],
+    ['Crea un cuento sobre un perro', 'answer']
+  ] as const
+
+  for (const resolver of ['unavailable', 'malformed', 'accepted'] as const) {
+    it.each(localizedRequests)(`resolves or abstains for %s with a ${resolver} resolver`, async (text, operation) => {
+      model.response = resolver === 'accepted' ? JSON.stringify({ intent: operation, confidence: 0.99 }) : 'invalid'
+      const result = await resolveTaskDecision({ ...options(), text, fallback: 'answer',
+        ...(resolver === 'unavailable' ? { skipInference: 'cold-native-routing-skipped' as const } : {}) })
+      const abstains = operation === 'edit' && resolver !== 'accepted'
+      expect(result.intent).toBe(abstains ? 'answer' : operation)
+      expect(result.rule === 'unresolved-localized-workspace-request').toBe(abstains)
+      expect(model.requests).toHaveLength(resolver === 'unavailable' ? 0 : 1)
+    })
+  }
+
+  it('asks for clarification before dispatch when localized workspace intent is unresolved', async () => {
+    const settings = getDefaults()
+    settings.agent.helperCalls = 'off'
+    const text = 'Crea una página en este proyecto'
+    const input = { requestId: 'local-intent', workspacePath: null, model: 'test-provider-model',
+      mode: 'agent' as const, settings, text, getSecret: () => null }
+    const { plan, task } = await resolveChatTurnContract(input, await planInitialChatTurn(input))
+    expect(task.requested?.state).toBe('needs-clarification')
+    expect(task.authority).toMatchObject({ tools: 'none', edit: false, execute: 'none' })
+    const events = []
+    for await (const event of runAgentWithWorkspaceTools({
+      ...input, messages: [{ role: 'user', content: text }], turnPlan: plan, temperature: 0
+    })) events.push(event)
+    expect(events).toContainEqual(expect.objectContaining({ type: 'answer',
+      text: expect.stringContaining('Should I make these changes in the project') }))
+    expect(model.requests).toHaveLength(0)
+  })
+
   it('uses structured interpretation for an ambiguous request without agent identity prompts', async () => {
     model.response = '{"intent":"review","confidence":0.95}'
     expect(await resolveTaskIntent(options())).toBe('review')

@@ -182,6 +182,15 @@ export async function resolveTaskIntent(input: ResolveTaskInput): Promise<ChatIn
   return (await resolveTaskDecision(input)).intent
 }
 
+// Recognize a bounded set of direct wording so ambiguous workspace requests
+// can ask for clarification when no classifier decision is available.
+function unresolvedLocalizedEdit(text: string): boolean {
+  const request = requestTextForIntent(text).trim().normalize('NFC')
+  const imperative = /^(?:crea|modifica|corrige|añade|crée|créez|modifiez|corrigez|ajoutez|erstelle|erstellen sie|ändere|ändern sie|korrigiere|crie|altere|corrija|adicione)\s/iu
+  const project = /(?:en (?:este|el) proyecto|dans (?:ce|le) projet|in (?:diesem|dem) projekt|(?:neste|no) projeto)\b/iu
+  return imperative.test(request) && (project.test(request) || asksForCodeDestination(request))
+}
+
 /** The resolved intent with its source, rule, failure reason and timing. */
 export async function resolveTaskDecision(input: ResolveTaskInput): Promise<IntentResolution> {
   const startedAt = Date.now()
@@ -218,12 +227,15 @@ export async function resolveTaskDecision(input: ResolveTaskInput): Promise<Inte
     return done({ intent: 'answer', source: 'bypass', rule: 'standalone-question' })
   if (bypass) return done({ intent: input.fallback, source: 'bypass', rule: bypass })
 
+  const needsClarification = input.mode === 'agent' && input.fallback === 'answer' &&
+    unresolvedLocalizedEdit(input.text)
+  const clarificationRule = 'unresolved-localized-workspace-request'
   if (input.skipInference) {
     const intent = conservativeFallback(input.text, input.fallback)
     return done({
       intent,
       source: 'fallback',
-      rule: input.skipInference,
+      rule: needsClarification ? clarificationRule : input.skipInference,
       ...(intent !== input.fallback
         ? {
             downgrade: {
@@ -311,6 +323,8 @@ export async function resolveTaskDecision(input: ResolveTaskInput): Promise<Inte
         } else {
           confidence = parsed.data.confidence
           const proposed = parsed.data.intent
+          if (needsClarification && proposed === 'answer')
+            return done({ intent: 'answer', source: 'fallback', rule: clarificationRule, confidence })
           const text = requestTextForIntent(input.text)
           // A classifier may choose the workflow, but cannot change the requested
           // deliverable or invent a workspace destination from its confidence score.
@@ -375,7 +389,7 @@ export async function resolveTaskDecision(input: ResolveTaskInput): Promise<Inte
   return done({
     intent,
     source: 'fallback',
-    rule: fallbackRule(input.text, input.fallback),
+    rule: needsClarification ? clarificationRule : fallbackRule(input.text, input.fallback),
     confidence,
     failure,
     ...(intent !== input.fallback
