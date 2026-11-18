@@ -3,7 +3,7 @@ import { usesModelMaximum, parameterBillions, type ModelCapabilityEvidence, type
 import { boundedContextWindow, validContextWindow } from '../../../src/shared/model-context'
 import type { AppSettings, LocalModelStatus, ModelConnection } from '../../../src/shared/settings-schema'
 import { providerModelId } from '../../../src/shared/eris-cloud'
-import { isOllamaConnection, ollamaCapabilityEvidence } from './ollama-runtime'
+import { isOllamaConnection, modelMaximumContext, ollamaCapabilityEvidence } from './ollama-runtime'
 import { providerCapabilityEvidence } from './provider-context'
 
 const knownFamilies = families.map(({ pattern, ...facts }) => ({
@@ -47,8 +47,8 @@ export function resolveRoutingCapabilityProfile(
     ...(local ? { costClass: 'free-local' } : {}),
     ...(connection?.modelLimits?.[id] ? { contextWindow: connection.modelLimits[id].contextWindow } : {}),
     ...(user?.enabled === false ? undefined : user),
-    ...(usesModelMaximum(settings, model) && connection && isOllamaConnection(connection)
-      ? { contextWindow: provider?.contextWindow ?? fallback.contextWindow }
+    ...(usesModelMaximum(settings, model)
+      ? { contextWindow: modelMaximumContext(settings, model, false) ?? fallback.contextWindow }
       : {})
   }
 }

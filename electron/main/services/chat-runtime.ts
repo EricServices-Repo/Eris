@@ -36,6 +36,7 @@ import {
   ACTIVE_SESSION_KEEP_ALIVE,
   KEEP_LOADED_INDEFINITELY,
   ensureMaximumContextAllocation,
+  isOllamaConnection,
   noteOllamaOutOfMemory,
   observeOllamaPlacement,
   ollamaRequestWindow,
@@ -586,7 +587,8 @@ export async function* streamProviderChat(
       modelMaximum: usesModelMaximum(options.settings, model)
     }
     let numCtx = ollamaRequestWindow(connection, model, windowRequest.requested, windowRequest)
-    if (windowRequest.modelMaximum && numCtx !== windowRequest.requested)
+    const directOllama = isOllamaConnection(connection) && !isErisCloudConnection(connection)
+    if (windowRequest.modelMaximum && (numCtx !== null || directOllama) && numCtx !== windowRequest.requested)
       throw new Error(`Maximum context for ${model} changed before dispatch. Retry after refreshing the model metadata.`)
     const streamFor = (window: number | null) =>
       window === null
@@ -695,7 +697,7 @@ export async function* streamProviderChat(
       }
     }
     finish()
-    if (numCtx !== null)
+    if (numCtx !== null && !isErisCloudConnection(connection))
       void observeOllamaPlacement(connection, model, numCtx, apiKey, windowRequest)
   } catch (err) {
     reportChatActivity('integrating', {

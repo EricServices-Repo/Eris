@@ -89,10 +89,10 @@ function ProfileFields({ model, current, defaults, apply }: {
       <label className="models-default-field"><span>Context sizing</span>
         <select value={draft.contextWindowMode ?? 'configured'} onChange={(event) => setDraft({ ...draft, contextWindowMode: event.target.value as ModelCapabilityProfile['contextWindowMode'] })}>
           <option value="configured">Configured limit</option>
-          <option value="model-maximum">Use model maximum (Ollama)</option>
+          <option value="model-maximum">Use model maximum</option>
         </select>
       </label>
-      {draft.contextWindowMode === 'model-maximum' && <p className="models-hint">Requests the maximum reported by Ollama and checks its loaded window before sending. Requires a directly connected Ollama server with model metadata and allocation reporting. A server memory or allocation failure stops the request. This can use more memory and take longer to load.</p>}
+      {draft.contextWindowMode === 'model-maximum' && <p className="models-hint">Uses the maximum reported by the selected provider, including Eris Cloud. Refresh the model list to read current limits. Providers must publish context metadata; otherwise choose a configured limit. Direct Ollama connections also verify the loaded allocation. Cloud services manage their own memory. Larger contexts can take longer and use more tokens.</p>}
       <label className="models-default-field"><span>Context window</span>
         <input type="number" disabled={draft.contextWindowMode === 'model-maximum'} required min={512} max={MAX_CONTEXT_TOKENS} value={draft.contextWindow || ''}
           onChange={(event) => setDraft({ ...draft, contextWindow: Number(event.target.value) })} />

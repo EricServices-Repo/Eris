@@ -1,5 +1,5 @@
 import { usesModelMaximum, parameterBillions, type ModelCapabilityEvidence } from '../../../src/shared/model-capability-profile'
-import { providerContext } from './provider-context'
+import { providerCapabilityEvidence, providerContext } from './provider-context'
 import { MAX_CONTEXT_TOKENS, boundedContextWindow } from '../../../src/shared/model-context'
 import { logWarn } from './logger'
 import { ollamaNativeHost } from './ollama'
@@ -188,6 +188,7 @@ export async function prepareModelWindows(
   getSecret: (key: string) => string | null,
   signal?: AbortSignal
 ): Promise<void> {
+  const catalogRequests = new Map<ModelConnection, Promise<string[]>>()
   await Promise.all(
     [...new Set(models)].map(async (model) => {
       signal?.throwIfAborted()
@@ -197,9 +198,29 @@ export async function prepareModelWindows(
         return
       }
       const connection = resolveConnectionForModel(settings, model)
-      if (!connection || !isOllamaConnection(connection)) return
+      if (!connection || connection.type !== 'openai-compatible') return
       const apiKey = connection.apiKeyRef ? getSecret(connection.apiKeyRef) : null
-      await probeOllamaModel(connection, model, apiKey, signal)
+      if (usesModelMaximum(settings, model) &&
+          (!isOllamaConnection(connection) || isErisCloudConnection(connection))) {
+        const id = providerModelId(model)
+        if (!providerCapabilityEvidence(connection.baseUrl, id)) {
+          // Refresh stale/absent metadata before budgeting; one authenticated list per connection.
+          let request = catalogRequests.get(connection)
+          if (!request) {
+            request = import('./openai-compatible').then(({ listOpenAIModels }) =>
+              listOpenAIModels(connection.baseUrl, apiKey, signal))
+            catalogRequests.set(connection, request)
+          }
+          const available = await request
+          if (isErisCloudConnection(connection) && !available.includes(id))
+            throw new Error(`“${model}” is unavailable in the Eris Cloud catalog. Refresh Cloud Models or select another model.`)
+        }
+        if (providerContext(connection.baseUrl, id)) return
+        // Hosted Ollama can report metadata via /api/show when /v1/models omits limits.
+        if (!isOllamaConnection(connection)) return
+      }
+      if (isOllamaConnection(connection))
+        await probeOllamaModel(connection, model, apiKey, signal)
     })
   )
 }
@@ -240,7 +261,9 @@ export function ollamaRequestWindow(
   options: { explicit?: boolean; modelMaximum?: boolean } = {}
 ): number | null {
   if (!isOllamaConnection(connection)) return null
-  const maxContext = probes.get(key(connection, model))?.maxContext
+  const maxContext = (isErisCloudConnection(connection) && options.modelMaximum
+    ? providerContext(connection.baseUrl, providerModelId(model))?.contextWindow
+    : undefined) ?? probes.get(key(connection, model))?.maxContext
   if (!maxContext) return null
   const base = windowFor(requested, maxContext)
   const mode = contextFitMode(connection)
@@ -442,7 +465,7 @@ export function serverWindow(settings: AppSettings, model: string, requested: nu
   const connection = resolveConnectionForModel(settings, model)
   if (connection?.type !== 'openai-compatible') return null
   const advertised = providerContext(connection.baseUrl, providerModelId(model))
-  if (advertised && !isOllamaConnection(connection))
+  if (advertised && (!isOllamaConnection(connection) || isErisCloudConnection(connection)))
     return {
       contextCeiling: boundedContextWindow(requested, advertised.contextWindow),
       contextSource: 'provider-declared' as const
@@ -458,6 +481,8 @@ export function serverWindow(settings: AppSettings, model: string, requested: nu
           contextSource: 'unverified-window' as const
         }
       : null
+  if (isErisCloudConnection(connection))
+    return { contextCeiling: target, contextSource: 'provider-declared' as const }
   const placement = ollamaPlacement(connection, model)
   // Strict maximum mode is validated live before dispatch, never silently fitted down.
   if (usesModelMaximum(settings, model) && placement?.loadedWindow !== target)
@@ -537,6 +562,20 @@ export function ollamaMaximumContext(settings: AppSettings, model: string, requi
   return Math.min(maximum, MAX_CONTEXT_TOKENS)
 }
 
+/** Hosted limits are provider declarations; only direct Ollama allocations are measurable here. */
+export function modelMaximumContext(settings: AppSettings, model: string, required = true): number | undefined {
+  const connection = resolveConnectionForModel(settings, model)
+  if (connection && isOllamaConnection(connection) && !isErisCloudConnection(connection))
+    return ollamaMaximumContext(settings, model, required)
+  const published = advertisedModelLimits(settings, model)?.contextWindow
+  const probe = connection && isErisCloudConnection(connection) ? probes.get(key(connection, model)) : undefined
+  const reported = probe && Date.now() - probe.at <= FACTS_TTL_MS ? probe.maxContext : undefined
+  const maximum = published ?? reported
+  if (maximum && maximum >= 512) return Math.min(maximum, MAX_CONTEXT_TOKENS)
+  if (!required) return undefined
+  throw new Error(`Cannot read the maximum context for ${model} from its provider. Refresh the model list, or select a configured limit when the provider does not publish context metadata.`)
+}
+
 /** Validate immediately before prompt packing/dispatch; old diagnostic records are insufficient. */
 export async function ensureMaximumContextAllocation(
   settings: AppSettings,
@@ -545,8 +584,10 @@ export async function ensureMaximumContextAllocation(
   signal?: AbortSignal
 ): Promise<void> {
   if (!usesModelMaximum(settings, model)) return
-  const maximum = ollamaMaximumContext(settings, model)!
+  const maximum = modelMaximumContext(settings, model)!
   const connection = resolveConnectionForModel(settings, model)!
+  // Hosted services own GPU allocation. Never preload or inspect their other running models.
+  if (!isOllamaConnection(connection) || isErisCloudConnection(connection)) return
   const loadedWindow = async () => {
     const body = await apiRequest(connection, '/api/ps', apiKey, undefined, signal) as {
       models?: Array<{ name?: string; model?: string; context_length?: number }>

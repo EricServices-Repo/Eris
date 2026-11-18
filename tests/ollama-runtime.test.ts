@@ -45,6 +45,7 @@ function fakeOllama(behaviour: {
   show?: number
   chat?: string[]
   maximumLoad?: { loaded?: number; error?: string }
+  catalog?: unknown[]
   chatFailure?: string
 }) {
   const seen: {
@@ -58,6 +59,10 @@ function fakeOllama(behaviour: {
     let raw = ''
     request.on('data', (chunk) => (raw += chunk))
     request.on('end', () => {
+      if (request.url === '/v1/models') {
+        response.end(JSON.stringify({ data: behaviour.catalog ?? [{ id: 'm' }] }))
+        return
+      }
       if (request.url === '/api/show') {
         seen.show++
         if (behaviour.show) return void ((response.statusCode = behaviour.show), response.end('{}'))
@@ -303,11 +308,11 @@ describe('Ollama window management', () => {
     expect(fake.seen.chat[0]?.options.num_ctx).toBe(32768)
   })
 
-  it('rejects maximum mode on a provider whose allocation Eris cannot control', async () => {
+  it('rejects maximum mode when a provider does not publish a context limit', async () => {
     const fake = fakeOllama({})
     server = fake.server
     const connection = connectionAt(await start(server), { id: 'custom', provider: 'custom' })
-    await expect(sendMaximum(maximumSettings(connection))).rejects.toThrow(/requires a direct Ollama connection/)
+    await expect(sendMaximum(maximumSettings(connection))).rejects.toThrow(/Cannot read the maximum context/)
     expect(fake.seen.v1).toBe(0)
   })
 

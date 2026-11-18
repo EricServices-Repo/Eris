@@ -1,5 +1,5 @@
 import { parameterBillions, type ModelCapabilityEvidence } from '../../../src/shared/model-capability-profile'
-import { boundedContextWindow, validContextWindow } from '../../../src/shared/model-context'
+import { MAX_CONTEXT_TOKENS, MIN_CONTEXT_TOKENS, boundedContextWindow } from '../../../src/shared/model-context'
 
 type ProviderModelFacts = ModelCapabilityEvidence & { maxOutputTokens?: number }
 
@@ -31,7 +31,8 @@ export function recordProviderContexts(baseUrl: string, rows: unknown[]): void {
       ? (Math.max(...prices) <= 5 / 1e6 ? 'low' : 'high')
       : undefined
     const parametersBillions = parameterBillions(item.parameter_count)
-    const contextWindow = validContextWindow(window) ? boundedContextWindow(window) : undefined
+    const contextWindow = typeof window === 'number' && Number.isSafeInteger(window) && window >= MIN_CONTEXT_TOKENS
+      ? boundedContextWindow(Math.min(window, MAX_CONTEXT_TOKENS)) : undefined
     const output = item.max_output_tokens ?? top?.max_completion_tokens
     models.set(item.id, {
       ...(contextWindow === undefined ? {} : { contextWindow }),
