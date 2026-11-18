@@ -593,6 +593,7 @@ export async function* streamProviderChat(
       signal: options.signal,
       refuseRedirects: modelDestination(options.settings, model).recallAllowed,
       tools: nativeTools,
+      erisCloud: isErisCloudConnection(connection),
       toolChoice: options.toolChoice,
       onNativeToolCalls: options.onNativeToolCalls,
       onReasoning,

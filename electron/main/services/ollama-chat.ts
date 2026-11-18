@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 import { ollamaNativeHost } from './ollama'
 import { MAX_MODEL_EVENT_BYTES, MAX_MODEL_STREAM_BYTES, ModelStreamError } from './model-sse'
 import {
-  modelErrorSnippet,
+  modelConnectionError,
   type ApiStreamFailure,
   type ChatRequestMessage,
   type NativeToolCall,
@@ -128,6 +128,7 @@ export async function* streamOllamaChat(options: {
   maxOutputTokens?: number
   signal?: AbortSignal
   refuseRedirects?: boolean
+  erisCloud?: boolean
   onUsage?: (usage: OpenAIStreamUsage) => void
   onFinish?: (finishReason: string | null, complete: boolean, failure?: ApiStreamFailure) => void
   tools?: OpenAIToolDef[]
@@ -163,8 +164,7 @@ export async function* streamOllamaChat(options: {
     ...(options.refuseRedirects ? { redirect: 'error' as const } : {})
   })
   if (!response.ok || !response.body) {
-    const text = await modelErrorSnippet(response, options.signal)
-    throw new Error(`Model connection failed: HTTP ${response.status} ${text}`)
+    throw await modelConnectionError(response, options.signal, options.erisCloud)
   }
 
   const reader = response.body.getReader()

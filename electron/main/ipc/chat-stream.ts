@@ -78,7 +78,6 @@ import { findAgent } from '../services/agents'
 import { appState } from '../app-state'
 import { getSecret, abortAllCompletes } from './shared'
 import { addWorkspaceAllowedCommand, workspaceAllowedCommands } from '../services/workspace-trust'
-import { assertChatWithinPlan } from '../services/eris-entitlements'
 import { logError, logInfo, logWarn } from '../services/logger'
 import { recordAgentRun } from '../services/agent-telemetry'
 import { rememberAgentRun, rememberAskUserReply } from '../services/project-memory'
@@ -346,13 +345,6 @@ export function registerChatStreamIpc(): void {
             source: 'intake',
             reason: 'Resolving task and project'
           })
-          try {
-            assertChatWithinPlan(settings, getSecret)
-          } catch (err) {
-            const message = err instanceof Error ? err.message : 'Plan limit reached'
-            publish('chat:error', { requestId, error: message })
-            return false
-          }
           appState.chatAbort = controller
           appState.chatStreamActive = true
           appState.activeChatRequestId = payload.requestId

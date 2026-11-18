@@ -698,6 +698,7 @@ export interface IdeApi {
     linked: boolean
     hasToken: boolean
     needsReauth?: boolean
+    hostedAllowance?: import('./eris-cloud').ErisHostedModels['allowance']
     apiBase: string
     username: string
     email: string

@@ -64,11 +64,23 @@ export function normalizeErisCloudConnection<T extends Record<string, unknown>>(
 export interface ErisHostedModels {
   enabled: boolean
   baseUrl?: string
+  allowance?: { limit: number; remaining: number }
 }
 
 export function parseHostedModels(raw: unknown): ErisHostedModels | null {
   if (!raw || typeof raw !== 'object') return null
   const r = raw as Record<string, unknown>
   if (typeof r.enabled !== 'boolean') return null
-  return { enabled: r.enabled, baseUrl: typeof r.baseUrl === 'string' ? r.baseUrl : undefined }
+  const allowance = r.allowance as Record<string, unknown> | undefined
+  const limit = allowance?.limit
+  const remaining = allowance?.remaining
+  return {
+    enabled: r.enabled,
+    baseUrl: typeof r.baseUrl === 'string' ? r.baseUrl : undefined,
+    ...(r.enabled && allowance?.available === true && allowance.window_days === 7 &&
+        typeof limit === 'number' && Number.isSafeInteger(limit) && limit > 0 &&
+        typeof remaining === 'number' && Number.isSafeInteger(remaining) && remaining >= 0 && remaining <= limit
+      ? { allowance: { limit, remaining } }
+      : {})
+  }
 }

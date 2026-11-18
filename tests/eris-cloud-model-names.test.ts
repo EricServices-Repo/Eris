@@ -7,6 +7,7 @@ import {
   erisCloudModelRef,
   ERIS_CLOUD_TOKEN_REF,
   isErisCloudModelRef,
+  parseHostedModels,
   providerModelId
 } from '../src/shared/eris-cloud'
 import type { AppSettings, ModelConnection } from '../src/shared/settings-schema'
@@ -46,6 +47,25 @@ function settingsWith(cloudModels: string[], ollamaModels: string[] = []): AppSe
 }
 
 describe('cloud: model names', () => {
+  it('accepts only an available rolling seven-day hosted balance', () => {
+    const allowance = { available: true, window_days: 7, limit: 1_000_000, remaining: 0 }
+    expect(parseHostedModels({ enabled: true, allowance })?.allowance)
+      .toEqual({ limit: 1_000_000, remaining: 0 })
+    for (const invalid of [{ available: false }, { window_days: 30 }, { remaining: -1 }, { limit: null }])
+      expect(parseHostedModels({ enabled: true, allowance: { ...allowance, ...invalid } })?.allowance).toBeUndefined()
+    expect(parseHostedModels({ enabled: false, allowance })?.allowance).toBeUndefined()
+  })
+
+  it('gives actionable quota guidance only for Eris Cloud responses', async () => {
+    vi.stubGlobal('fetch', async () => Response.json({ error: { code: 'weekly_token_limit' } }, { status: 429 }))
+    const request = { settings: settingsWith(['qwen3:8b'], ['qwen3:8b']),
+      messages: [{ role: 'user' as const, content: 'hello' }], temperature: 0, getSecret: () => 'fixture-token' }
+    await expect(streamModelChat({ ...request, model: 'cloud:qwen3:8b' }).next())
+      .rejects.toThrow('Choose a local model or another provider')
+    await expect(streamModelChat({ ...request, model: 'qwen3:8b' }).next())
+      .rejects.toThrow('HTTP 429')
+  })
+
   it('names and strips Eris Cloud refs', () => {
     expect(erisCloudModelRef('qwen3:8b')).toBe('cloud:qwen3:8b')
     expect(erisCloudModelRef('cloud:qwen3:8b')).toBe('cloud:qwen3:8b')

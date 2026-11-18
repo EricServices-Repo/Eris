@@ -123,19 +123,6 @@ export function getUsageEntitlement(
   }
 }
 
-/**
- * Local chat is always allowed on Free — Composer Lite runs on the user's own
- * machine. This only trips if an admin set an explicit request/token override
- * (blockedReason stays null for the default unlimited-local Free plan).
- */
-export function assertChatWithinPlan(
-  settings: AppSettings,
-  getSecret: (key: string) => string | null
-): void {
-  const ent = getUsageEntitlement(settings, getSecret)
-  if (ent.blockedReason) throw new Error(ent.blockedReason)
-}
-
 export function assertCloudJobWithinPlan(
   settings: AppSettings,
   getSecret: (key: string) => string | null
