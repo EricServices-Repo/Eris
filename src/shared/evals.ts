@@ -39,6 +39,13 @@ export const EvalCheckSchema = z.discriminatedUnion('type', [
       message: 'minLength requires an array or string field'
     })).min(1).max(32)
   }),
+  z.object({
+    type: z.literal('json_transition'),
+    path: SandboxPathSchema,
+    field: z.array(z.string()).max(12),
+    from: z.json(),
+    to: z.json()
+  }),
   z.object({ type: z.literal('file_exists'), path: SandboxPathSchema }),
   z.object({ type: z.literal('file_absent'), path: SandboxPathSchema }),
   z.object({
