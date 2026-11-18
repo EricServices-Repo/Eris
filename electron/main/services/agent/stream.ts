@@ -60,6 +60,7 @@ export async function* streamThinkingText(options: {
       full: string
       aborted?: 'loop' | 'tool' | 'user'
       nativeToolCalls?: ToolCall[]
+      reasoned?: true
     },
   void,
   unknown
@@ -98,6 +99,7 @@ export async function* streamThinkingText(options: {
     rethrowIfUserStop()
     for await (const item of interleaveReasoning((onReasoning) => streamModelChat({
       onReasoning,
+      onReasoningActivity: () => { sawReasoning = true },
       settings: options.settings,
       model: options.model,
       messages: options.messages,
@@ -200,11 +202,12 @@ export async function* streamThinkingText(options: {
   // A transport that separated reasoning itself never also writes it inline.
   const leading = sawReasoning ? null : splitLeadingReasoning(full)
   if (leading) {
+    sawReasoning ||= Boolean(leading.reasoning.trim())
     if (leading.reasoning && reasoningShown(options.settings, options.model))
       yield { kind: 'reasoning', text: leading.reasoning }
     full = leading.answer
   }
-  yield { kind: 'done', full, nativeToolCalls }
+  yield { kind: 'done', full, nativeToolCalls, ...(sawReasoning ? { reasoned: true as const } : {}) }
 }
 
 /**
