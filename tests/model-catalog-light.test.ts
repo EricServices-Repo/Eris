@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getModelsStatus } from '../electron/main/services/model-catalog'
+import { formatAvailableModelsPrompt, getModelsStatus } from '../electron/main/services/model-catalog'
 import { getDefaults } from '../electron/main/services/settings'
 import type { AppSettings } from '../src/shared/settings-schema'
 
@@ -41,4 +41,13 @@ describe('getModelsStatus light path', () => {
     expect(status.gpu).toBeDefined()
     expect(typeof status.gpu?.accelUsable).toBe('boolean')
   })
+})
+
+it('keeps retired downloads out of model recommendations even with an old default', () => {
+  const settings = settingsWithConnection()
+  settings.models.defaultModel = 'builtin:composer-lite'
+  const prompt = formatAvailableModelsPrompt(settings, 'builtin:composer')
+  expect(prompt).toContain('Chat selection: auto')
+  expect(prompt).toContain('Settings default: auto')
+  expect(prompt).not.toMatch(/builtin:composer|Built-in Composer/)
 })
