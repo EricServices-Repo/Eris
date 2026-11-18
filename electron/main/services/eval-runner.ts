@@ -12,7 +12,7 @@ import {
   writeFileSync
 } from 'fs'
 import { tmpdir } from 'os'
-import { dirname, join } from 'path'
+import { dirname, join, normalize, sep } from 'path'
 import { isDeepStrictEqual } from 'node:util'
 import ts from 'typescript'
 import type { AppSettings, TurnPlan } from '../../../src/shared/settings-schema'
@@ -221,6 +221,26 @@ function runCheck(workspacePath: string, check: EvalCheck, ctx: EvalContext): Ev
             return fail(check, `JSON field ${field.path.join('.') || '(root)'} requires at least ${field.minLength} entries or characters`)
         }
         return pass(check, `Validated ${check.fields.length} JSON fields`)
+      }
+      case 'json_transition': {
+        const after = JSON.parse(readOracleArtifact(workspacePath, check.path)) as unknown
+        const before = ctx.beforeWorkspace
+        const key = normalize(check.path).split(sep).join('/')
+        const field = check.field.join('.') || '(root)'
+        if (!before || !Object.hasOwn(before, key))
+          return fail(check, `Missing pre-turn snapshot for ${check.path}`)
+        const oldBody = before[key]!
+        if (Buffer.byteLength(oldBody) > 256 * 1024)
+          return fail(check, `Pre-turn artifact exceeds 256 KiB at ${check.path}`)
+        const oldValue = jsonField(JSON.parse(oldBody), check.field)
+        const newValue = jsonField(after, check.field)
+        if (!isDeepStrictEqual(oldValue, check.from))
+          return fail(check, `JSON field ${field} did not match its expected pre-turn value`)
+        if (!isDeepStrictEqual(newValue, check.to))
+          return fail(check, `JSON field ${field} did not match its expected final value`)
+        if (isDeepStrictEqual(oldValue, newValue))
+          return fail(check, `JSON field ${field} did not change`)
+        return pass(check, `Observed the expected transition in JSON field ${field}`)
       }
       case 'file_exists':
         return existsSync(resolveSandboxPath(workspacePath, check.path))

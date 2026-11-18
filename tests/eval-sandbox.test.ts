@@ -302,3 +302,26 @@ it('rejects incomplete JSON artifacts and accepts different valid values', () =>
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+it('checks an actual JSON state transition and refuses a pre-satisfied or missing baseline', () => {
+  const root = mkdtempSync(join(tmpdir(), 'eris-json-transition-'))
+  const path = 'booking.json'
+  const check = EvalCheckSchema.parse({ type: 'json_transition', path: './booking.json',
+    field: ['state'], from: 'pending', to: 'confirmed' })
+  const evaluate = (beforeWorkspace: Record<string, string>) =>
+    evaluateChecks(root, [check], { answer: 'Done. Booking confirmed.', snapshot: {}, files: {}, beforeWorkspace })[0]!
+  try {
+    writeFileSync(join(root, path), '{"state":"pending"}')
+    expect(evaluate({ [path]: '{"state":"pending"}' }).ok).toBe(false)
+    writeFileSync(join(root, path), '{"audited":true,"state":"confirmed"}')
+    expect(evaluate({ [path]: '{"state":"confirmed"}' }).detail).toContain('pre-turn value')
+    expect(evaluate({}).detail).toContain('Missing pre-turn snapshot')
+    expect(evaluate({ [path]: '{"state":"pending","audit":[]}' }).ok).toBe(true)
+    rmSync(join(root, path))
+    mkdirSync(join(root, 'other'))
+    writeFileSync(join(root, 'other', path), '{"state":"confirmed"}')
+    expect(evaluate({ [path]: '{"state":"pending"}' }).ok).toBe(false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
