@@ -1278,6 +1278,7 @@ async function* runAgentInternal(options: {
   // A grammar that yields no visible output must not poison every subsequent retry.
   let disableRetryGrammar = false
   let consecutiveEmptyReplies = 0
+  let reasoningOnlyReplies = 0
 
   // Discovery changes the next request's schemas; record what was added and its size.
   // The prompt budget is recomputed from openaiTools before every compaction check.
@@ -1620,6 +1621,7 @@ async function* runAgentInternal(options: {
       releaseGgufSession()
       disableRetryGrammar = false
       consecutiveEmptyReplies = 0
+      reasoningOnlyReplies = 0
       lastFingerprint = ''
       repeatFingerprint = 0
       consecutiveToolErrors = 0
@@ -2478,6 +2480,7 @@ async function* runAgentInternal(options: {
       const modelStartedAt = Date.now()
       let lastHeartbeatAt = modelStartedAt
       let generatedChars = 0
+      let emittedReasoning = false
       const constrainThisTurn =
         constrainNextToolCall &&
         localConstrainEnabled &&
@@ -2516,6 +2519,7 @@ async function* runAgentInternal(options: {
         }), modelDeadline.signal)) {
           if (evt.kind === 'reasoning') {
             // The model's reasoning is shown under Thinking and counts as activity.
+            emittedReasoning ||= Boolean(evt.text.trim())
             yield { type: 'reasoning', text: evt.text }
             generatedChars += evt.text.length
           } else if (evt.kind === 'thinking') {
@@ -2588,11 +2592,13 @@ async function* runAgentInternal(options: {
 
       if (!assistantText.trim() && toolCalls.length === 0) {
         consecutiveEmptyReplies++
+        if (emittedReasoning) reasoningOnlyReplies++
         appendTaskEvent(task.taskId, 'empty-model-response', {
           step,
           model: workerModel,
           constrained: constrainThisTurn,
           attempt: consecutiveEmptyReplies,
+          reasoningOnly: emittedReasoning,
           codeMutated,
           filesTouched: filesTouched.length
         })
@@ -2621,9 +2627,11 @@ async function* runAgentInternal(options: {
           workerMessages.push({
             role: 'system',
             content:
-              `Your last reply was empty: it had no text and no tool call. ` +
+              (emittedReasoning
+                ? 'Your last reply stopped after reasoning, without an answer or a tool call. Use the available output for one actionable next step. '
+                : 'Your last reply was empty: it had no text and no tool call. ') +
               // Session and grammar resets only exist for the local runtime.
-              (workerModel.startsWith('builtin:')
+              (isNativeGgufRef(workerModel)
                 ? `The local session was reset, and the next reply is not limited to a tool call. `
                 : '') +
               `Do not repeat completed file writes. Inspect existing files if more work is needed. ` +
@@ -2633,14 +2641,22 @@ async function* runAgentInternal(options: {
               `Existing changes: ${[...new Set(filesTouched)].join(', ') || 'none'}\n` +
               `Original request: ${originalUserGoal.slice(0, AGENT_HANDOFF_CHARS)}`
           })
-          yield { type: 'status', text: 'Retrying empty model response with a fresh session…' }
+          yield {
+            type: 'status',
+            text: emittedReasoning
+              ? 'Retrying model response that stopped after reasoning…'
+              : 'Retrying empty model response…'
+          }
           continue
         }
+        const failure = reasoningOnlyReplies ? 'responses without an answer or tool call' : 'empty model responses'
         if (plan.modelExecution && plan.modelExecution.policy !== 'fixed') {
           noProgressStreak = Math.max(noProgressStreak, 4)
-          if (yield* tryMidRunAdapt('repeated empty model responses')) continue
+          if (yield* tryMidRunAdapt(`repeated ${failure}`)) continue
         }
-        const reason = 'The model returned empty responses after two fresh-session retries.'
+        const reason = reasoningOnlyReplies
+          ? 'The model produced reasoning but did not return an answer or tool call after two retries.'
+          : 'The model returned empty responses after two retries.'
         workflow.block(reason)
         yield {
           type: 'progress',
@@ -2651,7 +2667,7 @@ async function* runAgentInternal(options: {
           ...(toolExecRounds === 0 && !filesTouched.length ? { blockedReason: 'empty-responses' as const } : {})
         }
         yield emitSessionStep(reason)
-        yield { type: 'status', text: 'Blocked · empty model responses' }
+        yield { type: 'status', text: `Blocked · ${failure}` }
         yield {
           type: 'answer',
           text:
@@ -2664,6 +2680,7 @@ async function* runAgentInternal(options: {
         return
       }
       consecutiveEmptyReplies = 0
+      reasoningOnlyReplies = 0
 
       toolCalls.forEach((call, index) => {
         call.id ??= `${task.taskId}:${step}:${index}`

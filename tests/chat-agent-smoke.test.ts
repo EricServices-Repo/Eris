@@ -17,6 +17,7 @@ const harness = vi.hoisted(() => ({
   receiptFailure: '' as '' | 'missing' | 'throw',
   receiptAfterWrite: () => {},
   replies: [] as string[],
+  reasoning: [] as string[],
   allocatedContext: 0,
   contextLoads: [] as number[],
   prompts: [] as string[],
@@ -57,6 +58,7 @@ vi.mock('../electron/main/services/chat-runtime', () => ({
     messages: Array<{ role: string; content: string }>
     builtinJsonSchema?: Record<string, unknown>
     sessionKey?: string
+    onReasoning?: (text: string) => void
     onNativeToolCalls?: (calls: Array<{ id: string; name: string; arguments: string }>) => void
   }) {
     if (harness.stallAfterReplies && !harness.replies.length) {
@@ -72,6 +74,8 @@ vi.mock('../electron/main/services/chat-runtime', () => ({
     })
     harness.prompts.push(options.messages.map((message) => message.content).join('\n'))
     harness.transcripts.push(structuredClone(options.messages))
+    const reasoning = harness.reasoning.shift()
+    if (reasoning) options.onReasoning?.(reasoning)
     const native = harness.nativeCalls.shift()
     if (native) options.onNativeToolCalls?.(native)
     yield harness.replies.shift() ?? 'DONE: The smoke-test model ran out of scripted replies.'
@@ -218,6 +222,7 @@ beforeEach(() => {
   harness.nativeCalls.length = 0
   harness.transcripts.length = 0
   harness.replies.length = 0
+  harness.reasoning.length = 0
   harness.prompts.length = 0
   harness.requestModes.length = 0
   harness.releasedSessions.length = 0
@@ -1033,6 +1038,23 @@ describe('chat agent complex smoke test', () => {
     expect(events.filter((event) => event.type === 'progress').at(-1)).toMatchObject({ blockedReason: 'empty-responses' })
   })
 
+  it('distinguishes reasoning-only responses and keeps reasoning out of retries', async () => {
+    const reasoning = 'private intermediate reasoning'
+    harness.reasoning.push(reasoning)
+    harness.replies.push('', '', '')
+    const events = await drain(runAgentWithWorkspaceTools({
+      workspacePath, settings: getDefaults(), model: 'test-provider-model',
+      messages: [{ role: 'user', content: 'Update retry limit to four.' }],
+      temperature: 0, getSecret: () => null, mode: 'agent', turnPlan: fullEditPlan(), mcp: 'off'
+    }))
+    expect(events).toContainEqual({ type: 'reasoning', text: reasoning })
+    expect(harness.prompts[1]).toContain('stopped after reasoning')
+    expect(harness.prompts.every((prompt) => !prompt.includes(reasoning))).toBe(true)
+    expect(lastAnswer(events)).toContain('produced reasoning but did not return an answer or tool call')
+    expect(events.filter((event) => event.type === 'progress').at(-1))
+      .toMatchObject({ incomplete: true, blockedReason: 'empty-responses', filesTouched: [] })
+  })
+
   it('bounds repeated empty completions without saving empty assistant turns or claiming success', async () => {
     harness.replies.push(
       JSON.stringify({
@@ -1060,7 +1082,7 @@ describe('chat agent complex smoke test', () => {
       })
     )
     expect(events.some((event) => event.type === 'progress' && event.incomplete)).toBe(true)
-    expect(lastAnswer(events)).toContain('empty responses after two fresh-session retries')
+    expect(lastAnswer(events)).toContain('empty responses after two retries')
     expect(lastAnswer(events)).toContain('implementation has not been confirmed complete')
     expect(events.filter((event) => event.type === 'progress').at(-1)).not.toHaveProperty('blockedReason')
     expect(harness.prompts).toHaveLength(4)
