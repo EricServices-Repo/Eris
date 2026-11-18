@@ -237,14 +237,14 @@ export function ollamaRequestWindow(
   connection: ModelConnection,
   model: string,
   requested: number,
-  options: { explicit?: boolean } = {}
+  options: { explicit?: boolean; modelMaximum?: boolean } = {}
 ): number | null {
   if (!isOllamaConnection(connection)) return null
   const maxContext = probes.get(key(connection, model))?.maxContext
   if (!maxContext) return null
   const base = windowFor(requested, maxContext)
   const mode = contextFitMode(connection)
-  if (mode === 'off') return base
+  if (mode === 'off' || options.modelMaximum) return base
   const fit = currentFit(connection, model, base)
   if (!fit) return base
   // A plan may grow the window only in `max` mode and only when the user set no window.
@@ -321,12 +321,12 @@ function updateFit(
   connection: ModelConnection,
   model: string,
   placement: OllamaPlacement,
-  request: { requested: number; explicit: boolean }
+  request: { requested: number; explicit: boolean; modelMaximum?: boolean }
 ) {
   const mode = contextFitMode(connection)
   const name = key(connection, model)
   const maxContext = probes.get(name)?.maxContext
-  if (mode === 'off' || !maxContext) return
+  if (mode === 'off' || request.modelMaximum || !maxContext) return
   const window = placement.loadedWindow ?? placement.requestedWindow
   recordLoad(connection, model, window, placement.sizeBytes)
   const base = windowFor(request.requested, maxContext)
@@ -405,9 +405,9 @@ function updateFit(
 export function noteOllamaOutOfMemory(
   connection: ModelConnection,
   model: string,
-  request: { requested: number; window: number }
+  request: { requested: number; window: number; modelMaximum?: boolean }
 ): number | null {
-  if (contextFitMode(connection) === 'off') return null
+  if (contextFitMode(connection) === 'off' || request.modelMaximum) return null
   const name = key(connection, model)
   const maxContext = probes.get(name)?.maxContext
   if (!maxContext) return null
@@ -448,7 +448,8 @@ export function serverWindow(settings: AppSettings, model: string, requested: nu
       contextSource: 'provider-declared' as const
     }
   const target = ollamaRequestWindow(connection, model, requested, {
-    explicit: requestedIsExplicit(settings, model)
+    explicit: requestedIsExplicit(settings, model),
+    modelMaximum: usesModelMaximum(settings, model)
   })
   if (target === null)
     return isLocalServer(connection) && !connection.modelLimits?.[providerModelId(model)]
@@ -486,7 +487,7 @@ export async function observeOllamaPlacement(
   requestedWindow: number,
   apiKey: string | null,
   /** The window asked for before any fit; enables fitting when given. */
-  request?: { requested: number; explicit: boolean }
+  request?: { requested: number; explicit: boolean; modelMaximum?: boolean }
 ): Promise<void> {
   try {
     const body = (await apiRequest(connection, '/api/ps', apiKey)) as {

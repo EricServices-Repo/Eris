@@ -12,6 +12,7 @@ import { streamOllamaChat } from '../electron/main/services/ollama-chat'
 import {
   clearOllamaRuntimeFacts,
   isPartlyOnCpu,
+  noteOllamaOutOfMemory,
   observeOllamaPlacement,
   ollamaPlacement,
   ollamaRequestWindow,
@@ -44,6 +45,7 @@ function fakeOllama(behaviour: {
   show?: number
   chat?: string[]
   maximumLoad?: { loaded?: number; error?: string }
+  chatFailure?: string
 }) {
   const seen: {
     chat: ChatBody[]
@@ -87,6 +89,11 @@ function fakeOllama(behaviour: {
       }
       if (request.url === '/api/chat') {
         seen.chat.push(JSON.parse(raw) as ChatBody)
+        if (behaviour.chatFailure) {
+          response.statusCode = 500
+          response.end(JSON.stringify({ error: behaviour.chatFailure }))
+          return
+        }
         for (const line of behaviour.chat ?? [
           '{"message":{"content":"he"},"done":false}',
           '{"message":{"content":"llo"},"done":true,"done_reason":"stop","prompt_eval_count":12,"eval_count":2}'
@@ -191,6 +198,65 @@ describe('Ollama window management', () => {
     expect(resolveModelCapabilities(settings, 'm').promptBudget).toBe(modelInputBudget(262144, 16384))
     await sendMaximum(settings)
     expect(fake.seen.loads).toHaveLength(1) // live /api/ps avoids a redundant reload
+  })
+
+  it.each(['fit', 'max'] as const)('bypasses a learned smaller %s window for maximum-mode packing and dispatch', async (contextFit) => {
+    const fake = fakeOllama({ contextLength: 262144, maximumLoad: { loaded: 262144 } })
+    server = fake.server
+    const connection = connectionAt(await start(server), { contextFit })
+    const settings = maximumSettings(connection)
+    settings.models.contextWindow = 262144
+    await prepareModelWindows(settings, ['m'], noSecret)
+    expect(noteOllamaOutOfMemory(connection, 'm', { requested: 262144, window: 262144 })).toBe(131072)
+    expect(resolveModelCapabilities(settings, 'm').contextCeiling).toBe(262144)
+    expect(ollamaRequestWindow(connection, 'm', 262144, { modelMaximum: true })).toBe(262144)
+
+    const content = 'BEGIN ' + 'x'.repeat(450000) + ' END'
+    await sendMaximum(settings, content)
+    await observeOllamaPlacement(connection, 'm', 262144, null, {
+      requested: 262144, explicit: true, modelMaximum: true
+    })
+    await sendMaximum(settings, content)
+    expect(fake.seen.chat.map((body) => body.options.num_ctx)).toEqual([262144, 262144])
+    expect(fake.seen.chat[1]?.messages[0]?.content).toBe(content)
+    expect(resolveModelCapabilities(settings, 'm')).toMatchObject({
+      contextCeiling: 262144, contextSource: 'measured-allocation'
+    })
+    // Maximum mode ignores, rather than overwrites, a fit learned in configured mode.
+    expect(ollamaRequestWindow(connection, 'm', 262144)).toBe(131072)
+    settings.models.capabilityProfiles.m!.enabled = false
+    expect(resolveModelCapabilities(settings, 'm').contextCeiling).toBe(131072)
+    await sendMaximum(settings)
+    expect(fake.seen.chat.at(-1)?.options.num_ctx).toBe(131072)
+  })
+
+  it.each(['fit', 'max'] as const)('does not learn a smaller %s window from CPU spill in maximum mode', async (contextFit) => {
+    const fake = fakeOllama({ contextLength: 262144, maximumLoad: { loaded: 262144 } })
+    server = fake.server
+    const connection = connectionAt(await start(server), { contextFit })
+    const settings = maximumSettings(connection)
+    await sendMaximum(settings)
+    await observeOllamaPlacement(connection, 'm', 262144, null, {
+      requested: 262144, explicit: true, modelMaximum: true
+    })
+    expect(ollamaPlacement(connection, 'm')).toMatchObject({ sizeBytes: 100, vramBytes: 60 })
+    expect(ollamaRequestWindow(connection, 'm', 262144)).toBe(262144)
+    expect(resolveModelCapabilities(settings, 'm').contextCeiling).toBe(262144)
+  })
+
+  it('never retries or records a smaller window when inference runs out of memory after a successful maximum preload', async () => {
+    const fake = fakeOllama({ contextLength: 262144, maximumLoad: { loaded: 262144 }, chatFailure: 'out of memory' })
+    server = fake.server
+    const connection = connectionAt(await start(server))
+    const settings = maximumSettings(connection)
+    await expect(sendMaximum(settings)).rejects.toThrow(/out of memory/)
+    expect(fake.seen.loads).toHaveLength(1)
+    expect(fake.seen.chat.map((body) => body.options.num_ctx)).toEqual([262144])
+    expect(ollamaRequestWindow(connection, 'm', 262144)).toBe(262144)
+    expect(noteOllamaOutOfMemory(connection, 'm', {
+      requested: 262144, window: 262144, modelMaximum: true
+    })).toBeNull()
+    expect(ollamaRequestWindow(connection, 'm', 262144)).toBe(262144)
   })
 
   it.each([8192, undefined])('refuses a smaller or unreported allocation (%s) before sending conversation data', async (loaded) => {
