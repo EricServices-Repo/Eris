@@ -94,7 +94,7 @@ General RAM recall occurs after task resolution. Historical reference binding oc
 
 Use existing canonical history, recommendation catalog, task persistence and evidence validation. File proposals beginning with create/generate/write now enter the existing proposal representation when offered in a plan or review. This avoids a parallel file-proposal store with a different privacy lifecycle.
 
-The pure recent-history fallback considers at most six messages and only assistant prose that describes proposed files. Code fences and blockquotes are excluded. Distinct lists produce an unresolved reference rather than selecting one arbitrarily. The fallback is bounded to 100 paths. Durable binding has priority and retains deletion, exclusion, project and destination checks.
+The pure recent-history fallback considers at most six messages and only assistant prose that describes proposed files. Code fences and blockquotes are excluded. Distinct lists produce an unresolved reference rather than selecting one arbitrarily. The fallback is bounded to 100 paths. Durable binding has priority and retains deletion, exclusion, project and destination checks. When an unqualified historical follow-up has competing source records and one is unavailable, intake asks for the intended IDs or a restatement before granting edit authority.
 
 This is not a comprehensive natural-language antecedent resolver. If a proposal is unavailable, clarification is preferable to generating unrelated files. More RAM or a larger model window does not remove that requirement.
 
