@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.14 — 2026-11-18
+
+- Improves inline suggestions, reasoning-only recovery, and project-fact saves, and adds provider and JSON state-transition checks.
+
 ## 0.7.13 — 2026-11-18
 
 - Shows the Eris Cloud allowance, removes retired Composer guidance, and improves chat recovery, prompt packing, and verification evidence.
