@@ -47,6 +47,19 @@ export function isLocalOllamaConnection(c: Pick<ModelConnection, 'id' | 'type' |
   return c.type !== 'builtin' && (c.provider === 'ollama' || c.id === 'ollama')
 }
 
+/**
+ * The Ollama server the Ollama settings card manages and model pulls target: id `ollama`,
+ * else the first local Ollama connection. Other Ollama servers are ordinary connections (#677).
+ */
+export function primaryOllamaConnection<T extends Pick<ModelConnection, 'id' | 'type' | 'provider'>>(
+  connections: readonly T[]
+): T | undefined {
+  return (
+    connections.find((c) => c.id === 'ollama' && isLocalOllamaConnection(c)) ??
+    connections.find((c) => isLocalOllamaConnection(c))
+  )
+}
+
 /** Canonical Eris Cloud connection fields; user-controlled fields are preserved. */
 export function normalizeErisCloudConnection<T extends Record<string, unknown>>(c: T): T {
   return {

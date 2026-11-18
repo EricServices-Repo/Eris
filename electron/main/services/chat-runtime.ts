@@ -24,6 +24,7 @@ import { reportContextDispatch, reportContextUsage } from './context-dispatch'
 import { isLocalRef, resolveExactLocalRef } from './local-model'
 import {
   streamOpenAICompatible,
+  type ApiStreamFailure,
   type ChatRequestMessage,
   type NativeToolCall,
   type OpenAIToolDef
@@ -34,11 +35,14 @@ import { streamOllamaChat } from './ollama-chat'
 import {
   ACTIVE_SESSION_KEEP_ALIVE,
   KEEP_LOADED_INDEFINITELY,
+  noteOllamaOutOfMemory,
   observeOllamaPlacement,
   ollamaRequestWindow,
-  ensureMaximumContextAllocation,
-  prepareModelWindows
+  prepareModelWindows,
+  requestedIsExplicit
 } from './ollama-runtime'
+import { isOutOfMemoryError } from './ollama-context-fit'
+import { modelInputBudget } from '../../../src/shared/model-context'
 import { estimateMessagesTokens, estimateTokens, recordModelUsage } from './usage-stats'
 import {
   activeDiagnosticsScope,
@@ -575,16 +579,18 @@ export async function* streamProviderChat(
         : 'external'
     const apiKey = connection.apiKeyRef ? options.getSecret(connection.apiKeyRef) : null
     dispatched('Provider request dispatched; network time is included')
-    const numCtx = ollamaRequestWindow(connection, model, capabilities.requestedContext)
-    if (usesModelMaximum(options.settings, model) && numCtx !== capabilities.requestedContext)
-      throw new Error(`Maximum context for ${model} changed before dispatch. Retry after refreshing the model metadata.`)
-    const stream =
-      numCtx === null
+    const windowRequest = {
+      requested: capabilities.requestedContext,
+      explicit: requestedIsExplicit(options.settings, model)
+    }
+    let numCtx = ollamaRequestWindow(connection, model, windowRequest.requested, windowRequest)
+    const streamFor = (window: number | null) =>
+      window === null
         ? streamOpenAICompatible
         : (request: Parameters<typeof streamOpenAICompatible>[0]) =>
             streamOllamaChat({
               ...request,
-              numCtx,
+              numCtx: window,
               keepAlive: connection.keepModelLoaded
                 ? KEEP_LOADED_INDEFINITELY
                 : ACTIVE_SESSION_KEEP_ALIVE
@@ -607,49 +613,86 @@ export async function* streamProviderChat(
       },
       context: contextProvenance(options.settings, model)
     })
-    for await (const chunk of stream({
-      baseUrl: connection.baseUrl,
-      apiKey,
-      // The provider knows the bare id; `cloud:` is Eris's name for hosted models.
-      model: providerModelId(model),
-      messages: compiled,
-      temperature: options.temperature,
-      maxOutputTokens: capabilities.outputCap,
-      signal: options.signal,
-      refuseRedirects: modelDestination(options.settings, model).recallAllowed,
-      tools: nativeTools,
-      erisCloud: isErisCloudConnection(connection),
-      toolChoice: options.toolChoice,
-      onNativeToolCalls: options.onNativeToolCalls,
-      onReasoning,
-      reasoning: reasoningLevelFor(options, model),
-      onUsage: (usage) => {
-        reportedPrompt = usage.promptTokens
-        reportedCompletion = usage.completionTokens
-      },
-      onFinish: options.onTermination
+    // `onFinish` runs once the server has answered with a stream. Before that, an
+    // out-of-memory refusal can be retried at a smaller window (#677).
+    let streamOpened = false
+    const onTermination:
+      | ((finishReason: string | null, complete: boolean, failure?: ApiStreamFailure) => void)
+      | undefined = options.onTermination
         ? (finishReason, complete, failure) =>
-            options.onTermination!({
-              reason: complete
-                ? apiFinishReason(finishReason)
-                : (failure?.reason ?? 'connection-closed'),
-              ...(failure?.code ? { failureCode: failure.code } : {}),
-              capabilities,
-              maxOutputTokens: capabilities.outputCap,
-              inputTokenSource: reportedPrompt === null ? 'unavailable' : 'measured',
-              outputTokenSource: reportedCompletion === null ? 'unavailable' : 'measured',
-              ...(finishReason ? { raw: finishReason } : {}),
-              ...(reportedPrompt !== null ? { promptTokens: reportedPrompt } : {}),
-              ...(reportedCompletion !== null ? { outputTokens: reportedCompletion } : {})
-            })
+          options.onTermination!({
+            reason: complete
+              ? apiFinishReason(finishReason)
+              : (failure?.reason ?? 'connection-closed'),
+            ...(failure?.code ? { failureCode: failure.code } : {}),
+            capabilities,
+            maxOutputTokens: capabilities.outputCap,
+            inputTokenSource: reportedPrompt === null ? 'unavailable' : 'measured',
+            outputTokenSource: reportedCompletion === null ? 'unavailable' : 'measured',
+            ...(finishReason ? { raw: finishReason } : {}),
+            ...(reportedPrompt !== null ? { promptTokens: reportedPrompt } : {}),
+            ...(reportedCompletion !== null ? { outputTokens: reportedCompletion } : {})
+          })
         : undefined
-    })) {
-      if (chunk) chunkSeen()
-      outputText += chunk
-      yield chunk
+    for (let attempt = 0; ; attempt++) {
+      const stream = streamFor(numCtx)
+      try {
+        for await (const chunk of stream({
+          baseUrl: connection.baseUrl,
+          apiKey,
+          // The provider knows the bare id; `cloud:` is Eris's name for hosted models.
+          model: providerModelId(model),
+          messages: compiled,
+          temperature: options.temperature,
+          maxOutputTokens: capabilities.outputCap,
+          signal: options.signal,
+          refuseRedirects: modelDestination(options.settings, model).recallAllowed,
+          tools: nativeTools,
+          erisCloud: isErisCloudConnection(connection),
+          toolChoice: options.toolChoice,
+          onNativeToolCalls: options.onNativeToolCalls,
+          onReasoning,
+          reasoning: reasoningLevelFor(options, model),
+          onUsage: (usage) => {
+            reportedPrompt = usage.promptTokens
+            reportedCompletion = usage.completionTokens
+          },
+          onFinish: (finishReason, complete, failure) => {
+            streamOpened = true
+            onTermination?.(finishReason, complete, failure)
+          }
+        })) {
+          if (chunk) chunkSeen()
+          outputText += chunk
+          yield chunk
+        }
+        break
+      } catch (error) {
+        if (numCtx === null || !isOutOfMemoryError(error) || options.signal?.aborted) throw error
+        const smaller = noteOllamaOutOfMemory(connection, model, {
+          requested: windowRequest.requested,
+          window: numCtx
+        })
+        if (smaller === null) throw error
+        // Retry only if nothing was streamed and the packed prompt fits the smaller window.
+        const promptFits = inputEstimate + capabilities.outputCap <= modelInputBudget(smaller, 0)
+        if (attempt === 0 && !streamOpened && !outputText && promptFits) {
+          numCtx = smaller
+          continue
+        }
+        // Keep the original code, so recovery still classifies the failure the same way.
+        throw Object.assign(
+          new Error(
+            `Ollama could not load ${model} with a ${numCtx.toLocaleString()}-token window (out of memory). Eris will use ${smaller.toLocaleString()} tokens from the next request. ${error instanceof Error ? error.message : String(error)}`,
+            { cause: error }
+          ),
+          (error as { code?: unknown }).code === undefined ? {} : { code: (error as { code?: unknown }).code }
+        )
+      }
     }
     finish()
-    if (numCtx !== null) void observeOllamaPlacement(connection, model, numCtx, apiKey)
+    if (numCtx !== null)
+      void observeOllamaPlacement(connection, model, numCtx, apiKey, windowRequest)
   } catch (err) {
     reportChatActivity('integrating', {
       source: 'transport',

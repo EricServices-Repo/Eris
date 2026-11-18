@@ -17,7 +17,7 @@ import { getBuiltinStatuses, isBuiltinRef, resolveReadyBuiltinRef } from './buil
 import { getLocalStatuses, isLocalRef } from './local-model'
 import { listOpenAIModels } from './openai-compatible'
 import { getGpuAccelStatus } from './gpu-accel'
-import { isOllamaConnection, placementsFor, probeOllamaModel } from './ollama-runtime'
+import { isOllamaConnection, placementsFor, probeOllamaModel, resetOllamaFit } from './ollama-runtime'
 
 export type ModelsStatusOptions = {
   /**
@@ -29,6 +29,8 @@ export type ModelsStatusOptions = {
   probeCloud?: boolean
   /** Include GPU accel probe (Settings). Default false on light paths. */
   includeGpu?: boolean
+  /** Connection id whose fitted Ollama windows to forget, so the next load re-measures (#677). */
+  resetContextFit?: string
 }
 
 function catalogModels(
@@ -90,6 +92,10 @@ export async function getModelsStatus(
 ): Promise<ModelsStatus> {
   const probeConnections = options.probeConnections === true
   const includeGpu = options.includeGpu === true
+  if (options.resetContextFit) {
+    const target = settings.models.connections.find((c) => c.id === options.resetContextFit)
+    if (target && isOllamaConnection(target)) resetOllamaFit(target)
+  }
   const preferEgpu = settings.models.preferEgpu !== false
 
   const builtin = getBuiltinStatuses()
