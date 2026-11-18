@@ -127,6 +127,21 @@ function readOracleArtifact(root: string, path: string): string {
   return readFileSync(file, 'utf8')
 }
 
+function jsonField(data: unknown, path: string[]): unknown {
+  let value = data
+  for (const key of path) {
+    if (!value || typeof value !== 'object' || !Object.hasOwn(value, key)) return undefined
+    value = (value as Record<string, unknown>)[key]
+  }
+  return value
+}
+
+function jsonKind(value: unknown): string {
+  if (value === null) return 'null'
+  if (Array.isArray(value)) return 'array'
+  return typeof value
+}
+
 function compileOracleFiles(root: string, files: string[]): string | undefined {
   const options: ts.CompilerOptions = {
     noEmit: true, strict: true, skipLibCheck: true, types: [], target: ts.ScriptTarget.ES2022,
@@ -189,15 +204,23 @@ function runCheck(workspacePath: string, check: EvalCheck, ctx: EvalContext): Ev
       case 'json_fields': {
         const data: unknown = JSON.parse(readOracleArtifact(workspacePath, check.path))
         for (const field of check.fields) {
-          let value = data
-          for (const key of field.path) {
-            value = value && typeof value === 'object' && Object.hasOwn(value, key)
-              ? (value as Record<string, unknown>)[key] : undefined
-          }
-          if (!isDeepStrictEqual(value, field.value))
+          if (!isDeepStrictEqual(jsonField(data, field.path), field.value))
             return fail(check, `JSON field ${field.path.join('.') || '(root)'} did not match`)
         }
         return pass(check, `Matched ${check.fields.length} JSON fields`)
+      }
+      case 'json_shape': {
+        const data: unknown = JSON.parse(readOracleArtifact(workspacePath, check.path))
+        for (const field of check.fields) {
+          const value = jsonField(data, field.path)
+          const kind = jsonKind(value)
+          const matches = field.kind === 'integer' ? Number.isInteger(value) : kind === field.kind
+          if (!matches) return fail(check, `JSON field ${field.path.join('.') || '(root)'} expected ${field.kind}, got ${kind}`)
+          if (field.minLength !== undefined && (typeof value === 'string' || Array.isArray(value)) &&
+              value.length < field.minLength)
+            return fail(check, `JSON field ${field.path.join('.') || '(root)'} requires at least ${field.minLength} entries or characters`)
+        }
+        return pass(check, `Validated ${check.fields.length} JSON fields`)
       }
       case 'file_exists':
         return existsSync(resolveSandboxPath(workspacePath, check.path))

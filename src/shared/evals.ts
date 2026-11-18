@@ -28,6 +28,17 @@ export const EvalCheckSchema = z.discriminatedUnion('type', [
     path: SandboxPathSchema,
     fields: z.array(z.object({ path: z.array(z.string()).max(12), value: z.json() })).min(1).max(32)
   }),
+  z.object({
+    type: z.literal('json_shape'),
+    path: SandboxPathSchema,
+    fields: z.array(z.object({
+      path: z.array(z.string()).max(12),
+      kind: z.enum(['object', 'array', 'string', 'number', 'integer', 'boolean', 'null']),
+      minLength: z.number().int().nonnegative().optional()
+    }).refine((field) => field.minLength === undefined || ['array', 'string'].includes(field.kind), {
+      message: 'minLength requires an array or string field'
+    })).min(1).max(32)
+  }),
   z.object({ type: z.literal('file_exists'), path: SandboxPathSchema }),
   z.object({ type: z.literal('file_absent'), path: SandboxPathSchema }),
   z.object({
