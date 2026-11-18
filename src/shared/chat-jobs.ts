@@ -44,3 +44,13 @@ export type ChatJobSnapshot = {
   timeline?: import('./task-timeline').TaskTimeline
   events: ChatJobEvent[]
 }
+
+/** Only an idle, unchanged renderer slot can adopt a stored request snapshot. */
+export function canRestoreChatJob(
+  job: Pick<ChatJobSnapshot, 'id' | 'threadId' | 'workspacePath'>,
+  scope: { threadId: string | null; workspacePath: string | null },
+  slot: { activeId: string | null; lastIdAtLookup: string | null; lastId: string | null; terminal: boolean }
+): boolean {
+  return job.threadId === scope.threadId && job.workspacePath === scope.workspacePath &&
+    !slot.activeId && slot.lastId === slot.lastIdAtLookup && !slot.terminal
+}

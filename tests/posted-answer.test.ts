@@ -1,3 +1,4 @@
+import { canRestoreChatJob } from '../src/shared/chat-jobs'
 import { cleanAnswerMarkers, displayedTerminalReply, finalizePostedAnswer, modelHistoryContent, upsertTerminalReply, visibleOutcomeAssessment } from '../src/shared/posted-answer'
 import type { ChatMessage, ChatThread } from '../src/shared/settings-schema'
 import { describe, expect, it } from 'vitest'
@@ -156,4 +157,16 @@ describe('model reasoning in posted replies (#573)', () => {
     expect(capped.endsWith('END')).toBe(true)
     expect(capReasoning('short')).toBe('short')
   })
+})
+
+it('rejects stale chat snapshots across sends, terminals and workspace switches', () => {
+  const scope = { workspacePath: '/project-a', threadId: 'chat' }
+  const slot = { activeId: null, lastIdAtLookup: null, lastId: null, terminal: false }
+  const job = { ...scope, id: 'old' }
+  expect(canRestoreChatJob(job, scope, slot)).toBe(true)
+  expect(canRestoreChatJob(job, scope, { ...slot, activeId: 'new' })).toBe(false)
+  expect(canRestoreChatJob(job, scope, { ...slot, lastId: 'new' })).toBe(false)
+  expect(canRestoreChatJob(job, scope, { ...slot, terminal: true })).toBe(false)
+  expect(canRestoreChatJob(job, { ...scope, workspacePath: '/project-b' }, slot)).toBe(false)
+  expect(canRestoreChatJob(job, { ...scope, threadId: 'other' }, slot)).toBe(false)
 })

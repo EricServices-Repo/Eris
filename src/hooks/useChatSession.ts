@@ -1,3 +1,4 @@
+import { canRestoreChatJob } from '@/shared/chat-jobs'
 import { CONNECT_MODEL_MESSAGE } from '@/shared/model-setup'
 import { taskActionSummary } from '@/shared/task-contract'
 import { taskPhaseLabels } from '@/shared/task-timeline'
@@ -196,7 +197,7 @@ export function useChatSession({
   useEffect(() => {
     let cancelled = false
     const selectedThread = activeThread?.id ?? null
-    if (requestThreadIdRef.current !== selectedThread) {
+    if (requestThreadIdRef.current !== selectedThread || requestWorkspacePathRef.current !== workspacePath) {
       requestIdRef.current = null
       lastRequestIdRef.current = null
       answerAcc.current = ''
@@ -207,14 +208,20 @@ export function useChatSession({
       setReasoningBuffer('')
       setStreaming(false)
     }
+    const lastIdAtLookup = lastRequestIdRef.current
     void window.ide
       .getLatestChatJob(selectedThread)
       .then(async (job) => {
         if (
           cancelled ||
-          activeThreadRef.current?.id !== selectedThread ||
+          (activeThreadRef.current?.id ?? null) !== selectedThread ||
           !job ||
-          job.workspacePath !== workspacePath
+          !canRestoreChatJob(job, { threadId: selectedThread, workspacePath }, {
+            activeId: requestIdRef.current,
+            lastIdAtLookup,
+            lastId: lastRequestIdRef.current,
+            terminal: completedRequestsRef.current.has(job.id)
+          })
         )
           return
         if (job.persistenceError) setChatError(job.persistenceError)
@@ -247,13 +254,6 @@ export function useChatSession({
           }
           return
         }
-        if (
-          cancelled ||
-          !job ||
-          (job.status !== 'running' && job.status !== 'queued') ||
-          job.workspacePath !== workspacePath
-        )
-          return
         if (job.interactions) {
           setPendingApprovals(job.interactions.approvals)
           const question = job.interactions.questions[0]
@@ -314,7 +314,7 @@ export function useChatSession({
           [...restoredDiffs.values()].map((d) => d.checkpointId)
         )) {
           const receipts = await window.ide.checkpointReview(checkpointId).catch((error) => {
-            if (!cancelled) setChatError(String(error))
+            if (!cancelled && requestIdRef.current === job.id) setChatError(String(error))
             return []
           })
           for (const [key, diff] of restoredDiffs) {
@@ -333,9 +333,9 @@ export function useChatSession({
         if (cancelled || requestIdRef.current !== job.id) return
         setPendingDiffs([...restoredDiffs.values()])
         setActiveCheckpointId(restoredCheckpoint)
-        setAnswerBuffer(job.answer)
-        setThinkingBuffer('')
-        setReasoningBuffer('')
+        setAnswerBuffer(answerAcc.current)
+        setThinkingBuffer(thinkingAcc.current)
+        setReasoningBuffer(reasoningAcc.current)
         setAgentStatus(
           job.timeline ? taskPhaseLabels[job.timeline.current.phase] : job.statusText || 'Working…'
         )
