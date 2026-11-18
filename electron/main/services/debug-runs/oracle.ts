@@ -510,6 +510,8 @@ function describeEvalCheck(item: EvalCheck): string {
       return `matches /${item.pattern}/`
     case 'typescript_compile':
       return `Typecheck ${item.files.join(', ')}`
+    case 'json_shape':
+      return `Validate declared JSON field types and lengths in ${item.path}`
     case 'json_fields':
       return `Match declared JSON fields in ${item.path}`
     case 'tool_used':

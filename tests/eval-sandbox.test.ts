@@ -269,3 +269,36 @@ it('grades artifact types, missing imports and structured output independently o
     rmSync(root, { recursive: true, force: true })
   }
 }, 15_000)
+
+it('rejects incomplete JSON artifacts and accepts different valid values', () => {
+  const root = mkdtempSync(join(tmpdir(), 'eris-artifact-shape-'))
+  const path = 'api/routes.json'
+  const check = EvalCheckSchema.parse({ type: 'json_shape', path, fields: [
+    { path: ['routes'], kind: 'array', minLength: 2 },
+    { path: ['routes', '1', 'path'], kind: 'string', minLength: 1 },
+    { path: ['routes', '1', 'status'], kind: 'integer' },
+    { path: ['routes', '1', 'secured'], kind: 'boolean' }
+  ] })
+  const evaluate = () => evaluateChecks(root, [check], { answer: 'DONE. All features work.', snapshot: {}, files: {} })[0]!
+  try {
+    writeFileSync(join(root, 'routes.json'), '{"routes":[]}')
+    expect(evaluate().ok).toBe(false)
+    mkdirSync(join(root, 'api'))
+    const writeRoutes = (routes: unknown[]) => writeFileSync(join(root, path), JSON.stringify({ routes }))
+    writeRoutes([{ path: '/confirm', status: 200 }])
+    expect(evaluate().detail).toContain('requires at least 2')
+    writeRoutes([{}, { path: '/search', status: '200', secured: true }])
+    expect(evaluate().detail).toContain('expected integer, got string')
+    writeRoutes([{}, { path: '/search', status: 200 }])
+    expect(evaluate().detail).toContain('expected boolean, got undefined')
+    for (const route of [{ path: '/search', status: 200 }, { path: '/lookup', status: 204 }]) {
+      writeRoutes([{}, { ...route, secured: true }])
+      expect(evaluate().ok).toBe(true)
+    }
+    expect(EvalCheckSchema.safeParse({ type: 'json_shape', path, fields: [
+      { path: [], kind: 'boolean', minLength: 1 }
+    ] }).success).toBe(false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
