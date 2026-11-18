@@ -200,7 +200,8 @@ export function budgetModelMessages(
       'Task instructions exceed model context. Increase the context window or reduce project rules.'
     )
   let result = messages.map((message) => ({ ...message }))
-  if (size(result) > maxTokens) {
+  let estimatedTokens = size(result)
+  if (estimatedTokens > maxTokens) {
     // Earlier chat couples a user request with its replies. Trim in groups so a
     // retained assistant answer cannot lose its owning request. Tool exchanges
     // and the current task are never marked as historical by the compiler.
@@ -214,29 +215,26 @@ export function budgetModelMessages(
     for (const group of groups) {
       const removed = new Set(group)
       result = result.filter((message) => !removed.has(message))
-      if (size(result) <= maxTokens) break
+      estimatedTokens = size(result)
+      if (estimatedTokens <= maxTokens) break
     }
   }
-  // Shorten old evidence; do not remove call/result records or original user intent.
-  for (let index = 0; index < result.length - 3 && size(result) > maxTokens; index++) {
+  // Count the compiled representation again only when it changes. Finish
+  // compacting older tool results before clipping the most recent evidence.
+  const shorten = (item: ModelMessage, head: number, tail: number, note: string) => {
+    item.content = item.content.slice(0, head) + note + item.content.slice(-tail)
+    estimatedTokens = size(result)
+  }
+  for (let index = 0; index < result.length - 3 && estimatedTokens > maxTokens; index++) {
     const item = result[index]!
     if (item.role === 'tool' && item.content.length > 1000)
-      item.content =
-        item.content.slice(0, 700) +
-        '\n[Evidence shortened; inspect again if needed.]\n' +
-        item.content.slice(-200)
+      shorten(item, 700, 200, '\n[Evidence shortened; inspect again if needed.]\n')
   }
-  if (size(result) > maxTokens) {
-    for (const item of result) {
-      if (size(result) <= maxTokens) break
-      if (item.role === 'tool' && item.content.length > 600)
-        item.content =
-          item.content.slice(0, 350) +
-          '\n[Evidence excerpt; read a narrower range for details.]\n' +
-          item.content.slice(-150)
-    }
+  for (const item of result) {
+    if (estimatedTokens <= maxTokens) break
+    if (item.role === 'tool' && item.content.length > 600)
+      shorten(item, 350, 150, '\n[Evidence excerpt; read a narrower range for details.]\n')
   }
-  const estimatedTokens = size(result)
   if (estimatedTokens > maxTokens)
     throw new Error(
       'Conversation exceeds the model context budget after evidence cleanup. Reduce attached context or use a larger context window.'

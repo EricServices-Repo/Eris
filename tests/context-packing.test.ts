@@ -326,3 +326,36 @@ it('rejects a schema that consumes the input window before contacting the provid
   await expect(stream.next()).rejects.toThrow(/context|budget/i)
   expect(h.provider).toHaveLength(0)
 })
+
+// Fixed long chat with protected active work and many small read receipts.
+it('recounts only changed projections while preserving active work and the newest result', () => {
+  const history = [
+    { role: 'user', content: 'OLDER CHAT '.repeat(300), historical: true },
+    { role: 'assistant', content: 'Older answer', historical: true }
+  ] as const
+  const calls = Array.from({ length: 30 }, (_, index) => [
+    { role: 'assistant' as const, content: '', tool_calls: [{ id: `r${index}`, type: 'function' as const,
+      function: { name: 'read_file', arguments: '{}' } }] },
+    { role: 'tool' as const, content: index === 29 ? 'RECENT RECEIPT' : 'old read result',
+      tool_call_id: `r${index}` }
+  ]).flat()
+  const messages = [
+    { role: 'system' as const, content: 'Retain the accepted no-network constraint' }, ...history,
+    { role: 'user' as const, content: 'Create checkout.ts and receipt.ts' }, ...calls
+  ]
+  let counts = 0
+  const measure = (wire: readonly { content?: string | null }[]) => {
+    counts++
+    return wire.reduce((sum, item) => sum + (item.content?.length ?? 0), 0)
+  }
+  const accepted = budgetModelMessages(messages, 600, 'native-tools', measure)
+  expect(counts).toBe(3)
+  expect(accepted.messages.some((item) => item.content.includes('OLDER CHAT'))).toBe(false)
+  expect(accepted.messages.some((item) => item.content.includes('checkout.ts and receipt.ts'))).toBe(true)
+  expect(accepted.messages[0]?.content).toContain('no-network')
+  expect(accepted.messages.at(-1)?.content).toBe('RECENT RECEIPT')
+  // An impossible budget also avoids recounting unchanged tool records.
+  counts = 0
+  expect(() => budgetModelMessages(messages, 400, 'native-tools', measure)).toThrow(/context budget/)
+  expect(counts).toBe(3)
+})
