@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { isLocalOllamaConnection } from '../../../src/shared/eris-cloud'
+import { primaryOllamaConnection } from '../../../src/shared/eris-cloud'
 import { getResolvedSettings, setSettings } from '../services/settings'
 import { appState } from '../app-state'
 import { logInfo, logWarn } from '../services/logger'
@@ -16,9 +16,8 @@ const OLLAMA_ID = 'ollama'
 
 function ollamaBaseUrl(): string {
   const settings = getResolvedSettings(appState.currentWorkspace)
-  const conn = settings.models.connections.find(
-    (c) => isLocalOllamaConnection(c)
-  )
+  // The primary server receives pulls when several are connected (#677).
+  const conn = primaryOllamaConnection(settings.models.connections)
   return conn?.baseUrl || 'http://127.0.0.1:11434/v1'
 }
 
@@ -26,9 +25,8 @@ function ollamaBaseUrl(): string {
 function registerModelOnConnection(name: string): void {
   const settings = getResolvedSettings(appState.currentWorkspace)
   const connections = settings.models.connections.map((c) => c)
-  const idx = connections.findIndex(
-    (c) => isLocalOllamaConnection(c)
-  )
+  const primary = primaryOllamaConnection(connections)
+  const idx = primary ? connections.indexOf(primary) : -1
   if (idx < 0) {
     connections.push({
       id: OLLAMA_ID,
@@ -94,11 +92,11 @@ export function registerOllamaIpc(): void {
     try {
       await deleteOllamaModel(model, ollamaBaseUrl())
       // Drop it from the connection's model list too.
+      // Only the server it was deleted from; another Ollama server may still have it.
       const settings = getResolvedSettings(appState.currentWorkspace)
+      const primary = primaryOllamaConnection(settings.models.connections)
       const connections = settings.models.connections.map((c) =>
-        isLocalOllamaConnection(c)
-          ? { ...c, models: c.models.filter((m) => m !== model) }
-          : c
+        c === primary ? { ...c, models: c.models.filter((m) => m !== model) } : c
       )
       setSettings('user', { models: { connections } }, appState.currentWorkspace)
       return { ok: true }

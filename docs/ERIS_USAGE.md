@@ -26,6 +26,18 @@ Eris doesn't bundle a model; you choose where inference runs. The welcome screen
 
 API keys are stored by the main process, either in a local file or the OS vault. The UI never reads them back.
 
+### Ollama context windows and several GPUs
+
+Eris sizes the context window it asks Ollama for. In the Ollama settings, **Context window** has three choices:
+
+- **Fit to VRAM** (default) shrinks the window when the model would otherwise run partly on the CPU.
+- **Largest that fits** grows the window to what the GPU memory holds, up to the model's limit.
+- **Exactly as set** never resizes.
+
+Set **KV cache type** to match the server's `OLLAMA_KV_CACHE_TYPE`. With **Largest that fits**, set **VRAM** for a server that isn't on this computer, or one limited to some GPUs with `CUDA_VISIBLE_DEVICES`. Otherwise Eris assumes all of this computer's GPUs and corrects itself after one load. The settings card shows the window in use and why.
+
+To keep a large model and a fast model loaded at once, run one Ollama server per group of GPUs (for example `CUDA_VISIBLE_DEVICES=2 OLLAMA_HOST=127.0.0.1:11435 ollama serve`). Then add the second one under **Providers → Ollama (another server)**. Pull models onto that server with `OLLAMA_HOST=127.0.0.1:11435 ollama pull <model>`.
+
 ## Open a project and chat
 
 1. **File → Link Folder as Workspace…** (⌘O / Ctrl+O) opens an existing folder. **New Workspace…** (⌘⇧N / Ctrl+Shift+N) creates one.
@@ -138,3 +150,5 @@ Local models and your own providers don't count toward the allowance. Without an
 | Request completion | ⌥\ | Alt+\ |
 | Go to definition | F12 | F12 |
 | Send message / new line | Enter / Shift+Enter | Enter / Shift+Enter |
+
+Ollama’s VRAM field is the total available across all GPUs assigned to that server. Leave it blank for a loopback estimate from detected GPUs, or enter a total when the server has a restricted GPU set. The **Largest that fits** option expands context up to the model limit and any explicit per-model limit. Automatic fitting can reduce context below 8K when needed, down to 512 tokens. The minimum-context warning describes an observed CPU spill and does not establish a limit on model weight size.
