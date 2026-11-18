@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.13 — 2026-11-18
+
+- Shows the Eris Cloud allowance, removes retired Composer guidance, and improves chat recovery, prompt packing, and verification evidence.
+
 ## 0.7.12 — 2026-11-17
 
 - Improved chat intake, proposal follow-ups, reasoning-only retries, and generated JSON checks.
