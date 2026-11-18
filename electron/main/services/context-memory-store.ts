@@ -1184,7 +1184,7 @@ export class ContextMemoryStore {
       if (c.fact.kind === 'pinned') pinChars += prefix.length + excerpt.length + 1
       selected.push({ ...c.fact, text: excerpt })
       seen.add(identity)
-      if (selected.length >= 24) break
+      if (selected.length >= Math.min(256, Math.max(24, Math.ceil(budget / 1_200)))) break
     }
     options.signal?.throwIfAborted()
     if (this.entries.get(key) !== e || e.generation !== generation) {

@@ -1,5 +1,5 @@
 import families from '../../../resources/model-families.json'
-import { parameterBillions, type ModelCapabilityEvidence, type ModelCapabilityProfile } from '../../../src/shared/model-capability-profile'
+import { usesModelMaximum, parameterBillions, type ModelCapabilityEvidence, type ModelCapabilityProfile } from '../../../src/shared/model-capability-profile'
 import { boundedContextWindow, validContextWindow } from '../../../src/shared/model-context'
 import type { AppSettings, LocalModelStatus, ModelConnection } from '../../../src/shared/settings-schema'
 import { providerModelId } from '../../../src/shared/eris-cloud'
@@ -46,7 +46,10 @@ export function resolveRoutingCapabilityProfile(
     ...provider,
     ...(local ? { costClass: 'free-local' } : {}),
     ...(connection?.modelLimits?.[id] ? { contextWindow: connection.modelLimits[id].contextWindow } : {}),
-    ...(user?.enabled === false ? undefined : user)
+    ...(user?.enabled === false ? undefined : user),
+    ...(usesModelMaximum(settings, model) && connection && isOllamaConnection(connection)
+      ? { contextWindow: provider?.contextWindow ?? fallback.contextWindow }
+      : {})
   }
 }
 

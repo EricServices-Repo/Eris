@@ -136,6 +136,7 @@ export const SettingsSchema = z.object({
       enabled: z.boolean().optional(),
       tier: z.enum(['small', 'standard', 'strong', 'frontier']),
       toolCalling: z.enum(['native', 'text', 'none']),
+      contextWindowMode: z.enum(['configured', 'model-maximum']).optional(),
       contextWindow: z.number().int().min(512).max(MAX_CONTEXT_TOKENS),
       reasoning: z.boolean().default(false),
       vision: z.boolean().default(false),

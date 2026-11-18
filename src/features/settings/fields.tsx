@@ -205,7 +205,7 @@ export function settingFields(agentIds: string[]): SettingField[] {
     },
     {
       cat: 'memory',
-      hint: "Recall normally takes up to 15% of the model's input window. This only lowers that. Range: 128–8192.",
+      hint: "Recall normally takes up to 15% of the model's input window. This only lowers that. Range: 128–131072.",
       label: 'Recalled context token ceiling (estimate)',
       path: ['agent', 'contextMemory', 'promptTokens'],
       type: 'number'

@@ -19,6 +19,17 @@ function writeUserSettings(raw: unknown) {
 }
 
 describe('settings defaults', () => {
+  it('round-trips maximum context mode while preserving saved numeric windows and recall limits', () => {
+    const defaults = getDefaults()
+    const profile = { enabled: true, contextWindowMode: 'model-maximum', contextWindow: 4096,
+      tier: 'standard', toolCalling: 'text', reasoning: false, vision: false, costClass: 'low' }
+    const settings = SettingsSchema.parse({ ...defaults,
+      models: { ...defaults.models, capabilityProfiles: { 'ollama:m': profile } },
+      agent: { ...defaults.agent, contextMemory: { ...defaults.agent.contextMemory, promptTokens: 8192 } }
+    })
+    expect(settings.models.capabilityProfiles['ollama:m']).toEqual(profile)
+    expect(settings.agent.contextMemory.promptTokens).toBe(8192)
+  })
   it('loads retired escalation settings as the normal automatic profile', () => {
     const defaults = getDefaults()
     const settings = SettingsSchema.parse({

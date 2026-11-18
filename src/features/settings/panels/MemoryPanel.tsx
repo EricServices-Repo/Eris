@@ -16,7 +16,7 @@ const ranges: Record<string, [number, number]> = {
   warmThreads: [1, 16],
   idleMinutes: [1, 120],
   foregroundDeadlineMs: [25, 2000],
-  promptTokens: [128, 8192]
+  promptTokens: [128, 131072]
 }
 export function memoryBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
