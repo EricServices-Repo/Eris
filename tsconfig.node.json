@@ -23,6 +23,7 @@
     "checks/quality/cases.json",
     "resources/agents.json",
     "src/features/chat/thinking-summary.ts",
+    "src/features/settings/ollama-connections.ts",
     "checks/context-gate.ts",
     "checks/bad-answer-smoke.ts",
     "checks/memory-process-baseline.ts",

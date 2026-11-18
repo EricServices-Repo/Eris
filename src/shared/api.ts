@@ -282,7 +282,13 @@ export interface IdeApi {
   inferenceAdmission: () => Promise<import('./inference').InferenceSnapshot>
   modelSetupOptions: () => Promise<ModelSetupOptions>
   connectDetectedModelService: (id: LocalModelServiceId) => Promise<void>
-  modelsStatus: (opts?: { probe?: boolean; probeCloud?: boolean; includeGpu?: boolean }) => Promise<ModelsStatus>
+  modelsStatus: (opts?: {
+    probe?: boolean
+    probeCloud?: boolean
+    includeGpu?: boolean
+    /** Connection id whose fitted Ollama windows to forget (#677). */
+    resetContextFit?: string
+  }) => Promise<ModelsStatus>
   /** Background-load a selected or default ready GGUF into the llama worker. */
   warmLocalModel: (modelRef?: string) => Promise<{ ok: boolean; model?: string; error?: string }>
   builtinModelStatus: () => Promise<BuiltinModelStatus[]>

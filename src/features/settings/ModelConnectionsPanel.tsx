@@ -2,7 +2,10 @@ import { MAX_CONTEXT_TOKENS } from '@/shared/model-context'
 import { ReasoningFields } from './ReasoningFields'
 import { useMemo, useState } from 'react'
 import { isLoopbackUrl } from '@/shared/model-destination'
+import { isErisCloudConnection, primaryOllamaConnection } from '@/shared/eris-cloud'
 import type { AppSettings, ModelConnection, ModelsStatus } from '@/shared/settings-schema'
+import { OllamaContextFields, placementText } from './OllamaContextFields'
+import { connectionFromDraft, parseModels, type ConnectionDraftFields } from './ollama-connections'
 
 export type ConnectionPreset = {
   id: string
@@ -63,6 +66,14 @@ const PRESETS: ConnectionPreset[] = [
     hint: 'DeepSeek chat/coder. Keys from platform.deepseek.com.'
   },
   {
+    id: 'ollama-server',
+    name: 'Ollama (another server)',
+    provider: 'ollama',
+    baseUrl: 'http://127.0.0.1:11435/v1',
+    requiresKey: false,
+    hint: 'A second ollama serve, for example one per GPU group (OLLAMA_HOST=127.0.0.1:11435). Its windows are verified and fitted to VRAM like the main Ollama server.'
+  },
+  {
     id: 'custom',
     name: 'Custom',
     provider: 'custom',
@@ -72,17 +83,7 @@ const PRESETS: ConnectionPreset[] = [
   }
 ]
 
-type Draft = {
-  modelLimits: NonNullable<ModelConnection['modelLimits']>
-  toolProtocol?: ModelConnection['toolProtocol']
-  reasoning?: ModelConnection['reasoning']
-  recallApproved: boolean
-  id: string
-  name: string
-  provider: string
-  baseUrl: string
-  enabled: boolean
-  modelsText: string
+type Draft = ConnectionDraftFields & {
   apiKey: string
   /** True when editing an existing connection that already has a stored key */
   hasStoredKey: boolean
@@ -91,6 +92,8 @@ type Draft = {
 
 function toDraft(conn: ModelConnection, hasStoredKey: boolean): Draft {
   return {
+    ollama: { contextFit: conn.contextFit, kvCacheType: conn.kvCacheType, vramGiB: conn.vramGiB },
+    original: conn,
     modelLimits: conn.modelLimits ?? {},
     id: conn.id,
     name: conn.name,
@@ -105,13 +108,6 @@ function toDraft(conn: ModelConnection, hasStoredKey: boolean): Draft {
     hasStoredKey,
     isNew: false
   }
-}
-
-function parseModels(text: string): string[] {
-  return text
-    .split(/[,\n]/)
-    .map((s) => s.trim())
-    .filter(Boolean)
 }
 
 interface Props {
@@ -138,14 +134,14 @@ export function ModelConnectionsPanel({
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
 
-  // Ollama has its own section on the Models page — exclude it here.
-  const external = useMemo(
-    () =>
-      (resolved.models.connections ?? []).filter(
-        (c) => c.type !== 'builtin' && c.provider !== 'ollama' && c.id !== 'ollama'
-      ),
-    [resolved.models.connections]
-  )
+  // The primary Ollama server and Eris Cloud have their own cards; other Ollama servers are listed here.
+  const external = useMemo(() => {
+    const connections = resolved.models.connections ?? []
+    const primary = primaryOllamaConnection(connections)
+    return connections.filter(
+      (c) => c.type !== 'builtin' && c !== primary && !isErisCloudConnection(c)
+    )
+  }, [resolved.models.connections])
 
   const statusById = useMemo(() => {
     const map = new Map<string, ModelsStatus['connections'][number]>()
@@ -159,6 +155,7 @@ export function ModelConnectionsPanel({
     setError(null)
     setInfo(null)
     setDraft({
+      ollama: {},
       recallApproved: false,
       modelLimits: {},
       id: `conn-${preset.provider}-${Date.now().toString(36)}`,
@@ -204,21 +201,7 @@ export function ModelConnectionsPanel({
       if (draft.apiKey) {
         await window.ide.setSecret(apiKeyRef, draft.apiKey)
       }
-      const baseUrl = draft.baseUrl.trim().replace(/\/$/, '')
-      const nextConn: ModelConnection = {
-        id: draft.id,
-        name: draft.name.trim(),
-        type: 'openai-compatible',
-        provider: draft.provider || 'custom',
-        toolProtocol: draft.toolProtocol ?? 'native-tools',
-        enabled: draft.enabled,
-        baseUrl,
-        apiKeyRef,
-        models: parseModels(draft.modelsText),
-        modelLimits: draft.modelLimits,
-        ...(draft.reasoning ? { reasoning: draft.reasoning } : {}),
-        ...(draft.recallApproved && !isLoopbackUrl(baseUrl) ? { recallApprovedUrl: baseUrl } : {})
-      }
+      const nextConn = connectionFromDraft(draft, apiKeyRef)
       const others = resolved.models.connections.filter((c) => c.id !== draft.id)
       // Keep builtin first
       const builtin = others.filter((c) => c.type === 'builtin')
@@ -239,6 +222,7 @@ export function ModelConnectionsPanel({
           await onSaveConnections(updated)
           setDraft({
             ...draft,
+            original: merged,
             modelsText: merged.models.join(', '),
             apiKey: '',
             hasStoredKey: Boolean(merged.apiKeyRef),
@@ -253,6 +237,7 @@ export function ModelConnectionsPanel({
       } else {
         setDraft({
           ...draft,
+          original: nextConn,
           apiKey: '',
           hasStoredKey: Boolean(apiKeyRef),
           isNew: false
@@ -273,6 +258,21 @@ export function ModelConnectionsPanel({
     await onSaveConnections(connections)
     if (draft?.id === id) setDraft(null)
     await onRefresh()
+  }
+
+  /** Forget fitted Ollama windows for one server so its next load measures again (#677). */
+  const remeasure = async (id: string) => {
+    setBusy(true)
+    setError(null)
+    try {
+      await window.ide.modelsStatus({ resetContextFit: id })
+      setInfo('Windows will be measured again on the next request.')
+      await onRefresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reset fitted windows')
+    } finally {
+      setBusy(false)
+    }
   }
 
   const toggleEnabled = async (conn: ModelConnection) => {
@@ -392,6 +392,14 @@ export function ModelConnectionsPanel({
         />
         <span>Enabled</span>
       </label>
+      {draft.provider === 'ollama' && (
+        <OllamaContextFields
+          value={draft.ollama}
+          busy={busy}
+          onChange={(ollama) => setDraft({ ...draft, ollama })}
+          onRemeasure={draft.isNew ? undefined : () => void remeasure(draft.id)}
+        />
+      )}
       {error && (
         <div className="subtitle" style={{ color: 'var(--danger)' }}>
           {error}
@@ -517,6 +525,14 @@ export function ModelConnectionsPanel({
             value={draft.reasoning}
             onChange={(reasoning) => setDraft({ ...draft, reasoning })}
           />
+          {draft.provider === 'ollama' && (
+            <OllamaContextFields
+              value={draft.ollama}
+              busy={busy}
+              onChange={(ollama) => setDraft({ ...draft, ollama })}
+              onRemeasure={draft.isNew ? undefined : () => void remeasure(draft.id)}
+            />
+          )}
           <label className="providers-enable-row">
             <input
               type="checkbox"
@@ -525,7 +541,8 @@ export function ModelConnectionsPanel({
             />
             <span>Enabled for chat</span>
           </label>
-          {(draft.provider === 'lmstudio' || isLoopbackUrl(draft.baseUrl.trim())) && (
+          {draft.provider !== 'ollama' &&
+            (draft.provider === 'lmstudio' || isLoopbackUrl(draft.baseUrl.trim())) && (
             <p className="model-conn-hint">
               Unverified window: this server does not report its loaded context size, so Eris
               budgets for 8,192 tokens at most.
@@ -647,6 +664,15 @@ export function ModelConnectionsPanel({
                       Remove
                     </button>
                   </div>
+                  {(live?.placements ?? []).map((item) => (
+                    <div
+                      key={item.model}
+                      className="models-inline-msg"
+                      data-tone={item.vramBytes < item.sizeBytes ? 'danger' : 'ok'}
+                    >
+                      {placementText(item)}
+                    </div>
+                  ))}
                   {models.length > 0 && c.enabled && (
                     <div className="providers-models-block">
                       <span className="providers-models-label">Set chat default</span>
@@ -682,8 +708,9 @@ export function ModelConnectionsPanel({
       <div className="model-connections-intro">
         <strong>Cloud &amp; other APIs</strong>
         <p>
-          Add LM Studio, OpenAI, OpenRouter, or any OpenAI-compatible endpoint. Ollama is configured
-          in its own section above. These connections appear in the model picker when reachable.
+          Add LM Studio, OpenAI, OpenRouter, another Ollama server, or any OpenAI-compatible
+          endpoint. Your main Ollama server is configured in its own section above. These
+          connections appear in the model picker when reachable.
         </p>
       </div>
 
@@ -718,6 +745,15 @@ export function ModelConnectionsPanel({
                     <span className="badge">default</span>
                   )}
                 </div>
+                {(live?.placements ?? []).map((item) => (
+                  <div
+                    key={item.model}
+                    className="models-inline-msg"
+                    data-tone={item.vramBytes < item.sizeBytes ? 'danger' : 'ok'}
+                  >
+                    {placementText(item)}
+                  </div>
+                ))}
                 <div className="model-conn-meta">
                   {c.baseUrl}
                   {live?.error ? ` · ${live.error}` : ''}

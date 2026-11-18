@@ -8,7 +8,7 @@ import type { ApplySetting } from '../fields'
 import { LocalModelsPanel } from '../LocalModelsPanel'
 import { ModelConnectionsPanel } from '../ModelConnectionsPanel'
 import { OllamaConfigPanel } from '../OllamaConfigPanel'
-import { connectionModelRef, isLocalOllamaConnection } from '@/shared/eris-cloud'
+import { connectionModelRef, primaryOllamaConnection } from '@/shared/eris-cloud'
 import { isAutomaticModelSelection } from '@/shared/model-execution'
 import { ModelCapabilityEditor } from './ModelCapabilityEditor'
 
@@ -152,9 +152,7 @@ export function ProvidersModelsPanel({
   const [showOllama, setShowOllama] = useState(false)
 
   const ollamaLive = useMemo(() => {
-    const conn = (resolved.models.connections ?? []).find(
-      (c) => isLocalOllamaConnection(c)
-    )
+    const conn = primaryOllamaConnection(resolved.models.connections ?? [])
     if (!conn) return { present: false, reachable: false, enabled: false }
     const live = status?.connections?.find((c) => c.id === conn.id)
     return {

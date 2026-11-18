@@ -112,7 +112,8 @@ export function registerModelsIpc(): void {
         probeCloud && key === ERIS_CLOUD_TOKEN_REF ? cloudToken : getSecret(key), {
         probeConnections: probe,
         probeCloud,
-        includeGpu
+        includeGpu,
+        ...(options?.resetContextFit ? { resetContextFit: options.resetContextFit } : {})
       })
       if (!probeCloud) return result
       const ownProbe: CloudProbe = { root, account: cloudAccount(cloudToken), enabled, result }

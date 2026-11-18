@@ -1,30 +1,12 @@
 import { useMemo, useState } from 'react'
-import { isLocalOllamaConnection } from '@/shared/eris-cloud'
+import { primaryOllamaConnection } from '@/shared/eris-cloud'
 import { ReasoningFields } from './ReasoningFields'
-import type {
-  AppSettings,
-  ConnectionModelPlacement,
-  ModelConnection,
-  ModelsStatus
-} from '@/shared/settings-schema'
+import { OllamaContextFields, placementText } from './OllamaContextFields'
+import { withPrimaryOllama } from './ollama-connections'
+import type { AppSettings, ModelConnection, ModelsStatus } from '@/shared/settings-schema'
 
 export const OLLAMA_DEFAULT_URL = 'http://127.0.0.1:11434/v1'
 export const OLLAMA_CONNECTION_ID = 'ollama'
-
-/** The user's own Ollama daemon — the hosted Eris Cloud connection has its own card. */
-function isOllamaConnection(c: ModelConnection): boolean {
-  return isLocalOllamaConnection(c)
-}
-
-/** Requested, loaded and placed, so a slow model has a visible cause. */
-function placementText(item: ConnectionModelPlacement): string {
-  const share = item.sizeBytes ? Math.round((item.vramBytes / item.sizeBytes) * 100) : 100
-  const loaded = item.loadedWindow?.toLocaleString() ?? 'not reported'
-  const window = `requested ${item.requestedWindow.toLocaleString()} tokens, loaded ${loaded}`
-  return share < 100
-    ? `${item.model} is partly on CPU (${share}% in VRAM) and will run slower; ${window}.`
-    : `${item.model} is fully in VRAM; ${window}.`
-}
 
 interface Props {
   resolved: AppSettings
@@ -50,7 +32,7 @@ export function OllamaConfigPanel({
   onSetDefaultModel
 }: Props) {
   const ollama = useMemo(
-    () => (resolved.models.connections ?? []).find(isOllamaConnection) ?? null,
+    () => primaryOllamaConnection(resolved.models.connections ?? []) ?? null,
     [resolved.models.connections]
   )
 
@@ -85,12 +67,8 @@ export function OllamaConfigPanel({
     </div>
   ))
 
-  const mergeConnections = (nextOllama: ModelConnection): ModelConnection[] => {
-    const others = (resolved.models.connections ?? []).filter((c) => !isOllamaConnection(c))
-    const builtin = others.filter((c) => c.type === 'builtin')
-    const rest = others.filter((c) => c.type !== 'builtin')
-    return [...builtin, nextOllama, ...rest]
-  }
+  const mergeConnections = (nextOllama: ModelConnection): ModelConnection[] =>
+    withPrimaryOllama(resolved.models.connections ?? [], ollama?.id, nextOllama)
 
   const ensureAndRefresh = async (opts?: { enabled?: boolean; baseUrl?: string }) => {
     setBusy(true)
@@ -103,6 +81,8 @@ export function OllamaConfigPanel({
         return
       }
       const next: ModelConnection = {
+        // Keep the fields this card does not edit (window fitting, keep-loaded, reasoning).
+        ...(ollama ?? {}),
         id: ollama?.id || OLLAMA_CONNECTION_ID,
         name: ollama?.name || 'Ollama',
         type: 'openai-compatible',
@@ -163,13 +143,27 @@ export function OllamaConfigPanel({
     setError(null)
     setInfo(null)
     try {
-      const connections = (resolved.models.connections ?? []).filter((c) => !isOllamaConnection(c))
-      await onSaveConnections(connections)
+      await onSaveConnections(withPrimaryOllama(resolved.models.connections ?? [], ollama.id, null))
       setUrlDirty(false)
       setBaseUrl(OLLAMA_DEFAULT_URL)
       await onRefresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to remove Ollama')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const remeasure = async () => {
+    if (!ollama) return
+    setBusy(true)
+    setError(null)
+    try {
+      await window.ide.modelsStatus({ resetContextFit: ollama.id })
+      setInfo('Windows will be measured again on the next request.')
+      await onRefresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reset fitted windows')
     } finally {
       setBusy(false)
     }
@@ -257,6 +251,15 @@ export function OllamaConfigPanel({
 
         {placementNotes}
 
+        {ollama && (
+          <OllamaContextFields
+            value={ollama}
+            busy={busy}
+            onChange={(fields) => void onSaveConnections(mergeConnections({ ...ollama, ...fields }))}
+            onRemeasure={() => void remeasure()}
+          />
+        )}
+
         {(error || (live?.error && !reachable) || info) && (
           <div
             className="models-inline-msg"
@@ -306,6 +309,14 @@ export function OllamaConfigPanel({
           onChange={(reasoning) =>
             void onSaveConnections(mergeConnections({ ...ollama, reasoning }))
           }
+        />
+      )}
+      {ollama && (
+        <OllamaContextFields
+          value={ollama}
+          busy={busy}
+          onChange={(fields) => void onSaveConnections(mergeConnections({ ...ollama, ...fields }))}
+          onRemeasure={() => void remeasure()}
         />
       )}
 

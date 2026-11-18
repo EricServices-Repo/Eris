@@ -118,9 +118,19 @@ Every model call goes through `streamModelChat` in [`chat-runtime.ts`](../electr
 | Destination | Transport | Notes |
 |---|---|---|
 | **Local GGUF** (`local:…`) | `node-llama-cpp` utility process | Downloaded from Hugging Face in Settings → Text Models. Only one model is loaded at a time. The inference governor grants one exclusive GPU job at a time and waits up to 120 s. |
-| **Ollama, LM Studio** | Ollama native `/api/chat` or OpenAI-compatible | Loopback servers count as local for privacy and policy. |
+| **Ollama, LM Studio** | Ollama native `/api/chat` or OpenAI-compatible | Loopback servers count as local for privacy and policy. Any number of Ollama servers can be connected; the first (id `ollama`) has its own settings card and receives model pulls. |
 | **OpenAI-compatible APIs** | `/v1/chat/completions` (SSE) | OpenAI, OpenRouter, Groq, Together, DeepSeek or a custom base URL. API keys stay in main. |
 | **Eris Cloud** (`cloud:<model>`) | OpenAI-compatible, `https://agents.ericservic.es/v1` | Hosted Ollama models for signed-in EricServic.es accounts, authenticated with the device token. Switched on automatically when the account offers it. |
+
+### Ollama context windows
+
+For Ollama, Eris reads each model's maximum window from `/api/show` and sends the window it budgets for as `num_ctx` on `/api/chat`. After every request it reads `/api/ps` (`size`, `size_vram`, `context_length`), and each connection's **Context window** setting (`contextFit`) decides what happens next ([`ollama-context-fit.ts`](../electron/main/services/ollama-context-fit.ts), [`ollama-runtime.ts`](../electron/main/services/ollama-runtime.ts)):
+
+- **Fit to VRAM** (default): if part of the model spilled to the CPU, the next request uses the largest window that would have stayed in VRAM, never below 8,192 tokens (or a smaller requested window). The KV cache cost per token is measured from two loads at different windows, or estimated from `model_info` (`block_count`, `attention.head_count_kv`, key and value lengths, hybrid layers) and the connection's **KV cache type**. A model whose weights alone exceed VRAM stops at the floor and is reported.
+- **Largest that fits**: after the first load, grows the window to what the VRAM budget holds, up to the model's maximum. The budget is the connection's **VRAM** setting, or this computer's GPUs for a loopback server. A per-model window set by the user is never exceeded. If the plan spills, it is shrunk as above.
+- **Exactly as set**: sends the requested window unchanged.
+
+If Ollama refuses to load a window for lack of memory before any output, Eris halves it and retries once when the already packed prompt fits; otherwise the turn fails and names the window the next request will use. Prompt budgets and `num_ctx` both come from `ollamaRequestWindow`, so they always agree. Fitted windows are kept until the requested window or the connection's fit settings change, or **Re-measure windows** is pressed. Eris Cloud is never fitted.
 
 The model picker offers a named model (Fixed), **Auto (this computer only)** and **Auto (any connected model)**. Auto ranks candidates by capability profile, the *Auto preference* setting (best, local or cheapest), measured outcomes and the loaded model; see [automatic model selection](design/AUTO-MODEL-EXECUTION.md).
 

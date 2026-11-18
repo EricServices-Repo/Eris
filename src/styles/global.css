@@ -3933,6 +3933,16 @@ select:focus {
   margin-top: 4px;
 }
 
+.ollama-context-fields {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.ollama-context-fields > .btn {
+  justify-self: start;
+}
+
 .providers-enable-row {
   display: flex;
   align-items: center;
