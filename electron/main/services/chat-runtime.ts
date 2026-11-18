@@ -1,3 +1,4 @@
+import { usesModelMaximum } from '../../../src/shared/model-capability-profile'
 import { recordNativeLatency } from './model-latency'
 import { modelStreamWithAbort } from './task-deadline'
 import { eligibleOutbound } from './eligible-outbound'
@@ -253,6 +254,17 @@ export async function* streamProviderChat(
     if (violation) throw new Error(violation)
   }
   await prepareModelWindows(options.settings, [model], options.getSecret, options.signal)
+  if (usesModelMaximum(options.settings, model))
+    reportChatActivity('loading', {
+      source: 'transport', purpose: options.purpose ?? 'agent', model,
+      reason: 'Loading and verifying the model maximum context window'
+    })
+  const maximumConnection = resolveConnectionForModel(options.settings, model)
+  await ensureMaximumContextAllocation(
+    options.settings, model,
+    maximumConnection?.apiKeyRef ? options.getSecret(maximumConnection.apiKeyRef) : null,
+    options.signal
+  )
   throwIfAborted(options.signal)
   // Preparation can load/reconfigure a server model asynchronously. Validate again
   // after that await, immediately before serializing the actual provider request.

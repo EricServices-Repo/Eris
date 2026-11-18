@@ -128,6 +128,20 @@ describe('RAM-CTX-032 source coverage', () => {
 })
 
 describe('detailed RAM conversation history', () => {
+  it('admits more relevant recall on large windows while honoring a saved lower ceiling', async () => {
+    const store = new ContextMemoryStore()
+    install(store, 'large', Array.from({ length: 100 }, (_, i) =>
+      message(String(i), `Remember: project context decision ${i}: ${'evidence '.repeat(100)}`)))
+    const small = await store.select('large', 'project context decision', { tokens: 8192 })
+    const large = await store.select('large', 'project context decision', { tokens: 36000 })
+    const limited = await store.select('large', 'project context decision', {
+      tokens: 36000, policy: { ...store.config, promptTokens: 8192 }
+    })
+    expect(large.inspection.facts.length).toBeGreaterThan(24)
+    expect(large.prompt.text.length).toBeGreaterThan(small.prompt.text.length)
+    expect(large.prompt.text.length).toBeLessThanOrEqual(36000 * 3)
+    expect(limited.prompt.text.length).toBeLessThanOrEqual(8192 * 3)
+  })
   it('retains 25,000 complete messages and recalls a buried decision within the prompt budget', async () => {
     const store = new ContextMemoryStore()
     const messages = Array.from({ length: 25000 }, (_, i) =>

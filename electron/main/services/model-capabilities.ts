@@ -1,3 +1,4 @@
+import { usesModelMaximum } from '../../../src/shared/model-capability-profile'
 import { boundedContextWindow, modelInputBudget } from '../../../src/shared/model-context'
 import type { AppSettings } from '../../../src/shared/settings-schema'
 import { contextPlan, findBuiltinEntry, isBuiltinRef, isNativeGgufRef } from './builtin-model'
@@ -6,6 +7,7 @@ import { findLocalEntry, isLocalRef, localEntryAsBuiltin } from './local-model'
 import { loadedModelFacts } from './model-runtime'
 import {
   advertisedModelLimits,
+  ollamaMaximumContext,
   declaredModelLimits,
   serverWindow,
   serverWindowFacts
@@ -95,8 +97,10 @@ export function contextProvenance(settings: AppSettings, model: string) {
 export function resolveModelCapabilities(settings: AppSettings, model: string): ModelCapabilities {
   const declared = declaredModelLimits(settings, model)
   const override = settings.models.capabilityProfiles?.[model]
+  const maximum = usesModelMaximum(settings, model) ? ollamaMaximumContext(settings, model, false) : undefined
   const requestedContext = boundedContextWindow(
-    (override?.enabled !== false ? override?.contextWindow : undefined) ??
+    maximum ??
+      (override?.enabled !== false ? override?.contextWindow : undefined) ??
       declared?.contextWindow ?? settings.models.contextWindow
   )
   const { contextCeiling, contextSource } = contextCapacity(settings, model, requestedContext)

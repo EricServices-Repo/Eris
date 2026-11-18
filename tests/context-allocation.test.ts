@@ -53,10 +53,11 @@ describe('allocateContext', () => {
     }
   })
 
-  it('holds its caps on a very large window', () => {
+  it('scales history on a very large window while bounding recall', () => {
     const allocation = allocateContext(1_000_000, 'chat')
     expect(allocation.recallTokens).toBe(RECALL_MAX_TOKENS)
-    expect(allocation.historyTokens).toBe(48_000)
+    expect(allocation.historyTokens).toBe(375_000)
+    expect(allocateContext(240_000, 'agent').historyTokens).toBe(24_000)
   })
 
   it('applies floors without letting them take over a tiny window', () => {

@@ -12,13 +12,12 @@ export type ContextAllocation = {
 
 /** The §14.3 experiment: a starting point to tune by evaluation, not a measurement. */
 export const RECALL_INPUT_SHARE = 0.15
-/** Selection admits 24 items of 1,200 characters, which this budget can fill. */
-export const RECALL_MAX_TOKENS = 8_192
+/** Product ceiling; the actual share follows the model budget and the user limit. */
+export const RECALL_MAX_TOKENS = 131_072
 const RECALL_MIN_TOKENS = 128
 /** Chosen so a 32K window keeps roughly the 6,000 and 24,000 characters it had. */
 const HISTORY_INPUT_SHARE: Record<TaskClass, number> = { agent: 0.1, chat: 0.375 }
 const HISTORY_MIN_TOKENS: Record<TaskClass, number> = { agent: 500, chat: 1_000 }
-const HISTORY_MAX_TOKENS: Record<TaskClass, number> = { agent: 16_000, chat: 48_000 }
 /** A floor never takes more than this of a very small window. */
 const FLOOR_MAX_SHARE = 0.25
 
@@ -46,7 +45,7 @@ export function allocateContext(
     input,
     HISTORY_INPUT_SHARE[taskClass],
     HISTORY_MIN_TOKENS[taskClass],
-    HISTORY_MAX_TOKENS[taskClass]
+    input
   )
   return {
     inputTokens: input,

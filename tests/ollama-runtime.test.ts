@@ -1,3 +1,4 @@
+import { resolveRoutingCapabilityProfile } from '../electron/main/services/model-capability-ranking'
 import { modelInputBudget } from '../src/shared/model-context'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'http'
@@ -42,13 +43,15 @@ function fakeOllama(behaviour: {
   ps?: Record<string, unknown>
   show?: number
   chat?: string[]
+  maximumLoad?: { loaded?: number; error?: string }
 }) {
   const seen: {
     chat: ChatBody[]
     v1: number
     show: number
+    loads: ChatBody[]
     v1Bodies: Array<{ messages: Array<{ content: string }> }>
-  } = { chat: [], v1: 0, show: 0, v1Bodies: [] }
+  } = { chat: [], v1: 0, show: 0, loads: [], v1Bodies: [] }
   const server: Server = createServer((request, response) => {
     let raw = ''
     request.on('data', (chunk) => (raw += chunk))
@@ -68,6 +71,18 @@ function fakeOllama(behaviour: {
       }
       if (request.url === '/api/ps') {
         response.end(JSON.stringify({ models: behaviour.ps ? [behaviour.ps] : [] }))
+        return
+      }
+      if (request.url === '/api/chat' && JSON.parse(raw).messages.length === 0) {
+        seen.loads.push(JSON.parse(raw))
+        if (behaviour.maximumLoad?.error) {
+          response.statusCode = 500
+          response.end(JSON.stringify({ error: behaviour.maximumLoad.error }))
+        } else {
+          behaviour.ps = { name: 'm', size: 100, size_vram: 60,
+            ...(behaviour.maximumLoad?.loaded ? { context_length: behaviour.maximumLoad.loaded } : {}) }
+          response.end(JSON.stringify({ done: true, done_reason: 'load' }))
+        }
         return
       }
       if (request.url === '/api/chat') {
@@ -140,6 +155,94 @@ describe('Ollama window management', () => {
       keep_alive: '30m',
       options: { num_ctx: 16384, temperature: 0.2 }
     })
+  })
+
+  const maximumSettings = (connection: ModelConnection) => {
+    const settings = settingsFor(connection)
+    settings.models.capabilityProfiles = {
+      m: { enabled: true, contextWindowMode: 'model-maximum', contextWindow: 4096,
+        tier: 'standard', toolCalling: 'text', reasoning: false, vision: false, costClass: 'low' }
+    }
+    return settings
+  }
+  const sendMaximum = async (settings: AppSettings, content = 'hi', signal?: AbortSignal) => {
+    let text = ''
+    for await (const chunk of streamProviderChat({
+      settings, model: 'm', messages: [{ role: 'user', content }],
+      temperature: 0, getSecret: noSecret, signal
+    } as never)) text += chunk
+    return text
+  }
+
+  it('uses the reported maximum over global, profile and connection limits with >128K input', async () => {
+    const fake = fakeOllama({ contextLength: 262144, maximumLoad: { loaded: 262144 } })
+    server = fake.server
+    const settings = maximumSettings(connectionAt(await start(server), { modelLimits: { m: { contextWindow: 8192 } } }))
+    const content = 'BEGIN EVIDENCE ' + 'x'.repeat(450000) + ' END EVIDENCE'
+    expect(await sendMaximum(settings, content)).toBe('hello')
+    expect(resolveRoutingCapabilityProfile(settings, 'm', { local: false, connection: settings.models.connections[0] }).contextWindow).toBe(262144)
+    expect(fake.seen.loads).toHaveLength(1)
+    expect(fake.seen.loads[0]).toMatchObject({ messages: [], options: { num_ctx: 262144 }, keep_alive: '30m' })
+    expect(fake.seen.chat[0]?.options.num_ctx).toBe(262144)
+    expect(fake.seen.chat[0]?.messages[0]?.content).toBe(content)
+    expect(contextProvenance(settings, 'm')).toMatchObject({
+      requestedContext: 262144, tokens: 262144, loaded: 262144, source: 'measured-allocation'
+    })
+    expect(resolveModelCapabilities(settings, 'm').promptBudget).toBe(modelInputBudget(262144, 16384))
+    await sendMaximum(settings)
+    expect(fake.seen.loads).toHaveLength(1) // live /api/ps avoids a redundant reload
+  })
+
+  it.each([8192, undefined])('refuses a smaller or unreported allocation (%s) before sending conversation data', async (loaded) => {
+    const fake = fakeOllama({ contextLength: 262144, maximumLoad: { loaded } })
+    server = fake.server
+    const settings = maximumSettings(connectionAt(await start(server)))
+    await expect(sendMaximum(settings)).rejects.toThrow(/Cannot allocate the maximum context/)
+    expect(fake.seen.chat).toHaveLength(0)
+    expect(fake.seen.v1).toBe(0)
+  })
+
+  it('stops on allocation failure without retrying a smaller window', async () => {
+    const fake = fakeOllama({ contextLength: 262144, maximumLoad: { error: 'out of memory' } })
+    server = fake.server
+    await expect(sendMaximum(maximumSettings(connectionAt(await start(server))))).rejects.toThrow(/Cannot allocate.*262,144/)
+    expect(fake.seen.loads).toHaveLength(1)
+    expect(fake.seen.chat).toHaveLength(0)
+  })
+
+  it('does not guess a maximum when model metadata is unavailable', async () => {
+    const fake = fakeOllama({ show: 404 })
+    server = fake.server
+    await expect(sendMaximum(maximumSettings(connectionAt(await start(server))))).rejects.toThrow(/Cannot read the maximum context/)
+    expect(fake.seen.loads).toHaveLength(0)
+    expect(fake.seen.v1).toBe(0)
+  })
+
+  it('bounds an advertised maximum above the product ceiling without falling to the default window', async () => {
+    const fake = fakeOllama({ contextLength: 4194304, maximumLoad: { loaded: 2097152 } })
+    server = fake.server
+    const settings = maximumSettings(connectionAt(await start(server)))
+    await sendMaximum(settings)
+    expect(fake.seen.chat[0]?.options.num_ctx).toBe(2097152)
+    expect(resolveModelCapabilities(settings, 'm').requestedContext).toBe(2097152)
+  })
+
+  it('restores configured limits when the profile is disabled', async () => {
+    const fake = fakeOllama({ contextLength: 262144 })
+    server = fake.server
+    const settings = maximumSettings(connectionAt(await start(server)))
+    settings.models.capabilityProfiles.m!.enabled = false
+    await sendMaximum(settings)
+    expect(fake.seen.loads).toHaveLength(0)
+    expect(fake.seen.chat[0]?.options.num_ctx).toBe(32768)
+  })
+
+  it('rejects maximum mode on a provider whose allocation Eris cannot control', async () => {
+    const fake = fakeOllama({})
+    server = fake.server
+    const connection = connectionAt(await start(server), { id: 'custom', provider: 'custom' })
+    await expect(sendMaximum(maximumSettings(connection))).rejects.toThrow(/requires a direct Ollama connection/)
+    expect(fake.seen.v1).toBe(0)
   })
 
   it('never asks for more than the setting or the model allows', async () => {

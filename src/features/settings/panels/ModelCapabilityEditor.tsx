@@ -86,8 +86,15 @@ function ProfileFields({ model, current, defaults, apply }: {
           <option value="native">Native</option><option value="text">Text</option><option value="none">None</option>
         </select>
       </label>
+      <label className="models-default-field"><span>Context sizing</span>
+        <select value={draft.contextWindowMode ?? 'configured'} onChange={(event) => setDraft({ ...draft, contextWindowMode: event.target.value as ModelCapabilityProfile['contextWindowMode'] })}>
+          <option value="configured">Configured limit</option>
+          <option value="model-maximum">Use model maximum (Ollama)</option>
+        </select>
+      </label>
+      {draft.contextWindowMode === 'model-maximum' && <p className="models-hint">Requests the maximum reported by Ollama and checks its loaded window before sending. Requires a directly connected Ollama server with model metadata and allocation reporting. A server memory or allocation failure stops the request. This can use more memory and take longer to load.</p>}
       <label className="models-default-field"><span>Context window</span>
-        <input type="number" required min={512} max={MAX_CONTEXT_TOKENS} value={draft.contextWindow || ''}
+        <input type="number" disabled={draft.contextWindowMode === 'model-maximum'} required min={512} max={MAX_CONTEXT_TOKENS} value={draft.contextWindow || ''}
           onChange={(event) => setDraft({ ...draft, contextWindow: Number(event.target.value) })} />
       </label>
       <label className="models-default-field"><span>Cost</span>

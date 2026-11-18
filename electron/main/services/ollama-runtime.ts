@@ -1,6 +1,6 @@
-import { parameterBillions, type ModelCapabilityEvidence } from '../../../src/shared/model-capability-profile'
+import { usesModelMaximum, parameterBillions, type ModelCapabilityEvidence } from '../../../src/shared/model-capability-profile'
 import { providerContext } from './provider-context'
-import { boundedContextWindow } from '../../../src/shared/model-context'
+import { MAX_CONTEXT_TOKENS, boundedContextWindow } from '../../../src/shared/model-context'
 import { logWarn } from './logger'
 import { ollamaNativeHost } from './ollama'
 import { resolveConnectionForModel } from './model-catalog'
@@ -162,7 +162,7 @@ export async function probeOllamaModel(
     const flags = Array.isArray(data?.capabilities) ? data.capabilities : null
     const parametersBillions = parameterBillions(data?.details?.parameter_size)
     capabilities = {
-      ...(maxContext ? { contextWindow: boundedContextWindow(maxContext) } : {}),
+      ...(maxContext ? { contextWindow: boundedContextWindow(Math.min(maxContext, MAX_CONTEXT_TOKENS)) } : {}),
       ...(flags ? {
         toolCalling: flags.includes('tools') ? 'native' : flags.includes('completion') ? 'text' : 'none',
         reasoning: flags.includes('thinking'),
@@ -205,7 +205,7 @@ export async function prepareModelWindows(
 }
 
 const windowFor = (requested: number, maxContext: number) =>
-  boundedContextWindow(requested, maxContext)
+  boundedContextWindow(requested, Math.min(maxContext, MAX_CONTEXT_TOKENS))
 
 /** How Eris sizes `num_ctx` on this connection. Eris Cloud is never fitted: its memory is not ours. */
 export function contextFitMode(connection: ModelConnection): 'fit' | 'max' | 'off' {
@@ -458,6 +458,9 @@ export function serverWindow(settings: AppSettings, model: string, requested: nu
         }
       : null
   const placement = ollamaPlacement(connection, model)
+  // Strict maximum mode is validated live before dispatch, never silently fitted down.
+  if (usesModelMaximum(settings, model) && placement?.loadedWindow !== target)
+    return { contextCeiling: target, contextSource: 'runtime-plan' as const }
   // A record from an earlier num_ctx says nothing about this request's window.
   return placement?.loadedWindow && placement.requestedWindow === target
     ? {
@@ -514,5 +517,72 @@ export async function observeOllamaPlacement(
       })
   } catch {
     /* Diagnostics only: an unanswered /api/ps must not fail a finished request. */
+  }
+}
+
+/** A reported model limit, never an inference from the model's name or GPU size. */
+export function ollamaMaximumContext(settings: AppSettings, model: string, required = true): number | undefined {
+  const connection = resolveConnectionForModel(settings, model)
+  if (!connection || !isOllamaConnection(connection) || isErisCloudConnection(connection)) {
+    if (!required) return undefined
+    throw new Error('Use model maximum requires a direct Ollama connection. Select a configured limit for this provider.')
+  }
+  const probe = probes.get(key(connection, model))
+  const maximum = probe && Date.now() - probe.at <= FACTS_TTL_MS ? probe.maxContext : undefined
+  if (!maximum || maximum < 512) {
+    if (!required) return undefined
+    throw new Error(`Cannot read the maximum context for ${model} from Ollama. Refresh the connection or select a configured limit.`)
+  }
+  return Math.min(maximum, MAX_CONTEXT_TOKENS)
+}
+
+/** Validate immediately before prompt packing/dispatch; old diagnostic records are insufficient. */
+export async function ensureMaximumContextAllocation(
+  settings: AppSettings,
+  model: string,
+  apiKey: string | null,
+  signal?: AbortSignal
+): Promise<void> {
+  if (!usesModelMaximum(settings, model)) return
+  const maximum = ollamaMaximumContext(settings, model)!
+  const connection = resolveConnectionForModel(settings, model)!
+  const loadedWindow = async () => {
+    const body = await apiRequest(connection, '/api/ps', apiKey, undefined, signal) as {
+      models?: Array<{ name?: string; model?: string; context_length?: number }>
+    }
+    const id = providerModelId(model)
+    return body.models?.find((item) => item.name === id || item.model === id)?.context_length
+  }
+  try {
+    if (await loadedWindow() === maximum) {
+      await observeOllamaPlacement(connection, model, maximum, apiKey)
+      return
+    }
+    // An empty native chat loads the requested runner without sending conversation data.
+    const timeout = AbortSignal.timeout(10 * 60_000)
+    const response = await fetch(`${ollamaNativeHost(connection.baseUrl)}/api/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+      },
+      body: JSON.stringify({
+        model: providerModelId(model), messages: [], stream: false,
+        options: { num_ctx: maximum },
+        keep_alive: connection.keepModelLoaded ? KEEP_LOADED_INDEFINITELY : ACTIVE_SESSION_KEEP_ALIVE
+      }),
+      redirect: 'error',
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout
+    })
+    if (!response.ok) throw new Error(`Ollama load failed (HTTP ${response.status})`)
+    const result = await response.json() as { error?: string }
+    if (result.error) throw new Error(result.error)
+    const loaded = await loadedWindow()
+    if (loaded !== maximum)
+      throw new Error(`requested ${maximum.toLocaleString()} tokens, loaded ${loaded?.toLocaleString() ?? 'an unreported window'}`)
+    await observeOllamaPlacement(connection, model, maximum, apiKey)
+  } catch (error) {
+    signal?.throwIfAborted()
+    throw new Error(`Cannot allocate the maximum context for ${model} (${maximum.toLocaleString()} tokens): ${error instanceof Error ? error.message : String(error)}. Check server memory and parallel slots, or select a configured limit.`, { cause: error })
   }
 }
