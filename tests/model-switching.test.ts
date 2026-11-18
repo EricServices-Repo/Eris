@@ -442,12 +442,14 @@ describe('provider setups at the production chat boundary', () => {
       expect(plan.error).toBeUndefined()
       expect(eligible).toContain(plan.models.chat)
       expect(task.authority.edit).toBe(false)
+      const { primary, fast } = plan.models
+      if (!primary || !fast) throw new Error('Auto did not resolve both parent model classes')
       const child = await planChatTurn({ ...input, context: {
         text: 'Review the file a.ts', mode: 'agent', selectedModel: policy, skipModelRouter: true,
-        inheritedModels: { primary: plan.models.primary, fast: plan.models.fast }
+        inheritedModels: { primary, fast }
       } })
       expect(child.error).toBeUndefined()
-      expect([plan.models.primary, plan.models.fast]).toContain(child.models.tools)
+      expect([primary, fast]).toContain(child.models.tools)
       const recovery = await decideMidRunAdapt({
         ...input, plan, selectedModel: plan.models.tools, startingModel: plan.models.tools,
         goal: text, rerouteCount: 0, actionLog: [], filesTouched: []
