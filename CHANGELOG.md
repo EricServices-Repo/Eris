@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.12 — 2026-11-17
+
+- Improved chat intake, proposal follow-ups, reasoning-only retries, and generated JSON checks.
+
 ## 0.7.11 — 2026-11-17
 
 - Refreshes the Eris Cloud catalog, removes stale hosted models, and improves task recovery and verification evidence.
