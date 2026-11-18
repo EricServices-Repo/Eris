@@ -35,6 +35,7 @@ import { streamOllamaChat } from './ollama-chat'
 import {
   ACTIVE_SESSION_KEEP_ALIVE,
   KEEP_LOADED_INDEFINITELY,
+  ensureMaximumContextAllocation,
   noteOllamaOutOfMemory,
   observeOllamaPlacement,
   ollamaRequestWindow,
@@ -581,9 +582,12 @@ export async function* streamProviderChat(
     dispatched('Provider request dispatched; network time is included')
     const windowRequest = {
       requested: capabilities.requestedContext,
-      explicit: requestedIsExplicit(options.settings, model)
+      explicit: requestedIsExplicit(options.settings, model),
+      modelMaximum: usesModelMaximum(options.settings, model)
     }
     let numCtx = ollamaRequestWindow(connection, model, windowRequest.requested, windowRequest)
+    if (windowRequest.modelMaximum && numCtx !== windowRequest.requested)
+      throw new Error(`Maximum context for ${model} changed before dispatch. Retry after refreshing the model metadata.`)
     const streamFor = (window: number | null) =>
       window === null
         ? streamOpenAICompatible
@@ -668,7 +672,7 @@ export async function* streamProviderChat(
         }
         break
       } catch (error) {
-        if (numCtx === null || !isOutOfMemoryError(error) || options.signal?.aborted) throw error
+        if (numCtx === null || windowRequest.modelMaximum || !isOutOfMemoryError(error) || options.signal?.aborted) throw error
         const smaller = noteOllamaOutOfMemory(connection, model, {
           requested: windowRequest.requested,
           window: numCtx

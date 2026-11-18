@@ -22,7 +22,10 @@ Before dispatch, Eris reads `/api/ps`. If necessary it loads the runner using an
 empty native chat at that exact `num_ctx`, then checks the reported loaded window.
 A missing maximum, missing allocation, smaller allocation, load error or timeout
 stops the request before conversation data is sent. There is no smaller-window
-retry in maximum mode. The empty load can take up to ten minutes and is cancellable.
+retry in maximum mode. This policy overrides connection Fit/Max: previously learned
+fits are ignored, and CPU spill or inference allocation failures do not record a
+smaller fit. Disabling the model profile resumes the connection's configured fitting
+policy. The empty load can take up to ten minutes and is cancellable.
 No VRAM-per-card restriction is applied; Ollama controls placement and parallel slots.
 A metadata maximum is a supported target, not proof it fits server memory.
 
