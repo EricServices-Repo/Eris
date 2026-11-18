@@ -3,7 +3,6 @@ import {
   closeSync,
   constants,
   fstatSync,
-  fsyncSync,
   mkdirSync,
   openSync,
   readSync,
@@ -120,7 +119,6 @@ function save(workspaceId: string, file: ProjectFactFile) {
     staged = true
     try {
       writeFileSync(fd, body, 'utf8')
-      fsyncSync(fd)
     } finally {
       closeSync(fd)
     }
