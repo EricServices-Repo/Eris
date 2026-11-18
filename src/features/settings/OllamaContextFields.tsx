@@ -12,8 +12,8 @@ export function placementText(item: ConnectionModelPlacement): string {
     share < 100
       ? `${item.model} is partly on CPU (${share}% in VRAM) and will run slower; ${window}.`
       : `${item.model} is fully in VRAM; ${window}.`
-  if (item.weightsExceedVram)
-    return `${placed} It does not fit in VRAM even at ${item.fittedWindow?.toLocaleString() ?? 'the smallest'} tokens, so layers run on the CPU. Use a smaller model or quantization.`
+  if (item.minimumWindowSpills)
+    return `${placed} The observed load still uses CPU memory at the minimum supported context. Review the server’s GPU allocation, other workloads, or model and cache quantization.`
   if (item.fittedWindow === undefined) return placed
   const why =
     item.fitReason === 'vram-plan'
@@ -72,7 +72,7 @@ export function OllamaContextFields({
         </select>
       </label>
       <label className="field">
-        <span>VRAM for this server, GiB (blank = this computer’s GPUs)</span>
+        <span>Total VRAM available to this server, GiB</span>
         <input
           type="number"
           min={1}
@@ -80,7 +80,7 @@ export function OllamaContextFields({
           step={1}
           disabled={busy || fit !== 'max'}
           value={value.vramGiB ?? ''}
-          placeholder="auto"
+          placeholder="Auto for loopback servers"
           onChange={(e) => {
             const gib = Number(e.target.value)
             onChange({
@@ -90,6 +90,12 @@ export function OllamaContextFields({
           }}
         />
       </label>
+      {fit === 'max' && (
+        <p className="models-hint">
+          Enter the combined VRAM of the GPUs assigned to this server. For a loopback server,
+          blank estimates the total from this computer’s detected GPUs.
+        </p>
+      )}
       {onRemeasure && fit !== 'off' && (
         <button type="button" className="btn" disabled={busy} onClick={onRemeasure}>
           Re-measure windows

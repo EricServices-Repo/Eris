@@ -6,7 +6,7 @@ import { ollamaNativeHost } from './ollama'
 import { resolveConnectionForModel } from './model-catalog'
 import { isLoopbackUrl } from '../../../src/shared/model-destination'
 import { isErisCloudConnection, providerModelId } from '../../../src/shared/eris-cloud'
-import { getGpuAccelStatus, gpusForVramShare, lastGpuAccelStatus } from './gpu-accel'
+import { getGpuAccelStatus, lastGpuAccelStatus } from './gpu-accel'
 import {
   estimateKvBytesPerToken,
   fitAfterOutOfMemory,
@@ -40,8 +40,8 @@ export type OllamaPlacement = {
   /** The window Eris now sends instead of the requested one (#677). */
   fittedWindow?: number
   fitReason?: FitReason
-  /** Even the smallest window spills: the weights alone exceed the server's VRAM. */
-  weightsExceedVram?: boolean
+  /** An observed load still spills at the minimum supported context. */
+  minimumWindowSpills?: boolean
 }
 
 type Probe = {
@@ -73,8 +73,12 @@ function currentFit(connection: ModelConnection, model: string, base: number) {
   return fit && fit.requested === base && fit.signature === fitSignature(connection) ? fit : undefined
 }
 /** Total size at each loaded window, newest last, for a measured per-token cost. */
-const loads = new Map<string, Array<{ window: number; sizeBytes: number }>>()
-const learnedCost = new Map<string, number>()
+const loads = new Map<string, { signature: string; samples: Array<{ window: number; sizeBytes: number }> }>()
+const learnedCost = new Map<string, { signature: string; bytes: number }>()
+function measuredKvCost(connection: ModelConnection, model: string): number | undefined {
+  const learned = learnedCost.get(key(connection, model))
+  return learned?.signature === fitSignature(connection) ? learned.bytes : undefined
+}
 const key = (connection: ModelConnection, model: string) =>
   `${ollamaNativeHost(connection.baseUrl)}\n${providerModelId(model)}`
 
@@ -262,17 +266,16 @@ export const placementsFor = (connection: ModelConnection) =>
             ...placement,
             fittedWindow: fit.window,
             fitReason: fit.reason,
-            ...(fit.weightsExceedVram ? { weightsExceedVram: true } : {})
+            ...(fit.minimumWindowSpills ? { minimumWindowSpills: true } : {})
           }
         : placement
     })
 
 /** KV cache bytes per token: measured across two loads, else estimated from `/api/show`. */
 export function kvBytesPerToken(connection: ModelConnection, model: string): number | null {
-  const name = key(connection, model)
   return (
-    learnedCost.get(name) ??
-    estimateKvBytesPerToken(probes.get(name)?.modelInfo, (connection.kvCacheType ?? 'f16') as KvCacheType)
+    measuredKvCost(connection, model) ??
+    estimateKvBytesPerToken(probes.get(key(connection, model))?.modelInfo, (connection.kvCacheType ?? 'f16') as KvCacheType)
   )
 }
 
@@ -284,18 +287,33 @@ export function serverVramBudget(
   if (!isLoopbackUrl(connection.baseUrl)) return null
   const gpu = lastGpuAccelStatus()
   if (!gpu) return null
-  const shared = gpusForVramShare(gpu.devices)
-  const bytes = gpu.vramShareTotalBytes ?? gpu.preferredGpu?.vramBytes
-  return bytes ? { bytes, gpuCount: Math.max(1, shared.length) } : null
+  // Ollama owns layer placement. Native GGUF's sharing flags and minimum-card
+  // threshold do not describe which GPUs this server can use.
+  const discrete = gpu.devices.filter((device) =>
+    (device.kind === 'discrete' || device.kind === 'external') &&
+    typeof device.vramBytes === 'number' && device.vramBytes > 0)
+  if (discrete.length) {
+    return {
+      bytes: discrete.reduce((total, device) => total + device.vramBytes!, 0),
+      gpuCount: discrete.length
+    }
+  }
+  // Unified memory is one pool, even when several integrated adapters are listed.
+  const bytes = gpu.preferredGpu?.vramBytes
+  return bytes ? { bytes, gpuCount: 1 } : null
 }
 
-function recordLoad(name: string, window: number, sizeBytes: number) {
-  const seen = (loads.get(name) ?? []).filter((item) => item.window !== window)
+function recordLoad(connection: ModelConnection, model: string, window: number, sizeBytes: number) {
+  const name = key(connection, model)
+  const signature = fitSignature(connection)
+  const previous = loads.get(name)
+  const seen = (previous?.signature === signature ? previous.samples : [])
+    .filter((item) => item.window !== window)
   seen.push({ window, sizeBytes })
-  loads.set(name, seen.slice(-4))
+  loads.set(name, { signature, samples: seen.slice(-4) })
   if (seen.length < 2) return
   const learned = learnedKvBytesPerToken(seen[seen.length - 2]!, seen[seen.length - 1]!)
-  if (learned) learnedCost.set(name, learned)
+  if (learned) learnedCost.set(name, { signature, bytes: learned })
 }
 
 /** After a load: shrink a window that spilled, or plan the largest one that fits (`max`). */
@@ -310,7 +328,7 @@ function updateFit(
   const maxContext = probes.get(name)?.maxContext
   if (mode === 'off' || !maxContext) return
   const window = placement.loadedWindow ?? placement.requestedWindow
-  recordLoad(name, window, placement.sizeBytes)
+  recordLoad(connection, model, window, placement.sizeBytes)
   const base = windowFor(request.requested, maxContext)
   const bytesPerToken = kvBytesPerToken(connection, model)
   const current = currentFit(connection, model, base)
@@ -336,14 +354,14 @@ function updateFit(
       requested: base,
       loaded: window,
       fitted: fit.window,
-      weightsExceedVram: fit.weightsExceedVram === true
+      minimumWindowSpills: fit.minimumWindowSpills === true
     })
     return
   }
   // An estimated cost can be wrong either way (sliding-window and compressed caches, a
   // parallel-slot server). Once a cost is measured, recompute the spill fit from the load
   // that spilled. This runs at most once per fit, so it cannot oscillate.
-  const measured = learnedCost.get(name)
+  const measured = measuredKvCost(connection, model)
   if (current?.spillAt && measured && current.bytesPerToken !== measured) {
     const refit = fitAfterSpill({ requested: base, ...current.spillAt, bytesPerToken: measured })
     if (refit) {

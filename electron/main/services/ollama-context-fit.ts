@@ -6,13 +6,15 @@
  * from `/api/show`. Everything here is pure; ollama-runtime.ts owns the state.
  */
 
+import { MIN_CONTEXT_TOKENS } from '../../../src/shared/model-context'
+
 const GIB = 1024 ** 3
 const MIB = 1024 ** 2
 
 /** Windows are rounded down to this, so a fit never asks for an odd size. */
 export const FIT_STEP_TOKENS = 1024
-/** A fit never goes below this (or below a smaller requested window). */
-export const MIN_FIT_WINDOW = 8192
+/** Lowest context supported by Eris; cache-heavy models may need less than 8K. */
+export const MIN_FIT_WINDOW = MIN_CONTEXT_TOKENS
 /** Slack added to a measured spill so the next load is not right at the edge. */
 export const SPILL_HEADROOM_BYTES = 256 * MIB
 /** Per-GPU allowance (CUDA context, compute graph) when planning from a VRAM total. */
@@ -94,7 +96,7 @@ export function learnedKvBytesPerToken(
 }
 
 export const roundDownToStep = (tokens: number) =>
-  Math.max(FIT_STEP_TOKENS, Math.floor(tokens / FIT_STEP_TOKENS) * FIT_STEP_TOKENS)
+  Math.max(MIN_FIT_WINDOW, Math.floor(tokens / FIT_STEP_TOKENS) * FIT_STEP_TOKENS)
 
 /** The smallest window a fit may choose for this request. */
 export const fitFloor = (requested: number) => Math.min(requested, MIN_FIT_WINDOW)
@@ -105,8 +107,8 @@ export type WindowFit = {
   /** The window to send instead of the requested one. */
   window: number
   reason: FitReason
-  /** The floor was reached and the model still does not fit: the weights alone are too big. */
-  weightsExceedVram?: boolean
+  /** An observed load still spills at the lowest supported context. */
+  minimumWindowSpills?: boolean
 }
 
 /**
@@ -123,14 +125,14 @@ export function fitAfterSpill(input: {
   const spill = input.sizeBytes - input.vramBytes
   if (!(spill > 0)) return null
   const floor = fitFloor(input.requested)
-  if (input.window <= floor) return { window: floor, reason: 'spill', weightsExceedVram: true }
+  if (input.window <= floor) return { window: floor, reason: 'spill', minimumWindowSpills: true }
   if (!input.bytesPerToken) {
     const halved = Math.max(floor, roundDownToStep(input.window / 2))
-    return { window: Math.min(halved, input.window - FIT_STEP_TOKENS), reason: 'spill' }
+    return { window: Math.max(floor, Math.min(halved, input.window - FIT_STEP_TOKENS)), reason: 'spill' }
   }
   const cut = Math.ceil((spill + SPILL_HEADROOM_BYTES) / input.bytesPerToken)
   const target = input.window - cut
-  if (target < floor) return { window: floor, reason: 'spill', weightsExceedVram: true }
+  if (target < floor) return { window: floor, reason: 'spill' }
   return {
     window: Math.max(floor, Math.min(roundDownToStep(target), input.window - FIT_STEP_TOKENS)),
     reason: 'spill'
@@ -166,8 +168,11 @@ export function planWindowForBudget(input: {
     PER_GPU_RESERVE_BYTES * Math.max(1, input.gpuCount) -
     fixed
   if (usable <= 0) return null
-  const tokens = roundDownToStep(usable / input.bytesPerToken)
-  return Math.max(fitFloor(input.requested), Math.min(tokens, input.maxContext, input.requested))
+  const affordable = usable / input.bytesPerToken
+  if (affordable < fitFloor(input.requested)) return null
+  const tokens = roundDownToStep(affordable)
+  const capped = Math.min(tokens, input.maxContext, input.requested)
+  return capped >= fitFloor(input.requested) ? capped : null
 }
 
 /** Matches the ways Ollama and llama.cpp report a failed allocation. */

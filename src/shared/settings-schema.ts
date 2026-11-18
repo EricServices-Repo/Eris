@@ -90,7 +90,7 @@ export const ModelConnectionSchema = z.object({
   contextFit: z.enum(['fit', 'max', 'off']).optional(),
   /** Ollama: the server's OLLAMA_KV_CACHE_TYPE, for KV cache estimates. Default f16. */
   kvCacheType: z.enum(['f16', 'q8_0', 'q4_0']).optional(),
-  /** Ollama: VRAM the server may use, in GiB. A loopback server defaults to this computer's GPUs. */
+  /** Ollama: Total VRAM across GPUs assigned to this server, in GiB. Overrides loopback device estimates. */
   vramGiB: z.number().min(1).max(4096).optional(),
   /** Model reasoning (#573): how much to ask for, and whether to show it under Thinking. */
   reasoning: z
@@ -499,8 +499,8 @@ export type ConnectionModelPlacement = {
   /** The window Eris now sends instead of the requested one (#677). */
   fittedWindow?: number
   fitReason?: 'spill' | 'out-of-memory' | 'vram-plan'
-  /** Even the smallest window spills: the weights alone exceed the server's VRAM. */
-  weightsExceedVram?: boolean
+  /** An observed load still spills at the minimum supported context. */
+  minimumWindowSpills?: boolean
 }
 
 export interface ModelsStatus {

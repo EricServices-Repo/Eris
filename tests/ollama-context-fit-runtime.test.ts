@@ -25,7 +25,8 @@ import {
   kvBytesPerToken,
   ollamaRequestWindow,
   placementsFor,
-  prepareModelWindows
+  prepareModelWindows,
+  serverVramBudget
 } from '../electron/main/services/ollama-runtime'
 import { MIN_FIT_WINDOW } from '../electron/main/services/ollama-context-fit'
 import type { AppSettings, ModelConnection } from '../src/shared/settings-schema'
@@ -211,11 +212,11 @@ describe('fit (default)', () => {
     expect(22 * GIB + (last + 1024) * real + 256 * 1024 ** 2).toBeGreaterThan(24 * GIB)
   })
 
-  it('stops at the floor and reports weights that do not fit', async () => {
+  it('reports the observed CPU spill at the minimum supported context', async () => {
     const { seen, settings, connection } = await setup({ weights: 30 * GIB, vram: 24 * GIB })
     for (let i = 0; i < 3; i++) await send(settings)
     expect(seen.numCtx).toEqual([131072, MIN_FIT_WINDOW, MIN_FIT_WINDOW])
-    expect(placementsFor(connection)[0]).toMatchObject({ weightsExceedVram: true, fittedWindow: MIN_FIT_WINDOW })
+    expect(placementsFor(connection)[0]).toMatchObject({ minimumWindowSpills: true, fittedWindow: MIN_FIT_WINDOW })
   })
 
   it('applies a fit only to the requested window it was made for', async () => {
@@ -280,13 +281,15 @@ describe('max', () => {
         { name: 'RTX 3060', kind: 'discrete', vramBytes: 12 * GIB, index: 0 },
         { name: 'RTX 3060', kind: 'discrete', vramBytes: 12 * GIB, index: 1 }
       ],
-      vramShareTotalBytes: 24 * GIB
+      preferredGpu: { name: 'RTX 3060', kind: 'discrete', vramBytes: 12 * GIB, index: 0 },
+      vramShareTotalBytes: undefined
     }
     const { settings, connection } = await setup(
       { weights: 19 * GIB, vram: 24 * GIB },
       { contextFit: 'max' },
       16384
     )
+    expect(serverVramBudget(connection)).toEqual({ bytes: 24 * GIB, gpuCount: 2 })
     await send(settings)
     const planned = ollamaRequestWindow(connection, 'm', 16384)!
     expect(planned).toBeGreaterThan(16384)
@@ -348,6 +351,63 @@ describe('max', () => {
   })
 })
 
+describe('server capacity and fit measurement boundaries', () => {
+  it('includes a 4-GiB card and honors a declared server subset', () => {
+    const devices = [
+      { name: 'RTX 3060', kind: 'discrete', vramBytes: 12 * GIB, index: 0 },
+      { name: 'RTX 3050', kind: 'discrete', vramBytes: 4 * GIB, index: 1 }
+    ]
+    gpu.status = { devices, preferredGpu: devices[0], vramShareTotalBytes: undefined }
+    const connection = connectionAt('http://127.0.0.1:11434/v1')
+    expect(serverVramBudget(connection)).toEqual({ bytes: 16 * GIB, gpuCount: 2 })
+    expect(serverVramBudget({ ...connection, vramGiB: 12 })).toEqual({ bytes: 12 * GIB, gpuCount: 1 })
+    expect(serverVramBudget(connectionAt('http://192.168.1.2:11434/v1'))).toBeNull()
+  })
+
+  it('does not multiply a unified memory pool', () => {
+    gpu.status = {
+      devices: [0, 1].map((index) => ({ name: 'Integrated', kind: 'integrated', vramBytes: 24 * GIB, index })),
+      preferredGpu: { vramBytes: 24 * GIB }
+    }
+    expect(serverVramBudget(connectionAt('http://localhost:11434/v1')))
+      .toEqual({ bytes: 24 * GIB, gpuCount: 1 })
+  })
+
+  it('fits a model below 8K without claiming its weights exceed VRAM', async () => {
+    const { settings, connection, seen } = await setup(
+      { weights: 23.5 * GIB, vram: 24 * GIB }, {}, 32768
+    )
+    await send(settings)
+    expect(placementsFor(connection)[0]?.minimumWindowSpills).toBeUndefined()
+    await send(settings)
+    expect(seen.numCtx[1]).toBeLessThan(8192)
+    expect(23.5 * GIB + seen.numCtx[1]! * PER_TOKEN).toBeLessThanOrEqual(24 * GIB)
+    expect(placementsFor(connection)[0]?.minimumWindowSpills).toBeUndefined()
+    expect(resolveModelCapabilities(settings, 'm').contextCeiling).toBe(seen.numCtx[1])
+  })
+
+  it('relearns the KV cost without mixing samples from different cache settings', async () => {
+    const fake = { weights: 19 * GIB, vram: 24 * GIB, perToken: PER_TOKEN }
+    const { settings, connection } = await setup(fake)
+    await send(settings)
+    await send(settings)
+    expect(kvBytesPerToken(connection, 'm')).toBe(PER_TOKEN)
+    connection.kvCacheType = 'q4_0'
+    fake.perToken = PER_TOKEN * 18 / 64
+    expect(kvBytesPerToken(connection, 'm')).toBe(fake.perToken)
+    await send(settings)
+    expect(kvBytesPerToken(connection, 'm')).toBe(fake.perToken)
+    settings.models.contextWindow = 65536
+    await send(settings)
+    expect(kvBytesPerToken(connection, 'm')).toBe(fake.perToken)
+    // This change also invalidates fits and measurements for the old device budget.
+    connection.vramGiB = 24
+    expect(kvBytesPerToken(connection, 'm')).toBe(fake.perToken)
+    await send(settings)
+    expect(kvBytesPerToken(connection, 'm')).toBe(fake.perToken)
+  })
+})
+
 describe('out of memory', () => {
   it('retries only once', async () => {
     const { seen, settings, connection } = await setup({ weights: 19 * GIB, vram: 24 * GIB, refuseAbove: 24 * GIB })
@@ -373,6 +433,15 @@ describe('out of memory', () => {
     )
     expect(seen.numCtx).toEqual([131072])
     expect(ollamaRequestWindow(connection, 'm', 131072)).toBe(65536)
+  })
+
+  it('recovers below 8K when the weights fit and only the cache is too large', async () => {
+    const { seen, settings } = await setup(
+      { weights: 23.5 * GIB, vram: 24 * GIB, refuseAbove: 24 * GIB }, {}, 8192
+    )
+    expect(await send(settings)).toBe('ok')
+    expect(seen.numCtx).toEqual([8192, 4096])
+    expect(resolveModelCapabilities(settings, 'm').contextCeiling).toBe(4096)
   })
 
   it('keeps the original error as the cause', async () => {

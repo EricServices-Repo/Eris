@@ -160,10 +160,10 @@ describe('fitAfterSpill', () => {
     ).toEqual({ window: 32768, reason: 'spill' })
     expect(
       fitAfterSpill({ requested: 12288, window: 12288, sizeBytes: 2, vramBytes: 1, bytesPerToken: null })
-    ).toEqual({ window: MIN_FIT_WINDOW, reason: 'spill' })
+    ).toEqual({ window: 6144, reason: 'spill' })
   })
 
-  it('stops at the floor and reports weights that cannot fit', () => {
+  it('reports minimum-context spill only after an observed load at the floor', () => {
     const tooBig = fitAfterSpill({
       requested: 32768,
       window: 32768,
@@ -171,7 +171,7 @@ describe('fitAfterSpill', () => {
       vramBytes: 24 * GIB,
       bytesPerToken: perToken
     })
-    expect(tooBig).toEqual({ window: MIN_FIT_WINDOW, reason: 'spill', weightsExceedVram: true })
+    expect(tooBig).toEqual({ window: MIN_FIT_WINDOW, reason: 'spill' })
     const atFloor = fitAfterSpill({
       requested: 32768,
       window: MIN_FIT_WINDOW,
@@ -179,22 +179,25 @@ describe('fitAfterSpill', () => {
       vramBytes: 1,
       bytesPerToken: null
     })
-    expect(atFloor).toEqual({ window: MIN_FIT_WINDOW, reason: 'spill', weightsExceedVram: true })
+    expect(atFloor).toEqual({ window: MIN_FIT_WINDOW, reason: 'spill', minimumWindowSpills: true })
   })
 
-  it('never goes below a requested window that is already under the floor', () => {
+  it('continues shrinking below 8K and handles a window smaller than one fit step', () => {
     expect(
       fitAfterSpill({ requested: 4096, window: 4096, sizeBytes: 2, vramBytes: 1, bytesPerToken: null })
-    ).toEqual({ window: 4096, reason: 'spill', weightsExceedVram: true })
+    ).toEqual({ window: 2048, reason: 'spill' })
+    expect(fitAfterSpill({ requested: 768, window: 768, sizeBytes: 2, vramBytes: 1, bytesPerToken: null }))
+      .toEqual({ window: MIN_FIT_WINDOW, reason: 'spill' })
   })
 })
 
 describe('fitAfterOutOfMemory', () => {
   it('halves down to the floor, then gives up', () => {
     expect(fitAfterOutOfMemory(131072, 131072)).toEqual({ window: 65536, reason: 'out-of-memory' })
-    expect(fitAfterOutOfMemory(32768, 12288)).toEqual({ window: MIN_FIT_WINDOW, reason: 'out-of-memory' })
+    expect(fitAfterOutOfMemory(32768, 12288)).toEqual({ window: 6144, reason: 'out-of-memory' })
     expect(fitAfterOutOfMemory(32768, MIN_FIT_WINDOW)).toBeNull()
-    expect(fitAfterOutOfMemory(4096, 4096)).toBeNull()
+    expect(fitAfterOutOfMemory(4096, 4096)).toEqual({ window: 2048, reason: 'out-of-memory' })
+    expect(fitAfterOutOfMemory(768, 768)).toEqual({ window: MIN_FIT_WINDOW, reason: 'out-of-memory' })
   })
 })
 

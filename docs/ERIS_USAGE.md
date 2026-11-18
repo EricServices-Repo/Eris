@@ -150,3 +150,5 @@ Local models and your own providers don't count toward the allowance. Without an
 | Request completion | ⌥\ | Alt+\ |
 | Go to definition | F12 | F12 |
 | Send message / new line | Enter / Shift+Enter | Enter / Shift+Enter |
+
+Ollama’s VRAM field is the total available across all GPUs assigned to that server. Leave it blank for a loopback estimate from detected GPUs, or enter a total when the server has a restricted GPU set. The **Largest that fits** option expands context up to the model limit and any explicit per-model limit. Automatic fitting can reduce context below 8K when needed, down to 512 tokens. The minimum-context warning describes an observed CPU spill and does not establish a limit on model weight size.
