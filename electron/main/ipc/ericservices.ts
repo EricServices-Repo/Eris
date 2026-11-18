@@ -58,6 +58,12 @@ export function registerEricServicesIpc(): void {
     const base = buildEricServicesStatus(settings, Boolean(token))
     if (opts?.cached || !token || !settings.ericServices.linked) return base
     const me = await ericServicesFetchMe(settings.ericServices.apiBase, token)
+    const stillCurrent = () => {
+      const current = getResolvedSettings(appState.currentWorkspace).ericServices
+      return current.linked && current.apiBase === settings.ericServices.apiBase &&
+        current.tokenRef === settings.ericServices.tokenRef && getSecret(current.tokenRef) === token
+    }
+    if (!stillCurrent()) return buildEricServicesStatus(getResolvedSettings(appState.currentWorkspace), false)
     if (!me.ok) {
       const needsReauth = isEricServicesAuthFailure(me.error, me.status)
       return {
@@ -92,7 +98,8 @@ export function registerEricServicesIpc(): void {
     }
     return {
       ...buildEricServicesStatus(getResolvedSettings(appState.currentWorkspace), true),
-      profile: me.profile ?? null
+      profile: me.profile ?? null,
+      hostedAllowance: stillCurrent() ? me.hostedModels?.allowance : undefined
     }
   })
 

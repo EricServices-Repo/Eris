@@ -92,6 +92,23 @@ export async function modelErrorSnippet(response: Response, signal?: AbortSignal
   }
 }
 
+export async function modelConnectionError(
+  response: Response, signal?: AbortSignal, erisCloud?: boolean
+): Promise<Error> {
+  const text = await modelErrorSnippet(response, signal)
+  if (erisCloud && response.status === 429) {
+    let code: unknown
+    try {
+      code = JSON.parse(text)?.error?.code
+    } catch { /* The edge can return a non-JSON rate-limit response. */ }
+    if (code === 'weekly_token_limit')
+      return new Error('Eris Cloud Free has too few tokens remaining for this request. Choose a local model or another provider, upgrade to Pro, or try again when your weekly allowance frees up.')
+    if (code === 'hosted_concurrency_limit')
+      return new Error('Eris Cloud Free already has a request in progress on this account. Try again when it finishes.')
+  }
+  return new Error(`Model connection failed: HTTP ${response.status} ${text}`)
+}
+
 export async function* streamOpenAICompatible(options: {
   baseUrl: string
   apiKey?: string | null
@@ -102,6 +119,7 @@ export async function* streamOpenAICompatible(options: {
   signal?: AbortSignal
   /** A destination cleared for recall must not hand the request to another host. */
   refuseRedirects?: boolean
+  erisCloud?: boolean
   onUsage?: (usage: OpenAIStreamUsage) => void
   /** The stream's finish_reason (if any) and whether it ended with a finish signal or [DONE]. */
   onFinish?: (finishReason: string | null, complete: boolean, failure?: ApiStreamFailure) => void
@@ -153,8 +171,7 @@ export async function* streamOpenAICompatible(options: {
   })
 
   if (!res.ok || !res.body) {
-    const text = await modelErrorSnippet(res, options.signal)
-    throw new Error(`Model connection failed: HTTP ${res.status} ${text}`)
+    throw await modelConnectionError(res, options.signal, options.erisCloud)
   }
 
   const reader = res.body.getReader()

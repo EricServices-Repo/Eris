@@ -39,10 +39,8 @@ export type ErisPlanProfileFields = {
 /**
  * Default Free tier caps, applied to a rolling 30-day window.
  *
- * Local Composer Lite runs on the user's own machine and costs us nothing, so
- * chat requests and tokens are UNLIMITED on Free (null). Only Cloud Agent jobs —
- * the one thing that spends our compute — are capped. Server-side enforcement
- * lives on www.ericservic.es; the client meters cloud jobs as the local proxy.
+ * Chat usage on local models and user-owned providers is unlimited. Eris Cloud
+ * inference uses a separate rolling seven-day allowance enforced by its gateway.
  */
 export const FREE_PLAN_LIMITS: ErisPlanLimits = {
   dailyRequests: null,

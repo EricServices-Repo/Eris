@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { UsageDestination, UsageSnapshot } from '@/shared/api'
-import { isErisCloudModelRef } from '@/shared/eris-cloud'
+import { isErisCloudModelRef, type ErisHostedModels } from '@/shared/eris-cloud'
 import { ERIS_CLOUD_WEEKLY_TOKEN_LIMIT } from '@/shared/eris-plan'
 import { isNativeGgufRef } from '@/shared/model-destination'
 import './weekly-usage.css'
@@ -43,6 +43,7 @@ function dayUsage(day: UsageSnapshot['days'][number]) {
 
 export function UsagePanel() {
   const [stats, setStats] = useState<UsageSnapshot | null>(null)
+  const [hostedAllowance, setHostedAllowance] = useState<ErisHostedModels['allowance']>()
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -50,7 +51,8 @@ export function UsagePanel() {
     setBusy(true)
     setError(null)
     try {
-      await window.ide.ericServicesStatus().catch(() => undefined)
+      const account = await window.ide.ericServicesStatus().catch(() => undefined)
+      setHostedAllowance(account?.ok && account.linked ? account.hostedAllowance : undefined)
       setStats(await window.ide.getUsageStats(7, { refresh: false }))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load usage')
@@ -207,7 +209,9 @@ export function UsagePanel() {
                 )}
               </div>
               <div>
-                {ERIS_CLOUD_WEEKLY_TOKEN_LIMIT[plan] === null
+                {plan === 'free' && entitlement?.authenticated && entitlement.plan === 'free' && hostedAllowance
+                  ? `${numberFormat.format(hostedAllowance.remaining)} of ${numberFormat.format(hostedAllowance.limit)} cloud tokens remaining`
+                  : ERIS_CLOUD_WEEKLY_TOKEN_LIMIT[plan] === null
                   ? 'Unlimited cloud tokens'
                   : `${compactFormat.format(ERIS_CLOUD_WEEKLY_TOKEN_LIMIT.free)} cloud tokens per week`}
               </div>
