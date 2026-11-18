@@ -229,3 +229,5 @@ The orchestrator is displayed as **Agent**. Its persisted agent ID remains `comp
 ### Queued chat messages
 
 While a reply is streaming, the app saves the queued text, attachments, skills, mode and model selection in the main process with the original workspace, chat, and request ID. The selected chat can continue its queue after a successful reply. After stopping, switching chats, or reloading, return to that chat and select **Send next**. Removing an item cancels it before admission. A retry of an already admitted item reuses the existing job and transcript entry.
+
+Verification evidence records an empty or entirely skipped test suite as skipped. A failing command remains failed when its output merely mentions the absence of tests. Typechecks and unscoped test commands record project-level evidence.
