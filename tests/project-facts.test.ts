@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   truncateSync,
@@ -13,7 +14,17 @@ import {
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 
-const h = vi.hoisted(() => ({ root: '', workspaces: new Map<string, string>() }))
+const h = vi.hoisted(() => ({ root: '', workspaces: new Map<string, string>(), failRename: false }))
+vi.mock('fs', async (original) => {
+  const actual = await original<typeof import('fs')>()
+  return {
+    ...actual,
+    renameSync: (...paths: Parameters<typeof actual.renameSync>) => {
+      if (h.failRename) throw Object.assign(new Error('rename interrupted'), { code: 'EACCES' })
+      return actual.renameSync(...paths)
+    }
+  }
+})
 vi.mock('../electron/main/services/paths', async (original) => ({
   ...(await original<object>()),
   userDataRoot: () => h.root
@@ -312,4 +323,30 @@ describe('approved project facts inside a running task', () => {
     const messages = run()
     expect(eligibleProjectFacts(messages, LOCAL, settings()).messages).toBe(messages)
   })
+})
+
+it('refuses duplicate fact IDs so revoking one row cannot leave a shadow active row', () => {
+  const original = promote()
+  const path = join(h.root, 'project-facts', 'workspace-a.json')
+  const corrupt = JSON.stringify({ version: 1, facts: [original, { ...original, text: 'Shadow record' }] })
+  writeFileSync(path, corrupt)
+  expect(() => revokeProjectFact('workspace-a', original.id)).toThrow('duplicate fact IDs')
+  expect(activeProjectFacts('workspace-a')).toEqual([])
+  expect(readFileSync(path, 'utf8')).toBe(corrupt)
+})
+
+it('preserves old facts and removes the staged update after an interrupted rename', () => {
+  const original = promote()
+  const storage = join(h.root, 'project-facts')
+  const path = join(storage, 'workspace-a.json')
+  const before = readFileSync(path, 'utf8')
+  h.failRename = true
+  try {
+    expect(() => promote('A replacement fact', original.id)).toThrow('The previous facts were kept')
+    expect(readFileSync(path, 'utf8')).toBe(before)
+    expect(readdirSync(storage)).toEqual(['workspace-a.json'])
+  } finally {
+    h.failRename = false
+  }
+  expect(promote('A replacement fact', original.id).status).toBe('active')
 })

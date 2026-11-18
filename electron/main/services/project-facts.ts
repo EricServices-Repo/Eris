@@ -3,6 +3,7 @@ import {
   closeSync,
   constants,
   fstatSync,
+  fsyncSync,
   mkdirSync,
   openSync,
   readSync,
@@ -51,7 +52,10 @@ function read(workspaceId: string): Read {
       offset += received
     }
     if (offset !== info.size) return { unreadable: 'its size changed while it was being read' }
-    return { file: ProjectFactFileSchema.parse(JSON.parse(bytes.toString('utf8', 0, offset))) }
+    const file = ProjectFactFileSchema.parse(JSON.parse(bytes.toString('utf8', 0, offset)))
+    if (new Set(file.facts.map((fact) => fact.id)).size !== file.facts.length)
+      return { unreadable: 'it contains duplicate fact IDs' }
+    return { file }
   } catch (error) {
     if (fd === undefined && (error as NodeJS.ErrnoException).code === 'ENOENT')
       return { file: { version: 1, facts: [] } }
@@ -109,15 +113,25 @@ function save(workspaceId: string, file: ProjectFactFile) {
     2
   )
   const next = `${path}.${randomUUID()}.tmp`
+  let staged = false
   try {
     mkdirSync(join(userDataRoot(), 'project-facts'), { recursive: true })
-    writeFileSync(next, body, 'utf8')
+    const fd = openSync(next, 'wx', 0o600)
+    staged = true
+    try {
+      writeFileSync(fd, body, 'utf8')
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
     renameSync(next, path)
   } catch (error) {
-    try {
-      unlinkSync(next)
-    } catch {
-      /* never created */
+    if (staged) {
+      try {
+        unlinkSync(next)
+      } catch {
+        /* The filesystem may also refuse cleanup. */
+      }
     }
     const code = (error as NodeJS.ErrnoException).code
     throw new Error(
