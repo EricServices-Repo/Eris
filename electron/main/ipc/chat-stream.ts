@@ -180,7 +180,6 @@ export function registerChatStreamIpc(): void {
         const history = payload.prompt?.history
         const plan = await planInitialChatTurn({
           requestId: payload.requestId,
-          deferAutoWorker: true,
           workspacePath,
           settings: getResolvedSettings(workspacePath),
           text: userText,
@@ -415,7 +414,6 @@ export function registerChatStreamIpc(): void {
           let turnPlan: TurnPlan
           const turnInput: ChatTurnInput = {
             requestId,
-            deferAutoWorker: true,
             workspacePath,
             settings,
             text: userText,

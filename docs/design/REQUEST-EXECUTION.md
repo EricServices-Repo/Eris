@@ -12,6 +12,8 @@ The 2026-11-06 router architecture review (findings R01–R12, now in git histor
 
 Explicit “explain how to implement” questions without a separate edit clause start as read-only, so the resolver does not need a model call to correct them. This is a narrow routing rule; general candidate-versus-resolved-operation consolidation remains future work.
 
+Auto intake in chat and diagnostics keeps the lexical operation provisional. A resident native model may resolve ambiguity without a new load. Worker ranking and context preparation use the resolved operation, and the route decision records both operations. Page selection supplies a target to the same final task contract.
+
 1. Load canonical recent history and calculate the initial route using existing policy.
 2. Bind historical recommendation/file-proposal references before semantic inference. Source eligibility, project identity and remote disclosure restrictions remain enforced by the existing binder.
 3. Resolve explicit file-creation operands with the pure `resolveFileRequest` helper. Equivalent wording such as “generate those files here in the project” does not require a classification model. Multiple recent file lists remain ambiguous. An unavailable durable binding cannot fall back to incidental prose.

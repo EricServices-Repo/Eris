@@ -21,6 +21,13 @@ export function helperModel(
     Boolean(model) && !workspaceLocalityViolation(settings, model) &&
     (plan.modelExecution?.policy !== 'auto-local' || executionLocal(settings, model))
 
+  // Auto intake has a lexical plan without a worker. A resident native model
+  // can classify it without loading a model based on that provisional intent.
+  if (!worker && purpose === 'resolve' && plan.modelExecution?.policy.startsWith('auto-')) {
+    const resident = currentLoadedModel()?.ref
+    return resident && isNativeGgufRef(resident) && allowed(resident) ? resident : undefined
+  }
+
   let model = allowed(preferred) ? preferred : worker
   // Do not send local work to a remote helper.
   if (worker && executionLocal(settings, worker) && !executionLocal(settings, model)) model = worker

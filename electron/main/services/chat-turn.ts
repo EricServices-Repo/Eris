@@ -52,7 +52,6 @@ export interface ChatTurnInput {
   mode?: 'ask' | 'agent'
   manualAgentId?: string | null
   fileNames?: string[]
-  deferAutoWorker?: boolean
   openFilePath?: string
   askTarget?: (question: string, choices: string[]) => Promise<string | null>
   previousAgentId?: string | null
@@ -83,7 +82,7 @@ function previousMessages(history: ChatPromptInput['history'] | undefined) {
 /** Deterministic first route for the turn; the model router is skipped as in chat. */
 export function planInitialChatTurn(input: ChatTurnInput): Promise<TurnPlan> {
   return planChatTurn({
-    deferAutoWorker: input.deferAutoWorker,
+    deferAutoWorker: true,
     workspacePath: input.workspacePath,
     settings: input.settings,
     context: {
@@ -123,7 +122,7 @@ export async function resolveChatTurnContract(
   } catch {
     /* reported by runtime */
   }
-  const deferred = input.deferAutoWorker === true && !initial.models.chat && !initial.error
+  const deferred = !initial.models.chat && !initial.error && initial.modelExecution?.policy !== 'fixed'
   let references = input.referenceBinding
   if (!references && input.threadId && input.priorTask === undefined) {
     try {
@@ -163,14 +162,15 @@ export async function resolveChatTurnContract(
     openFilePath: input.openFilePath,
     priorTask
   }
-  let pageTask = plan.mode === 'agent' && plan.intent === 'edit' && implicitHtmlElement(input.text)
+  const pageTask = plan.mode === 'agent' && plan.intent === 'edit' && implicitHtmlElement(input.text)
     ? createTaskContract({ ...taskInput, plan }) : undefined
+  let selectedEditTarget: string | undefined
   const question = pageTask?.requested?.targetQuestion
   if (question && input.askTarget) {
     const reply = await input.askTarget(question.text, question.choices)
     input.signal?.throwIfAborted()
     if (reply && question.choices.includes(reply))
-      pageTask = createTaskContract({ ...taskInput, plan, selectedEditTarget: reply })
+      selectedEditTarget = reply
   }
   const pageBound = pageTask?.requested?.targetQuestion || pageTask?.requested?.targetReason
   const selectedHelper = helperModel(input.settings, plan, 'resolve')
@@ -236,7 +236,7 @@ export async function resolveChatTurnContract(
     })
   }
   if (resolution.source === 'semantic') plan = { ...plan, models: { ...plan.models, coordinator: coordinatorModel } }
-  const task = pageBound && pageTask ? pageTask : createTaskContract({ ...taskInput, plan, resolution })
+  const task = createTaskContract({ ...taskInput, plan, resolution, selectedEditTarget })
   plan.task = task
   // Reference and scope problems are cheap intake results, not model-load requests.
   const preparationModels = !plan.error && !taskIntakeBlocked(task, plan.mode) &&

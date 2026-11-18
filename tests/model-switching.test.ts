@@ -2,7 +2,7 @@ import { resolveTaskDecision } from '../electron/main/services/task-resolver'
 import { LocalModelWorkerError } from '../electron/main/services/llama-worker-channel'
 import { modelInputBudget } from '../src/shared/model-context'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 const h = vi.hoisted(() => ({
@@ -187,7 +187,7 @@ describe('coordinator to worker at the actual transport boundary', () => {
     })
     const input = { requestId: 'deferred-edit', workspacePath: root, settings: s,
       text: 'Implement these improvements in index.ts', model: 'auto-local', mode: 'agent' as const,
-      getSecret: () => null, deferAutoWorker: true, history: [
+      getSecret: () => null, history: [
         { role: 'assistant' as const, content: '1. Add validation in index.ts.' }
       ] }
     const initial = await planInitialChatTurn(input)
@@ -209,12 +209,32 @@ describe('coordinator to worker at the actual transport boundary', () => {
       getSecret: () => null, history: [] }
     const initial = await planInitialChatTurn(input)
     expect(initial.intent).toBe('answer')
+    expect(initial.models.chat).toBe('')
+    expect(initial.modelExecution?.candidates).toEqual([])
     expect(h.warm).toEqual([])
     const result = await resolveChatTurnContract(input, initial)
     expect(result.task.authority.edit).toBe(false)
     expect(result.task.deliverable).toBe('answer')
     expect(h.warm).toEqual([])
   })
+  it('compiles the chosen page into the final, resolved task', async () => {
+    writeFileSync(join(root, 'index.html'), '<main>Home</main>')
+    writeFileSync(join(root, 'about.html'), '<main>About</main>')
+    const askTarget = vi.fn(async () => 'about.html')
+    const input = { requestId: 'choose-page', workspacePath: root, settings: settings(),
+      text: 'Add a footer', model: 'auto-local', mode: 'agent' as const, askTarget,
+      getSecret: () => null }
+    const initial = await planInitialChatTurn(input)
+    expect(initial.models.tools).toBe('')
+    const { plan, task, resolution } = await resolveChatTurnContract(input, initial)
+    expect(askTarget).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('footer'), ['about.html', 'index.html'])
+    expect(task.requested).toMatchObject({ targetFiles: ['about.html'], state: 'resolved' })
+    expect(task.authority.edit).toBe(true)
+    expect(task.interpretation?.resolution).toEqual(resolution)
+    expect(resolution.rule).toBe('html-target-intake')
+    expect(plan.task).toBe(task)
+  })
+
   it.each([
     ['What is a reasonable way to organize a small application?', false],
     ['Give me an idea for organizing a small application.', true]
@@ -243,7 +263,7 @@ describe('coordinator to worker at the actual transport boundary', () => {
           workspacePath: root,
           settings: s,
           text,
-          model: 'auto-local',
+          model: 'local:worker',
           mode: 'agent' as const,
           getSecret: () => null,
           history: []
