@@ -76,11 +76,12 @@ export async function bindTaskReferences(input: {
     [AbortSignal.timeout(input.settings.agent.contextMemory.foregroundDeadlineMs)]
   )
   let eligible = result.sources.filter((source) => source.recommendations.length)
+  // An unavailable source cannot prove that the surviving batch is the intended one.
+  if (!explicit.length && eligible.length && eligible.length !== candidates.length)
+    return fail('Some recommendation sources are unavailable. Which recommendations should I use? Reply with their IDs or restate the requested changes.', 'ambiguous')
   // “Latest improvements” explicitly names a source in conversation order,
   // independent of the order in which asynchronous catalog entries were saved.
   if (!explicit.length && /\b(?:latest|most\s+recent)\s+(?:recommendations?|improvements?|suggestions?|changes?|fixes?)\b/i.test(input.text)) {
-    if (eligible.length !== candidates.length)
-      return fail('Some recommendation sources are unavailable; clarify which improvements to implement.')
     eligible = [...eligible].sort((a, b) => b.ordinal - a.ordinal).slice(0, 1)
   }
   if (!eligible.length)
@@ -93,8 +94,8 @@ export async function bindTaskReferences(input: {
         'Older recommendation sources are local-only. Choose a local model or explicitly enable remote recall.'
       )
     const choices = eligible
-      .slice(-4)
-      .reverse()
+      .sort((a, b) => b.ordinal - a.ordinal)
+      .slice(0, 4)
       .map((source, index) => {
         const items = source.recommendations
           .slice(0, 4)

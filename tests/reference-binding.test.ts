@@ -170,6 +170,23 @@ it('describes ambiguous recommendations with usable item IDs', async () => {
   expect(resolved.binding.reason).not.toContain('new:assistant')
   expect(taskFor(resolved).authority.edit).toBe(false)
 })
+it('does not reinterpret an ambiguous ordinal against the only surviving batch', async () => {
+  save([source('old', a), source('new', b)])
+  db.contextControls('thread', {
+    version: 1, forgotten: ['new:assistant'], pinned: [], afterOrdinal: 0
+  })
+  const text = 'Implement the first one'
+  const unresolved = (await bind(text))!
+  expect(unresolved.binding).toMatchObject({ status: 'ambiguous', sources: [] })
+  expect(unresolved.binding.reason).toContain('Which recommendations should I use?')
+  expect(unresolved.binding.reason).not.toContain('Cache listing queries')
+  expect(taskFor(unresolved, text).authority.edit).toBe(false)
+  expect((await bind('Implement those improvements', { latestAssistantId: 'new:assistant' }))!
+    .binding.status).toBe('unavailable')
+  expect((await bind(`Implement ${extractRecommendations(a)[0]!.id}`))!
+    .binding.sources[0]?.messageId).toBe('old:assistant')
+})
+
 it('keeps Ask mode read-only even for a bound implementation reference', async () => {
   save([source('old', a)])
   const resolved = (await bind(`Explain recommendation ${extractRecommendations(a)[0]!.id}`))!
