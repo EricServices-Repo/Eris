@@ -1,3 +1,4 @@
+import { completionWindow } from '../src/shared/inline-completion'
 import * as settingsService from '../electron/main/services/settings'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'fs'
@@ -282,4 +283,10 @@ describe('debug adapter fixtures', () => {
     }
     expect(session.client.active).toBe(false)
   })
+})
+
+it('limits inline completion IPC to the cursor window', () => {
+  expect(completionWindow(50_000, 120_000)).toEqual({ start: 47_600, end: 50_800 })
+  expect(completionWindow(0, 500)).toEqual({ start: 0, end: 500 })
+  expect(completionWindow(500, 500)).toEqual({ start: 0, end: 500 })
 })

@@ -1,3 +1,4 @@
+import { completionWindow } from '@/shared/inline-completion'
 import { PanelActions } from '@/components/PanelActions'
 import { LanguageTools } from './LanguageTools'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -72,7 +73,8 @@ export function EditorArea({
   const [editBusy, setEditBusy] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
   const [completeHint, setCompleteHint] = useState<string | null>(null)
-  const ghostRef = useRef<string | null>(null)
+  const ghostRef = useRef<{ text: string; model: monaco.editor.ITextModel; version: number; offset: number } | null>(null)
+  const ghostContextRef = useRef<monaco.editor.IContextKey<boolean> | null>(null)
   const decorationRef = useRef<string[]>([])
   const bpDecorationRef = useRef<string[]>([])
   const patchDecorationRef = useRef<string[]>([])
@@ -85,6 +87,8 @@ export function EditorArea({
   const clearGhost = useCallback(() => {
     const ed = editorRef.current
     ghostRef.current = null
+    ghostContextRef.current?.reset()
+    completeReqRef.current++
     if (ed) {
       decorationRef.current = ed.deltaDecorations(decorationRef.current, [])
     }
@@ -323,8 +327,11 @@ export function EditorArea({
       const sel = ed.getSelection()
       if (sel && !sel.isEmpty()) return
       const offset = model.getOffsetAt(pos)
-      const value = model.getValue()
-      if (value.trim().length < 2) return
+      const version = model.getVersionId()
+      const { start, end } = completionWindow(offset, model.getValueLength())
+      const prefix = model.getValueInRange(monaco.Range.fromPositions(model.getPositionAt(start), pos))
+      const suffix = model.getValueInRange(monaco.Range.fromPositions(pos, model.getPositionAt(end)))
+      if ((prefix + suffix).trim().length < 2) return
       clearGhost()
       const requestId = `c-${++completeReqRef.current}`
       if (!opts?.quiet) setCompleteHint('Completing…')
@@ -332,8 +339,8 @@ export function EditorArea({
       const result = await window.ide.aiComplete({
         path: active.path,
         language: active.language,
-        prefix: value.slice(0, offset),
-        suffix: value.slice(offset),
+        prefix,
+        suffix,
         requestId
       })
       if (requestId !== `c-${completeReqRef.current}`) return
@@ -344,10 +351,12 @@ export function EditorArea({
         }
         return
       }
-      // Cursor may have moved — re-check
       const posNow = ed.getPosition()
-      if (!posNow) return
-      ghostRef.current = result.text
+      if (editorRef.current !== ed || ed.getModel() !== model || !posNow ||
+          model.getVersionId() !== version || model.getOffsetAt(posNow) !== offset ||
+          !ed.getSelection()?.isEmpty()) return
+      ghostRef.current = { text: result.text, model, version, offset }
+      ghostContextRef.current?.set(true)
       const preview = result.text.split('\n')[0] || result.text
       decorationRef.current = ed.deltaDecorations(decorationRef.current, [
         {
@@ -384,14 +393,18 @@ export function EditorArea({
 
   const acceptGhost = useCallback(() => {
     const ed = editorRef.current
-    const text = ghostRef.current
-    if (!ed || !text || !active) return false
+    const ghost = ghostRef.current
+    if (!ed || !ghost || !active) return false
     const pos = ed.getPosition()
-    if (!pos) return false
+    if (!pos || ed.getModel() !== ghost.model || ghost.model.getVersionId() !== ghost.version ||
+        ghost.model.getOffsetAt(pos) !== ghost.offset || !ed.getSelection()?.isEmpty()) {
+      clearGhost()
+      return false
+    }
     ed.executeEdits('eris-tab-complete', [
       {
         range: new monaco.Range(pos.lineNumber, pos.column, pos.lineNumber, pos.column),
-        text,
+        text: ghost.text,
         forceMoveMarkers: true
       }
     ])
@@ -564,6 +577,8 @@ export function EditorArea({
             path={active.path}
             dirty={active.dirty}
             editorWillUnmount={() => {
+              clearGhost()
+              ghostContextRef.current = null
               editorRef.current = null
             }}
             language={active.language}
@@ -758,22 +773,19 @@ export function EditorArea({
                 if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current)
                 void runtimeRef.current.requestTabComplete()
               })
+              ghostContextRef.current = editor.createContextKey('erisInlineGhost', false)
+              disposablesRef.current.push(editor.onDidChangeCursorSelection(() => {
+                clearGhost()
+                setCompleteHint(null)
+              }))
               editor.addCommand(monaco.KeyCode.Tab, () => {
-                if (ghostRef.current) {
-                  runtimeRef.current.acceptGhost()
-                  return
-                }
-                editor.trigger('keyboard', 'type', {
-                  text: ' '.repeat(runtimeRef.current.settings.editor.tabSize || 2)
-                })
-              })
+                runtimeRef.current.acceptGhost()
+              }, 'erisInlineGhost && !suggestWidgetVisible && !inSnippetMode && !editorTabMovesFocus')
               editor.addCommand(monaco.KeyCode.Escape, () => {
-                if (ghostRef.current) {
-                  clearGhost()
-                  setCompleteHint(null)
-                  void window.ide.aiCompleteCancel()
-                }
-              })
+                clearGhost()
+                setCompleteHint(null)
+                void window.ide.aiCompleteCancel()
+              }, 'erisInlineGhost && !suggestWidgetVisible')
 
               void applyDiagnostics(active.path)
               syncBreakpoints()

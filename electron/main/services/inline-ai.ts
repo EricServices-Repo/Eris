@@ -1,3 +1,4 @@
+import { COMPLETION_PREFIX_CHARS, COMPLETION_SUFFIX_CHARS } from '../../../src/shared/inline-completion'
 import type { AppSettings } from '../../../src/shared/settings-schema'
 import { streamModelChat } from './chat-runtime'
 
@@ -21,8 +22,8 @@ export async function completeAtCursor(options: {
   suffix: string
   signal?: AbortSignal
 }): Promise<{ ok: boolean; text?: string; error?: string }> {
-  const prefix = options.prefix.slice(-2400)
-  const suffix = options.suffix.slice(0, 800)
+  const prefix = options.prefix.slice(-COMPLETION_PREFIX_CHARS)
+  const suffix = options.suffix.slice(0, COMPLETION_SUFFIX_CHARS)
   const model = options.settings.models.defaultModel || 'auto'
   try {
     const text = await collectText(
