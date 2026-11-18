@@ -171,71 +171,33 @@ export function SettingsModal({
 
   useEffect(() => {
     if (!open) return
-    const offBuiltin = window.ide.onBuiltinDownloadProgress((s) => {
-      setStatus((prev) => (prev ? { ...prev, builtin: upsertDownloadRow(prev.builtin, s) } : prev))
-      if (s.downloading) modelsState.setDownloadingId(s.id)
-      else if (s.ready || s.downloadError) {
-        modelsState.setDownloadingId((cur) => (cur === s.id ? null : cur))
-      }
+    return window.ide.onLocalDownloadProgress((download) => {
+      // A Hugging Face download can register an ID before the catalog contains it.
+      setStatus((previous) => previous
+        ? { ...previous, local: upsertDownloadRow(previous.local ?? [], download) }
+        : { ok: true, builtin: [], local: [download], models: [], connections: [] })
     })
-    const offLocal = window.ide.onLocalDownloadProgress((s) => {
-      // Upsert: HF downloads register a new catalog id that may not be in the list yet.
-      setStatus((prev) =>
-        prev
-          ? { ...prev, local: upsertDownloadRow(prev.local ?? [], s) }
-          : {
-              ok: true,
-              builtin: [],
-              local: [s],
-              models: [],
-              connections: []
-            }
-      )
-      if (s.downloading) modelsState.setDownloadingId(s.id)
-      else if (s.ready || s.downloadError) {
-        modelsState.setDownloadingId((cur) => (cur === s.id ? null : cur))
-      }
-    })
-    return () => {
-      offBuiltin()
-      offLocal()
-    }
   }, [open])
 
-  // Keep progress fresh when Settings was closed mid-download (main process owns the transfer).
-  // Use light builtin/local snapshots — full modelsStatus() probes connections and arrives late,
-  // which made the percentage jump backwards on Windows.
+  const localDownloadActive = Boolean(status?.local?.some((model) => model.downloading))
+  // Use the light local snapshot to recover progress when Settings is reopened.
   useEffect(() => {
-    if (!open || (category !== 'composer' && category !== 'textModels')) return
-    const downloading =
-      Boolean(modelsState.downloadingId) ||
-      Boolean(status?.builtin?.some((b) => b.downloading)) ||
-      Boolean(status?.local?.some((m) => m.downloading))
-    if (!downloading) return
+    if (!open || category !== 'textModels' || !localDownloadActive) return
+    let cancelled = false
     const id = window.setInterval(() => {
-      void Promise.all([window.ide.builtinModelStatus(), window.ide.localModelStatus()]).then(
-        ([builtin, local]) => {
-          setStatus((prev) => {
-            const next = {
-              ...(prev || {
-                ok: true,
-                builtin: [],
-                local: [],
-                models: [],
-                connections: []
-              }),
-              builtin,
-              local
-            } as ModelsStatus
-            return mergeModelsDownloadStatus(prev, next)
-          })
-          const still = builtin.find((b) => b.downloading) || local.find((m) => m.downloading)
-          modelsState.setDownloadingId(still?.id ?? null)
-        }
-      )
+      void window.ide.localModelStatus().then((local) => {
+        if (cancelled) return
+        setStatus((previous) => {
+          if (!previous) return previous
+          return mergeModelsDownloadStatus(previous, { ...previous, local })
+        })
+      }).catch(() => undefined)
     }, 1_500)
-    return () => window.clearInterval(id)
-  }, [open, category, modelsState.downloadingId])
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [open, category, localDownloadActive])
 
   useEffect(() => {
     if (!hasWorkspace && scope === 'workspace') setScope('user')
