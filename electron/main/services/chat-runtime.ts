@@ -76,6 +76,8 @@ export type StreamModelChatOptions = {
    * back to a model. Without it, reasoning is still kept out of the yielded text.
    */
   onReasoning?: (text: string) => void
+  /** Signals nonempty reasoning without delivering its text when display is off. */
+  onReasoningActivity?: () => void
   /** Requested reasoning level; each transport maps it to its own control. */
   reasoning?: ReasoningLevel
 }
@@ -134,14 +136,22 @@ export async function* streamModelChat(
   // A live local session holds its seeded prompt; only a reseed removes revoked text.
   if (revoked && options.sessionKey) releaseLocalChatSession(options.sessionKey)
   let separated = false
-  // show: false discards reasoning here, so nothing downstream can show or save it.
-  const forward = reasoningShown(options.settings, options.model) ? options.onReasoning : undefined
+  const showReasoning = reasoningShown(options.settings, options.model)
+  let reasoned = false
+  const forward = (text: string) => {
+    if (!reasoned && text.trim()) {
+      reasoned = true
+      options.onReasoningActivity?.()
+    }
+    // Keep the text at the transport boundary when reasoning display is off.
+    if (showReasoning) options.onReasoning?.(text)
+  }
   const request = {
     ...options,
     messages,
     onReasoning: (text: string) => {
       separated = true
-      if (text) forward?.(text)
+      if (text) forward(text)
     }
   }
   const scope = activeDiagnosticsScope()

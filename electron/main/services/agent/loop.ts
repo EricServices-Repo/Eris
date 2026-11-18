@@ -2531,6 +2531,7 @@ async function* runAgentInternal(options: {
               yield { type: 'heartbeat', step, chars: generatedChars, elapsedMs: now - modelStartedAt }
             }
           } else {
+            emittedReasoning ||= evt.reasoned === true
             assistantText = evt.full
             latestAssistant = evt.full
             abortedLoop = evt.aborted === 'loop'

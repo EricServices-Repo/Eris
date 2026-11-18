@@ -45,11 +45,17 @@ function scope<T>(script: Script, fn: () => Promise<T>): Promise<T> {
   )
 }
 
-async function collectStream(script: Script, stopOnToolCall = true) {
+async function collectStream(script: Script, stopOnToolCall = true, hideReasoning = false) {
   return scope(script, async () => {
     const events: Array<{ kind: string; text?: string; full?: string; aborted?: string }> = []
+    const settings = markSimulatedSettings(structuredClone(getDefaults()))
+    if (hideReasoning) settings.models.connections.push({
+      id: 'reasoning-fixture', name: 'Fixture', type: 'openai-compatible', provider: 'custom',
+      enabled: true, apiKeyRef: '', baseUrl: 'https://example.invalid/v1',
+      models: [SIMULATED_MODEL_REF], reasoning: { show: false, level: 'default' }
+    })
     for await (const event of streamThinkingText({
-      settings: markSimulatedSettings(structuredClone(getDefaults())),
+      settings,
       model: SIMULATED_MODEL_REF,
       messages: [{ role: 'user', content: 'hi' }],
       temperature: 0,
@@ -100,6 +106,15 @@ describe('streamThinkingText reasoning', () => {
     expect(events.find((event) => event.kind === 'done')!.full).toBe(
       '<think>literal</think> tag in prose'
     )
+  })
+
+  it.each(['native', 'inline'])('reports hidden %s reasoning without exposing the text', async (source) => {
+    const events = await collectStream(async function* (request) {
+      if (source === 'native') request.onReasoning?.('hidden intermediate text')
+      else yield '<think>hidden intermediate text</think>'
+    }, true, true)
+    expect(events).toEqual([expect.objectContaining({ kind: 'done', full: '', reasoned: true })])
+    expect(JSON.stringify(events)).not.toContain('hidden intermediate text')
   })
 
   it('splits a bare closing tag on the complete text', async () => {
