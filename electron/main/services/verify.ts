@@ -69,9 +69,21 @@ function looksLikeMissingLocalBin(output: string): boolean {
   )
 }
 
-/** CRA exits 1 when the suite is empty — not a product bug. */
 function looksLikeNoTestsFound(output: string): boolean {
-  return /No tests found, exiting with code 1/i.test(output) || /No tests found/i.test(output)
+  return /^No tests found(?:, exiting with code [01])?\s*$/im.test(output)
+}
+
+function verifyCommandKind(command: string): ProjectCheckEvidence['kind'] {
+  if (/\b(?:react-scripts test|npm (?:run )?test)\b/.test(command)) return 'test'
+  if (/\b(?:type-?check|tsc)\b/.test(command)) return 'typecheck'
+  return /\blint\b/.test(command) ? 'lint' : 'other'
+}
+
+function emptyTestRun(command: string, output: string, code: number | null, timedOut: boolean): boolean {
+  if (timedOut || verifyCommandKind(command) !== 'test') return false
+  if (code === 0) return looksLikeNoTestsFound(output)
+  // Jest may exit 1 for an empty suite. Preserve other process failures.
+  return code === 1 && /^No tests found, exiting with code 1\s*$/im.test(output)
 }
 
 /** Tests import @testing-library/* but packages were never added to package.json. */
@@ -290,7 +302,7 @@ async function executeVerification(
   let usedCommand = command
 
   // CRA's --passWithNoTests can exit successfully without running a test.
-  if (!ran.timedOut && looksLikeNoTestsFound(out)) {
+  if (emptyTestRun(usedCommand, out, ran.code, ran.timedOut)) {
     return {
       ok: true,
       command: usedCommand,
@@ -315,7 +327,7 @@ async function executeVerification(
         ran = retry
         out = retryOut
         usedCommand = fallback
-        if (!ran.timedOut && looksLikeNoTestsFound(out)) {
+        if (emptyTestRun(usedCommand, out, ran.code, ran.timedOut)) {
           return {
             ok: true,
             command: usedCommand,
@@ -357,7 +369,7 @@ async function executeVerification(
         timeoutMs: 120_000
       })
       out = [ran.stdout, ran.stderr].filter(Boolean).join('\n').trim()
-      if (!ran.timedOut && looksLikeNoTestsFound(out)) {
+      if (emptyTestRun(usedCommand, out, ran.code, ran.timedOut)) {
         return {
           ok: true,
           command: usedCommand,
@@ -394,7 +406,7 @@ async function executeVerification(
         timeoutMs: 120_000
       })
       out = [ran.stdout, ran.stderr].filter(Boolean).join('\n').trim()
-      if (!ran.timedOut && looksLikeNoTestsFound(out)) {
+      if (emptyTestRun(usedCommand, out, ran.code, ran.timedOut)) {
         return {
           ok: true,
           command: usedCommand,
@@ -430,9 +442,7 @@ export async function runVerify(
 ): Promise<VerifyResult> {
   const result = await executeVerification(workspacePath, signal, opts)
   if (!result.command || result.command === 'npm install') return result
-  const kind = /\b(?:react-scripts test|npm (?:run )?test)\b/.test(result.command) ? 'test'
-    : /\b(?:type-?check|tsc)\b/.test(result.command) ? 'typecheck'
-    : /\blint\b/.test(result.command) ? 'lint' : 'other'
+  const kind = verifyCommandKind(result.command)
   const output = result.detail.replace(new RegExp(String.fromCharCode(27) + '\\[[0-9;]*m', 'g'), '')
   const countMatch = kind === 'test' ?
     /^\s*Tests:\s*(?:.*?,\s*)?(\d+) total\s*$/mi.exec(output) ??
@@ -441,8 +451,13 @@ export async function runVerify(
   const testCount = countMatch ? Number(countMatch[1]) : undefined
   const emptyOutput = /^(?:No (?:test files|tests) found(?:, exiting with code 0)?|TAP version \d+\n1\.\.0)\s*$/mi.test(output)
   const onlySkipped = /^\s*Tests[:\s]+\s*\d+ skipped(?:,\s*\d+ total|\s*\(\d+\))\s*$/mi.test(output)
+  const nodeNoExecutedTests = kind === 'test' && testCount !== undefined &&
+    /^[#ℹ] pass 0\s*$/m.test(output) && /^[#ℹ] fail 0\s*$/m.test(output) &&
+    Number(/^[#ℹ] skipped (\d+)\s*$/m.exec(output)?.[1] ?? 0) +
+      Number(/^[#ℹ] todo (\d+)\s*$/m.exec(output)?.[1] ?? 0) === testCount
   const empty = kind === 'test' && result.ok &&
-    (testCount === 0 || result.skipReason === 'no-tests' || onlySkipped || (testCount === undefined && emptyOutput))
+    (testCount === 0 || result.skipReason === 'no-tests' || onlySkipped || nodeNoExecutedTests ||
+      (testCount === undefined && emptyOutput))
   const skipped = result.skipped || empty
   const check: ProjectCheckEvidence = {
     kind, command: result.command, scope: 'project',
