@@ -7,6 +7,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 const h = vi.hoisted(() => ({
   budget: 16 * 1024 ** 3,
+  localRefs: ['local:worker'],
   winner: null as string | null,
   released: [] as string[],
   warm: [] as string[],
@@ -16,20 +17,18 @@ const h = vi.hoisted(() => ({
 }))
 vi.mock('../electron/main/services/local-model', async (original) => ({
   ...(await original<object>()),
-  getLocalStatuses: () => [
-    {
-      ref: 'local:worker',
+  getLocalStatuses: () => h.localRefs.map((ref) => ({
+      ref,
       name: 'Worker Instruct',
-      filename: 'worker.gguf',
+      filename: `${ref.slice(6)}.gguf`,
       family: 'qwen',
       ready: true,
       approxBytes: 5 * 1024 ** 3
-    }
-  ],
+  })),
   findLocalEntry: (m: string) =>
-    m === 'local:worker'
+    h.localRefs.includes(m)
       ? {
-          id: 'worker',
+          id: m.slice(6),
           ref: m,
           name: 'Worker',
           displayName: 'Worker',
@@ -45,7 +44,7 @@ vi.mock('../electron/main/services/local-model', async (original) => ({
           sizeLabel: '5 GB'
         }
       : null,
-  resolveExactLocalRef: (m: string) => (m === 'local:worker' ? m : null)
+  resolveExactLocalRef: (m: string) => (h.localRefs.includes(m) ? m : null)
 }))
 vi.mock('../electron/main/services/builtin-model', async (original) => ({
   ...(await original<object>()),
@@ -86,6 +85,7 @@ import type { TurnPlan } from '../src/shared/settings-schema'
 let root: string
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'eris-model-switch-'))
+  h.localRefs = ['local:worker']
   h.budget = 16 * 1024 ** 3
   h.winner = null
   h.released = []
@@ -400,6 +400,75 @@ describe('coordinator to worker at the actual transport boundary', () => {
     expect(h.released).toContain('gguf:chat:model-switch')
   })
 })
+describe('provider setups at the production chat boundary', () => {
+  it.each([
+    { name: 'one GGUF', local: 1, remote: 0, policy: 'auto-local' },
+    { name: 'two GGUFs', local: 2, remote: 0, policy: 'auto-local' },
+    { name: 'one provider', local: 0, remote: 1, policy: 'auto-any' },
+    { name: 'two providers', local: 0, remote: 2, policy: 'auto-any' },
+    { name: 'mixed, local policy', local: 1, remote: 2, policy: 'auto-local' },
+    { name: 'no model', local: 0, remote: 0, policy: 'auto-any' }
+  ])('routes, delegates and bounds recovery with $name', async ({ local, remote, policy }) => {
+    h.localRefs = ['local:worker', 'local:alternate'].slice(0, local)
+    const remoteRefs = ['gpt-4o', 'gpt-5'].slice(0, remote)
+    const s = markSimulatedSettings(settings())
+    s.agent.routing.profile = 'auto'
+    s.agent.helperCalls = 'off'
+    s.agent.recoveryAcrossProviders = true
+    s.models.connections = remoteRefs.map((model, idx) => ({
+      id: `remote-${idx}`, name: model, type: 'openai-compatible', provider: 'openai',
+      enabled: true, apiKeyRef: '', baseUrl: `https://fixture-${idx}.example/v1`, models: [model]
+    }))
+    const eligible = policy === 'auto-local' ? h.localRefs : [...h.localRefs, ...remoteRefs]
+    const requests: ModelTransportRequest[] = []
+    const text = 'Write a three-sentence story about a dog.'
+    const input = { requestId: `provider-matrix-${local}-${remote}`, workspacePath: root,
+      settings: s, text, model: policy, mode: 'agent' as const, getSecret: () => null }
+    await runInDiagnosticsScope({
+      runId: input.requestId, mode: 'simulated', onBlockedEffect: () => {},
+      adapter: { kind: 'scripted', async *stream(request) {
+        requests.push(request)
+        yield 'A dog waited at the gate. His owner arrived at sunset. They walked home together.'
+      } }
+    }, async () => {
+      const initial = await planInitialChatTurn(input)
+      expect(initial.models.chat).toBe('')
+      if (!eligible.length) {
+        expect(initial.error).toContain('No eligible model')
+        expect(requests).toHaveLength(0)
+        return
+      }
+      const { plan, task } = await resolveChatTurnContract(input, initial)
+      expect(plan.error).toBeUndefined()
+      expect(eligible).toContain(plan.models.chat)
+      expect(task.authority.edit).toBe(false)
+      const { primary, fast } = plan.models
+      if (!primary || !fast) throw new Error('Auto did not resolve both parent model classes')
+      const child = await planChatTurn({ ...input, context: {
+        text: 'Review the file a.ts', mode: 'agent', selectedModel: policy, skipModelRouter: true,
+        inheritedModels: { primary, fast }
+      } })
+      expect(child.error).toBeUndefined()
+      expect([primary, fast]).toContain(child.models.tools)
+      const recovery = await decideMidRunAdapt({
+        ...input, plan, selectedModel: plan.models.tools, startingModel: plan.models.tools,
+        goal: text, rerouteCount: 0, actionLog: [], filesTouched: []
+      })
+      const alternatives = eligible.filter((model) => model !== plan.models.tools)
+      if (alternatives.length) expect(alternatives).toContain(recovery.nextPlan?.models.tools)
+      else expect(recovery.nextPlan).toBeUndefined()
+      const answers: string[] = []
+      for await (const event of runAgentWithWorkspaceTools({
+        ...input, model: plan.models.chat, turnPlan: plan, mcp: 'off', temperature: 0,
+        messages: [{ role: 'user', content: text }]
+      })) if (event.type === 'answer') answers.push(event.text)
+      expect(requests.filter((request) => request.purpose === 'agent').map((request) => request.model))
+        .toEqual([plan.models.chat])
+      expect(answers.join(' ')).toContain('walked home together')
+    })
+  })
+})
+
 describe('policy precedence through production planning', () => {
   it('retains an explicit agent pin but blocks its remote destination under Auto-local', async () => {
     const agents = loadBuiltinAgents()
