@@ -537,7 +537,7 @@ export async function* streamProviderChat(
       throw new Error(`“${model}” is unavailable in the Eris Cloud catalog. Refresh Cloud Models or select another model.`)
     if (!connection || connection.type !== 'openai-compatible') {
       throw new Error(
-        `No model connection for “${model}”. Connect Ollama or another API in Settings → Models (Refresh models after ollama pull), or download Composer Lite.`
+        `No model connection for “${model}”. Connect Ollama or another API in Settings → Models, or download a local text model. Refresh the model list after pulling an Ollama model.`
       )
     }
     if (!connection.baseUrl) {

@@ -1,3 +1,5 @@
+import { CONNECT_MODEL_MESSAGE } from '../../../src/shared/model-setup'
+import { migrateRetiredModel } from '../../../src/shared/legacy-model-ref'
 import {
   connectionModelRef,
   isErisCloudConnection,
@@ -170,15 +172,14 @@ export async function getModelsStatus(
     }
   }
 
-  const anyBuiltinReady = builtin.some((b) => b.ready)
   const anyLocalReady = local.some((m) => m.ready)
   const anyConnectionReady = models.some((m) => m.source === 'connection' && m.ready)
   return {
-    ok: anyBuiltinReady || anyLocalReady || anyConnectionReady,
+    ok: anyLocalReady || anyConnectionReady,
     error:
-      anyBuiltinReady || anyLocalReady || anyConnectionReady
+      anyLocalReady || anyConnectionReady
         ? undefined
-        : 'No models ready — download Composer Lite or a Local model, or add an API in Settings → Models',
+        : CONNECT_MODEL_MESSAGE,
     builtin,
     local,
     models,
@@ -247,23 +248,15 @@ export function resolveConnectionForModel(
 
 /**
  * Compact catalog for agent system prompts — answers “what models do you have?”
- * without searching the workspace. Uses persisted connection lists + builtin status
+ * without searching the workspace. Uses persisted connection lists and the local GGUF catalog
  * (no network round-trip).
  */
 export function formatAvailableModelsPrompt(settings: AppSettings, selectedModel?: string): string {
   const lines: string[] = [
     '[Eris AI models — use this list for questions about available / accessible models. Do not search the workspace for “models”.]',
-    `Chat selection: ${selectedModel || settings.models.defaultModel || '(none)'}`,
-    `Settings default: ${settings.models.defaultModel || '(none)'}`
+    `Chat selection: ${migrateRetiredModel(selectedModel || settings.models.defaultModel) || '(none)'}`,
+    `Settings default: ${migrateRetiredModel(settings.models.defaultModel) || '(none)'}`
   ]
-  const builtins = getBuiltinStatuses()
-  if (builtins.length) {
-    lines.push('Built-in Composer:')
-    for (const b of builtins) {
-      const label = b.ready ? 'ready' : 'not downloaded'
-      lines.push(`- ${b.ref} (${label}${b.tier ? `, ${b.tier}` : ''})`)
-    }
-  }
   const locals = getLocalStatuses()
   if (locals.length) {
     lines.push('Local models (run inside Eris, no Ollama):')

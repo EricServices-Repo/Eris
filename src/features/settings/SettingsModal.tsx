@@ -27,8 +27,7 @@ import {
   ComposerModelsPanel,
   ImageModelsPanel,
   ProvidersModelsPanel,
-  TextModelsPanel,
-  useModelsPanelState
+  TextModelsPanel
 } from './panels/ModelsPanel'
 import { resolveSettingsCategory } from './settings-meta'
 import { RulesPanel, useRulesPanelState } from './panels/RulesPanel'
@@ -88,7 +87,6 @@ export function SettingsModal({
   const [projectAgents, setProjectAgents] = useState<ProjectAgentsConfig | null>(null)
   const [agentsDirty, setAgentsDirty] = useState(false)
   const [agentsError, setAgentsError] = useState<string | null>(null)
-  const modelsState = useModelsPanelState()
   const skillsState = useSkillsPanelState(hasWorkspace)
   const logsState = useLogsState()
   const rulesState = useRulesPanelState(hasWorkspace)
@@ -465,11 +463,9 @@ export function SettingsModal({
 
           {category === 'composer' && (
             <ComposerModelsPanel
-              state={modelsState}
               resolved={resolved}
               status={status}
               apply={apply}
-              load={load}
             />
           )}
 
